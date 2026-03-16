@@ -1,0 +1,19 @@
+# Rocq project file for Presburger Boolean Algebra correctness proofs
+#
+# Verifies that the Presburger NFA construction (presburger.rs) forms a
+# Boolean algebra over decidable predicates on Z:
+#
+#   - Commutativity, associativity of AND/OR
+#   - Absorption laws
+#   - Complementation (AND/OR with complement)
+#   - De Morgan's laws
+#   - Distributivity (AND over OR, OR over AND)
+#
+# Model: predicates as decidable sets over Z, NFA acceptance as set membership.
+#
+# Reference: Buechi (1960), Bartzis-Bultan (2003)
+
+-Q theories PresburgerProofs
+
+# Source files
+theories/PresburgerBooleanAlgebra.v

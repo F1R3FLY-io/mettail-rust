@@ -23,11 +23,11 @@
  * Spec-to-Code Traceability:
  *   Rocq Definition              | Rust Code                            | Location
  *   -----------------------------|--------------------------------------|--------------------------
- *   MsoFormula (inductive)       | WeightedMsoFormula enum              | weighted_mso.rs
- *   WFA (record)                 | WeightedMsoAutomaton struct          | weighted_mso.rs
- *   wfa_eval                     | evaluate_sentence_bool()             | weighted_mso.rs
- *   mso_to_wfa                   | (not yet implemented)                | weighted_mso.rs
- *   recognizable_series          | WFA behavior (accepted series)       | weighted_mso.rs
+ *   MsoFormula (inductive)       | WeightedMsoFormula enum              | weighted_mso.rs:120
+ *   WFA (record)                 | (no explicit WFA struct; see gap 6)  | —
+ *   wfa_eval                     | evaluate_sentence_bool()             | weighted_mso.rs:797
+ *   mso_sem (denotation)         | eval_inner() recursive evaluator     | weighted_mso.rs:839
+ *   recognizable_series          | (theoretical; not materialized)      | —
  *
  * Rocq 9.1 compatible.
  *)
@@ -477,6 +477,11 @@ Qed.
 (*     The Rocq model omits second-order quantification entirely.        *)
 (*  5. Formula normalization: The Rust applies algebraic simplifications *)
 (*     before compilation.  The Rocq model works with raw formulas.      *)
+(*  6. No explicit WFA construction: Rust evaluates MSO formulas         *)
+(*     directly via evaluate_sentence_bool() without constructing WFA    *)
+(*     state machines. The Rocq WFA record and Section Hypotheses model  *)
+(*     theoretical closure properties (Droste-Gastin Thm 3.7). The      *)
+(*     ConcreteClosure section proves these concretely for nat.          *)
 (*                                                                         *)
 (*  All proofs are COMPLETE -- zero Admitted.                               *)
 (* ===================================================================== *)

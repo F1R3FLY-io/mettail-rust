@@ -1,0 +1,17 @@
+# Rocq project file for LogicT Fairness correctness proofs
+#
+# Verifies fairness and msplit laws for the LogicT fair backtracking
+# search framework (logict.rs):
+#
+#   - Interleave fairness: both branches explored infinitely often
+#   - msplit identity and mzero laws
+#   - Interleave commutativity up to reordering
+#
+# Model: streams as lists (finite case), alternation property.
+#
+# Reference: Kiselyov, Shan, Friedman & Sabry (ICFP 2005)
+
+-Q theories LogicTProofs
+
+# Source files
+theories/LogicTFairness.v

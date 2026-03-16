@@ -43,6 +43,20 @@ pub enum TypeExpr {
         coll_type: CollectionType,
         element: Box<TypeExpr>,
     },
+
+    /// Refinement type: `{ var: BaseType | predicate }`
+    ///
+    /// This variant is populated during refinement type lowering (Sprint RT5),
+    /// not during initial parse — the parser produces `RefinementTypeDef`
+    /// structs which are later lowered into `TypeExpr::Refined` nodes.
+    Refined {
+        /// The binding variable name.
+        var: Ident,
+        /// The base type being refined.
+        base: Box<TypeExpr>,
+        /// Serialized predicate representation (for display/debugging).
+        predicate_repr: String,
+    },
 }
 
 impl std::fmt::Display for TypeExpr {
@@ -58,6 +72,9 @@ impl std::fmt::Display for TypeExpr {
                     CollectionType::HashSet => "HashSet",
                 };
                 write!(f, "{}({})", coll_name, element)
+            },
+            TypeExpr::Refined { var, base, predicate_repr } => {
+                write!(f, "{{ {}: {} | {} }}", var, base, predicate_repr)
             },
         }
     }

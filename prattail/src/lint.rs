@@ -290,9 +290,32 @@ pub struct LintContext<'a> {
     /// Two-way transducer analysis.
     #[cfg(feature = "two-way-transducer")]
     pub two_way_result: Option<&'a crate::two_way_transducer::TwoWayAnalysis>,
+    /// Symbolic finite transducer analysis.
+    #[cfg(feature = "sft")]
+    pub sft_result: Option<&'a crate::sft::SftAnalysis>,
+    /// E-graph equality saturation analysis.
+    #[cfg(feature = "egraph")]
+    pub egraph_result: Option<&'a crate::egraph::EGraphAnalysis>,
     /// Predicate dispatch diagnostics.
     #[cfg(feature = "predicate-dispatch")]
     pub dispatch_diagnostics: Option<&'a crate::predicate_dispatch::DispatchDiagnostics>,
+
+    // ── Constraint theory analysis results ──────────────────────────────────
+
+    /// Presburger arithmetic guard analysis results.
+    #[cfg(feature = "presburger")]
+    pub presburger_result: Option<&'a crate::presburger::PresburgerAnalysis>,
+    /// Structural unification guard analysis results.
+    #[cfg(feature = "unification")]
+    pub unification_result: Option<&'a crate::unification::UnificationAnalysis>,
+    /// Subtype lattice guard analysis results.
+    #[cfg(feature = "lattice-theory")]
+    pub lattice_result: Option<&'a crate::lattice_theory::LatticeAnalysis>,
+
+    // ── Refinement type analysis results ─────────────────────────────────
+    /// Refinement type analysis (satisfiability, subtyping, decidability).
+    #[cfg(feature = "type-system")]
+    pub refinement_analysis: Option<&'a crate::pipeline::RefinementAnalysisResult>,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -683,6 +706,24 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
         lint_tw03_constraint_propagation_divergent(ctx, &mut diagnostics);
     }
 
+    // Symbolic finite transducers
+    #[cfg(feature = "sft")]
+    {
+        lint_sft01_empty_domain(ctx, &mut diagnostics);
+        lint_sft02_constant_output(ctx, &mut diagnostics);
+        lint_sft03_nondeterministic(ctx, &mut diagnostics);
+        lint_sft04_equivalent_pair(ctx, &mut diagnostics);
+    }
+
+    // E-graph equality saturation
+    #[cfg(feature = "egraph")]
+    {
+        lint_eg01_discovered_equivalences(ctx, &mut diagnostics);
+        lint_eg02_simplifiable_guard(ctx, &mut diagnostics);
+        lint_eg03_saturation_non_convergence(ctx, &mut diagnostics);
+        lint_eg04_joinability_witness(ctx, &mut diagnostics);
+    }
+
     // P06: Analysis pipeline timing
     lint_p06_analysis_pipeline_cost(ctx, &mut diagnostics);
 
@@ -726,6 +767,38 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
         lint_pd02_all_modules_activated(ctx, &mut diagnostics);
         lint_pd03_dispatch_savings(ctx, &mut diagnostics);
         lint_pd04_missing_feature_gate(ctx, &mut diagnostics);
+    }
+
+    // ── Constraint theory lints ──
+    #[cfg(feature = "presburger")]
+    {
+        lint_pb01_unsatisfiable_arithmetic_guard(ctx, &mut diagnostics);
+        lint_pb02_tautological_arithmetic_guard(ctx, &mut diagnostics);
+        lint_pb03_subsumed_arithmetic_guard(ctx, &mut diagnostics);
+    }
+    #[cfg(feature = "unification")]
+    {
+        lint_un01_unsatisfiable_unification_guard(ctx, &mut diagnostics);
+        lint_un02_tautological_unification_guard(ctx, &mut diagnostics);
+        lint_un03_subsumed_unification_guard(ctx, &mut diagnostics);
+    }
+    #[cfg(feature = "lattice-theory")]
+    {
+        lint_sl01_unsatisfiable_subtype_constraint(ctx, &mut diagnostics);
+        lint_sl02_redundant_subtype_constraint(ctx, &mut diagnostics);
+    }
+    #[cfg(feature = "logict")]
+    lint_lt01_search_bound_exceeded(ctx, &mut diagnostics);
+
+    // ── Refinement type lints ──
+    #[cfg(feature = "type-system")]
+    {
+        lint_rt01_unsatisfiable_refinement(ctx, &mut diagnostics);
+        lint_rt02_tautological_refinement(ctx, &mut diagnostics);
+        lint_rt03_empty_intersection(ctx, &mut diagnostics);
+        lint_rt04_subtype_detected(ctx, &mut diagnostics);
+        lint_rt05_decidability_tier(ctx, &mut diagnostics);
+        lint_rt06_name_shadow(ctx, &mut diagnostics);
     }
 
     diagnostics
@@ -8064,6 +8137,214 @@ fn lint_tw03_constraint_propagation_divergent(ctx: &LintContext, diagnostics: &m
     }
 }
 
+// ── Symbolic Finite Transducers (SFT01-SFT04) ────────────────────────────────
+
+/// SFT01: SFT has empty domain (dead transduction — no input ever triggers it).
+#[cfg(feature = "sft")]
+fn lint_sft01_empty_domain(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.sft_result {
+        Some(r) => r,
+        None => return,
+    };
+    for label in &result.empty_domain_labels {
+        diagnostics.push(LintDiagnostic {
+            id: "SFT01",
+            name: "empty-domain-transduction",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: Some(label.clone()),
+            message: format!(
+                "SFT '{}' has empty domain \u{2014} no input word ever triggers this transduction",
+                label
+            ),
+            hint: Some("remove the dead transduction or fix its guard predicates".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// SFT02: SFT always produces the same constant output (simplifiable).
+#[cfg(feature = "sft")]
+fn lint_sft02_constant_output(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.sft_result {
+        Some(r) => r,
+        None => return,
+    };
+    for label in &result.constant_output_labels {
+        diagnostics.push(LintDiagnostic {
+            id: "SFT02",
+            name: "constant-output-transduction",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: Some(label.clone()),
+            message: format!(
+                "SFT '{}' always produces the same constant output \u{2014} simplifiable to a constant function",
+                label
+            ),
+            hint: Some("replace with a constant mapping to reduce transducer complexity".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// SFT03: SFT is not single-valued (nondeterministic output).
+#[cfg(feature = "sft")]
+fn lint_sft03_nondeterministic(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.sft_result {
+        Some(r) => r,
+        None => return,
+    };
+    let nonfunctional_count = result.num_transducers.saturating_sub(result.functional_count);
+    if nonfunctional_count > 0 {
+        diagnostics.push(LintDiagnostic {
+            id: "SFT03",
+            name: "nondeterministic-transduction",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "{} SFT(s) are nondeterministic (not single-valued) \u{2014} some inputs may produce multiple outputs",
+                nonfunctional_count
+            ),
+            hint: Some("ensure guard predicates are disjoint or merge overlapping transitions".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// SFT04: Two SFTs produce identical input-output behavior (dedup opportunity).
+#[cfg(feature = "sft")]
+fn lint_sft04_equivalent_pair(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.sft_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (a, b) in &result.equivalent_pairs {
+        diagnostics.push(LintDiagnostic {
+            id: "SFT04",
+            name: "equivalent-transductions",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "SFTs '{}' and '{}' produce identical input-output behavior \u{2014} deduplication opportunity",
+                a, b
+            ),
+            hint: Some("merge equivalent transducers to reduce analysis overhead".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EG01–EG04: E-Graph Equality Saturation Lints
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// EG01: E-graph saturation discovered non-obvious equivalences.
+#[cfg(feature = "egraph")]
+fn lint_eg01_discovered_equivalences(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.egraph_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (a, b) in &result.discovered_equivalences {
+        diagnostics.push(LintDiagnostic {
+            id: "EG01",
+            name: "discovered-equivalence",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "equality saturation discovered non-obvious equivalence: {} \u{2261} {}",
+                a, b
+            ),
+            hint: Some("review whether this equivalence is intentional; it may indicate redundant rules".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// EG02: Guard expression simplifiable via equality saturation.
+#[cfg(feature = "egraph")]
+fn lint_eg02_simplifiable_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.egraph_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (original, simplified) in &result.simplified_guards {
+        diagnostics.push(LintDiagnostic {
+            id: "EG02",
+            name: "simplifiable-guard",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "guard expression '{}' can be simplified to '{}' via equality saturation",
+                original, simplified
+            ),
+            hint: Some("consider replacing with the simpler equivalent form".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// EG03: Saturation did not converge within iteration limit.
+#[cfg(feature = "egraph")]
+fn lint_eg03_saturation_non_convergence(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.egraph_result {
+        Some(r) => r,
+        None => return,
+    };
+    if !result.converged {
+        diagnostics.push(LintDiagnostic {
+            id: "EG03",
+            name: "saturation-non-convergence",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "e-graph equality saturation did not converge after {} iterations ({} e-classes, {} e-nodes) \
+                 \u{2014} results may be incomplete",
+                result.saturation_iterations, result.num_eclasses, result.num_enodes
+            ),
+            hint: Some("increase iteration/node limits or simplify the rewrite system".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// EG04: E-graph found joinability witness for critical pair that normalization couldn't.
+#[cfg(feature = "egraph")]
+fn lint_eg04_joinability_witness(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.egraph_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (pair_idx, witness) in &result.joinability_witnesses {
+        diagnostics.push(LintDiagnostic {
+            id: "EG04",
+            name: "joinability-witness",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "e-graph found joinability witness for critical pair #{} that normalization could not: {}",
+                pair_idx, witness
+            ),
+            hint: Some("this critical pair is joinable via equality saturation \u{2014} the TRS may be more confluent than normalization alone suggests".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // PD01–PD04: Predicate Dispatch Lints
 // ══════════════════════════════════════════════════════════════════════════════
@@ -8168,6 +8449,370 @@ fn lint_pd04_missing_feature_gate(ctx: &LintContext, diagnostics: &mut Vec<LintD
                 idx
             ),
             hint: Some("enable the `two-way-transducer` feature to analyze cross-channel constraint propagation".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Constraint theory lints (PB01–PB03, UN01–UN03, SL01–SL02, LT01) ─────────
+
+#[cfg(feature = "presburger")]
+fn lint_pb01_unsatisfiable_arithmetic_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.presburger_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (desc, rule) in &result.unsatisfiable_guards {
+        diagnostics.push(LintDiagnostic {
+            id: "PB01",
+            name: "unsatisfiable-arithmetic-guard",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: Some(rule.clone()),
+            message: format!("arithmetic guard '{}' is unsatisfiable (dead code)", desc),
+            hint: Some("remove the unreachable guard or relax its numeric constraint".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "presburger")]
+fn lint_pb02_tautological_arithmetic_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.presburger_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (desc, rule) in &result.tautological_guards {
+        diagnostics.push(LintDiagnostic {
+            id: "PB02",
+            name: "tautological-arithmetic-guard",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: Some(rule.clone()),
+            message: format!("arithmetic guard '{}' is always satisfied (tautological)", desc),
+            hint: Some("remove the redundant guard to simplify the rule".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "presburger")]
+fn lint_pb03_subsumed_arithmetic_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.presburger_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (subsuming, subsumed, rule) in &result.subsumed_guards {
+        diagnostics.push(LintDiagnostic {
+            id: "PB03",
+            name: "subsumed-arithmetic-guard",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: Some(rule.clone()),
+            message: format!(
+                "arithmetic guard '{}' is subsumed by '{}' (redundant)",
+                subsumed, subsuming
+            ),
+            hint: Some("the subsuming guard already covers this constraint".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "unification")]
+fn lint_un01_unsatisfiable_unification_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.unification_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (desc, rule) in &result.unsatisfiable_guards {
+        diagnostics.push(LintDiagnostic {
+            id: "UN01",
+            name: "unsatisfiable-unification-guard",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: Some(rule.clone()),
+            message: format!(
+                "unification guard '{}' is unsatisfiable (constructor clash or occurs check)",
+                desc
+            ),
+            hint: Some("remove the unreachable guard or fix the structural pattern".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "unification")]
+fn lint_un02_tautological_unification_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.unification_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (desc, rule) in &result.tautological_guards {
+        diagnostics.push(LintDiagnostic {
+            id: "UN02",
+            name: "tautological-unification-guard",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: Some(rule.clone()),
+            message: format!(
+                "unification guard '{}' is trivially satisfiable (always matches)",
+                desc
+            ),
+            hint: Some("remove the redundant unification guard".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "unification")]
+fn lint_un03_subsumed_unification_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.unification_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (general, specific, rule) in &result.subsumed_guards {
+        diagnostics.push(LintDiagnostic {
+            id: "UN03",
+            name: "subsumed-unification-guard",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: Some(rule.clone()),
+            message: format!(
+                "unification guard '{}' is subsumed by more general pattern '{}'",
+                specific, general
+            ),
+            hint: Some("the more general pattern already covers this case".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "lattice-theory")]
+fn lint_sl01_unsatisfiable_subtype_constraint(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.lattice_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (desc, rule) in &result.unsatisfiable_constraints {
+        diagnostics.push(LintDiagnostic {
+            id: "SL01",
+            name: "unsatisfiable-subtype-constraint",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: Some(rule.clone()),
+            message: format!(
+                "subtype constraint '{}' is contradictory (unsatisfiable type hierarchy)",
+                desc
+            ),
+            hint: Some("check subtype declarations for conflicting edges".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "lattice-theory")]
+fn lint_sl02_redundant_subtype_constraint(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.lattice_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (desc, rule) in &result.redundant_constraints {
+        diagnostics.push(LintDiagnostic {
+            id: "SL02",
+            name: "redundant-subtype-constraint",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: Some(rule.clone()),
+            message: format!(
+                "subtype constraint '{}' is already implied by transitivity",
+                desc
+            ),
+            hint: Some("remove the redundant constraint \u{2014} it follows from existing edges".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "logict")]
+fn lint_lt01_search_bound_exceeded(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // LT01 is emitted when LogicT search hits its depth limit.
+    // Any ConstraintTheory with non-empty label() can trigger it.
+
+    // Presburger: decidable theory — label() returns empty, search bound never exceeded.
+    // Lattice theory: decidable — search bound never exceeded.
+
+    // Unification: may exceed on deeply nested CustomMatch alternatives.
+    #[cfg(feature = "unification")]
+    if let Some(result) = ctx.unification_result {
+        for desc in &result.search_bound_exceeded {
+            diagnostics.push(LintDiagnostic {
+                id: "LT01",
+                name: "logict-search-bound-exceeded",
+                severity: LintSeverity::Warning,
+                category: None,
+                rule: None,
+                message: format!(
+                    "LogicT search bound exceeded while solving constraint: {}",
+                    desc
+                ),
+                hint: Some("increase the search bound or simplify the constraint".to_string()),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+// ── Refinement type lints (RT01–RT06) ─────────────────────────────────────────
+
+#[cfg(feature = "type-system")]
+fn lint_rt01_unsatisfiable_refinement(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.refinement_analysis {
+        Some(r) => r,
+        None => return,
+    };
+    for (name, reason) in &result.unsatisfiable {
+        diagnostics.push(LintDiagnostic {
+            id: "RT01",
+            name: "unsatisfiable-refinement-predicate",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: Some(name.clone()),
+            message: format!(
+                "refinement type '{}' has unsatisfiable predicate: {} (dead type)",
+                name, reason
+            ),
+            hint: Some("remove the unreachable refinement type or relax its predicate".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "type-system")]
+fn lint_rt02_tautological_refinement(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.refinement_analysis {
+        Some(r) => r,
+        None => return,
+    };
+    for (name, reason) in &result.tautological {
+        diagnostics.push(LintDiagnostic {
+            id: "RT02",
+            name: "tautological-refinement-predicate",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: Some(name.clone()),
+            message: format!(
+                "refinement type '{}' is equivalent to its base type: {}",
+                name, reason
+            ),
+            hint: Some("remove the redundant refinement \u{2014} the predicate is always satisfied".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "type-system")]
+fn lint_rt03_empty_intersection(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.refinement_analysis {
+        Some(r) => r,
+        None => return,
+    };
+    for (type_a, type_b, reason) in &result.empty_intersections {
+        diagnostics.push(LintDiagnostic {
+            id: "RT03",
+            name: "empty-refinement-intersection",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "refinement types '{}' and '{}' have empty intersection: {}",
+                type_a, type_b, reason
+            ),
+            hint: Some("no value can inhabit both types simultaneously".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "type-system")]
+fn lint_rt04_subtype_detected(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.refinement_analysis {
+        Some(r) => r,
+        None => return,
+    };
+    for (sub, sup) in &result.subtype_pairs {
+        diagnostics.push(LintDiagnostic {
+            id: "RT04",
+            name: "refinement-subtype-detected",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "refinement type '{}' is a subtype of '{}'",
+                sub, sup
+            ),
+            hint: Some("this subtyping relationship is used for dispatch optimization".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "type-system")]
+fn lint_rt05_decidability_tier(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.refinement_analysis {
+        Some(r) => r,
+        None => return,
+    };
+    for (name, tier) in &result.decidability_tiers {
+        diagnostics.push(LintDiagnostic {
+            id: "RT05",
+            name: "refinement-decidability-tier",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: Some(name.clone()),
+            message: format!(
+                "refinement type '{}' predicate classified as {}",
+                name, tier
+            ),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "type-system")]
+fn lint_rt06_name_shadow(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.refinement_analysis {
+        Some(r) => r,
+        None => return,
+    };
+    for (refinement_name, base_name) in &result.name_shadows {
+        diagnostics.push(LintDiagnostic {
+            id: "RT06",
+            name: "refinement-type-shadows-base",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: Some(refinement_name.clone()),
+            message: format!(
+                "refinement type '{}' shadows base type '{}'",
+                refinement_name, base_name
+            ),
+            hint: Some("rename the refinement type to avoid ambiguity with the base type".to_string()),
             grammar_name: Some(ctx.grammar_name.to_string()),
             source_location: None,
         });
@@ -8294,8 +8939,22 @@ mod tests {
         multiset_result_data: Option<crate::multiset_automata::MultisetAnalysisResult>,
         #[cfg(feature = "two-way-transducer")]
         two_way_result_data: Option<crate::two_way_transducer::TwoWayAnalysis>,
+        #[cfg(feature = "sft")]
+        sft_result_data: Option<crate::sft::SftAnalysis>,
+        #[cfg(feature = "egraph")]
+        egraph_result_data: Option<crate::egraph::EGraphAnalysis>,
         #[cfg(feature = "predicate-dispatch")]
         dispatch_diagnostics_data: Option<crate::predicate_dispatch::DispatchDiagnostics>,
+        // ── Constraint theory analysis result fields ──
+        #[cfg(feature = "presburger")]
+        presburger_result_data: Option<crate::presburger::PresburgerAnalysis>,
+        #[cfg(feature = "unification")]
+        unification_result_data: Option<crate::unification::UnificationAnalysis>,
+        #[cfg(feature = "lattice-theory")]
+        lattice_result_data: Option<crate::lattice_theory::LatticeAnalysis>,
+        // ── Refinement type analysis result fields ──
+        #[cfg(feature = "type-system")]
+        refinement_analysis_data: Option<crate::pipeline::RefinementAnalysisResult>,
     }
 
     impl CtxBuilder {
@@ -8377,8 +9036,22 @@ mod tests {
                 multiset_result_data: None,
                 #[cfg(feature = "two-way-transducer")]
                 two_way_result_data: None,
+                #[cfg(feature = "sft")]
+                sft_result_data: None,
+                #[cfg(feature = "egraph")]
+                egraph_result_data: None,
                 #[cfg(feature = "predicate-dispatch")]
                 dispatch_diagnostics_data: None,
+                // ── Constraint theory analysis result fields ──
+                #[cfg(feature = "presburger")]
+                presburger_result_data: None,
+                #[cfg(feature = "unification")]
+                unification_result_data: None,
+                #[cfg(feature = "lattice-theory")]
+                lattice_result_data: None,
+                // ── Refinement type analysis result fields ──
+                #[cfg(feature = "type-system")]
+                refinement_analysis_data: None,
             }
         }
 
@@ -8460,8 +9133,22 @@ mod tests {
                 multiset_result: self.multiset_result_data.as_ref(),
                 #[cfg(feature = "two-way-transducer")]
                 two_way_result: self.two_way_result_data.as_ref(),
+                #[cfg(feature = "sft")]
+                sft_result: self.sft_result_data.as_ref(),
+                #[cfg(feature = "egraph")]
+                egraph_result: self.egraph_result_data.as_ref(),
                 #[cfg(feature = "predicate-dispatch")]
                 dispatch_diagnostics: self.dispatch_diagnostics_data.as_ref(),
+                // ── Constraint theory analysis results ──
+                #[cfg(feature = "presburger")]
+                presburger_result: self.presburger_result_data.as_ref(),
+                #[cfg(feature = "unification")]
+                unification_result: self.unification_result_data.as_ref(),
+                #[cfg(feature = "lattice-theory")]
+                lattice_result: self.lattice_result_data.as_ref(),
+                // ── Refinement type analysis results ──
+                #[cfg(feature = "type-system")]
+                refinement_analysis: self.refinement_analysis_data.as_ref(),
             }
         }
     }
@@ -13847,5 +14534,170 @@ mod tests {
             "same-category WPDS weights should not trigger W16: {:?}",
             diags,
         );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // RT01–RT06: Refinement Type Lints
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "type-system")]
+    fn make_refinement_analysis() -> crate::pipeline::RefinementAnalysisResult {
+        crate::pipeline::RefinementAnalysisResult::default()
+    }
+
+    #[cfg(feature = "type-system")]
+    #[test]
+    fn rt01_fires_on_unsatisfiable_refinement() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        let mut analysis = make_refinement_analysis();
+        analysis.unsatisfiable.push((
+            "NeverInt".to_string(),
+            "predicate is trivially false".to_string(),
+        ));
+        b.refinement_analysis_data = Some(analysis);
+
+        let mut diags = Vec::new();
+        lint_rt01_unsatisfiable_refinement(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 RT01 diagnostic: {:?}", diags);
+        assert_eq!(diags[0].id, "RT01");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("NeverInt"), "message: {}", diags[0].message);
+    }
+
+    #[cfg(feature = "type-system")]
+    #[test]
+    fn rt01_silent_when_no_analysis() {
+        let b = CtxBuilder::new();
+        let mut diags = Vec::new();
+        lint_rt01_unsatisfiable_refinement(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "absent analysis should not trigger RT01");
+    }
+
+    #[cfg(feature = "type-system")]
+    #[test]
+    fn rt02_fires_on_tautological_refinement() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        let mut analysis = make_refinement_analysis();
+        analysis.tautological.push((
+            "AnyInt".to_string(),
+            "predicate is trivially true".to_string(),
+        ));
+        b.refinement_analysis_data = Some(analysis);
+
+        let mut diags = Vec::new();
+        lint_rt02_tautological_refinement(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 RT02 diagnostic: {:?}", diags);
+        assert_eq!(diags[0].id, "RT02");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[cfg(feature = "type-system")]
+    #[test]
+    fn rt03_fires_on_empty_intersection() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        let mut analysis = make_refinement_analysis();
+        analysis.empty_intersections.push((
+            "PosInt".to_string(),
+            "NegInt".to_string(),
+            "contradictory predicates".to_string(),
+        ));
+        b.refinement_analysis_data = Some(analysis);
+
+        let mut diags = Vec::new();
+        lint_rt03_empty_intersection(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 RT03 diagnostic: {:?}", diags);
+        assert_eq!(diags[0].id, "RT03");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("PosInt"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("NegInt"), "message: {}", diags[0].message);
+    }
+
+    #[cfg(feature = "type-system")]
+    #[test]
+    fn rt04_fires_on_subtype_pair() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        let mut analysis = make_refinement_analysis();
+        analysis.subtype_pairs.push((
+            "StrictPosInt".to_string(),
+            "PosInt".to_string(),
+        ));
+        b.refinement_analysis_data = Some(analysis);
+
+        let mut diags = Vec::new();
+        lint_rt04_subtype_detected(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 RT04 diagnostic: {:?}", diags);
+        assert_eq!(diags[0].id, "RT04");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[cfg(feature = "type-system")]
+    #[test]
+    fn rt05_fires_on_decidability_tier() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        let mut analysis = make_refinement_analysis();
+        analysis.decidability_tiers.push((
+            "PosInt".to_string(),
+            "T2 (decidable, automata-based)".to_string(),
+        ));
+        b.refinement_analysis_data = Some(analysis);
+
+        let mut diags = Vec::new();
+        lint_rt05_decidability_tier(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 RT05 diagnostic: {:?}", diags);
+        assert_eq!(diags[0].id, "RT05");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+        assert!(diags[0].message.contains("T2"), "message: {}", diags[0].message);
+    }
+
+    #[cfg(feature = "type-system")]
+    #[test]
+    fn rt06_fires_on_name_shadow() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        let mut analysis = make_refinement_analysis();
+        analysis.name_shadows.push((
+            "Int".to_string(),
+            "Int".to_string(),
+        ));
+        b.refinement_analysis_data = Some(analysis);
+
+        let mut diags = Vec::new();
+        lint_rt06_name_shadow(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 RT06 diagnostic: {:?}", diags);
+        assert_eq!(diags[0].id, "RT06");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("shadows"), "message: {}", diags[0].message);
+    }
+
+    #[cfg(feature = "type-system")]
+    #[test]
+    fn rt_lints_run_in_run_lints() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        let mut analysis = make_refinement_analysis();
+        analysis.unsatisfiable.push((
+            "DeadType".to_string(),
+            "predicate is trivially false".to_string(),
+        ));
+        analysis.decidability_tiers.push((
+            "PosInt".to_string(),
+            "T2 (decidable, automata-based)".to_string(),
+        ));
+        b.refinement_analysis_data = Some(analysis);
+
+        let diags = run_lints(&b.ctx());
+        let rt_diags: Vec<_> = diags.iter().filter(|d| d.id.starts_with("RT")).collect();
+        assert_eq!(rt_diags.len(), 2, "expected 2 RT diagnostics (RT01 + RT05): {:?}", rt_diags);
     }
 }

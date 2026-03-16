@@ -18,12 +18,12 @@
  * Spec-to-Code Traceability:
  *   Rocq Definition          | Rust / Ascent Code                   | Location
  *   -------------------------|--------------------------------------|--------------------------
- *   is_core                  | compute_core_categories              | common.rs:357-391
+ *   is_core                  | compute_core_categories              | common.rs:658-700
  *   core_cats                | BTreeSet from compute_core_cats      | common.rs:375
  *   full_step                | full Ascent struct fixpoint step     | language.rs:1254-1312
  *   core_step                | core Ascent struct fixpoint step     | language.rs:1268-1279
  *   derive                   | consolidated subterm extraction      | categories.rs:50-53
- *   run_ascent_typed          | dispatcher: core vs full struct      | language.rs:1356-1366
+ *   run_ascent_typed          | dispatcher: core vs full struct      | language.rs:650, 1990
  *
  * Rocq 9.1 compatible.
  *)

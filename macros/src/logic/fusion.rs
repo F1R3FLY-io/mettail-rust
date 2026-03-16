@@ -252,6 +252,7 @@ fn build_subterm_map(
                             }
                         }
                     }
+                    crate::ast::grammar::TermParam::GuardBody { .. } => {}
                 }
             }
         } else {
@@ -587,6 +588,7 @@ fn generate_fused_rule(
                             None
                         }
                     }
+                    crate::ast::grammar::TermParam::GuardBody { .. } => None,
                 };
                 ty_str.map(|t| (i, t))
             })

@@ -111,6 +111,9 @@ fn collect_category_refs(rule: &GrammarRule, categories: &HashSet<String>) -> Ha
                 TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
                     collect_type_category_refs(ty, categories, &mut refs);
                 }
+                TermParam::GuardBody { .. } => {
+                    // Guard bodies carry no category references.
+                }
             }
         }
     }
@@ -165,6 +168,9 @@ fn collect_type_category_refs(
         }
         TypeExpr::Collection { element, .. } => {
             collect_type_category_refs(element, categories, refs);
+        }
+        TypeExpr::Refined { base, .. } => {
+            collect_type_category_refs(base, categories, refs);
         }
     }
 }

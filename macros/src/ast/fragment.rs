@@ -47,15 +47,15 @@ impl Parse for FragmentDef {
         let _ = input.parse::<Token![,]>()?;
 
         // Parse: types { ... }
-        let types = if input.peek(Ident) {
+        let (types, _refinement_types) = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
             if lookahead == "types" {
                 super::language::parse_types_public(input)?
             } else {
-                Vec::new()
+                (Vec::new(), Vec::new())
             }
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
 
         // Parse: tokens { ... } (optional)
@@ -97,6 +97,7 @@ impl FragmentDef {
             include_names: Vec::new(),
             mixin_names: Vec::new(),
             types: self.types.clone(),
+            refinement_types: Vec::new(),
             token_defs: self.token_defs.clone(),
             mode_defs: self.mode_defs.clone(),
             sync_constraints: Vec::new(),

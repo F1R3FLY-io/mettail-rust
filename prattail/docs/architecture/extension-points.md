@@ -523,6 +523,87 @@ tokens produce `Int` values alongside `Integer` tokens).
 
 ---
 
+## 8. Adding a New Constraint Theory
+
+The `ConstraintTheory` trait (feature: `logict`) provides the extension point for
+pluggable constraint domains.  Implementing a new theory gives you `BooleanAlgebra`
+integration (and therefore SFA determinization, minterm computation, and lint
+analysis) for free via the `TheoryAlgebra` bridge.
+
+### Steps to Add a New Constraint Theory (e.g., `ResourceTheory`)
+
+**Step 1: Implement `ConstraintTheory`**
+
+File: new module (e.g., `prattail/src/resource_theory.rs`)
+
+```rust
+use crate::logict::{ConstraintTheory, LogicStream};
+
+#[derive(Clone, Debug)]
+pub struct ResourceTheory { /* domain config */ }
+
+impl ConstraintTheory for ResourceTheory {
+    type Constraint = ResourceConstraint;
+    type Assignment = ResourceAssignment;
+    type Store = ResourceStore;
+
+    fn empty_store(&self) -> Self::Store { ResourceStore::new() }
+
+    fn propagate(&self, store: &Self::Store, c: &Self::Constraint) -> Option<Self::Store> {
+        // Add constraint, propagate implications, return None if inconsistent
+    }
+
+    fn is_consistent(&self, store: &Self::Store) -> bool { /* check store */ }
+
+    fn witness(&self, store: &Self::Store) -> Option<Self::Assignment> {
+        // Extract concrete assignment from consistent store
+    }
+
+    fn label(&self, store: &Self::Store) -> LogicStream<Self::Constraint> {
+        // Decidable theory → LogicStream::empty()
+        // Non-decidable → interleave over domain alternatives
+        LogicStream::empty()
+    }
+
+    fn evaluate(&self, c: &Self::Constraint, a: &Self::Assignment) -> bool {
+        // Check if assignment satisfies constraint
+    }
+}
+```
+
+**Step 2: Use via `TheoryAlgebra`**
+
+```rust
+use crate::logict::TheoryAlgebra;
+
+let algebra = TheoryAlgebra::new(ResourceTheory::new(), 1000);
+// algebra implements BooleanAlgebra — use with SymbolicAutomaton, ProductAlgebra, etc.
+```
+
+**Step 3: Add feature gate (optional)**
+
+In `Cargo.toml`:
+```toml
+resource-theory = ["logict"]
+```
+
+**Step 4: Add predicate dispatch integration (optional)**
+
+In `predicate_dispatch.rs`, add a new `PredicateSignature` bit and `ModuleId`
+variant, with detection logic in `extract_features()` and `classify_grammar()`.
+
+**Step 5: Add lints (optional)**
+
+In `lint.rs`, add lint functions that consume an analysis result struct from
+your theory module, gated on your feature flag.
+
+> **Cross-reference:** See [design/constraint-theories/README.md](../design/constraint-theories/README.md)
+> for the full constraint theory architecture, and
+> [design/constraint-theories/logict-framework.md](../design/constraint-theories/logict-framework.md)
+> for `ConstraintTheory` trait details.
+
+---
+
 ## Summary of Files to Modify per Extension
 
 | Extension              | lib.rs         | automata/                    | lexer.rs               | binding_power.rs       | prediction.rs            | pratt.rs                | recursive.rs             | dispatch.rs                |
@@ -534,3 +615,4 @@ tokens produce `Int` values alongside `Integer` tokens).
 | New Lexer Pattern      | --             | nfa.rs + mod.rs + codegen.rs | BuiltinNeeds + extract | --                     | generate_first_set_check | --                      | --                       | --                         |
 | New Dispatch Strategy  | --             | --                           | --                     | --                     | DispatchAction           | generate_prefix_handler | --                       | generate_category_dispatch |
 | Custom Token Kind      | CustomTokenSpec| nfa.rs + codegen.rs          | LexerInput + pipeline  | --                     | FIRST set augmentation   | --                      | --                       | --                         |
+| Constraint Theory      | --             | --                           | --                     | --                     | --                       | --                      | --                       | predicate_dispatch (opt)   |

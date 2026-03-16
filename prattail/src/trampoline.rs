@@ -2752,6 +2752,27 @@ pub fn write_frame_enum(
         }
     }
 
+    // ── Guard evaluation frame ──
+    // When the parser encounters a guarded input syntax (the `?` operator),
+    // it pushes a GuardEval frame to capture the continuation after parsing
+    // the guard pattern. This enables stack-safe parsing of deeply nested
+    // guard expressions.
+    //
+    // Guard evaluation itself (match_pattern, behavioral predicates) is
+    // iterative and does not require trampolining — only the *parsing* of
+    // the guard syntax is trampolined here.
+    if config.has_binders {
+        variants.push(FrameVariant {
+            name: "GuardEval".to_string(),
+            fields: vec![
+                FrameField {
+                    name: "saved_bp".to_string(),
+                    type_str: "u8".to_string(),
+                },
+            ],
+        });
+    }
+
     // NOTE: Cast rules are NOT trampolined — they call parse_SourceCat() directly
     // in the prefix (cross-category, bounded depth). No CastWrap_* frame variants needed.
 
@@ -5154,6 +5175,22 @@ fn write_unwind_handlers(
 
     // NOTE: Cast variants are NOT trampolined (cross-category, bounded depth).
     // No CastWrap_* unwind handlers needed.
+
+    // ── GuardEval frame ──
+    // When the parser finishes parsing the guard pattern scope (the `?` operator),
+    // the GuardEval frame restores the saved binding power and continues parsing
+    // the continuation body. The guard evaluation itself is handled at runtime
+    // by the Ascent Comm rule, not during parsing.
+    if config.has_binders {
+        write!(
+            buf,
+            "Some({enum_name}::GuardEval {{ saved_bp }}) => {{ \
+                cur_bp = saved_bp; \
+            }},",
+            enum_name = frame_info.enum_name,
+        )
+        .unwrap();
+    }
 
     // No PhantomData variant — Frame is 'static (no lifetime parameter).
 

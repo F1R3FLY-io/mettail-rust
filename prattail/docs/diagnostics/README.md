@@ -268,6 +268,15 @@ Ordering: `Info < Note < Warning < Error`
 | TW02 | one-way-sufficient | Note | `two-way-transducer` | W2T analysis determines backward pass is unnecessary — one-way transducer suffices for this pattern |
 | TW03 | constraint-propagation-divergent | Warning | `two-way-transducer` | Backward constraint propagation does not converge — infinite constraint refinement detected |
 
+### Symbolic Finite Transducers (SFT01–SFT04)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [SFT01](sft/SFT01.md) | empty-sft-domain | Warning | `sft` | SFT has empty domain — dead transduction that can never fire |
+| [SFT02](sft/SFT02.md) | constant-sft-output | Note | `sft` | SFT always produces same output — simplifiable to constant |
+| [SFT03](sft/SFT03.md) | nondeterministic-sft | Note | `sft` | SFT is not single-valued (nondeterministic output) |
+| [SFT04](sft/SFT04.md) | equivalent-sft-pair | Note | `sft` | Two functional SFTs produce identical input-output behavior |
+
 ### Predicate Dispatch (PD01–PD04)
 
 | ID | Name | Severity | Feature Gate | Description |
@@ -276,6 +285,46 @@ Ordering: `Info < Note < Warning < Error`
 | [PD02](predicate-dispatch/PD02.md) | all-modules-activated | Note | `predicate-dispatch` | Predicate activates all 11 modules (no dispatch benefit) |
 | [PD03](predicate-dispatch/PD03.md) | dispatch-savings | Info | `predicate-dispatch` | Reports number of module invocations skipped by dispatch |
 | [PD04](predicate-dispatch/PD04.md) | missing-feature-gate | Warning | `predicate-dispatch` | Cross-channel predicate but required module feature not enabled |
+
+### Presburger Arithmetic (PB01–PB03)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [PB01](presburger/PB01.md) | unsatisfiable-arithmetic-guard | Warning | `presburger` | Linear arithmetic guard is provably unsatisfiable via Presburger NFA emptiness — dead rule |
+| [PB02](presburger/PB02.md) | tautological-arithmetic-guard | Note | `presburger` | Arithmetic guard accepts all valid inputs (NFA complement is empty) — redundant guard |
+| [PB03](presburger/PB03.md) | subsumed-arithmetic-guard | Note | `presburger` | One guard's satisfying set ⊆ another's — subsumed guard is redundant on same channel |
+
+### Unification (UN01–UN03)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [UN01](unification/UN01.md) | unsatisfiable-unification-guard | Warning | `unification` | Structural pattern guard fails unification (constructor clash or occurs check) — dead rule |
+| [UN02](unification/UN02.md) | tautological-unification-guard | Note | `unification` | Unification guard trivially satisfiable — any substitution satisfies it |
+| [UN03](unification/UN03.md) | subsumed-unification-guard | Note | `unification` | One pattern guard strictly more general than another — subsumed guard is redundant |
+
+### Subtype Lattice (SL01–SL02)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [SL01](subtype-lattice/SL01.md) | unsatisfiable-subtype-constraint | Warning | `lattice-theory` | Subtype constraint set contradicts declared type hierarchy — no valid assignment |
+| [SL02](subtype-lattice/SL02.md) | redundant-subtype-constraint | Note | `lattice-theory` | Subtype constraint already implied by transitive closure of existing edges |
+
+### Refinement Types (RT01–RT06)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [RT01](refinement/RT01.md) | unsatisfiable-refinement-predicate | Warning | `type-system` | Refinement predicate has no satisfying value — empty type |
+| [RT02](refinement/RT02.md) | tautological-refinement-predicate | Note | `type-system` | Refinement predicate is always true — equivalent to base type |
+| [RT03](refinement/RT03.md) | empty-refinement-intersection | Warning | `type-system` | Two refinement types have provably empty intersection |
+| [RT04](refinement/RT04.md) | refinement-subtype-detected | Note | `type-system` | One refinement type is a subtype of another |
+| [RT05](refinement/RT05.md) | refinement-decidability-tier | Note | `type-system` | Refinement predicate decidability classification (T1–T4) |
+| [RT06](refinement/RT06.md) | refinement-type-shadows-base | Warning | `type-system` | Refinement type name shadows a base type category |
+
+### LogicT (LT01)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [LT01](logict/LT01.md) | logict-search-bound-exceeded | Warning | `logict` | Fair interleaving search hit configured depth limit — result is Unknown, not Unsat |
 
 ### Performance (P02–P06)
 
@@ -366,6 +415,15 @@ Ordering: `Info < Note < Warning < Error`
 | I18 | lint-cache-hit               | Info     | DB04 lint cache hit (hash-based)  |
 | I19 | parallel-analysis            | Info     | Parallel analysis execution       |
 
+### E-Graph Equality Saturation (EG01–EG04)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [EG01](egraph/EG01.md) | discovered-equivalence | Note | `egraph` | E-graph saturation discovered non-trivial term equivalence |
+| [EG02](egraph/EG02.md) | simplifiable-guard | Note | `egraph` | Guard expression simplifiable to lower-cost equivalent via equality saturation |
+| [EG03](egraph/EG03.md) | saturation-non-convergence | Warning | `egraph` | Equality saturation did not converge within configured resource limits |
+| [EG04](egraph/EG04.md) | joinability-witness | Note | `egraph` | E-graph found joinability witness for critical pair (suppresses T01) |
+
 ### Runtime Errors
 
 | Document                                | Description                                         |
@@ -422,5 +480,12 @@ provided by the 6-phase analysis pipeline (feature-gated).
 Advanced automata lints (SYM/O/N06-07/V05-06/PT/RA/PR/MT/MS/MSO/TW) run in the
 same parallel analysis phase, each gated by its respective feature flag. Results
 are collected into `MathAnalysisResults` fields and fed to `LintContext` for
-emission. See [advanced-automata-overview.md](../design/advanced-automata-overview.md)
+emission. Predicated type lints (PB/UN/SL/LT) run in the same phase, gated by
+their respective feature flags (`presburger`, `unification`, `lattice-theory`,
+`logict`). Refinement type lints (RT01–RT06) run in the same phase, gated by
+the `type-system` feature flag. Symbolic finite transducer lints (SFT01–SFT04)
+run in the same phase, gated by the `sft` feature flag. E-graph equality
+saturation lints (EG01–EG04) run in the same phase, gated by the `egraph`
+feature flag; EG04 interacts with TRS confluence analysis to suppress T01
+when joinability witnesses are found. See [advanced-automata-overview.md](../design/advanced-automata-overview.md)
 for the full module architecture.

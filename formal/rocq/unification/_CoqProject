@@ -1,0 +1,18 @@
+# Rocq project file for Unification Soundness correctness proofs
+#
+# Verifies soundness of the Martelli-Montanari unification algorithm
+# (unification.rs):
+#
+#   - MGU soundness: if unify succeeds, the substitution satisfies all equations
+#   - Occurs check: failure implies unsatisfiability
+#   - Constructor clash: failure implies unsatisfiability
+#   - TheoryAlgebra bridge preserves BooleanAlgebra axioms
+#
+# Model: terms as inductive type with Var, Const, App constructors.
+#
+# Reference: Martelli & Montanari (1982), Robinson (1965)
+
+-Q theories UnificationProofs
+
+# Source files
+theories/UnificationSoundness.v

@@ -1874,9 +1874,9 @@ The final `dead_rule_labels` set feeds into:
 
 ## 7. Advanced Automata Infrastructure
 
-PraTTaIL provides 11 advanced automata modules plus a predicate dispatch
-controller.  Each module is feature-gated and activated on demand based
-on grammar predicate complexity.
+PraTTaIL provides 14 advanced automata modules plus a predicate dispatch
+controller and a constraint theory framework.  Each module is feature-gated
+and activated on demand based on grammar predicate complexity.
 
 ### 7.1 Feature Dependency DAG
 
@@ -1919,6 +1919,20 @@ on grammar predicate complexity.
   │  automata      │    │           │──→ ltl
   │ (standalone)   │    └───────────┘
   └────────────────┘
+
+  ┌────────────────────────────────────────────┐
+  │         Constraint Theory Framework         │
+  ├────────────────────────────────────────────┤
+  │                                            │
+  │              ┌──────────┐                  │
+  │              │  logict  │                  │
+  │              └────┬─────┘                  │
+  │         ┌─────────┼──────────┐             │
+  │    ┌────▼─────┐ ┌─▼────────┐ ┌▼──────────┐│
+  │    │presburger│ │unification│ │lattice-   ││
+  │    │          │ │           │ │ theory    ││
+  │    └──────────┘ └──────────┘ └───────────┘│
+  └────────────────────────────────────────────┘
 ```
 
 ### 7.2 Feature Matrix 3: Advanced Automata Capabilities
@@ -1936,9 +1950,13 @@ on grammar predicate complexity.
 | M9 Multiset      | `multiset-automata`    |     ✓     |        ✗        |     ✗     | Cardinality constraints, tropical projection         |
 | M10 MSO          | `weighted-mso`         |    ✓‡     |        ✗        |     ✗     | Formula classification, B-E-T theorem                |
 | M11 Two-Way      | `two-way-transducer`   |     ✓     |        ✗        |     ✗     | Bidirectional simulation, deadlock detection         |
+| M12 Presburger   | `presburger`           |     ✓     |        ✓        |     ✗     | NFA-based linear integer arithmetic, multi-variable  |
+| M13 Unification  | `unification`          |    ✓§     |        ✓        |     ✗     | Martelli-Montanari, occurs check, LogicT search      |
+| M14 Lattice      | `lattice-theory`       |     ✓     |        ✗        |     ✗     | Subtype DAG, join/meet (LUB/GLB), exhaustiveness     |
 
 † Register automata: decidable for bounded registers.
 ‡ Weighted MSO: decidable for the restricted fragment (no ∀X).
+§ Unification: decidable for first-order terms; LogicT search for CustomMatch alternatives.
 
 ### 7.3 Per-Module Reference
 
@@ -2489,6 +2507,166 @@ O(|AST|) feature extraction from guard expressions determines which
 
 **Lints:** PD01 degenerate-predicate, PD02 all-modules-activated,
 PD03 dispatch-savings, PD04 missing-feature-gate.
+
+---
+
+#### M12: Presburger Arithmetic (Linear Integer Constraints)
+
+**Source:** `presburger.rs` (feature: `presburger`, depends on `logict`)
+
+**Theory:** Every Presburger formula over k variables defines a regular language
+over Σ = {0,1}^k (Büchi 1960).  Integers are binary-encoded (LSB-first, two's
+complement for negatives).  Atomic constraints `Σ aᵢ·xᵢ ≤ b` compile to NFAs
+via carry-propagation; Boolean operations map to NFA intersection/union/complement;
+satisfiability reduces to NFA emptiness (BFS reachability).
+
+**Key types:**
+
+```rust
+struct LinearConstraint {
+    lhs: Vec<(usize, i64)>,  // (variable_index, coefficient)
+    rhs: i64,
+}
+
+enum PresburgerPred { True, False, Atom(LinearConstraint), And(..), Or(..), Not(..), Exists { var, body } }
+
+struct PresburgerAlgebra { bit_width: u32 }       // BooleanAlgebra impl (fast path)
+struct PresburgerTheory { bit_width: u32 }         // ConstraintTheory impl (validation)
+```
+
+**Dual implementation:** `PresburgerAlgebra` directly implements `BooleanAlgebra`
+via NFA emptiness (fast path).  `PresburgerTheory` implements `ConstraintTheory`
+with `label() → LogicStream::empty()` (decidable — no search needed).  Cross-
+validation ensures both produce identical results.
+
+**Pipeline integration:** M12_LINEAR_ARITHMETIC bit (11) in `PredicateSignature`.
+Single-variable guards delegate to `IntervalAlgebra` for performance.
+
+**Lints:** PB01 unsatisfiable-arithmetic-guard, PB02 tautological-arithmetic-guard,
+PB03 subsumed-arithmetic-guard.
+
+---
+
+#### M13: Structural Unification
+
+**Source:** `unification.rs` (feature: `unification`, depends on `logict`)
+
+**Theory:** Martelli-Montanari unification (1982) — stack-based first-order
+syntactic unification with occurs check.  Terms are `Var(usize)`,
+`Const(String)`, or `App { head, args }`.  Unification produces an MGU (most
+general unifier) substitution or fails on constructor clash / occurs check.
+
+**Key types:**
+
+```rust
+enum TermExpr { Var(usize), Const(String), App { head: String, args: Vec<TermExpr> } }
+struct UnificationEquation { lhs: TermExpr, rhs: TermExpr }
+struct Substitution { bindings: HashMap<usize, TermExpr> }
+struct UnificationTheory { signature: TermSignature }  // ConstraintTheory impl
+```
+
+**ConstraintTheory integration:** `propagate()` applies Martelli-Montanari.
+`label()` returns `LogicStream::empty()` for deterministic unification, or
+interleaves over `CustomMatch` alternatives when multiple results exist.
+`TheoryAlgebra<UnificationTheory>` provides `BooleanAlgebra` for SFA integration.
+
+**Use cases:** MeTTa pattern matching, polymorphic type variable instantiation,
+Rholang quoted process matching (`@{P | Q}`), comm rule guard unification.
+
+**Pipeline integration:** M13_UNIFICATION bit (12) in `PredicateSignature`.
+
+**Lints:** UN01 unsatisfiable-unification-guard, UN02 tautological-unification-guard,
+UN03 subsumed-unification-guard.
+
+---
+
+#### M14: Subtype Lattice
+
+**Source:** `lattice_theory.rs` (feature: `lattice-theory`, depends on `logict`)
+
+**Theory:** Finite poset (partial order) with join (LUB) and meet (GLB) operations.
+Transitive closure via Warshall's algorithm.  Decidable — finite type universe
+means `label()` returns empty (propagation alone suffices).
+
+**Key types:**
+
+```rust
+type TypeId = usize;
+struct SubtypeConstraint { sub: TypeId, sup: TypeId }
+struct LatticeStore { edges, closure, closure_dirty, lub_cache, glb_cache, cycles }
+struct LatticeTheory { universe: Vec<TypeId>, names: HashMap<TypeId, String> }
+```
+
+**Key operations:**
+- `propagate()` — add subtype pair, compute transitive closure, detect cycles
+- `join(a, b)` — least upper bound (common supertype)
+- `meet(a, b)` — greatest lower bound (common subtype)
+- Exhaustiveness checking via set difference: "do guards cover all subtypes?"
+
+**Use cases:** MeTTa `(:< Nat Number)` subtype declarations, type compatibility
+checking, Rholang bundle capability ordering (`bundle+ ≤ bundle0`).
+
+**Pipeline integration:** M14_SUBTYPE_LATTICE bit (13) in `PredicateSignature`.
+
+**Lints:** SL01 unsatisfiable-subtype-constraint, SL02 redundant-subtype-constraint.
+
+---
+
+#### LogicT: Fair Backtracking Search Framework
+
+**Source:** `logict.rs` (feature: `logict`)
+
+**Theory:** msplit-based LogicT monad (Kiselyov, Shan, Friedman & Sabry, ICFP
+2005).  VecDeque-based branch scheduling provides fair interleaving without
+CPS/closure complexity.
+
+**Key types:**
+
+```rust
+struct LogicStream<T> { branches: VecDeque<Branch<T>> }
+trait ConstraintTheory { type Constraint; type Assignment; type Store; .. }
+struct TheoryAlgebra<T: ConstraintTheory> { theory: T, search_bound: usize }
+```
+
+**Core operations (all derived from msplit):**
+
+| Operation    | Semantics                        |
+|-------------|----------------------------------|
+| `msplit`    | Peek first result + remainder    |
+| `mzero`     | Empty stream (failure)           |
+| `mplus`     | Concatenation (unfair)           |
+| `interleave`| Fair disjunction (alternating)   |
+| `fair_conjoin`| Fair conjunction (>>-)         |
+| `ifte`      | Soft cut                         |
+| `once`      | Commit to first result           |
+| `gnot`      | Negation as finite failure       |
+
+**ConstraintTheory + TheoryAlgebra:** The `ConstraintTheory` trait provides a
+pluggable constraint domain with `propagate()`/`label()`/`witness()`/`evaluate()`.
+`TheoryAlgebra<T>` wraps any `ConstraintTheory` into a `BooleanAlgebra` for SFA
+integration — decidable theories use propagation-only; non-decidable theories
+use LogicT fair search (bounded).
+
+**Lints:** LT01 search-bound-exceeded.
+
+---
+
+#### ProductAlgebra: Cross-Domain Composition
+
+**Source:** `symbolic.rs` (always-on, no feature gate)
+
+**Theory:** Cartesian product of two `BooleanAlgebra` instances.  Enables mixing
+independent constraint domains (e.g., numeric + character, unification + lattice).
+
+**Key types:**
+
+```rust
+struct ProductAlgebra<A: BooleanAlgebra, B: BooleanAlgebra> { left: A, right: B }
+enum ProductPred<A, B> { True, False, Both(..), LeftOnly(..), RightOnly(..), And(..), Or(..), Not(..) }
+```
+
+`is_satisfiable(Both(a, b))` requires both components satisfiable (independent
+domains).  `witness(Both(a, b))` returns `(left.witness(a)?, right.witness(b)?)`.
 
 ---
 
@@ -3420,10 +3598,14 @@ failures.  These are collected as `pre_collected_diagnostics` in the
 | `multiset-automata`    | (none)                                                                                                                      | `multiset_automata.rs`                      |
 | `two-way-transducer`   | wfst-log                                                                                                                    | `two_way_transducer.rs`                     |
 | `predicate-dispatch`   | symbolic-automata, weighted-mso                                                                                             | `predicate_dispatch.rs`                     |
+| `logict`               | (none)                                                                                                                      | `logict.rs`                                 |
+| `presburger`           | logict                                                                                                                      | `presburger.rs`                             |
+| `unification`          | logict                                                                                                                      | `unification.rs`                            |
+| `lattice-theory`       | logict                                                                                                                      | `lattice_theory.rs`                         |
 | `analysis`             | tree-automata, vpa, trs-analysis                                                                                            | (convenience)           |
 | `verification`         | omega, ltl, kat, wpds-relational                                                                                            | (convenience)           |
 | `process-algebra`      | nominal, petri, omega, alternating, symbolic-automata, two-way-transducer                                                   | (convenience)           |
-| `predicated-types`     | symbolic-automata, weighted-mso, parity-tree-automata, register-automata, multi-tape, multiset-automata, two-way-transducer | (convenience)           |
+| `predicated-types`     | symbolic-automata, weighted-mso, parity-tree-automata, register-automata, multi-tape, multiset-automata, two-way-transducer, presburger, unification, lattice-theory | (convenience) |
 | `full-analysis`        | (all of the above)                                                                                                          | (convenience)           |
 
 ### C. Lint Code Directory
@@ -3502,6 +3684,20 @@ PAR01-PAR05.
 **Dispatch Optimization (DIS):**
 DIS01-DIS05.
 
+**Presburger (PB):**
+PB01 unsatisfiable-arithmetic-guard, PB02 tautological-arithmetic-guard,
+PB03 subsumed-arithmetic-guard.
+
+**Unification (UN):**
+UN01 unsatisfiable-unification-guard, UN02 tautological-unification-guard,
+UN03 subsumed-unification-guard.
+
+**Subtype Lattice (SL):**
+SL01 unsatisfiable-subtype-constraint, SL02 redundant-subtype-constraint.
+
+**LogicT (LT):**
+LT01 search-bound-exceeded.
+
 **Advanced Automata:**
 SYM01-04 (symbolic), O01-02 (omega/Buchi), PT01-03 (parity tree),
 RA01-03 (register), PR01-04 (probabilistic), MT01-02 (multi-tape),
@@ -3524,6 +3720,8 @@ PD01-04 (predicate dispatch).
 | **AST**                   | Abstract syntax tree                                                  |
 | **AWA**                   | Weighted alternating automaton                                        |
 | **BFS**                   | Breadth-first search                                                  |
+| **BooleanAlgebra**        | Trait for predicate operations: satisfiability, witness, and/or/not   |
+| **ConstraintTheory**      | Trait for pluggable constraint domains (propagate/label/witness)      |
 | **Binding power (BP)**    | Numeric precedence value controlling operator parsing order           |
 | **Category**              | A syntactic sort in the grammar (e.g., `Int`, `Bool`)                 |
 | **CEGAR**                 | Counterexample-guided abstraction refinement                          |
@@ -3547,13 +3745,18 @@ PD01-04 (predicate dispatch).
 | **FIRST set**             | Set of tokens that can begin a category derivation                    |
 | **FOLLOW set**            | Set of tokens that can appear after a category                        |
 | **FST**                   | Finite-state transducer                                               |
+| **GLB**                   | Greatest lower bound (meet in a lattice)                              |
 | **HeapSemiring**          | Semiring trait without `Copy` bound (HashMap-backed weights)          |
 | **Hopcroft minimization** | Algorithm to minimize DFA state count                                 |
 | **KAT**                   | Kleene Algebra with Tests                                             |
 | **LED**                   | Left denotation: Pratt parser handler for infix/postfix operators     |
+| **LogicStream**           | Fair backtracking search stream (LogicT monad implementation)         |
+| **LogicT**                | Fair backtracking monad transformer (Kiselyov et al., ICFP 2005)      |
 | **LTL**                   | Linear temporal logic                                                 |
+| **LUB**                   | Least upper bound (join in a lattice)                                 |
 | **Minterm**               | Atom of the Boolean algebra of guard predicates                       |
 | **MPH**                   | Minimal perfect hash (O(1) keyword lookup)                            |
+| **MGU**                   | Most general unifier (result of unification)                          |
 | **MSO**                   | Monadic Second-Order logic                                            |
 | **NBA**                   | Nondeterministic Büchi automaton                                      |
 | **NFA**                   | Nondeterministic finite automaton                                     |
@@ -3564,7 +3767,9 @@ PD01-04 (predicate dispatch).
 | **PDA**                   | Pushdown automaton                                                    |
 | **Pipeline analysis**     | `PipelineAnalysis` struct exported to macros for codegen optimization |
 | **Poststar**              | Forward reachability computation for WPDS                             |
+| **Presburger arithmetic** | Decidable theory of linear integer arithmetic (Büchi 1960)            |
 | **Prestar**               | Backward reachability computation for WPDS                            |
+| **ProductAlgebra**        | Cartesian product of two BooleanAlgebra instances                     |
 | **RD**                    | Recursive descent                                                     |
 | **REPL**                  | Read-eval-print loop                                                  |
 | **SCC**                   | Strongly connected component (Tarjan's algorithm)                     |
@@ -3572,9 +3777,11 @@ PD01-04 (predicate dispatch).
 | **SFA**                   | Symbolic finite automaton                                             |
 | **SGD**                   | Stochastic gradient descent                                           |
 | **StarSemiring**          | Semiring with Kleene closure operation a*                             |
+| **TheoryAlgebra**         | Bridge wrapping ConstraintTheory into BooleanAlgebra                  |
 | **Thompson construction** | NFA construction from regular expressions                             |
 | **Trampoline**            | Explicit continuation stack replacing OS call stack                   |
 | **TRS**                   | Term rewriting system                                                 |
+| **Unification**           | Finding a substitution making two terms syntactically equal            |
 | **Unicode property**      | Named character class from the Unicode standard (e.g., `XID_Start`, `Letter`, `Greek`) |
 | **UTF-8 byte chain**      | Sequence of byte-range NFA transitions encoding a multi-byte Unicode codepoint |
 | **Utf8Sequences**         | `regex-syntax` API that decomposes codepoint ranges into minimal byte-range chains |
@@ -3590,9 +3797,12 @@ PD01-04 (predicate dispatch).
 - Alur, R., D'Antoni, L., Deshmukh, J., Raghothaman, M., & Yuan, Y. (2013). Regular functions and cost register automata. *LICS 2013*, 13-22.
 - Alur, R., & Madhusudan, P. (2004). Visibly pushdown languages. *STOC 2004*, 202-211.
 - Arts, T., & Giesl, J. (2000). Termination of term rewriting using dependency pairs. *Theoretical Computer Science*, 236(1-2), 133-178.
+- Birkhoff, G. (1940). *Lattice Theory*. American Mathematical Society.
+- Büchi, J. R. (1960). Weak second-order arithmetic and finite automata. *Zeitschrift für mathematische Logik und Grundlagen der Mathematik*, 6, 66-92.
 - Buchi, J. R. (1962). On a decision method in restricted second order arithmetic. *Logic, Methodology and Philosophy of Science*, 1-11.
 - Chandra, A. K., Kozen, D. C., & Stockmeyer, L. J. (1981). Alternation. *Journal of the ACM*, 28(1), 114-133.
 - D'Antoni, L., & Veanes, M. (2017). The power of symbolic automata and transducers. *CAV 2017*, LNCS 10426, 47-67.
+- Davey, B. A., & Priestley, H. A. (2002). *Introduction to Lattices and Order* (2nd ed.). Cambridge University Press.
 - Droste, M., & Gastin, P. (2007). Weighted automata and weighted logics. *Theoretical Computer Science*, 380(1-2), 69-86.
 - Droste, M., Kuich, W., & Vogler, H. (2009). *Handbook of Weighted Automata*. Springer.
 - Eilenberg, S. (1976). *Automata, Languages, and Machines, Vol. B*. Academic Press.
@@ -3602,18 +3812,23 @@ PD01-04 (predicate dispatch).
 - Green, T. J., Karvounarakis, G., & Tannen, V. (2007). Provenance semirings. *PODS 2007*, 31-40.
 - Hopcroft, J. E. (1971). An n log n algorithm for minimizing states in a finite automaton. *Theory of Machines and Computations*, 189-196.
 - Karp, R. M., & Miller, R. E. (1969). Parallel program schemata. *Journal of Computer and System Sciences*, 3(2), 147-195.
+- Kiselyov, O., Shan, C., Friedman, D. P., & Sabry, A. (2005). Backtracking, interleaving, and terminating monad transformers. *ICFP 2005*, 192-203.
 - Kaminski, M., & Francez, N. (1994). Finite-memory automata. *Theoretical Computer Science*, 134(2), 329-363.
 - Kempe, A. (2004). Weighted finite-state transducer compilation of multi-tape automata. *LNCS 3317*, 189-198.
 - Kincaid, Z., Cyphert, J., Breck, J., & Reps, T. (2019). Non-linear reasoning for invariant synthesis. *POPL 2019*.
 - Knuth, D. E., & Bendix, P. B. (1970). Simple word problems in universal algebras. *Computational Problems in Abstract Algebra*, 263-297.
 - Kozen, D. (1997). Kleene algebra with tests. *TOPLAS*, 19(3), 427-443.
+- Martelli, A., & Montanari, U. (1982). An efficient unification algorithm. *ACM Transactions on Programming Languages and Systems*, 4(2), 258-282.
 - Mohri, M. (2009). Weighted automata algorithms. In *Handbook of Weighted Automata* (pp. 213-254). Springer.
 - Muller, T., Weiss, B., & Lochau, M. (2024). Featured multiset automata for software product-line analysis. *FASE 2024*.
+- Peyton Jones, S., & Graf, S. (2023). Triemaps that match. *Haskell Symposium 2023*.
 - Pratt, V. R. (1973). Top down operator precedence. *POPL 1973*, 41-51.
 - Rabiner, L. R. (1989). A tutorial on hidden Markov models. *Proceedings of the IEEE*, 77(2), 257-286.
 - Rabin, M. O., & Scott, D. (1959). Finite automata and their decision problems. *IBM Journal of Research and Development*, 3(2), 114-125.
 - Reps, T., Lal, A., & Kidd, N. (2007). Program analysis using weighted pushdown systems. *FSTTCS 2007*, LNCS 4855, 23-51.
+- Robinson, J. A. (1965). A machine-oriented logic based on the resolution principle. *Journal of the ACM*, 12(1), 23-41.
 - Thompson, K. (1968). Programming techniques: Regular expression search algorithm. *Communications of the ACM*, 11(6), 419-422.
 - Unicode Consortium. (2023). *The Unicode Standard, Version 15.1.0*. Unicode, Inc. [unicode.org/versions/Unicode15.1.0](https://unicode.org/versions/Unicode15.1.0/)
 - Viterbi, A. J. (1967). Error bounds for convolutional codes. *IEEE Transactions on Information Theory*, 13(2), 260-269.
 - Wagner, R. A., & Fischer, M. J. (1974). The string-to-string correction problem. *Journal of the ACM*, 21(1), 168-173.
+- Wolper, P., & Boigelot, B. (1995). An automata-theoretic approach to Presburger arithmetic constraints. *SAS 1995*, LNCS 983, 21-32.

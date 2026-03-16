@@ -1,0 +1,18 @@
+# Rocq project file for E-Graph equality saturation correctness proofs
+#
+# Verifies congruence closure soundness and saturation properties:
+#
+#   1. EGraphCongruence   — merge preserves equiv, rebuild idempotent,
+#                           congruence propagation correct
+#   2. EGraphSaturation   — saturation monotonicity, bounded termination,
+#                           saturation soundness
+#
+# Dependency order:
+#   EGraphCongruence.v    — (standalone)
+#   EGraphSaturation.v    — (standalone)
+
+-Q theories EGraph
+
+# Source files (no dependencies between them)
+theories/EGraphCongruence.v
+theories/EGraphSaturation.v

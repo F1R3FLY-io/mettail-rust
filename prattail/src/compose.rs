@@ -623,6 +623,7 @@ pub fn compose_many(specs: &[&LanguageSpec]) -> Result<LanguageSpec, Vec<Composi
             modes: Vec::new(),
             sync: None,
             tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
         });
     }
 
@@ -1135,6 +1136,7 @@ mod tests {
             modes: Vec::new(),
             sync: None,
             tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
         }
     }
 
@@ -1265,6 +1267,7 @@ mod tests {
             modes: Vec::new(),
             sync: None,
             tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
         };
 
         let err = compose_languages(&spec_a, &spec_b).expect_err("should fail");
@@ -1511,6 +1514,7 @@ mod tests {
             modes: Vec::new(),
             sync: None,
             tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
         };
 
         let merged = compose_languages(&spec_a, &spec_b).expect("composition should succeed");
@@ -1596,6 +1600,7 @@ mod tests {
                 modes: Vec::new(),
                 sync: None,
                 tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
             };
             // Manually set prefix_precedence to simulate user override
             spec.rules[0].prefix_precedence = Some(10);
@@ -1635,6 +1640,7 @@ mod tests {
                 modes: Vec::new(),
                 sync: None,
                 tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
             };
             spec.rules[0].prefix_precedence = Some(20);
             spec
@@ -1687,6 +1693,7 @@ mod tests {
                 modes: Vec::new(),
                 sync: None,
                 tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec
@@ -1724,6 +1731,7 @@ mod tests {
                 modes: Vec::new(),
                 sync: None,
                 tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec

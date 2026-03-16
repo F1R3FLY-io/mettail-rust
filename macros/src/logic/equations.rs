@@ -1228,6 +1228,7 @@ mod tests {
             include_names: vec![],
             mixin_names: vec![],
             types: lang_types,
+            refinement_types: Vec::new(),
             token_defs: vec![],
             mode_defs: vec![],
             sync_constraints: vec![],

@@ -45,6 +45,8 @@ pub struct LanguageDef {
     /// Parsed from `mixins: [ArithOps, BoolOps]`. Uses `DuplicateStrategy::Override`.
     pub mixin_names: Vec<Ident>,
     pub types: Vec<LangType>,
+    /// Refinement type definitions from `types { PosInt = { x: Int | x > 0 }; }`.
+    pub refinement_types: Vec<RefinementTypeDef>,
     /// Custom token definitions from `tokens { ... }` (default mode).
     pub token_defs: Vec<TokenDef>,
     /// Named lexer modes from `tokens { mode name { ... } }`.
@@ -110,6 +112,11 @@ pub enum Premise {
         param: Ident,
         body: Box<Premise>,
     },
+
+    /// Behavioral guard premise: `guard(pred_expr)`
+    /// Embeds a full quantified behavioral predicate as a rule premise.
+    /// Evaluated via `prattail::evaluate_quantified()` at runtime.
+    BehavioralGuard(BehavioralPred),
 }
 
 /// Equation in unified judgement syntax
@@ -170,6 +177,215 @@ pub enum Condition {
         param: Ident,
         body: Box<Condition>,
     },
+    /// Behavioral guard condition: quantified predicate evaluated via LogicT.
+    /// Generated from `Premise::BehavioralGuard` and evaluated at runtime
+    /// by calling `prattail::evaluate_quantified()`.
+    BehavioralGuard(BehavioralPred),
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Behavioral Predicates — Guard expressions for guarded Comm rules
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Quantifier type for behavioral predicates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Quantifier {
+    /// Universal: ∀ (for all elements in domain)
+    ForAll,
+    /// Existential: ∃ (there exists an element in domain)
+    Exists,
+}
+
+/// An argument to an atomic predicate in a behavioral guard.
+#[derive(Debug, Clone)]
+pub enum PredArg {
+    /// A variable reference (bound by pattern matching or quantifier).
+    Var(Ident),
+    /// A literal constant (constructor name or value).
+    Constant(Ident),
+}
+
+/// A behavioral predicate for guarded input (Comm rule guards).
+///
+/// Extends simple existential relation queries to full FOL with
+/// universal/existential quantification:
+///
+/// ```text
+/// for (@x : ∀y. (reachable(x,y) ⇒ safe(y)) <- ch) { P }
+/// ```
+///
+/// Evaluated at runtime via LogicT (Strategy 3 from Gap 3):
+/// - Simple `RelationQuery`: direct Ascent JOIN clause
+/// - `Quantified`: closure calling `prattail::evaluate_quantified()`
+/// - Boolean combinators: standard short-circuit evaluation
+///
+/// # References
+///
+/// - Gap 3 in `docs/design/predicated-types.md` §22
+/// - `prattail::logict::evaluate_quantified()` for runtime evaluation
+#[derive(Debug, Clone)]
+pub enum BehavioralPred {
+    /// Simple relation query: `R(args)` or `~R(args)`.
+    /// Checks whether a tuple exists (or does not exist) in an Ascent relation.
+    RelationQuery {
+        relation_name: Ident,
+        args: Vec<PredArg>,
+        negated: bool,
+    },
+    /// Quantified predicate: `∀/∃ var [∈ domain] [bound]. body`
+    Quantified {
+        quantifier: Quantifier,
+        var: Ident,
+        /// Domain relation to iterate over (e.g., "nodes").
+        /// If None, domain is inferred from the body's relation references.
+        domain: Option<Ident>,
+        /// Optional bound for semi-decidable (T3) domains.
+        bound: Option<usize>,
+        body: Box<BehavioralPred>,
+    },
+    /// Conjunction: `a /\ b`
+    And(Box<BehavioralPred>, Box<BehavioralPred>),
+    /// Disjunction: `a \/ b`
+    Or(Box<BehavioralPred>, Box<BehavioralPred>),
+    /// Negation: `~a`
+    Not(Box<BehavioralPred>),
+    /// Implication: `a => b`
+    Implies(Box<BehavioralPred>, Box<BehavioralPred>),
+    /// Associative-commutative match: `ac_match(bag, {x, y, ...rest})`
+    ///
+    /// Enumerates all ways to select `elements.len()` items from the multiset
+    /// bound to `bag`, binding each to the corresponding element variable.
+    /// If `rest` is present, the unmatched remainder is bound to it.
+    AcMatch {
+        /// Bag variable to match (must be bound by LHS pattern).
+        bag: Ident,
+        /// Element variables to bind from the bag.
+        elements: Vec<Ident>,
+        /// Optional rest variable for unmatched elements.
+        rest: Option<Ident>,
+    },
+}
+
+impl BehavioralPred {
+    /// Convert this macro-level predicate to a `prattail::QuantifiedFormula`
+    /// suitable for runtime evaluation.
+    pub fn to_quantified_formula(&self) -> proc_macro2::TokenStream {
+        use quote::quote;
+        match self {
+            BehavioralPred::RelationQuery {
+                relation_name,
+                args,
+                negated,
+            } => {
+                let rel_str = relation_name.to_string();
+                let arg_exprs: Vec<_> = args
+                    .iter()
+                    .map(|a| match a {
+                        PredArg::Var(v) => {
+                            let v_str = v.to_string();
+                            quote! { prattail::logict::QuantifiedArg::Var(#v_str.to_string()) }
+                        }
+                        PredArg::Constant(c) => {
+                            let c_str = c.to_string();
+                            quote! { prattail::logict::QuantifiedArg::Constant(#c_str.to_string()) }
+                        }
+                    })
+                    .collect();
+                let atom = quote! {
+                    prattail::logict::QuantifiedFormula::atom(
+                        #rel_str,
+                        vec![#(#arg_exprs),*],
+                    )
+                };
+                if *negated {
+                    quote! { prattail::logict::QuantifiedFormula::not(#atom) }
+                } else {
+                    atom
+                }
+            }
+            BehavioralPred::Quantified {
+                quantifier,
+                var,
+                domain,
+                bound,
+                body,
+            } => {
+                let var_str = var.to_string();
+                let body_expr = body.to_quantified_formula();
+                let domain_expr = if let Some(dom) = domain {
+                    let dom_str = dom.to_string();
+                    if let Some(b) = bound {
+                        quote! {
+                            prattail::logict::QuantifiedDomain::Bounded {
+                                relation: #dom_str.to_string(),
+                                limit: #b,
+                            }
+                        }
+                    } else {
+                        quote! {
+                            prattail::logict::QuantifiedDomain::Relation(#dom_str.to_string())
+                        }
+                    }
+                } else {
+                    // No explicit domain — use var name as relation (convention)
+                    let var_rel = var.to_string();
+                    quote! {
+                        prattail::logict::QuantifiedDomain::Relation(#var_rel.to_string())
+                    }
+                };
+                match quantifier {
+                    Quantifier::ForAll => quote! {
+                        prattail::logict::QuantifiedFormula::forall(
+                            #var_str,
+                            #domain_expr,
+                            #body_expr,
+                        )
+                    },
+                    Quantifier::Exists => quote! {
+                        prattail::logict::QuantifiedFormula::exists(
+                            #var_str,
+                            #domain_expr,
+                            #body_expr,
+                        )
+                    },
+                }
+            }
+            BehavioralPred::And(a, b) => {
+                let a_expr = a.to_quantified_formula();
+                let b_expr = b.to_quantified_formula();
+                quote! {
+                    prattail::logict::QuantifiedFormula::and(#a_expr, #b_expr)
+                }
+            }
+            BehavioralPred::Or(a, b) => {
+                let a_expr = a.to_quantified_formula();
+                let b_expr = b.to_quantified_formula();
+                quote! {
+                    prattail::logict::QuantifiedFormula::or(#a_expr, #b_expr)
+                }
+            }
+            BehavioralPred::Not(inner) => {
+                let inner_expr = inner.to_quantified_formula();
+                quote! {
+                    prattail::logict::QuantifiedFormula::not(#inner_expr)
+                }
+            }
+            BehavioralPred::Implies(a, b) => {
+                let a_expr = a.to_quantified_formula();
+                let b_expr = b.to_quantified_formula();
+                quote! {
+                    prattail::logict::QuantifiedFormula::implies(#a_expr, #b_expr)
+                }
+            }
+            BehavioralPred::AcMatch { .. } => {
+                // AcMatch does not translate to QuantifiedFormula —
+                // it generates specialized partition enumeration code
+                // in the codegen layer (rules.rs). This arm should never
+                // be reached; AcMatch is intercepted before this point.
+                panic!("BUG: AcMatch should be handled by specialized codegen, not to_quantified_formula()")
+            }
+        }
+    }
 }
 
 /// Rewrite rule in unified judgement syntax
@@ -216,6 +432,316 @@ pub struct LangType {
     pub name: Ident,
     /// Optional native Rust type (e.g., `i32` for `![i32] as Int`)
     pub native_type: Option<Type>,
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Refinement Types — `{ x: BaseType | predicate }` in the types block
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Comparison relation for linear arithmetic predicates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinearRelation {
+    /// `<=`
+    Le,
+    /// `<`
+    Lt,
+    /// `>=`
+    Ge,
+    /// `>`
+    Gt,
+    /// `==`
+    Eq,
+    /// `!=`
+    Neq,
+}
+
+impl std::fmt::Display for LinearRelation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LinearRelation::Le => write!(f, "<="),
+            LinearRelation::Lt => write!(f, "<"),
+            LinearRelation::Ge => write!(f, ">="),
+            LinearRelation::Gt => write!(f, ">"),
+            LinearRelation::Eq => write!(f, "=="),
+            LinearRelation::Neq => write!(f, "!="),
+        }
+    }
+}
+
+/// A refinement predicate constraining values of a refinement type.
+///
+/// Used in refinement type definitions:
+/// ```text
+/// PosInt = { x: Int | x > 0 };
+/// SafeProc = { p: Proc | forall y in nodes. (reachable(p, y) => safe(y)) };
+/// ```
+///
+/// Supports the same operator precedence as `BehavioralPred`:
+/// implies < or < and < not < atom.
+#[derive(Debug, Clone)]
+pub enum RefinementPredicate {
+    /// Linear arithmetic: `a₁*x₁ + a₂*x₂ + ... ⊕ c`
+    ///
+    /// Example: `x > 0`, `3*x + 2*y <= 7`
+    Linear {
+        /// Coefficient-variable pairs. If the variable is the bound variable,
+        /// its `Ident` matches the refinement type's `var`.
+        terms: Vec<(Ident, i64)>,
+        /// Comparison relation.
+        relation: LinearRelation,
+        /// Right-hand side constant.
+        rhs: i64,
+    },
+    /// Relation query: `R(args)` or `~R(args)`.
+    ///
+    /// Delegates to the same Ascent relations as `BehavioralPred::RelationQuery`.
+    Relation {
+        name: Ident,
+        args: Vec<PredArg>,
+        negated: bool,
+    },
+    /// Quantified predicate: `forall`/`exists` var [in domain] [_{k=N}]. body
+    Quantified {
+        quantifier: Quantifier,
+        var: Ident,
+        domain: Option<Ident>,
+        bound: Option<usize>,
+        body: Box<RefinementPredicate>,
+    },
+    /// Conjunction: `a && b`
+    And(Box<RefinementPredicate>, Box<RefinementPredicate>),
+    /// Disjunction: `a || b`
+    Or(Box<RefinementPredicate>, Box<RefinementPredicate>),
+    /// Negation: `!a` or `~a`
+    Not(Box<RefinementPredicate>),
+    /// Implication: `a => b`
+    Implies(Box<RefinementPredicate>, Box<RefinementPredicate>),
+    /// Equality: `a == b`
+    TermEq(PredArg, PredArg),
+    /// Inequality: `a != b`
+    TermNeq(PredArg, PredArg),
+}
+
+impl std::fmt::Display for RefinementPredicate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RefinementPredicate::Linear { terms, relation, rhs } => {
+                for (i, (var, coeff)) in terms.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " + ")?;
+                    }
+                    if *coeff == 1 {
+                        write!(f, "{}", var)?;
+                    } else {
+                        write!(f, "{}*{}", coeff, var)?;
+                    }
+                }
+                write!(f, " {} {}", relation, rhs)
+            }
+            RefinementPredicate::Relation { name, args, negated } => {
+                if *negated {
+                    write!(f, "~")?;
+                }
+                write!(f, "{}(", name)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    match arg {
+                        PredArg::Var(v) => write!(f, "{}", v)?,
+                        PredArg::Constant(c) => write!(f, "{}", c)?,
+                    }
+                }
+                write!(f, ")")
+            }
+            RefinementPredicate::Quantified { quantifier, var, domain, bound, body } => {
+                match quantifier {
+                    Quantifier::ForAll => write!(f, "forall")?,
+                    Quantifier::Exists => write!(f, "exists")?,
+                }
+                if let Some(k) = bound {
+                    write!(f, "_{{k={}}}", k)?;
+                }
+                write!(f, " {}", var)?;
+                if let Some(d) = domain {
+                    write!(f, " in {}", d)?;
+                }
+                write!(f, ". ({})", body)
+            }
+            RefinementPredicate::And(a, b) => write!(f, "({} && {})", a, b),
+            RefinementPredicate::Or(a, b) => write!(f, "({} || {})", a, b),
+            RefinementPredicate::Not(a) => write!(f, "~{}", a),
+            RefinementPredicate::Implies(a, b) => write!(f, "({} => {})", a, b),
+            RefinementPredicate::TermEq(a, b) => {
+                let a_str = match a { PredArg::Var(v) => v.to_string(), PredArg::Constant(c) => c.to_string() };
+                let b_str = match b { PredArg::Var(v) => v.to_string(), PredArg::Constant(c) => c.to_string() };
+                write!(f, "{} == {}", a_str, b_str)
+            }
+            RefinementPredicate::TermNeq(a, b) => {
+                let a_str = match a { PredArg::Var(v) => v.to_string(), PredArg::Constant(c) => c.to_string() };
+                let b_str = match b { PredArg::Var(v) => v.to_string(), PredArg::Constant(c) => c.to_string() };
+                write!(f, "{} != {}", a_str, b_str)
+            }
+        }
+    }
+}
+
+/// Which constraint-solving domain a [`RefinementPredicate`] (or sub-tree)
+/// belongs to.
+///
+/// The pipeline uses this to select the appropriate solver back-end:
+///
+/// | Domain        | Solver                                     |
+/// |---------------|--------------------------------------------|
+/// | `Presburger`  | Presburger arithmetic (linear constraints)  |
+/// | `Lattice`     | Subtype lattice checks                      |
+/// | `Behavioral`  | Relation queries / quantified formulas      |
+/// | `Unification` | Structural term unification                 |
+/// | `Product`     | ProductAlgebra composition of child domains |
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstraintDomain {
+    /// Pure linear arithmetic (e.g., `x > 0`, `3*x + 2*y <= 7`).
+    Presburger,
+    /// Pure subtype lattice checks.
+    Lattice,
+    /// Relation queries or quantified formulas delegated to Ascent.
+    Behavioral,
+    /// Structural term patterns (equality / inequality on terms).
+    Unification,
+    /// Mixed: the predicate spans multiple domains. The children record
+    /// which domains were encountered.
+    Product(Vec<ConstraintDomain>),
+}
+
+impl std::fmt::Display for ConstraintDomain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConstraintDomain::Presburger => write!(f, "Presburger"),
+            ConstraintDomain::Lattice => write!(f, "Lattice"),
+            ConstraintDomain::Behavioral => write!(f, "Behavioral"),
+            ConstraintDomain::Unification => write!(f, "Unification"),
+            ConstraintDomain::Product(children) => {
+                write!(f, "Product(")?;
+                for (i, c) in children.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", c)?;
+                }
+                write!(f, ")")
+            }
+        }
+    }
+}
+
+impl RefinementPredicate {
+    /// Classify which [`ConstraintDomain`] this predicate (tree) belongs to.
+    ///
+    /// Leaf nodes map directly:
+    /// - `Linear { .. }` -> `Presburger`
+    /// - `Relation { .. }` / `Quantified { .. }` -> `Behavioral`
+    /// - `TermEq` / `TermNeq` -> `Unification`
+    ///
+    /// Compound nodes (`And`, `Or`, `Implies`) merge children:
+    /// - If both children have the same domain, return that domain.
+    /// - If they differ, return `Product` containing both (flattened).
+    ///
+    /// `Not(inner)` delegates to its child.
+    pub fn classify(&self) -> ConstraintDomain {
+        match self {
+            RefinementPredicate::Linear { .. } => ConstraintDomain::Presburger,
+            RefinementPredicate::Relation { .. } => ConstraintDomain::Behavioral,
+            RefinementPredicate::Quantified { .. } => ConstraintDomain::Behavioral,
+            RefinementPredicate::TermEq(_, _) => ConstraintDomain::Unification,
+            RefinementPredicate::TermNeq(_, _) => ConstraintDomain::Unification,
+            RefinementPredicate::Not(inner) => inner.classify(),
+            RefinementPredicate::And(a, b)
+            | RefinementPredicate::Or(a, b)
+            | RefinementPredicate::Implies(a, b) => {
+                Self::merge_domains(a.classify(), b.classify())
+            }
+        }
+    }
+
+    /// Return the pipeline-facing predicate kind string corresponding to
+    /// this predicate's [`ConstraintDomain`].
+    ///
+    /// The returned string matches [`prattail::type_system::RefinementPredKind`]
+    /// variant names:
+    ///
+    /// | Domain          | String         |
+    /// |-----------------|----------------|
+    /// | `Presburger`    | `"Presburger"` |
+    /// | `Lattice`       | `"Lattice"`    |
+    /// | `Behavioral`    | `"Behavioral"` |
+    /// | `Unification`   | `"Structural"` |
+    /// | `Product(_)`    | `"Mixed"`      |
+    pub fn to_pred_kind_str(&self) -> &'static str {
+        match self.classify() {
+            ConstraintDomain::Presburger => "Presburger",
+            ConstraintDomain::Lattice => "Lattice",
+            ConstraintDomain::Behavioral => "Behavioral",
+            ConstraintDomain::Unification => "Structural",
+            ConstraintDomain::Product(_) => "Mixed",
+        }
+    }
+
+    /// Merge two [`ConstraintDomain`] values, producing `Product` when they
+    /// differ. Existing `Product` children are flattened.
+    fn merge_domains(a: ConstraintDomain, b: ConstraintDomain) -> ConstraintDomain {
+        if a == b {
+            return a;
+        }
+        let mut children = Vec::new();
+        Self::flatten_into(&a, &mut children);
+        Self::flatten_into(&b, &mut children);
+        // Deduplicate while preserving order.
+        let mut seen = Vec::new();
+        children.retain(|d| {
+            if seen.contains(d) {
+                false
+            } else {
+                seen.push(d.clone());
+                true
+            }
+        });
+        if children.len() == 1 {
+            children.into_iter().next().expect("non-empty after dedup")
+        } else {
+            ConstraintDomain::Product(children)
+        }
+    }
+
+    /// Flatten a `Product` into individual non-Product domains.
+    fn flatten_into(domain: &ConstraintDomain, out: &mut Vec<ConstraintDomain>) {
+        match domain {
+            ConstraintDomain::Product(children) => {
+                for c in children {
+                    Self::flatten_into(c, out);
+                }
+            }
+            other => out.push(other.clone()),
+        }
+    }
+}
+
+/// A refinement type definition in the `types { ... }` block.
+///
+/// Syntax: `PosInt = { x: Int | x > 0 };`
+///
+/// The `name` is the refinement type's name, `var` is the binding variable,
+/// `base_type` is the underlying type, and `predicate` is the refinement
+/// constraint.
+#[derive(Debug, Clone)]
+pub struct RefinementTypeDef {
+    /// The refinement type name (e.g., `PosInt`).
+    pub name: Ident,
+    /// The binding variable name (e.g., `x`).
+    pub var: Ident,
+    /// The base type (e.g., `Int`).
+    pub base_type: super::types::TypeExpr,
+    /// The refinement predicate (e.g., `x > 0`).
+    pub predicate: RefinementPredicate,
 }
 
 /// A token definition from the `tokens { ... }` block.
@@ -404,16 +930,16 @@ impl Parse for LanguageDef {
         // Parse: mixins: [ArithOps, BoolOps] (optional)
         let mixin_names = try_parse_keyword_list(input, "mixins")?;
 
-        // Parse: types { ... }
-        let types = if input.peek(Ident) {
+        // Parse: types { ... } (may include refinement type definitions)
+        let (types, refinement_types) = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
             if lookahead == "types" {
                 parse_types(input)?
             } else {
-                Vec::new()
+                (Vec::new(), Vec::new())
             }
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
 
         // Parse: tokens { ... } (optional)
@@ -483,6 +1009,7 @@ impl Parse for LanguageDef {
             include_names,
             mixin_names,
             types,
+            refinement_types,
             token_defs,
             mode_defs,
             sync_constraints,
@@ -495,7 +1022,7 @@ impl Parse for LanguageDef {
     }
 }
 
-fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
+fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTypeDef>)> {
     let types_ident = input.parse::<Ident>()?;
     if types_ident != "types" {
         return Err(syn::Error::new(types_ident.span(), "expected 'types'"));
@@ -505,6 +1032,7 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
     syn::braced!(content in input);
 
     let mut types = Vec::new();
+    let mut refinement_types = Vec::new();
     while !content.is_empty() {
         // Check for native type syntax: ![Type] as Name
         if content.peek(Token![!]) {
@@ -519,9 +1047,19 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
             let name = content.parse::<Ident>()?;
             types.push(LangType { name, native_type: Some(native_type) });
         } else {
-            // Regular type: just a name
+            // Could be either:
+            //   Name               — regular type
+            //   Name = { ... }     — refinement type
             let name = content.parse::<Ident>()?;
-            types.push(LangType { name, native_type: None });
+
+            if content.peek(Token![=]) {
+                // Refinement type: Name = { var: BaseType | predicate };
+                let _ = content.parse::<Token![=]>()?;
+                let ref_def = parse_refinement_type_body(&content, name)?;
+                refinement_types.push(ref_def);
+            } else {
+                types.push(LangType { name, native_type: None });
+            }
         }
 
         if content.peek(Token![;]) {
@@ -534,11 +1072,316 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
         let _ = input.parse::<Token![,]>()?;
     }
 
-    Ok(types)
+    Ok((types, refinement_types))
+}
+
+/// Parse a refinement type body: `{ var: BaseType | predicate }`
+///
+/// Called after `Name =` has been consumed. The `name` is the refinement
+/// type's identifier (e.g., `PosInt`).
+fn parse_refinement_type_body(
+    input: ParseStream,
+    name: Ident,
+) -> SynResult<RefinementTypeDef> {
+    let brace_content;
+    syn::braced!(brace_content in input);
+
+    // Parse: var : BaseType
+    let var = brace_content.parse::<Ident>()?;
+    brace_content.parse::<Token![:]>()?;
+    let base_type = brace_content.parse::<super::types::TypeExpr>()?;
+
+    // Parse: | predicate
+    brace_content.parse::<Token![|]>()?;
+    let predicate = parse_refinement_pred_implies(&brace_content)?;
+
+    Ok(RefinementTypeDef {
+        name,
+        var,
+        base_type,
+        predicate,
+    })
+}
+
+// ── Refinement predicate parser (operator-precedence climbing) ──────────────
+//
+// Precedence (lowest to highest):
+//   implies  =>
+//   or       ||
+//   and      &&
+//   not      ~ / !
+//   atom     variable, literal, relation, quantified, parenthesized, linear
+
+/// Parse refinement predicate: entry point (lowest precedence = implies).
+fn parse_refinement_pred_implies(input: ParseStream) -> SynResult<RefinementPredicate> {
+    let mut lhs = parse_refinement_pred_or(input)?;
+    while input.peek(Token![=>]) {
+        input.parse::<Token![=>]>()?;
+        let rhs = parse_refinement_pred_or(input)?;
+        lhs = RefinementPredicate::Implies(Box::new(lhs), Box::new(rhs));
+    }
+    Ok(lhs)
+}
+
+/// Parse refinement predicate: disjunction (`||`).
+fn parse_refinement_pred_or(input: ParseStream) -> SynResult<RefinementPredicate> {
+    let mut lhs = parse_refinement_pred_and(input)?;
+    while input.peek(Token![||]) {
+        input.parse::<Token![||]>()?;
+        let rhs = parse_refinement_pred_and(input)?;
+        lhs = RefinementPredicate::Or(Box::new(lhs), Box::new(rhs));
+    }
+    Ok(lhs)
+}
+
+/// Parse refinement predicate: conjunction (`&&`).
+fn parse_refinement_pred_and(input: ParseStream) -> SynResult<RefinementPredicate> {
+    let mut lhs = parse_refinement_pred_not(input)?;
+    while input.peek(Token![&&]) {
+        input.parse::<Token![&&]>()?;
+        let rhs = parse_refinement_pred_not(input)?;
+        lhs = RefinementPredicate::And(Box::new(lhs), Box::new(rhs));
+    }
+    Ok(lhs)
+}
+
+/// Parse refinement predicate: negation (`~` or `!`).
+fn parse_refinement_pred_not(input: ParseStream) -> SynResult<RefinementPredicate> {
+    if input.peek(Token![~]) {
+        input.parse::<Token![~]>()?;
+        let inner = parse_refinement_pred_not(input)?;
+        Ok(RefinementPredicate::Not(Box::new(inner)))
+    } else if input.peek(Token![!]) && !input.peek(Token![!=]) {
+        input.parse::<Token![!]>()?;
+        let inner = parse_refinement_pred_not(input)?;
+        Ok(RefinementPredicate::Not(Box::new(inner)))
+    } else {
+        parse_refinement_pred_atom(input)
+    }
+}
+
+/// Parse refinement predicate: atomic term.
+///
+/// Handles:
+/// - Parenthesized subexpressions: `(expr)`
+/// - Quantifiers: `forall`/`exists` var [_{k=N}] [in domain]. body
+/// - Relation queries: `rel(arg1, arg2, ...)`
+/// - Linear comparisons: `var > 0`, `3*x + 2*y <= 7`
+/// - Equality/inequality: `a == b`, `a != b`
+fn parse_refinement_pred_atom(input: ParseStream) -> SynResult<RefinementPredicate> {
+    // Parenthesized subexpression
+    if input.peek(syn::token::Paren) {
+        let paren_content;
+        syn::parenthesized!(paren_content in input);
+        return parse_refinement_pred_implies(&paren_content);
+    }
+
+    // Must be an identifier: could be quantifier, relation, or linear term
+    let fork = input.fork();
+    let ident: Ident = fork.parse()?;
+    let ident_str = ident.to_string();
+
+    // Quantifiers: forall / exists
+    if ident_str == "forall" || ident_str == "exists" {
+        input.parse::<Ident>()?; // consume the keyword
+        let quantifier = if ident_str == "forall" {
+            Quantifier::ForAll
+        } else {
+            Quantifier::Exists
+        };
+
+        // Optional bound: _{k=N}
+        let bound = if input.peek(Token![_]) {
+            input.parse::<Token![_]>()?;
+            let brace_content;
+            syn::braced!(brace_content in input);
+            let k_ident = brace_content.parse::<Ident>()?;
+            if k_ident != "k" {
+                return Err(syn::Error::new(k_ident.span(), "expected 'k'"));
+            }
+            brace_content.parse::<Token![=]>()?;
+            let lit: syn::LitInt = brace_content.parse()?;
+            Some(lit.base10_parse::<usize>()?)
+        } else {
+            None
+        };
+
+        // Quantified variable
+        let var = input.parse::<Ident>()?;
+
+        // Optional domain: `in relation`
+        let domain = if input.peek(Ident) {
+            let next_fork = input.fork();
+            let next_ident: Ident = next_fork.parse()?;
+            if next_ident == "in" {
+                input.parse::<Ident>()?; // consume "in"
+                Some(input.parse::<Ident>()?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Dot separator
+        input.parse::<Token![.]>()?;
+
+        // Body (may be parenthesized)
+        let body = parse_refinement_pred_atom(input)?;
+
+        return Ok(RefinementPredicate::Quantified {
+            quantifier,
+            var,
+            domain,
+            bound,
+            body: Box::new(body),
+        });
+    }
+
+    // Check if this is a relation query: ident(args)
+    if fork.peek(syn::token::Paren) {
+        input.parse::<Ident>()?; // consume the relation name
+        let paren_content;
+        syn::parenthesized!(paren_content in input);
+        let mut args = Vec::new();
+        while !paren_content.is_empty() {
+            let arg_ident = paren_content.parse::<Ident>()?;
+            let first_char = arg_ident.to_string().chars().next().unwrap_or('a');
+            if first_char.is_uppercase() {
+                args.push(PredArg::Constant(arg_ident));
+            } else {
+                args.push(PredArg::Var(arg_ident));
+            }
+            if paren_content.peek(Token![,]) {
+                paren_content.parse::<Token![,]>()?;
+            }
+        }
+        return Ok(RefinementPredicate::Relation {
+            name: ident,
+            args,
+            negated: false,
+        });
+    }
+
+    // Linear arithmetic or simple variable comparison
+    // Parse: ident followed by comparison operator
+    // We need to handle: `x > 0`, `x >= 0`, `x == y`, etc.
+    input.parse::<Ident>()?; // consume the first identifier
+
+    // Check for comparison operators
+    if input.peek(Token![>]) && input.peek2(Token![=]) {
+        input.parse::<Token![>]>()?;
+        input.parse::<Token![=]>()?;
+        let rhs = parse_linear_rhs(input)?;
+        return Ok(RefinementPredicate::Linear {
+            terms: vec![(ident, 1)],
+            relation: LinearRelation::Ge,
+            rhs,
+        });
+    }
+    if input.peek(Token![>]) {
+        input.parse::<Token![>]>()?;
+        let rhs = parse_linear_rhs(input)?;
+        return Ok(RefinementPredicate::Linear {
+            terms: vec![(ident, 1)],
+            relation: LinearRelation::Gt,
+            rhs,
+        });
+    }
+    if input.peek(Token![<]) && input.peek2(Token![=]) {
+        input.parse::<Token![<]>()?;
+        input.parse::<Token![=]>()?;
+        let rhs = parse_linear_rhs(input)?;
+        return Ok(RefinementPredicate::Linear {
+            terms: vec![(ident, 1)],
+            relation: LinearRelation::Le,
+            rhs,
+        });
+    }
+    if input.peek(Token![<]) {
+        input.parse::<Token![<]>()?;
+        let rhs = parse_linear_rhs(input)?;
+        return Ok(RefinementPredicate::Linear {
+            terms: vec![(ident, 1)],
+            relation: LinearRelation::Lt,
+            rhs,
+        });
+    }
+    if input.peek(Token![==]) {
+        input.parse::<Token![==]>()?;
+        // Could be term equality or linear equality
+        if input.peek(syn::LitInt) {
+            let rhs = parse_linear_rhs(input)?;
+            return Ok(RefinementPredicate::Linear {
+                terms: vec![(ident, 1)],
+                relation: LinearRelation::Eq,
+                rhs,
+            });
+        }
+        let rhs_ident = input.parse::<Ident>()?;
+        let first_char = rhs_ident.to_string().chars().next().unwrap_or('a');
+        let rhs_arg = if first_char.is_uppercase() {
+            PredArg::Constant(rhs_ident)
+        } else {
+            PredArg::Var(rhs_ident)
+        };
+        let first_char_lhs = ident.to_string().chars().next().unwrap_or('a');
+        let lhs_arg = if first_char_lhs.is_uppercase() {
+            PredArg::Constant(ident)
+        } else {
+            PredArg::Var(ident)
+        };
+        return Ok(RefinementPredicate::TermEq(lhs_arg, rhs_arg));
+    }
+    if input.peek(Token![!=]) {
+        input.parse::<Token![!=]>()?;
+        if input.peek(syn::LitInt) {
+            let rhs = parse_linear_rhs(input)?;
+            return Ok(RefinementPredicate::Linear {
+                terms: vec![(ident, 1)],
+                relation: LinearRelation::Neq,
+                rhs,
+            });
+        }
+        let rhs_ident = input.parse::<Ident>()?;
+        let first_char = rhs_ident.to_string().chars().next().unwrap_or('a');
+        let rhs_arg = if first_char.is_uppercase() {
+            PredArg::Constant(rhs_ident)
+        } else {
+            PredArg::Var(rhs_ident)
+        };
+        let first_char_lhs = ident.to_string().chars().next().unwrap_or('a');
+        let lhs_arg = if first_char_lhs.is_uppercase() {
+            PredArg::Constant(ident)
+        } else {
+            PredArg::Var(ident)
+        };
+        return Ok(RefinementPredicate::TermNeq(lhs_arg, rhs_arg));
+    }
+
+    // Bare identifier — treat as zero-argument relation query
+    Ok(RefinementPredicate::Relation {
+        name: ident,
+        args: vec![],
+        negated: false,
+    })
+}
+
+/// Parse the right-hand side of a linear comparison (integer literal).
+fn parse_linear_rhs(input: ParseStream) -> SynResult<i64> {
+    let negative = if input.peek(Token![-]) {
+        input.parse::<Token![-]>()?;
+        true
+    } else {
+        false
+    };
+    let lit: syn::LitInt = input.parse()?;
+    let val = lit.base10_parse::<i64>()?;
+    Ok(if negative { -val } else { val })
 }
 
 /// Public wrapper for `parse_types` for use by `fragment.rs`.
-pub fn parse_types_public(input: ParseStream) -> SynResult<Vec<LangType>> {
+pub fn parse_types_public(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTypeDef>)> {
     parse_types(input)
 }
 
@@ -1239,12 +2082,269 @@ fn parse_premise(input: ParseStream) -> SynResult<Premise> {
             param,
             body: Box::new(body),
         })
+    } else if first == "guard" && input.peek(syn::token::Paren) {
+        // Behavioral guard premise: guard(pred_expr)
+        let content;
+        syn::parenthesized!(content in input);
+        let pred = parse_behavioral_pred(&content)?;
+        Ok(Premise::BehavioralGuard(pred))
+    } else if first == "forall" || first == "exists" {
+        // Quantified behavioral guard used directly as premise:
+        // forall var in domain. body  /  exists var in domain. body
+        let quantifier = if first == "forall" {
+            Quantifier::ForAll
+        } else {
+            Quantifier::Exists
+        };
+        let var = input.parse::<Ident>()?;
+
+        // Optional bound: _{k=N}
+        let bound = if input.peek(Token![_]) {
+            let _ = input.parse::<Token![_]>()?;
+            let bound_content;
+            syn::braced!(bound_content in input);
+            // Parse k=N inside braces
+            let _k = bound_content.parse::<Ident>()?;
+            let _ = bound_content.parse::<Token![=]>()?;
+            let n: syn::LitInt = bound_content.parse()?;
+            Some(n.base10_parse::<usize>()?)
+        } else {
+            None
+        };
+
+        // Optional domain: "in" relation_name
+        let domain = if input.peek(Token![in]) {
+            let _ = input.parse::<Token![in]>()?;
+            Some(input.parse::<Ident>()?)
+        } else {
+            None
+        };
+
+        // "." separates quantifier header from body
+        let _ = input.parse::<Token![.]>()?;
+        let body = parse_behavioral_pred(input)?;
+
+        Ok(Premise::BehavioralGuard(BehavioralPred::Quantified {
+            quantifier,
+            var,
+            domain,
+            bound,
+            body: Box::new(body),
+        }))
     } else {
         Err(syn::Error::new(
             first.span(),
-            "expected premise: 'x # term', 'S ~> T', 'rel(args)', or 'xs.*map(|x| ...)'",
+            "expected premise: 'x # term', 'S ~> T', 'rel(args)', 'guard(...)', \
+             'forall ...', 'exists ...', or 'xs.*map(|x| ...)'",
         ))
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Behavioral predicate parser — sublanguage for quantified guards
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Parse a behavioral predicate expression (implication level).
+///
+/// Grammar (precedence low→high):
+/// ```text
+/// pred_implies  ::= pred_or ("=>" pred_implies)?
+/// pred_or       ::= pred_and ("||" pred_and)*
+/// pred_and      ::= pred_not ("&&" pred_not)*
+/// pred_not      ::= "~" pred_atom | "!" pred_atom | pred_atom
+/// pred_atom     ::= quantified | relation_query | "(" pred_implies ")"
+/// quantified    ::= ("forall" | "exists") ident [bound] ["in" ident] "." pred_implies
+/// bound         ::= "_{" ident "=" lit_int "}"
+/// relation_query::= ident "(" (pred_arg ("," pred_arg)*)? ")"
+/// pred_arg      ::= ident
+/// ```
+///
+/// Uses `&&` for conjunction, `||` for disjunction, `~`/`!` for negation,
+/// and `=>` for implication. These are all valid Rust tokens parseable by
+/// proc_macro2.
+fn parse_behavioral_pred(input: ParseStream) -> SynResult<BehavioralPred> {
+    parse_pred_implies(input)
+}
+
+/// Implication (right-associative, lowest precedence).
+fn parse_pred_implies(input: ParseStream) -> SynResult<BehavioralPred> {
+    let lhs = parse_pred_or(input)?;
+
+    // Check for "=>" (fat arrow — implication)
+    if input.peek(Token![=>]) {
+        let _ = input.parse::<Token![=>]>()?;
+        let rhs = parse_pred_implies(input)?; // right-associative
+        Ok(BehavioralPred::Implies(Box::new(lhs), Box::new(rhs)))
+    } else {
+        Ok(lhs)
+    }
+}
+
+/// Disjunction (`||`).
+fn parse_pred_or(input: ParseStream) -> SynResult<BehavioralPred> {
+    let mut result = parse_pred_and(input)?;
+
+    while input.peek(Token![||]) {
+        let _ = input.parse::<Token![||]>()?;
+        let rhs = parse_pred_and(input)?;
+        result = BehavioralPred::Or(Box::new(result), Box::new(rhs));
+    }
+
+    Ok(result)
+}
+
+/// Conjunction (`&&`).
+fn parse_pred_and(input: ParseStream) -> SynResult<BehavioralPred> {
+    let mut result = parse_pred_not(input)?;
+
+    while input.peek(Token![&&]) {
+        let _ = input.parse::<Token![&&]>()?;
+        let rhs = parse_pred_not(input)?;
+        result = BehavioralPred::And(Box::new(result), Box::new(rhs));
+    }
+
+    Ok(result)
+}
+
+/// Negation (`~` or `!`).
+fn parse_pred_not(input: ParseStream) -> SynResult<BehavioralPred> {
+    if input.peek(Token![~]) {
+        let _ = input.parse::<Token![~]>()?;
+        let inner = parse_pred_atom(input)?;
+        Ok(BehavioralPred::Not(Box::new(inner)))
+    } else if input.peek(Token![!]) {
+        let _ = input.parse::<Token![!]>()?;
+        let inner = parse_pred_atom(input)?;
+        Ok(BehavioralPred::Not(Box::new(inner)))
+    } else {
+        parse_pred_atom(input)
+    }
+}
+
+/// Atomic predicate: relation query, quantifier, or parenthesized expression.
+fn parse_pred_atom(input: ParseStream) -> SynResult<BehavioralPred> {
+    // Parenthesized subexpression
+    if input.peek(syn::token::Paren) {
+        let content;
+        syn::parenthesized!(content in input);
+        return parse_behavioral_pred(&content);
+    }
+
+    let ident = input.parse::<Ident>()?;
+
+    // AC-match: ac_match(bag, {x, y, ...rest})
+    if ident == "ac_match" {
+        let content;
+        syn::parenthesized!(content in input);
+        let bag = content.parse::<Ident>()?;
+        let _ = content.parse::<Token![,]>()?;
+
+        // Parse the element set: { x, y, ...rest }
+        let set_content;
+        syn::braced!(set_content in content);
+        let mut elements = Vec::new();
+        let mut rest = None;
+
+        while !set_content.is_empty() {
+            // Check for "..." (rest pattern)
+            if set_content.peek(Token![...]) {
+                let _ = set_content.parse::<Token![...]>()?;
+                rest = Some(set_content.parse::<Ident>()?);
+                // Trailing comma is optional after rest
+                if set_content.peek(Token![,]) {
+                    let _ = set_content.parse::<Token![,]>()?;
+                }
+                break;
+            }
+
+            elements.push(set_content.parse::<Ident>()?);
+            if set_content.peek(Token![,]) {
+                let _ = set_content.parse::<Token![,]>()?;
+            }
+        }
+
+        if elements.is_empty() {
+            return Err(syn::Error::new(
+                ident.span(),
+                "ac_match requires at least one element variable",
+            ));
+        }
+
+        return Ok(BehavioralPred::AcMatch { bag, elements, rest });
+    }
+
+    // Quantifier: forall/exists var [bound] [in domain]. body
+    if ident == "forall" || ident == "exists" {
+        let quantifier = if ident == "forall" {
+            Quantifier::ForAll
+        } else {
+            Quantifier::Exists
+        };
+        let var = input.parse::<Ident>()?;
+
+        // Optional bound: _{k=N}
+        let bound = if input.peek(Token![_]) {
+            let _ = input.parse::<Token![_]>()?;
+            let bound_content;
+            syn::braced!(bound_content in input);
+            let _k = bound_content.parse::<Ident>()?;
+            let _ = bound_content.parse::<Token![=]>()?;
+            let n: syn::LitInt = bound_content.parse()?;
+            Some(n.base10_parse::<usize>()?)
+        } else {
+            None
+        };
+
+        // Optional domain: "in" relation_name
+        let domain = if input.peek(Token![in]) {
+            let _ = input.parse::<Token![in]>()?;
+            Some(input.parse::<Ident>()?)
+        } else {
+            None
+        };
+
+        let _ = input.parse::<Token![.]>()?;
+        let body = parse_behavioral_pred(input)?;
+
+        return Ok(BehavioralPred::Quantified {
+            quantifier,
+            var,
+            domain,
+            bound,
+            body: Box::new(body),
+        });
+    }
+
+    // Relation query: rel(args...)
+    if input.peek(syn::token::Paren) {
+        let args_content;
+        syn::parenthesized!(args_content in input);
+        let mut args = Vec::new();
+        while !args_content.is_empty() {
+            let arg = args_content.parse::<Ident>()?;
+            // Lowercase first char → variable, uppercase → constant
+            if arg.to_string().starts_with(|c: char| c.is_uppercase()) {
+                args.push(PredArg::Constant(arg));
+            } else {
+                args.push(PredArg::Var(arg));
+            }
+            if args_content.peek(Token![,]) {
+                let _ = args_content.parse::<Token![,]>()?;
+            }
+        }
+        return Ok(BehavioralPred::RelationQuery {
+            relation_name: ident,
+            args,
+            negated: false,
+        });
+    }
+
+    // Bare identifier as nullary relation query (no args)
+    Ok(BehavioralPred::RelationQuery {
+        relation_name: ident,
+        args: vec![],
+        negated: false,
+    })
 }
 
 /// Parse a typed parameter: name:Type

@@ -230,6 +230,12 @@ Qed.
 (*  property that underlies this).                                         *)
 (* ===================================================================== *)
 
+(* NOTE: positive_preserved and zero_preserved are identity lemmas
+   that hold by assumption. They serve as type signatures documenting
+   the intended normalization invariant. The actual verification that
+   normalization preserves these properties is in SupportPreservation
+   below (scale_preserves_support, Theorem proportional_same_support). *)
+
 (* Positive weights remain positive after normalization *)
 Theorem positive_preserved : forall (w w_total : nat),
   positive w -> positive w_total -> w <= w_total ->

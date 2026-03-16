@@ -6,5 +6,6 @@
 //! - `environment` - `{Name}Env` for storing variable bindings
 
 pub mod environment;
+pub mod guard_codegen;
 pub mod language;
 pub mod metadata;

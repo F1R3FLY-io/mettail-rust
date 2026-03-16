@@ -1022,6 +1022,7 @@ fn extract_base_category(ty: &TypeExpr) -> Ident {
         TypeExpr::Collection { element, .. } => extract_base_category(element),
         TypeExpr::Arrow { codomain, .. } => extract_base_category(codomain),
         TypeExpr::MultiBinder(inner) => extract_base_category(inner),
+        TypeExpr::Refined { base, .. } => extract_base_category(base),
     }
 }
 

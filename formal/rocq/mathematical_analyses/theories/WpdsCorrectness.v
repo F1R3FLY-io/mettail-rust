@@ -45,7 +45,6 @@ From Stdlib Require Import PeanoNat.
 From Stdlib Require Import Lia.
 From Stdlib Require Import ZArith.
 From Stdlib Require Import Classical.
-From Hammer Require Import Tactics.
 
 Import ListNotations.
 

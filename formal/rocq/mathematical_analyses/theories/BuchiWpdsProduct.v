@@ -39,10 +39,10 @@
  *   --------------------------|-----------------------------------|--------------------------
  *   wpds_config               | StackSymbol + WpdsRule             | wpds.rs:62-133
  *   wpds_step                 | (poststar saturation)              | wpds.rs (poststar fn)
- *   buchi_state               | BuchiState                        | buchi.rs:58-69
+ *   buchi_state               | BuchiState                        | buchi.rs:75-90
  *   buchi_transition          | BuchiTransition                   | buchi.rs:112-131
- *   buchi_intersect           | buchi_intersect()                 | buchi.rs:277-385
- *   check_emptiness           | check_emptiness()                 | buchi.rs:402-578
+ *   buchi_intersect           | buchi_intersect()                 | buchi.rs:352-450
+ *   check_emptiness           | check_emptiness()                 | buchi.rs:507-650
  *   product_config            | (product construction in pipeline) | pipeline.rs
  *   scc_has_accepting         | Tarjan SCC + accepting check      | buchi.rs:462-575
  *
@@ -54,7 +54,6 @@ From Stdlib Require Import Bool.
 From Stdlib Require Import Arith.
 From Stdlib Require Import PeanoNat.
 From Stdlib Require Import Lia.
-From Hammer Require Import Tactics.
 
 Import ListNotations.
 

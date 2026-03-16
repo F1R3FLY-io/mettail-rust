@@ -334,6 +334,7 @@ fn generate_var_inference_arm(
                             None
                         }
                     },
+                    TermParam::GuardBody { .. } => None,
                 }
             })
             .collect()
@@ -539,6 +540,7 @@ fn generate_var_type_inference_arm(
                             None
                         }
                     },
+                    TermParam::GuardBody { .. } => None,
                 }
             })
             .collect()
@@ -675,5 +677,6 @@ fn extract_base_cat(ty: &TypeExpr) -> syn::Ident {
         TypeExpr::Collection { element, .. } => extract_base_cat(element),
         TypeExpr::Arrow { codomain, .. } => extract_base_cat(codomain),
         TypeExpr::MultiBinder(inner) => extract_base_cat(inner),
+        TypeExpr::Refined { base, .. } => extract_base_cat(base),
     }
 }

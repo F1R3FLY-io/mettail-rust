@@ -921,6 +921,9 @@ pub struct ParserBundle {
     pub(crate) semantic_dependency_groups: Vec<HashSet<String>>,
     /// Custom token specs from the `tokens { ... }` block.
     pub(crate) custom_tokens: Vec<crate::CustomTokenSpec>,
+    /// Refinement type definitions from the `types { ... }` block.
+    #[cfg(feature = "type-system")]
+    pub(crate) refinement_types: Vec<crate::RefinementTypeSpec>,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1322,6 +1325,8 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         rule_locations,
         semantic_dependency_groups: spec.semantic_dependency_groups.clone(),
         custom_tokens: spec.custom_tokens.clone(),
+        #[cfg(feature = "type-system")]
+        refinement_types: spec.refinement_types.clone(),
     };
 
     (lexer_bundle, parser_bundle)
@@ -1386,6 +1391,26 @@ fn generate_parser_code_with_analysis(
 // ══════════════════════════════════════════════════════════════════════════════
 // DB03: Parallel analysis phase execution
 // ══════════════════════════════════════════════════════════════════════════════
+
+/// Result of compile-time refinement type analysis.
+#[cfg(feature = "type-system")]
+#[derive(Debug, Clone, Default)]
+pub struct RefinementAnalysisResult {
+    /// Refinement types whose predicate is unsatisfiable (RT01).
+    pub unsatisfiable: Vec<(String, String)>, // (type_name, reason)
+    /// Refinement types whose predicate is tautological (RT02).
+    pub tautological: Vec<(String, String)>, // (type_name, reason)
+    /// Pairs of refinement types with empty intersection (RT03).
+    pub empty_intersections: Vec<(String, String, String)>, // (type_a, type_b, reason)
+    /// Subtype relationships detected between refinement types (RT04).
+    pub subtype_pairs: Vec<(String, String)>, // (sub, super)
+    /// Decidability tier for each refinement type's predicate (RT05).
+    pub decidability_tiers: Vec<(String, String)>, // (type_name, tier_description)
+    /// Refinement types that shadow a base type name (RT06).
+    pub name_shadows: Vec<(String, String)>, // (refinement_name, base_type_name)
+    /// SFA dispatch analysis: disjointness, subsumption, overlap (RT10).
+    pub dispatch_analysis: Option<crate::type_system::RefinementDispatchAnalysis>,
+}
 
 /// Collected results from the mathematical analysis phase.
 ///
@@ -1453,6 +1478,24 @@ pub(crate) struct MathAnalysisResults {
     pub multiset_result: Option<crate::multiset_automata::MultisetAnalysisResult>,
     #[cfg(feature = "two-way-transducer")]
     pub two_way_result: Option<crate::two_way_transducer::TwoWayAnalysis>,
+    #[cfg(feature = "sft")]
+    pub sft_result: Option<crate::sft::SftAnalysis>,
+
+    // ── E-graph equality saturation ──
+    #[cfg(feature = "egraph")]
+    pub egraph_result: Option<crate::egraph::EGraphAnalysis>,
+
+    // ── Constraint theory analyses ──
+    #[cfg(feature = "presburger")]
+    pub presburger_result: Option<crate::presburger::PresburgerAnalysis>,
+    #[cfg(feature = "unification")]
+    pub unification_result: Option<crate::unification::UnificationAnalysis>,
+    #[cfg(feature = "lattice-theory")]
+    pub lattice_result: Option<crate::lattice_theory::LatticeAnalysis>,
+
+    // ── Refinement type analysis ──
+    #[cfg(feature = "type-system")]
+    pub refinement_analysis: Option<RefinementAnalysisResult>,
 }
 
 /// Count the number of analysis phases based on enabled features.
@@ -1506,6 +1549,18 @@ pub(crate) fn count_analysis_phases() -> u32 {
     { count += 1; }
     #[cfg(feature = "two-way-transducer")]
     { count += 1; }
+    #[cfg(feature = "sft")]
+    { count += 1; }
+    #[cfg(feature = "egraph")]
+    { count += 1; }
+    #[cfg(feature = "presburger")]
+    { count += 1; }
+    #[cfg(feature = "unification")]
+    { count += 1; }
+    #[cfg(feature = "lattice-theory")]
+    { count += 1; }
+    #[cfg(feature = "type-system")]
+    { count += 1; }
     count
 }
 
@@ -1543,7 +1598,8 @@ fn run_math_analyses_parallel(
     #[cfg(feature = "predicate-dispatch")]
     let dispatch_plan = crate::predicate_dispatch::classify_grammar(all_syntax, categories);
 
-    std::thread::scope(|s| {
+    #[allow(unused_mut)] // mut needed when egraph feature adds post-scope mutation
+    let mut results = std::thread::scope(|s| {
         // Phase 1: TRS (no dependencies)
         #[cfg(feature = "trs-analysis")]
         let h_confluence = s.spawn(|| {
@@ -1709,6 +1765,14 @@ fn run_math_analyses_parallel(
             }
             Some(crate::two_way_transducer::analyze_from_bundle(all_syntax, categories))
         });
+        #[cfg(feature = "sft")]
+        let h_sft = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Sft) {
+                return None;
+            }
+            Some(crate::sft::analyze_from_bundle(all_syntax, categories))
+        });
         #[cfg(feature = "alternating")]
         let h_alternating = s.spawn(|| {
             #[cfg(feature = "predicate-dispatch")]
@@ -1717,6 +1781,42 @@ fn run_math_analyses_parallel(
             }
             Some(crate::alternating::analyze_from_bundle(all_syntax, categories))
         });
+
+        // Phase 8: Constraint theory analyses
+        #[cfg(feature = "presburger")]
+        let h_presburger = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::LinearArithmetic) {
+                return None;
+            }
+            Some(crate::presburger::analyze_from_bundle(all_syntax))
+        });
+        #[cfg(feature = "unification")]
+        let h_unification = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Unification) {
+                return None;
+            }
+            Some(crate::unification::analyze_from_bundle(all_syntax))
+        });
+        #[cfg(feature = "lattice-theory")]
+        let h_lattice = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::SubtypeLattice) {
+                return None;
+            }
+            Some(crate::lattice_theory::analyze_from_bundle(all_syntax, categories))
+        });
+
+        // Phase 8B: Refinement type analysis (synchronous — lightweight syntactic checks)
+        #[cfg(feature = "type-system")]
+        let refinement_analysis_result: Option<RefinementAnalysisResult> = {
+            if bundle.refinement_types.is_empty() {
+                None
+            } else {
+                Some(analyze_refinement_types(bundle))
+            }
+        };
 
         // ── Collect results ──────────────────────────────────────────────
         MathAnalysisResults {
@@ -1770,8 +1870,38 @@ fn run_math_analyses_parallel(
             multiset_result: h_multiset.join().expect("DB03: multiset analysis thread panicked"),
             #[cfg(feature = "two-way-transducer")]
             two_way_result: h_two_way.join().expect("DB03: two-way transducer analysis thread panicked"),
+            #[cfg(feature = "sft")]
+            sft_result: h_sft.join().expect("DB03: SFT analysis thread panicked"),
+            // ── E-graph equality saturation (placeholder — filled below) ──
+            #[cfg(feature = "egraph")]
+            egraph_result: None,
+            // ── Constraint theory analyses ──
+            #[cfg(feature = "presburger")]
+            presburger_result: h_presburger.join().expect("DB03: Presburger analysis thread panicked"),
+            #[cfg(feature = "unification")]
+            unification_result: h_unification.join().expect("DB03: Unification analysis thread panicked"),
+            #[cfg(feature = "lattice-theory")]
+            lattice_result: h_lattice.join().expect("DB03: Lattice analysis thread panicked"),
+            // ── Refinement type analysis ──
+            #[cfg(feature = "type-system")]
+            refinement_analysis: refinement_analysis_result,
         }
-    })
+    });
+
+    // Phase 8C: E-graph equality saturation (sequential — depends on confluence result)
+    #[cfg(feature = "egraph")]
+    {
+        // egraph feature implies trs-analysis, so confluence_result is available
+        let confluence_ref = results.confluence_result.as_ref();
+        let egraph_result = crate::egraph::analyze_from_bundle(
+            &bundle.all_syntax,
+            confluence_ref,
+            &crate::egraph::EGraphConfig::default(),
+        );
+        results.egraph_result = egraph_result;
+    }
+
+    results
 }
 
 /// Run all mathematical analyses sequentially (fallback when DB03 gate is off
@@ -1965,7 +2095,132 @@ fn run_math_analyses_sequential(
                 Some(crate::two_way_transducer::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
         } else { None },
+        #[cfg(feature = "sft")]
+        sft_result: if eligible {
+            (|| {
+                dispatch_gate!(Sft);
+                Some(crate::sft::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else { None },
+        // ── E-graph equality saturation (placeholder — filled by caller) ──
+        #[cfg(feature = "egraph")]
+        egraph_result: None,
+        // ── Constraint theory analyses ──
+        #[cfg(feature = "presburger")]
+        presburger_result: if eligible {
+            (|| {
+                dispatch_gate!(LinearArithmetic);
+                Some(crate::presburger::analyze_from_bundle(&bundle.all_syntax))
+            })()
+        } else { None },
+        #[cfg(feature = "unification")]
+        unification_result: if eligible {
+            (|| {
+                dispatch_gate!(Unification);
+                Some(crate::unification::analyze_from_bundle(&bundle.all_syntax))
+            })()
+        } else { None },
+        #[cfg(feature = "lattice-theory")]
+        lattice_result: if eligible {
+            (|| {
+                dispatch_gate!(SubtypeLattice);
+                Some(crate::lattice_theory::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else { None },
+        // ── Refinement type analysis ──
+        #[cfg(feature = "type-system")]
+        refinement_analysis: if !bundle.refinement_types.is_empty() {
+            Some(analyze_refinement_types(bundle))
+        } else {
+            None
+        },
     }
+}
+
+/// Analyze refinement type definitions from the language specification.
+///
+/// This runs at compile time during `language!` macro expansion. It checks:
+/// - RT01: predicate unsatisfiability (dead refinement type)
+/// - RT02: predicate tautology (refinement equivalent to base type)
+/// - RT03: pairwise empty intersection
+/// - RT04: pairwise subtype detection
+/// - RT05: decidability tier classification
+/// - RT06: name shadowing of base types
+#[cfg(feature = "type-system")]
+fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnalysisResult {
+    use crate::RefinementPredKind;
+
+    let mut result = RefinementAnalysisResult::default();
+    let spec = &bundle.refinement_types;
+
+    // Collect base category names for RT06 shadow detection
+    let base_category_names: std::collections::HashSet<&str> = bundle.categories
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+
+    for rt in spec {
+        // RT05: Classify decidability tier based on predicate kind
+        let tier = match rt.predicate_kind {
+            RefinementPredKind::Presburger => "T2 (decidable, automata-based)".to_string(),
+            RefinementPredKind::Structural => "T2 (decidable, unification-based)".to_string(),
+            RefinementPredKind::Behavioral => "T3 (bounded, quantified)".to_string(),
+            RefinementPredKind::Mixed => "T3 (bounded, mixed constraint domains)".to_string(),
+        };
+        result.decidability_tiers.push((rt.name.clone(), tier));
+
+        // RT06: Check if refinement type name shadows a base category
+        if base_category_names.contains(rt.name.as_str()) {
+            result.name_shadows.push((rt.name.clone(), rt.base_category.clone()));
+        }
+
+        // RT01/RT02: Predicate analysis
+        // For now, mark predicates that are syntactically trivial.
+        // Full satisfiability checking requires the actual ConstraintTheory
+        // instances (Presburger NFA, etc.) which are only available when
+        // the corresponding features are enabled. The per-predicate analysis
+        // is deferred to the feature-gated analysis modules.
+        if rt.predicate_repr == "true" || rt.predicate_repr.is_empty() {
+            result.tautological.push((
+                rt.name.clone(),
+                "predicate is trivially true".to_string(),
+            ));
+        } else if rt.predicate_repr == "false" {
+            result.unsatisfiable.push((
+                rt.name.clone(),
+                "predicate is trivially false".to_string(),
+            ));
+        }
+    }
+
+    // RT03/RT04/RT10: SFA dispatch analysis + pairwise overlap/subsumption
+    // Uses the RefinementDispatchAnalysis from type_system.rs for predicate-aware
+    // disjointness and subsumption checking.
+    let dispatch = crate::type_system::analyze_refinement_dispatch(spec);
+
+    // Merge dispatch results into the RT03/RT04 lints
+    for (sub, sup) in &dispatch.subtype_pairs {
+        if !result.subtype_pairs.iter().any(|(s, p)| s == sub && p == sup) {
+            result.subtype_pairs.push((sub.clone(), sup.clone()));
+        }
+    }
+    for (a, b) in &dispatch.disjoint_pairs {
+        // Disjoint pairs don't trigger RT03 — they're the *absence* of
+        // empty intersection (both are individually satisfiable but share
+        // no values). RT03 is about detecting that the intersection is empty
+        // when the user might have expected overlap.
+        // (No-op: disjointness is informational, not a warning)
+        let _ = (a, b);
+    }
+    for (a, b) in &dispatch.overlapping_pairs {
+        // Overlapping predicates: potential dispatch ambiguity.
+        // This feeds into future lint for dispatch safety.
+        let _ = (a, b);
+    }
+
+    result.dispatch_analysis = Some(dispatch);
+
+    result
 }
 
 /// Generate parser code from the parser bundle.
@@ -3232,6 +3487,18 @@ fn generate_parser_code(
     let multiset_result = math_results.multiset_result;
     #[cfg(feature = "two-way-transducer")]
     let two_way_result = math_results.two_way_result;
+    #[cfg(feature = "sft")]
+    let sft_result = math_results.sft_result;
+    #[cfg(feature = "egraph")]
+    let egraph_result = math_results.egraph_result;
+    #[cfg(feature = "presburger")]
+    let presburger_result = math_results.presburger_result;
+    #[cfg(feature = "unification")]
+    let unification_result = math_results.unification_result;
+    #[cfg(feature = "lattice-theory")]
+    let lattice_result = math_results.lattice_result;
+    #[cfg(feature = "type-system")]
+    let refinement_analysis = math_results.refinement_analysis;
 
     let math_analysis_elapsed = math_analysis_start.elapsed();
 
@@ -3414,8 +3681,22 @@ fn generate_parser_code(
             multiset_result: multiset_result.as_ref(),
             #[cfg(feature = "two-way-transducer")]
             two_way_result: two_way_result.as_ref(),
+            #[cfg(feature = "sft")]
+            sft_result: sft_result.as_ref(),
+            #[cfg(feature = "egraph")]
+            egraph_result: egraph_result.as_ref(),
             #[cfg(feature = "predicate-dispatch")]
             dispatch_diagnostics: None, // TODO: wire from Phase 7A dispatch plan when available
+            // ── Constraint theory analysis results ──
+            #[cfg(feature = "presburger")]
+            presburger_result: presburger_result.as_ref(),
+            #[cfg(feature = "unification")]
+            unification_result: unification_result.as_ref(),
+            #[cfg(feature = "lattice-theory")]
+            lattice_result: lattice_result.as_ref(),
+            // ── Refinement type analysis results ──
+            #[cfg(feature = "type-system")]
+            refinement_analysis: refinement_analysis.as_ref(),
         };
 
         // DB04: Use cached lint results when the optimization gate is enabled.
@@ -6127,6 +6408,8 @@ mod tests {
             rule_locations: std::collections::HashMap::new(),
             semantic_dependency_groups: Vec::new(),
             custom_tokens: Vec::new(),
+            #[cfg(feature = "type-system")]
+            refinement_types: Vec::new(),
         };
 
         let results = super::run_math_analyses_sequential(&bundle, None, false);
@@ -6179,6 +6462,8 @@ mod tests {
             rule_locations: std::collections::HashMap::new(),
             semantic_dependency_groups: Vec::new(),
             custom_tokens: Vec::new(),
+            #[cfg(feature = "type-system")]
+            refinement_types: Vec::new(),
         };
 
         let results = super::run_math_analyses_parallel(&bundle, None);

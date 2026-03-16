@@ -108,6 +108,19 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
         }
     }
 
+    // Refinement type membership relations: is_refined_posint(Int), ...
+    for rdef in &language.refinement_types {
+        let rel_name = format_ident!("is_refined_{}", rdef.name.to_string().to_lowercase());
+        let base_type_str = match &rdef.base_type {
+            crate::ast::types::TypeExpr::Base(id) => id.to_string(),
+            _ => continue,
+        };
+        out.push(RelationForExtraction {
+            name: rel_name,
+            param_types: vec![base_type_str],
+        });
+    }
+
     out
 }
 
@@ -183,6 +196,12 @@ pub fn generate_relations(language: &LanguageDef, _demanded: &BTreeSet<String>) 
     let projection_relations = generate_collection_projection_relations(language);
     relations.extend(projection_relations);
 
+    // Refinement type membership relations.
+    // For each refinement type definition (e.g., PosInt = { x: Int | x > 0 }),
+    // generates: relation is_refined_posint(Int);
+    let refinement_relations = generate_refinement_relations(language);
+    relations.extend(refinement_relations);
+
     quote! {
         #(#relations)*
     }
@@ -227,6 +246,36 @@ fn generate_collection_projection_relations(language: &LanguageDef) -> Vec<Token
                 relation #rel_name(#parent_cat, #elem_cat);
             });
         }
+    }
+
+    relations
+}
+
+/// Generate refinement type membership relations.
+///
+/// For each refinement type definition in `language.refinement_types`,
+/// generates an Ascent relation declaration:
+/// ```text
+/// relation is_refined_posint(Int);
+/// ```
+///
+/// These relations are populated by rules generated in
+/// [`super::rules::generate_refinement_type_rules`].
+fn generate_refinement_relations(language: &LanguageDef) -> Vec<TokenStream> {
+    let mut relations = Vec::new();
+
+    for rdef in &language.refinement_types {
+        let rel_name = format_ident!("is_refined_{}", rdef.name.to_string().to_lowercase());
+        let base_cat = &rdef.base_type;
+        // Resolve the base type identifier from TypeExpr.
+        let base_ident = match base_cat {
+            crate::ast::types::TypeExpr::Base(id) => id.clone(),
+            _ => continue, // Only base types supported as refinement base for now
+        };
+
+        relations.push(quote! {
+            relation #rel_name(#base_ident);
+        });
     }
 
     relations

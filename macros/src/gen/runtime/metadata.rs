@@ -291,6 +291,17 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
                         }
                     }
                 },
+                TermParam::GuardBody { name, .. } => {
+                    let name_str = format!("?{}", name);
+                    let name_lit = LitStr::new(&name_str, name.span());
+                    quote! {
+                        mettail_runtime::FieldDef {
+                            name: #name_lit,
+                            ty: "Guard",
+                            is_binder: false,
+                        }
+                    }
+                },
             })
             .collect();
 
@@ -380,6 +391,7 @@ fn type_expr_to_string(ty: &TypeExpr) -> String {
         TypeExpr::MultiBinder(inner) => {
             format!("{}*", type_expr_to_string(inner))
         },
+        TypeExpr::Refined { base, .. } => type_expr_to_string(base),
     }
 }
 
@@ -414,6 +426,9 @@ fn premise_to_display_string(p: &Premise) -> String {
         },
         Premise::ForAll { collection, param, body } => {
             format!("{}.*map(|{}| {})", collection, param, premise_to_display_string(body))
+        },
+        Premise::BehavioralGuard(pred) => {
+            format!("guard({:?})", pred)
         },
     }
 }

@@ -21,8 +21,8 @@
  * Spec-to-Code Traceability:
  *   Rocq Definition           | Rust Code                         | Location
  *   --------------------------|-----------------------------------|--------------------------
- *   symbol_kind               | SymbolKind                        | vpa.rs:100-110
- *   classify                  | VpaAlphabet::classify()           | vpa.rs:75-86
+ *   symbol_kind               | SymbolKind                        | vpa.rs:137-141
+ *   classify                  | VpaAlphabet::classify()           | vpa.rs:110-123
  *   step / run / accepts      | Vpa run simulation                | vpa.rs:130-175
  *   complement_is_final       | complement()                      | vpa.rs (complement fn)
  *   prod_step / prod_run      | intersect()                       | vpa.rs (intersect fn)
@@ -37,7 +37,6 @@ From Stdlib Require Import Arith.
 From Stdlib Require Import PeanoNat.
 From Stdlib Require Import Lia.
 From Stdlib Require Import Decidable.
-From Hammer Require Import Tactics.
 
 Import ListNotations.
 

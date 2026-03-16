@@ -8,5 +8,6 @@
 pub mod depth;
 pub mod ground;
 pub mod hash_consing_analysis;
+pub mod match_pattern;
 pub mod normalize;
 pub mod subst;

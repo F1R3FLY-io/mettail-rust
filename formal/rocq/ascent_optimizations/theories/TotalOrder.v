@@ -20,13 +20,13 @@
  * Spec-to-Code Traceability:
  *   Rocq Definition          | Rust / Ascent Code                | Location
  *   -------------------------|-----------------------------------|--------------------------
- *   cmp_var                  | OrdVar::cmp                       | binding.rs:266-289
- *   cmp_scope                | Scope::cmp                        | binding.rs:111-134
- *   hash_uid                 | hash_uid closure in OrdVar::cmp   | binding.rs:279-283
- *   hash_pat                 | hash_pat closure in Scope::cmp    | binding.rs:127-130
+ *   cmp_var                  | OrdVar::cmp                       | binding.rs:389-411
+ *   cmp_scope                | Scope::cmp                        | binding.rs:230-253
+ *   hash_uid                 | hash_uid closure in OrdVar::cmp   | binding.rs:402-406
+ *   hash_pat                 | hash_pat closure in Scope::cmp    | binding.rs:244-248
  *   Free / Bound             | Var::Free / Var::Bound            | moniker crate
- *   OrdVar                   | pub struct OrdVar(pub Var<String>) | binding.rs:256-258
- *   Scope                    | pub struct Scope<P, T> { inner }  | binding.rs:87-89
+ *   OrdVar                   | pub struct OrdVar(pub Var<String>) | binding.rs:379-381
+ *   Scope                    | pub struct Scope<P, T> { inner }  | binding.rs:206-208
  *
  * Rocq 9.1 compatible.
  *)
@@ -157,7 +157,7 @@ Section OrdVarOrder.
     | Free : UID -> Var
     | Bound : ScopeId -> BinderId -> Var.
 
-  (* OrdVar comparison: mirrors binding.rs:266-289 *)
+  (* OrdVar comparison: mirrors binding.rs:389-411 *)
   Definition cmp_var (v1 v2 : Var) : comparison :=
     match v1, v2 with
     | Free _, Bound _ _ => Lt          (* Free < Bound by variant discriminant *)
@@ -318,13 +318,13 @@ Section ScopeOrder.
   Variable eq_pat : P -> P -> Prop.
   Hypothesis eq_pat_dec : forall p1 p2, {eq_pat p1 p2} + {~ eq_pat p1 p2}.
 
-  (* Scope = (pattern, body) pair — mirrors binding.rs:87-89 *)
+  (* Scope = (pattern, body) pair — mirrors binding.rs:206-208 *)
   Record Scope_t := mkScope {
     scope_pattern : P;
     scope_body : T;
   }.
 
-  (* Scope comparison: mirrors binding.rs:111-134 *)
+  (* Scope comparison: mirrors binding.rs:230-253 *)
   Definition cmp_scope (s1 s2 : Scope_t) : comparison :=
     cmp_then
       (Z.compare (hash_pat (scope_pattern s1)) (hash_pat (scope_pattern s2)))

@@ -24,6 +24,11 @@ fn term_context_param_names(term_context: &[TermParam]) -> Vec<syn::Ident> {
                 names.push(binder.clone());
                 names.push(body.clone());
             },
+            TermParam::GuardBody { name, .. } => {
+                // Guard bodies are not constructor fields; they are evaluated
+                // separately by the behavioral guard evaluator.
+                let _ = name;
+            },
         }
     }
     names

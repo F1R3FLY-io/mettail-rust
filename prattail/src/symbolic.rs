@@ -1807,6 +1807,305 @@ impl crate::predicate_dispatch::PredicateCompiler for SymbolicCompiler {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ProductAlgebra — Cartesian product of two Boolean algebras
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A predicate over the Cartesian product of two Boolean algebras.
+///
+/// Represents Boolean combinations of predicates from algebras `A` and `B`.
+/// The domain is the pair `(A::Domain, B::Domain)`, and satisfiability requires
+/// both components to be satisfiable (independent domains).
+#[derive(Clone, Debug)]
+pub enum ProductPred<A: BooleanAlgebra, B: BooleanAlgebra> {
+    /// Always true.
+    True,
+    /// Always false.
+    False,
+    /// Both left and right predicates must be satisfied.
+    Both(A::Predicate, B::Predicate),
+    /// Only left predicate constrained (right is implicitly True).
+    LeftOnly(A::Predicate),
+    /// Only right predicate constrained (left is implicitly True).
+    RightOnly(B::Predicate),
+    /// Conjunction of two product predicates.
+    And(Box<ProductPred<A, B>>, Box<ProductPred<A, B>>),
+    /// Disjunction of two product predicates.
+    Or(Box<ProductPred<A, B>>, Box<ProductPred<A, B>>),
+    /// Negation of a product predicate.
+    Not(Box<ProductPred<A, B>>),
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> PartialEq for ProductPred<A, B> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ProductPred::True, ProductPred::True) => true,
+            (ProductPred::False, ProductPred::False) => true,
+            (ProductPred::Both(a1, b1), ProductPred::Both(a2, b2)) => a1 == a2 && b1 == b2,
+            (ProductPred::LeftOnly(a1), ProductPred::LeftOnly(a2)) => a1 == a2,
+            (ProductPred::RightOnly(b1), ProductPred::RightOnly(b2)) => b1 == b2,
+            (ProductPred::And(l1, r1), ProductPred::And(l2, r2)) => l1 == l2 && r1 == r2,
+            (ProductPred::Or(l1, r1), ProductPred::Or(l2, r2)) => l1 == l2 && r1 == r2,
+            (ProductPred::Not(a), ProductPred::Not(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> Eq for ProductPred<A, B> {}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> std::hash::Hash for ProductPred<A, B> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            ProductPred::True | ProductPred::False => {}
+            ProductPred::Both(a, b) => {
+                a.hash(state);
+                b.hash(state);
+            }
+            ProductPred::LeftOnly(a) => a.hash(state),
+            ProductPred::RightOnly(b) => b.hash(state),
+            ProductPred::And(l, r) | ProductPred::Or(l, r) => {
+                l.hash(state);
+                r.hash(state);
+            }
+            ProductPred::Not(inner) => inner.hash(state),
+        }
+    }
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> fmt::Display for ProductPred<A, B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProductPred::True => write!(f, "TRUE"),
+            ProductPred::False => write!(f, "FALSE"),
+            ProductPred::Both(a, b) => write!(f, "({:?} × {:?})", a, b),
+            ProductPred::LeftOnly(a) => write!(f, "({:?} × TRUE)", a),
+            ProductPred::RightOnly(b) => write!(f, "(TRUE × {:?})", b),
+            ProductPred::And(l, r) => write!(f, "({} ∧ {})", l, r),
+            ProductPred::Or(l, r) => write!(f, "({} ∨ {})", l, r),
+            ProductPred::Not(inner) => write!(f, "¬{}", inner),
+        }
+    }
+}
+
+/// Domain element for the product algebra: a pair of domain elements.
+#[derive(Clone, Debug)]
+pub struct ProductDomain<A: BooleanAlgebra, B: BooleanAlgebra>(pub A::Domain, pub B::Domain);
+
+/// A Boolean algebra combining two independent Boolean algebras.
+///
+/// The product algebra `A × B` has:
+/// - **Predicates**: Boolean combinations of `A::Predicate` and `B::Predicate`
+/// - **Domain**: `(A::Domain, B::Domain)` pairs
+/// - **Satisfiability**: `Both(a, b)` requires both `a` and `b` satisfiable
+///   (independent domains, so satisfiability factors)
+///
+/// This enables mixing constraint domains: e.g.,
+/// `ProductAlgebra<PresburgerAlgebra, CharClassAlgebra>` for guards combining
+/// numeric and character constraints.
+#[derive(Clone, Debug)]
+pub struct ProductAlgebra<A: BooleanAlgebra, B: BooleanAlgebra> {
+    /// Left component algebra.
+    pub left: A,
+    /// Right component algebra.
+    pub right: B,
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> ProductAlgebra<A, B> {
+    /// Create a new product algebra from two component algebras.
+    pub fn new(left: A, right: B) -> Self {
+        ProductAlgebra { left, right }
+    }
+
+    /// Collect all atomic (left, right) predicate pairs in DNF.
+    ///
+    /// Converts the product predicate to disjunctive normal form over
+    /// the atomic predicates. Each disjunct is a pair `(left_pred, right_pred)`.
+    /// The overall predicate is satisfiable iff at least one disjunct has
+    /// both components satisfiable (independent domains factor per-disjunct).
+    fn to_dnf(&self, pred: &ProductPred<A, B>) -> Vec<(A::Predicate, B::Predicate)> {
+        match pred {
+            ProductPred::True => {
+                vec![(self.left.true_pred(), self.right.true_pred())]
+            }
+            ProductPred::False => vec![],
+            ProductPred::Both(a, b) => vec![(a.clone(), b.clone())],
+            ProductPred::LeftOnly(a) => vec![(a.clone(), self.right.true_pred())],
+            ProductPred::RightOnly(b) => vec![(self.left.true_pred(), b.clone())],
+            ProductPred::And(l, r) => {
+                let l_dnf = self.to_dnf(l);
+                let r_dnf = self.to_dnf(r);
+                let mut result = Vec::with_capacity(l_dnf.len() * r_dnf.len());
+                for (ll, lr) in &l_dnf {
+                    for (rl, rr) in &r_dnf {
+                        let left_conj = self.left.and(ll, rl);
+                        let right_conj = self.right.and(lr, rr);
+                        result.push((left_conj, right_conj));
+                    }
+                }
+                result
+            }
+            ProductPred::Or(l, r) => {
+                let mut l_dnf = self.to_dnf(l);
+                let r_dnf = self.to_dnf(r);
+                l_dnf.extend(r_dnf);
+                l_dnf
+            }
+            ProductPred::Not(inner) => {
+                // ¬P: push negation down to atoms using De Morgan's laws.
+                // ¬(A ∧ B) = ¬A ∨ ¬B
+                // ¬(A ∨ B) = ¬A ∧ ¬B
+                // ¬True = False, ¬False = True
+                // ¬Both(a,b) = LeftOnly(¬a) ∨ RightOnly(¬b) (De Morgan over independent domains)
+                // ¬LeftOnly(a) = LeftOnly(¬a) (right was True, remains True)
+                // ¬RightOnly(b) = RightOnly(¬b) (left was True, remains True)
+                let negated = self.negate_pred(inner);
+                self.to_dnf(&negated)
+            }
+        }
+    }
+
+    /// Push negation down to atomic predicates (NNF conversion).
+    fn negate_pred(&self, pred: &ProductPred<A, B>) -> ProductPred<A, B> {
+        match pred {
+            ProductPred::True => ProductPred::False,
+            ProductPred::False => ProductPred::True,
+            ProductPred::Both(a, b) => {
+                // ¬(a ∧ b) = ¬a ∨ ¬b (De Morgan, independent domains)
+                ProductPred::Or(
+                    Box::new(ProductPred::LeftOnly(self.left.not(a))),
+                    Box::new(ProductPred::RightOnly(self.right.not(b))),
+                )
+            }
+            ProductPred::LeftOnly(a) => ProductPred::LeftOnly(self.left.not(a)),
+            ProductPred::RightOnly(b) => ProductPred::RightOnly(self.right.not(b)),
+            ProductPred::And(l, r) => {
+                // ¬(L ∧ R) = ¬L ∨ ¬R
+                ProductPred::Or(
+                    Box::new(self.negate_pred(l)),
+                    Box::new(self.negate_pred(r)),
+                )
+            }
+            ProductPred::Or(l, r) => {
+                // ¬(L ∨ R) = ¬L ∧ ¬R
+                ProductPred::And(
+                    Box::new(self.negate_pred(l)),
+                    Box::new(self.negate_pred(r)),
+                )
+            }
+            ProductPred::Not(inner) => (**inner).clone(), // Double negation
+        }
+    }
+
+    /// Extract the left predicate from a product predicate (for witness extraction).
+    fn extract_left(&self, pred: &ProductPred<A, B>) -> A::Predicate {
+        match pred {
+            ProductPred::True | ProductPred::RightOnly(_) => self.left.true_pred(),
+            ProductPred::False => self.left.false_pred(),
+            ProductPred::Both(a, _) | ProductPred::LeftOnly(a) => a.clone(),
+            ProductPred::And(l, r) => {
+                self.left.and(&self.extract_left(l), &self.extract_left(r))
+            }
+            ProductPred::Or(l, r) => {
+                self.left.or(&self.extract_left(l), &self.extract_left(r))
+            }
+            ProductPred::Not(inner) => self.left.not(&self.extract_left(inner)),
+        }
+    }
+
+    /// Extract the right predicate from a product predicate (for witness extraction).
+    fn extract_right(&self, pred: &ProductPred<A, B>) -> B::Predicate {
+        match pred {
+            ProductPred::True | ProductPred::LeftOnly(_) => self.right.true_pred(),
+            ProductPred::False => self.right.false_pred(),
+            ProductPred::Both(_, b) | ProductPred::RightOnly(b) => b.clone(),
+            ProductPred::And(l, r) => {
+                self.right.and(&self.extract_right(l), &self.extract_right(r))
+            }
+            ProductPred::Or(l, r) => {
+                self.right.or(&self.extract_right(l), &self.extract_right(r))
+            }
+            ProductPred::Not(inner) => self.right.not(&self.extract_right(inner)),
+        }
+    }
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> BooleanAlgebra for ProductAlgebra<A, B> {
+    type Predicate = ProductPred<A, B>;
+    type Domain = ProductDomain<A, B>;
+
+    fn true_pred(&self) -> ProductPred<A, B> {
+        ProductPred::True
+    }
+
+    fn false_pred(&self) -> ProductPred<A, B> {
+        ProductPred::False
+    }
+
+    fn and(&self, a: &ProductPred<A, B>, b: &ProductPred<A, B>) -> ProductPred<A, B> {
+        match (a, b) {
+            (ProductPred::True, _) => b.clone(),
+            (_, ProductPred::True) => a.clone(),
+            (ProductPred::False, _) | (_, ProductPred::False) => ProductPred::False,
+            _ => ProductPred::And(Box::new(a.clone()), Box::new(b.clone())),
+        }
+    }
+
+    fn or(&self, a: &ProductPred<A, B>, b: &ProductPred<A, B>) -> ProductPred<A, B> {
+        match (a, b) {
+            (ProductPred::True, _) | (_, ProductPred::True) => ProductPred::True,
+            (ProductPred::False, _) => b.clone(),
+            (_, ProductPred::False) => a.clone(),
+            _ => ProductPred::Or(Box::new(a.clone()), Box::new(b.clone())),
+        }
+    }
+
+    fn not(&self, a: &ProductPred<A, B>) -> ProductPred<A, B> {
+        match a {
+            ProductPred::True => ProductPred::False,
+            ProductPred::False => ProductPred::True,
+            ProductPred::Not(inner) => (**inner).clone(),
+            _ => ProductPred::Not(Box::new(a.clone())),
+        }
+    }
+
+    fn is_satisfiable(&self, pred: &ProductPred<A, B>) -> bool {
+        // Convert to DNF and check each disjunct independently.
+        // A disjunct (left, right) is satisfiable iff both components are.
+        // The overall predicate is satisfiable iff any disjunct is.
+        let dnf = self.to_dnf(pred);
+        dnf.iter().any(|(l, r)| {
+            self.left.is_satisfiable(l) && self.right.is_satisfiable(r)
+        })
+    }
+
+    fn witness(&self, pred: &ProductPred<A, B>) -> Option<ProductDomain<A, B>> {
+        let dnf = self.to_dnf(pred);
+        for (l, r) in &dnf {
+            if let (Some(lw), Some(rw)) = (self.left.witness(l), self.right.witness(r)) {
+                return Some(ProductDomain(lw, rw));
+            }
+        }
+        None
+    }
+
+    fn evaluate(&self, pred: &ProductPred<A, B>, elem: &ProductDomain<A, B>) -> bool {
+        match pred {
+            ProductPred::True => true,
+            ProductPred::False => false,
+            ProductPred::Both(a, b) => {
+                self.left.evaluate(a, &elem.0) && self.right.evaluate(b, &elem.1)
+            }
+            ProductPred::LeftOnly(a) => self.left.evaluate(a, &elem.0),
+            ProductPred::RightOnly(b) => self.right.evaluate(b, &elem.1),
+            ProductPred::And(l, r) => self.evaluate(l, elem) && self.evaluate(r, elem),
+            ProductPred::Or(l, r) => self.evaluate(l, elem) || self.evaluate(r, elem),
+            ProductPred::Not(inner) => !self.evaluate(inner, elem),
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -3015,6 +3314,171 @@ mod tests {
             3,
             "three rules with same terminal should yield 3 overlap pairs"
         );
+    }
+
+    // ── ProductAlgebra tests ────────────────────────────────────────────
+
+    #[test]
+    fn product_true_is_satisfiable() {
+        let left = IntervalAlgebra::new(0, 100);
+        let right = IntervalAlgebra::new(0, 100);
+        let product = ProductAlgebra::new(left, right);
+        assert!(product.is_satisfiable(&product.true_pred()));
+    }
+
+    #[test]
+    fn product_false_is_not_satisfiable() {
+        let left = IntervalAlgebra::new(0, 100);
+        let right = IntervalAlgebra::new(0, 100);
+        let product = ProductAlgebra::new(left, right);
+        assert!(!product.is_satisfiable(&product.false_pred()));
+    }
+
+    #[test]
+    fn product_both_satisfiable() {
+        let left = IntervalAlgebra::new(0, 100);
+        let right = IntervalAlgebra::new(0, 100);
+        let product = ProductAlgebra::new(left, right);
+        // Both [10, 20) and [30, 40) satisfiable
+        let pred = ProductPred::Both(IntervalPred::Range(10, 20), IntervalPred::Range(30, 40));
+        assert!(product.is_satisfiable(&pred));
+    }
+
+    #[test]
+    fn product_left_unsat_makes_product_unsat() {
+        let left = IntervalAlgebra::new(0, 100);
+        let right = IntervalAlgebra::new(0, 100);
+        let product = ProductAlgebra::new(left, right);
+        // Left: [200, 300) is outside universe → unsat
+        let pred = ProductPred::Both(IntervalPred::Range(200, 300), IntervalPred::Range(10, 20));
+        assert!(!product.is_satisfiable(&pred));
+    }
+
+    #[test]
+    fn product_right_unsat_makes_product_unsat() {
+        let left = IntervalAlgebra::new(0, 100);
+        let right = IntervalAlgebra::new(0, 100);
+        let product = ProductAlgebra::new(left, right);
+        // Right: empty range
+        let pred = ProductPred::Both(IntervalPred::Range(10, 20), IntervalPred::Range(50, 40));
+        assert!(!product.is_satisfiable(&pred));
+    }
+
+    #[test]
+    fn product_left_only_satisfiable() {
+        let left = IntervalAlgebra::new(0, 100);
+        let right = IntervalAlgebra::new(0, 100);
+        let product = ProductAlgebra::new(left, right);
+        let pred: ProductPred<IntervalAlgebra, IntervalAlgebra> =
+            ProductPred::LeftOnly(IntervalPred::Range(10, 20));
+        assert!(product.is_satisfiable(&pred));
+    }
+
+    #[test]
+    fn product_right_only_satisfiable() {
+        let left = IntervalAlgebra::new(0, 100);
+        let right = IntervalAlgebra::new(0, 100);
+        let product = ProductAlgebra::new(left, right);
+        let pred: ProductPred<IntervalAlgebra, IntervalAlgebra> =
+            ProductPred::RightOnly(IntervalPred::Range(30, 50));
+        assert!(product.is_satisfiable(&pred));
+    }
+
+    #[test]
+    fn product_witness_extraction() {
+        let left = IntervalAlgebra::new(0, 100);
+        let right = IntervalAlgebra::new(0, 100);
+        let product = ProductAlgebra::new(left, right);
+        let pred = ProductPred::Both(IntervalPred::Range(10, 20), IntervalPred::Range(30, 40));
+        let witness = product.witness(&pred).expect("should have witness");
+        assert!(witness.0 >= 10 && witness.0 < 20);
+        assert!(witness.1 >= 30 && witness.1 < 40);
+    }
+
+    #[test]
+    fn product_evaluate() {
+        let left = IntervalAlgebra::new(0, 100);
+        let right = IntervalAlgebra::new(0, 100);
+        let product = ProductAlgebra::new(left, right);
+        let pred = ProductPred::Both(IntervalPred::Range(10, 20), IntervalPred::Range(30, 40));
+        assert!(product.evaluate(&pred, &ProductDomain(15, 35)));
+        assert!(!product.evaluate(&pred, &ProductDomain(5, 35)));
+        assert!(!product.evaluate(&pred, &ProductDomain(15, 50)));
+    }
+
+    #[test]
+    fn product_and_or_not() {
+        let left = IntervalAlgebra::new(0, 100);
+        let right = IntervalAlgebra::new(0, 100);
+        let product = ProductAlgebra::new(left, right);
+
+        let p1: ProductPred<IntervalAlgebra, IntervalAlgebra> =
+            ProductPred::LeftOnly(IntervalPred::Range(10, 20));
+        let p2: ProductPred<IntervalAlgebra, IntervalAlgebra> =
+            ProductPred::RightOnly(IntervalPred::Range(30, 40));
+
+        // AND
+        let conj = product.and(&p1, &p2);
+        assert!(product.is_satisfiable(&conj));
+        assert!(product.evaluate(&conj, &ProductDomain(15, 35)));
+        assert!(!product.evaluate(&conj, &ProductDomain(5, 35)));
+
+        // OR
+        let disj = product.or(&p1, &p2);
+        assert!(product.is_satisfiable(&disj));
+        assert!(product.evaluate(&disj, &ProductDomain(15, 50)));
+        assert!(product.evaluate(&disj, &ProductDomain(50, 35)));
+        assert!(!product.evaluate(&disj, &ProductDomain(50, 50)));
+
+        // NOT
+        let neg = product.not(&p1);
+        assert!(product.is_satisfiable(&neg));
+    }
+
+    #[test]
+    fn product_mixed_algebras() {
+        let left = IntervalAlgebra::new(0, 1000);
+        let right = CharClassAlgebra::new();
+        let product = ProductAlgebra::new(left, right);
+
+        let pred = ProductPred::Both(
+            IntervalPred::Range(65, 91),   // ASCII codes for 'A'..'Z'+1
+            CharClassPred::Range('a', 'z'), // lowercase letters
+        );
+        assert!(product.is_satisfiable(&pred));
+
+        let witness = product.witness(&pred).expect("should have witness");
+        assert!(witness.0 >= 65 && witness.0 < 91);
+        assert!(witness.1 >= 'a' && witness.1 <= 'z');
+    }
+
+    #[test]
+    fn product_sfa_determinization() {
+        let left = IntervalAlgebra::new(0, 100);
+        let right = IntervalAlgebra::new(0, 100);
+        let product = ProductAlgebra::new(left, right);
+
+        let mut sfa = SymbolicAutomaton::new(product.clone());
+        let q0 = sfa.add_state(false, Some("q0".into()));
+        let q1 = sfa.add_state(true, Some("q1".into()));
+        sfa.set_initial(q0);
+
+        // Transition on left=[10,20) × right=[30,40)
+        sfa.add_transition(
+            q0,
+            q1,
+            ProductPred::Both(IntervalPred::Range(10, 20), IntervalPred::Range(30, 40)),
+        );
+
+        assert!(!sfa.is_empty());
+        assert!(sfa.accepts(&[ProductDomain(15, 35)]));
+        assert!(!sfa.accepts(&[ProductDomain(5, 35)]));
+
+        // Determinize
+        let det = sfa.determinize();
+        assert!(!det.is_empty());
+        assert!(det.accepts(&[ProductDomain(15, 35)]));
+        assert!(!det.accepts(&[ProductDomain(5, 35)]));
     }
 }
 

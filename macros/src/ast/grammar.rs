@@ -41,6 +41,10 @@ pub enum TermParam {
     /// - `body` is the parameter name for the body (p)
     /// - `ty` is the function type [Name* -> Proc]
     MultiAbstraction { binder: Ident, body: Ident, ty: TypeExpr },
+    /// Guard body parameter: `?guard:Guard`
+    /// Carries a behavioral predicate for guarded Comm rules.
+    /// The guard is evaluated at runtime via `prattail::evaluate_quantified()`.
+    GuardBody { name: Ident, guard: super::language::BehavioralPred },
 }
 
 /// Syntax expression in patterns (can include meta-operations)
@@ -719,6 +723,10 @@ fn convert_term_context_to_items(
 
                     bindings.push((binder_idx, vec![body_idx]));
                 }
+            },
+            TermParam::GuardBody { .. } => {
+                // Guard bodies are evaluated by the behavioral guard evaluator
+                // and do not produce traditional grammar items or bindings.
             },
         }
     }

@@ -13,10 +13,10 @@
  * Spec-to-Code Traceability:
  *   Rocq Definition          | Rust / Ascent Code                   | Location
  *   -------------------------|--------------------------------------|--------------------------
- *   Node                     | category names (String)              | common.rs:218
+ *   Node                     | category names (String)              | common.rs:215
  *   edge                     | direct adjacency list                | common.rs:219-265
  *   reach                    | transitive closure loop              | common.rs:267-297
- *   bidi_reach               | compute_core_categories bidi check   | common.rs:377-384
+ *   bidi_reach               | compute_core_categories bidi check   | common.rs:658-700
  *   field_types              | constructor field type references     | common.rs:230-260
  *
  * Rocq 9.1 compatible.

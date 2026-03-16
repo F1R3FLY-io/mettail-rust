@@ -1141,6 +1141,10 @@ fn generate_var_collection_impl(
                                 }
                             }
                         },
+                        TermParam::GuardBody { .. } => {
+                            // Guard bodies do not contribute constructor fields;
+                            // they are evaluated by the behavioral guard evaluator.
+                        },
                     }
                 }
             } else {

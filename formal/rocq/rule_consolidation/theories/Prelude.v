@@ -24,7 +24,6 @@ From Stdlib Require Import PeanoNat.
 From Stdlib Require Import Lia.
 From Stdlib Require Import Permutation.
 From Stdlib Require Import SetoidList.
-From Stdlib Require Import FunctionalExtensionality.
 
 Import ListNotations.
 

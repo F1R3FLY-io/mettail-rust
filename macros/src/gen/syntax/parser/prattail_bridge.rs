@@ -19,8 +19,9 @@ use crate::ast::{
 use crate::gen::native::native_type_to_string;
 use mettail_prattail::{
     binding_power::Associativity, recursive::CollectionKind, BeamWidthConfig, CategorySpec,
-    CustomTokenSpec, LanguageSpec, LexerModeSpec, LiteralPatterns, RuleSpecInput,
-    SyncConstraintSpec, SyncSpec, SyntaxItemSpec, TreeInvariantSpec,
+    CustomTokenSpec, LanguageSpec, LexerModeSpec, LiteralPatterns, RefinementPredKind,
+    RefinementTypeSpec, RuleSpecInput, SyncConstraintSpec, SyncSpec, SyntaxItemSpec,
+    TreeInvariantSpec,
 };
 
 /// Convert a `LanguageDef` to a PraTTaIL `LanguageSpec`.
@@ -199,6 +200,29 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
     spec.modes = modes;
     spec.sync = sync;
     spec.tree_invariants = tree_invariants;
+
+    // Convert refinement type definitions from the macros AST to the pipeline spec.
+    spec.refinement_types = language
+        .refinement_types
+        .iter()
+        .map(|rt| {
+            let kind = match rt.predicate.to_pred_kind_str() {
+                "Presburger" => RefinementPredKind::Presburger,
+                "Behavioral" => RefinementPredKind::Behavioral,
+                "Structural" => RefinementPredKind::Structural,
+                "Mixed" => RefinementPredKind::Mixed,
+                _ => RefinementPredKind::Mixed,
+            };
+            RefinementTypeSpec {
+                name: rt.name.to_string(),
+                base_category: rt.base_type.to_string(),
+                variable_name: rt.var.to_string(),
+                predicate_kind: kind,
+                predicate_repr: format!("{}", rt.predicate),
+            }
+        })
+        .collect();
+
     spec
 }
 
@@ -267,6 +291,7 @@ fn convert_syntax_pattern(
                     TermParam::MultiAbstraction { binder, body, .. } => {
                         binder.to_string() == name_str || body.to_string() == name_str
                     },
+                    TermParam::GuardBody { .. } => false,
                 }) {
                     match param {
                         TermParam::Simple { ty, .. } => {
@@ -310,6 +335,10 @@ fn convert_syntax_pattern(
                                 });
                             }
                         },
+                        TermParam::GuardBody { .. } => {
+                            // Guard bodies are not syntax items; handled by
+                            // behavioral guard evaluator.
+                        },
                     }
                 } else {
                     // Unknown parameter — treat as ident capture
@@ -343,6 +372,7 @@ fn classify_param_from_context(
         TermParam::MultiAbstraction { binder, body, .. } => {
             binder.to_string() == name_str || body.to_string() == name_str
         },
+        TermParam::GuardBody { .. } => false,
     }) {
         match param {
             TermParam::Abstraction { binder, ty, .. } if binder.to_string() == name_str => {
@@ -377,6 +407,10 @@ fn classify_param_from_context(
                     category: base_cat,
                     param_name: name_str.to_string(),
                 }
+            },
+            TermParam::GuardBody { .. } => {
+                // Guard bodies are not syntax items; treat as ident capture fallback.
+                SyntaxItemSpec::IdentCapture { param_name: name_str.to_string() }
             },
         }
     } else {
@@ -667,6 +701,7 @@ fn extract_base_category(ty: &TypeExpr) -> String {
         TypeExpr::Collection { element, .. } => extract_base_category(element),
         TypeExpr::Arrow { codomain, .. } => extract_base_category(codomain),
         TypeExpr::MultiBinder(inner) => extract_base_category(inner),
+        TypeExpr::Refined { base, .. } => extract_base_category(base),
     }
 }
 

@@ -1,0 +1,18 @@
+# Rocq project file for Lattice Theory Correctness proofs
+#
+# Verifies lattice axioms and decidability for the subtype lattice
+# (lattice_theory.rs):
+#
+#   - Finite poset: reflexivity, antisymmetry, transitivity
+#   - Decidable subtype checking on finite DAGs
+#   - Transitive closure correctness
+#   - Join/meet commutativity, associativity, absorption, idempotence
+#
+# Model: finite poset with decidable ordering.
+#
+# Reference: Warshall (1962), Pierce (2002) Ch.15
+
+-Q theories LatticeProofs
+
+# Source files
+theories/LatticeTheoryCorrectness.v

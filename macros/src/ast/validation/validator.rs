@@ -236,6 +236,10 @@ fn validate_premise(
             validate_premise(body, pattern_vars, &inner_bound)?;
         },
         Premise::Congruence { .. } | Premise::RelationQuery { .. } => {},
+        Premise::BehavioralGuard(_) => {
+            // Behavioral guards are evaluated at runtime via LogicT;
+            // no pattern-variable validation needed here.
+        },
     }
     Ok(())
 }

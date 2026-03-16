@@ -10,9 +10,9 @@
  * Spec-to-Code Traceability:
  *   Rocq Definition          | Rust / Ascent Code                | Location
  *   -------------------------|-----------------------------------|--------------------------
- *   hash                     | DefaultHasher::new() + .finish()  | binding.rs:279-283
- *   hash_injective           | u32 UniqueId (no practical colls) | binding.rs:276 (comment)
- *   hash_le                  | .cmp() on hash values             | binding.rs:285
+ *   hash                     | DefaultHasher::new() + .finish()  | binding.rs:244-247
+ *   hash_injective           | u32 UniqueId (no practical colls) | binding.rs:239-242 (comment)
+ *   hash_le                  | .cmp() on hash values             | binding.rs:249-251
  *
  * Rocq 9.1 compatible.
  *)
@@ -44,6 +44,21 @@ Section HashModel.
 
   (* For u32-sized types, DefaultHasher has no practical collisions.
      This injectivity hypothesis reflects that. *)
+  (* DESIGN DECISION: hash_injective is a strong hypothesis (true
+     injectivity). Justified for PraTTaIL because:
+     1. Domain is u32 UniqueId (2^32 distinct values)
+     2. DefaultHasher produces u64 outputs for u32 inputs
+     3. Runtime variable count is O(1000), birthday-paradox
+        collision probability < 10^-13
+     4. Enables clean total order (hash_le_antisym) without
+        probability theory in the formalization
+     5. OrdVar ordering is used in BTree collections that only
+        require consistent ordering, not semantic equality
+
+     A collision-tolerant alternative would weaken hash_le_antisym
+     to a total preorder on Free variables and cascade through
+     TotalOrder.v and ConcreteInstantiations.v. The pragmatic
+     justification is preferred given negligible collision risk. *)
   Hypothesis hash_injective : forall a b : A, hash a = hash b -> a = b.
 
   (* Ordering derived from hash values *)

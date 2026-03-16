@@ -105,11 +105,30 @@ pub enum Optimization {
     /// TW01: Two-way transducer analysis (deadlock cycles, one-way equivalence).
     #[cfg(feature = "two-way-transducer")]
     TwoWayTransducerAnalysis,
+    /// SFT01: Symbolic finite transducer analysis (composition, functionality).
+    #[cfg(feature = "sft")]
+    SftAnalysis,
+    /// EG01: E-graph equality saturation (enhanced joinability, term simplification).
+    #[cfg(feature = "egraph")]
+    EGraphSaturation,
+    /// LA01: Linear arithmetic guard analysis (Presburger satisfiability, subsumption).
+    #[cfg(feature = "presburger")]
+    PresburgerAnalysis,
+    /// UN01: Unification guard analysis (structural pattern satisfiability, occurs check).
+    #[cfg(feature = "unification")]
+    UnificationAnalysis,
+    /// LT01: Subtype lattice guard analysis (join/meet, exhaustiveness checking).
+    #[cfg(feature = "lattice-theory")]
+    LatticeAnalysis,
 
     /// PD01: Predicate dispatch — algebraic variety classification for directed
     /// module spawning. Skips irrelevant Phase 7 modules based on predicate morphemes.
     #[cfg(feature = "predicate-dispatch")]
     PredicateDispatch,
+
+    /// RT01: Refinement type analysis — satisfiability, subtyping, decidability classification.
+    #[cfg(feature = "type-system")]
+    RefinementTypeCheck,
 
     // ── Codegen Optimization Catalog ─────────────────────────────────────────
 
@@ -227,8 +246,20 @@ impl fmt::Display for Optimization {
             Self::WeightedMsoAnalysis => write!(f, "MSO01:WeightedMsoAnalysis"),
             #[cfg(feature = "two-way-transducer")]
             Self::TwoWayTransducerAnalysis => write!(f, "TW01:TwoWayTransducerAnalysis"),
+            #[cfg(feature = "sft")]
+            Self::SftAnalysis => write!(f, "SFT01:SftAnalysis"),
+            #[cfg(feature = "egraph")]
+            Self::EGraphSaturation => write!(f, "EG01:EGraphSaturation"),
+            #[cfg(feature = "presburger")]
+            Self::PresburgerAnalysis => write!(f, "LA01:PresburgerAnalysis"),
+            #[cfg(feature = "unification")]
+            Self::UnificationAnalysis => write!(f, "UN01:UnificationAnalysis"),
+            #[cfg(feature = "lattice-theory")]
+            Self::LatticeAnalysis => write!(f, "LT01:LatticeAnalysis"),
             #[cfg(feature = "predicate-dispatch")]
             Self::PredicateDispatch => write!(f, "PD01:PredicateDispatch"),
+            #[cfg(feature = "type-system")]
+            Self::RefinementTypeCheck => write!(f, "RT01:RefinementTypeCheck"),
             Self::HashConsing => write!(f, "ART01:HashConsing"),
             Self::IncrementalDelta => write!(f, "ART02:IncrementalDelta"),
             Self::RelationIndexing => write!(f, "ART03:RelationIndexing"),
@@ -356,10 +387,34 @@ impl std::str::FromStr for Optimization {
             "TW01" => Ok(Self::TwoWayTransducerAnalysis),
             #[cfg(feature = "two-way-transducer")]
             s if s.eq_ignore_ascii_case("TwoWayTransducerAnalysis") => Ok(Self::TwoWayTransducerAnalysis),
+            #[cfg(feature = "sft")]
+            "SFT01" => Ok(Self::SftAnalysis),
+            #[cfg(feature = "sft")]
+            s if s.eq_ignore_ascii_case("SftAnalysis") => Ok(Self::SftAnalysis),
+            #[cfg(feature = "egraph")]
+            "EG01" => Ok(Self::EGraphSaturation),
+            #[cfg(feature = "egraph")]
+            s if s.eq_ignore_ascii_case("EGraphSaturation") => Ok(Self::EGraphSaturation),
+            #[cfg(feature = "presburger")]
+            "LA01" => Ok(Self::PresburgerAnalysis),
+            #[cfg(feature = "presburger")]
+            s if s.eq_ignore_ascii_case("PresburgerAnalysis") => Ok(Self::PresburgerAnalysis),
+            #[cfg(feature = "unification")]
+            "UN01" => Ok(Self::UnificationAnalysis),
+            #[cfg(feature = "unification")]
+            s if s.eq_ignore_ascii_case("UnificationAnalysis") => Ok(Self::UnificationAnalysis),
+            #[cfg(feature = "lattice-theory")]
+            "LT01" => Ok(Self::LatticeAnalysis),
+            #[cfg(feature = "lattice-theory")]
+            s if s.eq_ignore_ascii_case("LatticeAnalysis") => Ok(Self::LatticeAnalysis),
             #[cfg(feature = "predicate-dispatch")]
             "PD01" => Ok(Self::PredicateDispatch),
             #[cfg(feature = "predicate-dispatch")]
             s if s.eq_ignore_ascii_case("PredicateDispatch") => Ok(Self::PredicateDispatch),
+            #[cfg(feature = "type-system")]
+            "RT01" => Ok(Self::RefinementTypeCheck),
+            #[cfg(feature = "type-system")]
+            s if s.eq_ignore_ascii_case("RefinementTypeCheck") => Ok(Self::RefinementTypeCheck),
             "ART01" => Ok(Self::HashConsing),
             "ART02" => Ok(Self::IncrementalDelta),
             "ART03" => Ok(Self::RelationIndexing),
@@ -432,7 +487,7 @@ impl std::str::FromStr for Optimization {
                 .parse(),
             other => Err(format!(
                 "unknown optimization: '{}'. Valid values: A1, A2, A4, A5, B1, B2, B3, F1, F2, F3, G1, H1, G25, T01, V01, S01, S03, N01, \
-                 SYM01, O01, N06, V05, PT01, RA01, PR01, MT01, MS01, MSO01, TW01, \
+                 SYM01, O01, N06, V05, PT01, RA01, PR01, MT01, MS01, MSO01, TW01, LA01, UN01, LT01, PD01, RT01, \
                  ART01-ART06, BCG01-BCG06, AL01-AL06, BP01-BP05, CD01-CD05, DB01-DB04",
                 other
             )),
@@ -532,6 +587,10 @@ pub struct GrammarProfile {
     /// Number of dead binder registers.
     #[cfg(feature = "register-automata")]
     pub dead_register_count: usize,
+
+    /// Number of refinement type definitions.
+    #[cfg(feature = "type-system")]
+    pub refinement_type_count: usize,
 }
 
 /// Build a `GrammarProfile` from pipeline data and decision tree metrics.
@@ -648,6 +707,8 @@ pub fn build_grammar_profile(
         bisimulation_extra_groups: 0,
         #[cfg(feature = "register-automata")]
         dead_register_count: 0,
+        #[cfg(feature = "type-system")]
+        refinement_type_count: 0,
     }
 }
 
@@ -1010,6 +1071,56 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         format!("category_count={} (threshold: >=2)", profile.category_count),
     ));
 
+    // SFT01: Symbolic finite transducer analysis — composition & functionality checking
+    #[cfg(feature = "sft")]
+    candidates.push(OptimizationCandidate::new(
+        Optimization::SftAnalysis,
+        0.5, // diagnostic benefit
+        0.4, // moderate cost
+        profile.rule_count > 3,
+        format!("rule_count={} (threshold: >3)", profile.rule_count),
+    ));
+
+    // EG01: E-graph equality saturation — enhanced joinability & simplification
+    #[cfg(feature = "egraph")]
+    candidates.push(OptimizationCandidate::new(
+        Optimization::EGraphSaturation,
+        0.45, // moderate diagnostic benefit
+        0.4, // moderate cost (saturation loop)
+        profile.rule_count > 3,
+        format!("rule_count={} (threshold: >3)", profile.rule_count),
+    ));
+
+    // LA01: Presburger arithmetic analysis — beneficial for numeric guards
+    #[cfg(feature = "presburger")]
+    candidates.push(OptimizationCandidate::new(
+        Optimization::PresburgerAnalysis,
+        0.7, // high benefit (dead guard detection, subsumption)
+        0.2, // moderate cost (NFA construction)
+        profile.rule_count > 3,
+        format!("rule_count={} (threshold: >3)", profile.rule_count),
+    ));
+
+    // UN01: Unification analysis — beneficial for structural pattern guards
+    #[cfg(feature = "unification")]
+    candidates.push(OptimizationCandidate::new(
+        Optimization::UnificationAnalysis,
+        0.7, // high benefit (occurs check, constructor clash detection)
+        0.2, // moderate cost (Martelli-Montanari)
+        profile.rule_count > 3,
+        format!("rule_count={} (threshold: >3)", profile.rule_count),
+    ));
+
+    // LT01: Lattice analysis — beneficial for type hierarchy guards
+    #[cfg(feature = "lattice-theory")]
+    candidates.push(OptimizationCandidate::new(
+        Optimization::LatticeAnalysis,
+        0.6, // good benefit (exhaustiveness, redundant subtype detection)
+        0.1, // low cost (decidable, finite universe)
+        profile.rule_count > 2,
+        format!("rule_count={} (threshold: >2)", profile.rule_count),
+    ));
+
     // ── Tier 1: Low complexity ───────────────────────────────────────────
 
     // ART03: Relation indexing — beneficial for grammars with many rules
@@ -1337,6 +1448,19 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         format!("rule_count={} (threshold: >10)", profile.rule_count),
     ));
 
+    // RT01: Refinement type analysis
+    #[cfg(feature = "type-system")]
+    candidates.push(OptimizationCandidate::new(
+        Optimization::RefinementTypeCheck,
+        0.4,
+        0.35,
+        profile.refinement_type_count > 0,
+        format!(
+            "refinement_type_count={} (threshold: >0)",
+            profile.refinement_type_count
+        ),
+    ));
+
     // Sort by score (lexicographic: speedup first, then compile_cost)
     candidates.sort_by(|a, b| a.score.cmp(&b.score));
 
@@ -1450,6 +1574,24 @@ pub struct OptimizationGates {
     /// TW01: Two-way transducer analysis.
     #[cfg(feature = "two-way-transducer")]
     pub two_way_transducer: bool,
+    /// SFT01: Symbolic finite transducer analysis.
+    #[cfg(feature = "sft")]
+    pub sft: bool,
+    /// EG01: E-graph equality saturation.
+    #[cfg(feature = "egraph")]
+    pub egraph: bool,
+    /// LA01: Presburger arithmetic guard analysis.
+    #[cfg(feature = "presburger")]
+    pub presburger: bool,
+    /// UN01: Unification guard analysis.
+    #[cfg(feature = "unification")]
+    pub unification: bool,
+    /// LT01: Subtype lattice guard analysis.
+    #[cfg(feature = "lattice-theory")]
+    pub lattice: bool,
+    /// RT01: Refinement type analysis.
+    #[cfg(feature = "type-system")]
+    pub refinement_type_check: bool,
 
     // ── Advanced Automata Codegen Promotions ─────────────────────────────────
 
@@ -1591,6 +1733,18 @@ impl OptimizationGates {
             weighted_mso: true,
             #[cfg(feature = "two-way-transducer")]
             two_way_transducer: true,
+            #[cfg(feature = "sft")]
+            sft: true,
+            #[cfg(feature = "egraph")]
+            egraph: true,
+            #[cfg(feature = "presburger")]
+            presburger: true,
+            #[cfg(feature = "unification")]
+            unification: true,
+            #[cfg(feature = "lattice-theory")]
+            lattice: true,
+            #[cfg(feature = "type-system")]
+            refinement_type_check: true,
             #[cfg(feature = "symbolic-automata")]
             symbolic_guard_dce: true,
             #[cfg(feature = "probabilistic")]
@@ -1690,6 +1844,18 @@ impl OptimizationGates {
             weighted_mso: enabled.contains(&Optimization::WeightedMsoAnalysis),
             #[cfg(feature = "two-way-transducer")]
             two_way_transducer: enabled.contains(&Optimization::TwoWayTransducerAnalysis),
+            #[cfg(feature = "sft")]
+            sft: enabled.contains(&Optimization::SftAnalysis),
+            #[cfg(feature = "egraph")]
+            egraph: enabled.contains(&Optimization::EGraphSaturation),
+            #[cfg(feature = "presburger")]
+            presburger: enabled.contains(&Optimization::PresburgerAnalysis),
+            #[cfg(feature = "unification")]
+            unification: enabled.contains(&Optimization::UnificationAnalysis),
+            #[cfg(feature = "lattice-theory")]
+            lattice: enabled.contains(&Optimization::LatticeAnalysis),
+            #[cfg(feature = "type-system")]
+            refinement_type_check: enabled.contains(&Optimization::RefinementTypeCheck),
             #[cfg(feature = "symbolic-automata")]
             symbolic_guard_dce: enabled.contains(&Optimization::SymbolicGuardAnalysis),
             #[cfg(feature = "probabilistic")]
@@ -1781,6 +1947,18 @@ impl OptimizationGates {
             weighted_mso: false,
             #[cfg(feature = "two-way-transducer")]
             two_way_transducer: false,
+            #[cfg(feature = "sft")]
+            sft: false,
+            #[cfg(feature = "egraph")]
+            egraph: false,
+            #[cfg(feature = "presburger")]
+            presburger: false,
+            #[cfg(feature = "unification")]
+            unification: false,
+            #[cfg(feature = "lattice-theory")]
+            lattice: false,
+            #[cfg(feature = "type-system")]
+            refinement_type_check: false,
             #[cfg(feature = "symbolic-automata")]
             symbolic_guard_dce: false,
             #[cfg(feature = "probabilistic")]
@@ -1910,6 +2088,18 @@ impl OptimizationGates {
             weighted_mso: enabled.contains(&Optimization::WeightedMsoAnalysis),
             #[cfg(feature = "two-way-transducer")]
             two_way_transducer: enabled.contains(&Optimization::TwoWayTransducerAnalysis),
+            #[cfg(feature = "sft")]
+            sft: enabled.contains(&Optimization::SftAnalysis),
+            #[cfg(feature = "egraph")]
+            egraph: enabled.contains(&Optimization::EGraphSaturation),
+            #[cfg(feature = "presburger")]
+            presburger: enabled.contains(&Optimization::PresburgerAnalysis),
+            #[cfg(feature = "unification")]
+            unification: enabled.contains(&Optimization::UnificationAnalysis),
+            #[cfg(feature = "lattice-theory")]
+            lattice: enabled.contains(&Optimization::LatticeAnalysis),
+            #[cfg(feature = "type-system")]
+            refinement_type_check: enabled.contains(&Optimization::RefinementTypeCheck),
             #[cfg(feature = "symbolic-automata")]
             symbolic_guard_dce: enabled.contains(&Optimization::SymbolicGuardAnalysis),
             #[cfg(feature = "probabilistic")]
@@ -2224,8 +2414,20 @@ impl Optimization {
             Self::WeightedMsoAnalysis => OptimizationStatus::Diagnostic,
             #[cfg(feature = "two-way-transducer")]
             Self::TwoWayTransducerAnalysis => OptimizationStatus::Diagnostic,
+            #[cfg(feature = "sft")]
+            Self::SftAnalysis => OptimizationStatus::Diagnostic,
+            #[cfg(feature = "egraph")]
+            Self::EGraphSaturation => OptimizationStatus::Diagnostic,
+            #[cfg(feature = "presburger")]
+            Self::PresburgerAnalysis => OptimizationStatus::Diagnostic,
+            #[cfg(feature = "unification")]
+            Self::UnificationAnalysis => OptimizationStatus::Diagnostic,
+            #[cfg(feature = "lattice-theory")]
+            Self::LatticeAnalysis => OptimizationStatus::Diagnostic,
             #[cfg(feature = "predicate-dispatch")]
             Self::PredicateDispatch => OptimizationStatus::Diagnostic,
+            #[cfg(feature = "type-system")]
+            Self::RefinementTypeCheck => OptimizationStatus::Diagnostic,
         }
     }
 }
@@ -2435,6 +2637,8 @@ mod tests {
             bisimulation_extra_groups: 0,
             #[cfg(feature = "register-automata")]
             dead_register_count: 0,
+            #[cfg(feature = "type-system")]
+            refinement_type_count: 0,
         }
     }
 
@@ -2568,9 +2772,9 @@ mod tests {
     fn test_all_candidates_evaluated() {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
-        // 50 base + 11 cfg-gated advanced automata variants (when all features enabled)
+        // 50 base + 15 cfg-gated advanced automata + constraint theory variants + type-system + egraph (when all features enabled)
         #[cfg(feature = "full-analysis")]
-        assert_eq!(all.len(), 61, "should evaluate all 61 optimization candidates");
+        assert_eq!(all.len(), 67, "should evaluate all 67 optimization candidates");
         #[cfg(not(feature = "full-analysis"))]
         assert!(all.len() >= 50, "should evaluate at least 50 optimization candidates");
     }

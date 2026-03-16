@@ -45,7 +45,6 @@ From Stdlib Require Import Bool.
 From Stdlib Require Import Arith.
 From Stdlib Require Import PeanoNat.
 From Stdlib Require Import Lia.
-From Hammer Require Import Tactics.
 From Stdlib Require Import Setoid.
 
 Import ListNotations.

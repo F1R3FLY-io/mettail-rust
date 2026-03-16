@@ -18,17 +18,24 @@
  * bounded priority function.  The algorithm recurses on vertex count,
  * which is well-founded over nat.
  *
- * Spec-to-Code Traceability:
- *   Rocq Definition              | Rust Code                            | Location
- *   -----------------------------|--------------------------------------|--------------------------
- *   ParityGame (record)          | ParityGame struct                    | parity_tree.rs
- *   Vertex / Priority            | NodeId, Priority (u32)               | parity_tree.rs
- *   attractor                    | compute_attractor()                  | parity_tree.rs
- *   zielonka                     | solve_parity_game()                  | parity_tree.rs
- *   winning_region               | WinningRegion enum                   | parity_tree.rs
- *
  * Rocq 9.1 compatible.
  *)
+
+(*  Spec-to-Code Traceability                                            *)
+(*  ══════════════════════════════════════════════════════════════════════ *)
+(*  Rocq Definition          │ Rust Implementation          │ Line       *)
+(*  ─────────────────────────┼──────────────────────────────┼────────── *)
+(*  ParityGame (record)      │ ParityAlternatingTreeAutomaton│ parity_tree.rs:179 *)
+(*  Vertex / Priority        │ ParityTreeState / priority u32│ parity_tree.rs:62  *)
+(*  zielonka (fuel-based)    │ check_emptiness()            │ parity_tree.rs     *)
+(*  ══════════════════════════════════════════════════════════════════════ *)
+(*                                                                       *)
+(*  NOTE: The Rocq model uses Zielonka's parity game algorithm as the    *)
+(*  theoretical foundation. The Rust code implements PATA emptiness       *)
+(*  directly rather than explicit parity game solving. The structural     *)
+(*  correspondence is at the algorithmic level (both reduce to parity     *)
+(*  game reasoning), not at the API level. compute_attractor(),           *)
+(*  solve_parity_game(), and WinningRegion do not exist in Rust.          *)
 
 From Stdlib Require Import List.
 From Stdlib Require Import Bool.

@@ -323,12 +323,14 @@ Section CrossingSeqEquivalence.
      than defining the full two-way computation. *)
   Variable compute_weight : CrossingSeq -> list Symbol -> Weight.
 
-  (* Axiom: computations with the same crossing sequence and remaining
-     input produce the same weight.  This follows from determinism:
-     the future behavior of a deterministic transducer is completely
-     determined by its current state and remaining input, and the
-     crossing sequence captures all relevant state information at
-     a position boundary. *)
+  (* NOTE: cs_determines_weight is trivially true by reflexivity —
+     compute_weight is a pure function of (cs, w), so the same inputs
+     always produce the same output. The intended theorem is that the
+     crossing sequence at a boundary fully determines the weight
+     contribution, independent of position. This holds by construction
+     since compute_weight takes the crossing sequence directly, not
+     the position. The hypothesis is retained as a documentation
+     marker for this design invariant. *)
   Hypothesis cs_determines_weight : forall cs w,
     compute_weight cs w = compute_weight cs w.
 

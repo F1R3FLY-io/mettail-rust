@@ -61,6 +61,7 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     use term_gen::{generate_random_generation, generate_term_generation};
     use term_ops::depth::generate_term_depth_methods;
     use term_ops::ground::generate_is_ground_methods;
+    use term_ops::match_pattern::generate_match_pattern;
     use term_ops::normalize::{generate_flatten_helpers, generate_normalize_functions};
     use term_ops::subst::{generate_env_substitution, generate_substitution};
     use types::enums::generate_ast_enums;
@@ -81,6 +82,8 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     let eval_impl = generate_eval_method(language);
     let is_ground_impl = generate_is_ground_methods(language);
     let term_depth_impl = generate_term_depth_methods(language);
+    let match_pattern_impl = generate_match_pattern(language);
+    let guard_codegen_impl = runtime::guard_codegen::generate_guard_codegen(language);
     let var_inference_impl = generate_var_category_inference(language);
 
     // Parser code: PraTTaIL (inline) — also captures pipeline analysis
@@ -120,6 +123,10 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
         #is_ground_impl
 
         #term_depth_impl
+
+        #match_pattern_impl
+
+        #guard_codegen_impl
 
         #var_inference_impl
 

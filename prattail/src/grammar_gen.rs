@@ -665,6 +665,7 @@ mod tests {
             modes: Vec::new(),
             sync: None,
             tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
         }
     }
 

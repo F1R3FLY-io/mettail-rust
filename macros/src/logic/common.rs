@@ -234,6 +234,7 @@ pub fn compute_category_reachability(language: &LanguageDef) -> BTreeSet<(String
                     TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
                         collect_type_refs(&src, ty, &categories, &mut edges);
                     },
+                    TermParam::GuardBody { .. } => {},
                 }
             }
         } else {
@@ -320,6 +321,9 @@ fn collect_type_refs(
         },
         TypeExpr::MultiBinder(inner) => {
             collect_type_refs(src, inner, categories, edges);
+        },
+        TypeExpr::Refined { base, .. } => {
+            collect_type_refs(src, base, categories, edges);
         },
     }
 }
@@ -413,6 +417,7 @@ pub fn compute_demanded_categories(language: &LanguageDef) -> BTreeSet<String> {
                         TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
                             collect_type_expr_categories(ty, &all_categories, &mut demanded);
                         },
+                        TermParam::GuardBody { .. } => {},
                     }
                 }
             }
@@ -542,6 +547,7 @@ fn collect_constructor_field_categories(
                 TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
                     collect_type_expr_categories(ty, all_categories, demanded);
                 },
+                TermParam::GuardBody { .. } => {},
             }
         }
     } else {
@@ -594,6 +600,9 @@ fn collect_type_expr_categories(
         },
         TypeExpr::MultiBinder(inner) => {
             collect_type_expr_categories(inner, all_categories, demanded);
+        },
+        TypeExpr::Refined { base, .. } => {
+            collect_type_expr_categories(base, all_categories, demanded);
         },
     }
 }
@@ -973,6 +982,7 @@ mod tests {
             include_names: vec![],
             mixin_names: vec![],
             types: lang_types,
+            refinement_types: Vec::new(),
             token_defs: vec![],
             mode_defs: vec![],
             sync_constraints: vec![],

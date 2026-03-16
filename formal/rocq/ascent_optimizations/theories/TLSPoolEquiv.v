@@ -15,11 +15,11 @@
  *   Rocq Definition          | Rust / Ascent Code                | Location
  *   -------------------------|-----------------------------------|--------------------------
  *   vec_pattern              | vec![...] in old subterm rules    | helpers.rs (pre-Opt2)
- *   pool_pattern             | generate_tls_pool_iter            | common.rs:448-482
+ *   pool_pattern             | generate_tls_pool_iter            | common.rs:749-900
  *   classify                 | match on term variant             | generated match arms
- *   clear                    | buf.clear()                       | common.rs:475
+ *   clear                    | buf.clear()                       | common.rs:773
  *   push                     | buf.push(...)                     | common.rs (match arms)
- *   take / return            | p.take() / p.set(buf)             | common.rs:474, 479
+ *   take / return            | p.take() / p.set(buf)             | common.rs:772, 779
  *
  * Rocq 9.1 compatible.
  *)

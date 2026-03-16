@@ -1317,6 +1317,7 @@ mod tests {
             modes: Vec::new(),
             sync: None,
             tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
         }
     }
 
@@ -1520,6 +1521,8 @@ mod tests {
             rule_locations: std::collections::HashMap::new(),
             semantic_dependency_groups: Vec::new(),
             custom_tokens: Vec::new(),
+            #[cfg(feature = "type-system")]
+            refinement_types: Vec::new(),
         }
     }
 
@@ -1734,6 +1737,7 @@ mod tests {
             modes: Vec::new(),
             sync: None,
             tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
         };
 
         let bundle = build_bundle(&spec);
@@ -1811,6 +1815,7 @@ mod tests {
             modes: Vec::new(),
             sync: None,
             tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
         };
 
         let bundle = build_bundle(&spec);
@@ -1881,6 +1886,7 @@ mod tests {
             modes: Vec::new(),
             sync: None,
             tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
         };
 
         let bundle = build_bundle(&spec);

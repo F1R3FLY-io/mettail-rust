@@ -1,0 +1,16 @@
+# Rocq project file for SFT (Symbolic Finite Transducer) correctness proofs
+#
+# Verifies algebraic and functionality properties of SFTs:
+#
+#   1. SftComposition    — Left/right identity and associativity of SFT composition
+#   2. SftFunctionality  — Functionality preservation under identity, constant, composition
+#
+# Dependency order:
+#   SftComposition.v     — (standalone)
+#   SftFunctionality.v   — (standalone)
+
+-Q theories Sft
+
+# Source files (no dependencies between them)
+theories/SftComposition.v
+theories/SftFunctionality.v

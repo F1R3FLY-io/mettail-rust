@@ -122,6 +122,11 @@ pub mod confluence;
 #[cfg(feature = "trs-analysis")]
 pub mod termination;
 
+/// E-graph equality saturation: enhanced joinability, term simplification,
+/// equivalence discovery via the egg algorithm (Willsey et al., POPL 2021).
+#[cfg(feature = "egraph")]
+pub mod egraph;
+
 /// Buchi/Parity automata: infinite-word acceptance for liveness properties.
 #[cfg(feature = "omega")]
 pub mod buchi;
@@ -200,11 +205,43 @@ pub mod multiset_automata;
 #[cfg(feature = "two-way-transducer")]
 pub mod two_way_transducer;
 
+/// Symbolic Finite Transducers: output-producing transductions over infinite
+/// domains. Composition, pre/post-image, functionality (D'Antoni & Veanes 2012).
+#[cfg(feature = "sft")]
+pub mod sft;
+
 /// Predicate Dispatch Automaton: algebraic variety classification for directed
 /// module dispatch. Decomposes predicate formulas into morphemes and activates
 /// only the relevant Phase 7 modules (Eilenberg variety theorem).
 #[cfg(feature = "predicate-dispatch")]
 pub mod predicate_dispatch;
+
+/// LogicT fair backtracking search framework and ConstraintTheory trait.
+/// Implements msplit-based LogicT (Kiselyov et al., ICFP 2005) for fair
+/// disjunction and conjunction. Provides the ConstraintTheory trait for
+/// pluggable constraint domains and TheoryAlgebra bridge to BooleanAlgebra.
+#[cfg(feature = "logict")]
+pub mod logict;
+
+/// Presburger arithmetic: automata-based decision procedure for
+/// multi-variable linear integer arithmetic (Büchi 1960). Zero external deps.
+#[cfg(feature = "presburger")]
+pub mod presburger;
+
+/// Structural unification with occurs check (Martelli & Montanari 1982).
+/// ConstraintTheory implementation for pattern matching and type variable solving.
+#[cfg(feature = "unification")]
+pub mod unification;
+
+/// Subtype lattice with join/meet (LUB/GLB) operations.
+/// ConstraintTheory implementation for type hierarchy analysis.
+#[cfg(feature = "lattice-theory")]
+pub mod lattice_theory;
+
+/// Pluggable type system framework: TypeSystem trait, LatticeTypeSystem,
+/// RefinementTypeSystem, TypeSystemAlgebra bridge to BooleanAlgebra.
+#[cfg(feature = "type-system")]
+pub mod type_system;
 
 /// Safety/liveness verification API: WPDS-based property checking.
 pub mod verify;
@@ -473,6 +510,10 @@ pub struct LanguageSpec {
     /// Tree structural invariants for PATA verification.
     /// Default: empty.
     pub tree_invariants: Vec<TreeInvariantSpec>,
+    /// Refinement type definitions from the `types { ... }` block.
+    /// Each entry describes a type like `PosInt = { x: Int | x > 0 }`.
+    /// Default: empty.
+    pub refinement_types: Vec<RefinementTypeSpec>,
 }
 
 /// A category (type) in the language.
@@ -703,6 +744,7 @@ impl LanguageSpec {
             modes: Vec::new(),
             sync: None,
             tree_invariants: Vec::new(),
+            refinement_types: Vec::new(),
         }
     }
 }
@@ -752,6 +794,36 @@ impl RuleSpec {
 // Re-exports for generated code and external use
 pub use recovery::{RecoveryConfig, ParseSimulator, SimulationResult};
 pub use lint::{LintDiagnostic, LintSeverity, LintContext};
+
+// ── Refinement Type Specifications (unconditional — used by LanguageSpec) ────
+
+/// Specification for a refinement type, passed from macros to prattail pipeline.
+#[derive(Clone, Debug)]
+pub struct RefinementTypeSpec {
+    /// The refinement type name (e.g., "PosInt").
+    pub name: String,
+    /// The base category name (e.g., "Int").
+    pub base_category: String,
+    /// The binding variable name (e.g., "x").
+    pub variable_name: String,
+    /// Classification of the predicate.
+    pub predicate_kind: RefinementPredKind,
+    /// Serialized predicate representation for analysis.
+    pub predicate_repr: String,
+}
+
+/// Classification of a refinement predicate for pipeline dispatch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RefinementPredKind {
+    /// Pure linear arithmetic (e.g., `x > 0`).
+    Presburger,
+    /// Relation queries / quantified formulas.
+    Behavioral,
+    /// Structural term patterns.
+    Structural,
+    /// Mixed domain requiring ProductAlgebra composition.
+    Mixed,
+}
 
 /// Analysis data produced by the PraTTaIL pipeline during parser generation.
 ///

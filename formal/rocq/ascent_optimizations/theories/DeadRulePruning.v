@@ -10,9 +10,9 @@
  * Spec-to-Code Traceability:
  *   Rocq Definition            | Rust / Ascent Code                   | Location
  *   ---------------------------|--------------------------------------|--------------------------
- *   extract                    | generated match arms per (src,tgt)   | categories.rs:50-53
+ *   extract                    | generated match arms per (src,tgt)   | categories.rs:89-91
  *   reach                      | compute_category_reachability        | common.rs:215-298
- *   dead rule skip             | reachability check before rule gen   | categories.rs:34-48
+ *   dead rule skip             | reachability check before rule gen   | categories.rs:76-87
  *   rule_derivations           | consolidated subterm extraction rule | helpers.rs
  *   immediate_consequence      | Ascent fixpoint iteration step      | ascent! macro output
  *

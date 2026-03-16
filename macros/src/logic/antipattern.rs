@@ -414,6 +414,7 @@ fn collect_category_refs_from_term_param(
         TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
             collect_category_refs_from_type_expr(ty, category_set)
         }
+        TermParam::GuardBody { .. } => Vec::new(),
     }
 }
 
@@ -441,6 +442,9 @@ fn collect_category_refs_from_type_expr(
         }
         TypeExpr::Collection { element, .. } => {
             collect_category_refs_from_type_expr(element, category_set)
+        }
+        TypeExpr::Refined { base, .. } => {
+            collect_category_refs_from_type_expr(base, category_set)
         }
     }
 }
@@ -654,6 +658,7 @@ fn extract_collection_from_param(param: &TermParam) -> Option<(String, String)> 
     let ty = match param {
         TermParam::Simple { ty, .. } => ty,
         TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => ty,
+        TermParam::GuardBody { .. } => return None,
     };
     extract_collection_from_type_expr(ty)
 }
@@ -699,6 +704,7 @@ mod tests {
             include_names: Vec::new(),
             mixin_names: Vec::new(),
             types: Vec::new(),
+            refinement_types: Vec::new(),
             token_defs: Vec::new(),
             mode_defs: Vec::new(),
             sync_constraints: Vec::new(),

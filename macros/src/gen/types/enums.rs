@@ -293,6 +293,10 @@ fn generate_variant_from_term_context(
                     });
                 }
             },
+            TermParam::GuardBody { .. } => {
+                // Guard bodies do not generate enum variant fields;
+                // they are evaluated by the behavioral guard evaluator.
+            },
         }
     }
 
@@ -431,6 +435,10 @@ fn type_expr_to_field_type(
             let inner_type = type_expr_to_rust_type(inner);
             quote! { Vec<#inner_type> }
         },
+        TypeExpr::Refined { base, .. } => {
+            // Refinement type: delegate to the base type
+            type_expr_to_field_type(base, language_category)
+        },
     }
 }
 
@@ -456,6 +464,10 @@ fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
         TypeExpr::MultiBinder(inner) => {
             let inner_type = type_expr_to_rust_type(inner);
             quote! { Vec<#inner_type> }
+        },
+        TypeExpr::Refined { base, .. } => {
+            // Refinement type: delegate to the base type
+            type_expr_to_rust_type(base)
         },
     }
 }

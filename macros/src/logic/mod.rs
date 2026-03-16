@@ -48,6 +48,7 @@ pub use equations::generate_equation_rules;
 pub use equations::{stratify_equation_rules, EqRuleKind, StratificationInfo};
 pub use relations::generate_relations;
 pub use relations::list_all_relations_for_extraction;
+pub use rules::generate_refinement_type_rules;
 
 // Re-export congruence function
 pub use congruence::generate_all_explicit_congruences;
@@ -267,6 +268,11 @@ pub fn generate_ascent_source(
         quote! { #(#fused_rules)* }
     };
 
+    // RT8: Refinement type population rules.
+    // For each refinement type (e.g., PosInt = { x: Int | x > 0 }),
+    // generates a membership relation + population rule in Ascent.
+    let refinement_rules = generate_refinement_type_rules(language);
+
     let custom_logic = language
         .logic
         .as_ref()
@@ -284,6 +290,8 @@ pub fn generate_ascent_source(
 
         #fused_content
 
+        #refinement_rules
+
         #custom_logic
     };
 
@@ -294,6 +302,9 @@ pub fn generate_ascent_source(
         let core_equation_rules = generate_equation_rules(language, Some(&core_cats), analysis, &subsumed_equations, &cancellation_equations, false, &demanded, Some(&strat_info));
         let core_rewrite_rules = generate_rewrite_rules(language, Some(&core_cats), analysis, false, &demanded);
 
+        // Refinement rules are shared — they don't depend on category filtering
+        let core_refinement_rules = generate_refinement_type_rules(language);
+
         quote! {
             #core_relations
 
@@ -302,6 +313,8 @@ pub fn generate_ascent_source(
             #core_equation_rules
 
             #core_rewrite_rules
+
+            #core_refinement_rules
 
             #custom_logic
         }
@@ -1593,6 +1606,10 @@ pub fn generate_rewrite_rules(
     // Generate base rewrite clauses (no premise)
     let base_rewrite_clauses = generate_base_rewrites(language, cat_filter);
     rules.extend(base_rewrite_clauses);
+
+    // Generate guarded Comm rules for PGuardedInput constructors
+    let guarded_comm_clauses = rules::generate_guarded_comm_rules(language, cat_filter);
+    rules.extend(guarded_comm_clauses);
 
     // Generate small-step rules for HOL rust_code (step mode)
     let hol_step_rules = generate_hol_step_rules(language, cat_filter, analysis);

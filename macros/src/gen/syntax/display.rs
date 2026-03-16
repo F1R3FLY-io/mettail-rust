@@ -285,6 +285,10 @@ fn generate_syntax_pattern_display_arm(
                 abstraction_binder = Some(binder.to_string());
                 abstraction_body = Some(body.to_string());
             },
+            TermParam::GuardBody { .. } => {
+                // Guard bodies are not display fields; they are evaluated
+                // separately by the behavioral guard evaluator.
+            },
         }
     }
 

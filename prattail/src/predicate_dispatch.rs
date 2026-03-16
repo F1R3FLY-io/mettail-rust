@@ -30,7 +30,7 @@ use crate::SyntaxItemSpec;
 
 /// Bitfield encoding which automata varieties are relevant to a predicate formula.
 ///
-/// Each bit corresponds to one of the 11 advanced automata modules (M1–M11).
+/// Each bit corresponds to one of the 15 advanced automata modules (M1–M15).
 /// The base signature (M1 | M10) is always set: M1 provides the predicate algebra
 /// foundation and M10 provides the MSO specification language.
 ///
@@ -46,6 +46,9 @@ use crate::SyntaxItemSpec;
 /// Bit 8:  M9  Multiset        (MSET — commutative)
 /// Bit 9:  M10 W. MSO          (MSO — full definability)
 /// Bit 10: M11 Two-Way         (2-WAY — bidirectional)
+/// Bit 11: M12 Linear Arith    (PRESB — Presburger arithmetic)
+/// Bit 12: M13 Unification     (UNIF — structural unification)
+/// Bit 13: M14 Subtype Lattice (LAT — subtype hierarchy)
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PredicateSignature(u16);
@@ -62,11 +65,15 @@ impl PredicateSignature {
     pub const M9_MULTISET: u16 = 1 << 8;
     pub const M10_MSO: u16 = 1 << 9;
     pub const M11_TWO_WAY: u16 = 1 << 10;
+    pub const M12_LINEAR_ARITHMETIC: u16 = 1 << 11;
+    pub const M13_UNIFICATION: u16 = 1 << 12;
+    pub const M14_SUBTYPE_LATTICE: u16 = 1 << 13;
+    pub const M15_SFT: u16 = 1 << 14;
 
     /// Number of module bits defined.
-    pub const NUM_MODULES: u32 = 11;
+    pub const NUM_MODULES: u32 = 15;
 
-    /// All bits set: 0x07FF.
+    /// All bits set: 0x7FFF.
     pub const ALL: u16 = (1 << Self::NUM_MODULES) - 1;
 
     /// Default: M1 + M10 always active.
@@ -146,6 +153,7 @@ impl fmt::Display for PredicateSignature {
         let names = [
             "M1:Sym", "M2:Büchi", "M3:AWA", "M4:VPA", "M5:PTree",
             "M6:Reg", "M7:Prob", "M8:MTape", "M9:MSet", "M10:MSO", "M11:2Way",
+            "M12:Presb", "M13:Unif", "M14:Lat", "M15:Sft",
         ];
         let mut first = true;
         for (i, name) in names.iter().enumerate() {
@@ -165,7 +173,7 @@ impl fmt::Display for PredicateSignature {
 // §2  ModuleId — enumeration of the 11 advanced automata modules
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Identifies one of the 11 advanced automata modules.
+/// Identifies one of the 15 advanced automata modules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ModuleId {
     /// M1: Symbolic automata (predicate algebra foundation).
@@ -190,14 +198,23 @@ pub enum ModuleId {
     Mso = 9,
     /// M11: Two-Way Transducer (cross-channel constraints).
     TwoWay = 10,
+    /// M12: Linear Arithmetic (Presburger automata for numeric guards).
+    LinearArithmetic = 11,
+    /// M13: Unification (structural pattern matching via Martelli-Montanari).
+    Unification = 12,
+    /// M14: Subtype Lattice (type hierarchy with join/meet).
+    SubtypeLattice = 13,
+    /// M15: Symbolic Finite Transducer (output-producing transductions).
+    Sft = 14,
 }
 
 impl ModuleId {
-    /// All 11 module IDs in order.
-    pub const ALL: [ModuleId; 11] = [
+    /// All 15 module IDs in order.
+    pub const ALL: [ModuleId; 15] = [
         Self::Symbolic, Self::Buchi, Self::Awa, Self::Vpa, Self::ParityTree,
         Self::Register, Self::Probabilistic, Self::MultiTape, Self::Multiset,
-        Self::Mso, Self::TwoWay,
+        Self::Mso, Self::TwoWay, Self::LinearArithmetic, Self::Unification,
+        Self::SubtypeLattice, Self::Sft,
     ];
 
     /// The signature bit for this module.
@@ -219,6 +236,10 @@ impl ModuleId {
             Self::Multiset => "Multiset",
             Self::Mso => "Weighted MSO",
             Self::TwoWay => "Two-Way",
+            Self::LinearArithmetic => "Linear Arithmetic",
+            Self::Unification => "Unification",
+            Self::SubtypeLattice => "Subtype Lattice",
+            Self::Sft => "SFT",
         }
     }
 
@@ -236,18 +257,25 @@ impl ModuleId {
             Self::Multiset => "multiset-automata",
             Self::Mso => "weighted-mso",
             Self::TwoWay => "two-way-transducer",
+            Self::LinearArithmetic => "presburger",
+            Self::Unification => "unification",
+            Self::SubtypeLattice => "lattice-theory",
+            Self::Sft => "sft",
         }
     }
 
     /// Estimated relative cost (lower = cheaper). Used for scheduling.
     pub fn estimated_cost(self) -> u32 {
         match self {
-            Self::Symbolic | Self::Mso => 1,           // always-on foundations
-            Self::Multiset | Self::Register => 2,      // lightweight analysis
-            Self::Buchi | Self::Awa => 3,              // omega-regular
-            Self::Vpa | Self::ParityTree => 4,         // pushdown / tree
-            Self::Probabilistic | Self::MultiTape => 5, // WFST-dependent
-            Self::TwoWay => 6,                         // most complex
+            Self::Symbolic | Self::Mso => 1,                // always-on foundations
+            Self::Multiset | Self::Register => 2,           // lightweight analysis
+            Self::SubtypeLattice => 2,                      // decidable, finite universe
+            Self::Buchi | Self::Awa => 3,                   // omega-regular
+            Self::LinearArithmetic | Self::Unification => 3, // constraint theories
+            Self::Vpa | Self::ParityTree => 4,              // pushdown / tree
+            Self::Probabilistic | Self::MultiTape => 5,     // WFST-dependent
+            Self::TwoWay => 6,                              // most complex
+            Self::Sft => 5,                                  // depends on symbolic-automata + weighted-mso
         }
     }
 }
@@ -334,6 +362,12 @@ pub struct PredicateProfile {
     pub has_cardinality: bool,
     /// Whether recursive predicate definitions (letprop / fixpoints) were found.
     pub has_recursive_predicate: bool,
+    /// Whether arithmetic comparisons (linear arithmetic) were found.
+    pub has_arithmetic: bool,
+    /// Whether structural unification / pattern matching was detected.
+    pub has_unification: bool,
+    /// Whether subtype / type hierarchy constraints were detected.
+    pub has_subtype: bool,
     /// Decidability tier from `classify_decidability()`.
     pub decidability_tier: DecidabilityTier,
 }
@@ -349,6 +383,9 @@ impl PredicateProfile {
             has_backward_constraint: false,
             has_cardinality: false,
             has_recursive_predicate: false,
+            has_arithmetic: false,
+            has_unification: false,
+            has_subtype: false,
             decidability_tier: DecidabilityTier::CompileTimeDecidable,
         }
     }
@@ -358,7 +395,40 @@ impl PredicateProfile {
 // §5  Feature Extraction — PredicateExpr → PredicateProfile
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ── Relation Name Heuristics ─────────────────────────────────────────────
+//
+// The following `is_*_relation()` functions classify `PredicateExpr::Relation`
+// names into constraint theory modules via hardcoded keyword lists. This is a
+// **temporary, heuristic-based approach** that mirrors the existing M1–M11
+// classification pattern (equality → M6, cardinality → M9, etc.).
+//
+// Design notes:
+//
+// 1. **Conservative approximation**: These heuristics may activate extra modules
+//    (false positives) but never miss a needed one. Unrecognized relation names
+//    fall through to the default M6 (Register) path.
+//
+// 2. **Not extensible**: User-defined languages that introduce novel relation
+//    names (e.g., a custom "resource_available" relation for a process algebra)
+//    will not trigger theory-specific modules via these heuristics. The correct
+//    long-term fix is to let `ConstraintTheory` implementers declare which
+//    relation names their theory handles — either via a trait method like
+//    `fn relation_names(&self) -> &[&str]` or via a registration table
+//    populated by the `theories { }` block in `language!`.
+//
+// 3. **Overlap**: Some relation names appear in multiple classifiers (e.g.,
+//    ">=" appears in both `is_cardinality_relation` and `is_arithmetic_relation`).
+//    This is intentional — a relation may activate multiple modules, and
+//    `walk_predicate()` calls all classifiers independently.
+//
+// 4. **Planned removal**: These functions will be replaced when the `language!`
+//    macro gains a `theories { }` block that explicitly maps relation names to
+//    constraint theories (see `docs/design/predicated-types.md` §19.13).
+//    At that point, the mapping becomes data-driven rather than hardcoded.
+
 /// Equality-like relation names that trigger M6 (Register).
+///
+/// Temporary heuristic — see module-level comment on relation name heuristics.
 fn is_equality_relation(name: &str) -> bool {
     matches!(
         name,
@@ -368,6 +438,8 @@ fn is_equality_relation(name: &str) -> bool {
 }
 
 /// Cardinality-like relation names that trigger M9 (Multiset).
+///
+/// Temporary heuristic — see module-level comment on relation name heuristics.
 fn is_cardinality_relation(name: &str) -> bool {
     matches!(
         name,
@@ -377,8 +449,64 @@ fn is_cardinality_relation(name: &str) -> bool {
 }
 
 /// Fixpoint/recursive relation names that trigger M4 (VPA) + M5 (Parity Tree).
+///
+/// Temporary heuristic — see module-level comment on relation name heuristics.
 fn is_fixpoint_relation(name: &str) -> bool {
     matches!(name, "letprop" | "fixpoint" | "mu" | "nu" | "letrec" | "recursive")
+}
+
+/// Arithmetic/numeric relation names that trigger M12 (Linear Arithmetic / Presburger).
+///
+/// Recognizes arithmetic operators, comparison operators, and numeric range
+/// predicates. Note overlap with `is_cardinality_relation` for `>`, `<`, `>=`,
+/// `<=` — both M9 and M12 may activate for the same relation.
+///
+/// Temporary heuristic — see module-level comment on relation name heuristics.
+fn is_arithmetic_relation(name: &str) -> bool {
+    matches!(
+        name,
+        "add" | "sub" | "mul" | "sum" | "diff" | "plus" | "minus"
+            | "linear" | "arithmetic" | "numeric"
+            | ">" | "<" | ">=" | "<=" | "==" | "!="
+            | "gt" | "lt" | "ge" | "le"
+            | "bounded" | "range" | "between" | "clamp"
+            | "mod" | "div" | "rem"
+    )
+}
+
+/// Unification/pattern-matching relation names that trigger M13 (Unification).
+///
+/// Recognizes structural matching, type variable instantiation, and substitution
+/// predicates common in MeTTa (`match`, `unify`) and Rholang (quoted process
+/// matching). User-defined languages with custom matching semantics should
+/// eventually register their relation names via the `theories { }` block.
+///
+/// Temporary heuristic — see module-level comment on relation name heuristics.
+fn is_unification_relation(name: &str) -> bool {
+    matches!(
+        name,
+        "match" | "unify" | "bind" | "pattern"
+            | "match_type" | "instantiate" | "substitute"
+            | "custom_match" | "structural_match"
+    )
+}
+
+/// Subtype/type-hierarchy relation names that trigger M14 (Subtype Lattice).
+///
+/// Recognizes subtype declarations, join/meet operations, type compatibility
+/// checks, and exhaustiveness predicates. Covers MeTTa `(:<  sub super)`,
+/// Rholang bundle capabilities (`bundle+ ≤ bundle0`), and general type
+/// hierarchy constraints.
+///
+/// Temporary heuristic — see module-level comment on relation name heuristics.
+fn is_subtype_relation(name: &str) -> bool {
+    matches!(
+        name,
+        "subtype" | "supertype" | ":<" | ":>" | "is_a"
+            | "join" | "meet" | "lub" | "glb"
+            | "type_compatible" | "assignable"
+            | "exhaustive" | "covers"
+    )
 }
 
 /// Extract variety features from a `PredicateExpr` in O(|AST|) time.
@@ -409,6 +537,9 @@ pub fn extract_features(expr: &PredicateExpr, ctx: &ChannelContext) -> Predicate
         &mut profile.has_backward_constraint,
         &mut profile.has_cardinality,
         &mut profile.has_recursive_predicate,
+        &mut profile.has_arithmetic,
+        &mut profile.has_unification,
+        &mut profile.has_subtype,
     );
 
     profile.quantifier_depth = max_depth;
@@ -438,6 +569,9 @@ fn walk_predicate(
     has_backward: &mut bool,
     has_cardinality: &mut bool,
     has_recursive: &mut bool,
+    has_arithmetic: &mut bool,
+    has_unification: &mut bool,
+    has_subtype: &mut bool,
 ) {
     match expr {
         PredicateExpr::True | PredicateExpr::False | PredicateExpr::Atom(_) => {
@@ -445,26 +579,26 @@ fn walk_predicate(
         }
 
         PredicateExpr::Not(inner) => {
-            walk_predicate(inner, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive);
+            walk_predicate(inner, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype);
         }
 
         PredicateExpr::And(a, b) | PredicateExpr::Or(a, b) => {
-            walk_predicate(a, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive);
-            walk_predicate(b, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive);
+            walk_predicate(a, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype);
+            walk_predicate(b, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype);
         }
 
         PredicateExpr::ForallFinite { body, .. } => {
             sig.set(PredicateSignature::M3_AWA); // universal branching
             *depth += 1;
             *max_depth = (*max_depth).max(*depth);
-            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive);
+            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype);
             *depth -= 1;
         }
 
         PredicateExpr::ExistsFinite { body, .. } => {
             *depth += 1;
             *max_depth = (*max_depth).max(*depth);
-            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive);
+            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype);
             *depth -= 1;
         }
 
@@ -473,7 +607,7 @@ fn walk_predicate(
             sig.set(PredicateSignature::M3_AWA);   // universal branching
             *depth += 1;
             *max_depth = (*max_depth).max(*depth);
-            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive);
+            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype);
             *depth -= 1;
         }
 
@@ -481,7 +615,7 @@ fn walk_predicate(
             sig.set(PredicateSignature::M2_BUCHI); // omega-regular
             *depth += 1;
             *max_depth = (*max_depth).max(*depth);
-            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive);
+            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype);
             *depth -= 1;
         }
 
@@ -501,6 +635,21 @@ fn walk_predicate(
                 sig.set(PredicateSignature::M4_VPA);
                 sig.set(PredicateSignature::M5_PARITY_TREE);
                 *has_recursive = true;
+            }
+            // M12: Arithmetic comparisons → Presburger linear arithmetic
+            if is_arithmetic_relation(name) {
+                sig.set(PredicateSignature::M12_LINEAR_ARITHMETIC);
+                *has_arithmetic = true;
+            }
+            // M13: Unification/pattern-matching → structural unification
+            if is_unification_relation(name) {
+                sig.set(PredicateSignature::M13_UNIFICATION);
+                *has_unification = true;
+            }
+            // M14: Subtype/type-hierarchy → subtype lattice
+            if is_subtype_relation(name) {
+                sig.set(PredicateSignature::M14_SUBTYPE_LATTICE);
+                *has_subtype = true;
             }
             // Cross-channel detection
             for arg in args {
@@ -523,7 +672,7 @@ fn walk_predicate(
         }
 
         PredicateExpr::Bounded { body, .. } => {
-            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive);
+            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype);
         }
     }
 }
@@ -866,6 +1015,44 @@ pub fn classify_grammar(
         aggregate.set(PredicateSignature::M7_PROBABILISTIC);
     }
 
+    // ── M12 Linear Arithmetic: Numeric terminal patterns ──────────────
+    // Temporary heuristic: grammars with arithmetic operators suggest
+    // numeric guard predicates that benefit from Presburger analysis.
+    // Will be replaced by explicit `theories { }` registration.
+    let arithmetic_terminals = ["+", "-", "*", "/", "%", "mod", "div"];
+    let has_arithmetic = arithmetic_terminals.iter().any(|s| terminals.contains(s));
+    if has_arithmetic {
+        aggregate.set(PredicateSignature::M12_LINEAR_ARITHMETIC);
+    }
+
+    // ── M13 Unification: Pattern matching terminals ──────────────────
+    // Temporary heuristic: grammars with match/case constructs suggest
+    // structural pattern guards needing unification for satisfiability
+    // analysis. Will be replaced by explicit `theories { }` registration.
+    let unification_terminals = ["match", "case", "with", "=>", "->", "|"];
+    let has_pattern_match = unification_terminals.iter().any(|s| terminals.contains(s));
+    if has_pattern_match {
+        aggregate.set(PredicateSignature::M13_UNIFICATION);
+    }
+
+    // ── M14 Subtype Lattice: Type hierarchy terminals ─────────────────
+    // Temporary heuristic: grammars with subtype/extends/implements
+    // constructs suggest type hierarchy guards needing lattice analysis.
+    // Will be replaced by explicit `theories { }` registration.
+    let subtype_terminals = ["extends", "implements", ":", "::", ":<", "is"];
+    let has_type_hierarchy = subtype_terminals.iter().any(|s| terminals.contains(s));
+    if has_type_hierarchy {
+        aggregate.set(PredicateSignature::M14_SUBTYPE_LATTICE);
+    }
+
+    // ── M15 SFT: Output-producing transductions ─────────────────────
+    // Activated when the grammar has both cross-category references and
+    // recursion, suggesting guard-driven term transformations that
+    // benefit from SFT composition analysis.
+    if has_recursion && aggregate.contains(PredicateSignature::M11_TWO_WAY) {
+        aggregate.set(PredicateSignature::M15_SFT);
+    }
+
     // Build module schedule from aggregate signature
     let mut schedule: Vec<ModuleId> = ModuleId::ALL
         .iter()
@@ -1006,7 +1193,7 @@ impl BooleanAlgebra for DispatchAlgebra {
 // §9  Dispatch SFA — verification automaton
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Build the dispatch SFA: a 13-state automaton (q₀ + 11 module states + q_⊥)
+/// Build the dispatch SFA: a 17-state automaton (q₀ + 15 module states + q_⊥)
 /// that verifies dispatch completeness and consistency.
 ///
 /// State diagram:
@@ -1016,6 +1203,9 @@ impl BooleanAlgebra for DispatchAlgebra {
 ///        ──HasBit(2)──→ ◉ q_M3  (AWA)
 ///        ...
 ///        ──HasBit(10)─→ ◉ q_M11 (Two-Way)
+///        ──HasBit(11)─→ ◉ q_M12 (Linear Arithmetic)
+///        ──HasBit(12)─→ ◉ q_M13 (Unification)
+///        ──HasBit(13)─→ ◉ q_M14 (Subtype Lattice)
 ///        ──¬(any bit)─→ ○ q_⊥   (reject)
 /// ```
 pub fn build_dispatch_sfa() -> SymbolicAutomaton<DispatchAlgebra> {
@@ -1225,7 +1415,76 @@ pub fn order_by_specificity(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// §12 Tests
+// §12 Guard Selectivity Estimation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Selectivity estimation for predicate expressions.
+///
+/// Returns an estimate in [0.0, 1.0] of the fraction of inputs satisfying the
+/// predicate. Used by guard ordering (Phase 7A) to sort guards on the same
+/// channel so the most selective guard is evaluated first.
+///
+/// These are heuristic estimates — they do not require access to runtime data.
+/// The selectivity model uses the independence assumption: conjunction selectivity
+/// is the product, disjunction follows inclusion-exclusion.
+pub fn estimate_predicate_selectivity(expr: &PredicateExpr) -> f64 {
+    match expr {
+        PredicateExpr::True => 1.0,
+        PredicateExpr::False => 0.0,
+        PredicateExpr::Atom(_) => 0.5, // unknown atom: assume 50%
+        PredicateExpr::Relation { name, args, .. } => {
+            // Estimate based on relation name and arity
+            let arity_factor = 1.0 / (args.len() as f64 + 1.0).sqrt();
+            if is_equality_relation(name) {
+                // Equality is very selective
+                0.1 * arity_factor
+            } else if is_cardinality_relation(name) {
+                0.3 * arity_factor
+            } else {
+                0.5 * arity_factor
+            }
+        }
+        PredicateExpr::Not(inner) => 1.0 - estimate_predicate_selectivity(inner),
+        PredicateExpr::And(a, b) => {
+            estimate_predicate_selectivity(a) * estimate_predicate_selectivity(b)
+        }
+        PredicateExpr::Or(a, b) => {
+            let sa = estimate_predicate_selectivity(a);
+            let sb = estimate_predicate_selectivity(b);
+            1.0 - (1.0 - sa) * (1.0 - sb)
+        }
+        PredicateExpr::ForAll { body, .. } => {
+            // Universal: very selective
+            let body_sel = estimate_predicate_selectivity(body);
+            body_sel * 0.1 // assume domain size ~10
+        }
+        PredicateExpr::Exists { body, .. } => {
+            // Existential: moderate
+            let body_sel = estimate_predicate_selectivity(body);
+            1.0 - (1.0 - body_sel).powi(10) // assume domain size ~10
+        }
+    }
+}
+
+/// Estimated evaluation cost of a predicate expression.
+///
+/// Lower cost = cheaper. Used as a tiebreaker when guards have equal selectivity.
+pub fn estimate_predicate_cost(expr: &PredicateExpr) -> u32 {
+    match expr {
+        PredicateExpr::True | PredicateExpr::False => 0,
+        PredicateExpr::Atom(_) => 1,
+        PredicateExpr::Relation { args, .. } => 2 + args.len() as u32,
+        PredicateExpr::Not(inner) => estimate_predicate_cost(inner) + 1,
+        PredicateExpr::And(a, b) | PredicateExpr::Or(a, b) => {
+            estimate_predicate_cost(a) + estimate_predicate_cost(b)
+        }
+        PredicateExpr::ForAll { body, .. } => 10 + estimate_predicate_cost(body) * 10,
+        PredicateExpr::Exists { body, .. } => 5 + estimate_predicate_cost(body) * 10,
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §13 Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
@@ -1287,7 +1546,28 @@ mod tests {
 
     #[test]
     fn test_module_id_count() {
-        assert_eq!(ModuleId::ALL.len(), 11);
+        assert_eq!(ModuleId::ALL.len(), 15);
+    }
+
+    #[test]
+    fn test_module_id_new_modules_have_correct_bits() {
+        assert_eq!(ModuleId::LinearArithmetic.bit(), PredicateSignature::M12_LINEAR_ARITHMETIC);
+        assert_eq!(ModuleId::Unification.bit(), PredicateSignature::M13_UNIFICATION);
+        assert_eq!(ModuleId::SubtypeLattice.bit(), PredicateSignature::M14_SUBTYPE_LATTICE);
+    }
+
+    #[test]
+    fn test_module_id_new_feature_gates() {
+        assert_eq!(ModuleId::LinearArithmetic.feature_gate(), "presburger");
+        assert_eq!(ModuleId::Unification.feature_gate(), "unification");
+        assert_eq!(ModuleId::SubtypeLattice.feature_gate(), "lattice-theory");
+    }
+
+    #[test]
+    fn test_module_id_new_cost_tiers() {
+        assert_eq!(ModuleId::LinearArithmetic.estimated_cost(), 3);
+        assert_eq!(ModuleId::Unification.estimated_cost(), 3);
+        assert_eq!(ModuleId::SubtypeLattice.estimated_cost(), 2);
     }
 
     // ── extract_features: PredicateExpr tests ─────────────────────────────
@@ -1510,6 +1790,103 @@ mod tests {
         assert!(profile.signature.contains(PredicateSignature::M2_BUCHI));
     }
 
+    // ── M12/M13/M14 extraction tests ───────────────────────────────────
+
+    #[test]
+    fn test_extract_arithmetic_relation_triggers_m12() {
+        for name in ["add", "sub", "gt", "le", "bounded", "range"] {
+            let expr = PredicateExpr::Relation {
+                name: name.to_string(),
+                args: vec!["x".to_string(), "y".to_string()],
+            };
+            let ctx = ChannelContext::new();
+            let profile = extract_features(&expr, &ctx);
+            assert!(
+                profile.signature.contains(PredicateSignature::M12_LINEAR_ARITHMETIC),
+                "'{name}' should trigger M12"
+            );
+            assert!(profile.has_arithmetic, "'{name}' should set has_arithmetic");
+        }
+    }
+
+    #[test]
+    fn test_extract_unification_relation_triggers_m13() {
+        for name in ["match", "unify", "bind", "pattern", "instantiate"] {
+            let expr = PredicateExpr::Relation {
+                name: name.to_string(),
+                args: vec!["x".to_string()],
+            };
+            let ctx = ChannelContext::new();
+            let profile = extract_features(&expr, &ctx);
+            assert!(
+                profile.signature.contains(PredicateSignature::M13_UNIFICATION),
+                "'{name}' should trigger M13"
+            );
+            assert!(profile.has_unification, "'{name}' should set has_unification");
+        }
+    }
+
+    #[test]
+    fn test_extract_subtype_relation_triggers_m14() {
+        for name in ["subtype", ":<", "join", "meet", "exhaustive"] {
+            let expr = PredicateExpr::Relation {
+                name: name.to_string(),
+                args: vec!["x".to_string()],
+            };
+            let ctx = ChannelContext::new();
+            let profile = extract_features(&expr, &ctx);
+            assert!(
+                profile.signature.contains(PredicateSignature::M14_SUBTYPE_LATTICE),
+                "'{name}' should trigger M14"
+            );
+            assert!(profile.has_subtype, "'{name}' should set has_subtype");
+        }
+    }
+
+    #[test]
+    fn test_extract_unknown_relation_does_not_trigger_m12_m13_m14() {
+        let expr = PredicateExpr::Relation {
+            name: "some_custom_predicate".to_string(),
+            args: vec!["x".to_string()],
+        };
+        let ctx = ChannelContext::new();
+        let profile = extract_features(&expr, &ctx);
+        assert!(!profile.signature.contains(PredicateSignature::M12_LINEAR_ARITHMETIC));
+        assert!(!profile.signature.contains(PredicateSignature::M13_UNIFICATION));
+        assert!(!profile.signature.contains(PredicateSignature::M14_SUBTYPE_LATTICE));
+        // Falls through to default M6 (Register)
+        assert!(profile.signature.contains(PredicateSignature::M6_REGISTER));
+    }
+
+    #[test]
+    fn test_extract_comparison_overlaps_m9_m12() {
+        // ">=" appears in both cardinality and arithmetic classifiers
+        let expr = PredicateExpr::Relation {
+            name: ">=".to_string(),
+            args: vec!["x".to_string()],
+        };
+        let ctx = ChannelContext::new();
+        let profile = extract_features(&expr, &ctx);
+        assert!(profile.signature.contains(PredicateSignature::M9_MULTISET),
+            ">= triggers M9");
+        assert!(profile.signature.contains(PredicateSignature::M12_LINEAR_ARITHMETIC),
+            ">= triggers M12");
+        assert!(profile.has_cardinality);
+        assert!(profile.has_arithmetic);
+    }
+
+    #[test]
+    fn test_signature_display_includes_new_modules() {
+        let mut sig = PredicateSignature::new();
+        sig.set(PredicateSignature::M12_LINEAR_ARITHMETIC);
+        sig.set(PredicateSignature::M13_UNIFICATION);
+        sig.set(PredicateSignature::M14_SUBTYPE_LATTICE);
+        let s = format!("{sig}");
+        assert!(s.contains("M12:Presb"), "display should include M12");
+        assert!(s.contains("M13:Unif"), "display should include M13");
+        assert!(s.contains("M14:Lat"), "display should include M14");
+    }
+
     // ── extract_features_mso: WeightedMsoFormula tests ────────────────────
 
     #[test]
@@ -1725,10 +2102,10 @@ mod tests {
     #[test]
     fn test_dispatch_sfa_state_count() {
         let sfa = build_dispatch_sfa();
-        // 1 initial + 11 module + 1 reject = 13 states
-        assert_eq!(sfa.num_states(), 13);
-        // 11 module transitions + 1 reject transition = 12
-        assert_eq!(sfa.num_transitions(), 12);
+        // 1 initial + 15 module + 1 reject = 17 states
+        assert_eq!(sfa.num_states(), 17);
+        // 16 module transitions + 1 reject transition = 17
+        assert_eq!(sfa.num_transitions(), 16);
     }
 
     #[test]
@@ -2685,6 +3062,18 @@ mod tests {
                     kind: crate::recursive::CollectionKind::Vec,
                 },
             ]),
+            // Arithmetic terminal → M12
+            ("Add".to_string(), "Expr".to_string(), vec![
+                SyntaxItemSpec::Terminal("+".to_string()),
+            ]),
+            // Pattern matching terminal → M13
+            ("Match".to_string(), "Expr".to_string(), vec![
+                SyntaxItemSpec::Terminal("match".to_string()),
+            ]),
+            // Subtype terminal → M14
+            ("Extends".to_string(), "Decl".to_string(), vec![
+                SyntaxItemSpec::Terminal("extends".to_string()),
+            ]),
         ];
         let plan = classify_grammar(&syntax, &[]);
         for module in &ModuleId::ALL {
@@ -2766,6 +3155,82 @@ mod tests {
         assert!(plan.requires(ModuleId::MultiTape), "M8");
         assert!(plan.requires(ModuleId::Multiset), "M9");
         assert!(plan.requires(ModuleId::TwoWay), "M11");
+    }
+
+    // ── classify_grammar M12/M13/M14 tests ────────────────────────────
+
+    #[test]
+    fn test_classify_grammar_arithmetic_terminals_trigger_m12() {
+        let syntax = vec![
+            ("Add".to_string(), "Expr".to_string(), vec![
+                SyntaxItemSpec::Terminal("+".to_string()),
+            ]),
+        ];
+        let plan = classify_grammar(&syntax, &[]);
+        assert!(plan.requires(ModuleId::LinearArithmetic),
+            "arithmetic terminal '+' → M12");
+    }
+
+    #[test]
+    fn test_classify_grammar_pattern_terminals_trigger_m13() {
+        let syntax = vec![
+            ("Match".to_string(), "Expr".to_string(), vec![
+                SyntaxItemSpec::Terminal("match".to_string()),
+                SyntaxItemSpec::Terminal("|".to_string()),
+            ]),
+        ];
+        let plan = classify_grammar(&syntax, &[]);
+        assert!(plan.requires(ModuleId::Unification),
+            "pattern-match terminals → M13");
+    }
+
+    #[test]
+    fn test_classify_grammar_subtype_terminals_trigger_m14() {
+        let syntax = vec![
+            ("TypeDecl".to_string(), "Decl".to_string(), vec![
+                SyntaxItemSpec::Terminal("extends".to_string()),
+            ]),
+        ];
+        let plan = classify_grammar(&syntax, &[]);
+        assert!(plan.requires(ModuleId::SubtypeLattice),
+            "subtype terminal 'extends' → M14");
+    }
+
+    #[test]
+    fn test_classify_grammar_no_theory_terminals() {
+        let syntax = vec![
+            ("Lit".to_string(), "Expr".to_string(), vec![
+                SyntaxItemSpec::Terminal("let".to_string()),
+                SyntaxItemSpec::Terminal("in".to_string()),
+            ]),
+        ];
+        let plan = classify_grammar(&syntax, &[]);
+        assert!(!plan.requires(ModuleId::LinearArithmetic),
+            "no arithmetic terminals → no M12");
+        assert!(!plan.requires(ModuleId::Unification),
+            "no pattern terminals → no M13");
+        assert!(!plan.requires(ModuleId::SubtypeLattice),
+            "no subtype terminals → no M14");
+    }
+
+    #[test]
+    fn test_classify_grammar_m12_m13_m14_in_schedule() {
+        // Grammar with all three theory terminal patterns
+        let syntax = vec![
+            ("Arith".to_string(), "Expr".to_string(), vec![
+                SyntaxItemSpec::Terminal("+".to_string()),
+                SyntaxItemSpec::Terminal("match".to_string()),
+                SyntaxItemSpec::Terminal("extends".to_string()),
+            ]),
+        ];
+        let plan = classify_grammar(&syntax, &[]);
+        assert!(plan.module_schedule.contains(&ModuleId::LinearArithmetic));
+        assert!(plan.module_schedule.contains(&ModuleId::Unification));
+        assert!(plan.module_schedule.contains(&ModuleId::SubtypeLattice));
+        // SubtypeLattice (cost 2) should come before LinearArithmetic/Unification (cost 3)
+        let lat_pos = plan.module_schedule.iter().position(|m| *m == ModuleId::SubtypeLattice).expect("M14 in schedule");
+        let arith_pos = plan.module_schedule.iter().position(|m| *m == ModuleId::LinearArithmetic).expect("M12 in schedule");
+        assert!(lat_pos < arith_pos, "M14 (cost 2) should be scheduled before M12 (cost 3)");
     }
 
     // ── Sprint C4: order_by_specificity tests ────────────────────────────

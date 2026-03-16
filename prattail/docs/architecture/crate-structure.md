@@ -394,6 +394,26 @@ compiled (no feature gate); only the log semiring modules require `wfst-log`.
 > **Cross-reference:** See [architecture/wfst/module-map.md](wfst/module-map.md)
 > for detailed WFST module architecture and data flow.
 
+#### Constraint Theory Framework (`logict` + dependent features)
+
+- **`logict.rs`** (`logict` feature) -- `LogicStream<T>` fair backtracking search,
+  `ConstraintTheory` trait, `TheoryAlgebra<T>` bridge to `BooleanAlgebra`,
+  8 core operations: `msplit`, `mzero`, `mplus`, `interleave`, `fair_conjoin`,
+  `ifte`, `once`, `gnot`
+- **`presburger.rs`** (`presburger` feature, depends on `logict`) --
+  `PresburgerAlgebra` (direct `BooleanAlgebra`), `PresburgerTheory`
+  (`ConstraintTheory`), `PresburgerNfa` for Büchi-style NFA construction,
+  `LinearConstraint`, `PresburgerPred`, `IntAssignment`
+- **`unification.rs`** (`unification` feature, depends on `logict`) --
+  `UnificationTheory` (`ConstraintTheory`), Martelli-Montanari unification,
+  `TermExpr`, `UnificationEquation`, `Substitution`, `UnificationStore`
+- **`lattice_theory.rs`** (`lattice-theory` feature, depends on `logict`) --
+  `LatticeTheory` (`ConstraintTheory`), subtype DAG with transitive closure,
+  `SubtypeConstraint`, `LatticeStore`, join/meet (LUB/GLB) operations
+
+> **Cross-reference:** See [design/constraint-theories/README.md](../design/constraint-theories/README.md)
+> for the constraint theory architecture and design documents.
+
 ### `decision_tree.rs` -- PathMap Decision Tree
 
 - **`DecisionTreeBuilder`** -- builds per-category PathMap tries from RD, cross-category,

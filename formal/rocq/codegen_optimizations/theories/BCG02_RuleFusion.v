@@ -42,7 +42,6 @@ From Stdlib Require Import Bool.
 From Stdlib Require Import Arith.
 From Stdlib Require Import PeanoNat.
 From Stdlib Require Import Lia.
-From Hammer Require Import Tactics.
 From Stdlib Require Import Setoid.
 
 Import ListNotations.
@@ -120,6 +119,12 @@ Proof.
   unfold fused_rule, sequential_chain.
   apply rel_eq_refl.
 Qed.
+
+(* NOTE: fused_eq_sequential is trivially true because fused_rule and
+   sequential_chain are defined identically (both are rw_apply r (decon_apply d input)).
+   The real verification value is in the IntermediateElimination section below,
+   which proves that removing the intermediate relation is safe when locality
+   and exclusive-access conditions hold. *)
 
 (* ===================================================================== *)
 (*  Soundness and Completeness                                             *)
