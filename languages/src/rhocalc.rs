@@ -34,13 +34,23 @@ language! {
                     else if let Some(o) = body.strip_prefix("0o") { (8, o) }
                     else if let Some(b) = body.strip_prefix("0b") { (2, b) }
                     else { (10, body) };
-                i64::from_str_radix(digits, radix).map(|n| sign * n).unwrap_or(-1_i64)
+
+                match i64::from_str_radix(digits, radix) {
+                    Ok(n) => Ok(sign * n),
+                    Err(e) => Err(e),
+                }
             } ]
         }
         Float {
             // Require decimal point or exponent so e.g. "3" is not matched (stays integer).
             pattern: r"[0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?";
-            eval: ![ { text.replace('_', "").parse::<f64>().unwrap_or(f64::NAN) } ]
+            eval: ![ {
+                let cleaned = text.replace('_', "");
+                match cleaned.parse::<f64>() {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(e),
+                }
+            } ]
         }
     },
 

@@ -25,7 +25,7 @@ use super::{
     nfa::{epsilon_closure, epsilon_closure_reuse},
     partition::AlphabetPartition,
     semiring::{Semiring, TropicalWeight},
-    ClassId, Dfa, DfaState, Nfa, StateId, TokenKind, DEAD_STATE,
+    ClassId, Dfa, DfaState, Nfa, StateId, TokenKind,
 };
 
 thread_local! {
@@ -81,9 +81,10 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
     // Start state: epsilon-closure of NFA start (uses original epsilon_closure
     // for the initial set since we need an owned Vec for state_map insertion)
     let start_set = epsilon_closure(nfa, &[nfa.start]);
-    let (start_accept, start_weight) = resolve_accept(nfa, &start_set);
+    let (start_candidates, start_accept, start_weight) = resolve_accept_all(nfa, &start_set);
     dfa.states[0].accept = start_accept;
     dfa.states[0].weight = start_weight;
+    dfa.states[0].accept_candidates = start_candidates;
     state_map.insert(start_set.clone(), 0);
     worklist.push(start_set);
 
@@ -118,12 +119,12 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
             let target_dfa_state = if let Some(&existing) = state_map.get(ec_closure.as_slice()) {
                 existing
             } else {
-                let (accept, weight) = resolve_accept(nfa, &ec_closure);
-                let new_state = dfa.add_state(DfaState {
-                    transitions: vec![DEAD_STATE; num_classes],
-                    accept,
-                    weight,
-                });
+                let (candidates, accept, weight) = resolve_accept_all(nfa, &ec_closure);
+                let mut state = DfaState::with_classes(num_classes);
+                state.accept = accept;
+                state.weight = weight;
+                state.accept_candidates = candidates;
+                let new_state = dfa.add_state(state);
                 state_map.insert(ec_closure.clone(), new_state);
                 worklist.push(ec_closure.clone());
                 new_state
@@ -142,12 +143,20 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
     dfa
 }
 
-/// Resolve the accept token and weight for a set of NFA states.
+/// Resolve the accepting token kinds and weights for a set of NFA states.
 ///
-/// If multiple NFA states in the set are accepting, the one with highest
-/// priority (lowest tropical weight) wins. Returns `(token_kind, weight)`.
-fn resolve_accept(nfa: &Nfa, states: &[StateId]) -> (Option<TokenKind>, TropicalWeight) {
-    let mut best_kind: Option<&TokenKind> = None;
+/// Returns:
+/// - `candidates`: all accepting token kinds with their tropical weights,
+///   sorted by increasing weight (highest priority first).
+/// - `best_kind`: the highest-priority token kind (if any).
+/// - `best_weight`: the corresponding tropical weight (or `TropicalWeight::zero()`
+///   if there are no accepting states).
+fn resolve_accept_all(
+    nfa: &Nfa,
+    states: &[StateId],
+) -> (Vec<(TokenKind, TropicalWeight)>, Option<TokenKind>, TropicalWeight) {
+    let mut candidates: Vec<(TokenKind, TropicalWeight)> = Vec::new();
+    let mut best_kind: Option<TokenKind> = None;
     let mut best_weight = TropicalWeight::zero(); // infinity = unreachable
 
     for &s in states {
@@ -155,14 +164,19 @@ fn resolve_accept(nfa: &Nfa, states: &[StateId]) -> (Option<TokenKind>, Tropical
         if let Some(ref kind) = nfa_state.accept {
             // Tropical plus = min: lower weight wins (higher priority)
             let w = nfa_state.weight;
+            candidates.push((kind.clone(), w));
             if best_kind.is_none() || w < best_weight {
-                best_kind = Some(kind);
+                best_kind = Some(kind.clone());
                 best_weight = w;
             }
         }
     }
 
-    (best_kind.cloned(), best_weight)
+    // Sort by increasing weight (highest priority first) so the lexer can try
+    // candidates in order until one eval succeeds.
+    candidates.sort_by(|(_, w_a), (_, w_b)| w_a.value().partial_cmp(&w_b.value()).unwrap());
+
+    (candidates, best_kind, best_weight)
 }
 
 #[cfg(test)]

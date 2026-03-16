@@ -24,38 +24,55 @@ language! {
             eval: ![ {
                 let s = text.replace('_', "");
                 let (sign, body) = match s.strip_prefix('-') {
-                    Some(rest) => (-1_i64, rest),
-                    None => (1_i64, s.as_str()),
+                    Some(rest) => (-1_i32, rest),
+                    None => (1_i32, s.as_str()),
                 };
                 let (radix, digits) = if let Some(h) = body.strip_prefix("0x") { (16, h) }
                     else if let Some(o) = body.strip_prefix("0o") { (8, o) }
                     else if let Some(b) = body.strip_prefix("0b") { (2, b) }
                     else { (10, body) };
-                i64::from_str_radix(digits, radix).map(|n| sign * n).unwrap_or(-1_i64)
+
+                match i32::from_str_radix(digits, radix) {
+                    Ok(n) => Ok(sign * n),
+                    Err(e) => Err(e),
+                }
             } ]
         }
         Float {
             // Require decimal point or exponent so e.g. "3" is not matched (stays integer).
             pattern: r"[0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?";
-            eval: ![ { text.replace('_', "").parse::<f64>().unwrap_or(f64::NAN) } ]
+            eval: ![ {
+                let cleaned = text.replace('_', "");
+                match cleaned.parse::<f64>() {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(e),
+                }
+            } ]
         }
         Bool {
             pattern: r"yeap|nope|true|false";
             eval: ![ {
                 match text {
-                    "yeap" => true,
-                    "nope" => false,
-                    "true" => true,
-                    "false" => false,
-                    _ => panic!("expected \"yeap\" or \"nope\", \"true\" or \"false\", got {:?}", text),
+                    "yeap" => Ok(true),
+                    "nope" => Ok(false),
+                    "true" => Ok(true),
+                    "false" => Ok(false),
+                    _ => Err(()),
                 }
             } ]
         }
         Str {
             pattern: r"'([^'\\]|\\.)*'";
             eval: ![ {
-                if text.len() < 2 { String::new() }
-                else { text[1..text.len()-1].replace("\\'", "'").replace("\\\\", "\\").to_string() }
+                if text.len() < 2 {
+                    Err(())
+                } else {
+                    let inner = &text[1..text.len()-1];
+                    let unescaped = inner
+                        .replace("\\'", "'")
+                        .replace("\\\\", "\\");
+                    Ok(unescaped.to_string())
+                }
             } ]
         }
     },

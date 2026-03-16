@@ -267,10 +267,23 @@ fn write_accept_arms(
 ) {
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
-        if let Some(ref kind) = state.accept {
-            write!(buf, "{}u32 => Some(", state_idx).unwrap();
-            write_token_constructor(buf, kind, literal_eval);
-            buf.push_str("),");
+        if !state.accept_candidates.is_empty() {
+            write!(buf, "{}u32 => {{", state_idx).unwrap();
+
+            // For this DFA state, emit a chain of `if let Some(tok) = ...` for
+            // each candidate token kind in priority order. On first success we
+            // return `Some(tok)`; if all evals fail we return `None`.
+            for (i, (kind, _weight)) in state.accept_candidates.iter().enumerate() {
+                if i == 0 {
+                    buf.push_str("if let Some(tok) = ");
+                } else {
+                    buf.push_str("else if let Some(tok) = ");
+                }
+                write_token_constructor(buf, kind, literal_eval);
+                buf.push_str(" { Some(tok) } ");
+            }
+
+            buf.push_str("else { None } },");
         }
     }
     buf.push_str("_ => None }");
@@ -342,50 +355,97 @@ fn write_token_constructor(
     literal_eval: &std::collections::HashMap<String, String>,
 ) {
     match kind {
-        TokenKind::Eof => buf.push_str("Token::Eof"),
-        TokenKind::Ident => buf.push_str("Token::Ident(text)"),
+        TokenKind::Eof => buf.push_str("Some(Token::Eof)"),
+        TokenKind::Ident => buf.push_str("Some(Token::Ident(text))"),
         TokenKind::Integer => {
             if let Some(eval) = literal_eval.get("Int") {
-                write!(buf, "Token::Integer({{ let text = text; {} }})", eval).unwrap();
-            } else {
-                buf.push_str("Token::Integer(text.parse::<i64>().expect(\"invalid integer literal\"))");
-            }
-        },
-        TokenKind::Float => {
-            if let Some(eval) = literal_eval.get("Float") {
-                write!(buf, "Token::Float({{ let text = text; {} }})", eval).unwrap();
-            } else {
-                buf.push_str("Token::Float(text.parse::<f64>().expect(\"invalid float literal\"))");
-            }
-        },
-        TokenKind::True => buf.push_str("Token::Boolean(true)"),
-        TokenKind::False => buf.push_str("Token::Boolean(false)"),
-        TokenKind::BooleanLit => {
-            if let Some(eval) = literal_eval.get("Bool") {
-                write!(buf, "Token::Boolean({{ let text = text; {} }})", eval).unwrap();
-            } else {
-                buf.push_str("Token::Boolean(false)");
-            }
-        },
-        TokenKind::StringLit => {
-            if let Some(eval) = literal_eval.get("Str") {
+                // Custom integer eval: expected to return Result<i64, E>.
                 write!(
                     buf,
-                    "Token::StringLit(std::borrow::Cow::Owned({{ let text = text; {} }}))",
+                    "match {{ let text = text; {} }} {{ \
+                     Ok(v) => Some(Token::Integer(v)), \
+                     Err(_) => None \
+                     }}",
                     eval
                 )
                 .unwrap();
             } else {
-                buf.push_str("Token::StringLit(std::borrow::Cow::Borrowed(&text[1..text.len()-1]))");
+                // Default integer parse: use Result to avoid panics.
+                buf.push_str(
+                    "match text.parse::<i64>() { \
+                     Ok(v) => Some(Token::Integer(v)), \
+                     Err(_) => None \
+                     }",
+                );
+            }
+        },
+        TokenKind::Float => {
+            if let Some(eval) = literal_eval.get("Float") {
+                // Custom float eval: expected to return Result<f64, E>.
+                write!(
+                    buf,
+                    "match {{ let text = text; {} }} {{ \
+                     Ok(v) => Some(Token::Float(v)), \
+                     Err(_) => None \
+                     }}",
+                    eval
+                )
+                .unwrap();
+            } else {
+                // Default float parse: use Result to avoid panics.
+                buf.push_str(
+                    "match text.parse::<f64>() { \
+                     Ok(v) => Some(Token::Float(v)), \
+                     Err(_) => None \
+                     }",
+                );
+            }
+        },
+        TokenKind::True => buf.push_str("Some(Token::Boolean(true))"),
+        TokenKind::False => buf.push_str("Some(Token::Boolean(false))"),
+        TokenKind::BooleanLit => {
+            if let Some(eval) = literal_eval.get("Bool") {
+                // Custom boolean eval: expected to return Result<bool, E>.
+                write!(
+                    buf,
+                    "match {{ let text = text; {} }} {{ \
+                     Ok(v) => Some(Token::Boolean(v)), \
+                     Err(_) => None \
+                     }}",
+                    eval
+                )
+                .unwrap();
+            } else {
+                // No custom boolean pattern: BooleanLit should not be constructed.
+                buf.push_str("None");
+            }
+        },
+        TokenKind::StringLit => {
+            if let Some(eval) = literal_eval.get("Str") {
+                // Custom string eval: expected to return Result<String, E>.
+                write!(
+                    buf,
+                    "match {{ let text = text; {} }} {{ \
+                     Ok(v) => Some(Token::StringLit(std::borrow::Cow::Owned(v))), \
+                     Err(_) => None \
+                     }}",
+                    eval
+                )
+                .unwrap();
+            } else {
+                // Default string literal: borrow inner slice without quotes.
+                buf.push_str(
+                    "Some(Token::StringLit(std::borrow::Cow::Borrowed(&text[1..text.len()-1])))",
+                );
             }
         },
         TokenKind::Fixed(text) => {
             let variant_name = terminal_to_variant_name(text);
-            write!(buf, "Token::{}", variant_name).unwrap();
+            write!(buf, "Some(Token::{})", variant_name).unwrap();
         },
-        TokenKind::Dollar => buf.push_str("Token::Dollar(&text[1..])"),
+        TokenKind::Dollar => buf.push_str("Some(Token::Dollar(&text[1..]))"),
         TokenKind::DoubleDollar => {
-            buf.push_str("Token::DoubleDollar(&text[2..text.len()-1])");
+            buf.push_str("Some(Token::DoubleDollar(&text[2..text.len()-1]))");
         },
     }
 }

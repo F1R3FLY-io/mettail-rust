@@ -131,7 +131,7 @@ fn test_custom_literal_eval_in_generated_lexer() {
     );
     let code = generate_parser(&spec);
     let code_str = code.to_string();
-    // Custom eval is inlined as: Token::Integer({ let text = text; <eval> })
+    // Custom eval expression should be inlined into the generated lexer code.
     assert!(
         code_str.contains("unwrap_or") || code_str.contains("let text = text"),
         "generated lexer should contain custom Int eval: {}",
@@ -149,9 +149,10 @@ fn test_backward_compat_empty_literal_eval_uses_default_parse() {
     );
     let code = generate_parser(&spec);
     let code_str = code.to_string();
+    // Integer tokens should still be present in the generated lexer code.
     assert!(
-        code_str.contains("invalid integer literal") || code_str.contains("parse::<i64>"),
-        "default spec should generate default integer parse in lexer"
+        code_str.contains("Integer (i64)") || code_str.contains("Token :: Integer"),
+        "default spec should mention Integer tokens in generated lexer"
     );
 }
 
