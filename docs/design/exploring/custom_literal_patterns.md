@@ -1,25 +1,4 @@
-<!--
----
-name: Custom numeric literal patterns
-overview: Add an optional `literals { ... }` block so users define Int/Float literal syntax via a regex-like pattern (what the lexer matches) and Rust parse code (how to convert matched text to a value). Patterns can be prefix or suffix (e.g. 0x or xh); the Rust code must align. Collection delimiters stay in `types { ... }`.
-todos:
-  - id: ast-literals-block
-    content: "Add `literals { Int { pattern: r\\\"...\\\", eval: ![ ... ] } Float { ... } }` (pattern + eval per type) parsing to `LanguageDef` in `macros/src/ast/language.rs`."
-    status: pending
-  - id: bridge-literal-config
-    content: Propagate literal parse code through prattail_bridge into parser/lexer pipeline.
-    status: pending
-  - id: regex-to-nfa
-    content: Compile user-provided literal patterns (regex subset) to NFA fragments; lexer uses these to recognize Int/Float tokens (prefix or suffix); emit token text for parser to pass to user parse code.
-    status: pending
-  - id: token-and-parse-hook
-    content: Lexer emits numeric token as text or value; trampoline/parser uses user eval for custom literals.
-    status: pending
-  - id: tests
-    content: Add tests for Int (prefix/suffix, hex/octal/binary, underscore), Float (underscore, exponent), Bool (yes/no), Str (single-quoted, escaping); and backward compatibility when literals {} is absent.
-    status: pending
----
--->
+
 
 ### Goal
 
@@ -120,7 +99,8 @@ language! {
 
 ### Design notes (why this shape)
 
-- **Lexer uses user patterns**: Each literal type has a `pattern` (regex-like string) compiled to an NFA so the lexer recognizes that token shape (prefix or suffix). The **eval** (`![ ... ]`) code must align: it receives whatever the pattern matched.
+- **Patterns drive fast lexing; eval refines candidates**: Each literal type has a `pattern` (regex-like string) that is compiled into the global NFA/DFA. The DFA does a single **O(n)** pass over the input, tracking the longest match and which token kinds can recognize each span. Only for DFA-accepted spans, and only for those candidate token kinds, does the lexer call the corresponding `eval` and inspect its `Result`. This keeps arbitrary user code off the hot path and prevents lexing from devolving into “try every eval at every position”.
+- **Patterns also resolve ambiguities**: The DFA plus token priorities encode maximal-munch and precedence rules (e.g. Integer vs Float, keyword vs Ident). Patterns decide *where* tokens can end and *which kinds* are even in play; eval only says “among these candidates, which ones can actually interpret this text?”. Removing patterns would push that disambiguation into ad hoc eval code and make behavior harder to reason about.
 - **Same convention**: Rust snippets in `![ ... ]` as in terms. Subsection names = type names. Collection delimiters stay in `types { ... }`.
 - **Result-based error signalling**: Eval should not panic; it returns `Ok(value)` on success or `Err(error)` on failure. Failure means “this particular evaluator cannot interpret this text”. The lexer then tries the next candidate literal token kind (if any) for the same span.
 - **Eval value type vs native type**: The eval expression’s success value type `T` must be compatible with the token representation the lexer uses for that literal (e.g. `i64` for `Token::Integer`, `f64` for `Token::Float`, `bool` for `Token::Boolean`, `String` for `Token::StringLit`). The **native type** declared in `types { ... }` (e.g. `![i32] as Int`) can differ; the trampoline code is responsible for converting from the token’s storage type to the native type (often via a cast).
@@ -163,7 +143,7 @@ When input could match both a custom literal (e.g. `yes`) and an **identifier**,
 - If `literals {}` is present but **omits** some types, those types still use the **default** literal parsing (decimals for Int, `true`/`false` for Bool, standard float for Float, double-quoted for Str, etc.). Only types listed in `literals` use custom pattern and eval.
 - `types`-level collection delimiters stay as they are; no migration needed.
 
-### Int eval returning `i64` vs native Int being `i32`
+### Eval storage types vs native numeric types
 
 In the Calculator example, the native `Int` type is declared as:
 
@@ -200,5 +180,19 @@ If instead you tried to have `Int.eval` return `Result<i32, E>` while the lexer 
 - The token’s **storage type** (chosen by PraTTaIL, e.g. `i64`), and
 - The language’s **native type** declared in `types { ... }` (e.g. `i32`),
 
-with the trampoline responsible for bridging the two.*** End Patch
+with the trampoline responsible for bridging the two.
 
+The same pattern applies to other numeric types:
+
+- Float literals are stored as `Token::Float(f64)` in the lexer/eval layer, even if a language chose a native `Float` type of `f32`. In that case the trampoline would cast via `as f32` when constructing the `Float` AST node.
+- Other integer widths (e.g. `u64` vs `u32`, or `i64` vs `i16`) follow the same rule: the eval returns a `Result<storage_type, E>` (`u64`, `i64`, etc.), the token stores that type, and the trampoline narrows or widens to the native type using Rust’s `as` casts.
+
+Because these conversions use standard Rust `as` semantics:
+
+- **In-range** values convert exactly.
+- **Out-of-range** values are truncated/wrapped as defined by Rust (e.g. modulo `2^N` for integer casts), rather than causing runtime errors.
+
+When writing eval code, it is therefore best to:
+
+- Choose a storage type (`i64`, `u64`, `f64`, etc.) that is at least as wide as the range of literals you care about, and
+- Be aware that, if the native type is narrower (e.g. `i32`, `f32`), the trampoline will apply a potentially narrowing conversion when building the AST.
