@@ -1453,15 +1453,31 @@ pub fn estimate_predicate_selectivity(expr: &PredicateExpr) -> f64 {
             let sb = estimate_predicate_selectivity(b);
             1.0 - (1.0 - sa) * (1.0 - sb)
         }
-        PredicateExpr::ForAll { body, .. } => {
-            // Universal: very selective
+        PredicateExpr::ForallFinite { body, domain, .. } => {
+            // Universal over finite domain: selectivity = body_sel ^ |domain|
             let body_sel = estimate_predicate_selectivity(body);
-            body_sel * 0.1 // assume domain size ~10
+            let n = domain.len().max(1) as i32;
+            body_sel.powi(n)
         }
-        PredicateExpr::Exists { body, .. } => {
-            // Existential: moderate
+        PredicateExpr::ExistsFinite { body, domain, .. } => {
+            // Existential over finite domain: selectivity = 1 - (1 - body_sel)^|domain|
             let body_sel = estimate_predicate_selectivity(body);
-            1.0 - (1.0 - body_sel).powi(10) // assume domain size ~10
+            let n = domain.len().max(1) as i32;
+            1.0 - (1.0 - body_sel).powi(n)
+        }
+        PredicateExpr::ForallInfinite { body, .. } => {
+            // Universal over infinite domain: very selective
+            let body_sel = estimate_predicate_selectivity(body);
+            body_sel * 0.05
+        }
+        PredicateExpr::ExistsInfinite { body, .. } => {
+            // Existential over infinite domain: moderate
+            let body_sel = estimate_predicate_selectivity(body);
+            1.0 - (1.0 - body_sel).powi(10)
+        }
+        PredicateExpr::Bounded { body, .. } => {
+            // Bounded wrapper: same selectivity as body
+            estimate_predicate_selectivity(body)
         }
     }
 }
@@ -1478,8 +1494,19 @@ pub fn estimate_predicate_cost(expr: &PredicateExpr) -> u32 {
         PredicateExpr::And(a, b) | PredicateExpr::Or(a, b) => {
             estimate_predicate_cost(a) + estimate_predicate_cost(b)
         }
-        PredicateExpr::ForAll { body, .. } => 10 + estimate_predicate_cost(body) * 10,
-        PredicateExpr::Exists { body, .. } => 5 + estimate_predicate_cost(body) * 10,
+        PredicateExpr::ForallFinite { body, domain, .. } => {
+            let n = domain.len().max(1) as u32;
+            n * estimate_predicate_cost(body)
+        }
+        PredicateExpr::ExistsFinite { body, domain, .. } => {
+            let n = domain.len().max(1) as u32;
+            (n / 2).max(1) * estimate_predicate_cost(body)
+        }
+        PredicateExpr::ForallInfinite { body, .. } => 100 + estimate_predicate_cost(body) * 10,
+        PredicateExpr::ExistsInfinite { body, .. } => 50 + estimate_predicate_cost(body) * 10,
+        PredicateExpr::Bounded { body, bound } => {
+            (*bound as u32).min(100) * estimate_predicate_cost(body)
+        }
     }
 }
 

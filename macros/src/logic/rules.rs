@@ -743,9 +743,13 @@ fn compile_guard_to_ascent_clauses(
         }
 
         BehavioralPred::And(a, b) => {
-            // Decompose conjunction into separate clauses
-            let mut clauses = compile_guard_to_ascent_clauses(a, lhs_clauses, earliest);
-            clauses.extend(compile_guard_to_ascent_clauses(b, lhs_clauses, earliest));
+            // Phase 7A: Order conjuncts by selectivity — most selective first
+            // for fail-fast evaluation (short-circuits sooner).
+            let sel_a = guard_codegen::estimate_selectivity(a);
+            let sel_b = guard_codegen::estimate_selectivity(b);
+            let (first, second) = if sel_a <= sel_b { (a, b) } else { (b, a) };
+            let mut clauses = compile_guard_to_ascent_clauses(first, lhs_clauses, earliest);
+            clauses.extend(compile_guard_to_ascent_clauses(second, lhs_clauses, earliest));
             clauses
         }
 
@@ -1898,9 +1902,112 @@ pub fn generate_guarded_comm_rules(
     cat_filter: CategoryFilter,
 ) -> Vec<TokenStream> {
     use crate::ast::grammar::TermParam;
+    use crate::gen::runtime::guard_codegen;
 
     let mut rules = Vec::new();
 
+    // Collect all guarded rules grouped by channel for guard set analysis.
+    // Each entry: (channel_name_string, guard_idx, &BehavioralPred)
+    let mut channel_guards: std::collections::HashMap<
+        String,
+        Vec<(usize, crate::ast::language::BehavioralPred)>,
+    > = std::collections::HashMap::new();
+    let mut guard_idx = 0usize;
+
+    for rule in &language.terms {
+        let guard_param = rule.term_context.as_ref().and_then(|ctx| {
+            ctx.iter().find_map(|p| {
+                if let TermParam::GuardBody { name, guard } = p {
+                    Some((name.clone(), guard.clone()))
+                } else {
+                    None
+                }
+            })
+        });
+        if let Some((_guard_name, guard_pred)) = &guard_param {
+            if !in_cat_filter(&rule.category, cat_filter) {
+                guard_idx += 1;
+                continue;
+            }
+            let channel_name = rule.term_context.as_ref().and_then(|ctx| {
+                ctx.iter().find_map(|p| {
+                    if let TermParam::Simple { name, .. } = p {
+                        Some(name.to_string())
+                    } else {
+                        None
+                    }
+                })
+            });
+            if let Some(ch) = channel_name {
+                channel_guards
+                    .entry(ch)
+                    .or_default()
+                    .push((guard_idx, guard_pred.clone()));
+            }
+            guard_idx += 1;
+        }
+    }
+
+    // Phase 7B: Analyze guard sets per channel and emit diagnostics.
+    for (channel, guards) in &channel_guards {
+        if guards.len() < 2 {
+            continue; // Single guard per channel — no overlap analysis needed
+        }
+        let guard_refs: Vec<(usize, &crate::ast::language::BehavioralPred)> =
+            guards.iter().map(|(idx, pred)| (*idx, pred)).collect();
+        let analysis = guard_codegen::analyze_guard_set(&guard_refs);
+
+        for &idx in &analysis.dead_guards {
+            mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
+                id: "SYM01",
+                name: "dead-guard",
+                severity: mettail_prattail::lint::LintSeverity::Warning,
+                category: None,
+                rule: Some(format!("guard_{}", idx)),
+                message: format!(
+                    "guard #{} on channel `{}` is unsatisfiable — this receive will never fire",
+                    idx, channel
+                ),
+                hint: Some("remove the dead receive or fix the guard predicate".to_string()),
+                grammar_name: None,
+                source_location: None,
+            });
+        }
+        for &(i, j) in &analysis.overlapping_pairs {
+            mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
+                id: "SYM02",
+                name: "overlapping-guards",
+                severity: mettail_prattail::lint::LintSeverity::Warning,
+                category: None,
+                rule: Some(format!("guard_{}+{}", i, j)),
+                message: format!(
+                    "guards #{} and #{} on channel `{}` overlap — may cause ambiguous dispatch",
+                    i, j, channel
+                ),
+                hint: Some("make guard predicates disjoint or add priority ordering".to_string()),
+                grammar_name: None,
+                source_location: None,
+            });
+        }
+        for &(i, j) in &analysis.subsumed_pairs {
+            mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
+                id: "SYM03",
+                name: "subsumed-guard",
+                severity: mettail_prattail::lint::LintSeverity::Note,
+                category: None,
+                rule: Some(format!("guard_{}⊆{}", i, j)),
+                message: format!(
+                    "guard #{} on channel `{}` is subsumed by guard #{} — it is redundant",
+                    i, channel, j
+                ),
+                hint: Some("remove the redundant guard or differentiate predicates".to_string()),
+                grammar_name: None,
+                source_location: None,
+            });
+        }
+    }
+
+    // Generate rules for each guarded term.
     for rule in &language.terms {
         // Find rules that have a GuardBody parameter
         let guard_param = rule.term_context.as_ref().and_then(|ctx| {
@@ -1959,6 +2066,29 @@ pub fn generate_guarded_comm_rules(
             Some(c) => c,
             None => continue, // No continuation — skip
         };
+
+        // Phase 5A/7B: T1 static elimination — skip dead guards entirely
+        let tier = guard_codegen::classify_guard_tier(&guard_pred);
+        if tier == guard_codegen::GuardTier::T1Static {
+            if let Some(false) = guard_codegen::evaluate_static_guard(&guard_pred) {
+                // T1 always-false: dead guard, skip both structural and behavioral rules
+                continue;
+            }
+            // T1 always-true: structural rule only (no behavioral check needed)
+            let structural_rule = generate_structural_comm_rule(
+                cat,
+                &cat_lower,
+                &rw_rel,
+                &eq_rel,
+                constructor_label,
+                &channel_name,
+                &guard_name,
+                &cont_binder,
+                &cont_body,
+            );
+            rules.push(structural_rule);
+            continue;
+        }
 
         // Generate the structural Comm rule (no behavioral predicates required)
         let structural_rule = generate_structural_comm_rule(

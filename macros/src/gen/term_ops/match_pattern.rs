@@ -11,26 +11,34 @@
 //! - `match_pattern(&self, pattern: &Cat) -> Option<MatchBindings>` — same-category matching
 //! - `match_pattern_other(&self, pattern: &Other) -> Option<MatchBindings>` — cross-category
 //!
-//! ## Design
+//! ## Architecture: Iterative Work Stack
 //!
-//! Pattern matching is generated based on the AST structure (variants), following
-//! the same `VariantKind` classification used by substitution (`subst.rs`).
-//! Each variant type has a uniform matching pattern:
-//! - **Var**: bind pattern variable to ground term
-//! - **Literal/Nullary**: exact equality
-//! - **Regular**: recurse into fields, merge bindings
-//! - **Collection**: element-wise matching with optional rest variable via
-//!   iteration over bag/set/vec elements. For PPar (bag) patterns, the
-//!   implementation matches non-variable pattern elements structurally and
-//!   binds variable-position elements to corresponding ground elements.
-//! - **Binder**: match body under the binder by opening both sides with a
-//!   fresh name. If the pattern binder is a FreeVar, bind it to the ground
-//!   binder name.
-//! - **MultiBinder**: match paired binders and body simultaneously.
+//! Pattern matching uses an explicit work stack (`Vec<MatchTask>`) instead of
+//! recursive function calls. This mirrors the trampoline parser design and
+//! provides stack safety for arbitrarily deep terms (100K+ nesting depth).
+//!
+//! The `MatchTask` enum is a heterogeneous work item with one variant per
+//! category (`MatchProc(Proc, Proc)`, `MatchName(Name, Name)`, etc.). When
+//! processing a Regular variant with cross-category fields, the handler pushes
+//! `MatchTask::MatchOtherCat(ground_field, pattern_field)` onto the stack.
+//!
+//! Thread-local pooling (`Cell<Vec<MatchTask>>`) ensures zero allocation in
+//! steady state. Re-entrant calls from Collection matching get fresh vectors;
+//! the outermost call retains its pool capacity.
+//!
+//! ## Variant Matching Strategies
+//!
+//! - **Var**: bind pattern variable to ground term (immediate, no stack push)
+//! - **Literal/Nullary**: exact equality (immediate)
+//! - **Regular**: push `MatchTask` for each field onto the work stack
+//! - **Collection**: inline element-wise matching; each element's `match_pattern`
+//!   call re-enters the iterative engine via TLS (bounded by collection size)
+//! - **Binder/MultiBinder**: inline scope opening; body `match_pattern` call
+//!   re-enters the iterative engine (one re-entry per binder level)
 
 use crate::ast::language::LanguageDef;
-use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use crate::gen::generate_var_label;
+use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -39,9 +47,12 @@ use syn::Ident;
 // Main Entry Point
 // =============================================================================
 
-/// Generate `MatchBindings` type and `match_pattern` methods for all exported categories.
+/// Generate `MatchBindings` type, `MatchTask` enum, TLS pool, iterative engine,
+/// and `match_pattern` methods for all exported categories.
 pub fn generate_match_pattern(language: &LanguageDef) -> TokenStream {
     let match_bindings_def = generate_match_bindings_type(language);
+    let match_task_enum = generate_match_task_enum(language);
+    let iterative_engine = generate_iterative_engine(language);
 
     let impls: Vec<TokenStream> = language
         .types
@@ -51,6 +62,8 @@ pub fn generate_match_pattern(language: &LanguageDef) -> TokenStream {
 
     quote! {
         #match_bindings_def
+        #match_task_enum
+        #iterative_engine
         #(#impls)*
     }
 }
@@ -185,159 +198,239 @@ fn generate_match_bindings_type(language: &LanguageDef) -> TokenStream {
 }
 
 // =============================================================================
-// Per-Category Match Pattern Generation
+// MatchTask Enum + TLS Pool
 // =============================================================================
 
-/// Generate `match_pattern` impl block for a single category.
-fn generate_category_match_pattern(category: &Ident, language: &LanguageDef) -> TokenStream {
-    let variants = collect_category_variants(category, language);
-
-    // Generate match arms for same-category pattern matching
-    let match_arms: Vec<TokenStream> = variants
-        .iter()
-        .map(|v| generate_match_arm(category, v, category, language))
-        .collect();
-
-    // Primary method name: match_pattern (or match_pattern_{cat} for secondary)
-    let primary_method = format_ident!("match_pattern");
-    let self_alias = format_ident!("match_pattern_{}", category.to_string().to_lowercase());
-
-    // Cross-category methods: types don't match so we always return None.
-    // Cross-category field matching in Regular variants is handled by dispatching
-    // to the field category's own match_pattern method directly.
-    let cross_methods: Vec<TokenStream> = language
+/// Generate the `MatchTask` enum and thread-local pool.
+///
+/// `MatchTask` has one variant per category: `MatchProc(Proc, Proc)`,
+/// `MatchName(Name, Name)`, etc. This enables the iterative engine to handle
+/// cross-category recursion (Proc → Name → Proc) via a single heterogeneous
+/// work stack.
+fn generate_match_task_enum(language: &LanguageDef) -> TokenStream {
+    let variants: Vec<TokenStream> = language
         .types
         .iter()
-        .filter(|t| t.name != *category)
         .map(|t| {
-            let other_cat = &t.name;
-            let other_cat_lower = other_cat.to_string().to_lowercase();
-            let method_name = format_ident!("match_pattern_{}", other_cat_lower);
-
+            let cat = &t.name;
+            let variant_name = format_ident!("Match{}", cat);
             quote! {
-                /// Cross-category pattern matching (always None — types differ).
-                #[inline]
-                pub fn #method_name(&self, _pattern: &#other_cat) -> Option<MatchBindings> {
-                    None
-                }
+                /// Match a #cat ground term against a #cat pattern.
+                #variant_name(#cat, #cat)
             }
         })
         .collect();
 
-    // Generate the var-catches-all arm: if the pattern is a FreeVar of this category,
-    // bind it. This must come first in the match to catch all var patterns.
+    quote! {
+        /// Work item for the iterative match_pattern engine.
+        ///
+        /// Each variant wraps a `(ground, pattern)` pair for one category.
+        /// The iterative engine pops tasks from a `Vec<MatchTask>` work stack,
+        /// processes each one (binding variables, checking equality, or pushing
+        /// sub-field tasks), and accumulates bindings until the stack is empty
+        /// (success) or a constructor clash is detected (failure).
+        #[allow(dead_code)]
+        enum MatchTask {
+            #(#variants),*
+        }
+
+        thread_local! {
+            /// Pool for reusing `MatchTask` work stacks across calls.
+            ///
+            /// The `Cell<Vec<MatchTask>>` pattern allows zero-allocation
+            /// steady-state operation: the first call allocates, subsequent
+            /// calls reuse the same buffer. Re-entrant calls (from Collection
+            /// matching) get fresh vectors; the outermost call retains capacity.
+            static MATCH_TASK_POOL: std::cell::Cell<Vec<MatchTask>> =
+                std::cell::Cell::new(Vec::new());
+        }
+    }
+}
+
+// =============================================================================
+// Iterative Engine
+// =============================================================================
+
+/// Generate the `match_pattern_iterative` function.
+///
+/// This function processes the `Vec<MatchTask>` work stack until either:
+/// - The stack is empty → return `Some(bindings)` (match succeeded)
+/// - A constructor clash is detected → return `None` (match failed)
+///
+/// For Regular variants, sub-field matching pushes new `MatchTask` entries.
+/// For Collection/Binder variants, the handler is inline and calls
+/// `match_pattern()` for element/body sub-matches (re-entering the engine
+/// via TLS — bounded by collection size, not nesting depth).
+fn generate_iterative_engine(language: &LanguageDef) -> TokenStream {
+    let category_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|lang_type| generate_iterative_category_arm(&lang_type.name, language))
+        .collect();
+
+    quote! {
+        /// Iterative match pattern engine.
+        ///
+        /// Processes the work stack until empty (success) or a constructor
+        /// clash is detected (failure). Stack-safe for arbitrarily deep terms.
+        #[allow(dead_code)]
+        fn match_pattern_iterative(
+            stack: &mut Vec<MatchTask>,
+        ) -> Option<MatchBindings> {
+            let mut bindings = MatchBindings::empty();
+
+            while let Some(task) = stack.pop() {
+                match task {
+                    #(#category_arms)*
+                }
+            }
+
+            Some(bindings)
+        }
+    }
+}
+
+/// Generate the match arm for one category inside the iterative engine.
+///
+/// Structure:
+/// ```rust,ignore
+/// MatchTask::MatchProc(ground, pattern) => {
+///     // 1. Variable check: if pattern is FreeVar, bind and continue
+///     // 2. Constructor match: switch on (ground, pattern) variants
+///     //    - Var/Literal/Nullary: equality check
+///     //    - Regular: push sub-field tasks
+///     //    - Collection: inline matching with re-entrant match_pattern calls
+///     //    - Binder: inline scope open with re-entrant body match_pattern call
+///     //    - Constructor clash: return None
+/// }
+/// ```
+fn generate_iterative_category_arm(category: &Ident, language: &LanguageDef) -> TokenStream {
+    let variant_name = format_ident!("Match{}", category);
     let var_label = generate_var_label(category);
     let cat_lower = category.to_string().to_lowercase();
     let cat_binding_method = format_ident!("{}", cat_lower);
 
+    let variants = collect_category_variants(category, language);
+
+    let variant_arms: Vec<TokenStream> = variants
+        .iter()
+        .map(|v| generate_iterative_variant_arm(category, v, language))
+        .collect();
+
     quote! {
-        impl #category {
-            /// First-order pattern matching: match `self` (ground term) against
-            /// `pattern` (may contain FreeVars).
-            ///
-            /// Returns `Some(bindings)` if the match succeeds, `None` otherwise.
-            /// Variable patterns bind the entire ground term at that position.
-            pub fn #primary_method(&self, pattern: &#category) -> Option<MatchBindings> {
-                // Variable pattern: bind the entire ground term
-                if let #category::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) = pattern {
-                    if let Some(ref pretty_name) = fv.pretty_name {
-                        return Some(MatchBindings::#cat_binding_method(
-                            pretty_name.clone(),
-                            self.clone(),
-                        ));
-                    }
-                }
-                // Structural matching per variant
-                match (self, pattern) {
-                    #(#match_arms,)*
-                    // Constructor clash: no match
-                    _ => None,
+        MatchTask::#variant_name(ground, pattern) => {
+            // Variable pattern: bind the entire ground term
+            if let #category::#var_label(mettail_runtime::OrdVar(
+                mettail_runtime::Var::Free(ref fv)
+            )) = pattern {
+                if let Some(ref pretty_name) = fv.pretty_name {
+                    bindings.merge(MatchBindings::#cat_binding_method(
+                        pretty_name.clone(),
+                        ground.clone(),
+                    ));
+                    continue;
                 }
             }
-
-            /// Alias for uniform cross-category dispatch.
-            #[inline]
-            pub fn #self_alias(&self, pattern: &#category) -> Option<MatchBindings> {
-                self.#primary_method(pattern)
+            // Structural matching per variant
+            match (&ground, &pattern) {
+                #(#variant_arms,)*
+                // Constructor clash: no match
+                _ => return None,
             }
-
-            #(#cross_methods)*
         }
     }
 }
 
-// =============================================================================
-// Per-Variant Match Arm Generation
-// =============================================================================
-
-/// Generate a match arm for a specific variant.
-fn generate_match_arm(
+/// Generate a match arm for a specific variant inside the iterative engine.
+fn generate_iterative_variant_arm(
     category: &Ident,
     variant: &VariantKind,
-    _match_cat: &Ident,
     language: &LanguageDef,
 ) -> TokenStream {
     match variant {
         VariantKind::Var { label } => {
-            // Var patterns are handled by the catch-all at the top of match_pattern.
-            // Here we handle matching a ground Var against a pattern Var (identity).
+            // Var identity: ground Var == pattern Var
             quote! {
-                (#category::#label(v1), #category::#label(v2)) if v1 == v2 => {
-                    Some(MatchBindings::empty())
-                }
+                (#category::#label(v1), #category::#label(v2)) if v1 == v2 => {}
             }
         }
 
         VariantKind::Literal { label } => {
-            // Literal: value equality
             quote! {
-                (#category::#label(v1), #category::#label(v2)) if v1 == v2 => {
-                    Some(MatchBindings::empty())
-                }
+                (#category::#label(v1), #category::#label(v2)) if v1 == v2 => {}
             }
         }
 
         VariantKind::Nullary { label } => {
-            // Nullary: exact constructor match
             quote! {
-                (#category::#label, #category::#label) => {
-                    Some(MatchBindings::empty())
-                }
+                (#category::#label, #category::#label) => {}
             }
         }
 
         VariantKind::Regular { label, fields } => {
-            generate_regular_match_arm(category, label, fields, language)
+            generate_iterative_regular_arm(category, label, fields, language)
         }
 
         VariantKind::Collection { label, element_cat, coll_type } => {
+            // Collection matching is inline — calls match_pattern() on elements
+            // which re-enters the iterative engine (bounded by element count).
             generate_collection_match_arm(category, label, element_cat, coll_type, language)
         }
 
-        VariantKind::Binder { label, pre_scope_fields, binder_cat, body_cat } => {
-            generate_binder_match_arm(category, label, pre_scope_fields, binder_cat, body_cat, language)
+        VariantKind::Binder {
+            label,
+            pre_scope_fields,
+            binder_cat,
+            body_cat,
+        } => {
+            // Binder matching is inline — calls match_pattern() on body
+            // which re-enters the iterative engine (one re-entry per binder).
+            generate_binder_match_arm_inline(
+                category,
+                label,
+                pre_scope_fields,
+                binder_cat,
+                body_cat,
+                language,
+            )
         }
 
-        VariantKind::MultiBinder { label, pre_scope_fields, binder_cat, body_cat } => {
-            generate_multi_binder_match_arm(category, label, pre_scope_fields, binder_cat, body_cat, language)
+        VariantKind::MultiBinder {
+            label,
+            pre_scope_fields,
+            binder_cat,
+            body_cat,
+        } => {
+            generate_multi_binder_match_arm_inline(
+                category,
+                label,
+                pre_scope_fields,
+                binder_cat,
+                body_cat,
+                language,
+            )
         }
     }
 }
 
-/// Generate match arm for Regular variant: recurse into fields, merge bindings.
-fn generate_regular_match_arm(
+/// Generate match arm for Regular variant in the iterative engine.
+///
+/// Instead of recursive calls, pushes `MatchTask` for each field.
+/// Fields are pushed in reverse order so they are processed left-to-right
+/// (stack is LIFO).
+fn generate_iterative_regular_arm(
     category: &Ident,
     label: &Ident,
     fields: &[FieldInfo],
-    language: &LanguageDef,
+    _language: &LanguageDef,
 ) -> TokenStream {
-    // If any field is a collection, the Regular variant cannot be matched
-    // element-wise here (varying container types: Vec, BTreeMap, BTreeSet).
-    // Return None for the entire arm.
+    // If any field is a collection, return None (same as before).
     if fields.iter().any(|f| f.is_collection) {
         let wildcards: Vec<TokenStream> = (0..fields.len()).map(|_| quote! { _ }).collect();
         return quote! {
-            (#category::#label(#(#wildcards),*), #category::#label(#(#wildcards),*)) => None
+            (#category::#label(#(#wildcards),*), #category::#label(#(#wildcards),*)) => {
+                return None
+            }
         };
     }
 
@@ -346,42 +439,33 @@ fn generate_regular_match_arm(
     let pattern_field_names: Vec<Ident> =
         (0..fields.len()).map(|i| format_ident!("p{}", i)).collect();
 
-    // For each field, generate the recursive match call
-    let field_matches: Vec<TokenStream> = fields
+    // Push sub-field tasks in REVERSE order (stack is LIFO, we want left-to-right)
+    let field_pushes: Vec<TokenStream> = fields
         .iter()
         .zip(ground_field_names.iter().zip(pattern_field_names.iter()))
+        .rev() // reverse for correct processing order
         .map(|(field, (gname, pname))| {
-            let match_method = match_method_for_category(&field.category, language);
+            let task_variant = format_ident!("Match{}", field.category);
             quote! {
-                {
-                    let sub_match = (**#gname).#match_method(&**#pname);
-                    match sub_match {
-                        Some(b) => bindings.merge(b),
-                        None => return None,
-                    }
-                }
+                stack.push(MatchTask::#task_variant(
+                    (**#gname).clone(),
+                    (**#pname).clone(),
+                ));
             }
         })
         .collect();
 
     quote! {
         (#category::#label(#(#ground_field_names),*), #category::#label(#(#pattern_field_names),*)) => {
-            let mut bindings = MatchBindings::empty();
-            #(#field_matches)*
-            Some(bindings)
+            #(#field_pushes)*
         }
     }
 }
 
-/// Generate match arm for Collection variant (PPar bags, lists, sets).
+/// Generate inline Collection match arm for the iterative engine.
 ///
-/// Collection matching iterates over pattern elements:
-/// - Non-variable elements must find an exact structural match in ground
-/// - Variable elements bind to ground elements
-/// - If both collections have the same size, all elements must be matched
-///
-/// For multiset (bag) collections, the order is irrelevant — each pattern
-/// element searches for a matching ground element that hasn't been claimed yet.
+/// Collection matching calls `match_pattern()` on elements, which re-enters
+/// the iterative engine via TLS. This is bounded by collection size.
 fn generate_collection_match_arm(
     category: &Ident,
     label: &Ident,
@@ -392,12 +476,9 @@ fn generate_collection_match_arm(
     let var_label = generate_var_label(category);
 
     match coll_type {
-        // HashBag (multiset): order-independent matching
         crate::ast::types::CollectionType::HashBag => {
             quote! {
                 (#category::#label(g_bag), #category::#label(p_bag)) => {
-                    let mut bindings = MatchBindings::empty();
-                    // Track which ground elements have been claimed
                     let g_elems: Vec<_> = g_bag.iter()
                         .flat_map(|(elem, count)| std::iter::repeat(elem.clone()).take(count))
                         .collect();
@@ -408,7 +489,6 @@ fn generate_collection_match_arm(
                     let mut claimed = vec![false; g_elems.len()];
 
                     for p_elem in &p_elems {
-                        // Check if pattern element is a FreeVar
                         let is_var = matches!(
                             p_elem,
                             #category::#var_label(mettail_runtime::OrdVar(
@@ -417,13 +497,13 @@ fn generate_collection_match_arm(
                         );
 
                         if is_var {
-                            // Variable: bind to any unclaimed ground element
                             if let Some(idx) = claimed.iter().position(|c| !c) {
                                 claimed[idx] = true;
                                 if let #category::#var_label(mettail_runtime::OrdVar(
                                     mettail_runtime::Var::Free(ref fv)
                                 )) = p_elem {
                                     if let Some(ref pretty_name) = fv.pretty_name {
+                                        // Re-enter iterative engine via match_pattern
                                         let sub = p_elem.match_pattern(&g_elems[idx]);
                                         if let Some(b) = sub {
                                             bindings.merge(b);
@@ -431,52 +511,48 @@ fn generate_collection_match_arm(
                                     }
                                 }
                             } else {
-                                return None; // No unclaimed element for variable
+                                return None;
                             }
                         } else {
-                            // Non-variable: find a structural match in unclaimed ground elements
                             let found = g_elems.iter().enumerate()
                                 .find(|(idx, g_elem)| {
+                                    // Re-enter iterative engine for structural check
                                     !claimed[*idx] && g_elem.match_pattern(p_elem).is_some()
                                 });
                             match found {
                                 Some((idx, _)) => {
                                     claimed[idx] = true;
+                                    // Re-enter for binding extraction
                                     if let Some(b) = g_elems[idx].match_pattern(p_elem) {
                                         bindings.merge(b);
                                     }
                                 }
-                                None => return None, // No matching ground element
+                                None => return None,
                             }
                         }
                     }
-                    Some(bindings)
                 }
             }
         }
-        // Vec (ordered): position-wise matching
         crate::ast::types::CollectionType::Vec => {
             quote! {
                 (#category::#label(g_vec), #category::#label(p_vec)) => {
                     if g_vec.len() != p_vec.len() {
                         return None;
                     }
-                    let mut bindings = MatchBindings::empty();
                     for (g_elem, p_elem) in g_vec.iter().zip(p_vec.iter()) {
+                        // Re-enter iterative engine via match_pattern
                         match g_elem.match_pattern(p_elem) {
                             Some(b) => bindings.merge(b),
                             None => return None,
                         }
                     }
-                    Some(bindings)
                 }
             }
         }
-        // HashSet: order-independent, like HashBag but count=1
         crate::ast::types::CollectionType::HashSet => {
             quote! {
                 (#category::#label(g_set), #category::#label(p_set)) => {
-                    let mut bindings = MatchBindings::empty();
                     let g_elems: Vec<_> = g_set.iter().cloned().collect();
                     let p_elems: Vec<_> = p_set.iter().cloned().collect();
                     let mut claimed = vec![false; g_elems.len()];
@@ -496,32 +572,30 @@ fn generate_collection_match_arm(
                             None => return None,
                         }
                     }
-                    Some(bindings)
                 }
             }
         }
     }
 }
 
-/// Generate match arm for Binder variant.
+/// Generate inline Binder match arm for the iterative engine.
 ///
-/// Binder matching opens both sides with a fresh name and matches the bodies.
-/// If the pattern binder is a FreeVar, it gets bound to the ground binder name.
-fn generate_binder_match_arm(
+/// Opens both scopes and calls `match_pattern()` on the bodies, which
+/// re-enters the iterative engine (one re-entry per binder level).
+/// Pre-scope fields also use `match_pattern()` re-entry.
+fn generate_binder_match_arm_inline(
     category: &Ident,
     label: &Ident,
     pre_scope_fields: &[FieldInfo],
     _binder_cat: &Ident,
     _body_cat: &Ident,
-    language: &LanguageDef,
+    _language: &LanguageDef,
 ) -> TokenStream {
-    let total_fields = pre_scope_fields.len() + 1; // +1 for scope
+    let total_fields = pre_scope_fields.len() + 1;
 
-    // Generate field names for both ground and pattern
     let g_fields: Vec<Ident> = (0..total_fields).map(|i| format_ident!("g{}", i)).collect();
     let p_fields: Vec<Ident> = (0..total_fields).map(|i| format_ident!("p{}", i)).collect();
 
-    // Pre-scope fields (before the binder scope)
     let pre_scope_matches: Vec<TokenStream> = pre_scope_fields
         .iter()
         .enumerate()
@@ -535,10 +609,10 @@ fn generate_binder_match_arm(
                     }
                 }
             } else {
-                let match_method = match_method_for_category(&field.category, language);
+                // Re-enter iterative engine for pre-scope field matching
                 quote! {
                     {
-                        let sub_match = (**#gname).#match_method(&**#pname);
+                        let sub_match = (**#gname).match_pattern(&**#pname);
                         match sub_match {
                             Some(b) => bindings.merge(b),
                             None => return None,
@@ -549,46 +623,36 @@ fn generate_binder_match_arm(
         })
         .collect();
 
-    // Scope field is the last one
     let g_scope = &g_fields[total_fields - 1];
     let p_scope = &p_fields[total_fields - 1];
 
     quote! {
         (#category::#label(#(#g_fields),*), #category::#label(#(#p_fields),*)) => {
-            let mut bindings = MatchBindings::empty();
-
-            // Match pre-scope fields
             #(#pre_scope_matches)*
 
-            // Match under the binder: open both scopes and match bodies.
-            // The binder scope provides `.inner()` to access binder + body.
             let g_inner = #g_scope.inner();
             let p_inner = #p_scope.inner();
 
-            // Match bodies structurally
+            // Re-enter iterative engine for body matching
             let body_match = (*g_inner.unsafe_body).match_pattern(&*p_inner.unsafe_body);
             match body_match {
                 Some(b) => bindings.merge(b),
                 None => return None,
             }
-
-            Some(bindings)
         }
     }
 }
 
-/// Generate match arm for MultiBinder variant.
-///
-/// MultiBinder matching opens all binders with fresh names and matches the body.
-fn generate_multi_binder_match_arm(
+/// Generate inline MultiBinder match arm for the iterative engine.
+fn generate_multi_binder_match_arm_inline(
     category: &Ident,
     label: &Ident,
     pre_scope_fields: &[FieldInfo],
     _binder_cat: &Ident,
     _body_cat: &Ident,
-    language: &LanguageDef,
+    _language: &LanguageDef,
 ) -> TokenStream {
-    let total_fields = pre_scope_fields.len() + 1; // +1 for scope
+    let total_fields = pre_scope_fields.len() + 1;
 
     let g_fields: Vec<Ident> = (0..total_fields).map(|i| format_ident!("g{}", i)).collect();
     let p_fields: Vec<Ident> = (0..total_fields).map(|i| format_ident!("p{}", i)).collect();
@@ -606,10 +670,9 @@ fn generate_multi_binder_match_arm(
                     }
                 }
             } else {
-                let match_method = match_method_for_category(&field.category, language);
                 quote! {
                     {
-                        let sub_match = (**#gname).#match_method(&**#pname);
+                        let sub_match = (**#gname).match_pattern(&**#pname);
                         match sub_match {
                             Some(b) => bindings.merge(b),
                             None => return None,
@@ -625,37 +688,87 @@ fn generate_multi_binder_match_arm(
 
     quote! {
         (#category::#label(#(#g_fields),*), #category::#label(#(#p_fields),*)) => {
-            let mut bindings = MatchBindings::empty();
-
-            // Match pre-scope fields
             #(#pre_scope_matches)*
 
-            // Match under the multi-binder: open scopes and match bodies.
             let g_inner = #g_scope.inner();
             let p_inner = #p_scope.inner();
 
-            // Binder count must match
             if g_inner.unsafe_pattern.len() != p_inner.unsafe_pattern.len() {
                 return None;
             }
 
-            // Match bodies structurally
+            // Re-enter iterative engine for body matching
             let body_match = (*g_inner.unsafe_body).match_pattern(&*p_inner.unsafe_body);
             match body_match {
                 Some(b) => bindings.merge(b),
                 None => return None,
             }
-
-            Some(bindings)
         }
     }
 }
 
-/// Get the match_pattern method name for a field's category.
+// =============================================================================
+// Per-Category Match Pattern Wrappers
+// =============================================================================
+
+/// Generate `match_pattern` impl block for a single category.
 ///
-/// Every category implements `match_pattern()` on itself, so cross-category
-/// field matching simply calls `field.match_pattern(pattern_field)` — the
-/// method is always `match_pattern` regardless of which category the field is.
-fn match_method_for_category(_field_cat: &Ident, _language: &LanguageDef) -> TokenStream {
-    quote! { match_pattern }
+/// The public `match_pattern` method delegates to the iterative engine via
+/// the TLS pool. Cross-category methods remain trivially None.
+fn generate_category_match_pattern(category: &Ident, language: &LanguageDef) -> TokenStream {
+    let primary_method = format_ident!("match_pattern");
+    let self_alias = format_ident!("match_pattern_{}", category.to_string().to_lowercase());
+    let task_variant = format_ident!("Match{}", category);
+
+    // Cross-category methods: types don't match so we always return None.
+    let cross_methods: Vec<TokenStream> = language
+        .types
+        .iter()
+        .filter(|t| t.name != *category)
+        .map(|t| {
+            let other_cat = &t.name;
+            let other_cat_lower = other_cat.to_string().to_lowercase();
+            let method_name = format_ident!("match_pattern_{}", other_cat_lower);
+
+            quote! {
+                /// Cross-category pattern matching (always None — types differ).
+                #[inline]
+                pub fn #method_name(&self, _pattern: &#other_cat) -> Option<MatchBindings> {
+                    None
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        impl #category {
+            /// First-order pattern matching: match `self` (ground term) against
+            /// `pattern` (may contain FreeVars).
+            ///
+            /// Returns `Some(bindings)` if the match succeeds, `None` otherwise.
+            /// Variable patterns bind the entire ground term at that position.
+            ///
+            /// Uses an iterative work stack for stack safety (supports 100K+
+            /// nesting depth). Collection and Binder matching re-enter the
+            /// engine via this method, bounded by element/binder count.
+            pub fn #primary_method(&self, pattern: &#category) -> Option<MatchBindings> {
+                MATCH_TASK_POOL.with(|cell| {
+                    let mut stack = cell.take();
+                    stack.clear();
+                    stack.push(MatchTask::#task_variant(self.clone(), pattern.clone()));
+                    let result = match_pattern_iterative(&mut stack);
+                    cell.set(stack);
+                    result
+                })
+            }
+
+            /// Alias for uniform cross-category dispatch.
+            #[inline]
+            pub fn #self_alias(&self, pattern: &#category) -> Option<MatchBindings> {
+                self.#primary_method(pattern)
+            }
+
+            #(#cross_methods)*
+        }
+    }
 }
