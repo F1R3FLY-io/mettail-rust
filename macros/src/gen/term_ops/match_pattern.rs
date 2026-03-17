@@ -331,6 +331,16 @@ fn generate_regular_match_arm(
     fields: &[FieldInfo],
     language: &LanguageDef,
 ) -> TokenStream {
+    // If any field is a collection, the Regular variant cannot be matched
+    // element-wise here (varying container types: Vec, BTreeMap, BTreeSet).
+    // Return None for the entire arm.
+    if fields.iter().any(|f| f.is_collection) {
+        let wildcards: Vec<TokenStream> = (0..fields.len()).map(|_| quote! { _ }).collect();
+        return quote! {
+            (#category::#label(#(#wildcards),*), #category::#label(#(#wildcards),*)) => None
+        };
+    }
+
     let ground_field_names: Vec<Ident> =
         (0..fields.len()).map(|i| format_ident!("g{}", i)).collect();
     let pattern_field_names: Vec<Ident> =
@@ -341,21 +351,13 @@ fn generate_regular_match_arm(
         .iter()
         .zip(ground_field_names.iter().zip(pattern_field_names.iter()))
         .map(|(field, (gname, pname))| {
-            if field.is_collection {
-                // Collection fields inside Regular variants.
-                // These have varying container types (Vec, BTreeMap, BTreeSet)
-                // so element-wise matching is deferred to the top-level
-                // Collection variant handler. Return None for now.
-                quote! { return None; }
-            } else {
-                let match_method = match_method_for_category(&field.category, language);
-                quote! {
-                    {
-                        let sub_match = (**#gname).#match_method(&**#pname);
-                        match sub_match {
-                            Some(b) => bindings.merge(b),
-                            None => return None,
-                        }
+            let match_method = match_method_for_category(&field.category, language);
+            quote! {
+                {
+                    let sub_match = (**#gname).#match_method(&**#pname);
+                    match sub_match {
+                        Some(b) => bindings.merge(b),
+                        None => return None,
                     }
                 }
             }
@@ -397,10 +399,10 @@ fn generate_collection_match_arm(
                     let mut bindings = MatchBindings::empty();
                     // Track which ground elements have been claimed
                     let g_elems: Vec<_> = g_bag.iter()
-                        .flat_map(|(elem, count)| std::iter::repeat(elem.clone()).take(*count))
+                        .flat_map(|(elem, count)| std::iter::repeat(elem.clone()).take(count))
                         .collect();
                     let p_elems: Vec<_> = p_bag.iter()
-                        .flat_map(|(elem, count)| std::iter::repeat(elem.clone()).take(*count))
+                        .flat_map(|(elem, count)| std::iter::repeat(elem.clone()).take(count))
                         .collect();
 
                     let mut claimed = vec![false; g_elems.len()];
