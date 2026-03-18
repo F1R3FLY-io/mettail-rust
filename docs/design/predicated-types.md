@@ -9,69 +9,134 @@
 ## 1. Introduction and Motivation
 
 The rho-calculus Comm rule fires unconditionally. Any process sent on a channel
-is accepted without question:
+is accepted without question.
+
+The standard Comm rule captures the fundamental communication primitive of the
+rho-calculus: when a send `n!(q)` and a receive `(n?x).{c}` coexist on the
+same channel `n`, the sent process `q` is quoted into a Name `@(q)` and
+substituted for the bound variable `x` in the continuation `c`. This is a
+single-step reduction in the CHAM (Chemical Abstract Machine) semantics —
+the two processes are consumed and replaced by the substituted continuation.
+The rule is unconditional: no inspection of `q` occurs before the
+substitution.
 
 ```
 { n!(q) | (n?x).{c} } ⟶ c[@(q)/x]
 ```
 
-The process `q` is quoted to a Name `@(q)`, substituted for `x` in the
-continuation `c`, and execution proceeds. There is no mechanism to inspect,
-filter, or constrain the received value before committing to the communication.
+The notation `@(q)` denotes the quote operator (Name constructor `NQuote`),
+and `c[v/x]` denotes capture-avoiding substitution of `v` for `x` in `c`.
+The substitution crosses category boundaries: `x` may appear as both an `NVar`
+and (via unquoting) as a `PVar` in `c`. This unconditional firing is what
+predicated types aim to extend — §2 introduces the guard `φ` that conditions
+this reduction.
 
 **Predicated types** extend this picture. They condition communication on
 **guard predicates** — structural and behavioral constraints that the received
-value must satisfy before the Comm rule fires:
+value must satisfy before the Comm rule fires.
+
+The guarded Comm rule adds a pattern `φ` between the channel and the
+continuation. Where the standard rule accepts any value blindly, the guarded
+variant interposes a first-order matching step (Baader & Snyder, 2001): the
+received Name `@(q)` is matched against the guard pattern `φ`, and
+communication proceeds only if matching succeeds. The rationale is to bring
+type-like discrimination into the process algebra without departing from the
+reflective "terms as patterns" discipline — the guard IS a term, not a
+separate type annotation. This design preserves the rho-calculus property
+that Names and Procs share a single syntactic universe. The matching
+function `match(φ, @(q))` returns an `Option<σ>`: `Some(σ)` on success, where
+`σ` maps the guard's free variables to sub-terms of `@(q)`, or `None` on
+failure.
 
 ```
 { n!(q) | (n ? φ).{c} } ⟶ c[σ]    iff match(φ, @(q)) = σ
 ```
 
-The guard `φ` is a pattern (a Name expression with free variables). Matching
-the concrete received Name `@(q)` against `φ` either succeeds — producing a
-substitution `σ` that binds the guard's variables to the corresponding
-sub-terms of the received value — or fails, in which case the Comm rule does
-not fire and the processes remain waiting.
+The guard `φ` is a Name expression with free variables, and `σ` is a
+substitution (partial function from variables to terms) partitioned by natural
+category — Name bindings for `NVar` positions, Proc bindings for `PVar`
+positions (see §3 "Natural Categories"). When matching fails, the Comm rule
+does not fire and the processes remain waiting, preserving the standard
+blocking semantics. The match function's O(|φ|) complexity (§5) ensures that
+the guard check adds only linear overhead proportional to the pattern size.
 
 ### Three Motivating Examples
 
 These examples illustrate progressively more powerful guards, building from
-pure structural matching to relational properties to first-order logic.
+pure structural matching to relational properties to first-order logic. Each
+example introduces a new layer of expressiveness — structural decomposition,
+relational join, and quantified reasoning — that maps to a distinct evaluation
+mechanism in the pipeline (§12). Together, they demonstrate the full spectrum
+of guard predicates that predicated types support.
 
-**Example 1 — Structural guard.** Accept only values that look like an output
-operation:
+**Example 1 — Structural guard.** The simplest guard form performs pure
+pattern matching on the received value's term structure. The intuition is
+that the guard acts as a shape filter: only values with a specific constructor
+layout pass through. This corresponds to first-order matching (§3) — the
+guard pattern contains free variables that bind to sub-terms of the concrete
+value. The theoretical basis is the standard variable rule of first-order
+matching: a free variable in the pattern matches any ground sub-term at the
+corresponding position. No relational or logical reasoning is involved — just
+structural decomposition.
 
 ```rholang
 for (@{x!(y)} <- ch) { P }
 ```
 
-The guard `@{x!(y)}` = `@(x!(y))` is a Name pattern. The receive fires only
-when the value sent on `ch` has the shape `channel!(body)`. The variables `x`
-and `y` bind the channel and body sub-terms at their natural categories
-(`x : Name`, `y : Proc`).
+The guard `@{x!(y)}` = `@(x!(y))` is a Name pattern parsed as
+`NQuote(POutput(NVar(x), PVar(y)))`. The receive fires only when the value
+sent on `ch` has the shape `channel!(body)`. The variables `x` and `y` bind
+the channel and body sub-terms at their natural categories (`x : Name`,
+`y : Proc`). The matching cost is O(|guard|) — constant for this two-variable
+pattern (§5). This is a T1 or T2 guard depending on whether the pattern is
+fully ground-decidable at compile time (§11).
 
-**Example 2 — Behavioral guard.** Accept only when a relational property holds
-over the extracted values:
+**Example 2 — Behavioral guard.** Beyond structural shape, many communication
+protocols need to condition acceptance on relational properties of the
+received value — properties that emerge from the Ascent fixpoint computation
+rather than the value's syntactic structure alone. The rationale for
+separating structural and behavioral guards is compositionality: the
+structural match extracts bindings (σ), and the behavioral predicates then
+query Ascent relations using those bindings. This two-phase design (match
+then check) maps naturally to the Ascent Datalog rule structure, where
+structural destructuring produces `let` bindings and behavioral predicates
+become JOIN clauses against declared relations (§8).
 
 ```rholang
-for (@{x!(y)} : path(y, {}) <- ch) { P }
+for (@{x!(y)} <- ch) where path(y, {}) { P }
 ```
 
-After structural matching succeeds (binding `x` and `y`), the behavioral
+After structural matching succeeds (binding `x` and `y`), the `where` clause
 predicate `path(y, {})` checks whether the tuple `(body, PZero)` exists in
 the `path` relation of the current Ascent fixed-point. Communication fires
-only if both the structural match AND all behavioral predicates succeed.
+only if both the structural match AND all `where`-clause predicates succeed.
+The runtime cost is O(1) per relation lookup (hash-indexed Ascent relation,
+§8) plus the O(|guard|) structural matching cost.
 
-**Example 3 — Quantified guard.** Express a universal property over all
-reachable terms:
+**Example 3 — Quantified guard.** The most expressive guard form uses
+first-order quantification to express properties that range over all (or some)
+terms in a domain. The intuition is that structural matching asks "does this
+value have the right shape?" and behavioral predicates ask "does this specific
+tuple exist in a relation?" but quantified guards ask "does a universal or
+existential property hold across an entire set of related terms?" This
+requires either LogicT fair backtracking evaluation (current implementation,
+§8 "Quantified Behavioral Predicates") or alternating weighted automata
+(future AWA path, §16). The theoretical basis is the automaton-theoretic
+characterization of first-order logic: universal quantifiers correspond to
+AWA Q⊗  (tensor/conjunction) states, existential quantifiers to Q⊕
+(direct-sum/disjunction) states (Droste & Gastin, 2007).
 
 ```rholang
-for (@x : forall y. (reachable(x, y) => safe(y)) <- ch) { P }
+for (@x <- ch) where forall(y, nodes, entails(reachable(x, y), safe(y))) { P }
 ```
 
 This demands that for EVERY term `y` reachable from the received value `x`,
 the `safe` relation holds. This is a first-order universally quantified
-predicate that compiles to alternating weighted automata (AWA) for evaluation.
+predicate. The `forall(y, nodes, ...)` sugar desugars to a negated
+existential: the compiler searches for a counterexample `y` where
+`reachable(x, y), not(safe(y))`, and the guard succeeds only if no such
+counterexample exists. The guard is classified as T3 (bounded checking) or T4
+(undecidable) depending on whether the reachability domain is bounded (§11).
 
 ### Language-Generic Framing
 
@@ -105,7 +170,19 @@ twenty-six sections in three parts:
 
 ### Formal Definitions
 
-The **guarded Comm rule** for structural guards:
+The following two equations formalize the guarded Comm rule, first for
+structural-only guards and then for the full structural + behavioral form.
+The notation follows standard operational semantics conventions: `σ` denotes
+a substitution (partial function `Var → Term`), `φ` denotes the guard
+pattern (a term with free variables), and `match` is the first-order matching
+function defined formally in §5. The key insight is that the guard extends
+the standard Comm rule with a **conditional gate**: communication fires only
+when the matching function returns `Some(σ)`, converting an unconditional
+reduction to a pattern-conditional one.
+
+The **guarded Comm rule** for structural guards encodes the core matching
+contract. The `match` function takes a pattern and a ground term and returns
+either a substitution binding the pattern's free variables or failure:
 
 ```
 { n!(q) | (n ? φ).{c} } ⟶ c[σ]
@@ -114,7 +191,19 @@ The **guarded Comm rule** for structural guards:
         σ : Var → Term
 ```
 
-The **guarded Comm rule** with behavioral predicates:
+The type signature `match : (T_pattern, T_ground) → Option<σ>` makes explicit
+that this is first-order matching, not unification — only the pattern may
+contain free variables. This distinction is formalized in §3 and ensures
+O(|pattern|) matching complexity. The rule is sound by construction: §9.1
+argues that the generated Datalog clause faithfully encodes this equation.
+
+The **guarded Comm rule** with behavioral predicates extends the structural
+form with a conjunction of relational checks against the Ascent fixpoint. The
+intuition is that structural matching extracts bindings, and behavioral
+predicates then validate those bindings against derived relational knowledge.
+The `resolve` function maps predicate arguments (which may reference match
+variables by name) to their bound values in `σ`. The conjunction `∀i` requires
+ALL predicates to hold — a single failing predicate blocks the Comm rule.
 
 ```
 { n!(q) | (n ? φ, R₁(a₁), …, Rₖ(aₖ)).{c} } ⟶ c[σ]
@@ -123,7 +212,25 @@ The **guarded Comm rule** with behavioral predicates:
         FP = current Ascent fixed-point
 ```
 
+Each `Rᵢ` is a declared Ascent relation, and `FP` is the current fixpoint
+state. The lookup `Rᵢ(v) ∈ FP` is an O(1) hash-indexed membership test in
+Ascent's internal index (§8). The conjunction is evaluated left-to-right with
+short-circuit semantics, and BCG01 selectivity ordering (§13) reorders
+conjuncts so the most selective predicate is checked first.
+
 ### Process Interaction Diagram
+
+The following diagram visualizes the **rho calculus Comm rule** (Meredith &
+Radestock, 2005), extended with the guard and predicate layers introduced by
+this design. Read the diagram top-to-bottom as a data-flow: the sender
+`n!(q)` and receiver `(n ? φ, preds).{c}` rendezvous on channel `n`, then
+the received value passes through two successive gates — structural matching
+and behavioral predicate checking — before the continuation fires. The two
+rightward exits ("Comm blocked") represent the two failure modes: pattern
+mismatch and predicate failure. This layered gate architecture maps directly
+to the generated Datalog rule structure in §6, where the `if let Some(...)`
+clause implements the structural gate and the JOIN clauses implement the
+behavioral gate.
 
 ```
 n!(q) ─────┐       ┌───── (n ? φ, preds).{c}
@@ -153,6 +260,14 @@ n!(q) ─────┐       ┌───── (n ? φ, preds).{c}
      └───────────────────┘
 ```
 
+The key insight is the strict ordering: structural matching ALWAYS executes
+first (cheap, O(|φ|)), and behavioral predicates execute only after a
+successful match (potentially expensive, involving fixpoint queries). This
+ordering is both a correctness requirement (predicates reference match
+variables that only exist after successful matching) and a performance
+optimization (fail-fast on cheap structural checks before invoking Ascent
+relation lookups).
+
 > **Citation:** Meredith, L. G. & Radestock, M. "A Reflective Higher-Order
 > Calculus." Electronic Notes in Theoretical Computer Science, 141(5), 2005.
 
@@ -162,82 +277,454 @@ n!(q) ─────┐       ┌───── (n ? φ, preds).{c}
 
 ### Examples First
 
+The surface syntax uses a `where` keyword to introduce **Datalog queries** —
+conjunctions of positive and negative literals compatible with Ascent's
+evaluation model. The `where` clause cleanly separates structural binding
+(the `@pattern <- channel` form, handled by first-order matching) from
+behavioral filtering (the Datalog literals that follow `where`). Each example
+below demonstrates a progressively more expressive guard, from pure structural
+matching (Layer 1, handled by existing Pratt/RD matching) through behavioral
+predicates (Layer 2, Ascent relation joins) to quantified and bounded
+predicates (Layers 3-4, LogicT/AWA evaluation). The `@` prefix on patterns
+is still required — the compiler does not infer categories.
+
 ```rholang
-// 1. Structural pattern (Layer 1 — existing Pratt/RD matching)
+// 1. Structural pattern only (no where) — unchanged
 for (@{x!(y)} <- ch) { P }
 
-// 2. Predicated type guard (Layer 2+)
-for (@x : halts /\ primes <- ch) { P }
+// 2. Structural + behavioral guard (where OUTSIDE parens)
+for (@(x /\ a!(b)) <- n) where path(b, {}), not(path(x, {})) { P }
 
-// 3. Combined structural + predicated
-for (@{x!(y)} : finite /\ ground <- ch) { P }
+// 3. Simple behavioral guard (no structural decomposition)
+for (@x <- ch) where halts(x), primes(x) { P }
 
-// 4. Multi-channel with cross-channel predicates
-for (@x <- ch1, @y : related(x) <- ch2) { P }
+// 4. Structural + combined predicates
+for (@{x!(y)} <- ch) where finite(x), ground(y) { P }
 
-// 5. Quantified predicates
-for (@x : forall y. (reachable(x, y) => safe(y)) <- ch) { P }
+// 5. Repeated bind with where
+for (@x <= ch) where valid(x) { P }
 
-// 6. Bounded predicates with explicit depth
-for (@x : exists_{k=100} y. (x ->* y /\ halts(y)) <- ch) { P }
+// 6. Peek bind with where
+for (@x <<- ch) where test(x) { P }
 ```
 
-### Predicate Sublanguage Grammar
+Examples 1-4 are single-channel guards with increasing predicate complexity.
+Example 2 introduces the conjunction of a structural pattern (`x /\ a!(b)`)
+with a `where` clause containing both positive and negated Datalog literals.
+Examples 5-6 show that `where` extends to all bind operators (`<=` for
+repeated, `<<-` for peek).
 
-The guard predicate language is a first-order logic fragment with bounded
-quantification and predicate application:
+#### Multi-Channel Receives
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Predicate Sublanguage EBNF                       │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│ guard  ::= atom                             atomic predicate        │
-│          | guard '/\' guard                 conjunction (and)       │
-│          | guard '\/' guard                 disjunction (or)        │
-│          | '~' guard                        negation                │
-│          | 'forall' var '.' guard           universal quantifier    │
-│          | 'exists' var '.' guard           existential quantifier  │
-│          | 'exists_{k=' N '}' var '.' guard bounded existential     │
-│          | 'forall_{k=' N '}' var '.' guard bounded universal       │
-│          | '(' guard ')'                    grouping                │
-│          | guard '=>' guard                 implication (~a \/ b)   │
-│                                                                     │
-│ atom   ::= ident '(' args ')'              relation application     │
-│          | term '==' term                   equality                │
-│          | term '!=' term                   disequality             │
-│          | 'fresh' '(' var ')'              name freshness          │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+Both per-bind and trailing (global) `where` clauses are valid. Per-bind
+`where` sits inside the closing `)` scoped to that bind's variables; global
+`where` sits outside, seeing all bound variables:
+
+```rholang
+// Per-bind where (INSIDE parens — scoped to that bind's variables)
+for (@x <- ch1, where pred1(x); @y <- ch2, where related(x, y)) { P }
+
+// Global where (OUTSIDE parens — sees all bound variables)
+for (@x <- ch1; @y <- ch2) where pred1(x), related(x, y) { P }
+
+// Mixed — per-bind inside + global outside
+for (@x <- ch1, where pred1(x); @y <- ch2) where pred2(x, y) { P }
 ```
 
-Each production maps to a `WeightedMsoFormula` AST variant in
-`weighted_mso.rs`. The `/\`, `\/`, `~`, `forall`, `exists` connectives
-align with the weighted MSO specification language (M10), enabling direct
-automaton compilation via `to_weighted_automaton()`.
+#### Contracts
+
+The `where` clause appears after the closing paren, before `=`:
+
+```rholang
+// After closing paren, before =
+contract handler(@{msg!(payload)}, ret) where valid(payload) = { body }
+
+// Without structural guard
+contract processor(@x) where authorized(x) = { body }
+
+// No where (structural only) — unchanged
+contract echo(@x, ret) = { ret!(x) }
+```
+
+#### Select Branches
+
+```rholang
+select {
+  case @x <- ch1 where pred(x) => { ... }
+  case @y <- ch2 where other(y) => { ... }
+}
+```
+
+### Where-Clause Sublanguage Grammar
+
+The `where` clause introduces a conjunction of Datalog literals — positive
+and negative relation applications, infix comparisons, and syntactic sugar
+for logical connectives, implications, and quantifiers. The design rationale
+for this particular fragment is decidability: every literal maps to a
+`WeightedMsoFormula` AST variant (§12, M10) that has a well-defined
+automaton-theoretic compilation target. Comma-separated literals map to
+conjunction (SFA intersection); `not()` maps to SFA complement; `or()` sugar
+desugars to auxiliary union relations with multiple Ascent rules; quantifiers
+desugar to auxiliary relations with negation-as-failure. The grammar is
+deliberately first-order — no second-order set quantification `∀X` — to
+stay within the MSO decidability boundary for tree structures.
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                    Where-Clause Sublanguage EBNF                        │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│ where_clause ::= 'where' literal (',' literal)*                         │
+│                                                                         │
+│ literal  ::= pos_lit                            positive literal        │
+│            | NOT '(' pos_lit ')'                stratified negation     │
+│            | AND '(' literal (',' literal)+ ')' conjunction sugar       │
+│            | OR '(' literal (',' literal)+ ')'  disjunction sugar       │
+│                                                                         │
+│ pos_lit  ::= ident '(' args ')'                 relation application    │
+│            | var IN ident                       set membership sugar    │
+│            | term cmp term                      infix comparison        │
+│            | term REWRITE term                  rewrite closure         │
+│            | ENTAILS '(' literal ',' literal ')' forward impl sugar    │
+│            | IMPLIED_BY '(' literal ',' literal ')' reverse impl sugar │
+│            | IFF '(' literal ',' literal ')'     biconditional sugar   │
+│            | FORALL '(' var [',' dom_or_bound] ','                      │
+│              literal ')'                        universal sugar         │
+│            | EXISTS '(' var [',' dom_or_bound] ','                      │
+│              literal ')'                        existential sugar       │
+│                                                                         │
+│ args     ::= arg (',' arg)*                                             │
+│ arg      ::= var | process_term | number | string                       │
+│                                                                         │
+│ dom_or_bound ::= ident                          named finite domain     │
+│                | '{' arg (',' arg)* '}'         enumerated domain       │
+│                | N                              depth bound (integer)   │
+│                                                                         │
+│ cmp      ::= '>' | '<' | GE | LE | '==' | NE                           │
+│ var      ::= LOWER_IDENT                        variable reference      │
+│                                                                         │
+│ ── Unicode/ASCII alternates ──────────────────────────────────────────  │
+│ IN       ::= 'in' | '∈' | ':'                                          │
+│ NOT      ::= 'not' | '¬'                                               │
+│ AND      ::= 'and' | '∧'                                                │
+│ OR       ::= 'or' | '∨'                                                 │
+│ ENTAILS  ::= 'entails' | 'implies' | '⟹'                                │
+│ IMPLIED_BY ::= 'implied_by' | '⟸'                                      │
+│ IFF      ::= 'iff' | '⟺'                                               │
+│ FORALL   ::= 'forall' | '∀'                                            │
+│ EXISTS   ::= 'exists' | '∃'                                            │
+│ GE       ::= '>=' | '≥'                                                │
+│ LE       ::= '<=' | '≤'                                                │
+│ NE       ::= '!=' | '≠'                                                │
+│ REWRITE  ::= '->*' | '→*'                                              │
+│                                                                         │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+Note: Pattern-level Unicode (`∧` for `/\`, `∨` for `\/`, `¬` for `~`) is
+handled by the structural pattern grammar (already supported by Rholang),
+not the `where`-clause grammar.
+
+`x in T` / `x ∈ T` / `x : T` is set membership sugar — `x ∈ PosInt` desugars
+to `PosInt(x)`. This provides a natural type-membership reading for refinement
+types (§19) and named predicate sets. The colon form mirrors type annotation
+syntax for familiarity.
+
+`->*` / `→*` denotes the reflexive-transitive closure of the one-step rewrite
+relation; `rewrites_to(x, y)` is the function-call synonym.
+`ac_match(bag, pat)` tests associative-commutative matching of `bag` against
+multiset pattern `pat` (see §Gap 4 and `prattail/src/logict.rs`).
+`count_ge(ch, k)` / `count_eq(ch, k)` test cardinality of a collection
+against a numeric bound. `dom_or_bound` optionally restricts quantifier
+variables to a named domain, enumeration, or explicit depth bound (integer).
+
+Each literal maps to a `WeightedMsoFormula` abstract syntax tree (AST) variant
+in `weighted_mso.rs`. The comma conjunction, `not()`, `forall()`, `exists()`
+forms align with the weighted MSO specification language (M10), enabling
+direct automaton compilation via `to_weighted_automaton()`.
+
+### Built-in Predicates
+
+```rholang
+// Equality / disequality (function or infix)
+where eq(x, y)       // or: x == y
+where neq(x, y)      // or: x != y
+
+// Comparisons (function or infix)
+where gt(x, 5)       // or: x > 5
+where le(x, y)       // or: x <= y
+
+// Rewrite closure
+where rewrites_to(x, y)    // x ->* y
+
+// Freshness
+where fresh(x)
+
+// AC-matching
+where ac_match(bag, pattern)
+
+// Cardinality
+where count_ge(ch, k)       // count(ch) >= k
+where count_eq(ch, k)       // count(ch) == k
+```
+
+### Syntactic Sugar — Logical Connectives (and, or)
+
+The `where` clause uses comma for conjunction by default, but explicit `and()`
+and `or()` sugar enables nested logical structure:
+
+```rholang
+// Explicit conjunction (equivalent to comma):
+for (@x <- ch) where and(path(x, {}), safe(x)) { P }
+// Same as: where path(x, {}), safe(x)
+
+// Disjunction (desugars to auxiliary union relation):
+for (@x <- ch) where or(fast(x), cached(x)) { P }
+// Compiler generates:
+//   fast_or_cached(X) :- fast(X).
+//   fast_or_cached(X) :- cached(X).
+// Desugars to: where fast_or_cached(x)
+```
+
+**De Morgan normalization** — the compiler normalizes nested `not(and(...))`
+and `not(or(...))` via De Morgan's Laws before Datalog compilation:
+
+| Sugar                    | De Morgan Normal Form         |
+|--------------------------|-------------------------------|
+| `not(and(A, B))`        | `or(not(A), not(B))`          |
+| `not(or(A, B))`         | `not(A), not(B)`              |
+| `not(not(A))`           | `A` (double negation elim.)   |
+| `not(and(A, B, C))`     | `or(not(A), not(B), not(C))`  |
+| `not(or(A, B, C))`      | `not(A), not(B), not(C)`      |
+
+These apply recursively. Variadic forms `and(A, B, C, ...)` and
+`or(A, B, C, ...)` accept 2+ arguments. `and(A, B, C)` ≡ `A, B, C`.
+`or(A, B, C)` generates one Ascent rule per disjunct.
+
+**DNF normalization** — After De Morgan normalization, the compiler converts
+the formula to **Disjunctive Normal Form** (DNF): a disjunction of
+conjunctions. Each conjunctive clause maps directly to one Ascent rule body,
+and the disjunction is the union of multiple rules with the same head:
+
+```
+// Pipeline: Source → De Morgan → DNF → Ascent rules
+
+// Source:
+where and(or(A, B), or(C, D))
+
+// DNF expansion (4 Ascent rules):
+//   guard(X) :- A(X), C(X).
+//   guard(X) :- A(X), D(X).
+//   guard(X) :- B(X), C(X).
+//   guard(X) :- B(X), D(X).
+```
+
+**Why DNF is the target form for Ascent** — DNF is not merely a canonical
+normal form; it is the *optimal* representation for Ascent's evaluation model.
+Four properties of Ascent's bottom-up semi-naive engine make DNF strictly
+better than encoding nested boolean structure inside rule bodies:
+
+1. **No runtime branching inside rules.** Each DNF clause is a flat
+   conjunction of literals, which maps directly to Ascent's join-based
+   evaluation — one hash-indexed lookup per literal, no conditional logic.
+   A nested `or` inside a single rule body would require the engine to
+   perform internal branching that bypasses join-driven execution.
+
+2. **Selective firing via semi-naive iteration.** Ascent re-fires a rule only
+   when its constituent relations have new tuples (deltas). With DNF, each
+   clause is a separate rule, so only clauses whose relations changed re-fire.
+   A monolithic rule body encoding a full boolean tree would re-fire whenever
+   *any* sub-relation changes, wasting work on unchanged branches.
+
+3. **Parallel evaluation.** Independent rule bodies can be evaluated
+   concurrently — each DNF clause maps to a separate Ascent rule, and Ascent's
+   architecture supports concurrent rule application. DNF exposes the maximal
+   parallelism inherent in the disjunction.
+
+4. **Index utilization.** Each flat conjunction can use Ascent's per-relation
+   hash indices optimally. The join ordering within a clause is determined by
+   the selectivity estimator (M7), which operates on flat conjunctions. Nested
+   boolean structure would obscure the optimal join order from the estimator.
+
+**DNF blowup lint** — DNF expansion of a formula with n conjuncts of k
+disjuncts each produces k^n clauses. The compiler emits a lint (DNF01) when
+expansion exceeds 16 clauses, warning the user to restructure their guard or
+use named auxiliary relations instead of deeply nested `and`/`or`. For typical
+guards (2–3 disjuncts of 2–3 conjuncts = 4–9 rules), DNF is strictly
+beneficial. Beyond the lint threshold, the combinatorial blowup in rule count
+may outweigh the per-rule evaluation advantages, and named auxiliary relations
+should be used to factor out shared sub-expressions.
+
+### Syntactic Sugar — Implications
+
+`entails(A, B)` ≡ `¬A ∨ B` (synonym: `implies`). Desugars to auxiliary
+Ascent relation + negation:
+
+```rholang
+// Sugar:
+for (@x <- ch) where entails(reachable(x, y), safe(y)) { P }
+
+// Compiler generates auxiliary relation:
+//   reachable_but_unsafe(X) :- reachable(X, Y), not(safe(Y)).
+// Desugars to:
+//   where not(reachable_but_unsafe(x))
+```
+
+`implied_by(A, B)` ≡ `entails(B, A)` — reverse implication:
+
+```rholang
+// Sugar:
+for (@x <- ch) where implied_by(safe(y), reachable(x, y)) { P }
+
+// Equivalent to:
+for (@x <- ch) where entails(reachable(x, y), safe(y)) { P }
+```
+
+`iff(A, B)` ≡ `(A ⟹ B) ∧ (B ⟹ A)` — biconditional. Desugars to two
+auxiliary relations:
+
+```rholang
+// Sugar:
+for (@x <- ch) where iff(member(x, s), valid(x)) { P }
+
+// Compiler generates:
+//   member_not_valid(X) :- member(X, S), not(valid(X)).
+//   valid_not_member(X) :- valid(X), not(member(X, S)).
+// Desugars to:
+//   where not(member_not_valid(x)), not(valid_not_member(x))
+```
+
+### Syntactic Sugar — Quantifiers
+
+**Universal** (`forall`) desugars to negated existential:
+
+```rholang
+// Sugar:
+for (@x <- ch) where forall(y, nodes, entails(reachable(x, y), safe(y))) { P }
+//   forall(var, domain, body)
+
+// Compiler generates:
+//   violates(X) :- nodes(Y), reachable(X, Y), not(safe(Y)).
+// Desugars to:
+//   where not(violates(x))
+```
+
+**Existential** — free variables in Datalog bodies are implicitly existential:
+
+```rholang
+// Explicit sugar:
+for (@x <- ch) where exists(y, nodes, reachable(x, y)) { P }
+
+// Equivalent plain Datalog:
+for (@x <- ch) where nodes(y), reachable(x, y) { P }
+```
+
+**Bounded quantification:**
+
+```rholang
+// Bounded existential (search limited to k steps):
+for (@x <- ch) where exists(y, 100, rewrites_to(x, y)) { P }
+
+// Bounded universal:
+for (@x <- ch) where forall(y, 50, entails(reachable(x, y), safe(y))) { P }
+```
+
+### Unicode Sugar
+
+Every ASCII keyword/operator has a Unicode alternative. The parser accepts
+both; Unicode desugars to the ASCII form before compilation.
+
+| ASCII              | Unicode | Category            |
+|--------------------|:-------:|---------------------|
+| `forall`           |   `∀`   | Quantifier          |
+| `exists`           |   `∃`   | Quantifier          |
+| `and(...)`         | `∧(...)` | Logic (where sugar) |
+| `or(...)`          | `∨(...)` | Logic (where sugar) |
+| `not(...)`         | `¬(...)` | Logic (where)      |
+| `entails(...)`     |   `⟹`   | Logic (where sugar) |
+| `implies(...)`     |   `⟹`   | Synonym for entails |
+| `implied_by(...)` |   `⟸`   | Logic (where sugar) |
+| `iff(...)`         |   `⟺`   | Logic (where sugar) |
+| `in` / `:`         |   `∈`   | Set/domain/membership |
+| `>=`               |   `≥`   | Comparison          |
+| `<=`               |   `≤`   | Comparison          |
+| `!=`               |   `≠`   | Comparison          |
+| `->*`              |  `→*`   | Rewrite closure     |
+| `/\`               |   `∧`   | Pattern conjunction  |
+| `\/`               |   `∨`   | Pattern disjunction  |
+| `~`                |   `¬`   | Pattern negation     |
+
+**Examples with Unicode:**
+
+```rholang
+// Quantified guard with Unicode
+for (@x <- ch) where ∀(y, nodes, ⟹(reachable(x, y), safe(y))) { P }
+
+// Domain membership
+for (@x <- ch) where ∀(y ∈ nodes, safe(y)) { P }
+
+// Comparisons
+for (@x <- ch) where x ≥ 0, x ≠ 42 { P }
+
+// Rewrite closure
+for (@x <- ch) where x →* {} { P }
+
+// Set membership (refinement type)
+for (@x <- ch) where x ∈ PosInt { P }
+// Equivalent ASCII forms:
+// for (@x <- ch) where x in PosInt { P }
+// for (@x <- ch) where x : PosInt { P }
+// for (@x <- ch) where PosInt(x) { P }
+
+// Pattern operators
+for (@(x ∧ a!(b)) <- n) where path(b, {}) { P }
+```
 
 ### Syntax Mapping
 
 The brainstorming document (`02-23-pattern-matching.md`) established
 `(n ? guard).{body}` as the canonical generic syntax for guarded receive,
-matching the constructor declaration in §4:
+matching the constructor declaration in §4. The design rationale for
+separating Rholang surface sugar from the internal canonical form is
+language-genericity: the `(n ? guard).{body}` form is language-agnostic and
+maps directly to the `PGuardedInput` constructor's field layout, while
+surface sugar like `for(... <- ...) where ...` is specific to each `language!`
+definition. This separation ensures the pipeline (§12) and codegen (§13)
+operate on a uniform internal representation regardless of the source
+language.
 
 ```
 "(" n "?" guard ")" "." "{" p "}"
 ```
 
-The `for(@pattern : predicate <- channel) { body }` notation used in the
-examples above is Rholang-specific surface sugar. The desugaring is:
+This canonical form has four positional fields: channel `n`, guard pattern,
+behavioral predicates (comma-separated after the structural guard), and
+continuation body `p`. The question mark `?` serves as the field separator
+between channel and guard, chosen to avoid collision with existing Rholang
+operators.
+
+The `for (@pattern <- channel) where preds { body }` notation used in the
+examples above is Rholang-specific surface sugar. The desugaring rewrites the
+`where`-clause predicates into the canonical comma-separated form and
+transposes the channel from arrow-source to first field:
 
 ```
-for (@{x!(y)} : path(y, {}) <- ch) { P }
-⟶  (ch ? @(x!(y)), path(y, {})).{ P }
+for (@(x /\ a!(b)) <- n) where path(b, {}), not(path(x, {})) { P }
+⟶  (n ? @(x /\ a!(b)), path(b, {}), not(path(x, {}))).{ P }
 ```
 
-| Syntax Form                                          | Context                                 |
-|------------------------------------------------------|-----------------------------------------|
-| `(n ? guard, preds).{body}`                          | Generic/internal (language-agnostic)    |
-| `for (@pattern : predicate <- channel) { body }`     | Rholang surface sugar                   |
+The desugaring is purely syntactic — it rearranges fields without semantic
+transformation. The structural guard `@(x /\ a!(b))` and behavioral
+predicates `path(b, {})`, `not(path(x, {}))` are preserved verbatim; only
+their position relative to the channel changes.
+
+| Syntax Form | Context |
+|---|---|
+| `(n ? guard, preds).{body}` | Generic/internal (language-agnostic) |
+| `for (@pattern <- channel) where preds { body }` | Rholang for sugar (global where) |
+| `for (@pat <- ch, where preds; ...) { body }` | Rholang for sugar (per-bind where) |
+| `contract name(args) where preds = { body }` | Rholang contract sugar |
+| `case @pat <- ch where preds => { body }` | Rholang select branch sugar |
 
 Subsequent sections (§§3–10 and beyond) use the internal `(n ? ...)` form
 to remain language-agnostic. The Rholang surface sugar is specific to the
@@ -254,7 +741,15 @@ In a reflective calculus, **terms serve as their own patterns**. A term with
 free variables is a pattern: matching a concrete (ground) term against it
 binds the free variables to the corresponding sub-terms.
 
-This is **first-order matching**, not unification:
+This is **first-order matching**, not unification. The distinction is
+fundamental to the system's complexity guarantees and correctness model:
+first-order matching is one-directional (ground term vs pattern), deterministic
+(no backtracking), and linear in pattern size. Unification is bidirectional
+(both inputs may contain variables), may require path compression, and
+returns a most general unifier rather than a simple binding. In the guarded
+Comm rule, the received value is always ground (it is a concrete term sent
+on a channel), so first-order matching suffices and provides the tighter
+complexity bound.
 
 | Property                   | First-Order Matching           | Unification                        |
 |----------------------------|--------------------------------|------------------------------------|
@@ -263,13 +758,25 @@ This is **first-order matching**, not unification:
 | Result                     | `Option<σ>` (match or fail)    | `Option<σ>` (most general unifier) |
 | Complexity                 | O(\|pattern\|)                 | O(n · α(n)) with path compression  |
 
+The type signature below formalizes the matching contract. The `T_ground`
+parameter is a term with no free variables (the received value); `T_pattern`
+may contain free variables at binding positions. The `Option` return type
+encodes the two-outcome semantics: `Some(σ)` on successful decomposition,
+`None` on constructor clash or arity mismatch. The substitution `σ` maps
+each free variable in the pattern to the corresponding sub-term of the
+ground term, partitioned by natural category (§3 "Natural Categories").
+
 ```
 match : (T_ground, T_pattern) → Option<σ>
   where σ : Var → Term
 ```
 
-The concrete term has no variables; only the pattern does. This is precise and
-generalizes to any language defined with MeTTaIL, not just the rho-calculus.
+The concrete term has no variables; only the pattern does. This asymmetry
+is what makes the function O(|pattern|) rather than O(n · α(n)) — no occurs
+check or variable chasing is needed. The design generalizes to any language
+defined with MeTTaIL, not just the rho-calculus; see §7A "Unification" for
+where bidirectional matching is used (compile-time overlap analysis, not
+runtime Comm rule evaluation).
 
 ### Natural Categories
 
@@ -283,15 +790,27 @@ then matches the Proc `a!(body)` against `POutput(NVar(x), PVar(y))`, yielding:
 Bindings preserve their **natural category**: Name-position variables bind
 Names; Proc-position variables bind Procs.
 
-**Natural-category property:**
+**Natural-category property.** The following invariant captures the
+category-preserving nature of the match function. The intuition is that
+a variable declared in a Name-typed position (like the channel slot of
+`POutput`) always binds a Name value, never a Proc — the binding respects
+the syntactic position's declared category. This property is enforced
+structurally by the generated `match_pattern` code (§5): each arm dispatches
+to the category-appropriate constructor (`MatchBindings::name` for NVar,
+`MatchBindings::proc` for PVar). The theoretical basis is the sorted
+first-order matching of multi-sorted algebras — each sort (category) is
+closed under substitution.
 
 ```
 ∀v ∈ dom(σ). category(v) = category(σ(v))
 ```
 
-This is precise — the user knows that `x` is a Name and `y` is a Proc —
-and generalizes to any language (not just rho-calculus with its quoting
-convention).
+This invariant ensures type safety of the two-pass substitution below:
+`multi_substitute_name` only encounters Name values, and `multi_substitute`
+only encounters Proc values. It generalizes to any language — not just
+rho-calculus with its quoting convention — because the category assignment
+is derived from the `language!` macro's `terms { }` declaration, not from
+any calculus-specific semantics.
 
 ### Two-Pass Substitution
 
@@ -311,7 +830,12 @@ passes are disjoint (NVar vs PVar targets), so their order is irrelevant.
 ### Consequence for Continuation Syntax
 
 The continuation uses variables at their natural types, with explicit quoting
-and dropping to cross categories:
+and dropping to cross categories. The intuition is that the rho-calculus
+reflective operators `@` (quote, Proc→Name) and `*` (drop, Name→Proc) are
+the ONLY category-crossing mechanisms — the guard design respects this
+discipline rather than introducing implicit coercions. The rationale is
+that explicit crossings make the programmer's intent visible and maintain
+the reflective structure's formal properties (Meredith & Radestock, 2005).
 
 ```
 (n ? @(x!(y))).{ @(y)!(*(x)) }
@@ -322,9 +846,21 @@ and dropping to cross categories:
 
 `@(y)` wraps the Proc variable `y` in a quote, producing a Name — correct
 because `y` IS a Proc. `*(x)` drops the Name variable `x` to a Proc —
-correct because `x` IS a Name.
+correct because `x` IS a Name. This explicit crossing convention eliminates
+an entire class of category errors at the source level and ensures that the
+two-pass substitution (§3 "Two-Pass Substitution") encounters only same-
+category replacements in each pass.
 
 ### Match Descent Diagram
+
+The following diagram traces the recursive descent of `match_pattern_name`
+through a concrete example. Read it as two parallel trees — pattern (left) and
+concrete term (right) — with matching proceeding top-down through aligned
+constructors. At each level, the matching function checks constructor equality
+(e.g., `NQuote` = `NQuote`) and recurses into children. When it reaches a
+free variable in the pattern (`NVar(x)` or `PVar(y)`), it produces a binding
+at the variable's natural category. This descent corresponds to the "Regular"
+case of the match recursion equations (§5).
 
 ```
 Pattern: @(x!(y))             Concrete: @(a!(body))
@@ -351,23 +887,51 @@ Pattern: @(x!(y))             Concrete: @(a!(body))
 ### Constructor Declaration
 
 The `PGuardedInput` constructor is declared in the `language!` macro's
-`terms { }` block:
+`terms { }` block. The declaration uses the macro's term specification
+syntax: field names with type annotations, caret-bracket binder notation
+(`^[xs]` for multi-binder scopes), and a surface syntax template after `|-`.
+The rationale for encoding the guard as a scoped Name (not a raw Name) is
+that the guard's free variables must be protected from outer substitutions
+by De Bruijn encoding — the same reason `PInputs` uses scoped bodies. The
+`[Name* -> Name]` type signature indicates a multi-binder scope (`Name*`
+means zero or more Name binders) whose body is a `Name` (the guard pattern).
 
 ```rust
 PGuardedInput . n:Name, ^[xs].guard:[Name* -> Name], ^[ys].p:[Name* -> Proc]
 |- "(" n "?" guard ")" "." "{" p "}" : Proc ;
 ```
 
-This generates the Rust enum variant:
+The declaration has three semantic fields (channel, guard scope, continuation
+scope) but the generated enum variant has four fields because the parser
+inserts the `Vec<BehavioralPred>` between the guard and continuation scopes
+when behavioral predicates are present in the source text. The `TermParam::
+GuardBody` variant in the macro's grammar module (§10) detects this
+constructor shape and triggers the specialized guard codegen path.
+
+The generated Rust enum variant maps each declaration field to a concrete
+Rust type. The `Box<Name>` channel field is unscoped (it is a simple Name
+reference, not a pattern with binders). The two `Scope` fields wrap the
+guard pattern and continuation body under independent binder vectors, and
+the `Vec<BehavioralPred>` sits between them as the behavioral predicate list.
+This field ordering mirrors the surface syntax: channel, then guard, then
+predicates, then body.
 
 ```rust
 PGuardedInput(
     Box<Name>,                                   // channel
-    Scope<Vec<Binder<String>>, Box<Name>>,        // guard pattern (Name, under scope)
+    Scope<Vec<Binder<String>>, Box<Name>>,        // guard pattern
     Vec<BehavioralPred>,                          // behavioral predicates
-    Scope<Vec<Binder<String>>, Box<Proc>>,         // continuation (Proc, under scope)
+    Scope<Vec<Binder<String>>, Box<Proc>>,         // continuation
 )
 ```
+
+The `Scope<Vec<Binder<String>>, Box<T>>` type is the moniker library's
+scoping mechanism: `Vec<Binder<String>>` lists the bound variables (by name),
+and `Box<T>` is the body in which those variables are De Bruijn-encoded.
+Calling `.unbind()` on a Scope produces fresh `FreeVar<String>` values with
+the original `pretty_name`s, while `.inner()` returns the raw body with
+`BoundVar` indices preserved (§5 "Iterative Work Stack Architecture" explains
+when each is appropriate).
 
 ### Why the Guard is a Name
 
@@ -381,7 +945,11 @@ The recursion naturally descends through `NQuote` into the Proc level.
 
 The guard pattern and the continuation share the same bound variables (the
 pattern's free variables). Both must be protected from outer substitutions
-by `Scope`:
+by `Scope`. The following example illustrates why: without scoping, an outer
+`new` binding for `x` could capture the guard variables `y` and `z` during
+substitution, violating alpha-equivalence. The theoretical basis is Barendregt's
+variable convention — bound variables must be distinct from free variables in
+the surrounding context, and De Bruijn encoding enforces this mechanically.
 
 ```
 new(x, (x ? @(y!(z))).{@(z)!(*(y))})
@@ -389,18 +957,39 @@ new(x, (x ? @(y!(z))).{@(z)!(*(y))})
 
 Here `x` is bound by `new`. The guard variables `y, z` must not be affected
 by any outer substitution for `x`. Both Scopes independently protect `y` and
-`z` via De Bruijn encoding.
+`z` via De Bruijn encoding, converting them to `BoundVar` indices during
+`close_term` and back to fresh `FreeVar`s during `unbind()`.
 
 At Comm time, we unbind both Scopes independently, obtaining different fresh
-`FreeVar`s but connecting them by position/name:
+`FreeVar`s but connecting them by position/name. The rationale for
+independent unbinding (rather than sharing a single set of fresh variables)
+is that the moniker library's `unbind()` is a consuming operation — each call
+generates globally unique `FreeVar`s. The connection between guard and
+continuation binders is established by the parser invariant: both binder
+vectors are built from the same left-to-right, depth-first traversal of the
+guard pattern's free variables (§9.7).
 
 ```rust
 let (guard_binders, guard_body) = guard_scope.clone().unbind();
 let (cont_binders, cont_body) = cont_scope.clone().unbind();
-// guard_binders[i] and cont_binders[i] correspond to the same pattern variable
 ```
 
+The positional correspondence `guard_binders[i] ↔ cont_binders[i]` is
+guaranteed by the parser: both `Scope`s are constructed with the same binder
+list in the same order. The `.clone()` before `.unbind()` is necessary because
+`unbind()` consumes the Scope. The generated Comm rule (§6) uses `pretty_name`
+matching to connect guard bindings to continuation variables, making the code
+robust to the specific `FreeVar` identities produced by each `unbind()` call.
+
 ### Dual-Scope Structure Diagram
+
+The following diagram shows the internal AST structure of a concrete
+`PGuardedInput` node for the guard `@(x!(y)) where path(y, {})`. Read it as a
+tree: the four fields (channel, guard scope, predicates, continuation scope)
+are children of the `PGuardedInput` constructor. Inside each `Scope`, the
+binder list `[x, y]` indicates which variables are De Bruijn-encoded in the
+body. The invariant at the bottom is the structural contract that the parser
+enforces and that the Comm rule (§6) depends on for correct substitution.
 
 ```
 PGuardedInput
@@ -414,6 +1003,14 @@ PGuardedInput
 Invariant:  |guard_scope.binders| = |cont_scope.binders|
           ∧ ∀i. guard_scope.binders[i].name = cont_scope.binders[i].name
 ```
+
+The invariant has two parts: equal binder counts and name-wise correspondence.
+The first ensures that the two-pass substitution (§3) produces exactly one
+replacement per binder. The second ensures that `pretty_name`-based lookup in
+the Comm rule's substitution loop (§6, lines connecting guard bindings to
+continuation variables) resolves correctly. Violation of either part would
+cause silent binding errors — the parser enforces both by constructing both
+binder lists from the same free-variable extraction pass.
 
 ### Mixed-Category Binders
 
@@ -442,8 +1039,17 @@ dispatch on this variant to handle the guard-specific structure.
 
 ### MatchBindings
 
-Matching produces bindings of **mixed categories**. A shared struct is
-generated alongside the AST categories:
+Matching produces bindings of **mixed categories**. The core design insight is
+that a single match may bind variables at different categories — Name-typed
+variables and Proc-typed variables — and these must be accumulated into a
+single result type for the Comm rule's two-pass substitution (§3). Rather
+than using a generic `HashMap<String, Term>` (which would lose category
+information), the generated struct has one typed field per category declared
+in the `language!` definition. This preserves the natural-category invariant
+(§3) at the type level: Name bindings and Proc bindings are stored in
+separate vectors, eliminating category confusion at the point of use. The
+struct is generated by `macros/src/gen/term_ops/match_pattern.rs` alongside
+the AST categories.
 
 ```rust
 struct MatchBindings {
@@ -452,6 +1058,13 @@ struct MatchBindings {
     // ... one field per declared category in the language definition
 }
 ```
+
+The `Vec<(String, T)>` representation uses the variable's `pretty_name`
+(a `String`) as the key, enabling O(n) lookup by name. For typical guard
+patterns with 2-5 variables, this is faster than a `HashMap` due to lower
+constant factors. The `merge()` operation is O(n) concatenation, and it is
+associative and commutative on disjoint variable sets — a property exploited
+by the recursive matching algorithm.
 
 `MatchBindings` supports:
 - `empty()` — no bindings
@@ -463,7 +1076,17 @@ struct MatchBindings {
 
 ### Formal Specification
 
-For each category `Cat`, the macro generates matching methods:
+For each category `Cat` declared in the `language!` definition, the macro
+generates a matching method on the category's Rust enum type. The method
+follows the first-order matching contract established in §3: `self` (the
+receiver) is the ground term with no free variables, and `pattern` is the
+term that may contain free variables at binding positions. The rationale for
+generating separate methods per category (rather than a single generic
+function) is that each category has its own constructor set — the `match`
+arms must exhaustively cover the category's enum variants, and Rust's type
+system enforces this at compile time. The `_name` suffix on
+`match_pattern_name` distinguishes the Name-category method from the
+Proc-category method in the same module.
 
 ```rust
 impl Proc {
@@ -475,19 +1098,57 @@ impl Name {
 }
 ```
 
-The function performs first-order matching: the receiver (`self`) is a ground
-term; the `pattern` may contain free variables. On success, returns bindings
-for each variable in the pattern, at their natural category.
+The `Option<MatchBindings>` return type encodes the matching semantics:
+`Some(bindings)` when all constructors align and all free variables bind
+successfully, `None` on any constructor clash or arity mismatch. The method
+bodies are generated by `generate_match_pattern()` in
+`macros/src/gen/term_ops/match_pattern.rs` and consist of a `match` block
+over `(self, pattern)` pairs, with one arm per variant kind (§5 "Generation
+Rules per Variant Kind").
 
 ### Match Recursion Equations
 
+The following four equations define the inductive structure of first-order
+matching. They form a complete case analysis over the possible pattern shapes:
+constructors with matching tags (recursive descent), free variables (binding),
+binders (scope opening plus body comparison), and constructor clashes
+(failure). These equations are the formal specification that the generated
+Rust code implements. The theoretical basis is the standard first-order
+matching algorithm for term algebras (Baader & Snyder, 2001, §8.2): the
+`merge` operation corresponds to the union of substitutions, and the
+`category(v)` annotation is the multi-sorted extension that preserves
+natural categories (§3).
+
 ```
-match(C(t₁, …, tₙ), C(π₁, …, πₙ)) = merge(match(t₁, π₁), …, match(tₙ, πₙ))
-match(t, Var(v))                      = {v ↦ t}  at category(v)
-match(C₁(…), C₂(…))  where C₁ ≠ C₂  = None     (constructor clash)
+match(C(t₁, …, tₙ), C(π₁, …, πₙ))  = merge(match(t₁, π₁), …, match(tₙ, πₙ))
+match(t, Var(v))                       = {v ↦ t}  at category(v)
+match(B(f̄, b̄, t), B(f̄', b̄', π))     = merge(match(f̄, f̄'), match(t, π))
+                                           if |b̄| = |b̄'|     (binder arity)
+                                         None  if |b̄| ≠ |b̄'|
+match(C₁(…), C₂(…))  where C₁ ≠ C₂   = None     (constructor clash)
 ```
 
+The binder equation reflects how scoped variants are matched. The binder names
+b̄ are scope-introducing positions — they are NOT free variables and produce no
+bindings in σ. Pre-scope fields f̄ (e.g., the channel names in `PInputs`) are
+matched normally and may produce bindings. Bodies are compared via
+`scope.inner()` + `unsafe_body`, which preserves `BoundVar`s (de Bruijn
+indices) rather than freshening — this gives alpha-invariant structural
+comparison. For single Binder variants the arity check is trivially satisfied
+(both sides have exactly one binder). Contrast with the Comm rule (§6), which
+uses `unbind()` on the guard scope to produce `FreeVar`s for top-level pattern
+matching — see §6 line 832 for the rationale.
+
 ### Generation Rules per Variant Kind
+
+The following table summarizes how the code generator handles each variant
+classification. Each row corresponds to a `VariantKind` in
+`macros/src/gen/term_ops/match_pattern.rs`. The match rule column describes
+the algorithmic strategy, and the result column shows what `MatchBindings`
+value is produced on success. The table is read as a dispatch table: the
+code generator inspects each variant's `VariantKind` and emits the
+corresponding match arm. The subsequent "Generated Code Examples" subsection
+shows the concrete Rust code for each row.
 
 ```
 ┌──────────────┬───────────────────┬─────────────────────────────────────┐
@@ -498,35 +1159,81 @@ match(C₁(…), C₂(…))  where C₁ ≠ C₂  = None     (constructor clash)
 │ Regular      │ Recurse fields    │ merge(match(f₁), …, match(fₙ))      │
 │ Literal      │ Value equality    │ MatchBindings::empty() if eq        │
 │ Collection   │ Order-independent │ AC-match via re-entrant engine      │
-│ Binder/Scope │ Unbind + recurse  │ merge(binder_bindings, body_match)  │
+│ Binder/Scope │ Arity + open +    │ merge(pre_scope_match, body_match)  │
+│              │ recurse body      │ (binder names are scope — not in σ) │
 └──────────────┴───────────────────┴─────────────────────────────────────┘
 ```
 
+The six rows partition all possible pattern shapes. Variable and Literal are
+the base cases (no recursion); Nullary is a degenerate base case (tag
+equality only); Regular is the main recursive case; Collection requires
+order-independent sub-matching; and Binder/Scope combines pre-scope field
+matching with scope opening and body comparison.
+
 ### Generated Code Examples
 
-**Variable (pattern is a variable):**
+**Variable (pattern is a variable).** In first-order matching, a free variable
+in the pattern acts as a universal acceptor — it matches any ground term and
+binds to it. This is the variable rule from the match recursion equations
+above: `match(t, Var(v)) = {v ↦ t} at category(v)`. The intuition is that
+a pattern variable is a "hole" that accepts whatever subterm occupies the
+corresponding position in the ground term. The binding is recorded at the
+variable's natural category: a `PVar` (Proc-level free variable) produces a
+Proc binding, while an `NVar` (Name-level free variable) produces a Name
+binding. This category-aware dispatch is why `MatchBindings` stores separate
+`name_bindings` and `proc_bindings` vectors — each variable binds at its
+declaration category regardless of where in the term tree the match occurs.
+
+The generated code destructures the `OrdVar(Var::Free(fv))` wrapper to access
+the `FreeVar`, extracts the variable's `pretty_name` (the user-visible name
+from the source text), and constructs a single-entry `MatchBindings`. The
+wildcard `_` on the ground side means any constructor matches:
 
 ```rust
-// Proc: bind as Proc
 (_, Proc::PVar(OrdVar(Var::Free(fv)))) => {
     let name = fv.pretty_name.clone()?;
     Some(MatchBindings::proc(name, self.clone()))
 }
 
-// Name: bind as Name
 (_, Name::NVar(OrdVar(Var::Free(fv)))) => {
     let name = fv.pretty_name.clone()?;
     Some(MatchBindings::name(name, self.clone()))
 }
 ```
 
-**Nullary (no fields):**
+The cost is O(1) per variable binding — one clone of the ground term and one
+`MatchBindings` constructor call. The `pretty_name.clone()?` returns `None`
+if the `FreeVar` lacks a pretty name (a defensive check — in practice, all
+user-declared variables have names), which propagates as a match failure.
+These arms appear first in the generated match block, ensuring that any
+pattern consisting solely of a free variable is handled before
+constructor-specific arms are attempted.
+
+**Nullary (no fields).** Nullary constructors (zero-argument variants like
+`PZero` or `PNil`) represent the base case of the matching recursion.
+Matching is pure tag equality: both sides must be the same nullary
+constructor. This corresponds to `match(C(), C()) = empty` in the recursion
+equations — no sub-terms to recurse into, no variables to bind. The
+theoretical basis is the ground term identity: two nullary constructors are
+equal iff they have the same tag.
 
 ```rust
 (Proc::PZero, Proc::PZero) => Some(MatchBindings::empty())
 ```
 
-**Regular (constructor with fields):**
+The cost is O(1) — a single discriminant comparison. Empty `MatchBindings`
+are returned because nullary constructors contain no sub-terms and therefore
+no variable binding sites.
+
+**Regular (constructor with fields).** The regular case implements recursive
+descent through constructor fields, corresponding to the first recursion
+equation: `match(C(t₁, …, tₙ), C(π₁, …, πₙ)) = merge(match(t₁, π₁), …,
+match(tₙ, πₙ))`. The intuition is that when two terms share the same
+constructor, their corresponding fields are matched pairwise. The `?`
+operator provides early exit on the first failing sub-match (short-circuit
+evaluation). Cross-category dispatch occurs naturally: Name-typed fields
+call `match_pattern_name`, Proc-typed fields call `match_pattern`, and the
+returned `MatchBindings` are merged.
 
 ```rust
 (Proc::POutput(n1, p1), Proc::POutput(n2, p2)) => {
@@ -536,37 +1243,128 @@ match(C₁(…), C₂(…))  where C₁ ≠ C₂  = None     (constructor clash)
 }
 ```
 
-**Literal:**
+The cost is O(|fields|) per constructor level, giving O(|pattern|) total
+across the full descent. The `**n1` double-dereference unboxes the
+`Box<Name>` field. The `merge()` call concatenates the Name and Proc binding
+vectors from the field-level matches. Cross-category recursion
+(`match_pattern_name` for Name fields, `match_pattern` for Proc) is what
+enables patterns like `@(x!(y))` to collect bindings across the Name-Proc
+boundary.
+
+**Literal.** Literal values (integers, strings, booleans) are matched by
+value equality rather than constructor decomposition. This is the primitive
+base case for non-algebraic types: two literals match iff they hold the same
+value. No bindings are produced because literals have no sub-terms. The
+match guard `if v1 == v2` performs the equality test before entering the
+arm body.
 
 ```rust
 (Proc::CastInt(v1), Proc::CastInt(v2)) if v1 == v2 =>
     Some(MatchBindings::empty())
 ```
 
-The recursion crosses categories naturally: `Name::match_pattern_name` and
-`Proc::match_pattern` both return `MatchBindings`, which accumulates Name
-and Proc entries uniformly.
+The cost is O(1) for integer and boolean literals, O(|string|) for string
+literals. Empty `MatchBindings` are returned because literals, like nullary
+constructors, contain no variable binding sites.
 
-**Collection** patterns use order-independent matching: HashBag elements are
-matched regardless of position via a `claimed` bitvector, Vec elements are
-matched positionally, and HashSet elements match like HashBag without
-multiplicity. Each element sub-match re-enters `match_pattern()` via TLS,
-which is bounded by collection size, not nesting depth. For behavioral
-guards that use AC-matching on collection patterns, see §8 (AC-Matching
-for Collection Guards). (The brainstorming document deferred collection
+**Collection.** Collection patterns (HashBag, Vec, HashSet) use
+order-independent matching — the key challenge is that multiset elements have
+no fixed position, so the matcher must find an assignment from pattern
+elements to ground elements. HashBag elements are matched regardless of
+position via a `claimed` bitvector: non-variable pattern elements are matched
+first (finding exact structural matches among unclaimed ground elements),
+then variable pattern elements bind to remaining unclaimed elements. Vec
+elements are matched positionally (`g_vec[i].match_pattern(p_vec[i])`).
+HashSet elements match like HashBag without multiplicity. Each element
+sub-match re-enters `match_pattern()` via TLS, which is bounded by
+collection size, not nesting depth. The theoretical basis is AC-matching for
+commutative collections — see §8 (AC-Matching for Collection Guards) for the
+full partition enumeration algorithm and its LogicT integration. (The
+brainstorming document deferred collection matching; this section implements
+what was deferred.)
+
+**Binder/Scope.** Binder patterns open both ground and pattern scopes via
+`inner()` (NOT `unbind()` — no freshening), then match bodies structurally
+using `unsafe_body`. The rationale for `inner()` over `unbind()` is that
+structural comparison requires De Bruijn indices to be preserved — two terms
+are alpha-equivalent iff they have identical `BoundVar` structure after scope
+opening. Using `unbind()` would generate fresh `FreeVar`s, which would differ
+between the ground and pattern terms and cause spurious mismatches. Binder
+names (`unsafe_pattern`) are scope-introducing positions and are NEVER
+extracted into `MatchBindings`. See §5 "Iterative Work Stack Architecture"
+for the full algorithm. (The brainstorming document deferred binder/scope
 matching; this section implements what was deferred.)
 
-**Binder/Scope** patterns open both ground and pattern scopes, then match
-bodies structurally. If the pattern binder is a FreeVar, it binds to the
-ground binder name. MultiBinder extends this to multiple simultaneous
-bindings. See §5 "Iterative Work Stack Architecture" for the full algorithm.
-(The brainstorming document deferred binder/scope matching; this section
-implements what was deferred.)
+**MultiBinder.** The rhocalc `PNew . ^[xs].p:[Name* -> Proc]` generates
+`PNew(Scope<Vec<Binder<String>>, Box<Proc>>)` — a single argument that is the
+scope itself, with no pre-scope fields. The matching algorithm first opens
+both scopes via `inner()` to access the raw `BoundVar`-encoded bodies, then
+checks binder arity (the ground and pattern must have the same number of
+bound variables), and finally re-enters the iterative matching engine for
+body comparison. The arity check is the binder equation's precondition:
+`|b̄| = |b̄'|`. The `unsafe_pattern` field contains the `Vec<Binder<String>>`
+binder names, which are scope-introducing and never produce bindings in σ.
+
+```rust
+(Proc::PNew(g0), Proc::PNew(p0)) => {
+    let g_inner = g0.inner();
+    let p_inner = p0.inner();
+
+    if g_inner.unsafe_pattern.len() != p_inner.unsafe_pattern.len() {
+        return None;
+    }
+
+    let body_match = (*g_inner.unsafe_body).match_pattern(&*p_inner.unsafe_body);
+    match body_match {
+        Some(b) => bindings.merge(b),
+        None => return None,
+    }
+}
+```
+
+The cost is O(1) for the arity check plus O(|body|) for the recursive body
+match. The `inner()` call is O(1) — it returns a reference to the scope's
+internal representation without cloning or freshening. The re-entrant
+`match_pattern()` call on the body processes the term iteratively via the
+work stack, so deeply nested `PNew` chains do not cause stack overflow.
+
+**Single Binder with pre-scope fields.** For language definitions like
+ambient `PNew . ^x.p:[Name -> Proc]`, which generates
+`PNew(Scope<Binder<String>, Box<Proc>>)`, there is exactly one binder per
+side, so no arity check is needed (trivially satisfied). When pre-scope
+fields are present (e.g., `PInputs` with channel names before the binder),
+they are matched first via re-entrant `match_pattern()` before opening the
+scope. This ordering — pre-scope fields, then scope opening, then body — is
+essential because pre-scope fields may contain free variables that produce
+bindings, and these bindings must be accumulated before entering the body.
+
+```rust
+(Proc::PNew(g0), Proc::PNew(p0)) => {
+    let g_inner = g0.inner();
+    let p_inner = p0.inner();
+
+    let body_match = (*g_inner.unsafe_body).match_pattern(&*p_inner.unsafe_body);
+    match body_match {
+        Some(b) => bindings.merge(b),
+        None => return None,
+    }
+}
+```
+
+The code structure mirrors the MultiBinder case but without the arity check.
+Pre-scope field matching (when present) would appear before the `inner()`
+calls, producing bindings that are merged with the body match result.
 
 ### Cross-Category Consistency
 
 Both `match_pattern` and `match_pattern_name` return the same type
-(`Option<MatchBindings>`), enabling seamless cross-category recursion:
+(`Option<MatchBindings>`), enabling seamless cross-category recursion. The
+intuition is that matching flows freely between categories — a Name pattern
+may contain Proc sub-terms (via `NQuote`), and a Proc pattern may contain
+Name sub-terms (via `POutput`'s channel field). The uniform return type
+allows the recursion to cross category boundaries without type conversion.
+This is the design's key compositionality property, and it is why a single
+`MatchBindings` struct accumulates both Name and Proc entries.
 
 ```
 match_pattern_name(NQuote(p_ground), NQuote(p_pattern))
@@ -578,8 +1376,12 @@ match_pattern_name(NQuote(p_ground), NQuote(p_pattern))
                     └── ...
 ```
 
-At every level, bindings accumulate uniformly. The property that makes this
-work:
+At every level, bindings accumulate uniformly. The following invariant
+formalizes this property. The `merge()` associativity and commutativity
+on disjoint variable sets ensures that the order of field recursion does
+not affect the final binding set — a requirement for the iterative work
+stack architecture (§5) where field processing order may differ from the
+source-level left-to-right order.
 
 ```
 ∀ call chain C through match_pattern / match_pattern_name:
@@ -605,24 +1407,44 @@ Pattern matching uses an explicit work stack (`Vec<MatchTask>`) instead of
 recursive function calls, providing stack safety for arbitrarily deep terms
 (100K+ nesting depth). This mirrors the trampoline parser design.
 
-**`MatchTask` enum:** A heterogeneous work item with one variant per category:
+**`MatchTask` enum.** The work stack uses a heterogeneous enum rather than a
+generic `(Box<dyn Term>, Box<dyn Term>)` pair. The rationale is that each
+category has its own Rust type (`Proc`, `Name`, etc.), and a heterogeneous
+enum preserves type safety at each dispatch point — when the engine pops a
+`MatchProc` task, it knows both values are `Proc`s and can dispatch directly
+to Proc-specific match arms. This design mirrors the trampoline parser's
+`Frame_Cat` enum (§ "Trampoline Parser"), which uses the same one-variant-per-
+category pattern for stack-safe parsing. The `usize` position field
+(not shown) tracks the current field index within Regular variants for
+resumption after pushing sub-tasks.
 
 ```rust
 enum MatchTask {
-    MatchProc(Proc, Proc),   // ground, pattern
+    MatchProc(Proc, Proc),
     MatchName(Name, Name),
-    // ... one per category
 }
 ```
 
 Cross-category recursion (Proc → Name → Proc) is handled naturally: when
 processing a `MatchProc` task with a `Name` field, the handler pushes
-`MatchTask::MatchName(ground_field, pattern_field)` onto the stack.
+`MatchTask::MatchName(ground_field, pattern_field)` onto the stack. The
+cost of the enum overhead is one discriminant per stack entry — negligible
+compared to the term cloning cost.
 
 **Thread-local pooling:** `Cell<Vec<MatchTask>>` with take/set at entry/exit.
-Zero allocation in steady state after the first call.
+Zero allocation in steady state after the first call. This is the same TLS
+pooling pattern used by the trampoline parser.
 
-**Algorithm:**
+**Algorithm.** The following pseudocode describes the iterative work stack
+algorithm. The key insight is that all recursive structure is converted to
+explicit stack operations: the Regular case pushes child tasks in LIFO order
+(so they are processed left-to-right), while Collection and Binder cases use
+synchronous re-entrant calls because they need immediate sub-match results.
+The theoretical basis is the standard defunctionalization of recursive descent
+— each recursive call becomes a push operation, and the while loop replaces
+the call stack. This transformation guarantees stack safety for terms of
+arbitrary depth (100K+ nesting verified in tests) at the cost of heap
+allocation for the explicit stack.
 
 ```
 1. Push initial MatchTask::MatchCat(self, pattern) onto stack
@@ -633,21 +1455,41 @@ Zero allocation in steady state after the first call.
       - Var/Literal/Nullary: equality check (immediate)
       - Regular: push MatchTask for each field (LIFO → left-to-right order)
       - Collection: inline element matching with re-entrant match_pattern()
-      - Binder: inline scope open with re-entrant body match_pattern()
+      - Binder: match pre-scope fields (re-entrant match_pattern()),
+        open scope via inner(), re-entrant body match_pattern()
+      - MultiBinder: match pre-scope fields (re-entrant match_pattern()),
+        open scope via inner(), check arity (|g_binders| = |p_binders|),
+        re-entrant body match_pattern()
       - Mismatch: return None
 3. Return Some(bindings)
 ```
 
-**Re-entrancy for Collections/Binders:** Collection matching requires
-synchronous sub-match results (to select which ground element to claim).
+The algorithm is O(|pattern|) for Regular variants (one push per field) and
+O(|collection| · |element|) for Collection variants (one re-entrant call per
+element). The re-entrant calls are bounded by collection size, not nesting
+depth — deep nesting within each element is handled iteratively by the inner
+engine call.
+
+**Re-entrancy for Collections/Binders.** Collection matching requires
+synchronous sub-match results (to determine which ground element to claim).
 These arms call `match_pattern()` per element, which re-enters the iterative
-engine via TLS (gets a fresh stack since the Cell is taken). This re-entry is
-bounded by collection size, not nesting depth — the deep nesting within each
-element is handled iteratively by the inner engine call.
+engine via TLS (gets a fresh stack since the `Cell` is taken). The re-entry
+depth is bounded by the maximum collection nesting level (typically 1-2), not
+by term depth — this is what makes the design stack-safe even for deeply
+nested terms inside collections.
 
 ### Collection Variant Matching
 
-Collection variants (PPar bags, lists, sets) use order-independent matching:
+Collection variants (PPar bags, lists, sets) use order-independent matching.
+The core challenge is that multiset elements have no fixed position — matching
+`{x, PSend(a,b), y}` against `{P, Q, R}` requires finding an assignment that
+satisfies all structural constraints. The algorithm uses a deterministic
+strategy: non-variable pattern elements are matched first (they have stricter
+requirements and produce earlier failure), then variable elements bind to
+remaining unclaimed ground elements. This is not full AC-unification (which
+is NP-complete in general) but a restricted form that exploits the first-order
+matching invariant: the ground side has no variables, so each non-variable
+pattern element either has a unique structural match or fails.
 
 **HashBag (multiset):** Pattern elements are matched against ground elements
 regardless of order. Each pattern element is classified:
@@ -656,6 +1498,12 @@ regardless of order. Each pattern element is classified:
 
 A `claimed` bitvector tracks which ground elements have been matched. If any
 pattern element fails to find a match, the entire match fails.
+
+The following trace shows the matching of a 3-element ground bag against a
+pattern with one non-variable element and two variable elements. The
+non-variable `PSend(a, b)` is tried first against all ground elements; once
+claimed, the variables `x` and `y` bind to the remaining unclaimed elements
+in iteration order.
 
 ```
 match_pattern(PPar({P, Q, R}), PPar({x, PSend(a, b), y}))
@@ -666,6 +1514,11 @@ match_pattern(PPar({P, Q, R}), PPar({x, PSend(a, b), y}))
   → MatchBindings { proc: {x→P_matched, y→R_matched}, name: {a→..., b→...} }
 ```
 
+The cost is O(|pattern| · |ground|) for non-variable elements (each is tried
+against all unclaimed ground elements) plus O(|variables|) for variable
+elements (each binds to the next unclaimed element). For the common case of
+1-2 non-variable elements in a small bag, this is effectively linear.
+
 **Vec (ordered):** Position-wise matching — `g_vec[i].match_pattern(p_vec[i])`
 for each position. Length must match.
 
@@ -673,23 +1526,67 @@ for each position. Length must match.
 
 ### Binder Variant Matching
 
-Binder variants (PNew, PInput) match under the binder by opening both scopes:
+Binder variants match under the binder by opening both scopes via `inner()`
+(structural access — NO freshening) and matching bodies via `unsafe_body`.
+The key insight is that `inner()` preserves De Bruijn indices (`BoundVar`s),
+making the comparison alpha-invariant: `new(x) in { x!(P) }` and
+`new(y) in { y!(P) }` both have `BoundVar(0)` at the binder position after
+scope opening, so they match structurally. This is the standard
+alpha-equivalence check via De Bruijn representation (de Bruijn, 1972).
+
+**MultiBinder (canonical: rhocalc PNew).** The following trace shows the
+step-by-step matching of two `PNew` terms. The arity check ensures both
+sides introduce the same number of bound variables — a `new(x, y)` pattern
+must not match a `new(z)` ground term. After the arity check, the body
+comparison proceeds by re-entering the iterative engine.
+
+Language definition: `PNew . ^[xs].p:[Name* -> Proc]`
+Generated type: `PNew(Scope<Vec<Binder<String>>, Box<Proc>>)` — one argument
+(the scope itself), no pre-scope fields.
 
 ```
-match_pattern(PNew(x, body_g), PNew(y, body_p))
-  → match pre-scope fields (if any)
-  → g_inner = ground_scope.inner()     // unbind ground
-  → p_inner = pattern_scope.inner()    // unbind pattern
+match_pattern(PNew(scope_g), PNew(scope_p))
+  → g_inner = scope_g.inner()
+  → p_inner = scope_p.inner()
+  → if |g_inner.unsafe_pattern| ≠ |p_inner.unsafe_pattern|: return None
   → (*g_inner.unsafe_body).match_pattern(&*p_inner.unsafe_body)
   → accumulate bindings from body match
 ```
 
-If the pattern binder is a FreeVar, it gets bound to the ground binder name
-via the variable-catches-all arm at the top of `match_pattern()`.
+The cost is O(1) for the `inner()` calls and arity check, plus O(|body|) for
+the recursive body match. Note that binder names themselves are NOT compared
+— only their count. Name comparison would break alpha-equivalence.
 
-**MultiBinder** extends this to multiple simultaneous bindings. Binder counts
-must match between ground and pattern. Bodies are matched after unbinding all
-binders with fresh names.
+The `unsafe_pattern` field contains the `Vec<Binder<String>>` — the binder
+names. These are scope-introducing positions and are NEVER dispatched through
+the match engine's variable-catches-all arm. Although `Binder<String>` wraps
+`FreeVar<String>`, the codegen only checks their count for arity and never
+extracts them into `MatchBindings`. The variable-catches-all arm handles
+`PVar(OrdVar(Var::Free(fv)))` and `NVar(OrdVar(Var::Free(fv)))` — term-level
+free variables, not scope binders.
+
+**Alpha-equivalence.** Because `inner()` preserves `BoundVar`s (de Bruijn
+indices) rather than freshening, `new(x) in { x!(P) }` correctly matches
+`new(y) in { y!(P) }` — both have the same `BoundVar` structure after scope
+opening.
+
+**Single Binder (e.g., ambient PNew).**
+Language definition: `PNew . ^x.p:[Name -> Proc]`
+Generated type: `PNew(Scope<Binder<String>, Box<Proc>>)` — exactly one binder
+per side, so no arity check is needed.
+
+**Pre-scope fields (e.g., PInputs).**
+Language definition: `PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]`
+When pre-scope fields are present, they are matched first via re-entrant
+`match_pattern()` before the scope is opened. The generated code matches
+each pre-scope field, then opens the scope, then matches the body.
+
+**Distinction from the Comm rule (§6).** The `match_pattern` codegen uses
+`inner()` — raw structural access with `BoundVar`s preserved — because it
+performs structural comparison (two terms must have the same shape). The Comm
+rule uses `unbind()` — which freshens `BoundVar`s into `FreeVar`s — because
+it needs `FreeVar`s with `pretty_name`s for top-level pattern matching against
+the guard. See §6 (lines 832–838) for the full rationale.
 
 ### Regular Variants with Collection Fields
 
@@ -711,35 +1608,48 @@ rule in the `rewrites {}` block. Detection occurs in
 
 ### Generated Datalog (Structural-Only)
 
-This is the rule for guards with no behavioral predicates, annotated
-line-by-line:
+The generated Datalog rule is the heart of the predicated types runtime. It
+implements the guarded Comm rule from §1's formal definitions as an Ascent
+rewrite rule, translating the mathematical equation into executable Rust code
+that fires during semi-naive fixpoint evaluation. The rule has four logical
+phases: (1) equational matching and bag iteration — finding a send/receive
+pair on the same channel within a `PPar` bag; (2) channel matching and
+received Name construction — building the Name `@(q)` from the sent process;
+(3) guard unbinding and first-order matching — converting the guard scope's
+De Bruijn-encoded body to `FreeVar`s and matching against the received Name;
+(4) two-pass substitution into the continuation — partitioning match results
+by category and applying separate Name and Proc substitutions.
+
+The rule is structurally modeled after the existing `PInputs` Comm rule
+but differs in three critical ways: it uses `match_pattern_name` (not
+`unsafe_body`), it unbinds the guard scope to produce `FreeVar`s (not just
+raw body access), and it performs two-pass substitution (not single-category).
+The `rw_proc` head relation means this produces a rewrite: the original
+term `s_orig` rewrites to `t`. The `eq_proc(s_orig, s)` clause respects
+the equational theory — the rule fires on any term equivalent to the LHS.
 
 ```rust
 rw_proc(s_orig.clone(), t) <--
-    // Match via equational theory
+    // Phase 1: equational matching and bag iteration
     eq_proc(s_orig, s),
     if let Proc::PPar(ref bag) = s,
 
-    // Find a PGuardedInput in the parallel bag
     for (inp, _) in bag.iter(),
     if let Proc::PGuardedInput(ref channel, ref guard_scope,
                                 ref _preds, ref cont_scope) = inp,
 
-    // Find a matching POutput on the same channel
     for (out, _) in bag.iter(),
     if let Proc::POutput(ref out_channel, ref sent_proc) = out,
     if channel == out_channel,
 
-    // Construct the received Name: @(q)
+    // Phase 2: received Name construction
     let received_name = Name::NQuote(sent_proc.clone()),
 
-    // Unbind guard scope → fresh FreeVars for matching
+    // Phase 3: guard unbinding and first-order matching
     let (guard_binders, guard_body) = guard_scope.clone().unbind(),
-
-    // First-order pattern match: received Name vs guard Name pattern
     if let Some(match_bindings) = received_name.match_pattern_name(&*guard_body),
 
-    // Remove consumed processes from the bag
+    // Phase 4: bag residual after consuming send/receive pair
     let rest = {
         let mut bag = bag.clone();
         bag.remove(&inp);
@@ -747,11 +1657,10 @@ rw_proc(s_orig.clone(), t) <--
         bag
     },
 
-    // Two-pass substitution into continuation
+    // Phase 4 (cont.): two-pass substitution into continuation
     let t = {
         let (cont_binders, cont_body) = cont_scope.clone().unbind();
 
-        // Pass 1: Name bindings → multi_substitute_name
         let name_vars: Vec<&FreeVar<String>> = cont_binders.iter()
             .filter(|b| {
                 let n = b.0.pretty_name.as_ref()
@@ -768,7 +1677,6 @@ rw_proc(s_orig.clone(), t) <--
                 .expect("name binding must exist").1.clone()
         }).collect();
 
-        // Pass 2: Proc bindings → multi_substitute
         let proc_vars: Vec<&FreeVar<String>> = cont_binders.iter()
             .filter(|b| {
                 let n = b.0.pretty_name.as_ref()
@@ -796,6 +1704,14 @@ rw_proc(s_orig.clone(), t) <--
         })
     }.normalize();
 ```
+
+The substitution loop connects guard binders to continuation binders by
+`pretty_name` matching: for each continuation binder, it checks whether a
+same-named binding exists in `match_bindings.name_bindings` (for Name pass)
+or `match_bindings.proc_bindings` (for Proc pass). The `filter` + `find`
+pattern is O(|binders| · |bindings|) but both sizes are typically 2-5.
+The final `.normalize()` call canonicalizes the result (e.g., flattening
+nested `PPar` bags), ensuring the fixpoint engine converges.
 
 ### Key Design Decisions
 
@@ -826,6 +1742,14 @@ them by name.
 
 ### Formal Semantics
 
+The following two equations formalize the generated Datalog rule above in
+standard operational semantics notation. The firing condition specifies the
+existential search over the `PPar` bag (the two `for` loops in the generated
+code), and the result specifies the bag transformation (removing consumed
+processes and inserting the substituted continuation). These equations serve
+as the correctness specification against which the generated code is validated
+(§9.1 "Soundness").
+
 **Firing condition:**
 
 ```
@@ -835,13 +1759,28 @@ them by name.
   ∧ match(unbind(φ_scope).body, NQuote(q)) = σ
 ```
 
+The empty list `[]` in the `PGuardedInput` indicates no behavioral predicates
+— this is the structural-only rule. When behavioral predicates are present,
+the conjunction extends with `∀i. Rᵢ(resolve(aᵢ, σ)) ∈ FP` (see §8).
+
 **Result:**
 
 ```
 PPar((bag ∖ {inp, out}) ∪ {unbind(c_scope).body[σ]}).normalize()
 ```
 
+The bag difference `∖ {inp, out}` removes the consumed send and receive; the
+union `∪ {body[σ]}` adds the substituted continuation. The `.normalize()`
+call ensures the result is in canonical form for the fixpoint engine.
+
 ### Step-by-Step Evaluation Flow
+
+The following diagram traces the data flow through the generated Comm rule,
+corresponding to the four phases identified in the code above. Read it
+top-to-bottom as a pipeline: each arrow represents a computation step, and
+the two exit points (`None` and `Some(σ)`) correspond to the `if let`
+guard in Phase 3. The final `.normalize()` call produces the canonical form
+that the Ascent engine adds to the `rw_proc` relation.
 
 ```
 PPar bag
@@ -874,7 +1813,20 @@ received ← NQuote(q)
 
 ## 7. Worked Example — End-to-End Trace
 
+This section traces the complete execution of a guarded Comm rule from input
+parsing through pattern matching, substitution, and normalization. The example
+exercises all key mechanisms: cross-category matching (Name→Proc→Name→Proc),
+natural-category bindings (`x: Name`, `y: Proc`), two-pass substitution, and
+the quoting/dropping discipline. Each step corresponds to a phase of the
+generated Datalog rule in §6. Following the trace verifies the correctness
+claims from §9.
+
 ### Input
+
+The input term places a guarded receive and a send in parallel on channel `n`.
+The guard pattern `@(x!(y))` decomposes the received value into a channel
+name `x` and a body `y`. The continuation `@(y)!(*(x))` uses both bindings
+with explicit category crossings.
 
 ```
 {(n ? @(x!(y))).{@(y)!(*(x))} | n!(a!({b!({}) | (b?z).{*(z)}}))}
@@ -900,6 +1852,10 @@ Both processes use channel `n`. ✓
 
 ### Step 4 — Construct Received Name
 
+The sent process is quoted to a Name via the `@()` operator, producing the
+value that will be matched against the guard pattern. This corresponds to
+`let received_name = Name::NQuote(sent_proc.clone())` in the generated code.
+
 ```
 received = @(a!({b!({}) | (b?z).{*(z)}}))
          = NQuote(POutput(a, PPar({POutput(b, PZero), PInput(b, z, PDrop(NVar(z)))})))
@@ -907,14 +1863,29 @@ received = @(a!({b!({}) | (b?z).{*(z)}}))
 
 ### Step 5 — Unbind Guard Scope
 
+Unbinding the guard scope converts De Bruijn-encoded bound variables to fresh
+`FreeVar`s with the original `pretty_name`s. This is necessary because
+`match_pattern_name` needs `FreeVar`s to produce bindings — De Bruijn
+`BoundVar`s would not carry the variable names needed for the substitution
+loop.
+
 ```
 (binders, guard_body) = guard_scope.unbind()
 guard_body = NQuote(POutput(NVar(x'), PVar(y')))
 ```
 
 Fresh `FreeVar`s `x'`, `y'` replace the De Bruijn-encoded bound variables.
+The primes indicate freshness — these are globally unique identifiers, not
+the original source-level names (though they share the same `pretty_name`).
 
 ### Step 6 — Pattern Match
+
+The matching descent proceeds top-down through aligned constructors, crossing
+from Name to Proc at the `NQuote` boundary. At each level, the constructor
+tag is compared; when a free variable is reached, a binding is produced at
+the variable's natural category. This trace demonstrates the cross-category
+consistency property (§5): Name and Proc bindings accumulate into a single
+`MatchBindings` regardless of the matching depth.
 
 ```
 match_pattern_name(received, guard_body):
@@ -931,16 +1902,33 @@ match_pattern_name(received, guard_body):
   └── Result: Some(MatchBindings { name: [x→a], proc: [y→{b!({})|...}] })
 ```
 
+The result has one Name binding (`x ↦ a`, from the Name-typed channel
+position of `POutput`) and one Proc binding (`y ↦ {b!({})|...}`, from the
+Proc-typed body position). This confirms the natural-category property:
+each variable binds at the category of its declaration position.
+
 ### Step 7 — Unbind Continuation Scope
+
+The continuation scope is unbound independently, producing a second set of
+fresh `FreeVar`s. These are connected to the guard binders by `pretty_name`
+matching in the substitution loop (not by identity).
 
 ```
 (cont_binders, cont_body) = cont_scope.unbind()
 cont_body = POutput(NQuote(PVar(y'')), PDrop(NVar(x'')))
 ```
 
-Fresh `FreeVar`s `x''`, `y''` (different from `x'`, `y'`).
+Fresh `FreeVar`s `x''`, `y''` are different from `x'`, `y'` (each `unbind()`
+call generates globally unique identifiers). The `pretty_name`s `"x"` and
+`"y"` are shared between the two sets, enabling the name-based lookup.
 
 ### Step 8 — Two-Pass Substitution
+
+The substitution is split into two passes by category. Pass 1 handles
+Name bindings (replacing `NVar` occurrences), Pass 2 handles Proc bindings
+(replacing `PVar` occurrences). The passes are disjoint: `NVar(x'')` and
+`PVar(y'')` target different wrapper types, so neither pass interferes with
+the other. This confirms the ordering-independence claimed in §3.
 
 ```
 Pass 1: multi_substitute_name([x''], [a]):
@@ -952,14 +1940,27 @@ Pass 2: multi_substitute([y''], [{b!({}) | (b?z).{*(z)}}]):
   Result: POutput(NQuote({b!({}) | (b?z).{*(z)}}), PDrop(a))
 ```
 
+After both passes, every `FreeVar` from the continuation's `unbind()` has
+been replaced by its bound value from the match result. The intermediate
+result after Pass 1 shows that `PDrop(NVar(x''))` → `PDrop(a)` — the Name
+variable `x''` is replaced by the Name value `a`.
+
 ### Step 9 — Normalize
+
+The final normalization step canonicalizes the substituted term. In this
+case, the term is already in normal form — no nested `PPar` flattening or
+equation application is needed.
 
 ```
 POutput(NQuote({b!({}) | (b?z).{*(z)}}), PDrop(a))
 = @({b!({}) | (b?z).{*(z)}})!(*(a))
 ```
 
-Final `PPar`: `{@({b!({}) | (b?z).{*(z)}})!(*(a))}` ✓
+Final `PPar`: `{@({b!({}) | (b?z).{*(z)}})!(*(a))}` — the continuation has
+been correctly instantiated with the match bindings. The result sends the
+body `{b!({}) | (b?z).{*(z)}}` (quoted to a Name) on the channel `*(a)`
+(the Name `a` dropped to a Proc), demonstrating the explicit category
+crossings from §3.
 
 ---
 
@@ -984,7 +1985,15 @@ the big picture before diving into any individual component.
   disambiguation*; it does NOT evaluate guards.
 - **Key file:** `prattail/src/decision_tree.rs`
 
-Concrete PathMap trie example for guarded vs unguarded receive:
+The following diagram shows a concrete PathMap trie that disambiguates
+guarded receive (`PGuardedInput`) from unguarded receive (`PInput`). Read the
+trie left-to-right: the shared prefix `FOR → LPAREN → capture(Name) → LARROW
+→ capture(Name)` is common to both rules; the branch point is the 5th token,
+where `RPAREN` commits to `PInput` and `IF` commits to `PGuardedInput`. This
+demonstrates how PathMap resolves syntactic ambiguity at parse time in
+O(prefix length) without backtracking — the guard evaluation mechanism (§5-8)
+is entirely orthogonal to parse dispatch.
+
 ```
 PathMap trie for parse dispatch:
 
@@ -992,7 +2001,7 @@ PathMap trie for parse dispatch:
                                                        │
                                           ┌────────────┴────────────┐
                                           ▼                         ▼
-                                      RPAREN                     IF
+                                      RPAREN                       IF
                                           │                         │
                                           ▼                         ▼
                               Commit(PInput rule)          capture(Pred)
@@ -1029,7 +2038,12 @@ PathMap trie for parse dispatch:
   deterministic. No occurs check needed. No backtracking.
 - **Key file:** `macros/src/gen/term_ops/match_pattern.rs`
 
-Concrete example:
+The following example demonstrates cross-category matching with a collection
+pattern containing both non-variable (`PSend(a, b)`) and variable (`...rest`)
+elements. The AC-matching strategy (§5 "Collection Variant Matching") first
+matches `PSend(a, b)` structurally, then binds `rest` to the remaining
+unclaimed element.
+
 ```
 match_pattern_name(
   NQuote(PPar({PSend(x,y), PNil})),
@@ -1037,6 +2051,10 @@ match_pattern_name(
 )
 → MatchBindings { name: {a→x, b→y}, proc: {rest→PNil} }
 ```
+
+The result contains three bindings across two categories: `a` and `b` are
+Name bindings (from the Name-typed fields of `PSend`), and `rest` is a Proc
+binding (from the variable capturing the remaining bag element).
 
 **Collection matching:** HashBag uses order-independent AC-matching with a
 `claimed` bitvector — non-variable pattern elements find exact structural
@@ -1066,7 +2084,11 @@ by requiring binder count equality and matching each pair.
     guard evaluation can use unification instead of first-order matching.
 - **Key file:** `prattail/src/unification.rs`
 
-Comparison with first-order matching:
+The following comparison highlights the fundamental difference between the
+two matching strategies. First-order matching (used at runtime) is
+one-directional and cheaper; unification (used at compile-time for overlap
+analysis) is bidirectional and handles patterns on both sides.
+
 ```
 First-order matching:      ground  ← pattern   (one-directional, O(|pattern|))
 Unification:               pattern ↔ pattern   (bidirectional,  O(n·α(n)))
@@ -1097,7 +2119,12 @@ In the guarded Comm rule pipeline:
   checks at their earliest valid positions for fail-fast evaluation.
 - **Key file:** `macros/src/ast/pattern.rs`
 
-Concrete pattern lowering example:
+The following example shows how a pattern AST node is lowered into Ascent
+Datalog clauses by `to_ascent_clauses()`. Each constructor becomes an `if let`
+destructuring clause; variables become `let` bindings; collection iteration
+uses `for` loops. The resulting clause sequence is inserted into the Ascent
+rule body, where it acts as a filter/binder chain.
+
 ```
 Pattern: (PNew x (PPar {P, Q}))
 ↓ to_ascent_clauses()
@@ -1131,41 +2158,56 @@ scope unpacking.
   classes, Comm rules fire when structural + behavioral guards are satisfied,
   and behavioral guard joins directly access fixpoint relations.
 
+The following diagram shows the Ascent engine's internal structure. The
+relations listed are the core set; user-declared relations (`R(T₁,...,Tₙ)`)
+extend this set. The rule firing order follows semi-naive evaluation: each
+iteration derives only NEW tuples (the delta), and the fixpoint is reached
+when no iteration produces new tuples in any relation.
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Ascent Fixpoint Engine                        │
-│                                                                 │
-│  Relations:                                                     │
-│    proc(Proc)          ← category exploration                   │
-│    name(Name)          ← category exploration                   │
-│    eq_proc(Proc, Proc) ← equations + congruence                 │
+┌────────────────────────────────────────────────────────────────┐
+│                    Ascent Fixpoint Engine                      │
+│                                                                │
+│  Relations:                                                    │
+│    proc(Proc)          ← category exploration                  │
+│    name(Name)          ← category exploration                  │
+│    eq_proc(Proc, Proc) ← equations + congruence                │
 │    rw_proc(Proc, Proc) ← rewrites + congruence                 │
 │    R(T₁, ..., Tₙ)     ← user-declared semantic relations       │
-│                                                                 │
-│  Rule firing order (semi-naïve):                                │
+│                                                                │
+│  Rule firing order (semi-naïve):                               │
 │    1. Category rules: proc(PNew(x,body)) → name(x), proc(body) │
 │    2. Equation rules: eq_proc(PDrop(@P), P) ← proc(PDrop(@P))  │
-│    3. Comm rules:                                               │
-│       proc(result) ←                                            │
-│         proc(PPar(bag)),                                        │
-│         for (elem, _) in bag.iter(),                            │
+│    3. Comm rules:                                              │
+│       proc(result) ←                                           │
+│         proc(PPar(bag)),                                       │
+│         for (elem, _) in bag.iter(),                           │
 │         if let PSend(ch, val) = elem,     ← structural match   │
-│         ...,                                                    │
+│         ...,                                                   │
 │         match_pattern_name(val, φ) = σ,   ← first-order match  │
 │         R(σ(x), σ(y)),                    ← behavioral guard   │
 │         let result = σ(continuation);     ← substitution       │
-│    4. Congruence rules: propagate eq/rw through constructors    │
-│                                                                 │
-│  Fixpoint: iterate until no new tuples in any relation          │
-└─────────────────────────────────────────────────────────────────┘
+│    4. Congruence rules: propagate eq/rw through constructors   │
+│                                                                │
+│  Fixpoint: iterate until no new tuples in any relation         │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ### End-to-End Composition Flow
 
+The following diagram traces a guarded receive expression from source code
+through all five subsystems. Read it top-to-bottom as a time sequence: parse
+time (PathMap dispatch), compile time (match_pattern codegen + AscentClauses
+bridge + guard codegen), and runtime (Ascent fixpoint). The key observation
+is that compile-time subsystems (② ③ ④) execute in parallel to produce
+different pieces of the generated code, which then converge at runtime in the
+Ascent engine (⑤). The arrows between ② and ④ show their independence — they
+produce different code artifacts that are assembled into the same Ascent rule.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         SOURCE CODE                                     │
-│   for(x <- ch if positive(x)) { P }                                    │
+│   for(x <- ch if positive(x)) { P }                                     │
 └───────────────────────────┬─────────────────────────────────────────────┘
                             │
                    ─── PARSE TIME ───
@@ -1173,7 +2215,7 @@ scope unpacking.
                             ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  ① PathMap Decision Tree                                                │
-│     Token stream: FOR LPAREN IDENT LARROW IDENT IF IDENT ... RPAREN    │
+│     Token stream: FOR LPAREN IDENT LARROW IDENT IF IDENT ... RPAREN     │
 │     PathMap lookup: FOR → Commit(PInputs rule)                          │
 │     Result: Parse as PGuardedInput constructor                          │
 └───────────────────────────┬─────────────────────────────────────────────┘
@@ -1199,7 +2241,7 @@ scope unpacking.
 │                          │  │   if let Proc::PSend(ch, val) = elem,    │
 │ Per-variant arms:        │  │   if ch == expected_channel,             │
 │   NQuote: recurse into   │  │   if let Some(mb) = val.match_pattern(φ),│
-│     Proc::match_pattern  │  │   positive(mb.get_name("x")),  ← T2 join│
+│     Proc::match_pattern  │  │   positive(mb.get_name("x")),  ← T2 join │
 │   NVar: check index eq   │  │   let result = construct_continuation(σ);│
 │   FreeVar: bind to σ     │  │                                          │
 └──────────────────────────┘  └──────────────┬───────────────────────────┘
@@ -1209,12 +2251,12 @@ scope unpacking.
 ┌──────────────────────────────┐             │
 │ Guard Codegen (§13)          │             │
 │                              │             │
-│ Classify: T1/T2/T3/T4       │             │
-│ (tiers defined in §11)      │             │
-│ T2 → direct Ascent join or  │             │
-│ SFA transition table or     │             │
-│ relation lookup or range    │             │
-│ check, per strategy         │             │
+│ Classify: T1/T2/T3/T4        │             │
+│ (tiers defined in §11)       │             │
+│ T2 → direct Ascent join or   │             │
+│ SFA transition table or      │             │
+│ relation lookup or range     │             │
+│ check, per strategy          │             │
 └──────────────────────────────┘             │
                                              │
                   ─── RUNTIME (Ascent fixpoint) ───
@@ -1226,16 +2268,23 @@ scope unpacking.
 │ Iteration 1: Category rules populate proc(·), name(·)                   │
 │ Iteration 2: Equation rules establish eq_proc equivalence classes       │
 │ Iteration N: Comm rule fires:                                           │
-│   proc(PPar({PSend(ch, @42), PInput(ch, x, P)}))                       │
-│   → match_pattern_name(@42, guard_body) = Some({x → 42})               │
+│   proc(PPar({PSend(ch, @42), PInput(ch, x, P)}))                        │
+│   → match_pattern_name(@42, guard_body) = Some({x → 42})                │
 │   → positive(42)?  ← behavioral guard join against Ascent relation      │
-│   → if yes: proc(P[x := 42])  (continuation with substitution)         │
+│   → if yes: proc(P[x := 42])  (continuation with substitution)          │
 │                                                                         │
 │ Fixpoint: no new tuples → DONE                                          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Component Interaction Matrix
+
+The following matrix summarizes the pairwise interactions between the five
+subsystems. Empty cells indicate no direct interaction. Read each row as
+"this subsystem [verb] that subsystem." The matrix reveals the architecture's
+key property: the Ascent engine (rightmost column) is the convergence point
+that consumes all other subsystems' output, while PathMap and match_pattern
+are independent of each other.
 
 ```
                 PathMap  match_pattern  Unification  AscentClauses  Ascent
@@ -1310,6 +2359,18 @@ Given a language that declares `relation path(Proc, Proc)` and
 
 ### Generated Datalog (Single Behavioral Predicate)
 
+The following rule extends the structural-only Comm rule (§6) with a
+behavioral predicate JOIN. The key difference is the addition of three
+clauses: (1) a guard checking that this rule handles the correct predicate
+(`preds.len() == 1 && preds[0].relation_name == "path"`), (2) argument
+resolution from match bindings (`resolve_arg`), and (3) a static Ascent join
+against the declared relation (`path(pred_arg0, pred_arg1)`). The structural
+matching reuses the same code as §6 — the behavioral layer is purely
+additive. The rationale for per-relation specialization (rather than a
+dynamic dispatch) is that Ascent's semi-naive evaluation requires join
+clauses to name specific relations at compile time; there is no runtime
+`check_relation(name, args)` mechanism.
+
 For the declared relation `path(Proc, Proc)`:
 
 ```rust
@@ -1321,23 +2382,20 @@ rw_proc(s_orig.clone(), t) <--
     if let Proc::PGuardedInput(ref channel, ref guard_scope,
                                 ref preds, ref cont_scope) = inp,
 
-    // Check this guard has exactly one pred referencing "path"
     if preds.len() == 1 && preds[0].relation_name == "path",
 
     for (out, _) in bag.iter(),
     if let Proc::POutput(ref out_channel, ref sent_proc) = out,
     if channel == out_channel,
 
-    // Structural matching (same as §6)
     let received_name = Name::NQuote(sent_proc.clone()),
     let (_, guard_body) = guard_scope.clone().unbind(),
     if let Some(match_bindings) = received_name.match_pattern_name(&*guard_body),
 
-    // Resolve predicate arguments from match bindings
     let pred_arg0 = preds[0].resolve_arg(0, &match_bindings),
     let pred_arg1 = preds[0].resolve_arg(1, &match_bindings),
 
-    // JOIN against the declared relation — static Ascent clause
+    // JOIN: fires only if (pred_arg0, pred_arg1) exists in the path relation
     path(pred_arg0, pred_arg1),
 
     // ... rest, substitution, same as §6 ...
@@ -1345,10 +2403,18 @@ rw_proc(s_orig.clone(), t) <--
 
 The critical line is `path(pred_arg0, pred_arg1)`. This is a standard Ascent
 join clause: it succeeds only if the tuple `(pred_arg0, pred_arg1)` exists
-in the `path` relation. Since the relation name `path` is known at macro
-expansion time, the join clause is statically generated.
+in the `path` relation's hash index. The O(1) lookup cost makes behavioral
+guards practically free after the structural matching phase. Since the
+relation name `path` is known at macro expansion time, the join clause is
+statically generated — no runtime reflection is needed.
 
 ### Behavioral Predicate Evaluation Flow
+
+The following diagram shows the three-stage pipeline for a single behavioral
+predicate: structural matching (producing σ), argument resolution (mapping
+predicate arguments through σ to concrete values), and the Ascent JOIN check.
+The two exit points (fire/skip) correspond to the `if let Some(...)` and
+`path(...)` join clauses in the generated code above.
 
 ```
 PGuardedInput(ch, φ, [R(a₁, a₂)], c)
@@ -1369,23 +2435,32 @@ PGuardedInput(ch, φ, [R(a₁, a₂)], c)
 
 ### Predicate Argument Resolution
 
-Each behavioral predicate argument is either:
-
-- A **match variable reference**: `y` → resolved from `match_bindings` by name
-- A **constant term**: `{}` → used directly
+Each behavioral predicate argument is either a match variable reference or a
+constant term. The `resolve_arg` function handles this dispatch: for
+`Var("y")`, it looks up `"y"` in `match_bindings` by name; for
+`Constant(PZero)`, it returns the ground term directly. The `BehavioralPred`
+struct captures the full predicate specification including the relation name,
+argument list, and negation flag. The `negated` field enables stratified
+negation (§9): when `true`, the generated code uses `!path(...)` instead of
+`path(...)`, firing when the tuple is ABSENT from the relation.
 
 ```rust
 struct BehavioralPred {
     relation_name: String,
     args: Vec<PredArg>,
-    negated: bool,           // for stratified negation (§9)
+    negated: bool,
 }
 
 enum PredArg {
-    Var(String),              // reference to a match variable
-    Constant(Proc),           // a ground term
+    Var(String),
+    Constant(Proc),
 }
 ```
+
+The `relation_name` is a `String` (not a type-level identifier) because it is
+resolved at macro expansion time against the `logic {}` block's declared
+relations. The `PredArg::Var` variant stores the variable's `pretty_name`,
+which is matched against `match_bindings` entries during resolution.
 
 > **Note:** The brainstorming document's `BehavioralPred` had only
 > `relation_name` and `args`; `negated` extends the design for stratified
@@ -1396,7 +2471,10 @@ enum PredArg {
 For conjunctions of behavioral predicates (e.g., `path(y, {}) AND
 is_output(*(x))`), the macro generates rules for the relevant combinations.
 A guard with predicates referencing relations `R₁` and `R₂` requires a rule
-with BOTH join clauses:
+with BOTH join clauses. The generated code resolves each predicate's arguments
+independently and chains the joins sequentially. BCG01 selectivity ordering
+(§13) may reorder the joins so the more selective relation is checked first,
+enabling earlier short-circuit pruning.
 
 ```rust
     // ... structural matching ...
@@ -1407,18 +2485,22 @@ with BOTH join clauses:
     // ... continuation ...
 ```
 
+Both joins must succeed for the rule to fire — this is the conjunction
+semantics of the `Vec<BehavioralPred>` representation.
+
 > **Conjunction notation:** Three equivalent notations appear across the
 > design documents:
 >
-> | Notation                        | Context                                            |
-> |---------------------------------|----------------------------------------------------|
-> | `/\`                            | Surface syntax in the predicate sublanguage (§2 EBNF) |
-> | `AND`                           | English prose / pseudo-syntax (brainstorming document) |
-> | `BehavioralPred::And(a, b)` / multiple entries in `Vec<BehavioralPred>` | AST representation |
+> | Notation                                                                | Context                                                |
+> |-------------------------------------------------------------------------|--------------------------------------------------------|
+> | `,` (comma)                                                             | Surface syntax in the `where`-clause (§2 EBNF)        |
+> | `AND`                                                                   | English prose / pseudo-syntax (brainstorming document) |
+> | `BehavioralPred::And(a, b)` / multiple entries in `Vec<BehavioralPred>` | AST representation                                     |
 >
 > The brainstorming document uses `AND` (e.g., `path(y, {}) AND
-> is_output(*(x))`); the §2 predicate sublanguage grammar uses `/\`; the
-> runtime representation is a `Vec<BehavioralPred>` (implicit conjunction).
+> is_output(*(x))`); the §2 `where`-clause grammar uses comma-separated
+> literals; the runtime representation is a `Vec<BehavioralPred>` (implicit
+> conjunction).
 
 ### Scaling Analysis
 
@@ -1439,23 +2521,40 @@ accesses Ascent relation state.
 
 ### Negated Predicates
 
-When `negated: true`, the generated rule uses Ascent negation:
+When `negated: true`, the generated rule uses Ascent's stratified negation
+operator. The theoretical basis is well-founded semantics (Van Gelder et al.,
+1991): negation is safe only when the negated relation is fully computed before
+the rule consuming it fires. This is enforced by stratification — the negated
+relation must belong to a lower stratum than the rule body.
 
 ```rust
-    !path(pred_arg0, pred_arg1),    // fires when tuple is ABSENT
+    !path(pred_arg0, pred_arg1),
 ```
 
-Stratification validation ensures negated relations appear in lower strata
-than the rules consuming them. Same-stratum negation produces a compile-time
-error.
+The `!` prefix is Ascent's negation syntax. The clause fires when the tuple
+is ABSENT from the `path` relation — the semantic complement of the positive
+join. Stratification validation ensures negated relations appear in lower
+strata than the rules consuming them. Same-stratum negation produces a
+compile-time error.
 
 ### Full Guard Check Formula
+
+The following equation unifies the structural and behavioral guard checks
+into a single formal predicate. The structural match produces σ, and each
+behavioral predicate is then evaluated against the Ascent fixpoint with
+polarity determined by the `negated` flag. This equation is the specification
+that the generated Datalog rules implement.
 
 ```
 match(φ, @(q)) = σ  ∧  ∀(R, args, neg) ∈ preds.
     (¬neg ⟹ R(resolve(args, σ)) ∈ FP) ∧
     (neg  ⟹ R(resolve(args, σ)) ∉ FP)
 ```
+
+The conjunction `∀(R, args, neg) ∈ preds` requires ALL predicates in the
+guard to be satisfied — a single failing predicate blocks the Comm rule.
+The `resolve(args, σ)` function maps each `PredArg` through the substitution
+σ: variables are looked up by name, constants are used directly.
 
 ### Quantified Behavioral Predicates
 
@@ -1465,7 +2564,7 @@ nested quantification.
 
 **Infrastructure available:** LogicT provides `gnot` (negation as failure for
 `not-exists`), `ifte`/`once` (committed choice for `exists-unique`), and `fair_conjoin` (fair
-nested quantification `forall x. exists y. P(x,y)`).
+nested quantification `forall(x, exists(y, P(x,y)))`).
 
 **Three evaluation strategies:**
 1. Compile to Ascent aggregation (count comparison)
@@ -1497,13 +2596,14 @@ Components added:
 
 Guard syntax (inside `language!` macro):
 ```text
-guard(forall y in nodes. (reachable(x, y) => safe(y)))
-guard(exists_{k=100} y in terms. (reachable(x, y) && halts(y)))
-guard(~safe(x) || connected(x, z))
-guard(path(x, y) && connected(y, z))
+guard(forall(y, nodes, entails(reachable(x, y), safe(y))))
+guard(exists(y, 100, rewrites_to(x, y)), halts(y))
+guard(not(safe(x)), connected(x, z))
+guard(path(x, y), connected(y, z))
 ```
 
-Operators: `&&` (conjunction), `||` (disjunction), `!`/`~` (negation), `=>` (implication).
+Operators: `,` (conjunction), `not()` (negation), `entails()` (implication),
+`forall()` / `exists()` (quantifiers).
 
 The cost-benefit framework assigns cost 20 to `BehavioralGuard` conditions,
 ensuring they are evaluated last in BCG01 fail-fast ordering.
@@ -1570,7 +2670,7 @@ generates fresh `FreeVar`s and opens the body. No capture is possible because:
 
 ### 9.4 Compositionality
 
-**Claim:** `match(C(π₁,…,πₙ), C(t₁,…,tₙ)) = ⨆ᵢ match(πᵢ, tᵢ)`
+**Claim:** `match(C(t₁,…,tₙ), C(π₁,…,πₙ)) = ⨆ᵢ match(tᵢ, πᵢ)`
 
 **Argument:** `match_pattern` recurses through constructors. A guard like
 `@(x!(y!(z)))` = `NQuote(POutput(NVar(x), POutput(NVar(y), PVar(z))))` yields:
@@ -1621,12 +2721,34 @@ positional correspondence between guard and continuation binders.
 
 ### Parser Steps
 
+The parser decomposes a guarded receive into four semantically distinct fields,
+each serving a different role in the predicated Comm rule. The core insight is
+that the surface syntax `(n ? pattern, predicates).{ body }` encodes a
+*structured guard*: the pattern constrains the structural shape of the received
+value, the predicates constrain its behavioral properties, and the continuation
+specifies the post-match computation. This decomposition is analogous to the
+distinction between syntax-directed and semantics-directed analysis in
+type-checking — the parser extracts sufficient information for later stages to
+classify, compile, and optimize each field independently.
+
+The following diagram annotates a concrete guarded receive, showing which
+substring maps to which field:
+
 ```
 (n ? @(x!(y)), path(y, {})).{ @(y)!(*(x)) }
  │   ├────────┤ ├──────────┤  ├────────────┤
  │   structural  behavioral    continuation
  channel
 ```
+
+The channel `n` identifies the communication endpoint. The structural pattern
+`@(x!(y))` is a Name-typed first-order pattern whose free variables `{x, y}`
+become the binder list. The behavioral predicate `path(y, {})` is parsed into
+a `BehavioralPred` AST node (§8) and evaluated against the Ascent fixpoint at
+runtime. The continuation `@(y)!(*(x))` is the process body executed after a
+successful match. All four fields are extracted in a single left-to-right parse
+pass — no backtracking is needed because the delimiters (`?`, `,`, `.{`, `}`)
+are unambiguous in PraTTaIL's Pratt grammar.
 
 The parser:
 
@@ -1653,8 +2775,18 @@ the continuation knows which variables are NVar vs PVar.
 
 ### Term Context Declaration
 
-The term context syntax extends to support the guard-binder pattern via a new
-`TermParam` variant:
+The `language!` macro needs a way to express the guard-binder relationship in
+its term declarations — specifically, that the guard pattern and continuation
+body share a common set of binders but differ in category (Name vs Proc). The
+`TermParam::GuardBody` variant captures this dual-scope relationship in a
+single declaration, telling the macro codegen layer to produce two
+`Scope<Vec<Binder<String>>, _>` wrappers (one for Name, one for Proc) that
+share the same binder list. This design avoids the need for a separate
+cross-scope linking pass and ensures the binder list is constructed exactly
+once during parsing, then threaded through both scopes by reference.
+
+The variant stores two identifier-type pairs — one for the guard and one for
+the continuation body — mirroring the dual-scope structure described in §4:
 
 ```rust
 TermParam::GuardBody {
@@ -1665,17 +2797,25 @@ TermParam::GuardBody {
 }
 ```
 
-This generates a `Scope<Vec<Binder<String>>, Box<Name>>` for the guard, a
-`Vec<BehavioralPred>` for the predicates, and a
-`Scope<Vec<Binder<String>>, Box<Proc>>` for the continuation.
+From this declaration, the codegen layer generates three outputs: a
+`Scope<Vec<Binder<String>>, Box<Name>>` for the guard (wrapping the structural
+pattern in a Name-category scope), a `Vec<BehavioralPred>` for the behavioral
+predicates (extracted during parsing but not scoped — they reference variables
+by name), and a `Scope<Vec<Binder<String>>, Box<Proc>>` for the continuation
+(wrapping the body in a Proc-category scope with the same binders). The guard
+and continuation scopes share identical binder lists, ensuring that `unbind()`
+on either scope produces the same set of free variables — the invariant
+required by two-pass substitution (§6).
 
 ### Tokens Feature Integration
 
-Guard keywords (`forall`, `exists`, `/\`, `\/`, `~`, `=>`, `exists_{k=N}`)
-are defined via the `tokens { ... }` block as `TokenKind::Custom` entries.
-Modal lexing (`push(pred_mode)`/`pop`) activates predicate keyword
-recognition inside guard scope. FIRST set augmentation auto-wires custom
-guard tokens. No manual lexer NFA/DFA modifications are needed.
+Guard keywords (`where`, `not`, `and`, `or`, `forall`, `exists`, `entails`,
+`implies`, `implied_by`, `iff`) and their Unicode alternatives (`¬`, `∧`, `∨`,
+`∀`, `∃`, `⟹`, `⟸`, `⟺`) are defined via the `tokens { ... }` block as
+`TokenKind::Custom` entries. Modal lexing (`push(pred_mode)`/`pop`) activates
+predicate keyword recognition inside `where`-clause scope. FIRST set
+augmentation auto-wires custom guard tokens. No manual lexer NFA/DFA
+modifications are needed.
 
 ---
 
@@ -1692,8 +2832,26 @@ perfectly reasonable guard to write — but it cannot be evaluated in general.
 Rather than rejecting such predicates outright, the pipeline classifies every
 guard into one of four **decidability tiers** and applies the appropriate
 compilation strategy.
+(See `prattail/docs/design/weighted-mso.md` for the MSO classification
+framework that informs decidability analysis.)
 
 ### Tier Classification
+
+The four tiers correspond exactly to the four levels of the arithmetical
+hierarchy relevant to predicate evaluation: decidable (computable in finite
+time), computably enumerable but not decidable (semi-decidable — an answer may
+come but is not guaranteed), co-computably-enumerable, and fully undecidable.
+The rationale for exactly four tiers rather than a finer-grained hierarchy is
+pragmatic: each tier maps to a qualitatively different compilation strategy,
+and finer distinctions (e.g., separating polynomial-time decidable from
+exponential-time decidable within T2) do not change the code shape — only the
+constant factor. The tier system ensures that every guard receives the most
+efficient compilation strategy that soundness permits: if a guard *can* be
+eliminated at compile time (T1), it *is* eliminated; if it *can* be compiled
+to a finite automaton (T2), it *is* compiled rather than interpreted; if it can
+only be approximated (T3), the approximation is bounded and the user is warned;
+if nothing can be done (T4), the burden shifts to the user via proof
+certificates or trust assertions.
 
 ```
 ┌─────────┬───────────────────────────┬──────────────────────────────────┐
@@ -1717,9 +2875,26 @@ compilation strategy.
 └─────────┴───────────────────────────┴──────────────────────────────────┘
 ```
 
+The runtime cost column deserves attention: T1 achieves zero cost by
+construction (no code emitted), T2's cost is linear in the received value's
+size (one automaton traversal), T3 multiplies that by the user-specified bound
+`k` (at most `k` unrollings of the bounded quantifier), and T4's O(1) reflects
+that the guard is trusted rather than evaluated — the "cost" is the risk of
+unsoundness if the user's assertion is wrong. The `classify_decidability()`
+function in `symbolic.rs` implements this classification (see the decision tree
+below).
+
 ### Classification Criteria
 
 **T1 — Compile-time decidable:**
+
+A formula qualifies as T1 when two conditions hold simultaneously: every atomic
+predicate can be decided without runtime information (ground-decidable), and
+every quantifier ranges over a finite, statically-known domain. The conjunction
+of these two conditions guarantees that the formula's truth value can be fully
+determined during macro expansion — the key insight is that finiteness of both
+the predicate semantics and the quantification domains reduces evaluation to
+bounded enumeration:
 
 ```
 ground_decidable(atoms(φ)) ∧ finite_domain(quantifiers(φ))
@@ -1729,8 +2904,8 @@ ground_decidable(atoms(φ)) ∧ finite_domain(quantifiers(φ))
 |---------------------------------|----------------|------------------------------------|
 | `true`                          | —              | T1 (trivially true)                |
 | `false`                         | —              | T1 (trivially false, dead receive) |
-| `forall c in {R,G,B}. valid(c)` | 3-element enum | T1 (check all 3)                   |
-| `x > 5 /\ x < 10`               | i64 interval   | T1 (interval algebra)              |
+| `forall(c, {R,G,B}, valid(c))`  | 3-element enum | T1 (check all 3)                   |
+| `x > 5, x < 10`                 | i64 interval   | T1 (interval algebra)              |
 | `is_nil(x)`                     | structural     | T1 (pattern match)                 |
 
 **T2 — Runtime decidable:**
@@ -1746,14 +2921,26 @@ or are register-testable (M6).
 
 **T3 — Semi-decidable:**
 
+A formula is T3 when it would be undecidable in general but becomes decidable
+under a finite depth bound `k`. The theoretical basis is the observation that
+many undecidable properties (reachability, termination) become decidable when
+restricted to bounded computation traces — this is the principle behind bounded
+model checking (Biere et al., 1999). The notation `φ↾k` denotes the formula
+`φ` with all quantifiers restricted to depth `k`:
+
 ```
 ∃k. decidable(φ↾k)    where φ↾k bounds all quantifiers to depth k
 ```
 
+The result is sound but incomplete: if the bounded checker accepts, the
+property holds within the bound; if it rejects, the property fails within the
+bound; but silence (neither accept nor reject within `k` steps) does not
+imply the property holds in general.
+
 | Predicate                        | Bound         | Completeness         |
 |----------------------------------|---------------|----------------------|
-| `exists_{k=100} y. halts(y)`     | k = 100 steps | Sound but incomplete |
-| `forall_{k=50} path. safe(path)` | k = 50 depth  | Sound but incomplete |
+| `exists(y, 100, halts(y))`       | k = 100 steps | Sound but incomplete |
+| `forall(path, 50, safe(path))`   | k = 50 depth  | Sound but incomplete |
 
 **T4 — Undecidable:**
 
@@ -1763,10 +2950,24 @@ properties of programs, membership is undecidable.
 | Predicate                      | Why Undecidable           | Mitigation                     |
 |--------------------------------|---------------------------|--------------------------------|
 | `halts(x)`                     | Rice's theorem            | User proof or Rocq certificate |
-| `forall y. (x →* y ⟹ safe(y))` | Unbounded ∀ over ∞ domain | `assert_pred` annotation       |
-| `forall X. φ(X)`               | Second-order universal    | Restricted MSO or user proof   |
+| `forall(y, entails(rewrites_to(x, y), safe(y)))` | Unbounded ∀ over ∞ domain | `assert_pred` annotation       |
+| `forall(X, φ(X))`              | Second-order universal    | Restricted MSO or user proof   |
 
 ### Classification Decision Tree
+
+The `classify_decidability()` function implements the following decision tree,
+which maps any formula `φ` to its tier in O(|φ|) time via a single recursive
+descent over the formula's AST. The tree is structured to assign the
+most-favorable (lowest-cost) tier first: T1 is checked before T2, T2 before
+T3, and T4 is the fallback. The rationale for this priority ordering is that
+lower tiers strictly subsume higher tiers in terms of runtime efficiency —
+a formula that is T1-eligible should never be compiled as T2, even if T2
+compilation would also succeed. The first branch distinguishes ground-decidable
+atoms (structural/arithmetic predicates evaluable without runtime state) from
+atoms that require runtime data (Ascent relations, register values). The
+second-order check is a fast syntactic test for `∀X` quantification over
+set variables, which immediately classifies as T4 per Trakhtenbrot's theorem
+on the undecidability of second-order logic over infinite domains:
 
 ```
 Formula φ
@@ -1786,7 +2987,26 @@ Formula φ
         └── Yes ──────────────────────────────────► T4 (MSO01 lint)
 ```
 
+Note that the tree has no T3 path from the "No: All atoms are declared Ascent
+relations?" branch — if an atom requires runtime state (Ascent relation) but
+is not available as a declared relation, no amount of bounding helps, since the
+issue is missing data, not unbounded search. The MSO01 lint emitted for T4
+second-order formulas warns the user that their guard is inherently undecidable
+and suggests either providing a Rocq proof certificate or rewriting as a
+bounded (T3) variant.
+
 ### Cost Model
+
+The following table summarizes the asymptotic costs and correctness guarantees
+of each tier. The key trade-off is between compile cost and runtime cost: T1
+pays a linear compile cost to achieve zero runtime cost, while T4 pays a
+minimal compile cost (just verifying the proof certificate) but shifts all
+correctness responsibility to the user. T2's worst-case exponential compile
+cost (from SFA subset construction) is the price of achieving complete and
+sound runtime evaluation — in practice, most guards produce small automata
+because the SFA representation avoids the per-symbol blowup of explicit-alphabet
+automata. T3's linear-in-k compile cost reflects the k-bounded unrolling of
+quantifiers:
 
 | Tier | Compile Cost                | Runtime Cost per Receive | Guarantees               |
 |------|-----------------------------|--------------------------|--------------------------|
@@ -1799,7 +3019,14 @@ Formula φ
 
 ## 12. The Five-Stage Pipeline
 
-The predicated types pipeline has five stages, described once here.
+The predicated types pipeline has five stages, described once here. The
+pipeline is a classic compiler architecture — lex/parse, analysis, optimization,
+codegen — adapted for predicate compilation rather than general-purpose
+language compilation. The key insight is that predicates are themselves
+*programs* (formulas that must be evaluated), and the pipeline applies the full
+arsenal of compiler techniques to them: constant folding (T1 elimination),
+automaton compilation (T2), bounded model checking (T3), and graceful
+degradation to trust (T4).
 
 > **Note:** All five pipeline stages execute at **compile time** during
 > `language!` macro expansion. Stage 5 (Codegen) produces a `TokenStream`
@@ -1808,24 +3035,29 @@ The predicated types pipeline has five stages, described once here.
 > analysis, optimization — is not present in the compiled binary. See §14 for
 > a comprehensive compile-time vs runtime classification.
 
+The following diagram shows the five stages as a linear pipeline, with each
+box listing the stage's purpose, the modules that implement it, and (for stages
+with multiple compilation paths) the tier-specific behavior. Read the diagram
+top-to-bottom, following the arrows through the data flow:
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ Stage 1: PARSE                                                           │
 │ Surface syntax → Predicate AST (WeightedMsoFormula)                      │
 │ Modules: Pratt parser, weighted_mso.rs                                   │
 │                                                                          │
-│ Input:  for (@x : halts /\ primes <- ch) { P }                           │
+│ Input:  for (@x <- ch) where halts(x), primes(x) { P }                   │
 │ Output: WeightedMsoFormula::And(AtomicPos("halts"), AtomicPos("primes")) │
 └───────────────────────┬──────────────────────────────────────────────────┘
                         │
                         ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ Stage 2: CLASSIFY + DISPATCH                                             │
-│ Decidability tier (T1–T4) + Module activation (M1–M14)                   │
+│ Decidability tier (T1–T4) + Module activation (M1–M15)                   │
 │ Modules: symbolic.rs, predicate_dispatch.rs, weighted_mso.rs             │
 │                                                                          │
 │ Actions: classify_decidability() → tier                                  │
-│          extract_features() → 14-bit PredicateSignature                  │
+│          extract_features() → 15-bit PredicateSignature                  │
 │          Cost-ordered module execution plan                              │
 └───────────────────────┬──────────────────────────────────────────────────┘
                         │
@@ -1871,16 +3103,33 @@ The predicated types pipeline has five stages, described once here.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
+The pipeline is monotonically information-preserving: each stage enriches the
+representation (adding tier labels, automaton structure, optimization metadata)
+without discarding the original formula, so later stages can always refer back
+to the source. The overall compile-time cost is dominated by Stage 3's
+automaton construction, which is O(2^|φ|) in the worst case for subset
+construction but typically much smaller due to SFA's symbolic representation
+of transitions.
+
 ### Stage 1: Parse
 
-The predicate sublanguage is parsed by PraTTaIL's Pratt parser into a
-`WeightedMsoFormula` AST:
+The `where`-clause sublanguage is parsed by PraTTaIL's Pratt parser into a
+`WeightedMsoFormula` AST. The parser treats the `where` clause as an embedded
+sublanguage: comma-separated literals form the top-level conjunction, `not()`
+provides stratified negation, and sugar forms (`and()`, `or()`, `entails()`,
+`forall()`, `exists()`) desugar to Datalog-compatible structures. The Pratt
+parser handles all of this with the same binding-power mechanism used for the
+host language — no special-purpose parser is needed.
+
+The following example shows a simple conjunction of two atomic predicates,
+which is the most common guard form:
 
 ```rholang
-for (@x : halts /\ primes <- ch) { P }
+for (@x <- ch) where halts(x), primes(x) { P }
 ```
 
-Parses to:
+This parses to a binary `And` node, where each leaf is an `AtomicPos` recording
+the predicate label and the variable it constrains:
 
 ```
 WeightedMsoFormula::And(
@@ -1889,13 +3138,21 @@ WeightedMsoFormula::And(
 )
 ```
 
-For quantified predicates:
+The `label` field is the predicate name as written in the source, which will
+be resolved to an Ascent relation during Stage 2 classification. The `var`
+field identifies the bound variable from the receive pattern that the predicate
+constrains.
+
+Quantified predicates illustrate the richer AST structure. The following
+example shows a universal quantifier with an implication body — the logical
+reading is "for all `y`, if `x` can reach `y`, then `y` is safe":
 
 ```rholang
-for (@x : forall y. (reachable(x, y) => safe(y)) <- ch) { P }
+for (@x <- ch) where forall(y, nodes, entails(reachable(x, y), safe(y))) { P }
 ```
 
-Parses to:
+The parser desugars `entails(A, B)` to `¬A ∨ B` (material implication),
+producing:
 
 ```
 WeightedMsoFormula::ForallFirst {
@@ -1907,9 +3164,23 @@ WeightedMsoFormula::ForallFirst {
 }
 ```
 
+The `ForallFirst` variant indicates first-order universal quantification (over
+values, not sets — second-order `∀X` over sets would use `ForallSecond`). The
+`NegAtomicPos` node represents a negated atom, corresponding to the `¬` in the
+desugared implication. This desugaring ensures that the downstream compilation
+stages (§§11-13) work with a normalized AST in negation normal form.
+
 ### Stage 2: Classify
 
-Classification algorithm (in `symbolic.rs` and `weighted_mso.rs`):
+Classification determines both the decidability tier (which compilation path
+to use) and the module activation set (which automaton modules to invoke). The
+four-step algorithm runs in O(|φ|) time — a single pass over the formula AST
+suffices to compute both the logical complexity class and the feature signature.
+The feature signature is a 14-bit bitvector where each bit indicates whether a
+specific module (M1–M15, excluding M0 which is always on) is needed for this
+guard. Modules are then sorted by `estimated_cost()` to produce a
+cost-ascending execution plan — cheapest modules execute first, enabling early
+termination if a cheap module can handle the guard alone:
 
 1. `classify_formula()` → `FirstOrder | Existential | Restricted | Full`
 2. `check_decidability()` → `T1 | T2 | T3 | T4`
@@ -1918,7 +3189,19 @@ Classification algorithm (in `symbolic.rs` and `weighted_mso.rs`):
 
 ### Stage 3: Compile
 
-Compilation path depends on tier and formula structure:
+Compilation transforms the formula AST into an executable representation. The
+central abstraction is `SymbolicAutomaton<A>`, where the type parameter `A`
+represents the alphabet's BooleanAlgebra (§15) — transitions are labeled with
+predicates rather than individual symbols, enabling compact representation of
+guards over large or infinite domains. The compilation path begins with
+`to_weighted_automaton()`, which translates the formula's logical structure
+into automaton states and transitions via a compositional construction (each
+connective — ∧, ∨, ¬, ∀, ∃ — has a corresponding automaton operation). From
+the symbolic automaton, three paths diverge based on the formula's structure:
+standard SFA determinization and minimization for most T2 guards, parity tree
+automaton (PATA) construction for mu-calculus fixpoint formulas (recursive
+predicates via `letprop`), and register automaton compilation for predicates
+that compare data values across positions (e.g., `x == last_seen`).
 
 ```
 WeightedMsoFormula ──► to_weighted_automaton() ──► SymbolicAutomaton<A>
@@ -1931,9 +3214,32 @@ WeightedMsoFormula ──► to_weighted_automaton() ──► SymbolicAutomaton
                             minimize()        PATA<W>         RegisterAutomaton<W>
 ```
 
+The left path (determinize → minimize) is the standard SFA pipeline and
+handles the majority of T2 guards. Determinization applies subset construction
+over symbolic predicates (§15), and minimization applies Hopcroft's algorithm
+adapted for SFAs. The middle path invokes `mu_calculus_to_pata()` (see
+`prattail/docs/design/parity-tree-automata.md`) for formulas containing
+fixpoint operators (νX, μX). The right path compiles to register automata
+(M6) for predicates that need to compare the current input against stored
+values. All three paths produce a typed automaton that Stage 5 can lower to
+Rust code.
+
 ### Stage 4: Optimize
 
-Guard optimization after compilation:
+After compilation, the optimizer applies three transformations: guard fusion
+(intersecting multiple guards into a single automaton), cross-channel
+coordination (building multi-tape automata for guards that span multiple
+channels), and selectivity ordering (reordering guard evaluations to maximize
+short-circuit elimination). The core insight behind guard fusion is that
+evaluating two guards separately — SFA_A then SFA_B — requires two automaton
+traversals of the input, while evaluating their intersection requires only one
+traversal of a product automaton. The intersection `intersect(SFA_A, SFA_B)`
+computes the product construction over symbolic predicates (transitions labeled
+with `pred_A ∧ pred_B`), and the subsequent `minimize()` pass reduces the
+product states using Hopcroft's algorithm.
+
+The following diagram shows the fusion of two guards into a single minimized
+automaton:
 
 ```
 Guard A: halts(x)     Guard B: primes(x)
@@ -1952,8 +3258,19 @@ Guard A: halts(x)     Guard B: primes(x)
      Fused guard automaton
 ```
 
-For multi-channel predicates, M8 (multi-tape) fuses cross-channel constraints.
-M7 (probabilistic) orders guards by selectivity:
+The fused automaton accepts exactly the intersection of the two guards'
+languages — a value passes the fused guard if and only if it passes both
+individual guards.
+
+For multi-channel predicates, M8 (multi-tape) fuses cross-channel constraints
+into a single multi-tape automaton that processes values from different channels
+simultaneously (see §17 for the multi-tape construction). M7 (probabilistic)
+orders guards by selectivity — the probability that a random input passes the
+guard. The rationale is that checking the most selective guard first maximizes
+the probability of early rejection, avoiding the cost of evaluating subsequent
+guards. The selectivity estimates come from static analysis of the guard's
+structure (e.g., `halts(x)` is highly selective because most processes do not
+halt):
 
 ```
 Guard            Selectivity    Order
@@ -1962,19 +3279,38 @@ primes(x)        0.15 (15%)     2
 ground(x)        0.80 (80%)     3 (check last — eliminates only 20%)
 ```
 
+This selectivity-ordered evaluation is a compile-time decision: the generated
+code evaluates guards in the selectivity-optimal order, with short-circuit
+`&&` between them so that a failing guard skips all subsequent evaluations.
+
 ### Stage 5: Codegen
 
-The compiled automaton generates Rust code as a `TokenStream`. Each tier
-produces a different code shape:
+The final stage lowers the compiled and optimized automaton into Rust source
+code emitted as a `TokenStream` during `language!` macro expansion. The code
+shape varies qualitatively by tier — this is not merely a matter of different
+constants or thresholds, but fundamentally different code structures reflecting
+the computability-theoretic differences between tiers. T1 produces *no* code
+(the guard is constant-folded away); T2 produces deterministic finite-state
+code (match tables, arithmetic checks, or Ascent join clauses); T3 produces
+bounded-search code with an explicit depth counter; T4 produces a trust wrapper
+that defers to user-provided proof certificates. The following table summarizes
+the code shape and runtime cost for each tier:
 
-| Tier | Generated Code Shape | Runtime Cost |
-|------|---------------------|--------------|
-| T1   | No code (guard eliminated) | O(0) |
-| T2   | Inline arithmetic, Ascent join clause, register machine, or SFA `match` table | O(1) to O(\|value\|) |
-| T3   | BFS/DFS with depth counter returning `TriState` | O(k · \|value\|) |
-| T4   | `assert_pred()` trust wrapper | O(1) |
+| Tier | Generated Code Shape                                                                          | Runtime Cost         |
+|------|-----------------------------------------------------------------------------------------------|----------------------|
+| T1   | No code (guard eliminated)                                                                    | O(0)                 |
+| T2   | Inline arithmetic, Ascent join clause, register machine, or SFA `match` table                 | O(1) to O(\|value\|) |
+| T3   | Breadth-first search (BFS) / depth-first search (DFS) with depth counter returning `TriState` | O(k · \|value\|)     |
+| T4   | `assert_pred()` trust wrapper                                                                 | O(1)                 |
 
-See §13 "Generated Rust Code per Tier" for concrete code examples of each tier.
+The T2 row shows a range of code shapes because T2 guards vary in complexity:
+a simple arithmetic predicate like `x > 5` compiles to a single comparison
+(O(1)), while a complex SFA over string patterns compiles to a match table
+traversed in O(|value|) time. The T3 `TriState` return type
+(accept/reject/unknown) reflects the inherent incompleteness of bounded
+checking — the caller must handle the `unknown` case, typically by falling
+through to a conservative default. See §13 "Generated Rust Code per Tier" for
+concrete code examples of each tier.
 
 ### WeightedMsoFormula Parsing
 
@@ -1988,6 +3324,13 @@ pipeline's Stage 1 parse entry point.
 ## 13. Guard Compilation Strategies
 
 ### Single-Channel Guards
+
+The simplest and most common case is a guard that constrains a single channel's
+received value. The compilation strategy is a direct application of the tier
+classification from §11: the formula is classified, then the appropriate
+compilation path is taken. The four paths are mutually exclusive — every
+single-channel guard follows exactly one. The diagram below shows the branching
+structure, with each branch annotating the key functions invoked along the path:
 
 ```
 φ(x)
@@ -2006,10 +3349,26 @@ Tier
   └─ T4 ──► emit MSO01 lint ──► codegen: assert_pred() wrapper
 ```
 
+The T2 path is the most complex: `to_weighted_automaton()` builds an NFA-like
+symbolic automaton, `determinize()` applies subset construction (potentially
+exponential in |φ| but typically small), and `minimize()` applies Hopcroft's
+O(n log n) algorithm. The entire T2 path executes at compile time; only the
+resulting transition table appears in the generated binary.
+
 ### Multi-Channel Guards
 
+When a guard references variables bound by multiple channels, the compilation
+becomes a coordination problem: the guard cannot be evaluated until values
+arrive on all referenced channels, and the order of consumption affects both
+correctness and performance. The five-step process below first classifies each
+channel's guard independently (reusing the single-channel pipeline), then
+detects cross-channel data dependencies by scanning for free variables that
+originate from other channels. The key insight is that cross-channel references
+create a *dependency graph* among channels, and the compilation strategy must
+respect this graph's topological order.
+
 ```
-for (@x <- ch1, @y : f(x, y) <- ch2) { P }
+for (@x <- ch1; @y <- ch2) where f(x, y) { P }
 
 Step 1: Classify each guard independently
 Step 2: Detect cross-channel dependencies (x referenced in ch2's guard)
@@ -2018,11 +3377,19 @@ Step 4: Optimize consumption order via selectivity (M7)
 Step 5: Codegen coordinated guard evaluation
 ```
 
-For cross-channel constraint propagation, M11 (two-way transducer) resolves
-backward dependencies:
+In this example, the `where` clause predicate `f(x, y)` references `x`,
+which is bound by `ch1`, and `y`, which is bound by `ch2`. This cross-channel
+dependency means `ch1` must be consumed before the guard can be evaluated. But
+the dependency can also flow backward: if the `where` clause constrains which
+values on `ch1` are worth consuming (e.g., `f(x, y)` implies `x` must satisfy
+certain properties), M11 (two-way transducer) can propagate this constraint
+backward to prune the `ch1` value space before consumption.
+
+The following diagram shows the `ChannelConstraint` structure that captures
+the bidirectional data flow between channels:
 
 ```
-for (@x <- ch1, @y : f(x, y) <- ch2) { P }
+for (@x <- ch1; @y <- ch2) where f(x, y) { P }
        │
        ▼  backward_constraint(ch2_guard, ch1)
     ChannelConstraint {
@@ -2031,19 +3398,41 @@ for (@x <- ch1, @y : f(x, y) <- ch2) { P }
     }
 ```
 
+The `forward_transducer` maps a consumed `ch1` value to a partially-evaluated
+guard for `ch2` (substituting the concrete `x` value). The
+`backward_transducer` inverts this: given `ch2`'s guard, it computes a
+predicate on `ch1` values that filters out values guaranteed to make the
+combined guard fail. This backward propagation is the SFT pre-image operation
+(§16) applied to the guard's transducer representation.
+
 ### Recursive Predicates (letprop)
 
-User-defined predicates compile through the mu-calculus:
+User-defined predicates allow programmers to name and reuse complex guard
+formulas. The `letprop` syntax binds a predicate name to a formula, which can
+then be used as an atomic predicate in subsequent guards. The compilation
+strategy routes these definitions through the mu-calculus — specifically,
+recursive predicate definitions map to fixpoint formulas (νX for greatest
+fixpoints, μX for least fixpoints), which are then compiled to parity
+alternating tree automata (PATA) via the construction in
+`prattail/docs/design/parity-tree-automata.md`. The PATA representation
+captures the alternation between universal and existential quantification in
+the predicate's recursive structure.
+
+The following Rholang example defines a `halt` predicate that checks whether a
+process has no infinite execution trace — the standard halting property:
 
 ```rholang
-letprop halt x = forall x'. ~(x ->* x') in
-for (@x : halt <- ch) { P }
+letprop halt x = forall(x', not(rewrites_to(x, x'))) in
+for (@x <- ch) where halt(x) { P }
 ```
 
-Compilation path:
+The compilation path translates the predicate definition through four phases:
+parsing to a mu-calculus formula, constructing a PATA, classifying
+decidability, and (in this case) requiring user intervention because the
+predicate is inherently undecidable:
 
 ```
-letprop halt x = forall x'. ~(x ->* x')
+letprop halt x = forall(x', not(rewrites_to(x, x')))
   │
   ▼  Parse to mu-calculus
 νX. □_{→*}(¬X)
@@ -2057,22 +3446,82 @@ T4 (undecidable in general)
   ▼  Require assert_pred or bounded variant
 ```
 
-This is T4 because `halt` universally quantifies over an infinite domain
-(all reachable states) with no explicit bound — the halting problem in
-disguise. A bounded variant (`halt_{100}`) is T3 and compiles to a bounded
-checker.
+The mu-calculus formula `νX. □_{→*}(¬X)` reads as: "the greatest fixpoint X
+such that for all successors under the →* (reduction) relation, X does not
+hold" — i.e., no infinite reduction sequence exists. This is T4 because `halt`
+universally quantifies over an infinite domain (all reachable states) with no
+explicit bound — the halting problem in disguise. By Rice's theorem, this
+property is undecidable for any Turing-complete reduction system. A bounded
+variant (`halt_{100}`) restricts the universal quantifier to depth 100,
+yielding T3 and compiling to a bounded depth-first checker that returns
+`TriState::Unknown` if the bound is exhausted without a definitive answer.
 
 ### Generated Rust Code per Tier
 
-**T1 — Static elimination (compile-time constant):**
+The five-stage pipeline (parse → classify → optimize → lower → codegen)
+culminates in code generation, where each decidability tier produces a
+qualitatively different code shape reflecting fundamental computability
+constraints. A T1 guard vanishes entirely; a T2 guard becomes a simple
+conditional or hash probe; a T3 guard becomes a bounded search; a T4 guard
+becomes a trust annotation. The following examples illustrate the generated
+code for each tier, with narrative explaining the theory, rationale, and
+runtime behavior.
+
+#### T1 — Static Elimination
+
+If all atoms in a guard are ground-decidable and all quantifiers range over
+finite domains (§11 T1 criteria), the formula can be fully evaluated during
+macro expansion — analogous to a traditional compiler's constant-folding pass.
+The result is a boolean constant: `true` means the Comm rule fires
+unconditionally (no guard check emitted); `false` means the rule is dead code
+and is not emitted at all (SYM01 lint). Either way, the generated binary
+contains zero guard-evaluation overhead.
+
+Theoretically, the class of ground formulas over finite domains is trivially
+decidable: every atom can be evaluated by table lookup, every quantifier
+expanded by enumeration. `is_statically_decidable()` detects two syntactic
+patterns — tautologies (P ∨ ¬P) and contradictions (P ∧ ¬P). The SFA-based
+path (once compiled to `SymbolicAutomaton`) generalizes this to semantic
+tautology/contradiction detection via SFA emptiness and universality checks.
+
+Consider a guard `x > 0, x < 100` where `x` is bound to the literal 42 at
+parse time:
 
 ```rust
-// Guard `x > 0 /\ x < 100` with x bound to literal 42 at parse time:
+// Guard `x > 0, x < 100` with x bound to literal 42 at parse time:
 // Entire guard statically evaluates to `true` → guard eliminated from codegen.
 // No runtime code generated.
 ```
 
-**T2 — Range check (IntervalAlgebra):**
+In the implementation, `evaluate_static_guard()` returns `Some(true)` for
+tautologies and `Some(false)` for contradictions. In
+`generate_guarded_comm_rules()`, always-true guards emit only the structural
+Comm rule (no behavioral check); always-false guards skip rule generation
+entirely.
+
+#### T2 — Decidable Guards
+
+T2 guards are runtime-decidable — they require input values not known until
+execution, but evaluation is guaranteed to terminate with a definitive boolean
+answer. T2 has three compilation targets, selected by predicate structure:
+interval arithmetic for range predicates, Ascent semi-joins for relation
+membership, and register machines for data-equality constraints over infinite
+domains. All three are complete and sound.
+
+**Interval Arithmetic (IntervalAlgebra)**
+
+`IntervalAlgebra` is a `BooleanAlgebra` instance (§15) whose predicates are
+conjunctions/disjunctions of intervals over ordered domains (e.g., `i64`).
+When the guard's SFA is compiled with `IntervalAlgebra` as the effective
+Boolean algebra, each symbolic transition corresponds to an interval membership
+test. SFA minimization collapses redundant states, and the resulting DFA's
+transition function is emitted as a simple conditional.
+
+For a single-interval guard like `x > 0, x < 100`, the SFA has one
+accepting transition labeled with the interval (0, 100), and codegen produces
+a direct range check — the simplest possible runtime evaluation at O(1). For
+disjunctions of k intervals, the generated code tests membership in the
+interval union, which is O(k) but typically k is small after minimization:
 
 ```rust
 fn guard_check(x: i64) -> bool {
@@ -2080,7 +3529,22 @@ fn guard_check(x: i64) -> bool {
 }
 ```
 
-**T2 — Relation lookup (Ascent join):**
+**Relation Lookup (Ascent Semi-Join)**
+
+Guards of the form `is_wellformed(x)` reference relations declared in the
+`logic { }` block. These relations are populated by Ascent's semi-naive
+Datalog fixpoint engine before Comm rules fire. At runtime, the guard reduces
+to a hash-indexed membership test: "is this tuple in the relation?"
+
+This is the canonical T2 fast path. `can_compile_to_ascent_join()` detects
+guards that are pure conjunctions of (possibly negated) relation queries and
+inlines them directly as Ascent join clauses in the rule body. Ascent's native
+indexing performs O(1) lookup per tuple, and semi-naive evaluation ensures each
+fact is derived exactly once.
+
+The generated code probes Ascent's internal hash index for the runtime value.
+If the tuple exists, the Comm rule fires and applies its continuation
+(substitution + normalization, §6):
 
 ```rust
 if ascent_program.is_wellformed.contains(&(value.clone(),)) {
@@ -2088,7 +3552,31 @@ if ascent_program.is_wellformed.contains(&(value.clone(),)) {
 }
 ```
 
-**T2 — Register test (RegisterAutomaton):**
+For conjunctions of multiple relation queries,
+`compile_guard_to_ascent_clauses()` reorders conjuncts by selectivity (§13
+"Guard Selectivity") so the most selective clause appears first in the Ascent
+rule body, enabling earlier short-circuit pruning.
+
+**Register Machine (RegisterAutomaton)**
+
+When guards involve data equality or freshness over an unbounded domain —
+e.g., "every element in this list equals the first" — neither interval
+arithmetic nor relation lookup suffices, because the domain of possible values
+is infinite. Register automata (Kaminski & Francez, 1994; M6) solve this by
+extending finite automata with a fixed set of registers that store data values.
+Transitions may `TestEq` (compare the current input against a stored register)
+or `TestFresh` (assert the value has not been seen before).
+
+The generated code mirrors the register automaton's transition function
+directly: it walks the term's inductive structure (e.g., a cons-list), stores
+the first encountered value in register 0, and for each subsequent element
+tests equality against the stored value. The recursion follows the term
+structure — each recursive call processes the tail of the list, advancing the
+automaton by one transition.
+
+Runtime cost is O(|value|) — one pass over the term, with O(1) work per
+register at each step. The number of registers is determined at compile time
+by the guard's data-flow analysis (M6):
 
 ```rust
 fn register_guard(value: &Term, registers: &mut [Option<Term>; 4]) -> bool {
@@ -2112,7 +3600,77 @@ fn register_guard(value: &Term, registers: &mut [Option<Term>; 4]) -> bool {
 }
 ```
 
-**T3 — Bounded iteration:**
+This pattern handles precisely the class of data-aware predicates (equality,
+freshness, bounded counting) that SFAs over finite alphabets cannot express.
+The register count is statically bounded, so the automaton remains finite-state
+in its control structure — only the register contents are drawn from the
+infinite domain.
+
+#### T3 — Bounded Checking
+
+Semi-decidable properties — those in RE \ R, recognizable but not decidable —
+arise when guards quantify universally or existentially over domains whose size
+is not known at compile time. The halting predicate `halts(x)` is the textbook
+example: verifying that a term eventually reaches a normal form requires
+exploring an unbounded rewrite graph.
+
+To see why, consider what "checking halts(x)" actually requires. A term
+rewrite system generates a chain of successor terms — each application of a
+rewrite rule produces the next term in the sequence:
+
+    t₀ → t₁ → t₂ → ⋯
+
+Asking "does this chain ever reach a halted (normal-form) state?" means
+searching for a fixed point in this sequence. But the sequence may be infinite:
+the term may grow without bound, cycle through an unbounded orbit, or diverge
+in some other way. No finite algorithm can explore an infinite graph in
+general — this is precisely why the halting property is semi-decidable (we can
+confirm halting if it happens, but we cannot confirm non-halting in bounded
+time).
+
+The bounded checking strategy (§11, T3) exploits a simple but powerful insight:
+if we restrict our search to the first **k** rewrite steps, the reachable state
+space is guaranteed finite. Concretely, if each call to `reduce()` produces at
+most **b** successor terms (the branching factor), then the rewrite graph
+within k steps contains at most **k · b** nodes. A finite graph can always be
+exhaustively searched — the bound converts an infinite search problem into a
+finite one.
+
+An analogy may help. Imagine searching for an exit in a maze that might be
+infinite. Without a step budget you might walk forever. With a budget of k
+corridor segments, exactly three outcomes are possible: (1) you find the exit
+within k segments — success; (2) you explore every reachable corridor within k
+segments and none leads to an exit — definite failure within the bound; or
+(3) you exhaust your budget with unexplored corridors still remaining — you
+simply cannot tell whether an exit exists further on.
+
+This transformation is **sound** — `True` and `False` within the bound are
+always correct — but **incomplete**: the property might hold at step k+1, yet
+we will never observe it. The bound k is a resource parameter through which the
+user trades completeness for guaranteed termination.
+
+The bound k is either user-specified via bounded quantification (e.g.,
+`exists(y, 100, halts(y))`) or inferred from the guard's quantifier structure
+when no explicit bound is given.
+
+The evaluation has three possible outcomes, encoded as `TriState`:
+
+- **`True`:** the property holds — the BFS found a witness within the bound.
+- **`False`:** the property does not hold — the BFS exhausted the reachable
+  state space within the bound without finding a witness, proving the property
+  false over the bounded domain.
+- **`Unknown`:** the depth limit was reached before the search completed. The
+  property may or may not hold — we simply cannot tell within k steps. The
+  Comm rule conservatively does not fire, ensuring soundness.
+
+The soundness guarantee is critical: `True` and `False` are always correct
+(within the bounded domain). Only `Unknown` introduces approximation, and it
+always errs on the side of caution (not firing the rule).
+
+The implementation uses breadth-first search over the term rewrite graph. Each
+call to `reduce()` produces the set of successor terms (one rewrite step). The
+`visited` set prevents re-exploration of shared subterms (DAG structure),
+bounding the work to O(k · |value|):
 
 ```rust
 fn bounded_check(x: &Term, depth_limit: usize) -> TriState {
@@ -2131,7 +3689,32 @@ fn bounded_check(x: &Term, depth_limit: usize) -> TriState {
 }
 ```
 
-**T4 — User assertion:**
+The choice of BFS (rather than DFS) ensures that the depth bound is respected
+uniformly — all terms at depth d are explored before any at depth d+1, so
+`Unknown` is only returned when the frontier genuinely exceeds the bound. In
+the actual implementation, `evaluate_quantified()` from LogicT handles the
+domain enumeration and depth tracking, with the `TriState` result threaded
+through the `QuantifiedFormula` evaluator.
+
+#### T4 — User Assertion
+
+By Rice's theorem (1953), for any non-trivial semantic property of programs,
+membership is undecidable. When the pipeline classifies a guard as T4 — e.g.,
+unbounded universal quantification over an infinite domain with nested
+quantifiers — no compilation strategy can produce a sound and complete checker.
+
+Rather than rejecting such guards outright, the system provides an escape
+hatch: `assert_pred()`, which trusts the user's annotation that the property
+holds. This is analogous to Rust's `unsafe` keyword or Coq's `Admitted`
+tactic: the type system acknowledges its limitation and shifts the correctness
+burden to the programmer.
+
+The MSO01 lint fires at compile time if the T4 guard is not accompanied by a
+Rocq proof certificate, alerting the user that the guard's correctness is
+unverified. If a certificate is provided, it is checked during macro expansion;
+a valid proof silences the lint and provides the same confidence as T1–T3
+evaluation — the only difference is that the proof obligation was discharged
+externally rather than by the automaton tower:
 
 ```rust
 fn assert_pred(value: &Term) -> bool {
@@ -2140,6 +3723,218 @@ fn assert_pred(value: &Term) -> bool {
     true
 }
 ```
+
+Runtime cost is O(1) — trivially. The correctness guarantee depends entirely
+on the quality of the user's proof or assertion. This is the least automated
+tier but the most expressive: any predicate whatsoever can be guarded, provided
+the user accepts responsibility for its truth.
+
+#### Tier Override Directive — `#[tier(...)]`
+
+The compiler's structural analysis is deliberately conservative: it assigns the
+*highest* (least decidable) tier that is provably sound for a given predicate
+shape. This is the right default — over-classifying a guard as more decidable
+than it actually is would silently introduce unsound evaluation — but it creates
+friction in edge cases where the programmer possesses domain knowledge that the
+compiler cannot infer. For example:
+
+- A quantifier ranges over a domain that is *effectively* finite at runtime
+  (e.g., a graph whose size is bounded by an external invariant), but the type
+  system sees an unbounded domain → the compiler assigns T4.
+- A predicate has a known decision procedure (published in a textbook or proved
+  in Rocq), but the compiler's structural heuristics do not recognise the
+  pattern → the compiler assigns T3 or T4.
+- An experimental guard should be conservatively *upgraded* to T4 during
+  development, even though the compiler would assign T2.
+
+The existing mechanisms address specific instances of this problem — `Bounded`
+wraps a quantifier with an explicit depth limit (T4→T3), and `assert_pred`
+trusts the user unconditionally (any tier → T4 semantics). The `#[tier(...)]`
+directive **unifies and generalises** these mechanisms into a single, explicit
+annotation that works in any direction, carries optional proof certificates, and
+integrates with the lint infrastructure.
+
+##### Syntax
+
+The directive is an attribute on a predicate definition or an inline guard
+expression:
+
+```
+#[tier(T3)]                          // single-step downgrade
+#[tier(T3, bound = 500)]             // downgrade with explicit iteration bound
+#[tier(T2, force)]                   // multi-step downgrade (requires force)
+#[tier(T2, proof = "path.rocq")]     // downgrade with proof certificate
+#[tier(T4)]                          // conservative upgrade (always allowed)
+```
+
+The general form is:
+
+```
+#[tier( <target-tier> [, bound = <k>] [, force] [, proof = "<path>"] )]
+```
+
+where:
+
+| Parameter       | Type      | Required                   | Description                                               |
+|-----------------|-----------|----------------------------|-----------------------------------------------------------|
+| `<target-tier>` | `T1`–`T4` | Yes                        | The tier the programmer asserts this predicate belongs to |
+| `bound = <k>`   | `usize`   | If target is T3            | Explicit iteration depth limit for bounded checking       |
+| `force`         | flag      | If downgrade spans >1 tier | Acknowledges multi-step override risk                     |
+| `proof = "<p>"` | string    | No                         | Path to a Rocq proof certificate of the claimed tier      |
+
+##### Override Direction Rules
+
+The safety of a tier override depends on its *direction*. Downward overrides
+(toward more decidable tiers) weaken soundness guarantees and require
+increasingly explicit opt-in; upward overrides (toward less decidable tiers) are
+always safe — they simply trade performance for conservatism.
+
+| Override Direction | Example                   | Allowed? | Requirements          | Lint             |
+|--------------------|---------------------------|----------|-----------------------|------------------|
+| Single-step down   | T4→T3, T3→T2, T2→T1       | Yes      | —                     | TIER01 (warning) |
+| Multi-step down    | T4→T2, T4→T1, T3→T1       | Yes      | `force` flag required | TIER01 (warning) |
+| Upward             | T1→T2, T2→T3, T3→T4, etc. | Yes      | —                     | No lint          |
+| Identity           | T3→T3                     | Yes      | —                     | No lint (no-op)  |
+
+**Proof certificates**: when a `proof = "path.rocq"` parameter is supplied, the
+macro-expansion phase validates the certificate against the predicate's AST. A
+valid proof **silences** the TIER01 lint entirely — the override is no longer
+an unverified trust assumption but a machine-checked guarantee. An invalid or
+missing certificate re-enables the lint.
+
+##### Semantic Specification
+
+Each target tier determines the *code shape* that the guard codegen emits,
+regardless of the compiler's inferred tier:
+
+**Override to T1** — the programmer asserts that the predicate is ground-
+decidable at macro-expansion time. The guard codegen evaluates the predicate
+statically and eliminates the guard entirely (constant-folds to `true` or
+`false`). If the predicate is *not* actually ground-decidable, macro expansion
+fails with an error — this is the only target tier that provides an automatic
+soundness check without a proof certificate.
+
+**Override to T2** — the programmer asserts that a decision procedure exists and
+terminates for all inputs. The guard codegen emits a decidable guard function
+(inline arithmetic, Ascent join clause, or register-machine check) with no
+depth bound. The programmer accepts responsibility for termination — if the
+predicate does not actually terminate, the generated guard will loop at runtime.
+
+**Override to T3** — the programmer asserts that bounded evaluation is
+meaningful. The guard codegen emits a bounded checker with the depth limit
+specified by `bound = k`. If `bound` is omitted, the compiler emits a hard
+error (`#[tier(T3)]` without `bound` is ambiguous — the whole point of T3 is
+explicit resource bounding). The checker returns `TriState`:
+
+- `True` — predicate verified within k steps.
+- `False` — predicate refuted within k steps.
+- `Unknown` — depth limit exhausted; Comm rule conservatively does not fire.
+
+**Override to T4** — the programmer requests the most conservative tier. The
+guard codegen emits an `assert_pred` wrapper that unconditionally returns
+`true`, placing full correctness responsibility on the programmer (or on an
+external proof certificate). This is useful during development: marking an
+experimental guard as T4 ensures it never silently blocks rule firing while
+the predicate's properties are still being investigated.
+
+##### Examples
+
+**T4→T3 override with explicit bound.** The compiler classifies `reachable` as
+T4 (unbounded transitive closure over an infinite graph type), but the
+programmer knows the runtime graph has at most 1000 nodes:
+
+```rust
+#[tier(T3, bound = 1000)]
+guard(forall(v, vertices, entails(reachable(src, v), safe(v))))
+```
+
+Generated code (bounded checker):
+
+```rust
+fn __guard_reachable_safe(src: &Term, vertices: &[Term]) -> TriState {
+    let depth_limit: usize = 1000;
+    for v in vertices.iter() {
+        match check_reachable_bounded(src, v, depth_limit) {
+            TriState::True => {
+                // reachable(src, v) holds — now check safe(v)
+                if !evaluate_safe(v) {
+                    return TriState::False; // ∃ reachable but unsafe vertex
+                }
+            }
+            TriState::Unknown => return TriState::Unknown, // depth exhausted
+            TriState::False => {} // not reachable — implication vacuously true
+        }
+    }
+    TriState::True
+}
+```
+
+**T4→T2 multi-step override with proof certificate.** The compiler classifies
+a normalization predicate as T4 (potentially non-terminating rewrite), but the
+programmer has a Rocq proof of strong normalisation for the type system's term
+language:
+
+```rust
+#[tier(T2, force, proof = "proofs/strong_normalisation.rocq")]
+guard(is_normalising(term))
+```
+
+Generated code (decidable guard — no depth bound):
+
+```rust
+fn __guard_is_normalising(term: &Term) -> bool {
+    // Decision procedure: reduce to normal form.
+    // Termination guaranteed by strong_normalisation.rocq.
+    let nf = reduce_to_normal_form(term);
+    nf.is_some()
+}
+```
+
+Because a valid proof certificate is provided, the TIER01 lint is silent.
+
+##### TIER01 Lint — Unverified Tier Override
+
+**Diagnostic code:** `TIER01`
+**Severity:** Warning
+**Fires when:** A `#[tier(...)]` directive specifies a *downward* override
+(lower tier than the compiler infers) **without** a valid `proof` certificate.
+
+**Message format:**
+
+```
+warning[TIER01]: unverified tier override
+  --> grammar.rs:42:5
+   |
+42 |     #[tier(T2, force)]
+   |     ^^^^^^^^^^^^^^^^^^ compiler infers T4, override claims T2
+   |
+   = note: override trusts programmer assertion; provide `proof = "..."` to silence
+   = help: add a Rocq proof certificate, or verify manually that the predicate
+           is decidable for all inputs
+```
+
+**Suppression:** Providing a `proof = "path.rocq"` parameter that passes
+certificate validation silences TIER01. The lint does **not** fire for upward
+overrides (those are always sound) or identity overrides (no-ops).
+
+##### Relationship to Existing Mechanisms
+
+The `#[tier(...)]` directive subsumes the two existing override mechanisms and
+the proposed `#[assert_decidable]` annotation:
+
+| Existing Mechanism                        | Equivalent `#[tier(...)]` Form                              | Notes                                                                                                                                                          |
+|-------------------------------------------|-------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `exists(y, 100, p(y))` (explicit bound) | `#[tier(T3, bound = 100)]` on an unbounded `exists(y, p(y))` | `#[tier(T3, bound = k)]` separates the bound from the quantifier syntax, allowing the same predicate to be evaluated at different bounds in different contexts |
+| `assert_pred(value)` (T4 trust)           | `#[tier(T4)]` on any predicate                              | Semantically identical — both emit an unconditional `true` wrapper. The directive form makes the trust assumption visible and greppable                        |
+| `#[assert_decidable]` (MSO01 docs)        | `#[tier(T2)]` or `#[tier(T3)]` depending on intent          | The MSO01-proposed annotation lacked precision about *which* decidable tier was claimed; `#[tier(...)]` requires an explicit target, eliminating ambiguity     |
+
+When `#[tier(...)]` is implemented, the `Bounded` wrapper in the `BehavioralPred`
+AST remains as the *syntactic* mechanism for inline bounds (e.g.,
+`exists(y, 100, ...)`), while `#[tier(T3, bound = k)]` serves as the
+*attribute* mechanism for the same
+semantics. Both paths converge in `generate_guard_function()` at the T3 codegen
+branch. The `assert_pred` function remains as the T4 codegen target — `#[tier(T4)]`
+simply routes through it explicitly rather than as a fallback.
 
 ### Guard Codegen Architecture (`guard_codegen.rs`)
 
@@ -2202,16 +3997,16 @@ pipeline. The primary evaluation path for T2 guards uses inline Ascent joins.
 When multiple guards protect the same channel, `estimate_selectivity(pred) → f64`
 computes a heuristic selectivity value in [0.0, 1.0]:
 
-| Guard Structure                | Selectivity    | Rationale                      |
-|--------------------------------|----------------|--------------------------------|
-| Negated RelationQuery          | 0.1            | Rejects most inputs            |
-| Positive RelationQuery         | 0.5            | Moderate (half of domain)      |
-| And(a, b)                      | sel(a) × sel(b)| Independent conjunction        |
-| Or(a, b)                       | 1 − (1−sa)(1−sb)| Independent disjunction      |
-| ForAll (bounded/unbounded)     | 0.05/k^0.5     | Very selective                 |
-| Exists (bounded/unbounded)     | 0.3/k^0.5      | Moderate                       |
-| AcMatch { elements }           | 0.3/|elements| | Depends on bag size            |
-| Not(inner)                     | 1 − sel(inner) | Complement                     |
+| Guard Structure            | Selectivity      | Rationale                 |
+|----------------------------|------------------|---------------------------|
+| Negated RelationQuery      | 0.1              | Rejects most inputs       |
+| Positive RelationQuery     | 0.5              | Moderate (half of domain) |
+| And(a, b)                  | sel(a) × sel(b)  | Independent conjunction   |
+| Or(a, b)                   | 1 − (1−sa)(1−sb) | Independent disjunction   |
+| ForAll (bounded/unbounded) | 0.05/k^0.5       | Very selective            |
+| Exists (bounded/unbounded) | 0.3/k^0.5        | Moderate                  |
+| AcMatch { elements }       | 0.3/\|elements\| | Depends on bag size       |
+| Not(inner)                 | 1 − sel(inner)   | Complement                |
 
 `estimate_guard_cost(pred) → u32` provides a tiebreaker for equal selectivity.
 
@@ -2272,41 +4067,41 @@ The predicated types system has a sharp two-phase architecture:
 The following table summarizes where each subsystem operates. For detailed
 discussion, see the referenced section.
 
-| Subsystem | Compile-Time Role | Runtime Role | Section |
-|---|---|---|---|
-| Surface syntax parsing | Pratt parser in proc macro | — | §2 |
-| Guard predicate sublanguage | Parse `/\`, `\/`, `~`, `forall`, `exists` | — | §2 |
-| Term AST / `PGuardedInput` | Enum variant generation | — | §4 |
-| `match_pattern` / `match_pattern_name` | Code generation (per-category methods) | Ground-vs-pattern matching per Comm fire | §5 |
-| `MatchBindings` | — | Accumulates bindings during matching | §5 |
-| Guarded Comm rules | Ascent clause generation | Fires during fixpoint evaluation | §6 |
-| Substitution + normalization | — | Per-fire: `multi_substitute` + `.normalize()` | §6 |
-| Behavioral predicate joins | Ascent join clause generation | O(1) hash lookup in Ascent relation | §8 |
-| Quantified predicates | `QuantifiedFormula` AST construction | `evaluate_quantified()` via LogicT | §8 |
-| AC-matching | Partition codegen | `multiset_select()` per Comm fire | §8 |
-| Decidability classification (T1–T4) | Formula analysis → tier assignment | — | §11 |
-| Guard codegen (T1) | Static evaluation → dead-code elim | — (zero overhead) | §13 |
-| Guard codegen (T2) | SFA/range/register compilation | Guard function: O(1)–O(\|value\|) | §13 |
-| Guard codegen (T3) | Bounded automaton compilation | BFS with depth counter: O(k·\|value\|) | §13 |
-| Guard codegen (T4) | Lint MSO01, Rocq certificate check | `assert_pred()` returns true (trust) | §13 |
-| Pipeline (Stages 1–5) | Parse → Classify → Compile → Optimize → Codegen | — | §12 |
-| BooleanAlgebra + SFA ops | `is_satisfiable`, intersect, minimize | — | §15 |
-| ConstraintTheory suite | Propagate, label, witness | — | §16 |
-| Automata modules (M1–M14) | Guard analysis + dispatch | — | §17 |
-| Selectivity estimation (M7) | Ordering decision at compile time | Evaluation order at runtime | §13, §17 |
-| Predicate dispatch controller | Feature extraction + module activation | — | §17 |
-| All lints (SYM, MSO, PT, RA, …) | Diagnostic emission at `cargo build` | — | §19 |
-| Unification (Martelli-Montanari) | Pattern overlap analysis (UN01–03) | Optional: unification-based matching | §16 |
-| LogicT / `LogicStream` | Fair search for CT satisfiability | `∀`/`∃` guard evaluation | §16 |
-| Forward-Backward analysis | Hot/cold path classification | `#[inline]`/`#[cold]` annotations | §17 |
-| `is_refined_*` relations | Ascent relation generation | Per-tuple predicate evaluation | §22 |
-| Rocq formal proofs | Property verification | — (not in binary) | §16, §22 |
+| Subsystem                              | Compile-Time Role                               | Runtime Role                                  | Section  |
+|----------------------------------------|-------------------------------------------------|-----------------------------------------------|----------|
+| Surface syntax parsing                 | Pratt parser in proc macro                      | —                                             | §2       |
+| Guard predicate sublanguage            | Parse `where` clause: `not`, `and`, `or`, `forall`, `exists` | —                                    | §2       |
+| Term AST / `PGuardedInput`             | Enum variant generation                         | —                                             | §4       |
+| `match_pattern` / `match_pattern_name` | Code generation (per-category methods)          | Ground-vs-pattern matching per Comm fire      | §5       |
+| `MatchBindings`                        | —                                               | Accumulates bindings during matching          | §5       |
+| Guarded Comm rules                     | Ascent clause generation                        | Fires during fixpoint evaluation              | §6       |
+| Substitution + normalization           | —                                               | Per-fire: `multi_substitute` + `.normalize()` | §6       |
+| Behavioral predicate joins             | Ascent join clause generation                   | O(1) hash lookup in Ascent relation           | §8       |
+| Quantified predicates                  | `QuantifiedFormula` AST construction            | `evaluate_quantified()` via LogicT            | §8       |
+| AC-matching                            | Partition codegen                               | `multiset_select()` per Comm fire             | §8       |
+| Decidability classification (T1–T4)    | Formula analysis → tier assignment              | —                                             | §11      |
+| Guard codegen (T1)                     | Static evaluation → dead-code elim              | — (zero overhead)                             | §13      |
+| Guard codegen (T2)                     | SFA/range/register compilation                  | Guard function: O(1)–O(\|value\|)             | §13      |
+| Guard codegen (T3)                     | Bounded automaton compilation                   | BFS with depth counter: O(k·\|value\|)        | §13      |
+| Guard codegen (T4)                     | Lint MSO01, Rocq certificate check              | `assert_pred()` returns true (trust)          | §13      |
+| Pipeline (Stages 1–5)                  | Parse → Classify → Compile → Optimize → Codegen | —                                             | §12      |
+| BooleanAlgebra + SFA ops               | `is_satisfiable`, intersect, minimize           | —                                             | §15      |
+| ConstraintTheory suite                 | Propagate, label, witness                       | —                                             | §16      |
+| Automata modules (M1–M15)              | Guard analysis + dispatch                       | —                                             | §17      |
+| Selectivity estimation (M7)            | Ordering decision at compile time               | Evaluation order at runtime                   | §13, §17 |
+| Predicate dispatch controller          | Feature extraction + module activation          | —                                             | §17      |
+| All lints (SYM, MSO, PT, RA, …)        | Diagnostic emission at `cargo build`            | —                                             | §19      |
+| Unification (Martelli-Montanari)       | Pattern overlap analysis (UN01–03)              | Optional: unification-based matching          | §16      |
+| LogicT / `LogicStream`                 | Fair search for CT satisfiability               | `∀`/`∃` guard evaluation                      | §16      |
+| Forward-Backward analysis              | Hot/cold path classification                    | `#[inline]`/`#[cold]` annotations             | §17      |
+| `is_refined_*` relations               | Ascent relation generation                      | Per-tuple predicate evaluation                | §22      |
+| Rocq formal proofs                     | Property verification                           | — (not in binary)                             | §16, §22 |
 
 Rows with both columns filled have a **dual nature** ("codegen"): compiled as
 proc macro logic, they emit `TokenStream` fragments that execute at runtime.
 Rows with "—" in the Runtime Role column produce **zero runtime overhead** —
 no generated code, no data structures, no per-value cost in the binary. This
-includes all automata modules (M1–M14), BooleanAlgebra + SFA, all
+includes all automata modules (M1–M15), BooleanAlgebra + SFA, all
 ConstraintTheory implementations, the dispatch controller, all 30+ lint codes,
 and all Rocq proofs.
 
@@ -2337,8 +4132,23 @@ selectivity and overlap analysis, see §13.)
 
 ### The BooleanAlgebra Trait
 
-A `BooleanAlgebra` is a structure `(P, ∧, ∨, ¬, ⊤, ⊥)` satisfying
-De Morgan's laws, distributivity, and complementation:
+The trait captures the algebraic structure `(P, ∧, ∨, ¬, ⊤, ⊥)` satisfying
+De Morgan's laws, distributivity, and complementation — the minimal interface
+needed to build Symbolic Finite Automata (SFAs) that operate over arbitrary
+domains. The core insight is that SFA algorithms (determinization, minimization,
+intersection, complement) need only these Boolean operations on transition
+labels, not knowledge of the underlying domain. This makes the trait the single
+extension point for adding new guard domains: implement `BooleanAlgebra` for
+your domain, and all SFA operations work automatically. The `Predicate` type
+represents guard conditions, while `Domain` represents the concrete values
+those conditions constrain. The trait requires `Clone + Debug + Send + Sync`
+because SFA operations may run in parallel during the compile-time pipeline
+(§12, Stage 4).
+
+The trait separates *core operations* (the Boolean algebra axioms) from
+*derived operations* (which have default implementations using the core
+methods). The core methods are the minimum an implementor must provide; the
+derived methods offer convenience without additional implementation burden:
 
 ```rust
 pub trait BooleanAlgebra: Clone + Debug + Send + Sync + 'static {
@@ -2365,14 +4175,34 @@ pub trait BooleanAlgebra: Clone + Debug + Send + Sync + 'static {
 }
 ```
 
+The `is_satisfiable()` method is the critical decision procedure: it
+determines whether a predicate can be satisfied by any element in the domain,
+which is the foundation of guard liveness analysis (does this guard ever fire?)
+and overlap detection (can two guards fire on the same input?). The `witness()`
+method extends satisfiability with a concrete example, used for counterexample
+generation in lints. The derived operations are implemented via the standard
+Boolean reductions: `implies(a, b)` checks `¬is_satisfiable(a ∧ ¬b)`,
+`equivalent(a, b)` checks `implies(a, b) ∧ implies(b, a)`, and
+`is_tautology(a)` checks `¬is_satisfiable(¬a)`.
+
 ### Built-in Algebras
+
+The pipeline ships with six `BooleanAlgebra` implementations covering the
+common guard domains. The first five are *direct implementations* — they
+implement the trait methods directly using domain-specific algorithms (interval
+arithmetic, Unicode range operations, etc.). The sixth, `TheoryAlgebra<T>`, is
+an *adapter* that wraps any `ConstraintTheory` (§16) into a `BooleanAlgebra`
+via propagation and optional LogicT search, providing the extensibility bridge
+for user-defined domains. The diagram below shows the algebra hierarchy and
+the `SymbolicAutomaton<A>` type that is parameterized over any of these
+algebras:
 
 ```
 BooleanAlgebra trait
 ├── IntervalAlgebra ──── Domain: i64 ranges          (numeric guards)
 ├── CharClassAlgebra ─── Domain: Unicode chars        (structural patterns)
 ├── KatBooleanAlgebra ── Domain: propositional atoms  (behavioral predicates)
-├── DispatchAlgebra ──── Domain: module signatures    (14-bit dispatch)
+├── DispatchAlgebra ──── Domain: module signatures    (15-bit dispatch)
 ├── PresburgerAlgebra ── Domain: ℤⁿ linear constraints (multi-variable arithmetic)
 └── TheoryAlgebra<T> ─── Domain: any ConstraintTheory (extensible)
          │
@@ -2387,11 +4217,30 @@ SymbolicAutomaton<A: BooleanAlgebra>
 └── witness()            counterexample generation
 ```
 
+The `SymbolicAutomaton<A>` type is the central data structure: once a guard is
+compiled to an SFA over any `BooleanAlgebra`, the full suite of automaton
+operations (determinization, minimization, intersection, etc.) becomes
+available without writing algebra-specific code. This is the payoff of the
+algebraic abstraction — the O(n log n) Hopcroft minimization algorithm, for
+example, is written once against the `BooleanAlgebra` trait and works for all
+six algebras.
+
 ### Symbolic Finite Automata
 
 A symbolic finite automaton (SFA) generalizes classical finite automata by
 labeling transitions with predicates from a `BooleanAlgebra` instead of
-concrete alphabet symbols:
+concrete alphabet symbols. The theoretical foundation is D'Antoni and Veanes'
+work on effective Boolean algebras (POPL 2014): any decidable Boolean algebra
+can serve as the predicate language for SFA transitions, and the classical
+automaton operations (determinization, minimization, intersection, complement)
+lift to the symbolic setting with complexity proportional to the number of
+*predicates* rather than the size of the *alphabet*. This is the key insight
+that makes SFAs practical for guard compilation: a guard over all 64-bit
+integers would require 2^64 explicit transitions in a classical DFA, but a
+single `IntervalAlgebra` predicate like `x ∈ [5, 100)` in an SFA.
+
+The formal definition mirrors the classical DFA tuple, with the transition
+relation `δ` carrying a predicate label `P` on each edge:
 
 ```
 SFA = (Q, q₀, F, δ)
@@ -2399,33 +4248,57 @@ SFA = (Q, q₀, F, δ)
         P is a BooleanAlgebra predicate
 ```
 
-The key advantage: SFAs can operate over infinite alphabets (e.g., all
-integers, all Unicode strings) without materializing the alphabet. Predicate
-intersection, union, and complement map to the corresponding Boolean algebra
-operations.
+A transition `(q, φ, q')` fires when the current input symbol satisfies
+predicate `φ` (i.e., `algebra.evaluate(φ, symbol)` returns true). The
+`is_satisfiable()` method on the algebra determines whether a transition can
+ever fire, which is used during minimization to identify dead transitions. The
+`witness()` method produces a concrete input that fires a given transition,
+used for counterexample generation in lint diagnostics.
 
 ### Minterm-Based Determinization
 
-Determinization of SFAs uses **minterms** — maximal satisfiable conjunctions
-of predicate atoms and their negations. For a set of predicates
-`{φ₁, φ₂, …, φₙ}`, the minterms partition the domain into equivalence
-classes where all predicates evaluate uniformly:
+Determinization of SFAs requires partitioning the input domain so that every
+element in a partition cell behaves identically with respect to all transitions
+from a given state set. Classical subset construction partitions by individual
+alphabet symbols, but SFAs operate over potentially infinite domains where
+enumeration is impossible. The solution, due to Veanes et al., is
+**minterms** — maximal satisfiable conjunctions of predicate atoms and their
+negations. Each minterm represents a region of the domain where every
+predicate in the SFA evaluates to the same boolean value. For a set of `n`
+predicates, there are at most 2^n minterms, but in practice many conjunctions
+are unsatisfiable (detected via `is_satisfiable()`) and are pruned, yielding
+far fewer minterms than the worst case.
+
+The formal definition constructs each minterm by choosing a subset `S` of
+predicates to include positively and complementing the rest:
 
 ```
 minterm(S, S') = ⋀_{φ ∈ S} φ ∧ ⋀_{φ ∈ S'} ¬φ
   where S ⊆ atoms, S' = atoms ∖ S, is_satisfiable(minterm(S, S'))
 ```
 
-This avoids enumerating the infinite domain while guaranteeing a correct
-partitioning for determinization.
+The `is_satisfiable` guard ensures only non-empty minterms are retained. The
+resulting set of minterms forms a partition of the domain: every domain element
+belongs to exactly one minterm, and within each minterm, all SFA transitions
+behave identically. This partitioning enables the standard powerset
+construction to operate over minterms rather than individual symbols, yielding
+a deterministic SFA with the same language as the original.
 
 ### SFA Compilation to Rust Match Statements
 
-When a guard compiles to an SFA via `generate_sfa_transition_table()` in
-`guard_codegen.rs`, the determinized and minimized DFA is encoded as a Rust
-`match` statement. The minterm-based determinization produces a partitioning
-of the input domain into equivalence classes, and each transition becomes a
-match arm:
+The final step of guard compilation for T2 guards is lowering the determinized,
+minimized SFA into a Rust function. The `generate_sfa_transition_table()`
+function in `guard_codegen.rs` emits a function that simulates the DFA by
+iterating over the input value's symbols and matching against the transition
+table. The intuition is that the DFA's state-transition graph becomes a nested
+Rust `match` expression: the outer level dispatches on the current state, and
+the inner level dispatches on the minterm partition that the current symbol
+falls into. This encoding avoids the overhead of a generic automaton
+interpreter (no vtable dispatch, no trait object indirection) — the entire
+DFA is inlined as native Rust pattern matching.
+
+The following generated function illustrates the pattern for a simple two-state
+DFA with two minterms:
 
 ```rust
 fn __guard_sfa_N(value: &Term) -> bool {
@@ -2443,17 +4316,28 @@ fn __guard_sfa_N(value: &Term) -> bool {
 }
 ```
 
-The key insight is that minterms partition the predicate space into regions
-where all transitions behave uniformly. For `IntervalAlgebra` guards, minterms
-correspond to integer intervals; for `KatBooleanAlgebra` guards, minterms
-correspond to propositional atom truth assignments. The number of match arms
-is bounded by |states| x |minterms|, which is typically small after
-minimization.
+The runtime cost is O(|value|) — one match dispatch per symbol in the input
+value, with each dispatch being O(1) due to the finite minterm partition. The
+`_ => return false` arm handles implicit sink states (states from which no
+accepting state is reachable), providing an early-exit optimization. For
+`IntervalAlgebra` guards, minterm predicates compile to range checks
+(`x >= 5 && x < 100`); for `KatBooleanAlgebra` guards, they compile to
+boolean variable tests. The number of match arms is bounded by
+|states| × |minterms|, which is typically small after Hopcroft minimization —
+most real-world guards produce DFAs with fewer than 10 states.
 
 ### ProductAlgebra
 
-`ProductAlgebra<A, B>` composes two independent `BooleanAlgebra` instances
-into their Cartesian product:
+When a guard combines constraints from two different domains — for example,
+an arithmetic condition on a value's numeric field and a type hierarchy
+condition on its structural type — the guard cannot be compiled using a single
+`BooleanAlgebra`. `ProductAlgebra<A, B>` solves this by lifting two independent
+algebras into their Cartesian product, where predicates are pairs `(a, b)` and
+operations apply component-wise. The theoretical basis is that the product of
+two Boolean algebras is itself a Boolean algebra (a standard result in
+universal algebra). The key satisfiability equation decomposes into independent
+checks because the two domains are independent — a product predicate is
+satisfiable if and only if both components are satisfiable:
 
 ```
 ProductAlgebra<A, B>.is_satisfiable((a, b)) = A.is_satisfiable(a) ∧ B.is_satisfiable(b)
@@ -2461,7 +4345,9 @@ ProductAlgebra<A, B>.is_satisfiable((a, b)) = A.is_satisfiable(a) ∧ B.is_satis
 
 This enables mixed-domain constraints, e.g.,
 `ProductAlgebra<PresburgerAlgebra, LatticeTheory>` for guards combining
-numeric and type hierarchy constraints.
+numeric and type hierarchy constraints. The SFA operations (`determinize`,
+`minimize`, `intersect`) work over the product algebra without modification,
+since they are generic over any `BooleanAlgebra` implementation.
 
 > **Citation:** D'Antoni, L. & Veanes, M. "Minimization of Symbolic
 > Automata." *Proceedings of POPL*, 2014. DOI: 10.1145/2535838.2535849
@@ -2488,6 +4374,16 @@ with provably decidable decision procedures — no external SMT dependency.
 
 ### Why Automata Instead of SMT
 
+A natural question is why the pipeline uses custom automata-based decision
+procedures rather than delegating to an established SMT solver (Z3, CVC5). The
+rationale is threefold: deployment simplicity (no C++ FFI, no platform-specific
+binaries, WASM-compatible), formal control (the decision procedures are
+provably decidable with known complexity bounds, rather than relying on a
+solver's completeness as an opaque guarantee), and extensibility (new domains
+are added by implementing a Rust trait, not by extending an external solver's
+theory combination). The following table compares the two approaches across
+seven criteria:
+
 | Criterion     | SMT (Z3/CVC5)                          | Constraint Theory Suite         |
 |---------------|----------------------------------------|---------------------------------|
 | External deps | z3-sys (~1.5GB), platform build        | Zero — pure Rust                |
@@ -2498,7 +4394,31 @@ with provably decidable decision procedures — no external SMT dependency.
 | Scope match   | Over-powered (arrays, UF, bitvectors)  | Exact fit for guard predicates  |
 | Extensibility | Fixed theory set, FFI boundary         | Open `ConstraintTheory` trait   |
 
+The "scope match" row is particularly important: SMT solvers support theories
+(arrays, uninterpreted functions, bitvectors) that are irrelevant to guard
+predicates, while lacking direct support for the automaton-theoretic operations
+(SFA intersection, minterm partitioning) that the pipeline needs. Using an
+SMT solver would require marshaling automata into SMT-LIB2 format and parsing
+models back — a lossy round-trip that adds complexity without benefit.
+
 ### Architecture
+
+The constraint theory architecture has two layers connected by the
+`TheoryAlgebra<T>` bridge. The upper layer is the `BooleanAlgebra` trait (§15),
+which all SFA operations consume. The lower layer is the `ConstraintTheory`
+trait, which domain-specific implementations provide. The bridge translates
+between the two: `is_satisfiable()` on the algebra side becomes `propagate()`
+plus optional `label()` search on the theory side. The left column shows direct
+`BooleanAlgebra` implementations (the "fast path" — no bridge overhead), while
+the right column shows the bridge path through `TheoryAlgebra<T>`. Note that
+`PresburgerAlgebra` appears on both sides: it has a direct `BooleanAlgebra`
+implementation for compile-time analysis performance, and a `ConstraintTheory`
+implementation for validation and LogicT integration.
+
+The key architectural insight is the `label()` method's return type: decidable
+theories return `LogicStream::empty()` (propagation alone determines
+satisfiability, no search needed), while search-based theories return a
+non-empty `LogicStream` of search choices that LogicT explores fairly:
 
 ```
                     ┌──────────────────────────────────────────┐
@@ -2533,7 +4453,27 @@ with provably decidable decision procedures — no external SMT dependency.
   LogicStream<T>: fair backtracking search (Kiselyov et al., ICFP 2005)
 ```
 
+The `ProductAlgebra<A, B>` at the bottom composes any two algebras
+(direct or bridged) into a single algebra, enabling multi-domain guards. The
+`LogicStream<T>` provides the fair backtracking monad that powers search-based
+theories, ensuring that all branches are explored without starvation.
+
 ### The ConstraintTheory Trait
+
+The `ConstraintTheory` trait is the extension point for adding new constraint
+domains to the pipeline. Its design follows the constraint logic programming
+(CLP) paradigm: a *store* accumulates constraints via *propagation* (which may
+detect inconsistency and return `None`), and *labeling* generates search choices
+when propagation alone cannot determine satisfiability. The separation of
+propagation and labeling is the key design decision: it allows decidable
+theories (where propagation is complete) to avoid search entirely, while
+search-based theories (where propagation narrows but doesn't solve) can
+delegate to LogicT's fair backtracking. The three associated types —
+`Constraint`, `Assignment`, `Store` — separate the *what* (constraints to
+satisfy), the *evidence* (a satisfying assignment), and the *state* (the
+accumulated constraint set).
+
+See `prattail/docs/design/constraint-theories/` for per-theory design docs.
 
 ```rust
 pub trait ConstraintTheory {
@@ -2551,28 +4491,54 @@ pub trait ConstraintTheory {
 }
 ```
 
-- **Decidable theories** (Presburger, Lattice): `label()` returns
-  `LogicStream::empty()` — propagation alone determines satisfiability.
-- **Search-based theories** (Unification): `label()` returns search choices
-  that `LogicStream::interleave` explores fairly.
+The `propagate()` method is the workhorse: it takes the current store and a new
+constraint, and returns either `Some(new_store)` (the constraint is consistent
+with the existing store) or `None` (inconsistency detected — the constraint
+set is unsatisfiable). For decidable theories like Presburger arithmetic, a
+sequence of propagations followed by `is_consistent()` is sufficient to
+determine satisfiability — `label()` returns `LogicStream::empty()` to signal
+that no search is needed. For search-based theories like unification, `label()`
+returns a `LogicStream` of *labeling choices* — additional constraints that
+narrow the search space — and `LogicStream::interleave` explores these choices
+fairly, ensuring both branches of a disjunction receive equal attention.
 
 ### The TheoryAlgebra Bridge
 
-`TheoryAlgebra<T: ConstraintTheory>` wraps any `ConstraintTheory` into a
-`BooleanAlgebra`:
+The `TheoryAlgebra<T: ConstraintTheory>` adapter is the glue between the two
+layers: it implements `BooleanAlgebra` for any `ConstraintTheory`, allowing
+domain-specific constraint solvers to be used as SFA transition labels without
+modification. The implementation translates each `BooleanAlgebra` method into
+the corresponding `ConstraintTheory` operations. The critical translation is
+`is_satisfiable()`, which first attempts propagation (the fast path), and only
+falls back to labeling search if propagation succeeds but the store is not yet
+fully determined:
 
 ```
 is_satisfiable(φ) ≡ propagate(∅, φ) ≠ ⊥ ∨ label_search(store) succeeds
 ```
 
-For decidable theories, no search is needed. For search-based theories, LogicT
-provides bounded fair backtracking.
+For decidable theories (Presburger, Lattice), `label()` returns
+`LogicStream::empty()` and the disjunction's right branch is never evaluated —
+the entire check reduces to a single `propagate()` call. For search-based
+theories (Unification), the `label_search()` invokes LogicT's fair
+backtracking with a configurable depth bound, ensuring that the bridge does
+not loop indefinitely on theories with infinite search spaces.
 
 ### LogicStream — Fair Backtracking Monad
 
-`LogicStream<T>` implements the `msplit`-based LogicT of Kiselyov et al.
-(ICFP 2005). It uses an explicit `VecDeque`-based branch queue for
-round-robin fair scheduling:
+The `LogicStream<T>` type provides the search backbone for non-decidable
+constraint theories. It implements the `msplit`-based LogicT monad of Kiselyov
+et al. (ICFP 2005), which guarantees *fair* exploration of search branches —
+a property that standard depth-first backtracking lacks. The key insight is
+that unfair search can starve branches: if one disjunct produces infinitely
+many results, depth-first search never explores the other. LogicT's
+`interleave()` operation solves this by alternating between branches in a
+round-robin fashion. The implementation uses an explicit `VecDeque`-based
+branch queue rather than Haskell-style lazy thunks, adapting the functional
+design to Rust's eager evaluation model.
+
+The following table lists all `LogicStream` operations and their logical
+semantics:
 
 | Operation                | Semantics                               |
 |--------------------------|-----------------------------------------|
@@ -2586,9 +4552,15 @@ round-robin fair scheduling:
 | `once()`                 | Commit to first result                  |
 | `gnot()`                 | Negation as finite failure              |
 
-**Fairness guarantee:** `interleave(a, b)` alternates between branches from
-`a` and `b`, ensuring both are explored infinitely often. This prevents
-starvation when one branch produces results faster than the other.
+The `interleave(a, b)` operation is the critical fairness primitive: it
+alternates between drawing results from `a` and `b`, ensuring both branches
+are explored infinitely often even if one produces results faster. The
+`fair_conjoin(f)` lifts this fairness to conjunction: rather than evaluating
+`f` on all results of the first stream before moving to the second, it
+interleaves the evaluations. The `gnot()` operation implements negation as
+finite failure — it succeeds (with `()`) if the stream is empty, and fails
+if the stream produces any result, enabling stratified negation in quantified
+predicates (§8).
 
 ### PresburgerAlgebra — Multi-Variable Linear Integer Arithmetic
 
@@ -2615,7 +4587,14 @@ existential projection (drop bit dimension, merge transitions).
 
 ### UnificationTheory — Structural Unification
 
-**Algorithm:** Martelli & Montanari (1982) stack-based unification:
+Structural unification determines whether two term expressions can be made
+identical by finding a substitution for their variables. Unlike first-order
+matching (§5), which is one-directional (the ground term is fixed), unification
+is bidirectional — both terms may contain variables. The Martelli & Montanari
+(1982) algorithm implements unification in near-linear time O(n · α(n)) using
+a stack-based approach with union-find for variable binding. The key recursion
+decomposes constructor applications by matching heads and recursively unifying
+corresponding arguments:
 
 ```
 unify(f(t₁,…,tₙ), f(s₁,…,sₙ)) = compose(unify(t₁,s₁), …, unify(tₙ,sₙ))
@@ -2628,7 +4607,11 @@ unify(f(t₁,…,tₙ), f(s₁,…,sₙ)) = compose(unify(t₁,s₁), …, unify
 | `App(f, args₁) ≡ App(f, args₂)`     | Decompose: push `argsᵢ₁ ≡ argsᵢ₂` |
 | `App(f, _) ≡ App(g, _)` where f ≠ g | Constructor clash → failure       |
 
-**Term representation:**
+**Term representation:** The `TermExpr` type captures the three fundamental
+cases of first-order terms: variables (unification targets), constants (nullary
+constructors), and constructor applications (recursive structure). Variables
+are identified by `usize` indices rather than names to avoid alpha-equivalence
+complications during unification:
 
 ```rust
 pub enum TermExpr {
@@ -2646,12 +4629,12 @@ pub enum TermExpr {
 
 **Theory:** A finite partially ordered set of types with:
 - **Subtyping:** `a ≤ b` (a is subtype of b)
-- **Join/LUB:** smallest common supertype — `a ≤ a ⊔ b` and `b ≤ a ⊔ b`
-- **Meet/GLB:** largest common subtype — `a ⊓ b ≤ a` and `a ⊓ b ≤ b`
+- **Join / least upper bound (LUB):** smallest common supertype — `a ≤ a ⊔ b` and `b ≤ a ⊔ b`
+- **Meet / greatest lower bound (GLB):** largest common subtype — `a ⊓ b ≤ a` and `a ⊓ b ≤ b`
 - **Lattice order:** `a ≤ b ⟺ a ⊔ b = b`
 
 **Implementation:**
-- Subtype DAG constructed from explicit edges
+- Subtype directed acyclic graph (DAG) constructed from explicit edges
 - Warshall's transitive closure: O(n³) once, cached with dirty-flag
   invalidation
 - LUB/GLB computed lazily and cached
@@ -2726,6 +4709,18 @@ explicit guard fields on `RuleSpec`:
 
 ### Parallel Analysis
 
+The three constraint theories are independent — Presburger arithmetic,
+structural unification, and lattice theory operate on non-overlapping aspects
+of the grammar — so their analyses can run concurrently. The pipeline exploits
+this via `thread::scope` (optimization gate DB03), spawning one thread per
+theory. Each thread walks the same `all_syntax` bundle but extracts different
+features: Presburger looks for numeric comparison terminals (`<`, `>=`, etc.)
+near captures; Unification looks for overlapping structural patterns across
+rules; Lattice looks for category delegation patterns (one category's rules
+reference only another category). The three analysis results are joined into a
+single `MathAnalysisResults` struct, which is then destructured into the
+`LintContext` for downstream lint functions.
+
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │  thread::scope (DB03 parallel analysis)                              │
@@ -2757,6 +4752,14 @@ explicit guard fields on `RuleSpec`:
               │  LT01: LogicT search bound            │
               └───────────────────────────────────────┘
 ```
+
+The lint functions at the bottom consume the analysis results without
+recomputing them — each lint function reads pre-computed data from the
+`LintContext` and emits diagnostics. The PB01–PB03 lints check for
+unsatisfiable arithmetic constraints, redundant comparisons, and missing
+bounds; UN01–UN03 check for non-unifiable patterns, occurs-check violations,
+and subsumption; SL01–SL02 check for lattice inconsistencies and missing
+subtype edges; LT01 warns when LogicT search exceeds its depth bound.
 
 ### Dispatch Gating
 
@@ -2800,7 +4803,13 @@ heuristic support.
 The constraint theory system is designed for extension. Users add new theories
 through three layers:
 
-**Layer 1 — Rust Implementation.** Implement `ConstraintTheory`:
+**Layer 1 — Rust Implementation.** The first step is implementing the
+`ConstraintTheory` trait for the new domain. The example below shows a
+hypothetical `ResourceTheory` for resource-usage guards (e.g., "this process
+uses at most 5 MB of memory"). The implementation must provide the five
+core methods. Note that `label()` returns `LogicStream::empty()`, indicating
+that resource constraints are decidable by propagation alone — no search is
+needed:
 
 ```rust
 pub struct ResourceTheory;
@@ -2820,7 +4829,18 @@ impl ConstraintTheory for ResourceTheory {
 }
 ```
 
-**Layer 2 — `language!` Declaration** (future):
+Once implemented, the theory automatically gains `BooleanAlgebra` support via
+`TheoryAlgebra<ResourceTheory>`, which means it can be used as an SFA
+transition label — all SFA operations (determinization, minimization,
+intersection) work without additional code.
+
+**Layer 2 — `language!` Declaration** (future). The second step registers the
+theory in the `language!` macro's `theories { }` block, giving it a name and
+associating it with its Rust type. This declaration replaces the heuristic
+keyword lists currently used for dispatch — the spec author explicitly states
+which theories are available, eliminating guesswork. The declaration also
+enables the pipeline to set the corresponding `PredicateSignature` bit during
+classification:
 
 ```rust
 language! {
@@ -2875,12 +4895,13 @@ with lower estimated cost per guard.
 
 ---
 
-## 17. The Automata Modules (M1–M14)
+## 17. The Automata Modules (M1–M15)
 
-Each of the 14 automata modules contributes to the predicated types pipeline.
+Each of the 15 predicate-dispatched modules (M1–M15) contributes to the
+predicated types pipeline, alongside additional feature-gated analysis modules.
 The predicate dispatch controller determines the minimal set needed per guard.
 
-> **Note:** All 14 automata modules are **compile-time analysis only**. They
+> **Note:** All 15 predicate-dispatched modules are **compile-time analysis only**. They
 > execute during `language!` macro expansion to analyze guards, detect issues,
 > and inform codegen decisions. None of these modules or their automata appear
 > in the generated binary. The only runtime effects are indirect: M7's
@@ -2889,6 +4910,17 @@ The predicate dispatch controller determines the minimal set needed per guard.
 > for details.
 
 ### Module Table
+
+The following table lists all 15 predicate-dispatched modules and their role
+in the predicated types pipeline. The modules are numbered M1–M15, matching the
+bit positions in the 15-bit `PredicateSignature` bitvector that the dispatch
+controller uses to determine which modules to activate per guard. Each module
+corresponds to a specific automaton-theoretic formalism (SFA, Büchi, AWA, VPA,
+PATA, register, multi-tape, etc.) and handles a specific class of guard
+predicates. The table is ordered by module number, which roughly corresponds
+to increasing complexity — M1 (propositional) is simplest, M15 (transduction)
+is most complex. Read the "Role" column to understand what kind of guard
+predicate triggers each module:
 
 ```
 ┌──────────────────────┬──────────────────────────────────────────────────┐
@@ -2901,7 +4933,7 @@ The predicate dispatch controller determines the minimal set needed per guard.
 │                      │ guards on streams. "Channel always eventually    │
 │                      │ delivers."                                       │
 ├──────────────────────┼──────────────────────────────────────────────────┤
-│ M3  Poly. AWA        │ ∀/∃ quantifier evaluation as ⊗/⊕ states.         │
+│ M3  Poly. AWA        │ ∀/∃ quantifier evaluation as ⊗ /⊕  states.       │
 │                      │ H-polynomial fixpoints for letprop.              │
 ├──────────────────────┼──────────────────────────────────────────────────┤
 │ M4  W. VPA           │ Quantifier scope nesting → call/return.          │
@@ -2922,8 +4954,8 @@ The predicate dispatch controller determines the minimal set needed per guard.
 │ M9  Multiset         │ Cardinality predicates: count(chan) >= 3.        │
 │                      │ PPar analysis with HashBag multiplicities.       │
 ├──────────────────────┼──────────────────────────────────────────────────┤
-│ M10 W. MSO           │ THE specification language. User syntax /\, \/,  │
-│                      │ ~, forall, exists IS weighted MSO.               │
+│ M10 W. MSO           │ THE specification language. where-clause syntax   │
+│                      │ (not, and, or, forall, exists) IS weighted MSO.  │
 ├──────────────────────┼──────────────────────────────────────────────────┤
 │ M11 W. Two-Way       │ Cross-channel constraint propagation.            │
 │                      │ Backward constraints for join reordering.        │
@@ -2936,8 +4968,27 @@ The predicate dispatch controller determines the minimal set needed per guard.
 ├──────────────────────┼──────────────────────────────────────────────────┤
 │ M14 Subtype Lattice  │ Type hierarchy constraints. Warshall closure     │
 │                      │ for MeTTa (:< sub super).                        │
+├──────────────────────┼──────────────────────────────────────────────────┤
+│ M15 SFT              │ Output-producing transductions. Guard-based      │
+│                      │ string transforms (case fold, normalize).        │
 └──────────────────────┴──────────────────────────────────────────────────┘
 ```
+
+M1 and M10 are the most frequently activated — M1 provides the foundational
+satisfiability checks needed for all guards, and M10 classifies the guard's
+logical structure. Modules M12–M14 are the constraint theory modules added
+by §16 (Presburger, Unification, Lattice). M15 is the SFT module (§16) for
+output-producing transductions.
+
+> **Module design docs** (all in `prattail/docs/design/`):
+> M1 → `symbolic-automata.md`, M2 → `weighted-buchi.md`,
+> M3 → `polynomial-awa.md`, M4 → `weighted-vpa.md`,
+> M5 → `parity-tree-automata.md`, M6 → `register-automata.md`,
+> M7 → `probabilistic-automata.md`, M8 → `multi-tape-automata.md`,
+> M9 → `multiset-automata.md`, M10 → `weighted-mso.md`,
+> M11 → `two-way-transducer.md`, M12 → `presburger.md`,
+> M13 → `unification.md`, M14 → `lattice-theory.md`,
+> M15 → `symbolic-finite-transducer.md`.
 
 ### Predicate Dispatch Controller
 
@@ -2945,15 +4996,15 @@ The controller determines the minimal module set per guard:
 
 1. **Feature extraction:** `extract_features(expr, ctx) → PredicateProfile`
    in O(|AST|)
-2. **Signature computation:** Profile → 14-bit `PredicateSignature(u16)`
-   (one bit per module)
+2. **Signature computation:** Profile → 15-bit `PredicateSignature(u16)`
+   (one bit per module, M1–M15)
 3. **Cost-ordered execution:** Modules ordered by `estimated_cost()`:
-   M1/M10 = 1, M6/M9 = 2, M2/M3 = 3, M4/M5 = 4, M7/M8 = 5, M11 = 6
+   M1/M10 = 1, M6/M9/M14 = 2, M2/M3/M12/M13 = 3, M4/M5 = 4, M7/M8/M15 = 5, M11 = 6
 4. **Early termination:** Skip modules not in signature; cheap modules
    resolve before expensive ones fire
 
-**Concrete example:** Guard `x == fresh_name /\ count(ch) >= 2` activates
-only M1+M6+M9+M10, skipping 10 modules. The dispatch controller extracts
+**Concrete example:** Guard `eq(x, fresh_name), count_ge(ch, 2)` activates
+only M1+M6+M9+M10, skipping 11 modules. The dispatch controller extracts
 features (equality test → M6, cardinality → M9) and computes the 4-bit
 signature, executing in cost order: M1 (satisfiability), M10
 (classification), M6 (register analysis), M9 (multiset check).
@@ -2963,27 +5014,32 @@ signature, executing in cost order: M1 (satisfiability), M10
 These modules run on every guard regardless of the predicate signature
 (negligible amortized cost: O(|guards|) per channel):
 
-| Module               | Guard-Related Role                                                 |
-|----------------------|--------------------------------------------------------------------|
-| **WPDS**             | Stack-aware reachability for guard evaluation chains               |
-| **CEGAR**            | Iterative refinement: Boolean→Counting→Tropical abstraction ladder |
-| **Safety**           | Guard completeness: does every input match ≥1 guard?               |
-| **Algebraic**        | Path expressions summarize guard evaluation CFG                    |
-| **Newton**           | Accelerated fixpoint: h+1 iterations for idempotent semirings      |
-| **Forward-Backward** | Hot-path guards → `#[inline]`, cold → `#[cold]`                    |
+| Module               | Guard-Related Role                                                   |
+|----------------------|----------------------------------------------------------------------|
+| **WPDS**             | Stack-aware reachability for guard evaluation chains                 |
+| **CEGAR**            | Iterative refinement: Boolean→Counting→Tropical abstraction ladder   |
+| **Safety**           | Guard completeness: does every input match ≥1 guard?                 |
+| **Algebraic**        | Path expressions summarize guard evaluation control-flow graph (CFG) |
+| **Newton**           | Accelerated fixpoint: h+1 iterations for idempotent semirings        |
+| **Forward-Backward** | Hot-path guards → `#[inline]`, cold → `#[cold]`                      |
 
 ### Feature-Gated Analysis Modules
 
-| Module           | Guard-Related Role                                           |
-|------------------|--------------------------------------------------------------|
-| **TRS**          | Guard-conditional rewrite confluence + termination           |
-| **Nominal**      | Name-binding safety, alpha-equivalence in guard patterns     |
-| **Petri**        | Deadlock analysis for guarded communication                  |
-| **KAT**          | Guard flow equivalence, Hoare triples                        |
-| **CRA**          | Quantitative guard cost metering                             |
-| **Morphism**     | Translation verification between guard formalisms            |
-| **Provenance**   | Derivation tracking through guard evaluation                 |
-| **Proof Output** | Correctness certificates (confluence + termination + safety) |
+| Module                             | Guard-Related Role                                                       |
+|------------------------------------|--------------------------------------------------------------------------|
+| **TRS**                            | Guard-conditional rewrite confluence + termination                       |
+| **Nominal**                        | Name-binding safety, alpha-equivalence in guard patterns                 |
+| **Petri**                          | Deadlock analysis for guarded communication                              |
+| **KAT**                            | Guard flow equivalence, Hoare triples                                    |
+| **CRA** (Cost Register Automata)   | Quantitative guard cost metering                                         |
+| **Morphism**                       | Translation verification between guard formalisms                        |
+| **Provenance**                     | Derivation tracking through guard evaluation                             |
+| **Proof Output**                   | Correctness certificates (confluence + termination + safety)             |
+| **WTA** (Weighted Tree Automata)   | Term recognition/ranking, set-theoretic subtyping via language inclusion |
+| **LTL** (Linear Temporal Logic)    | Temporal safety/liveness properties over WPDS call graphs                |
+| **EWPDS** (Extended WPDS)          | Merging functions for local variable analysis at call/return boundaries  |
+| **ARA** (Affine-Relation Analysis) | Affine invariant discovery (subsumes constant/copy/linear propagation)   |
+| **Relational WPDS**                | Binary relation weight domain (`HeapSemiring`) for heap analysis         |
 
 ### Symbolic Finite Transducers (M15)
 
@@ -3009,8 +5065,35 @@ simplification, and equivalence discovery beyond what normalization alone
 achieves. Pipeline integration via `EGraphAnalysis`, lints EG01-EG04,
 cost-benefit gate `EGraphSaturation`. In the guard infrastructure, e-graphs
 simplify guard predicates via equality saturation — discovering algebraic
-identities (e.g., `x > 0 /\ x > 0` → `x > 0`) before SFA compilation,
+identities (e.g., `x > 0, x > 0` → `x > 0`) before SFA compilation,
 producing smaller automata and faster runtime checks.
+See `prattail/docs/design/egraph-equality-saturation.md` for details.
+
+### WPDS Extension Family (EWPDS, ARA, Relational)
+
+- `ewpds.rs` (feature `wpds-extended`): Extends WPDS with merging functions at
+  call/return boundaries for local variable analysis. Pipeline: `EwpdsAnalysis`.
+- `ara.rs` (feature `wpds-ara`, dep: `wpds-relational`): Affine-Relation
+  Analysis — vector space weight domain discovering interprocedural affine
+  invariants. Pipeline: `AraAnalysis`.
+- `relational.rs` (feature `wpds-relational`): `HeapSemiring` trait +
+  `RelationalWeight<G>` binary relation semiring. Weight domain foundation for
+  ARA.
+- Reference: Reps, Lal & Kidd, CAV 2007.
+
+### Weighted Tree Automata (WTA)
+
+`tree_automaton.rs` (feature `tree-automata`): Bottom-up term recognition,
+top-down hot-path analysis, `WtaAnalysis` pipeline result. Used by
+`SetTheoreticTypeSystem` for subtype checking as language inclusion.
+Reference: Comon et al., TATA (2007).
+
+### Linear Temporal Logic (LTL)
+
+`ltl.rs` (feature `ltl`, dep: `omega`): Full temporal operators (G, F, X, U, R,
+W). Compiles to Büchi automata via `ltl_to_buchi()`. Pipeline:
+`check_from_bundle()` → `Vec<LtlCheckResult>`. Verifies temporal invariants over
+WPDS call graphs. Reference: Vardi & Wolper (1986).
 
 ---
 
@@ -3018,24 +5101,53 @@ producing smaller automata and faster runtime checks.
 
 ### Composition Operators
 
-The automata compose for complete first-order logic:
+The key achievement of the automata module architecture is that the 15 modules
+compose to support the full first-order predicate logic used in guard
+specifications. Each logical connective and quantifier maps to a specific
+automaton operation, and the composition is sound — the composed automaton
+accepts exactly the language defined by the logical formula. The following table
+shows the mapping from logical operators to compilation strategies. The left
+column lists the surface syntax operators from §2; the right column shows the
+automaton operation that implements each:
 
-| Operator                       | Compilation                                       |
-|--------------------------------|---------------------------------------------------|
-| Conjunction (`/\`)             | SFA intersection → minimize                       |
-| Disjunction (`\/`)             | SFA union → minimize                              |
-| Negation (`~`)                 | SFA complement                                    |
-| Universal (`forall`)           | AWA Q⊗ branching: all successors must accept      |
-| Existential (`exists`)         | AWA Q⊕ branching: at least one accepts            |
-| Implication (`=>`)             | Desugar to `~a \/ b`, then SFA ops                |
-| Recursive (`letprop`)          | Mu-calculus → PATA → Zielonka solver              |
-| Data equality (`x == y`)       | Register automaton TestEq                         |
-| Freshness (`fresh(x)`)         | Register automaton TestFresh                      |
-| Cardinality (`count(ch) >= k`) | Multiset automaton constraint check               |
-| Multi-channel                  | Multi-tape product + two-way backward propagation |
-| Infinite behavior              | Buchi acceptance condition                        |
+| Operator                         | Compilation                                       |
+|----------------------------------|---------------------------------------------------|
+| Conjunction (`,` / `and()`)      | SFA intersection → minimize                       |
+| Disjunction (`or()`)             | SFA union → minimize                              |
+| Negation (`not()`)               | SFA complement                                    |
+| Universal (`forall()`)           | AWA Q⊗  branching: all successors must accept     |
+| Existential (`exists()`)         | AWA Q⊕  branching: at least one accepts           |
+| Implication (`entails()`)        | Desugar to `not(a), b`, then SFA ops              |
+| Recursive (`letprop`)            | Mu-calculus → PATA → Zielonka solver              |
+| Data equality (`eq(x, y)`)       | Register automaton TestEq                         |
+| Freshness (`fresh(x)`)           | Register automaton TestFresh                      |
+| Cardinality (`count_ge(ch, k)`)  | Multiset automaton constraint check               |
+| Multi-channel                    | Multi-tape product + two-way backward propagation |
+| Infinite behavior                | Buchi acceptance condition                        |
+| Rewrite closure (`rewrites_to`)  | Reflexive-transitive closure via SFA compilation  |
+| AC-matching (`ac_match`)         | Multiset partition enumeration via LogicT         |
+
+The propositional connectives (∧, ∨, ¬) use SFA product and complement — these
+are closed operations on regular languages. The quantifiers (∀, ∃) require the
+richer AWA (alternating weighted automaton) model, where universal quantifiers
+produce tensor (⊗ ) states and existential quantifiers produce direct-sum (⊕ )
+states. Recursive predicates step up to the mu-calculus and parity tree
+automata, which can express fixpoint properties that alternating automata
+cannot.
 
 ### Formal Definitions
+
+The following equations define the formal semantics of the compilation mapping
+from logical formulas to automaton constructs. The notation `⟦·⟧` denotes the
+*interpretation function* — the denotational semantics that maps each formula
+to its automaton representation. The universal quantifier maps to the
+tensor-product state `Q⊗ `, which requires *all* successor computations to
+accept (the semiring tensor product takes the weight product of all branches).
+The existential quantifier maps to the direct-sum state `Q⊕ `, which requires
+*at least one* successor to accept (the semiring sum takes the weight sum).
+Implication desugars to its classical equivalent via `⟦¬φ ∨ ψ⟧`. Recursive
+predicates compile to the greatest fixpoint `νX` in the mu-calculus, with the
+box modality `□` quantifying over the reduction relation:
 
 ```
 Universal:   ⟦∀y. φ(y)⟧ = Q⊗     all successors accept; weight = ⊗
@@ -3044,9 +5156,21 @@ Implication: ⟦φ ⇒ ψ⟧   = ⟦¬φ ∨ ψ⟧
 Recursive:   ⟦letprop P x = ∀x'. ¬(x →* x')⟧ = νX. □_{→*}(¬X)
 ```
 
+The tensor/sum duality (⊗  vs ⊕ ) mirrors the standard AND/OR duality in
+alternating automata theory (Chandra, Kozen & Stockmeyer, 1981). The choice
+of greatest fixpoint (νX) for the recursive example reflects that `halt` is
+a safety property — it must hold at every step of the computation, which is
+the coinductive (greatest fixpoint) characterization.
+
 ### End-to-End Trace
 
-Guard: `forall y. (reachable(x, y) => safe(y))`
+To make the module composition concrete, the following trace walks through the
+compilation of a real quantified guard: `forall(y, entails(reachable(x, y), safe(y)))`.
+This guard says "for all processes `y` reachable from `x`, `y` must be safe."
+The trace shows which modules activate, in what order, and what each module
+contributes to the final compilation. The key observation is that four modules
+participate (M1, M3, M5, M10) out of fifteen — the dispatch controller skips
+eleven modules that are irrelevant to this guard's structure:
 
 ```
 User Predicate: ∀y. (reachable(x, y) ⟹ safe(y))
@@ -3073,7 +5197,7 @@ User Predicate: ∀y. (reachable(x, y) ⟹ safe(y))
                  │
     ┌────────────▼────────────┐
     │ M3 (AWA): quantifiers   │
-    │ ∀ → Q⊗ branching        │
+    │ ∀ → Q⊗  branching        │
     │ ⟹ desugars to ¬a ∨ b    │
     │ polynomial transitions  │
     └────────────┬────────────┘
@@ -3093,31 +5217,168 @@ User Predicate: ∀y. (reachable(x, y) ⟹ safe(y))
     └─────────────────────────┘
 ```
 
+The trace illustrates the tier classification's impact on the final code shape:
+if `reachable` and `safe` are declared Ascent relations (T2), the codegen
+emits an Ascent join clause. If they are defined via `letprop` with unbounded
+quantifiers (T4), the codegen emits an `assert_pred()` wrapper and the MSO01
+lint warns the user. The M5 (PATA) module only activates when the predicates
+involve recursive definitions — for simple Ascent-relation guards, the trace
+would skip directly from M3 to codegen.
+
 ### Automata Role Matrix
 
-| Automaton        | Init | Tokenize |  Dispatch   |   Analyze    | Optimize |   Codegen    | FOL Feature              |
-|------------------|:----:|:--------:|:-----------:|:------------:|:--------:|:------------:|--------------------------|
-| NFA/DFA          |         | tokenize |             |              |         |              | Token recognition        |
-| FIRST/FOLLOW     |         |          |  dispatch   |              |         |              | Parse prediction         |
-| Prediction WFST  |         |          |   weights   |              |         |              | Disambiguation           |
-| Decision Tree    |         |          | prefix trie |              | codegen |              | Parse dispatch           |
-| ContextWeight    |         |          |  rule bits  |              | filter  |              | Context narrowing        |
-| WPDS             |         |          | stack syms  | reachability |         |  dead rules  | Stack analysis           |
-| Token Lattice    |         |          |  ambiguity  |              |         |              | Lexical ambiguity        |
-| M1 Symbolic      |         |          |             | SFA compile  |         |   disambig   | Propositional, ranges    |
-| M2 Buchi         |         |          |             |  ∞-behavior  |         |              | Liveness (∞ quantifiers) |
-| M3 AWA           |         |          |             |   ∀/∃ eval   |         |              | First-order quantifiers  |
-| M4 VPA           |         |          |             |   nesting    |         |              | Well-formed nesting      |
-| M5 PATA          |         |          |             |  recursive   |         |              | Mu-calculus, letprop     |
-| M6 Register      |         |          |             |   data eq    |         | dead binders | Equality, fresh          |
-| M7 Probabilistic |         |          |             | selectivity  |         |   entropy    | Performance              |
-| M8 Multi-Tape    |         |          |             |   multi-ch   |         |  indep cats  | Multi-channel            |
-| M9 Multiset      |         |          |             | cardinality  |         |              | count/size               |
-| M10 MSO          |         |          |             |   classify   |         |              | Spec language            |
-| M11 Two-Way      |         |          |             |   cross-ch   |         |              | Backward constraints     |
-| M12 Presburger   |         |          |             |  arithmetic  |         |              | Linear integer           |
-| M13 Unification  |         |          |             |   patterns   |         |              | Structural unify         |
-| M14 Lattice      |         |          |             |  subtyping   |         |              | Type hierarchy           |
+The following matrix lists only automata with guard-related roles in the
+predicated types pipeline. Parser/lexer infrastructure (NFA/DFA, FIRST/FOLLOW,
+Prediction WFST, Decision Tree, ContextWeight, Token Lattice) is omitted —
+those are documented in PraTTaIL's architecture docs. Columns cover three
+compile-time pipeline phases plus the FOL feature class each automaton handles.
+All entries are compile-time only (§14) — zero runtime overhead except where
+noted (M7 selectivity → guard order, Forward-Backward → inline/cold attrs).
+See the **Matrix Key** below the table for column definitions and cell value
+glossaries.
+
+| Automaton        |             Analyze              |       Optimize       |           Codegen            | FOL Feature                                 |
+|------------------|:--------------------------------:|:--------------------:|:----------------------------:|---------------------------------------------|
+| WPDS             |        Guard reachability        |                      |    Dead rule elimination     | Stack-aware guard evaluation                |
+| M1 Symbolic      |         SFA compilation          |                      |     Guard disambiguation     | Propositional predicates, range constraints |
+| M2 Buchi         |   Infinite-behavior acceptance   |                      |                              | Liveness (omega-regular quantifiers)        |
+| M3 AWA           |    ∀/∃ quantifier evaluation     |                      |                              | First-order quantifiers (⊗ /⊕  states)      |
+| M4 VPA           |    Scope nesting verification    |                      |                              | Well-formed quantifier nesting              |
+| M5 PATA          | Recursive predicate compilation  |                      |                              | Mu-calculus fixpoints (letprop)             |
+| M6 Register      | Data equality/freshness analysis |                      |   Dead binder elimination    | Equality (x == y), freshness (fresh(x))     |
+| M7 Probabilistic |      Selectivity estimation      |                      | Entropy-based guard ordering | Guard short-circuit performance             |
+| M8 Multi-Tape    | Multi-channel guard construction |                      | Independent category codegen | Multi-channel receive guards                |
+| M9 Multiset      | Cardinality constraint analysis  |                      |                              | Collection predicates (count(ch) >= k)      |
+| M10 MSO          |      Formula classification      |                      |                              | Guard specification language (∧,∨,¬,∀,∃)    |
+| M11 Two-Way      |    Cross-channel propagation     |                      |                              | Backward constraint propagation             |
+| M12 Presburger   |    Linear arithmetic decision    |                      |                              | Multi-variable integer (Σ aᵢ·xᵢ ≤ b)        |
+| M13 Unification  |    Pattern overlap detection     |                      |                              | Structural term unification                 |
+| M14 Lattice      | Subtype relationship computation |                      |                              | Type hierarchy constraints (a <: b)         |
+| M15 SFT          |   Guard transduction analysis    |                      |  Guard input transformation  | String transforms (case fold, normalize)    |
+| E-Graph          |       Equality saturation        |  Predicate simplify  |                              | Algebraic identity discovery                |
+| WTA              |   Term classification/ranking    |  Hot-path priority   |                              | Term recognition, set-theoretic subtyping   |
+| LTL              |  Temporal property verification  |                      |                              | Safety/liveness (G, F, X, U operators)      |
+| CRA              |       Guard cost metering        |  Anomaly detection   |                              | Quantitative evaluation cost                |
+| EWPDS            |    Call/return merge analysis    |                      |    Scope instrumentation     | Local variable analysis at boundaries       |
+| ARA              |    Affine invariant discovery    |                      |                              | Interprocedural affine relations (x'=ax+b)  |
+| Relational WPDS  |    Heap relationship analysis    |                      |                              | Binary relation heap reasoning              |
+| Safety           |   Guard completeness checking    |                      |                              | Input coverage (every input matches ≥1)     |
+| CEGAR            | Abstraction ladder construction  | Iterative refinement |                              | Boolean→Counting→Tropical abstraction       |
+| Algebraic        |   CFG path expression summary    |                      |                              | Guard evaluation control-flow summarization |
+| Newton           |      Fixpoint acceleration       | Convergence speedup  |                              | Idempotent semiring convergence (h+1 iters) |
+| Forward-Backward |   Hot/cold path classification   |                      |  #[inline] / #[cold] attrs   | Generated function annotation               |
+
+#### Matrix Key
+
+**Column definitions:**
+
+- **Analyze** — Compile-time analysis during `language!` macro expansion.
+  Detects issues, classifies guards, computes properties. No runtime cost.
+- **Optimize** — Compile-time guard simplification, fusion, or reordering.
+  Improves runtime performance of generated guard code.
+- **Codegen** — Influences or directly produces generated Rust code that
+  appears in the compiled binary.
+- **FOL Feature** — The first-order logic feature or guard predicate class
+  that this automaton handles.
+
+**Cell value semantics:**
+
+- A filled cell indicates the automaton participates in that pipeline phase.
+- The cell text names the specific contribution (defined in the glossary
+  tables below).
+- An empty cell means the automaton does not participate in that phase.
+
+**Analyze column — cell value glossary:**
+
+| Cell Value                       | Meaning                                                                                |
+|----------------------------------|----------------------------------------------------------------------------------------|
+| Guard reachability               | Stack-aware reachability analysis for guard evaluation call chains                     |
+| SFA compilation                  | Compile guard formula to Symbolic Finite Automaton for satisfiability/overlap          |
+| Infinite-behavior acceptance     | Omega-regular acceptance for infinite-stream behavioral predicates                     |
+| ∀/∃ quantifier evaluation        | Alternating universal (⊗) / existential (⊕) state evaluation for quantifiers           |
+| Scope nesting verification       | Verify well-formed quantifier scope nesting via pushdown call/return matching          |
+| Recursive predicate compilation  | Compile recursive predicate definitions (letprop) via mu-calculus fixpoints            |
+| Data equality/freshness analysis | Data-equality and freshness analysis using register contents (x == y, fresh(x))        |
+| Selectivity estimation           | Estimate guard acceptance probability for short-circuit evaluation ordering            |
+| Multi-channel guard construction | Analyze multi-channel receive guards via multi-tape automaton construction             |
+| Cardinality constraint analysis  | Analyze collection cardinality predicates (count(ch) >= k) via multiset bags           |
+| Formula classification           | Classify guard formula structure (FirstOrder / Existential / Restricted / Full)        |
+| Cross-channel propagation        | Detect and propagate constraints across channels via two-way transducer pre-image      |
+| Linear arithmetic decision       | Decide multi-variable linear integer constraints (Σ aᵢ·xᵢ ≤ b) via Presburger NFA      |
+| Pattern overlap detection        | Detect structural pattern overlaps via Martelli-Montanari unification                  |
+| Subtype relationship computation | Compute subtype relationships via transitive closure over type hierarchy DAG           |
+| Guard transduction analysis      | Analyze output-producing guard transformations (case fold, normalize) via SFT          |
+| Equality saturation              | Discover algebraic identities in guard predicates via e-graph equality saturation      |
+| Term classification/ranking      | Bottom-up term classification and ranking; set-theoretic subtyping via WTA inclusion   |
+| Temporal property verification   | Verify temporal safety/liveness properties (G, F, X, U) over WPDS call graphs          |
+| Guard cost metering              | Meter quantitative guard evaluation cost and detect anomalies                          |
+| Call/return merge analysis       | Analyze local variable behavior at function call/return boundaries via merge functions |
+| Affine invariant discovery       | Discover interprocedural affine invariants (x' = ax + b) over guard evaluation         |
+| Heap relationship analysis       | Analyze heap-shape relationships using binary relation weight domain                   |
+| Guard completeness checking      | Check guard coverage: does every possible input match at least one guard?              |
+| Abstraction ladder construction  | Build Boolean → Counting → Tropical abstraction ladder for iterative refinement        |
+| CFG path expression summary      | Summarize guard evaluation control-flow graph via algebraic path expressions           |
+| Fixpoint acceleration            | Accelerate Ascent fixpoint convergence (h+1 iterations for idempotent semirings)       |
+| Hot/cold path classification     | Classify guard evaluation paths as hot (frequently taken) or cold (rarely taken)       |
+
+**Optimize column — cell value glossary:**
+
+| Cell Value           | Meaning                                                                    |
+|----------------------|----------------------------------------------------------------------------|
+| Predicate simplify   | Simplify guard predicates by discovering and applying algebraic identities |
+| Hot-path priority    | Prioritize optimization effort on frequently-evaluated guard paths         |
+| Anomaly detection    | Flag guards with abnormal cost profiles for investigation                  |
+| Iterative refinement | Iteratively refine abstraction when coarser level is insufficient          |
+| Convergence speedup  | Accelerate fixpoint computation to reach convergence faster                |
+
+**Codegen column — cell value glossary:**
+
+| Cell Value                   | Meaning                                                                            |
+|------------------------------|------------------------------------------------------------------------------------|
+| Dead rule elimination        | Eliminate guard evaluation code for rules proven unreachable                       |
+| Guard disambiguation         | Generate disambiguation logic when multiple guards overlap on a channel            |
+| Dead binder elimination      | Eliminate unused variable bindings from generated guard evaluation code            |
+| Entropy-based guard ordering | Emit guard evaluation order based on information-theoretic entropy ranking         |
+| Independent category codegen | Generate independent per-category guard evaluation when channels are independent   |
+| Guard input transformation   | Generate SFT-based input transformations (case fold, normalize) before guard check |
+| Scope instrumentation        | Generate scope entry/exit instrumentation at call/return boundaries                |
+| #[inline] / #[cold] attrs    | Annotate generated guard functions with `#[inline]` (hot) or `#[cold]` (cold)      |
+
+#### FOL Feature Glossary
+
+Each row's **FOL Feature** column identifies the first-order logic feature or
+guard predicate class that the automaton handles:
+
+| FOL Feature                                 | Definition                                                                               |
+|---------------------------------------------|------------------------------------------------------------------------------------------|
+| Stack-aware guard evaluation                | Stack-aware reachability analysis for guard evaluation chains via WPDS                   |
+| Propositional predicates, range constraints | Boolean combinations of range predicates (x ∈ [a,b]) over finite or infinite domains     |
+| Liveness (omega-regular quantifiers)        | Omega-regular properties over infinite streams: "always eventually" / "infinitely often" |
+| First-order quantifiers (⊗ /⊕  states)      | ∀/∃ quantification over values (first-order), compiled to alternating automaton states   |
+| Well-formed quantifier nesting              | Balanced scope/quantifier nesting checked via pushdown stack discipline                  |
+| Mu-calculus fixpoints (letprop)             | Recursive predicate definitions via fixpoint operators (νX, μX) in the modal mu-calculus |
+| Equality (x == y), freshness (fresh(x))     | Data-aware predicates comparing register contents: x == y, fresh(x)                      |
+| Guard short-circuit performance             | Guard selectivity estimation for short-circuit evaluation ordering                       |
+| Multi-channel receive guards                | Guards spanning multiple receive channels, compiled to multi-tape automata               |
+| Collection predicates (count(ch) >= k)      | Cardinality predicates on collections: count(ch) >= k                                    |
+| Guard specification language (∧,∨,¬,∀,∃)    | The guard predicate language itself (∧, ∨, ¬, ∀, ∃) as weighted MSO                      |
+| Backward constraint propagation             | Cross-channel constraint propagation via two-way transducer pre-image                    |
+| Multi-variable integer (Σ aᵢ·xᵢ ≤ b)        | Multi-variable linear arithmetic (Σ aᵢ·xᵢ ≤ b) via Presburger NFA                        |
+| Structural term unification                 | First-order term unification for pattern overlap detection                               |
+| Type hierarchy constraints (a <: b)         | Subtype lattice constraints (a <: b) via transitive closure                              |
+| String transforms (case fold, normalize)    | Output-producing guard transductions (case fold, normalize) via SFT                      |
+| Algebraic identity discovery                | Guard predicate simplification via equality saturation (x>0 ∧ x>0 → x>0)                 |
+| Term recognition, set-theoretic subtyping   | Bottom-up term classification and ranking; set-theoretic subtyping                       |
+| Safety/liveness (G, F, X, U operators)      | Temporal properties (G, F, X, U) over guard evaluation call graphs                       |
+| Quantitative evaluation cost                | Guard evaluation cost metering and anomaly detection                                     |
+| Local variable analysis at boundaries       | Local variable analysis at function call/return boundaries via merge functions           |
+| Interprocedural affine relations (x'=ax+b)  | Interprocedural affine invariant discovery (x' = ax + b)                                 |
+| Binary relation heap reasoning              | Binary relation weight domain for heap-shape reasoning                                   |
+| Input coverage (every input matches ≥1)     | Completeness: does every possible input match at least one guard?                        |
+| Boolean→Counting→Tropical abstraction       | Iterative refinement: Boolean → Counting → Tropical abstraction hierarchy                |
+| Guard evaluation control-flow summarization | Path expression summaries of guard evaluation control-flow graphs                        |
+| Idempotent semiring convergence (h+1 iters) | Accelerated fixpoint computation (h+1 iterations for idempotent semirings)               |
+| Generated function annotation               | Hot/cold path classification → #[inline] / #[cold] on generated guard functions          |
 
 > **Citations:**
 >
@@ -3225,20 +5486,36 @@ codegen) for free. Three implementations planned:
 
 ### Architecture
 
+The type system framework mirrors the two-layer architecture of the constraint
+theory suite (§16): a trait defines the interface, concrete implementations
+provide domain-specific logic, and a bridge adapter connects to the
+`BooleanAlgebra`/SFA infrastructure. The key insight is that type system
+operations — checking, inference, subtyping, join, meet — have the same
+algebraic structure as constraint operations: a lattice with decidable
+ordering. This parallelism is not accidental: a type system *is* a constraint
+system where the constraints are type judgments and the store is the type
+environment. The three implementations span a spectrum from simple (finite
+lattice) to expressive (refinement types composing base types with constraint
+predicates) to powerful (set-theoretic types modeled as tree automata
+languages).
+
+The diagram below shows the trait, its three implementations, and the pipeline
+integration point where all three converge:
+
 ```
-                   ┌──────────────────────────────────────────────────┐
-                   │             TypeSystem Trait                     │
-                   │                                                  │
-                   │  check(env, term, type) → bool                   │
-                   │  infer(env, term) → Vec<Type>                    │
-                   │  is_subtype(env, sub, sup) → bool                │
-                   │  join(env, a, b) → Option<Type>                  │
-                   │  meet(env, a, b) → Option<Type>                  │
-                   │  extend(env, var, type) → TypeEnv                │
-                   │  is_inhabited(env, type) → bool                  │
-                   │  top() → Option<Type>                            │
-                   │  bottom() → Option<Type>                         │
-                   └────────────┬─────────────────────────────────────┘
+       ┌──────────────────────────────────────────────────┐
+       │             TypeSystem Trait                     │
+       │                                                  │
+       │  check(env, term, type) → bool                   │
+       │  infer(env, term) → Vec<Type>                    │
+       │  is_subtype(env, sub, sup) → bool                │
+       │  join(env, a, b) → Option<Type>                  │
+       │  meet(env, a, b) → Option<Type>                  │
+       │  extend(env, var, type) → TypeEnv                │
+       │  is_inhabited(env, type) → bool                  │
+       │  top() → Option<Type>                            │
+       │  bottom() → Option<Type>                         │
+       └────────────────────────┬─────────────────────────┘
                                 │
               ┌─────────────────┼──────────────────────┐
               │                 │                      │
@@ -3255,16 +5532,36 @@ codegen) for free. Three implementations planned:
               │                 │                      │
               └─────────────────┼──────────────────────┘
                                 │
-                 ┌──────────────▼─────────────────────┐
-                 │    Pipeline Integration            │
-                 │                                    │
-                 │  TypeSystemAnalysis (compile-time) │
-                 │  Lints: RT01–RT06                  │
-                 │  Codegen: runtime type checks      │
-                 └────────────────────────────────────┘
+              ┌─────────────────▼──────────────────┐
+              │    Pipeline Integration            │
+              │                                    │
+              │  TypeSystemAnalysis (compile-time) │
+              │  Lints: RT01–RT06                  │
+              │  Codegen: runtime type checks      │
+              └────────────────────────────────────┘
 ```
 
+The `RefinementTypeSystem<S, T>` (center column) is the most architecturally
+interesting: it uses `ProductAlgebra<LatticeType, TheoryAlgebra<T>>` to compose
+base-type subtyping with constraint-predicate entailment, enabling the
+subtyping rule `{x: S | P(x)} <: {x: T | Q(x)}` to decompose into two
+independent checks — `S <: T` via the base type system and `∀x. P(x) ⟹ Q(x)`
+via the constraint theory (see Refinement Types below).
+
 ### TypeSystem Trait
+
+The `TypeSystem` trait is the extension point for plugging type disciplines
+into the pipeline. Its design parallels the `ConstraintTheory` trait (§16) but
+operates at a higher abstraction level: where `ConstraintTheory` works with
+constraints and stores, `TypeSystem` works with types and type environments.
+The nine methods capture the fundamental operations of bidirectional type
+checking (Pierce, 2004): `check` implements the checking direction (does this
+term have this type?), `infer` implements the inference direction (what types
+can this term have?), and `is_subtype`/`join`/`meet` implement the lattice
+operations on the type space. The `is_inhabited` method connects to the
+predicated types system: a refinement type `{x: T | P(x)}` is inhabited if
+and only if `T` is inhabited AND `P` is satisfiable, so the type system must
+be able to answer inhabitedness queries to support the RT01 lint.
 
 ```rust
 pub trait TypeSystem: Clone + fmt::Debug + Send + Sync + 'static {
@@ -3285,6 +5582,15 @@ pub trait TypeSystem: Clone + fmt::Debug + Send + Sync + 'static {
 }
 ```
 
+The `infer` method returns `Vec<Self::Type>` rather than `Option<Self::Type>`
+to support type systems with principal type pairs or multiple valid typings
+(e.g., MeTTa's gradual typing where a term may have several incomparable
+types). The `top()` and `bottom()` methods return `Option` because not all type
+systems have a universal supertype or an empty bottom type — `LatticeTypeSystem`
+does (if the lattice has them), but `RefinementTypeSystem` may not. Default
+implementations return `None` and `true` respectively, minimizing the
+implementation burden for simple type systems.
+
 ### TypeSystemAlgebra Bridge
 
 `TypeSystemAlgebra<S>` bridges `TypeSystem` to `BooleanAlgebra`, analogous
@@ -3299,12 +5605,25 @@ A refined type `{ x: T | P(x) }` combines:
 - A **base type** `T` from a `TypeSystem S` (e.g., `Int` from `LatticeTypeSystem`)
 - A **predicate** `P` from a `ConstraintTheory T` (e.g., `x > 0` from Presburger)
 
-Subtyping rule:
+The subtyping rule for refinement types decomposes into two independent checks,
+reflecting the product structure of `RefinementTypeSystem<S, T>`. The base type
+check uses the underlying `TypeSystem S`'s `is_subtype()`, while the predicate
+entailment check uses the `ConstraintTheory T`'s `is_satisfiable()` to test
+whether `P(x) ∧ ¬Q(x)` is unsatisfiable (i.e., every `x` satisfying `P` also
+satisfies `Q`). This decomposition is sound because the refinement type's
+denotation is the intersection of the base type's denotation with the
+predicate's satisfying set:
+
 ```
 { x: S | P(x) } <: { x: T | Q(x) }
   iff  S <: T   (base subtype via TypeSystem)
   AND  ∀x. P(x) ⟹ Q(x)  (predicate entailment via ConstraintTheory)
 ```
+
+The entailment check `∀x. P(x) ⟹ Q(x)` reduces to `¬∃x. P(x) ∧ ¬Q(x)` via
+the standard logical equivalence, which is tested by
+`!algebra.is_satisfiable(algebra.and(P, algebra.not(Q)))` — reusing the
+existing `BooleanAlgebra` infrastructure from §15.
 
 Inhabitedness: `{ x: T | P(x) }` is inhabited iff `T` is inhabited AND
 `P` is satisfiable (checked via `TheoryAlgebra::is_satisfiable()`).
@@ -3323,7 +5642,17 @@ inclusion (decidable via intersection + complement + emptiness).
 
 ### Surface Syntax
 
-Refinement types declared inline in the `types { ... }` block:
+Refinement types are declared inline in the `types { ... }` block of the
+`language!` macro, using a syntax inspired by Liquid Types (Rondon, Kawaguchi &
+Jhala, PLDI 2008). The `{ variable: BaseType | predicate }` syntax makes the
+refinement's three components explicit: the bound variable, the base type, and
+the constraining predicate. The predicate sublanguage is the same `where`-clause
+predicate language from §2 — the same `not()`, `and()`, `or()`, `forall()`,
+`exists()` forms, parsed by the same Pratt parser, classified by the same
+decidability
+tiering (§11). This reuse ensures that refinement predicates benefit from the
+full compilation pipeline: a `PosInt` predicate compiles to a T1 static check,
+while a `SafeProc` predicate compiles to a T2 or T3 bounded check.
 
 ```rust
 types {
@@ -3331,23 +5660,38 @@ types {
     Name { ... }
     Int:i64 { ... }
     PosInt = { x: Int | x > 0 };
-    SafeProc = { p: Proc | forall y in nodes. (reachable(p, y) => safe(y)) };
+    SafeProc = { p: Proc | forall(y, nodes, entails(reachable(p, y), safe(y))) };
     NonEmpty = { b: HashBag(Proc) | count(b) >= 1 };
 }
 ```
 
+The three examples illustrate different constraint domains: `PosInt` uses
+Presburger arithmetic (`x > 0`), `SafeProc` uses a quantified behavioral
+predicate (classified as T2 if `reachable`/`safe` are Ascent relations, T4
+otherwise), and `NonEmpty` uses a cardinality predicate (`count(b) >= 1`)
+handled by the multiset module M9.
+
 Refinement predicates support:
-- **Linear arithmetic**: `a₁*x₁ + a₂*x₂ + ... ⊕ c` (Presburger)
+- **Linear arithmetic**: `a₁*x₁ + a₂*x₂ + ... ⊕  c` (Presburger)
 - **Relation queries**: `R(args)` (behavioral)
-- **Quantified formulas**: `forall`/`exists` with optional domain and bound
-- **Boolean combinators**: `&&`, `||`, `!`/`~`, `=>`
+- **Quantified formulas**: `forall()`/`exists()` with optional domain and bound
+- **Logical connectives**: `not()`, `and()`, `or()`, `entails()`
 - **Term comparison**: `==`, `!=`
 
-Guards referencing refinement types:
+When a guard references a refinement type by name, the pipeline generates a
+conjunction of the structural match (from the base type) and the refinement
+predicate check. The generated code first pattern-matches the received value
+against the base type's structure, then evaluates the refinement predicate on
+the matched bindings:
+
+```rholang
+for (@x <- ch) where x ∈ PosInt { P }
+// Equivalent: where x in PosInt / where x : PosInt / where PosInt(x)
 ```
-for (@x : PosInt <- ch) { P }
-```
-generates conjunction of structural match AND refinement predicate check.
+
+This desugars to `for (@x <- ch) { if is_refined_PosInt(x) { P } }` — the
+structural match extracts `x`, and the Ascent relation `is_refined_PosInt`
+confirms that `x > 0`.
 
 ### Predicate Lowering
 
@@ -3384,7 +5728,18 @@ representation for compile-time analysis and runtime codegen.
 
 ### Codegen
 
-For each refinement type `PosInt = { x: Int | x > 0 }`, generated code:
+The codegen layer generates Ascent relations and population rules for each
+refinement type. The generated code has two parts: a relation declaration
+(`is_refined_TypeName`) that stores all values satisfying the refinement, and a
+population rule that checks base-type membership and predicate satisfaction.
+The population rule runs during Ascent's fixpoint evaluation (§6), so
+refinement membership is automatically maintained as the fixpoint evolves — new
+values entering the base-type relation are checked against the predicate and
+added to the refinement relation if they satisfy it.
+
+For simple Presburger predicates, the predicate is inlined as an Ascent `if`
+guard:
+
 ```rust
 // Ascent relation for refinement membership
 relation is_refined_PosInt(Int);
@@ -3395,12 +5750,20 @@ is_refined_PosInt(x) <--
     if *x > 0;      // predicate (inline for simple Presburger)
 ```
 
-For behavioral predicates (quantified):
+For behavioral predicates involving quantifiers, the predicate evaluation is
+delegated to `evaluate_quantified()` (§8), which uses LogicT's fair
+backtracking to evaluate `∀`/`∃` formulas:
+
 ```rust
 is_refined_SafeProc(p) <--
     proc(p),
     if { evaluate_quantified(&formula, &lookup) };
 ```
+
+The runtime cost depends on the predicate's decidability tier: T1 predicates
+are constant-folded away (the `if` guard is always true or the rule is
+eliminated), T2 predicates incur O(|value|) per population rule firing, and T3
+predicates incur O(k · |value|) with the user-specified bound `k`.
 
 ### Infrastructure
 
@@ -3424,12 +5787,24 @@ is_refined_SafeProc(p) <--
 
 ### Feature Gating
 
+The type system framework uses Cargo feature gates to control compilation
+scope. The `type-system` feature is the base — it pulls in `logict` (for
+`ConstraintTheory` and `TheoryAlgebra`) and `lattice-theory` (for the
+`LatticeTypeSystem` reference implementation). The `set-theoretic-types`
+feature adds the `SetTheoreticTypeSystem` with its tree automaton
+infrastructure. The convenience features `predicated-types` and
+`full-analysis` include both:
+
 ```toml
 type-system = ["logict", "lattice-theory"]
 set-theoretic-types = ["type-system"]
 predicated-types = [ ..., "type-system", "set-theoretic-types" ]
 full-analysis = [ ..., "type-system", "set-theoretic-types" ]
 ```
+
+This feature hierarchy ensures that users who don't need type system analysis
+pay zero compile-time cost — the ~2400 lines of `type_system.rs` and its
+dependencies are not compiled unless the feature is enabled.
 
 ### Key Files
 
@@ -3543,9 +5918,11 @@ Key operations via the `TypeSystem` trait:
 
 The `tokens { ... }` block provides:
 
-1. Custom guard tokens (`forall`, `exists`, `/\`, `\/`) via
-   `TokenKind::Custom` with regex patterns and priority
-2. Modal lexing (WPDS modes) for predicate keyword recognition inside guards
+1. Custom guard tokens (`where`, `not`, `and`, `or`, `forall`, `exists`,
+   `entails`, `implies`, `implied_by`, `iff` and their Unicode alternatives)
+   via `TokenKind::Custom` with regex patterns and priority
+2. Modal lexing (WPDS modes) for predicate keyword recognition inside
+   `where` clauses
 3. FIRST set augmentation for guard token disambiguation
 4. VPA delimiter verification for guard scope nesting
 5. Tree automata validation for guard expression structure
@@ -3575,7 +5952,7 @@ The `tokens { ... }` block provides:
 ### Rocq Formal Verification
 
 - Guard compilation soundness: SFA accepts iff formula satisfied
-- Quantifier correspondence: AWA Q⊗ ↔ ∀, Q⊕ ↔ ∃
+- Quantifier correspondence: AWA Q⊗  ↔ ∀, Q⊕  ↔ ∃
 - Pattern matching correctness: `match_pattern` is injective
 - Stratification validation: negated-relation well-ordering implies no
   circular dependency
@@ -3629,7 +6006,7 @@ receive mechanism:
 | Guard uses `unsafe_body` with BoundVars        | Match fails silently     | Use `unbind()` to get FreeVars (§6)         |
 | Binder ordering mismatch guard↔continuation    | Wrong substitution       | Parser enforces same order, same extraction |
 | Duplicate variable names in guard              | Ambiguous bindings       | Parser rejects duplicates                   |
-| Large collection in guard pattern               | Combinatorial AC-match   | Re-entrant engine bounds by collection size |
+| Large collection in guard pattern              | Combinatorial AC-match   | Re-entrant engine bounds by collection size |
 | `match_pattern_name` per candidate pair        | Slowdown for large bags  | O(\|pattern\|) per call; acceptable         |
 | Category mismatch in continuation              | Wrong substitution pass  | Parser infers categories from guard         |
 | Behavioral pred references undeclared relation | No matching Comm rule    | Parser validates against declared relations |
@@ -3643,12 +6020,12 @@ The brainstorming document (`02-23-pattern-matching.md`) established the
 foundational design for guarded receive with type predicates. This document
 extends and restructures that content:
 
-| Layer       | Scope                              | Document Section                                  |
-|-------------|------------------------------------|-------------------------------------------------  |
-| **Layer 1** | Structural patterns + Ascent joins | §§3-10 (core design)                              |
-| **Layer 2** | First-order predicate logic        | §§11-14 (formal framework)                        |
-| **Layer 3** | Analysis and verification          | §§15-18 (BooleanAlgebra, constraints, automata)   |
-| **Layer 4** | Extended infrastructure            | §§19-25 (lints, types, architecture, references)  |
+| Layer       | Scope                              | Document Section                                 |
+|-------------|------------------------------------|--------------------------------------------------|
+| **Layer 1** | Structural patterns + Ascent joins | §§3-10 (core design)                             |
+| **Layer 2** | First-order predicate logic        | §§11-14 (formal framework)                       |
+| **Layer 3** | Analysis and verification          | §§15-18 (BooleanAlgebra, constraints, automata)  |
+| **Layer 4** | Extended infrastructure            | §§19-25 (lints, types, architecture, references) |
 
 Layer 1's `BehavioralPred { relation_name, args }` becomes a special case of
 the general `BooleanAlgebra::Predicate` from M1.
@@ -3731,25 +6108,25 @@ The following table maps each brainstorming document component to its
 location in this specification, noting what was preserved, extended, or
 added:
 
-| Brainstorming Component       | Brainstorming § | Design Spec §    | Status           |
-|-------------------------------|-----------------|------------------|------------------|
-| Motivation                    | §1              | §1               | Preserved        |
-| Scope                         | §2              | §1, §2           | Preserved        |
-| Terms as Patterns             | §3              | §3               | Preserved        |
-| Natural Categories            | §4              | §3               | Preserved        |
-| Term Representation           | §5              | §4               | Preserved        |
-| `match_pattern`               | §6              | §5               | Extended (work stack, Collection, Binder) |
-| Comm Rule                     | §7              | §6               | Preserved        |
-| Parsing                       | §8              | §4, §21          | Preserved        |
-| Correctness Analysis          | §9              | §10              | Preserved        |
-| Ordering and Determinism      | §10             | §6               | Preserved        |
-| Behavioral Predicates         | §11             | §8               | Extended (quantified, negated, AC) |
-| Implementation Plan           | §12             | §21              | Preserved        |
-| Worked Example                | §13             | §7               | Preserved        |
-| Risks and Mitigations         | §14             | §23              | Extended          |
-| Relation to Infrastructure    | §15             | §21, §24         | Preserved (this table) |
-| Summary                       | §16             | §1               | Preserved        |
-| *—*                           | —               | §§11–20          | **Added** (decidability, pipeline, automata, types) |
+| Brainstorming Component    | Brainstorming § | Design Spec § | Status                                              |
+|----------------------------|-----------------|---------------|-----------------------------------------------------|
+| Motivation                 | §1              | §1            | Preserved                                           |
+| Scope                      | §2              | §1, §2        | Preserved                                           |
+| Terms as Patterns          | §3              | §3            | Preserved                                           |
+| Natural Categories         | §4              | §3            | Preserved                                           |
+| Term Representation        | §5              | §4            | Preserved                                           |
+| `match_pattern`            | §6              | §5            | Extended (work stack, Collection, Binder)           |
+| Comm Rule                  | §7              | §6            | Preserved                                           |
+| Parsing                    | §8              | §4, §21       | Preserved                                           |
+| Correctness Analysis       | §9              | §10           | Preserved                                           |
+| Ordering and Determinism   | §10             | §6            | Preserved                                           |
+| Behavioral Predicates      | §11             | §8            | Extended (quantified, negated, AC)                  |
+| Implementation Plan        | §12             | §21           | Preserved                                           |
+| Worked Example             | §13             | §7            | Preserved                                           |
+| Risks and Mitigations      | §14             | §23           | Extended                                            |
+| Relation to Infrastructure | §15             | §21, §24      | Preserved (this table)                              |
+| Summary                    | §16             | §1            | Preserved                                           |
+| *—*                        | —               | §§11–20       | **Added** (decidability, pipeline, automata, types) |
 
 ---
 
@@ -3757,15 +6134,44 @@ added:
 
 ### Cross-References
 
-- **Advanced automata overview:** `prattail/docs/design/advanced-automata-overview.md`
+**Core infrastructure:**
+- **Analysis pipeline overview:** `prattail/docs/design/analysis-pipeline-overview.md`
+- **Lint layer:** `prattail/docs/design/lint-layer.md`
+- **Predicate dispatch automaton:** `prattail/docs/design/predicate-dispatch-automaton.md`
+- **Composed dispatch:** `prattail/docs/design/composed-dispatch.md`
 - **Semiring catalog:** `prattail/docs/design/semiring-catalog.md`
 - **Diagnostics reference:** `prattail/docs/diagnostics/README.md`
-- **Predicate dispatch automaton:** `prattail/docs/design/predicate-dispatch-automaton.md`
+- **Error recovery:** `prattail/docs/design/wfst/error-recovery.md`
+- **Mathematical analyses:** `docs/design/mathematical-analyses.md`
+
+**Automata modules (M1–M11):**
+- **M1 Symbolic automata:** `prattail/docs/design/symbolic-automata.md`
+- **M2 Weighted Büchi:** `prattail/docs/design/weighted-buchi.md`
+- **M3 Polynomial AWA:** `prattail/docs/design/polynomial-awa.md`
+- **M4 Weighted VPA:** `prattail/docs/design/weighted-vpa.md`
+- **M5 Parity tree automata:** `prattail/docs/design/parity-tree-automata.md`
+- **M6 Register automata:** `prattail/docs/design/register-automata.md`
+- **M7 Probabilistic automata:** `prattail/docs/design/probabilistic-automata.md`
+- **M8 Multi-tape automata:** `prattail/docs/design/multi-tape-automata.md`
+- **M9 Multiset automata:** `prattail/docs/design/multiset-automata.md`
+- **M10 Weighted MSO:** `prattail/docs/design/weighted-mso.md`
+- **M11 Two-way transducer:** `prattail/docs/design/two-way-transducer.md`
+- **Advanced automata overview:** `prattail/docs/design/advanced-automata-overview.md`
+
+**Extended analyses (M15+):**
+- **M15 Symbolic finite transducer:** `prattail/docs/design/symbolic-finite-transducer.md`
+- **E-graph equality saturation:** `prattail/docs/design/egraph-equality-saturation.md`
+
+**Type system and constraints:**
+- **Type system framework design:** `prattail/docs/design/type-system-framework.md` (§20)
 - **Constraint theory design docs:** `prattail/docs/design/constraint-theories/`
 - **Constraint theory diagnostics:** `prattail/docs/diagnostics/{presburger,unification,subtype-lattice,logict}/`
-- **Rocq proofs:** `formal/rocq/{logict,presburger,unification,lattice}/`
-- **Type system framework design:** `prattail/docs/design/type-system-framework.md` (§20)
 - **Refinement type diagnostics:** `prattail/docs/diagnostics/refinement/` (RT01–RT06)
+
+**Formal verification:**
+- **Rocq proofs:** `formal/rocq/{logict,presburger,unification,lattice}/`
+
+**Origins:**
 - **Original brainstorming:** `/home/dylon/Downloads/02-23-pattern-matching.md`
 
 ### References
@@ -3801,7 +6207,7 @@ added:
 10. Kaminski, M. & Francez, N. "Finite-Memory Automata." *Theoretical
     Computer Science*, 134(2):329–363, 1994.
 
-11. Kempe, A. "Weighted Multi-Tape Automata and Transducers for NLP." 2004.
+11. Kempe, A. "Weighted Multi-Tape Automata and Transducers for Natural Language Processing (NLP)." 2004.
 
 12. Kiselyov, O., Shan, C., Friedman, D. P. & Sabry, A. "Backtracking,
     Interleaving, and Terminating Monad Transformers." *Proceedings of ICFP*,
