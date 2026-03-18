@@ -30,6 +30,7 @@ language! {
                     else if let Some(b) = body.strip_prefix("0b") { (2, b) }
                     else { (10, body) };
 
+                // Lexer expects Result<i64, E>; Token::Integer(i64). Native type (e.g. i32) is applied in the trampoline.
                 i64::from_str_radix(digits, radix)
             } ]
         }
