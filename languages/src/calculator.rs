@@ -22,6 +22,7 @@ language! {
         Int {
             pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)";
             eval: ![ {
+                // Strip digit separators (e.g. 1_000_000 or 0xFF_FF_FF) before parsing.
                 let s = text.replace('_', "");
                 let body = s.as_str();
                 let (radix, digits) = if let Some(h) = body.strip_prefix("0x") { (16, h) }
@@ -29,21 +30,16 @@ language! {
                     else if let Some(b) = body.strip_prefix("0b") { (2, b) }
                     else { (10, body) };
 
-                match i64::from_str_radix(digits, radix) {
-                    Ok(n) => Ok(n),
-                    Err(e) => Err(e),
-                }
+                i64::from_str_radix(digits, radix)
             } ]
         }
         Float {
             // Require decimal point or exponent so e.g. "3" is not matched (stays integer).
             pattern: r"[0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?";
             eval: ![ {
+                // Strip digit separators (e.g. 1_000_000.5) before parsing.
                 let cleaned = text.replace('_', "");
-                match cleaned.parse::<f64>() {
-                    Ok(v) => Ok(v),
-                    Err(e) => Err(e),
-                }
+                cleaned.parse::<f64>()
             } ]
         }
         Bool {

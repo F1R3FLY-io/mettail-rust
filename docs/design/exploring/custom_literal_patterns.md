@@ -38,28 +38,30 @@ language! {
 
   literals {
     Int {
-      // Hex (`0xFF`), octal (`0o77`), binary (`0b1010`), or decimal with `_` separators.
-      pattern: r"[+-]?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)";
+      // Hex (`0xFF`), octal (`0o77`), binary (`0b1010`), or decimal with `_` separators (as in Calculator).
+      pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)";
       eval: ![ {
-        // Example using i64 as the token’s storage type; see “Int eval returning i64 vs native i32” below.
+        // Example using i64 as the token’s storage type; see 
+        // “Int eval returning i64 vs native i32” below.
+        
+        // Strip digit separators (e.g. 1_000_000 or 0xFF_FF_FF) before parsing.
         let s = text.replace('_', "");
-        let (sign, body) = match s.strip_prefix('-') {
-          Some(rest) => (-1_i64, rest),
-          None => (1_i64, s.as_str()),
-        };
+        let body = s.as_str();
         let (radix, digits) = if let Some(h) = body.strip_prefix("0x") { (16, h) }
           else if let Some(o) = body.strip_prefix("0o") { (8, o) }
           else if let Some(b) = body.strip_prefix("0b") { (2, b) }
           else { (10, body) };
-        i64::from_str_radix(digits, radix).map(|n| sign * n)
+        i64::from_str_radix(digits, radix)
       } ]
     }
 
     Float {
-      // Require decimal point or exponent so bare integers like "3" are Int, not Float.
+      // Require decimal point or exponent so e.g. "3" is not matched (stays integer).
       pattern: r"[0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?";
       eval: ![ {
-        text.replace('_', "").parse::<f64>()
+        // Strip digit separators (e.g. 1_000_000.5) before parsing.
+        let cleaned = text.replace('_', "");
+        cleaned.parse::<f64>()
       } ]
     }
 
