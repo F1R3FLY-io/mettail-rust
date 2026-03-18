@@ -54,7 +54,7 @@ ascent_syntax_export = { path = "ascent_syntax_export" }
 query = { path = "query" }
 
 [profile.dev]
-codegen-backend = "cranelift"
+codegen-backend = "cranelift" # Fast compile, slower runtime (~2.7x vs LLVM)
 debug = "line-tables-only"    # Saves debuginfo generation time
 
 [profile.release]
