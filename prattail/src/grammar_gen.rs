@@ -655,6 +655,7 @@ mod tests {
             log_semiring_model_path: None,
             dispatch_strategy: DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
+            literal_eval: std::collections::HashMap::new(),
         }
     }
 

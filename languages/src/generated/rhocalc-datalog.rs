@@ -94,14 +94,14 @@ proc(sub.clone()) <--
         Proc::CastStr(f0) => {
             buf.push(Proc::CastStr(Box::new(f0.as_ref().clone())));
         },
-        Proc::ProcList(f0) => {
-            buf.push(Proc::ProcList(Box::new(f0.as_ref().clone())));
+        Proc::CastList(f0) => {
+            buf.push(Proc::CastList(Box::new(f0.as_ref().clone())));
         },
-        Proc::ProcBag(f0) => {
-            buf.push(Proc::ProcBag(Box::new(f0.as_ref().clone())));
+        Proc::CastBag(f0) => {
+            buf.push(Proc::CastBag(Box::new(f0.as_ref().clone())));
         },
-        Proc::ProcMap(f0) => {
-            buf.push(Proc::ProcMap(Box::new(f0.as_ref().clone())));
+        Proc::CastMap(f0) => {
+            buf.push(Proc::CastMap(Box::new(f0.as_ref().clone())));
         },
         Proc::Add(f0, f1) => {
             buf.push(f0.as_ref().clone());
@@ -330,11 +330,11 @@ proc(sub.clone()) <--
         Proc::MLamMap(scope) => {
             buf.push(scope.inner().unsafe_body.as_ref().clone());
         },
-        Proc::ProcList(f0) => {
-            buf.push(Proc::ProcList(Box::new(f0.as_ref().clone())));
+        Proc::CastList(f0) => {
+            buf.push(Proc::CastList(Box::new(f0.as_ref().clone())));
         },
-        Proc::ProcBag(f0) => {
-            buf.push(Proc::ProcBag(Box::new(f0.as_ref().clone())));
+        Proc::CastBag(f0) => {
+            buf.push(Proc::CastBag(Box::new(f0.as_ref().clone())));
         },
         _ => {
             buf.push(Proc::KeysMap(Box::new(t.clone())));
@@ -423,7 +423,7 @@ str(sub.clone()) <--
 list(sub.clone()) <--
     proc(t),
     for sub in { std::thread_local! { static POOL_PROC_LIST : std::cell::Cell < Vec < List >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_LIST.with(| p | p.take()); buf.clear(); match t {
-        Proc::ProcList(f0) => {
+        Proc::CastList(f0) => {
             buf.push(f0.as_ref().clone());
         },
         Proc::ApplyList(_, arg) => {
@@ -438,7 +438,7 @@ list(sub.clone()) <--
 bag(sub.clone()) <--
     proc(t),
     for sub in { std::thread_local! { static POOL_PROC_BAG : std::cell::Cell < Vec < Bag >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_BAG.with(| p | p.take()); buf.clear(); match t {
-        Proc::ProcBag(f0) => {
+        Proc::CastBag(f0) => {
             buf.push(f0.as_ref().clone());
         },
         Proc::ApplyBag(_, arg) => {
@@ -453,7 +453,7 @@ bag(sub.clone()) <--
 map(sub.clone()) <--
     proc(t),
     for sub in { std::thread_local! { static POOL_PROC_MAP : std::cell::Cell < Vec < Map >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_MAP.with(| p | p.take()); buf.clear(); match t {
-        Proc::ProcMap(f0) => {
+        Proc::CastMap(f0) => {
             buf.push(f0.as_ref().clone());
         },
         Proc::ApplyMap(_, arg) => {
@@ -2046,7 +2046,7 @@ eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
     for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_2 : std::cell::Cell < Vec < (Bag, Bag) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_2.with(| p | p.take()); buf.clear(); match (s, t) {
-        (Proc::ProcBag(sf0), Proc::ProcBag(tf0)) => {
+        (Proc::CastBag(sf0), Proc::CastBag(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
         _ => {},
@@ -2090,7 +2090,7 @@ eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
     for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_6 : std::cell::Cell < Vec < (List, List) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_6.with(| p | p.take()); buf.clear(); match (s, t) {
-        (Proc::ProcList(sf0), Proc::ProcList(tf0)) => {
+        (Proc::CastList(sf0), Proc::CastList(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
         _ => {},
@@ -2101,7 +2101,7 @@ eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
     for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_7 : std::cell::Cell < Vec < (Map, Map) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_7.with(| p | p.take()); buf.clear(); match (s, t) {
-        (Proc::ProcMap(sf0), Proc::ProcMap(tf0)) => {
+        (Proc::CastMap(sf0), Proc::CastMap(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
         _ => {},
@@ -2335,9 +2335,9 @@ fold_proc(t.clone(), t.clone()) <--
         Proc::CastFloat(_) => true,
         Proc::CastBool(_) => true,
         Proc::CastStr(_) => true,
-        Proc::ProcList(_) => true,
-        Proc::ProcBag(_) => true,
-        Proc::ProcMap(_) => true,
+        Proc::CastList(_) => true,
+        Proc::CastBag(_) => true,
+        Proc::CastMap(_) => true,
         _ => false,
     });
 
@@ -2490,10 +2490,10 @@ fold_proc(s.clone(), res) <--
     let a = lv,
     let b = rv,
     let res = ({ match (& a, & b) {
-        (Proc::ProcList(la), Proc::ProcList(lb)) => match (la.as_ref(), lb.as_ref()) { (List::ListLit(va), List::ListLit(vb)) => {
+        (Proc::CastList(la), Proc::CastList(lb)) => match (la.as_ref(), lb.as_ref()) { (List::ListLit(va), List::ListLit(vb)) => {
             let mut o = va.clone();
             o.extend(vb.iter().cloned());
-            Proc::ProcList(Box::new(List::ListLit(o)))
+            Proc::CastList(Box::new(List::ListLit(o)))
         }, _ => Proc::Err, },
         _ => Proc::Err,
     } }),
@@ -2507,7 +2507,7 @@ fold_proc(s.clone(), res) <--
     let a = lv,
     let i = rv,
     let res = ({ match (& a, & i) {
-        (Proc::ProcList(l), Proc::CastInt(ii)) => match (l.as_ref(), &** ii) { (List::ListLit(v), Int::NumLit(n)) => v.get(* n as usize).cloned().expect("at: index out of bounds"), _ => Proc::Err },
+        (Proc::CastList(l), Proc::CastInt(ii)) => match (l.as_ref(), &** ii) { (List::ListLit(v), Int::NumLit(n)) => v.get(* n as usize).cloned().expect("at: index out of bounds"), _ => Proc::Err },
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
@@ -2520,11 +2520,11 @@ fold_proc(s.clone(), res) <--
     let a = lv,
     let i = rv,
     let res = ({ match (& a, & i) {
-        (Proc::ProcList(l), Proc::CastInt(ii)) => match (l.as_ref(), &** ii) { (List::ListLit(v), Int::NumLit(n)) => {
+        (Proc::CastList(l), Proc::CastInt(ii)) => match (l.as_ref(), &** ii) { (List::ListLit(v), Int::NumLit(n)) => {
             let idx = * n as usize;
             let mut vec = v.clone();
             if idx >= vec.len() { panic!("delete: index out of bounds"); } vec.remove(idx);
-            Proc::ProcList(Box::new(List::ListLit(vec)))
+            Proc::CastList(Box::new(List::ListLit(vec)))
         }, _ => Proc::Err, },
         _ => Proc::Err,
     } }),
@@ -2538,7 +2538,7 @@ fold_proc(s.clone(), res) <--
     let a = lv,
     let b = rv,
     let res = ({ match (& a, & b) {
-        (Proc::ProcBag(ba), Proc::ProcBag(bb)) => match (ba.as_ref(), bb.as_ref()) { (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::ProcBag(Box::new(Bag::BagLit(ha.union(hb)))), _ => Proc::Err, },
+        (Proc::CastBag(ba), Proc::CastBag(bb)) => match (ba.as_ref(), bb.as_ref()) { (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::CastBag(Box::new(Bag::BagLit(ha.union(hb)))), _ => Proc::Err, },
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
@@ -2551,7 +2551,7 @@ fold_proc(s.clone(), res) <--
     let a = lv,
     let e = rv,
     let res = ({ match & a {
-        Proc::ProcBag(b) => match b.as_ref() { Bag::BagLit(h) => Proc::ProcBag(Box::new(Bag::BagLit(h.remove_one(& e)))), _ => Proc::Err },
+        Proc::CastBag(b) => match b.as_ref() { Bag::BagLit(h) => Proc::CastBag(Box::new(Bag::BagLit(h.remove_one(& e)))), _ => Proc::Err },
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
@@ -2564,7 +2564,7 @@ fold_proc(s.clone(), res) <--
     let a = lv,
     let b = rv,
     let res = ({ match (& a, & b) {
-        (Proc::ProcBag(ba), Proc::ProcBag(bb)) => match (ba.as_ref(), bb.as_ref()) { (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::ProcBag(Box::new(Bag::BagLit(ha.diff(hb)))), _ => Proc::Err, },
+        (Proc::CastBag(ba), Proc::CastBag(bb)) => match (ba.as_ref(), bb.as_ref()) { (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::CastBag(Box::new(Bag::BagLit(ha.diff(hb)))), _ => Proc::Err, },
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
@@ -2577,7 +2577,7 @@ fold_proc(s.clone(), res) <--
     let m = lv,
     let k = rv,
     let res = ({ match & m {
-        Proc::ProcMap(inner) => match inner.as_ref() { Map::MapLit(ref payload) => payload.get(& k).cloned().unwrap_or(Proc::Err), _ => Proc::Err, },
+        Proc::CastMap(inner) => match inner.as_ref() { Map::MapLit(ref payload) => payload.get(& k).cloned().unwrap_or(Proc::Err), _ => Proc::Err, },
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
@@ -2592,10 +2592,10 @@ fold_proc(s.clone(), res) <--
     let k = mv,
     let v = rv,
     let res = ({ match & m {
-        Proc::ProcMap(inner) => match inner.as_ref() { Map::MapLit(ref payload) => {
+        Proc::CastMap(inner) => match inner.as_ref() { Map::MapLit(ref payload) => {
             let mut new_map = payload.clone();
             new_map.insert(k.clone(), v.clone());
-            Proc::ProcMap(Box::new(Map::MapLit(new_map)))
+            Proc::CastMap(Box::new(Map::MapLit(new_map)))
         }, _ => Proc::Err, },
         _ => Proc::Err,
     } }),
@@ -2609,10 +2609,10 @@ fold_proc(s.clone(), res) <--
     let m = lv,
     let k = rv,
     let res = ({ match & m {
-        Proc::ProcMap(inner) => match inner.as_ref() { Map::MapLit(ref payload) => {
+        Proc::CastMap(inner) => match inner.as_ref() { Map::MapLit(ref payload) => {
             let mut new_map = payload.clone();
             new_map.remove(& k);
-            Proc::ProcMap(Box::new(Map::MapLit(new_map)))
+            Proc::CastMap(Box::new(Map::MapLit(new_map)))
         }, _ => Proc::Err, },
         _ => Proc::Err,
     } }),
@@ -2626,9 +2626,9 @@ fold_proc(s.clone(), res) <--
     let a = lv,
     let b = rv,
     let res = ({ match (& a, & b) {
-        (Proc::ProcMap(ma), Proc::ProcMap(mb)) => match (ma.as_ref(), mb.as_ref()) { (Map::MapLit(pa), Map::MapLit(pb)) => {
+        (Proc::CastMap(ma), Proc::CastMap(mb)) => match (ma.as_ref(), mb.as_ref()) { (Map::MapLit(pa), Map::MapLit(pb)) => {
             let mut m = pa.clone();
-            for (k, v) in pb.iter() { m.insert(k.clone(), v.clone()); } Proc::ProcMap(Box::new(Map::MapLit(m)))
+            for (k, v) in pb.iter() { m.insert(k.clone(), v.clone()); } Proc::CastMap(Box::new(Map::MapLit(m)))
         }, _ => Proc::Err, },
         _ => Proc::Err,
     } }),
@@ -2642,7 +2642,7 @@ fold_proc(s.clone(), res) <--
     let m = lv,
     let k = rv,
     let res = ({ match & m {
-        Proc::ProcMap(inner) => match inner.as_ref() { Map::MapLit(ref payload) => Proc::CastBool(Box::new(Bool::BoolLit(payload.get(& k).is_some()))), _ => Proc::Err, },
+        Proc::CastMap(inner) => match inner.as_ref() { Map::MapLit(ref payload) => Proc::CastBool(Box::new(Bool::BoolLit(payload.get(& k).is_some()))), _ => Proc::Err, },
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
@@ -2653,7 +2653,7 @@ fold_proc(s.clone(), res) <--
     fold_proc(inner.as_ref().clone(), lv),
     let m = lv,
     let res = ({ match & m {
-        Proc::ProcMap(inner) => match inner.as_ref() { Map::MapLit(ref payload) => Proc::ProcList(Box::new(List::ListLit(payload.iter().map(| (k, _) | k.clone()).collect::< Vec < _ > > ()))), _ => Proc::Err, },
+        Proc::CastMap(inner) => match inner.as_ref() { Map::MapLit(ref payload) => Proc::CastList(Box::new(List::ListLit(payload.iter().map(| (k, _) | k.clone()).collect::< Vec < _ > > ()))), _ => Proc::Err, },
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
@@ -2664,7 +2664,7 @@ fold_proc(s.clone(), res) <--
     fold_proc(inner.as_ref().clone(), lv),
     let m = lv,
     let res = ({ match & m {
-        Proc::ProcMap(inner) => match inner.as_ref() { Map::MapLit(ref payload) => Proc::ProcList(Box::new(List::ListLit(payload.iter().map(| (_, v) | v.clone()).collect::< Vec < _ > > ()))), _ => Proc::Err, },
+        Proc::CastMap(inner) => match inner.as_ref() { Map::MapLit(ref payload) => Proc::CastList(Box::new(List::ListLit(payload.iter().map(| (_, v) | v.clone()).collect::< Vec < _ > > ()))), _ => Proc::Err, },
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
@@ -2713,8 +2713,8 @@ fold_proc(s.clone(), res) <--
     let p = lv,
     let res = ({ match & p {
         Proc::CastStr(inner) => match &** inner { Str::StringLit(x) => Proc::CastInt(Box::new(Int::NumLit(x.len() as i64))), _ => Proc::Err, },
-        Proc::ProcList(l) => match l.as_ref() { List::ListLit(v) => Proc::CastInt(Box::new(Int::NumLit(v.len() as i64))), _ => Proc::Err, },
-        Proc::ProcMap(m) => match m.as_ref() { Map::MapLit(ref payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))), _ => Proc::Err, },
+        Proc::CastList(l) => match l.as_ref() { List::ListLit(v) => Proc::CastInt(Box::new(Int::NumLit(v.len() as i64))), _ => Proc::Err, },
+        Proc::CastMap(m) => match m.as_ref() { Map::MapLit(ref payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))), _ => Proc::Err, },
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
@@ -2827,12 +2827,12 @@ fold_int(s.clone(), res) <--
     if let Int::CountBag(left, right) = s,
     fold_proc(left.as_ref().clone(), lv),
     fold_proc(right.as_ref().clone(), rv),
-    if (match & lv { Proc::ProcBag(_) => true, _ => false }),
+    if (match & lv { Proc::CastBag(_) => true, _ => false }),
     let b = lv,
     let e = rv,
     let res = Int::NumLit(({ match & b {
-        Proc::ProcBag(bag) => match bag.as_ref() { Bag::BagLit(h) => mettail_runtime::HashBag::count(h, & e) as i64, _ => panic!("count: expected bag literal") },
-        _ => panic!("count: expected ProcBag")
+        Proc::CastBag(bag) => match bag.as_ref() { Bag::BagLit(h) => mettail_runtime::HashBag::count(h, & e) as i64, _ => panic!("count: expected bag literal") },
+        _ => panic!("count: expected CastBag")
     } }));
 
 rw_int(s.clone(), t.clone()) <--
@@ -2884,12 +2884,12 @@ rw_proc(lhs.clone(), match (lhs, vi) {
     rw_int(field_val, t);
 
 rw_proc(lhs.clone(), match (lhs, vi) {
-    (Proc::ProcMap(_), 0usize) => Proc::ProcMap(Box::new(t.clone())),
+    (Proc::CastMap(_), 0usize) => Proc::CastMap(Box::new(t.clone())),
     _ => unreachable!(),
 }) <--
     proc(lhs),
     for (field_val, vi) in { std::thread_local! { static POOL_PROC_SCONG_MAP : std::cell::Cell < Vec < (Map, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_SCONG_MAP.with(| p | p.take()); buf.clear(); match lhs {
-        Proc::ProcMap(x0) => {
+        Proc::CastMap(x0) => {
             buf.push(((** x0).clone(), 0usize));
         },
         _ => {},

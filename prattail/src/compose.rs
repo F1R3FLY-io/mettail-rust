@@ -602,6 +602,7 @@ pub fn compose_many(specs: &[&LanguageSpec]) -> Result<LanguageSpec, Vec<Composi
             log_semiring_model_path: None,
             dispatch_strategy: DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
+            literal_eval: std::collections::HashMap::new(),
         });
     }
 
@@ -785,6 +786,7 @@ mod tests {
             log_semiring_model_path: None,
             dispatch_strategy: DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
+            literal_eval: std::collections::HashMap::new(),
         }
     }
 
@@ -911,6 +913,7 @@ mod tests {
             log_semiring_model_path: None,
             dispatch_strategy: DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
+            literal_eval: std::collections::HashMap::new(),
         };
 
         let err = compose_languages(&spec_a, &spec_b).expect_err("should fail");
@@ -1154,6 +1157,7 @@ mod tests {
             log_semiring_model_path: None,
             dispatch_strategy: DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
+            literal_eval: std::collections::HashMap::new(),
         };
 
         let merged = compose_languages(&spec_a, &spec_b).expect("composition should succeed");
@@ -1235,6 +1239,7 @@ mod tests {
                 log_semiring_model_path: None,
                 dispatch_strategy: DispatchStrategy::Static,
                 literal_patterns: LiteralPatterns::default(),
+                literal_eval: std::collections::HashMap::new(),
             };
             // Manually set prefix_precedence to simulate user override
             spec.rules[0].prefix_precedence = Some(10);
@@ -1270,6 +1275,7 @@ mod tests {
                 log_semiring_model_path: None,
                 dispatch_strategy: DispatchStrategy::Static,
                 literal_patterns: LiteralPatterns::default(),
+                literal_eval: std::collections::HashMap::new(),
             };
             spec.rules[0].prefix_precedence = Some(20);
             spec
@@ -1318,6 +1324,7 @@ mod tests {
                 log_semiring_model_path: None,
                 dispatch_strategy: DispatchStrategy::Static,
                 literal_patterns: LiteralPatterns::default(),
+                literal_eval: std::collections::HashMap::new(),
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec
@@ -1351,6 +1358,7 @@ mod tests {
                 log_semiring_model_path: None,
                 dispatch_strategy: DispatchStrategy::Static,
                 literal_patterns: LiteralPatterns::default(),
+                literal_eval: std::collections::HashMap::new(),
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec

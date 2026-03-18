@@ -1150,6 +1150,7 @@ mod tests {
             None,                              // log_semiring_model_path
             crate::DispatchStrategy::Static,   // dispatch_strategy
             crate::LiteralPatterns::default(), // literal_patterns
+            std::collections::HashMap::new(),  // literal_eval
         );
 
         assert_eq!(spec.beam_width, BeamWidthConfig::Explicit(1.5));

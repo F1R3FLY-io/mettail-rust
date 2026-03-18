@@ -1310,6 +1310,7 @@ mod tests {
             log_semiring_model_path: None,
             dispatch_strategy: crate::DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
+            literal_eval: std::collections::HashMap::new(),
         }
     }
 
@@ -1713,6 +1714,7 @@ mod tests {
             log_semiring_model_path: None,
             dispatch_strategy: crate::DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
+            literal_eval: std::collections::HashMap::new(),
         };
 
         let bundle = build_bundle(&spec);
@@ -1788,6 +1790,7 @@ mod tests {
             log_semiring_model_path: None,
             dispatch_strategy: crate::DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
+            literal_eval: std::collections::HashMap::new(),
         };
 
         let bundle = build_bundle(&spec);
@@ -1854,6 +1857,7 @@ mod tests {
             log_semiring_model_path: None,
             dispatch_strategy: crate::DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
+            literal_eval: std::collections::HashMap::new(),
         };
 
         let bundle = build_bundle(&spec);

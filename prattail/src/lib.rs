@@ -208,6 +208,10 @@ impl DispatchStrategy {
 /// - float:   `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?`
 /// - string:  `"([^"\\]|\\.)*"`
 /// - ident:   `[a-zA-Z_][a-zA-Z0-9_]*`
+///
+/// When `boolean` is `Some(pattern)`, the lexer uses that regex for boolean
+/// literals (e.g. `yes|no`) and emits a single token with the matched text;
+/// when `None`, the default `true`/`false` keywords are used.
 #[derive(Debug, Clone)]
 pub struct LiteralPatterns {
     /// Integer literal pattern (e.g., `[0-9]+`).
@@ -218,6 +222,8 @@ pub struct LiteralPatterns {
     pub string: String,
     /// Identifier pattern (e.g., `[a-zA-Z_][a-zA-Z0-9_]*`).
     pub ident: String,
+    /// Optional boolean literal pattern (e.g. `yes|no`). When `None`, default `true`/`false` keywords are used.
+    pub boolean: Option<String>,
 }
 
 /// The embedded content of `literal_patterns.ebnf`, compiled into the binary.
@@ -259,6 +265,10 @@ pub struct LanguageSpec {
     /// Configurable literal token patterns for the lexer.
     /// Default: `LiteralPatterns::default()` (standard patterns from `literal_patterns.ebnf`).
     pub literal_patterns: LiteralPatterns,
+    /// Optional custom eval code per literal category (Int, Float, Bool, Str).
+    /// Key = category name, value = Rust expression string that takes `text: &str` in scope and returns the value.
+    /// When present for a category, the generated lexer uses this instead of default parsing.
+    pub literal_eval: std::collections::HashMap<String, String>,
 }
 
 /// A category (type) in the language.
@@ -425,6 +435,7 @@ impl LanguageSpec {
             None,
             DispatchStrategy::Static,
             LiteralPatterns::default(),
+            std::collections::HashMap::new(),
         )
     }
 
@@ -433,6 +444,7 @@ impl LanguageSpec {
     /// All classification flags (is_infix, is_postfix, is_cast, etc.) are
     /// derived automatically via [`classify::classify_rule()`]. The bridge
     /// only needs to provide structural data and DSL annotations.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_options(
         name: String,
         types: Vec<CategorySpec>,
@@ -441,6 +453,7 @@ impl LanguageSpec {
         log_semiring_model_path: Option<String>,
         dispatch_strategy: DispatchStrategy,
         literal_patterns: LiteralPatterns,
+        literal_eval: std::collections::HashMap<String, String>,
     ) -> Self {
         let cat_names: Vec<String> = types.iter().map(|t| t.name.clone()).collect();
         let rules = inputs
@@ -481,6 +494,7 @@ impl LanguageSpec {
             log_semiring_model_path,
             dispatch_strategy,
             literal_patterns,
+            literal_eval,
         }
     }
 }

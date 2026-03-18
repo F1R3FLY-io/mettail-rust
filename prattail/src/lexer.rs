@@ -33,6 +33,8 @@ pub struct LexerInput {
     pub needs: BuiltinNeeds,
     /// Configurable literal token patterns for lexer generation.
     pub literal_patterns: LiteralPatterns,
+    /// Custom eval code per literal category (Int, Float, Bool, Str). Key = category name, value = Rust expr string.
+    pub literal_eval: std::collections::HashMap<String, String>,
 }
 
 /// Statistics from the lexer generation pipeline (for diagnostics).
@@ -79,8 +81,12 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
         token_kinds.push(TokenKind::Float);
     }
     if input.needs.boolean {
-        token_kinds.push(TokenKind::True);
-        token_kinds.push(TokenKind::False);
+        if input.literal_patterns.boolean.is_some() {
+            token_kinds.push(TokenKind::BooleanLit);
+        } else {
+            token_kinds.push(TokenKind::True);
+            token_kinds.push(TokenKind::False);
+        }
     }
     if input.needs.string_lit {
         token_kinds.push(TokenKind::StringLit);
@@ -93,8 +99,13 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
     let sparsity = analyze_sparsity(&min_dfa);
 
     // Step 6: Generate code
-    let (code, codegen_strategy) =
-        generate_lexer_code(&min_dfa, &partition, &token_kinds, &input.language_name);
+    let (code, codegen_strategy) = generate_lexer_code(
+        &min_dfa,
+        &partition,
+        &token_kinds,
+        &input.language_name,
+        &input.literal_eval,
+    );
 
     let stats = LexerStats {
         num_terminals: input.terminals.len(),
@@ -143,8 +154,12 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
         token_kinds.push(TokenKind::Float);
     }
     if input.needs.boolean {
-        token_kinds.push(TokenKind::True);
-        token_kinds.push(TokenKind::False);
+        if input.literal_patterns.boolean.is_some() {
+            token_kinds.push(TokenKind::BooleanLit);
+        } else {
+            token_kinds.push(TokenKind::True);
+            token_kinds.push(TokenKind::False);
+        }
     }
     if input.needs.string_lit {
         token_kinds.push(TokenKind::StringLit);
@@ -157,8 +172,13 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     let sparsity = analyze_sparsity(&min_dfa);
 
     // Step 6: Generate code as string
-    let (code, codegen_strategy) =
-        generate_lexer_string(&min_dfa, &partition, &token_kinds, &input.language_name);
+    let (code, codegen_strategy) = generate_lexer_string(
+        &min_dfa,
+        &partition,
+        &token_kinds,
+        &input.language_name,
+        &input.literal_eval,
+    );
 
     let stats = LexerStats {
         num_terminals: input.terminals.len(),
@@ -285,6 +305,7 @@ pub fn extract_terminals(
         terminals: terminal_set.into_iter().collect(),
         needs,
         literal_patterns: LiteralPatterns::default(),
+        literal_eval: std::collections::HashMap::new(),
     }
 }
 

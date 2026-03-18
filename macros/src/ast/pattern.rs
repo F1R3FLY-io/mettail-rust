@@ -1394,8 +1394,18 @@ impl Pattern {
                     }
                 });
                 match cat_str.as_deref() {
-                    Some("List") => quote! { #elem_cat::ProcList(Box::new(#expr)) },
-                    Some("Bag") => quote! { #elem_cat::ProcBag(Box::new(#expr)) },
+                    Some("List") => {
+                        let label = language
+                            .injection_term_label_for_collection("List")
+                            .unwrap_or_else(|| quote::format_ident!("ProcList"));
+                        quote! { #elem_cat::#label(Box::new(#expr)) }
+                    },
+                    Some("Bag") => {
+                        let label = language
+                            .injection_term_label_for_collection("Bag")
+                            .unwrap_or_else(|| quote::format_ident!("ProcBag"));
+                        quote! { #elem_cat::#label(Box::new(#expr)) }
+                    },
                     _ => expr,
                 }
             })
@@ -1495,8 +1505,18 @@ fn generate_collection_rhs_with_constructor(
                     }
                 });
                 match cat_str.as_deref() {
-                    Some("List") => quote! { #elem_cat::ProcList(Box::new(#expr)) },
-                    Some("Bag") => quote! { #elem_cat::ProcBag(Box::new(#expr)) },
+                    Some("List") => {
+                        let label = language
+                            .injection_term_label_for_collection("List")
+                            .unwrap_or_else(|| quote::format_ident!("ProcList"));
+                        quote! { #elem_cat::#label(Box::new(#expr)) }
+                    },
+                    Some("Bag") => {
+                        let label = language
+                            .injection_term_label_for_collection("Bag")
+                            .unwrap_or_else(|| quote::format_ident!("ProcBag"));
+                        quote! { #elem_cat::#label(Box::new(#expr)) }
+                    },
                     _ => expr,
                 }
             })

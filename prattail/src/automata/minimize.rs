@@ -259,6 +259,9 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
     let representative = partitions[start_partition][0];
     new_dfa.states[0].accept = dfa.states[representative as usize].accept.clone();
     new_dfa.states[0].weight = dfa.states[representative as usize].weight;
+    new_dfa.states[0].accept_candidates = dfa.states[representative as usize]
+        .accept_candidates
+        .clone();
 
     // Assign remaining states
     for &part_idx in &non_empty {
@@ -266,11 +269,11 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
             continue; // already assigned (start partition)
         }
         let rep = partitions[part_idx][0];
-        let new_state = new_dfa.add_state(DfaState {
-            transitions: vec![DEAD_STATE; num_classes],
-            accept: dfa.states[rep as usize].accept.clone(),
-            weight: dfa.states[rep as usize].weight,
-        });
+        let mut state = DfaState::with_classes(num_classes);
+        state.accept = dfa.states[rep as usize].accept.clone();
+        state.weight = dfa.states[rep as usize].weight;
+        state.accept_candidates = dfa.states[rep as usize].accept_candidates.clone();
+        let new_state = new_dfa.add_state(state);
         partition_to_new_state[part_idx] = new_state;
     }
 
@@ -365,6 +368,7 @@ pub fn canonicalize_state_order(dfa: &mut Dfa) {
             transitions: new_transitions,
             accept: old_state.accept.clone(),
             weight: old_state.weight,
+            accept_candidates: old_state.accept_candidates.clone(),
         });
     }
 

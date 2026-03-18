@@ -186,6 +186,7 @@ fn bench_codegen(c: &mut Criterion) {
                     &prepared.partition,
                     &prepared.token_kinds,
                     &prepared.spec.name,
+                    &std::collections::HashMap::new(),
                 )
             });
         });

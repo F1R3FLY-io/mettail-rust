@@ -179,6 +179,8 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         _ => unreachable!("dispatch type validated at parse time"),
     };
 
+    let (literal_patterns, literal_eval) = build_literal_config(language);
+
     LanguageSpec::with_options(
         language.name.to_string(),
         categories,
@@ -186,8 +188,57 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         beam_width,
         log_semiring_model_path,
         dispatch_strategy,
-        LiteralPatterns::default(),
+        literal_patterns,
+        literal_eval,
     )
+}
+
+/// Build LiteralPatterns and literal_eval map from language.literals.
+/// When literals is None, returns default patterns and empty eval map.
+fn build_literal_config(
+    language: &LanguageDef,
+) -> (LiteralPatterns, std::collections::HashMap<String, String>) {
+    let default_patterns = LiteralPatterns::default();
+    let mut literal_patterns = LiteralPatterns {
+        integer: default_patterns.integer.clone(),
+        float: default_patterns.float.clone(),
+        string: default_patterns.string.clone(),
+        ident: default_patterns.ident.clone(),
+        boolean: default_patterns.boolean.clone(),
+    };
+    let mut literal_eval: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
+    let Some(ref block) = language.literals else {
+        return (literal_patterns, literal_eval);
+    };
+
+    for spec in &block.specs {
+        let name = spec.type_name.to_string();
+        let expr = &spec.eval;
+        let eval_code = quote::quote! { #expr }.to_string();
+        match name.as_str() {
+            "Int" => {
+                literal_patterns.integer = spec.pattern.clone();
+                literal_eval.insert(name, eval_code);
+            },
+            "Float" => {
+                literal_patterns.float = spec.pattern.clone();
+                literal_eval.insert(name, eval_code);
+            },
+            "Str" => {
+                literal_patterns.string = spec.pattern.clone();
+                literal_eval.insert(name, eval_code);
+            },
+            "Bool" => {
+                literal_patterns.boolean = Some(spec.pattern.clone());
+                literal_eval.insert(name, eval_code);
+            },
+            _ => {},
+        }
+    }
+
+    (literal_patterns, literal_eval)
 }
 
 /// Convert a single grammar rule to a PraTTaIL `RuleSpecInput`.

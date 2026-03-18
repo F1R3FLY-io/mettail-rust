@@ -45,6 +45,8 @@ pub enum TokenKind {
     True,
     /// Boolean literal `false`
     False,
+    /// Custom boolean literal (regex match, eval converts text to bool). Used when literal_patterns.boolean is Some.
+    BooleanLit,
     /// String literal
     StringLit,
     /// A fixed terminal symbol (operator, keyword, delimiter).
@@ -65,7 +67,7 @@ impl TokenKind {
             TokenKind::Ident => 1,
             TokenKind::Integer => 2,
             TokenKind::Float => 3,
-            TokenKind::True | TokenKind::False => 10,
+            TokenKind::True | TokenKind::False | TokenKind::BooleanLit => 10,
             TokenKind::StringLit => 2,
             TokenKind::Fixed(_) => 10,
             TokenKind::Dollar => 5,
@@ -199,14 +201,26 @@ pub struct DfaState {
     /// Length is always `num_classes` (stored in parent `Dfa`).
     /// `DEAD_STATE` means no transition for that equivalence class.
     pub transitions: Vec<StateId>,
-    /// If this is an accepting state, which token kind it produces.
+    /// If this is an accepting state, which token kind it produces by default.
+    ///
+    /// This is the highest-priority candidate (lowest tropical weight) among
+    /// all accepting NFA states in the subset. It is preserved for backwards
+    /// compatibility with existing code that expects a single winning token
+    /// kind.
     pub accept: Option<TokenKind>,
-    /// Tropical weight for this accepting state.
+    /// Tropical weight for the default accepting token kind.
     ///
     /// Inherits from the highest-priority NFA accept state during subset
-    /// construction. Lower weight = higher priority.
-    /// Non-accepting states have `TropicalWeight::zero()` (infinity).
+    /// construction. Lower weight = higher priority. Non-accepting states
+    /// have `TropicalWeight::zero()` (infinity).
     pub weight: TropicalWeight,
+    /// All accepting token kinds reachable in this DFA state, along with their
+    /// tropical weights, sorted by increasing weight (highest priority first).
+    ///
+    /// This is used by the generated lexer to attempt multiple candidate token
+    /// kinds in priority order when evaluating literal text, falling back when
+    /// an `eval` function reports failure.
+    pub accept_candidates: Vec<(TokenKind, TropicalWeight)>,
 }
 
 impl DfaState {
@@ -216,6 +230,7 @@ impl DfaState {
             transitions: vec![DEAD_STATE; num_classes],
             accept: None,
             weight: TropicalWeight::zero(),
+            accept_candidates: Vec::new(),
         }
     }
 }

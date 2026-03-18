@@ -16,9 +16,35 @@ language! {
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
-        ![Vec<Proc>] as List
+        ![Vec<Proc>] as List ["[", "]", ","]
         ![mettail_runtime::HashBag<Proc>] as Bag [ "#{", "}#", "|" ]
         ![HashMap<Proc, Proc>] as Map
+    },
+
+    literals {
+        Int {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)";
+            eval: ![ {
+                // Strip digit separators (e.g. 1_000_000 or 0xFF_FF_FF) before parsing.
+                let s = text.replace('_', "");
+                let body = s.as_str();
+                let (radix, digits) = if let Some(h) = body.strip_prefix("0x") { (16, h) }
+                    else if let Some(o) = body.strip_prefix("0o") { (8, o) }
+                    else if let Some(b) = body.strip_prefix("0b") { (2, b) }
+                    else { (10, body) };
+
+                i64::from_str_radix(digits, radix)
+            } ]
+        }
+        Float {
+            // Require decimal point or exponent so e.g. "3" is not matched (stays integer).
+            pattern: r"[0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?";
+            eval: ![ {
+                // Strip digit separators (e.g. 1_000_000.5) before parsing.
+                let cleaned = text.replace('_', "");
+                cleaned.parse::<f64>()
+            } ]
+        }
     },
 
     terms {
@@ -50,9 +76,9 @@ language! {
         CastFloat . k:Float |- k : Proc;
         CastBool . k:Bool |- k : Proc;
         CastStr . s:Str |- s : Proc;
-        ProcList . l:List |- l : Proc;
-        ProcBag . b:Bag |- b : Proc;
-        ProcMap . m:Map |- m : Proc;
+        CastList . l:List |- l : Proc;
+        CastBag . b:Bag |- b : Proc;
+        CastMap . m:Map |- m : Proc;
 
         // and invoke any methods on them
         Add . a:Proc, b:Proc |- a "+" b : Proc ![
@@ -175,11 +201,11 @@ language! {
             }}
         ] fold;
 
-        // List operations: take Proc, match ProcList/ListLit in semantic (like arithmetic)
+        // List operations: take Proc, match CastList/ListLit in semantic (like arithmetic)
         ConcatList . a:Proc, b:Proc |- "concat" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
-                (Proc::ProcList(la), Proc::ProcList(lb)) => match (la.as_ref(), lb.as_ref()) {
-                    (List::ListLit(va), List::ListLit(vb)) => { let mut o = va.clone(); o.extend(vb.iter().cloned()); Proc::ProcList(Box::new(List::ListLit(o))) },
+                (Proc::CastList(la), Proc::CastList(lb)) => match (la.as_ref(), lb.as_ref()) {
+                    (List::ListLit(va), List::ListLit(vb)) => { let mut o = va.clone(); o.extend(vb.iter().cloned()); Proc::CastList(Box::new(List::ListLit(o))) },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -187,25 +213,25 @@ language! {
         ] fold;
         ElemList . a:Proc, i:Proc |- "at" "(" a "," i ")" : Proc ![
             { match (&a, &i) {
-                (Proc::ProcList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) { (List::ListLit(v), Int::NumLit(n)) => v.get(*n as usize).cloned().expect("at: index out of bounds"), _ => Proc::Err },
+                (Proc::CastList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) { (List::ListLit(v), Int::NumLit(n)) => v.get(*n as usize).cloned().expect("at: index out of bounds"), _ => Proc::Err },
                 _ => Proc::Err,
             }}
         ] fold;
         DeleteList . a:Proc, i:Proc |- "delete" "(" a "," i ")" : Proc ![
             { match (&a, &i) {
-                (Proc::ProcList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) {
-                    (List::ListLit(v), Int::NumLit(n)) => { let idx = *n as usize; let mut vec = v.clone(); if idx >= vec.len() { panic!("delete: index out of bounds"); } vec.remove(idx); Proc::ProcList(Box::new(List::ListLit(vec))) },
+                (Proc::CastList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) {
+                    (List::ListLit(v), Int::NumLit(n)) => { let idx = *n as usize; let mut vec = v.clone(); if idx >= vec.len() { panic!("delete: index out of bounds"); } vec.remove(idx); Proc::CastList(Box::new(List::ListLit(vec))) },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
             }}
         ] fold;
 
-        // Bag operations: take Proc, match ProcBag/BagLit in semantic (like arithmetic)
+        // Bag operations: take Proc, match CastBag/BagLit in semantic (like arithmetic)
         UnionBag . a:Proc, b:Proc |- "union" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
-                (Proc::ProcBag(ba), Proc::ProcBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
-                    (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::ProcBag(Box::new(Bag::BagLit(ha.union(hb)))),
+                (Proc::CastBag(ba), Proc::CastBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
+                    (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::CastBag(Box::new(Bag::BagLit(ha.union(hb)))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -213,14 +239,14 @@ language! {
         ] fold;
         RemoveBag . a:Proc, e:Proc |- "remove" "(" a "," e ")" : Proc ![
             { match &a {
-                Proc::ProcBag(b) => match b.as_ref() { Bag::BagLit(h) => Proc::ProcBag(Box::new(Bag::BagLit(h.remove_one(&e)))), _ => Proc::Err },
+                Proc::CastBag(b) => match b.as_ref() { Bag::BagLit(h) => Proc::CastBag(Box::new(Bag::BagLit(h.remove_one(&e)))), _ => Proc::Err },
                 _ => Proc::Err,
             }}
         ] fold;
         DiffBag . a:Proc, b:Proc |- "diff" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
-                (Proc::ProcBag(ba), Proc::ProcBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
-                    (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::ProcBag(Box::new(Bag::BagLit(ha.diff(hb)))),
+                (Proc::CastBag(ba), Proc::CastBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
+                    (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::CastBag(Box::new(Bag::BagLit(ha.diff(hb)))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -228,14 +254,14 @@ language! {
         ] fold;
         CountBag . b:Proc, e:Proc |- "count" "(" b "," e ")" : Int ![
             { match &b {
-                Proc::ProcBag(bag) => match bag.as_ref() { Bag::BagLit(h) => mettail_runtime::HashBag::count(h, &e) as i64, _ => panic!("count: expected bag literal") }, _ => panic!("count: expected ProcBag")
+                Proc::CastBag(bag) => match bag.as_ref() { Bag::BagLit(h) => mettail_runtime::HashBag::count(h, &e) as i64, _ => panic!("count: expected bag literal") }, _ => panic!("count: expected CastBag")
             }}
         ] fold;
 
-        // Map operations: take Proc (ProcMap/MapLit), return Proc
+        // Map operations: take Proc (CastMap/MapLit), return Proc
         GetMap . m:Proc, k:Proc |- "get" "(" m "," k ")" : Proc ![
             { match &m {
-                Proc::ProcMap(inner) => match inner.as_ref() {
+                Proc::CastMap(inner) => match inner.as_ref() {
                     Map::MapLit(ref payload) => payload.get(&k).cloned().unwrap_or(Proc::Err),
                     _ => Proc::Err,
                 },
@@ -244,11 +270,11 @@ language! {
         ] fold;
         PutMap . m:Proc, k:Proc, v:Proc |- "put" "(" m "," k "," v ")" : Proc ![
             { match &m {
-                Proc::ProcMap(inner) => match inner.as_ref() {
+                Proc::CastMap(inner) => match inner.as_ref() {
                     Map::MapLit(ref payload) => {
                         let mut new_map = payload.clone();
                         new_map.insert(k.clone(), v.clone());
-                        Proc::ProcMap(Box::new(Map::MapLit(new_map)))
+                        Proc::CastMap(Box::new(Map::MapLit(new_map)))
                     },
                     _ => Proc::Err,
                 },
@@ -257,11 +283,11 @@ language! {
         ] fold;
         DeleteMap . m:Proc, k:Proc |- "mapdelete" "(" m "," k ")" : Proc ![
             { match &m {
-                Proc::ProcMap(inner) => match inner.as_ref() {
+                Proc::CastMap(inner) => match inner.as_ref() {
                     Map::MapLit(ref payload) => {
                         let mut new_map = payload.clone();
                         new_map.remove(&k);
-                        Proc::ProcMap(Box::new(Map::MapLit(new_map)))
+                        Proc::CastMap(Box::new(Map::MapLit(new_map)))
                     },
                     _ => Proc::Err,
                 },
@@ -270,11 +296,11 @@ language! {
         ] fold;
         MergeMap . a:Proc, b:Proc |- "merge" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
-                (Proc::ProcMap(ma), Proc::ProcMap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+                (Proc::CastMap(ma), Proc::CastMap(mb)) => match (ma.as_ref(), mb.as_ref()) {
                     (Map::MapLit(pa), Map::MapLit(pb)) => {
                         let mut m = pa.clone();
                         for (k, v) in pb.iter() { m.insert(k.clone(), v.clone()); }
-                        Proc::ProcMap(Box::new(Map::MapLit(m)))
+                        Proc::CastMap(Box::new(Map::MapLit(m)))
                     },
                     _ => Proc::Err,
                 },
@@ -283,7 +309,7 @@ language! {
         ] fold;
         HasMap . m:Proc, k:Proc |- "has" "(" m "," k ")" : Proc ![
             { match &m {
-                Proc::ProcMap(inner) => match inner.as_ref() {
+                Proc::CastMap(inner) => match inner.as_ref() {
                     Map::MapLit(ref payload) => Proc::CastBool(Box::new(Bool::BoolLit(payload.get(&k).is_some()))),
                     _ => Proc::Err,
                 },
@@ -292,8 +318,8 @@ language! {
         ] fold;
         KeysMap . m:Proc |- "keys" "(" m ")" : Proc ![
             { match &m {
-                Proc::ProcMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => Proc::ProcList(Box::new(List::ListLit(payload.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()))),
+                Proc::CastMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => Proc::CastList(Box::new(List::ListLit(payload.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -301,8 +327,8 @@ language! {
         ] fold;
         ValuesMap . m:Proc |- "values" "(" m ")" : Proc ![
             { match &m {
-                Proc::ProcMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => Proc::ProcList(Box::new(List::ListLit(payload.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()))),
+                Proc::CastMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => Proc::CastList(Box::new(List::ListLit(payload.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -345,11 +371,11 @@ language! {
                     Str::StringLit(x) => Proc::CastInt(Box::new(Int::NumLit(x.len() as i64))),
                     _ => Proc::Err,
                 },
-                Proc::ProcList(l) => match l.as_ref() {
+                Proc::CastList(l) => match l.as_ref() {
                     List::ListLit(v) => Proc::CastInt(Box::new(Int::NumLit(v.len() as i64))),
                     _ => Proc::Err,
                 },
-                Proc::ProcMap(m) => match m.as_ref() {
+                Proc::CastMap(m) => match m.as_ref() {
                     Map::MapLit(ref payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))),
                     _ => Proc::Err,
                 },
@@ -523,7 +549,7 @@ language! {
         KeysMapCong . | S ~> T |- (KeysMap S) ~> (KeysMap T);
         ValuesMapCong . | S ~> T |- (ValuesMap S) ~> (ValuesMap T);
 
-        ProcMapCong . | S ~> T |- (ProcMap S) ~> (ProcMap T);
+        CastMapCong . | S ~> T |- (CastMap S) ~> (CastMap T);
         CastIntCong . | S ~> T |- (CastInt S) ~> (CastInt T);
         ToIntCong . | S ~> T |- (ToInt S) ~> (ToInt T);
         ToFloatCong . | S ~> T |- (ToFloat S) ~> (ToFloat T);

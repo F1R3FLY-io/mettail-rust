@@ -72,6 +72,7 @@ fn calculator_spec() -> LanguageSpec {
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
+        literal_eval: std::collections::HashMap::new(),
     }
 }
 
@@ -93,6 +94,63 @@ fn test_generate_parser_produces_code() {
 
     // Should contain parse entry point
     assert!(code_str.contains("parse"), "should contain parse method");
+}
+
+#[test]
+fn test_custom_literal_eval_in_generated_lexer() {
+    use crate::RuleSpecInput;
+    // When literal_eval is set for Int, generated code should use it instead of default parse
+    let mut literal_eval = std::collections::HashMap::new();
+    literal_eval.insert("Int".to_string(), "text.parse::<i64>().unwrap_or(-1_i64)".to_string());
+    let spec = LanguageSpec::with_options(
+        "CustomInt".to_string(),
+        vec![CategorySpec {
+            name: "Int".to_string(),
+            native_type: Some("i64".to_string()),
+            is_primary: true,
+            has_var: true,
+        }],
+        vec![RuleSpecInput {
+            label: "NumLit".to_string(),
+            category: "Int".to_string(),
+            syntax: vec![],
+            associativity: Associativity::Left,
+            prefix_precedence: None,
+            has_rust_code: false,
+            rust_code: None,
+            eval_mode: None,
+        }],
+        BeamWidthConfig::Disabled,
+        None,
+        DispatchStrategy::Static,
+        LiteralPatterns::default(),
+        literal_eval,
+    );
+    let code = generate_parser(&spec);
+    let code_str = code.to_string();
+    // Custom eval expression should be inlined into the generated lexer code.
+    assert!(
+        code_str.contains("unwrap_or") || code_str.contains("let text = text"),
+        "generated lexer should contain custom Int eval: {}",
+        &code_str[..code_str.len().min(4000)]
+    );
+}
+
+#[test]
+fn test_backward_compat_empty_literal_eval_uses_default_parse() {
+    // When literal_eval is empty (no custom literals), generated code uses default integer parse
+    let spec = calculator_spec();
+    assert!(
+        spec.literal_eval.is_empty(),
+        "calculator_spec should have empty literal_eval for backward compat"
+    );
+    let code = generate_parser(&spec);
+    let code_str = code.to_string();
+    // Integer tokens should still be present in the generated lexer code.
+    assert!(
+        code_str.contains("Integer (i64)") || code_str.contains("Token :: Integer"),
+        "default spec should mention Integer tokens in generated lexer"
+    );
 }
 
 #[test]
@@ -187,6 +245,7 @@ fn test_generate_parser_two_categories() {
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
+        literal_eval: std::collections::HashMap::new(),
     };
 
     let code = generate_parser(&spec);
@@ -423,7 +482,13 @@ mod wfst_lexer_weight_tests {
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
         let dfa = minimize_dfa(&dfa);
-        let (code, _) = generate_lexer_string(&dfa, &partition, &token_kinds, "test");
+        let (code, _) = generate_lexer_string(
+            &dfa,
+            &partition,
+            &token_kinds,
+            "test",
+            &std::collections::HashMap::new(),
+        );
         code
     }
 
@@ -627,6 +692,7 @@ mod wfst_lexer_weight_tests {
             None,
             DispatchStrategy::Weighted,
             LiteralPatterns::default(),
+            std::collections::HashMap::new(),
         )
     }
 

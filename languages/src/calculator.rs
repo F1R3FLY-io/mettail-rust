@@ -18,6 +18,58 @@ language! {
         ![mettail_runtime::HashBag<Proc>] as Bag
         ![HashMap<Proc, Proc>] as Map
     },
+    literals {
+        Int {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)";
+            eval: ![ {
+                // Strip digit separators (e.g. 1_000_000 or 0xFF_FF_FF) before parsing.
+                let s = text.replace('_', "");
+                let body = s.as_str();
+                let (radix, digits) = if let Some(h) = body.strip_prefix("0x") { (16, h) }
+                    else if let Some(o) = body.strip_prefix("0o") { (8, o) }
+                    else if let Some(b) = body.strip_prefix("0b") { (2, b) }
+                    else { (10, body) };
+
+                // Lexer expects Result<i64, E>; Token::Integer(i64). Native type (e.g. i32) is applied in the trampoline.
+                i64::from_str_radix(digits, radix)
+            } ]
+        }
+        Float {
+            // Require decimal point or exponent so e.g. "3" is not matched (stays integer).
+            pattern: r"[0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?";
+            eval: ![ {
+                // Strip digit separators (e.g. 1_000_000.5) before parsing.
+                let cleaned = text.replace('_', "");
+                cleaned.parse::<f64>()
+            } ]
+        }
+        Bool {
+            pattern: r"yeap|nope|true|false";
+            eval: ![ {
+                match text {
+                    "yeap" => Ok(true),
+                    "nope" => Ok(false),
+                    "true" => Ok(true),
+                    "false" => Ok(false),
+                    _ => Err(()),
+                }
+            } ]
+        }
+        Str {
+            pattern: r#""([^"\\]|\\.)*""#;
+            eval: ![ {
+                if text.len() < 2 {
+                    Err(())
+                } else {
+                    let inner = &text[1..text.len()-1];
+                    let unescaped = inner
+                        .replace("\\\"", "\"")
+                        .replace("\\\\", "\\");
+                    Ok(unescaped.to_string())
+                }
+            } ]
+        }
+    },
     terms {
         // Injection into Proc (unified variant) so List/Bag elements are Proc
         ProcInt . i:Int |- i : Proc ;

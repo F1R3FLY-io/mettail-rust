@@ -54,6 +54,8 @@ pub struct LexerBundle {
     category_names: Vec<String>,
     /// Configurable literal token patterns for lexer generation.
     literal_patterns: LiteralPatterns,
+    /// Custom eval code per literal category (Int, Float, Bool, Str). Passed to codegen.
+    literal_eval: std::collections::HashMap<String, String>,
 }
 
 /// Category metadata for the parser pipeline. Send+Sync.
@@ -219,6 +221,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         has_binders,
         category_names: lexer_category_names,
         literal_patterns: spec.literal_patterns.clone(),
+        literal_eval: spec.literal_eval.clone(),
     };
 
     // ── Parser bundle ──
@@ -427,6 +430,12 @@ fn generate_lexer_code(bundle: &LexerBundle) -> String {
         &bundle.category_names,
     );
     lexer_input.literal_patterns = bundle.literal_patterns.clone();
+    lexer_input.literal_eval = bundle.literal_eval.clone();
+    if bundle.literal_patterns.boolean.is_some() {
+        lexer_input.terminals.retain(|t| {
+            !matches!(t.kind, crate::automata::TokenKind::True | crate::automata::TokenKind::False)
+        });
+    }
     let (lexer_str, _stats) = generate_lexer_as_string(&lexer_input);
     lexer_str
 }
