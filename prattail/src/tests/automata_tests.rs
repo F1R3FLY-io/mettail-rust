@@ -221,15 +221,15 @@ fn test_rhocalc_terminals() {
 
     // Verify minimization keeps state count reasonable
     assert!(
-        dfa.states.len() <= 30,
-        "RhoCalc DFA should have at most 30 states after minimization, got {}",
+        dfa.states.len() <= 60,
+        "RhoCalc DFA should have at most 60 states after minimization, got {}",
         dfa.states.len()
     );
 
     // Verify equivalence class compression
     assert!(
-        partition.num_classes < 25,
-        "RhoCalc should have fewer than 25 equivalence classes, got {}",
+        partition.num_classes < 50,
+        "RhoCalc should have fewer than 50 equivalence classes, got {}",
         partition.num_classes
     );
 }

@@ -190,13 +190,13 @@ fn test_lexer_stats_rhocalc() {
 
     // RhoCalc should have reasonable stats
     assert!(
-        stats.num_equiv_classes < 30,
-        "RhoCalc should have <30 equivalence classes, got {}",
+        stats.num_equiv_classes < 60,
+        "RhoCalc should have <60 equivalence classes, got {}",
         stats.num_equiv_classes
     );
     assert!(
-        stats.num_minimized_states < 30,
-        "RhoCalc minimized DFA should have <30 states, got {}",
+        stats.num_minimized_states < 60,
+        "RhoCalc minimized DFA should have <60 states, got {}",
         stats.num_minimized_states
     );
 }

@@ -131,6 +131,24 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// Proc U Int32: ...
+	{
+		type: "proc_proc_uint32",
+		tooltip: "Proc U Int32: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "UInt32",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Tern: ... ... ...
 	{
 		type: "int_tern",
@@ -828,6 +846,28 @@ const definitions = [
 		inputsInline: true,
 		output: "Str",
 		colour: "51e05f",
+	},
+
+	// Add U Int32: ... ...
+	{
+		type: "uint32_add_uint32",
+		tooltip: "Add U Int32: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "UInt32",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "UInt32",
+			},
+		],
+		inputsInline: true,
+		output: "UInt32",
+		colour: "e05172",
 	},
 
 	// Add Int: ... ...

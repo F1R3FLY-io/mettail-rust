@@ -106,6 +106,7 @@ export const categoryInfo = {
 			"ProcList",
 			"ProcBag",
 			"ProcMap",
+			"ProcUInt32",
 			"ElemList",
 			"GetMap"
 		],
@@ -118,6 +119,12 @@ export const categoryInfo = {
 			"ProcToStr"
 		],
 		colour: "51e05f",
+	},
+	UInt32: {
+		constructors: [
+			"AddUInt32"
+		],
+		colour: "e05172",
 	}
 };
 

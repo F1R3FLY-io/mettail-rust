@@ -226,6 +226,9 @@ pub struct LiteralPatterns {
     pub boolean: Option<String>,
 }
 
+pub mod int_lit;
+pub use int_lit::{parse_int_lit, IntLit, Suffix};
+
 /// The embedded content of `literal_patterns.ebnf`, compiled into the binary.
 const DEFAULT_LITERAL_PATTERNS_EBNF: &str = include_str!("literal_patterns.ebnf");
 

@@ -209,32 +209,119 @@ fn build_literal_config(
     let mut literal_eval: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
 
+    // Map declared category name -> native Rust type string (if any), so literals can be
+    // attached to arbitrary category names like Int32/UInt64/etc.
+    let mut native_by_cat: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for t in &language.types {
+        if let Some(ref native) = t.native_type {
+            native_by_cat.insert(t.name.to_string(), quote::quote! { #native }.to_string());
+        }
+    }
+
+    // If the language declares integer categories beyond the default i64, widen the integer
+    // token regex to accept suffixed literals (e.g. `23u32`, `5i128`, `123n`).
+    //
+    // This keeps the global default pattern simple (`[0-9]+`) while letting each language
+    // opt into additional integer types via its `types { ... }` section.
+    let mut int_suffixes: Vec<&'static str> = Vec::new();
+    for native in native_by_cat.values() {
+        match native.as_str() {
+            // Signed ints
+            "i8" => int_suffixes.push("i8"),
+            "i16" => int_suffixes.push("i16"),
+            "i32" => int_suffixes.push("i32"),
+            "i64" => int_suffixes.push("i64"),
+            "i128" => int_suffixes.push("i128"),
+            "isize" => int_suffixes.push("isize"),
+            // Unsigned ints
+            "u8" => int_suffixes.push("u8"),
+            "u16" => int_suffixes.push("u16"),
+            "u32" => int_suffixes.push("u32"),
+            "u64" => int_suffixes.push("u64"),
+            "u128" => int_suffixes.push("u128"),
+            "usize" => int_suffixes.push("usize"),
+            _ => {
+                if native.ends_with("BigInt") {
+                    int_suffixes.push("n");
+                }
+                if native.ends_with("BigRat") {
+                    int_suffixes.push("r");
+                }
+            }
+        }
+    }
+
+    // De-duplicate while preserving a stable, long-first ordering (important for suffix splitting).
+    int_suffixes.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    int_suffixes.dedup();
+
+    // Default is i64 decimal only; only add suffix support if needed.
+    if int_suffixes.iter().any(|s| *s != "i64") {
+        // Decimal digits with optional suffix from declared types.
+        // (Prefixes like 0x/0b and digit separators remain opt-in via `literals { Int { pattern } }`.)
+        literal_patterns.integer = format!(
+            r"[0-9]+({})?",
+            int_suffixes.join("|")
+        );
+    }
+
     let Some(ref block) = language.literals else {
         return (literal_patterns, literal_eval);
     };
+
+    fn class_for_native_type(native: &str) -> Option<&'static str> {
+        match native {
+            // Signed integers
+            "i8" | "i16" | "i32" | "i64" | "i128" | "isize" |
+            // Unsigned integers
+            "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => Some("Int"),
+            // Floats
+            "f32" | "f64" => Some("Float"),
+            // Strings
+            "str" | "String" => Some("Str"),
+            // Booleans
+            "bool" => Some("Bool"),
+            _ => {
+                // External types: support num-bigint BigInt as integer literal class.
+                if native.ends_with("BigInt") {
+                    Some("Int")
+                } else {
+                    None
+                }
+            }
+        }
+    }
 
     for spec in &block.specs {
         let name = spec.type_name.to_string();
         let expr = &spec.eval;
         let eval_code = quote::quote! { #expr }.to_string();
-        match name.as_str() {
-            "Int" => {
+        let class = match name.as_str() {
+            "Int" | "Float" | "Str" | "Bool" => Some(name.as_str()),
+            _ => native_by_cat
+                .get(&name)
+                .and_then(|native| class_for_native_type(native.as_str())),
+        };
+
+        match class {
+            Some("Int") => {
                 literal_patterns.integer = spec.pattern.clone();
-                literal_eval.insert(name, eval_code);
-            },
-            "Float" => {
+                // Integer token kind uses "Int" key in the codegen layer.
+                literal_eval.insert("Int".to_string(), eval_code);
+            }
+            Some("Float") => {
                 literal_patterns.float = spec.pattern.clone();
-                literal_eval.insert(name, eval_code);
-            },
-            "Str" => {
+                literal_eval.insert("Float".to_string(), eval_code);
+            }
+            Some("Str") => {
                 literal_patterns.string = spec.pattern.clone();
-                literal_eval.insert(name, eval_code);
-            },
-            "Bool" => {
+                literal_eval.insert("Str".to_string(), eval_code);
+            }
+            Some("Bool") => {
                 literal_patterns.boolean = Some(spec.pattern.clone());
-                literal_eval.insert(name, eval_code);
-            },
-            _ => {},
+                literal_eval.insert("Bool".to_string(), eval_code);
+            }
+            _ => {}
         }
     }
 

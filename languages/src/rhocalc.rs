@@ -25,15 +25,7 @@ language! {
         Int {
             pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)";
             eval: ![ {
-                // Strip digit separators (e.g. 1_000_000 or 0xFF_FF_FF) before parsing.
-                let s = text.replace('_', "");
-                let body = s.as_str();
-                let (radix, digits) = if let Some(h) = body.strip_prefix("0x") { (16, h) }
-                    else if let Some(o) = body.strip_prefix("0o") { (8, o) }
-                    else if let Some(b) = body.strip_prefix("0b") { (2, b) }
-                    else { (10, body) };
-
-                i64::from_str_radix(digits, radix)
+                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
             } ]
         }
         Float {

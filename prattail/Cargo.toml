@@ -20,6 +20,8 @@ grammar-gen = ["dep:proptest"]
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
+num-bigint = "0.4"
+num-traits = "0.2"
 serde = { version = "1", features = ["derive"], optional = true }
 postcard = { version = "1", features = ["alloc"], optional = true }
 proptest = { version = "1", optional = true }

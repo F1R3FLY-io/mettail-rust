@@ -109,7 +109,7 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind]) {
             TokenKind::Eof | TokenKind::Ident => {},
             TokenKind::Integer => {
                 if seen.insert("Integer".to_string()) {
-                    buf.push_str("Integer(i64),");
+                    buf.push_str("Integer(mettail_prattail::IntLit),");
                 }
             },
             TokenKind::Float => {
@@ -359,7 +359,7 @@ fn write_token_constructor(
         TokenKind::Ident => buf.push_str("Some(Token::Ident(text))"),
         TokenKind::Integer => {
             if let Some(eval) = literal_eval.get("Int") {
-                // Custom integer eval: expected to return Result<i64, E>.
+                // Custom integer eval: expected to return Result<IntLit, E>.
                 write!(
                     buf,
                     "match {{ let text = text; {} }} {{ \
@@ -370,9 +370,9 @@ fn write_token_constructor(
                 )
                 .unwrap();
             } else {
-                // Default integer parse: use Result to avoid panics.
+                // Default integer parse: supports suffixes (e.g. 23u32, 10i128, 123n).
                 buf.push_str(
-                    "match text.parse::<i64>() { \
+                    "match mettail_prattail::parse_int_lit(text) { \
                      Ok(v) => Some(Token::Integer(v)), \
                      Err(_) => None \
                      }",
@@ -1271,7 +1271,7 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                 if seen.insert("Integer".to_string()) {
                     variants.push(quote! {
                         /// Integer literal
-                        Integer(i64)
+                        Integer(mettail_prattail::IntLit)
                     });
                 }
             },
@@ -1673,7 +1673,7 @@ pub fn token_kind_to_constructor(kind: &TokenKind) -> TokenStream {
         TokenKind::Eof => quote! { Token::Eof },
         TokenKind::Ident => quote! { Token::Ident(text.to_string()) },
         TokenKind::Integer => quote! {
-            Token::Integer(text.parse::<i64>().expect("invalid integer literal"))
+            Token::Integer(mettail_prattail::parse_int_lit(text).expect("invalid integer literal"))
         },
         TokenKind::Float => quote! {
             Token::Float(text.parse::<f64>().expect("invalid float literal"))

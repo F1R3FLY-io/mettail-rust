@@ -1822,34 +1822,138 @@ fn write_rd_constructor_inline(buf: &mut String, rule: &RDRuleInfo, segments: &[
 /// Write native literal match arms.
 fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
     match native_type {
+        "i8" => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_i8() {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"i8 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
+                cat,
+            )
+            .unwrap();
+        }
+        "i16" => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_i16() {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"i16 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
+                cat,
+            )
+            .unwrap();
+        }
         "i32" => {
             write!(
                 buf,
-                "Token::Integer(v) => {{ let val = *v as i32; *pos += 1; break 'prefix {}::NumLit(val); }},",
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_i32() {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"i32 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
                 cat,
-            ).unwrap();
-        },
-        "i64" | "isize" => {
+            )
+            .unwrap();
+        }
+        "i64" => {
             write!(
                 buf,
-                "Token::Integer(v) => {{ let val = *v; *pos += 1; break 'prefix {}::NumLit(val); }},",
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_i64() {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"i64 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
                 cat,
-            ).unwrap();
-        },
+            )
+            .unwrap();
+        }
+        "i128" => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_i128() {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"i128 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
+                cat,
+            )
+            .unwrap();
+        }
+        "isize" => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_i64().and_then(|x| isize::try_from(x).ok()) {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"isize literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
+                cat,
+            )
+            .unwrap();
+        }
+        "u8" => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_u8() {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"u8 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
+                cat,
+            )
+            .unwrap();
+        }
+        "u16" => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_u16() {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"u16 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
+                cat,
+            )
+            .unwrap();
+        }
         "u32" => {
             write!(
                 buf,
-                "Token::Integer(v) => {{ let val = *v as u32; *pos += 1; break 'prefix {}::NumLit(val); }},",
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_u32() {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"u32 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
                 cat,
-            ).unwrap();
-        },
-        "u64" | "usize" => {
+            )
+            .unwrap();
+        }
+        "u64" => {
             write!(
                 buf,
-                "Token::Integer(v) => {{ let val = *v as u64; *pos += 1; break 'prefix {}::NumLit(val); }},",
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_u64() {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"u64 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
                 cat,
-            ).unwrap();
-        },
+            )
+            .unwrap();
+        }
+        "u128" => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_u128() {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"u128 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
+                cat,
+            )
+            .unwrap();
+        }
+        "usize" => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_u64().and_then(|x| usize::try_from(x).ok()) {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"usize literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
+                cat,
+            )
+            .unwrap();
+        }
         "f32" | "f64" => {
             write!(
                 buf,
