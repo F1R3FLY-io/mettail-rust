@@ -1,6 +1,5 @@
 use num_bigint::BigInt;
 use num_traits::Num;
-use num_traits::ToPrimitive;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum IntLit {
@@ -80,162 +79,62 @@ impl IntLit {
     pub fn to_i8(&self) -> Option<i8> {
         match self {
             IntLit::I8(v) => Some(*v),
-            IntLit::I16(v) => i8::try_from(*v).ok(),
-            IntLit::I32(v) => i8::try_from(*v).ok(),
-            IntLit::I64(v) => i8::try_from(*v).ok(),
-            IntLit::I128(v) => i8::try_from(*v).ok(),
-            IntLit::U8(v) => i8::try_from(*v).ok(),
-            IntLit::U16(v) => i8::try_from(*v).ok(),
-            IntLit::U32(v) => i8::try_from(*v).ok(),
-            IntLit::U64(v) => i8::try_from(*v).ok(),
-            IntLit::U128(v) => i8::try_from(*v).ok(),
-            IntLit::BigInt(v) => v.to_i8(),
-            IntLit::BigRatStub(_) => None,
+            _ => None,
         }
     }
     pub fn to_i16(&self) -> Option<i16> {
         match self {
-            IntLit::I8(v) => Some(*v as i16),
             IntLit::I16(v) => Some(*v),
-            IntLit::I32(v) => i16::try_from(*v).ok(),
-            IntLit::I64(v) => i16::try_from(*v).ok(),
-            IntLit::I128(v) => i16::try_from(*v).ok(),
-            IntLit::U8(v) => Some(*v as i16),
-            IntLit::U16(v) => i16::try_from(*v).ok(),
-            IntLit::U32(v) => i16::try_from(*v).ok(),
-            IntLit::U64(v) => i16::try_from(*v).ok(),
-            IntLit::U128(v) => i16::try_from(*v).ok(),
-            IntLit::BigInt(v) => v.to_i16(),
-            IntLit::BigRatStub(_) => None,
+            _ => None,
         }
     }
     pub fn to_i32(&self) -> Option<i32> {
         match self {
-            IntLit::I8(v) => Some(*v as i32),
-            IntLit::I16(v) => Some(*v as i32),
             IntLit::I32(v) => Some(*v),
-            IntLit::I64(v) => i32::try_from(*v).ok(),
-            IntLit::I128(v) => i32::try_from(*v).ok(),
-            IntLit::U8(v) => Some(*v as i32),
-            IntLit::U16(v) => Some(*v as i32),
-            IntLit::U32(v) => i32::try_from(*v).ok(),
-            IntLit::U64(v) => i32::try_from(*v).ok(),
-            IntLit::U128(v) => i32::try_from(*v).ok(),
-            IntLit::BigInt(v) => v.to_i32(),
-            IntLit::BigRatStub(_) => None,
+            _ => None,
         }
     }
     pub fn to_i64(&self) -> Option<i64> {
         match self {
-            IntLit::I8(v) => Some(*v as i64),
-            IntLit::I16(v) => Some(*v as i64),
-            IntLit::I32(v) => Some(*v as i64),
             IntLit::I64(v) => Some(*v),
-            IntLit::I128(v) => i64::try_from(*v).ok(),
-            IntLit::U8(v) => Some(*v as i64),
-            IntLit::U16(v) => Some(*v as i64),
-            IntLit::U32(v) => Some(*v as i64),
-            IntLit::U64(v) => i64::try_from(*v).ok(),
-            IntLit::U128(v) => i64::try_from(*v).ok(),
-            IntLit::BigInt(v) => v.to_i64(),
-            IntLit::BigRatStub(_) => None,
+            _ => None,
         }
     }
     pub fn to_i128(&self) -> Option<i128> {
         match self {
-            IntLit::I8(v) => Some(*v as i128),
-            IntLit::I16(v) => Some(*v as i128),
-            IntLit::I32(v) => Some(*v as i128),
-            IntLit::I64(v) => Some(*v as i128),
             IntLit::I128(v) => Some(*v),
-            IntLit::U8(v) => Some(*v as i128),
-            IntLit::U16(v) => Some(*v as i128),
-            IntLit::U32(v) => Some(*v as i128),
-            IntLit::U64(v) => Some(*v as i128),
-            IntLit::U128(v) => i128::try_from(*v).ok(),
-            IntLit::BigInt(v) => v.to_i128(),
-            IntLit::BigRatStub(_) => None,
+            _ => None,
         }
     }
 
     pub fn to_u8(&self) -> Option<u8> {
         match self {
-            IntLit::I8(v) => u8::try_from(*v).ok(),
-            IntLit::I16(v) => u8::try_from(*v).ok(),
-            IntLit::I32(v) => u8::try_from(*v).ok(),
-            IntLit::I64(v) => u8::try_from(*v).ok(),
-            IntLit::I128(v) => u8::try_from(*v).ok(),
             IntLit::U8(v) => Some(*v),
-            IntLit::U16(v) => u8::try_from(*v).ok(),
-            IntLit::U32(v) => u8::try_from(*v).ok(),
-            IntLit::U64(v) => u8::try_from(*v).ok(),
-            IntLit::U128(v) => u8::try_from(*v).ok(),
-            IntLit::BigInt(v) => v.to_u8(),
-            IntLit::BigRatStub(_) => None,
+            _ => None,
         }
     }
     pub fn to_u16(&self) -> Option<u16> {
         match self {
-            IntLit::I8(v) => u16::try_from(*v).ok(),
-            IntLit::I16(v) => u16::try_from(*v).ok(),
-            IntLit::I32(v) => u16::try_from(*v).ok(),
-            IntLit::I64(v) => u16::try_from(*v).ok(),
-            IntLit::I128(v) => u16::try_from(*v).ok(),
-            IntLit::U8(v) => Some(*v as u16),
             IntLit::U16(v) => Some(*v),
-            IntLit::U32(v) => u16::try_from(*v).ok(),
-            IntLit::U64(v) => u16::try_from(*v).ok(),
-            IntLit::U128(v) => u16::try_from(*v).ok(),
-            IntLit::BigInt(v) => v.to_u16(),
-            IntLit::BigRatStub(_) => None,
+            _ => None,
         }
     }
     pub fn to_u32(&self) -> Option<u32> {
         match self {
-            IntLit::I8(v) => u32::try_from(*v).ok(),
-            IntLit::I16(v) => u32::try_from(*v).ok(),
-            IntLit::I32(v) => u32::try_from(*v).ok(),
-            IntLit::I64(v) => u32::try_from(*v).ok(),
-            IntLit::I128(v) => u32::try_from(*v).ok(),
-            IntLit::U8(v) => Some(*v as u32),
-            IntLit::U16(v) => Some(*v as u32),
             IntLit::U32(v) => Some(*v),
-            IntLit::U64(v) => u32::try_from(*v).ok(),
-            IntLit::U128(v) => u32::try_from(*v).ok(),
-            IntLit::BigInt(v) => v.to_u32(),
-            IntLit::BigRatStub(_) => None,
+            _ => None,
         }
     }
     pub fn to_u64(&self) -> Option<u64> {
         match self {
-            IntLit::I8(v) => u64::try_from(*v).ok(),
-            IntLit::I16(v) => u64::try_from(*v).ok(),
-            IntLit::I32(v) => u64::try_from(*v).ok(),
-            IntLit::I64(v) => u64::try_from(*v).ok(),
-            IntLit::I128(v) => u64::try_from(*v).ok(),
-            IntLit::U8(v) => Some(*v as u64),
-            IntLit::U16(v) => Some(*v as u64),
-            IntLit::U32(v) => Some(*v as u64),
             IntLit::U64(v) => Some(*v),
-            IntLit::U128(v) => u64::try_from(*v).ok(),
-            IntLit::BigInt(v) => v.to_u64(),
-            IntLit::BigRatStub(_) => None,
+            _ => None,
         }
     }
     pub fn to_u128(&self) -> Option<u128> {
         match self {
-            IntLit::I8(v) => u128::try_from(*v).ok(),
-            IntLit::I16(v) => u128::try_from(*v).ok(),
-            IntLit::I32(v) => u128::try_from(*v).ok(),
-            IntLit::I64(v) => u128::try_from(*v).ok(),
-            IntLit::I128(v) => u128::try_from(*v).ok(),
-            IntLit::U8(v) => Some(*v as u128),
-            IntLit::U16(v) => Some(*v as u128),
-            IntLit::U32(v) => Some(*v as u128),
-            IntLit::U64(v) => Some(*v as u128),
             IntLit::U128(v) => Some(*v),
-            IntLit::BigInt(v) => v.to_u128(),
-            IntLit::BigRatStub(_) => None,
+            _ => None,
         }
     }
 }

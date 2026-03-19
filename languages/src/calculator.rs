@@ -20,9 +20,15 @@ language! {
         ![HashMap<Proc, Proc>] as Map
     },
     literals {
+        UInt32 {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)u32";
+            eval: ![ {
+                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+            } ]
+        }
         Int {
-            // One integer pattern for both Int (i32) and UInt32 (u32). Unsuffixed defaults to i32.
-            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32|u32)?";
+            // Int (i32) literals; unsuffixed defaults to i32.
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32)?";
             eval: ![ {
                 mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::I32)).map_err(|_| ())
             } ]

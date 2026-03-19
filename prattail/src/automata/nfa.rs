@@ -46,9 +46,17 @@ pub fn build_nfa(
         fragments.push(frag);
     }
     if needs.integer {
-        let frag = regex::compile_regex(&patterns.integer, &mut nfa, TokenKind::Integer)
-            .expect("integer pattern should be a valid regex");
-        fragments.push(frag);
+        if patterns.integer_by_category.is_empty() {
+            let frag = regex::compile_regex(&patterns.integer, &mut nfa, TokenKind::Integer)
+                .expect("integer pattern should be a valid regex");
+            fragments.push(frag);
+        } else {
+            for (cat, pat) in &patterns.integer_by_category {
+                let frag = regex::compile_regex(pat, &mut nfa, TokenKind::IntegerLit(cat.clone()))
+                    .expect("integer-by-category pattern should be a valid regex");
+                fragments.push(frag);
+            }
+        }
     }
     if needs.float {
         let frag = regex::compile_regex(&patterns.float, &mut nfa, TokenKind::Float)

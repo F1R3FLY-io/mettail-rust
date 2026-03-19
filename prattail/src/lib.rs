@@ -216,6 +216,11 @@ impl DispatchStrategy {
 pub struct LiteralPatterns {
     /// Integer literal pattern (e.g., `[0-9]+`).
     pub integer: String,
+    /// Optional per-category integer literal patterns.
+    ///
+    /// Key = category name from `types {}` (e.g., `Int`, `UInt32`), value = regex pattern.
+    /// When non-empty, lexer generation can build separate integer token paths per category.
+    pub integer_by_category: std::collections::HashMap<String, String>,
     /// Float literal pattern (e.g., `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?`).
     pub float: String,
     /// String literal pattern (e.g., `"([^"\\]|\\.)*"`).

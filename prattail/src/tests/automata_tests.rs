@@ -315,6 +315,7 @@ fn run_codegen_pipeline(
         &token_kinds,
         "test",
         &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
     );
     code
 }

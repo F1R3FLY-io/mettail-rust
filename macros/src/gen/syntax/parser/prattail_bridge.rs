@@ -197,10 +197,14 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
 /// When literals is None, returns default patterns and empty eval map.
 fn build_literal_config(
     language: &LanguageDef,
-) -> (LiteralPatterns, std::collections::HashMap<String, String>) {
+) -> (
+    LiteralPatterns,
+    std::collections::HashMap<String, String>,
+) {
     let default_patterns = LiteralPatterns::default();
     let mut literal_patterns = LiteralPatterns {
         integer: default_patterns.integer.clone(),
+        integer_by_category: std::collections::HashMap::new(),
         float: default_patterns.float.clone(),
         string: default_patterns.string.clone(),
         ident: default_patterns.ident.clone(),
@@ -305,9 +309,11 @@ fn build_literal_config(
 
         match class {
             Some("Int") => {
-                literal_patterns.integer = spec.pattern.clone();
-                // Integer token kind uses "Int" key in the codegen layer.
-                literal_eval.insert("Int".to_string(), eval_code);
+                // Integer categories coexist; avoid overriding by storing each category separately.
+                literal_patterns
+                    .integer_by_category
+                    .insert(name.clone(), spec.pattern.clone());
+                literal_eval.insert(name.clone(), eval_code);
             }
             Some("Float") => {
                 literal_patterns.float = spec.pattern.clone();
@@ -323,6 +329,12 @@ fn build_literal_config(
             }
             _ => {}
         }
+    }
+
+    // If any integer categories were provided, keep the old single integer path disabled.
+    // Integer lexing/codegen uses the per-category maps instead.
+    if !literal_patterns.integer_by_category.is_empty() {
+        literal_patterns.integer = default_patterns.integer;
     }
 
     (literal_patterns, literal_eval)

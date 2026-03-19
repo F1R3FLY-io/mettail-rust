@@ -75,7 +75,13 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
         token_kinds.push(TokenKind::Ident);
     }
     if input.needs.integer {
-        token_kinds.push(TokenKind::Integer);
+        if input.literal_patterns.integer_by_category.is_empty() {
+            token_kinds.push(TokenKind::Integer);
+        } else {
+            for cat in input.literal_patterns.integer_by_category.keys() {
+                token_kinds.push(TokenKind::IntegerLit(cat.clone()));
+            }
+        }
     }
     if input.needs.float {
         token_kinds.push(TokenKind::Float);
@@ -104,6 +110,7 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
         &partition,
         &token_kinds,
         &input.language_name,
+        &input.literal_eval,
         &input.literal_eval,
     );
 
@@ -148,7 +155,13 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
         token_kinds.push(TokenKind::Ident);
     }
     if input.needs.integer {
-        token_kinds.push(TokenKind::Integer);
+        if input.literal_patterns.integer_by_category.is_empty() {
+            token_kinds.push(TokenKind::Integer);
+        } else {
+            for cat in input.literal_patterns.integer_by_category.keys() {
+                token_kinds.push(TokenKind::IntegerLit(cat.clone()));
+            }
+        }
     }
     if input.needs.float {
         token_kinds.push(TokenKind::Float);
@@ -177,6 +190,7 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
         &partition,
         &token_kinds,
         &input.language_name,
+        &input.literal_eval,
         &input.literal_eval,
     );
 
@@ -253,8 +267,9 @@ pub fn extract_terminals(
     // Check for native types
     for ty in types {
         match ty.native_type_name.as_deref() {
-            Some("i32") | Some("i64") | Some("u32") | Some("u64") | Some("isize")
-            | Some("usize") => {
+            Some("i8") | Some("i16") | Some("i32") | Some("i64") | Some("i128")
+            | Some("u8") | Some("u16") | Some("u32") | Some("u64") | Some("u128")
+            | Some("isize") | Some("usize") => {
                 needs.integer = true;
             },
             Some("f32") | Some("f64") => {
