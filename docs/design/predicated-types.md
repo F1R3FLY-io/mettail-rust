@@ -147,7 +147,7 @@ predicated types pipeline automatically. The pipeline is parametric in the
 term algebra, the guard predicate language, and the constraint theories
 available. Any `language!` with a `guards { theories {} }` block (§2A) gets
 theory-driven predicate dispatch, replacing the heuristic keyword lists in
-`predicate_dispatch.rs` with explicit, data-driven routing. Languages with
+[`predicate_dispatch.rs`](../../prattail/src/predicate_dispatch.rs) with explicit, data-driven routing. Languages with
 `guards { channels {} }` (§2A) get deterministic M8/M11 dispatch for
 multi-channel guards, replacing heuristic channel inference.
 
@@ -558,13 +558,13 @@ syntax for familiarity.
 `->*` / `→*` denotes the reflexive-transitive closure of the one-step rewrite
 relation; `rewrites_to(x, y)` is the function-call synonym.
 `ac_match(bag, pat)` tests associative-commutative matching of `bag` against
-multiset pattern `pat` (see §Gap 4 and `prattail/src/logict.rs`).
+multiset pattern `pat` (see §Gap 4 and [logict.rs](../../prattail/src/logict.rs)).
 `count_ge(ch, k)` / `count_eq(ch, k)` test cardinality of a collection
 against a numeric bound. `dom_or_bound` optionally restricts quantifier
 variables to a named domain, enumeration, or explicit depth bound (integer).
 
 Each literal maps to a `WeightedMsoFormula` abstract syntax tree (AST) variant
-in `weighted_mso.rs`. The comma conjunction, `not()`, `forall()`, `exists()`
+in [`weighted_mso.rs`](../../prattail/src/weighted_mso.rs). The comma conjunction, `not()`, `forall()`, `exists()`
 forms align with the weighted MSO specification language (M10), enabling
 direct automaton compilation via `to_weighted_automaton()`.
 
@@ -807,8 +807,8 @@ for (@(x ∧ a!(b)) <- n) where path(b, {}) { P }
 
 ### Syntax Mapping
 
-The brainstorming document (`02-23-pattern-matching.md`) established
-`(n ? guard).{body}` as the canonical generic syntax for guarded receive,
+The canonical generic syntax for guarded receive is
+`(n ? guard).{body}`,
 matching the constructor declaration in §4. The design rationale for
 separating Rholang surface sugar from the internal canonical form is
 language-genericity: the `(n ? guard).{body}` form is language-agnostic and
@@ -868,7 +868,7 @@ The guard sublanguage described in §2 uses Rholang-specific conventions:
 the `where` keyword introduces guards, connectives like `and`, `or`, `not`
 have hardcoded keyword spellings, and built-in predicates (`eq`, `gt`,
 `fresh`, etc.) are always available with no explicit declaration. Constraint
-theory dispatch in `predicate_dispatch.rs` uses hardcoded keyword heuristics
+theory dispatch in [`predicate_dispatch.rs`](../../prattail/src/predicate_dispatch.rs) uses hardcoded keyword heuristics
 (`is_arithmetic_relation()`, `is_unification_relation()`, etc.) — acknowledged
 as "temporary, not extensible, and brittle" (§16, Relation Name Heuristics).
 
@@ -1189,7 +1189,7 @@ and the pipeline uses type-agnostic analysis.
 
 ### Theory Routing via Typed Predicates
 
-**Current mechanism (heuristic, in `predicate_dispatch.rs`):**
+**Current mechanism (heuristic, in [`predicate_dispatch.rs`](../../prattail/src/predicate_dispatch.rs)):**
 
 The pipeline sets `PredicateSignature` bits by matching predicate names
 against hardcoded keyword lists:
@@ -1264,7 +1264,7 @@ implementation is plugged in:
 - `subtype_of(x: Proc, y: Proc)` → `TheoryAlgebra<LatticeTheory>` → SFA
   with lattice transition predicates
 
-The `TheoryAlgebra<T>` wrapper (`logict.rs`) already bridges
+The `TheoryAlgebra<T>` wrapper ([`logict.rs`](../../prattail/src/logict.rs)) already bridges
 `ConstraintTheory` to `BooleanAlgebra`. No new automata types are required.
 
 ### Selectivity Refinement via Typed Predicates
@@ -1298,7 +1298,7 @@ distributions instead of uniform assumptions.
 
 Implementation: extend `PredicateProfile` with an optional
 `type_context: Vec<Ident>` field populated by typed predicate parameter
-types. The cost estimator in `cost_benefit.rs` can then adjust selectivity
+types. The cost estimator in [`cost_benefit.rs`](../../prattail/src/cost_benefit.rs) can then adjust selectivity
 weights based on the type context.
 
 ### Channel Declarations for Multi-Channel Guard Dispatch
@@ -1387,7 +1387,7 @@ Without M8 — N separate traversals:
 For N channels this requires N automaton traversals, N sets of bookkeeping
 state, and N separate accept/reject decisions that must be combined afterward.
 The overhead is both computational (repeated loop control) and structural
-(no shared state across guards). Kempe (2004) [§25, ref #22] showed that
+(no shared state across guards). Kempe (2004) [§23, ref #22] showed that
 multi-tape automata eliminate this redundancy via the **pair construction**.
 
 ##### Intuition
@@ -1536,77 +1536,7 @@ Algorithm EVALUATE(M: WMA_K, x₁…x_K: String[K]) → W
   3. Return result  (0_W if no accepting run)
 ```
 
-##### Literate Code
-
-The `pair` function from `prattail/src/multi_tape.rs:238–315`:
-
-```rust
-// Step 1: Allocate product state space — |Q₁| × |Q₂| states.
-// Each product state (q₁, q₂) gets a composite label "(l₁,l₂)".
-result.states.reserve(n1 * n2);
-for s1 in &a1.states {
-    for s2 in &a2.states {
-        let label = match (&s1.label, &s2.label) {
-            (Some(l1), Some(l2)) => Some(format!("({l1},{l2})")),
-            // ... other label combinations
-        };
-        result.add_state(label);
-    }
-}
-
-// Step 2: Product state ID — O(1) bijection Q₁ × Q₂ → ℕ.
-let product_id = |q1: usize, q2: usize| -> usize { q1 * n2 + q2 };
-
-// Step 3: Initial states — (i₁, i₂) with weight w₁ ⊗ w₂.
-for (&i1, &w1) in &a1.initial {
-    for (&i2, &w2) in &a2.initial {
-        result.set_initial(product_id(i1, i2), w1.times(&w2));
-    }
-}
-
-// Step 4: Accepting states — (f₁, f₂) with weight w₁ ⊗ w₂.
-for (&f1, &w1) in &a1.accepting {
-    for (&f2, &w2) in &a2.accepting {
-        result.set_accepting(product_id(f1, f2), w1.times(&w2));
-    }
-}
-
-// Step 5: Class 1 — Synchronized transitions (both tapes advance).
-for t1 in &a1.transitions {
-    for t2 in &a2.transitions {
-        result.add_transition(
-            product_id(t1.from, t2.from),
-            product_id(t1.to, t2.to),
-            [t1.labels[0].clone(), t2.labels[0].clone()],
-            t1.weight.times(&t2.weight),
-        );
-    }
-}
-
-// Step 6: Class 2 — Tape 1 advances, tape 2 idles (ε on tape 2).
-for t1 in &a1.transitions {
-    for q2 in 0..n2 {
-        result.add_transition(
-            product_id(t1.from, q2),
-            product_id(t1.to, q2),
-            [t1.labels[0].clone(), None],   // None = ε
-            t1.weight,
-        );
-    }
-}
-
-// Step 7: Class 3 — Tape 2 advances, tape 1 idles (ε on tape 1).
-for t2 in &a2.transitions {
-    for q1 in 0..n1 {
-        result.add_transition(
-            product_id(q1, t2.from),
-            product_id(q1, t2.to),
-            [None, t2.labels[0].clone()],   // None = ε
-            t2.weight,
-        );
-    }
-}
-```
+Implementation: [multi_tape.rs](../../prattail/src/multi_tape.rs).
 
 ##### M8's Limitation
 
@@ -1665,7 +1595,7 @@ then walks back to prune earlier channels.
 ##### Formal Definition
 
 **Definition 2A.2** (Weighted Two-Way Transducer, after Feng & Maletti 2022
-[§25, ref #15]). A weighted two-way transducer over semiring W is a tuple
+[§23, ref #15]). A weighted two-way transducer over semiring W is a tuple
 M = (Q→, Q←, A, B, T, ⊢, ⊣) where:
 
 - Q→ is a finite set of **forward states** (head moves right after transition)
@@ -1739,7 +1669,7 @@ before looping), giving the exponential blowup in the one-way conversion.
 ##### ChannelConstraint
 
 The bridge between M11's transducer theory and the join optimization pipeline
-is the `ChannelConstraint` struct (from `two_way_transducer.rs:920`):
+is the `ChannelConstraint` struct (from [`two_way_transducer.rs`](../../prattail/src/two_way_transducer.rs)):
 
 ```rust
 pub struct ChannelConstraint<W: Semiring> {
@@ -1804,20 +1734,9 @@ Algorithm TRANSDUCE(M: W2T, input: a₁…aₙ) → (W, B*)
   5. Return result
 ```
 
-##### Literate Code
-
-Crossing sequence check from `prattail/src/two_way_transducer.rs:434–441`:
-
-```rust
-// Loop detection: include direction per the Rocq-verified
-// CrossingEntry := (State × Direction) — forward and backward
-// traversals through the same (state, position) are distinct
-// configurations.
-let config_key = (t.to, new_pos, self.states[t.to].direction);
-if config.visited.contains(&config_key) {
-    continue;   // Same (state, pos, dir) seen before → infinite loop
-}
-```
+Crossing-sequence loop detection uses `(state, position, direction)` triples
+to distinguish forward and backward traversals through the same position.
+Implementation: [two_way_transducer.rs](../../prattail/src/two_way_transducer.rs).
 
 #### Composition: The M7 → M11 → M8 Optimization Pipeline
 
@@ -2375,7 +2294,7 @@ parser would not recognize it).
 
 ### AST Representation
 
-The AST types for `guards {}` live in `macros/src/ast/language.rs`:
+The AST types for `guards {}` live in [language.rs](../../macros/src/ast/language.rs):
 
 ```rust
 /// Guard configuration from the `guards { ... }` block.
@@ -2481,8 +2400,8 @@ pub struct LanguageDef {
 The pipeline orders guard evaluation by **selectivity** — the estimated
 fraction of inputs satisfying a predicate — and breaks ties by **cost** — the
 relative computational expense of evaluating the predicate. Currently, both
-values are hardcoded per-predicate-pattern in `predicate_dispatch.rs` (§12
-of that module) and `guard_codegen.rs`. Grammar authors with domain knowledge
+values are hardcoded per-predicate-pattern in [`predicate_dispatch.rs`](../../prattail/src/predicate_dispatch.rs) (§12
+of that module) and [`guard_codegen.rs`](../../macros/src/gen/runtime/guard_codegen.rs). Grammar authors with domain knowledge
 can provide tighter estimates via `@[...]` annotations on predicate
 declarations.
 
@@ -2552,9 +2471,9 @@ the satisfaction of Q):
 | ∃x (infinite). P(x) | sel(∃∞) = 1 − (1 − sel(P))^10             | Heuristic: 10-element proxy for unknown infinite domain size |
 
 These formulas are implemented identically in both
-`estimate_predicate_selectivity()` (in `predicate_dispatch.rs`, operating on
+`estimate_predicate_selectivity()` (in [`predicate_dispatch.rs`](../../prattail/src/predicate_dispatch.rs), operating on
 `PredicateExpr` AST nodes from the `prattail` crate) and
-`estimate_selectivity()` (in `guard_codegen.rs`, operating on
+`estimate_selectivity()` (in [`guard_codegen.rs`](../../macros/src/gen/runtime/guard_codegen.rs), operating on
 `BehavioralPred` AST nodes from the `macros` crate). The `@[selectivity(...)]`
 annotation overrides only the **leaf** estimate; the combinator algebra
 remains unchanged.
@@ -2592,21 +2511,21 @@ the source location, and the function that consumes it. The column
 gives the cost estimate. A `—` entry indicates the function estimates cost
 only, not selectivity (or vice versa):
 
-| Predicate pattern                   | Heuristic sel      | Heuristic cost | Source location                   | Consumer function(s)                                            |
-|-------------------------------------|--------------------|----------------|-----------------------------------|-----------------------------------------------------------------|
-| Equality (`eq`, `==`, `fresh`)      | 0.1 × arity factor | 2 + arity      | `predicate_dispatch.rs:1438–1440` | `estimate_predicate_selectivity()`, `estimate_predicate_cost()` |
-| Cardinality (`count`, `size`)       | 0.3 × arity factor | 2 + arity      | `predicate_dispatch.rs:1441–1442` | `estimate_predicate_selectivity()`, `estimate_predicate_cost()` |
-| Default (unrecognized) relation     | 0.5 × arity factor | 2 + arity      | `predicate_dispatch.rs:1443–1444` | `estimate_predicate_selectivity()`, `estimate_predicate_cost()` |
-| Negated relation query              | 0.1                | 2              | `guard_codegen.rs:725`            | `estimate_selectivity()`                                        |
-| Positive relation query             | 0.5                | 2              | `guard_codegen.rs:727`            | `estimate_selectivity()`                                        |
-| Universal quantifier (bounded, k)   | 0.05 / √k          | k + body cost  | `guard_codegen.rs:740–744`        | `estimate_selectivity()`, `estimate_guard_cost()`               |
-| Existential quantifier (bounded, k) | 0.3 / √k           | k + body cost  | `guard_codegen.rs:748–752`        | `estimate_selectivity()`, `estimate_guard_cost()`               |
-| AC-match (n elements)               | 0.3 / n            | 10 + 5n        | `guard_codegen.rs:756, 775`       | `estimate_selectivity()`, `estimate_guard_cost()`               |
-| Freshness check                     | —                  | 2              | `rules.rs:234`                    | `condition_cost()`                                              |
-| Environment query                   | —                  | 5              | `rules.rs:235`                    | `condition_cost()`                                              |
-| ForAll (condition-level)            | —                  | 10 + body cost | `rules.rs:236`                    | `condition_cost()`                                              |
-| BehavioralGuard (general)           | —                  | 20             | `rules.rs:242`                    | `condition_cost()`                                              |
-| BehavioralGuard (AC-match)          | —                  | 25             | `rules.rs:241`                    | `condition_cost()`                                              |
+| Predicate pattern                   | Heuristic sel      | Heuristic cost | Source file                | Consumer function(s)                                            |
+|-------------------------------------|--------------------|----------------|----------------------------|-----------------------------------------------------------------|
+| Equality (`eq`, `==`, `fresh`)      | 0.1 × arity factor | 2 + arity      | `predicate_dispatch.rs`    | `estimate_predicate_selectivity()`, `estimate_predicate_cost()` |
+| Cardinality (`count`, `size`)       | 0.3 × arity factor | 2 + arity      | `predicate_dispatch.rs`    | `estimate_predicate_selectivity()`, `estimate_predicate_cost()` |
+| Default (unrecognized) relation     | 0.5 × arity factor | 2 + arity      | `predicate_dispatch.rs`    | `estimate_predicate_selectivity()`, `estimate_predicate_cost()` |
+| Negated relation query              | 0.1                | 2              | `guard_codegen.rs`         | `estimate_selectivity()`                                        |
+| Positive relation query             | 0.5                | 2              | `guard_codegen.rs`         | `estimate_selectivity()`                                        |
+| Universal quantifier (bounded, k)   | 0.05 / √k          | k + body cost  | `guard_codegen.rs`         | `estimate_selectivity()`, `estimate_guard_cost()`               |
+| Existential quantifier (bounded, k) | 0.3 / √k           | k + body cost  | `guard_codegen.rs`         | `estimate_selectivity()`, `estimate_guard_cost()`               |
+| AC-match (n elements)               | 0.3 / n            | 10 + 5n        | `guard_codegen.rs`         | `estimate_selectivity()`, `estimate_guard_cost()`               |
+| Freshness check                     | —                  | 2              | `rules.rs`                 | `condition_cost()`                                              |
+| Environment query                   | —                  | 5              | `rules.rs`                 | `condition_cost()`                                              |
+| ForAll (condition-level)            | —                  | 10 + body cost | `rules.rs`                 | `condition_cost()`                                              |
+| BehavioralGuard (general)           | —                  | 20             | `rules.rs`                 | `condition_cost()`                                              |
+| BehavioralGuard (AC-match)          | —                  | 25             | `rules.rs`                 | `condition_cost()`                                              |
 
 
 ### Comprehensive Heuristic Inventory
@@ -2628,31 +2547,35 @@ principle is a two-part test:
   can see the structure directly and the grammar author would gain nothing
   from restating it.
 
-This inventory partitions every heuristic in `predicate_dispatch.rs` and
-`guard_codegen.rs` into one of three tables based on that test. Each entry
+This inventory partitions every heuristic in [`predicate_dispatch.rs`](../../prattail/src/predicate_dispatch.rs) and
+[`guard_codegen.rs`](../../macros/src/gen/runtime/guard_codegen.rs) into two tables based on that test. Each entry
 lists the current heuristic mechanism, the source location, and either the
-`guards {}` sub-block that replaces it (Tables A and B) or the rationale for
-keeping it internal (Table C).
+`guards {}` sub-block that replaces it (Configurable Heuristics table) or the
+rationale for keeping it internal (Table C).
 
-**Table A — Heuristics surfaced by `theories {}`.** Theory registrations
-replace the `is_*_relation()` keyword-matching functions and the
-terminal-based inference heuristics in `classify_grammar()`. Each row maps a
-heuristic function (or terminal check) to the explicit theory registration
-syntax that replaces it. The "Module activated" column indicates which of the
-15 automata modules (M1–M15, defined in `predicate_dispatch.rs` §1) the
-heuristic triggers:
+**Configurable heuristics — surfaced by `theories {}`, `channels {}`,
+`connectives {}`, and `@[selectivity, cost]`.** Theory registrations replace
+the `is_*_relation()` keyword-matching functions. Channel and connective
+declarations replace structural inference heuristics:
 
-| Heuristic function          | Keywords matched                                                 | Module activated        | Source location              | Replacement `theories {}` syntax                    |
-|-----------------------------|------------------------------------------------------------------|-------------------------|------------------------------|-----------------------------------------------------|
-| `is_equality_relation()`    | `eq`, `neq`, `==`, `!=`, `fresh`, `equal`, `related`             | M6 Register             | `predicate_dispatch.rs:432`  | `equality = RegisterTheory for [Name, Proc];`       |
-| `is_cardinality_relation()` | `count`, `size`, `>=`, `<=`, `at_least`, `at_most`               | M9 Multiset             | `predicate_dispatch.rs:443`  | `cardinality = MultisetTheory for [Collection];`    |
-| `is_fixpoint_relation()`    | `letprop`, `fixpoint`, `mu`, `nu`, `letrec`, `recursive`         | M4 VPA + M5 Parity Tree | `predicate_dispatch.rs:454`  | `fixpoints = FixpointTheory for [Proc, Name];`      |
-| `is_arithmetic_relation()`  | `add`, `sub`, `gt`, `lt`, `>=`, `<=`, `bounded`, `range`, ...    | M12 Linear Arithmetic   | `predicate_dispatch.rs:465`  | `arithmetic = PresburgerAlgebra for [Int];`         |
-| `is_unification_relation()` | `match`, `unify`, `bind`, `pattern`, `substitute`, ...           | M13 Unification         | `predicate_dispatch.rs:485`  | `patterns = UnificationTheory for [Proc, Name];`    |
-| `is_subtype_relation()`     | `subtype`, `:<`, `:>`, `is_a`, `join`, `meet`, `lub`, `glb`, ... | M14 Subtype Lattice     | `predicate_dispatch.rs:502`  | `types = LatticeTheory for [Proc, Name, Int, Str];` |
-| Arithmetic terminals        | `+`, `-`, `*`, `/`, `%`, `mod`, `div`                            | M12 Linear Arithmetic   | `predicate_dispatch.rs:1022` | Same `arithmetic` theory registration               |
-| Unification terminals       | `match`, `case`, `with`, `=>`, `->`, `\|`                        | M13 Unification         | `predicate_dispatch.rs:1032` | Same `patterns` theory registration                 |
-| Subtype terminals           | `extends`, `implements`, `:`, `::`, `:<`, `is`                   | M14 Subtype Lattice     | `predicate_dispatch.rs:1042` | Same `types` theory registration                    |
+| Heuristic                             | Current behavior                                                           | Module(s)               | Override mechanism                                               | Source                       |
+|---------------------------------------|----------------------------------------------------------------------------|-------------------------|------------------------------------------------------------------|------------------------------|
+| `is_equality_relation()`              | Keywords: `eq`, `neq`, `==`, `!=`, `fresh`, `equal`, `related`             | M6 Register             | `theories { equality = RegisterTheory for [Name, Proc]; }`       | `predicate_dispatch.rs`      |
+| `is_cardinality_relation()`           | Keywords: `count`, `size`, `>=`, `<=`, `at_least`, `at_most`               | M9 Multiset             | `theories { cardinality = MultisetTheory for [Collection]; }`    | `predicate_dispatch.rs`      |
+| `is_fixpoint_relation()`              | Keywords: `letprop`, `fixpoint`, `mu`, `nu`, `letrec`, `recursive`         | M4 VPA + M5 Parity Tree | `theories { fixpoints = FixpointTheory for [Proc, Name]; }`      | `predicate_dispatch.rs`      |
+| `is_arithmetic_relation()`            | Keywords: `add`, `sub`, `gt`, `lt`, `>=`, `<=`, `bounded`, `range`, ...    | M12 Linear Arithmetic   | `theories { arithmetic = PresburgerAlgebra for [Int]; }`         | `predicate_dispatch.rs`      |
+| `is_unification_relation()`           | Keywords: `match`, `unify`, `bind`, `pattern`, `substitute`, ...           | M13 Unification         | `theories { patterns = UnificationTheory for [Proc, Name]; }`    | `predicate_dispatch.rs`      |
+| `is_subtype_relation()`               | Keywords: `subtype`, `:<`, `:>`, `is_a`, `join`, `meet`, `lub`, `glb`, ... | M14 Subtype Lattice     | `theories { types = LatticeTheory for [Proc, Name, Int, Str]; }` | `predicate_dispatch.rs`      |
+| Arithmetic terminals                  | `+`, `-`, `*`, `/`, `%`, `mod`, `div`                                      | M12 Linear Arithmetic   | Same `arithmetic` theory registration                            | `predicate_dispatch.rs`      |
+| Unification terminals                 | `match`, `case`, `with`, `=>`, `->`, `\|`                                  | M13 Unification         | Same `patterns` theory registration                              | `predicate_dispatch.rs`      |
+| Subtype terminals                     | `extends`, `implements`, `:`, `::`, `:<`, `is`                             | M14 Subtype Lattice     | Same `types` theory registration                                 | `predicate_dispatch.rs`      |
+| Cross-category → M8 Multi-Tape        | `referenced_categories.len() >= 2` in `classify_grammar()`                 | M8 Multi-Tape           | `channels { channel C; join J(p: C, q: C); }`                    | `predicate_dispatch.rs`      |
+| Cross-category → M11 Two-Way          | Cross-category ref differs from rule's own category                        | M11 Two-Way             | `channels {}` with ≥ 2 distinct channel categories               | `predicate_dispatch.rs`      |
+| Multi-channel → M7 Probabilistic + M8 | `channels_seen.len() >= 2` in `extract_features()`                         | M7 Prob. + M8           | `channels {}` declarations                                       | `predicate_dispatch.rs`      |
+| Cross-channel variable detection      | `ChannelContext.is_cross_channel()` per relation argument                  | —                       | `channels {}` channel parameter bindings                         | `predicate_dispatch.rs`      |
+| Hardcoded connective keywords         | `&&`, `\|\|`, `~`, `!`, `=>` as Rust tokens in parser                      | —                       | `connectives { and = "keyword"; ... }`                           | `language.rs`                |
+| Leaf predicate selectivity            | Pattern-matched defaults (0.1, 0.3, 0.5, ...)                              | —                       | `@[selectivity(s)]` annotation                                   | See heuristic defaults table |
+| Leaf predicate cost                   | Pattern-matched defaults (2, 5, 10, ...)                                   | —                       | `@[cost(c)]` annotation                                          | See heuristic defaults table |
 
 When `theories {}` is present and non-empty, the pipeline skips all
 `is_*_relation()` calls and terminal-based inference for the theories
@@ -2662,20 +2585,6 @@ heuristic dispatch, so partial registration is safe — a grammar may register
 theory, and the `is_unification_relation()` heuristic continues to operate
 for unification-like predicate names.
 
-**Table B — Heuristics surfaced by `channels {}`, `connectives {}`, and
-`@[selectivity, cost]`.** These heuristics encode semantic information that
-the grammar author can provide more precisely than the compiler can infer:
-
-| Heuristic                             | Current mechanism                                          | Source location              | Replacement mechanism                              |
-|---------------------------------------|------------------------------------------------------------|------------------------------|----------------------------------------------------|
-| Cross-category → M8 Multi-Tape        | `referenced_categories.len() >= 2` in `classify_grammar()` | `predicate_dispatch.rs:954`  | `channels { channel C; join J(p: C, q: C); }`      |
-| Cross-category → M11 Two-Way          | Cross-category ref differs from rule's own category        | `predicate_dispatch.rs:957`  | `channels {}` with ≥ 2 distinct channel categories |
-| Multi-channel → M7 Probabilistic + M8 | `channels_seen.len() >= 2` in `extract_features()`         | `predicate_dispatch.rs:551`  | `channels {}` declarations                         |
-| Cross-channel variable detection      | `ChannelContext.is_cross_channel()` per relation argument  | `predicate_dispatch.rs:656`  | `channels {}` channel parameter bindings           |
-| Hardcoded connective keywords         | `&&`, `\|\|`, `~`, `!`, `=>` as Rust tokens in parser      | `language.rs:2165`           | `connectives { and = "keyword"; ... }`             |
-| Leaf predicate selectivity            | Pattern-matched defaults (0.1, 0.3, 0.5, ...)              | See heuristic defaults table | `@[selectivity(s)]` annotation                     |
-| Leaf predicate cost                   | Pattern-matched defaults (2, 5, 10, ...)                   | See heuristic defaults table | `@[cost(c)]` annotation                            |
-
 **Table C — Heuristics that remain internal.** These heuristics derive from
 grammar structure or encode mathematical identities. The "Trigger condition"
 column describes the grammar property the compiler detects; the "Rationale"
@@ -2683,19 +2592,19 @@ column explains why the heuristic should not be surfaced. The notation
 `refs(C)` denotes the set of grammar categories referenced by category C's
 production rules:
 
-| Heuristic                       | Trigger condition                                                                                                            | Module(s)        | Source location                                          | Rationale                                                                     |
+| Heuristic                       | Trigger condition                                                                                                            | Module(s)        | Source file(s)                                           | Rationale                                                                     |
 |---------------------------------|------------------------------------------------------------------------------------------------------------------------------|------------------|----------------------------------------------------------|-------------------------------------------------------------------------------|
-| Recursive category detection    | C ∈ refs(C) (direct self-reference in category graph)                                                                        | M2 Büchi         | `predicate_dispatch.rs:975`                              | Structural: the compiler sees the category reference graph directly           |
-| Multi-branch universal rules    | Rule has ≥ 3 non-terminal children                                                                                           | M3 AWA           | `predicate_dispatch.rs:939`                              | Structural: branching factor is visible from syntax item count                |
-| Bracket/delimiter detection     | Paired call/return terminals (`()`/`{}`/`[]`/`begin`/`end`)                                                                  | M4 VPA           | `predicate_dispatch.rs:988`                              | Structural: terminal symbols are directly enumerable from grammar             |
-| Recursive + branching           | Both recursion and ≥ 3-child branching present                                                                               | M5 Parity Tree   | `predicate_dispatch.rs:999`                              | Structural: conjunction of two structural properties                          |
-| Binder item detection           | Grammar contains `Binder` syntax items                                                                                       | M6 Register      | `predicate_dispatch.rs:1006`                             | Structural: `Binder` is a syntactic category the compiler sees directly       |
-| Parse ambiguity                 | ≥ 3 rules in same grammar category                                                                                           | M7 Probabilistic | `predicate_dispatch.rs:1013`                             | Structural: rule count per category is directly computable                    |
-| Collection/Sep items            | Grammar contains `Collection` or `Sep` syntax items                                                                          | M9 Multiset      | `predicate_dispatch.rs:964`                              | Structural: `Collection`/`Sep` are syntactic categories visible to compiler   |
-| Recursion + M11 → M15           | Recursive grammar with M11 Two-Way already activated                                                                         | M15 SFT          | `predicate_dispatch.rs:1052`                             | Derived: conjunction of structural (recursion) and semantic (M11) properties  |
-| Module cost tiers               | `ModuleId::estimated_cost()` returns 1–6 per module                                                                          | All              | `predicate_dispatch.rs:268`                              | Implementation detail: scheduling order is internal compiler policy           |
-| Selectivity algebra formulas    | Boolean combinator identities (¬, ∧, ∨, ⟹)                                                                                   | —                | `predicate_dispatch.rs:1447`                             | Mathematical identity: correct by construction, not configurable              |
-| Arity factor formula            | `1 / √(arity + 1)` diminishing correction                                                                                    | —                | `predicate_dispatch.rs:1437`                             | Mathematical identity: diminishing correction derived from probability theory |
+| Recursive category detection    | C ∈ refs(C) (direct self-reference in category graph)                                                                        | M2 Büchi         | `predicate_dispatch.rs`                                  | Structural: the compiler sees the category reference graph directly           |
+| Multi-branch universal rules    | Rule has ≥ 3 non-terminal children                                                                                           | M3 AWA           | `predicate_dispatch.rs`                                  | Structural: branching factor is visible from syntax item count                |
+| Bracket/delimiter detection     | Paired call/return terminals (`()`/`{}`/`[]`/`begin`/`end`)                                                                  | M4 VPA           | `predicate_dispatch.rs`                                  | Structural: terminal symbols are directly enumerable from grammar             |
+| Recursive + branching           | Both recursion and ≥ 3-child branching present                                                                               | M5 Parity Tree   | `predicate_dispatch.rs`                                  | Structural: conjunction of two structural properties                          |
+| Binder item detection           | Grammar contains `Binder` syntax items                                                                                       | M6 Register      | `predicate_dispatch.rs`                                  | Structural: `Binder` is a syntactic category the compiler sees directly       |
+| Parse ambiguity                 | ≥ 3 rules in same grammar category                                                                                           | M7 Probabilistic | `predicate_dispatch.rs`                                  | Structural: rule count per category is directly computable                    |
+| Collection/Sep items            | Grammar contains `Collection` or `Sep` syntax items                                                                          | M9 Multiset      | `predicate_dispatch.rs`                                  | Structural: `Collection`/`Sep` are syntactic categories visible to compiler   |
+| Recursion + M11 → M15           | Recursive grammar with M11 Two-Way already activated                                                                         | M15 SFT          | `predicate_dispatch.rs`                                  | Derived: conjunction of structural (recursion) and semantic (M11) properties  |
+| Module cost tiers               | `ModuleId::estimated_cost()` returns 1–6 per module                                                                          | All              | `predicate_dispatch.rs`                                  | Implementation detail: scheduling order is internal compiler policy           |
+| Selectivity algebra formulas    | Boolean combinator identities (¬, ∧, ∨, ⟹)                                                                                   | —                | `predicate_dispatch.rs`                                  | Mathematical identity: correct by construction, not configurable              |
+| Arity factor formula            | `1 / √(arity + 1)` diminishing correction                                                                                    | —                | `predicate_dispatch.rs`                                  | Mathematical identity: diminishing correction derived from probability theory |
 | Compilation strategy thresholds | `COMPUTED_GOTO_THRESHOLD` (20), `COLD_THRESHOLD` (1.0), `BP_TABLE_LOOKUP_THRESHOLD` (8), `DIRECT_CODED_THRESHOLD` (30), etc. | —                | `dispatch.rs`, `trampoline.rs`, `pratt.rs`, `codegen.rs` | Implementation detail: codegen strategy selection is internal compiler policy |
 | Cost-benefit gate ratios        | Per-optimization `GateId` thresholds in `cost_benefit.rs`                                                                    | —                | `cost_benefit.rs`                                        | Implementation detail: optimization gating is internal policy                 |
 
@@ -2710,7 +2619,7 @@ cannot depend on the `syn` crate. Therefore, a **lowered representation** —
 plain `String` and `HashMap` types instead of `syn` AST nodes.
 
 The lowering is performed by the existing `language_def_to_spec()` function
-(in `prattail_bridge.rs`), which already converts `LanguageDef` (syn-based)
+(in [`prattail_bridge.rs`](../../macros/src/gen/syntax/parser/prattail_bridge.rs)), which already converts `LanguageDef` (syn-based)
 to `LanguageSpec` (syn-free). The `GuardConfigSpec` is a new field on
 `LanguageSpec`, populated during this conversion. The following diagram shows
 the data flow from source to pipeline. Abbreviations: "sel" = selectivity,
@@ -3058,7 +2967,7 @@ guard expressions continue to compile without changes.
 
 The guard sublanguage parser — `parse_behavioral_pred()` and its
 sub-parsers `parse_pred_implies()`, `parse_pred_or()`, `parse_pred_and()`,
-`parse_pred_not()`, `parse_pred_atom()` (all in `macros/src/ast/language.rs`)
+`parse_pred_not()`, `parse_pred_atom()` (all in [language.rs](../../macros/src/ast/language.rs))
 — currently recognizes a fixed set of Rust tokens as logical connectives:
 `&&` for conjunction, `||` for disjunction, `~` and `!` for negation, `=>`
 for implication, and the identifiers `forall` and `exists` for quantifiers.
@@ -3453,7 +3362,7 @@ inside `NQuote(POutput(_, PVar(y)))`).
 ### VariantKind Extension
 
 The `PGuardedInput` constructor introduces a new `VariantKind::GuardedScope`
-in the macro's variant classification (`subst.rs`). This extends the
+in the macro's variant classification ([`subst.rs`](../../macros/src/gen/term_ops/subst.rs)). This extends the
 existing set (`Var`, `Literal`, `Nullary`, `Regular`, `Collection`,
 `Binder`, `MultiBinder`) with a variant that handles the dual-scope
 structure: a Name-typed guard scope and a Proc-typed continuation scope
@@ -3476,7 +3385,7 @@ information), the generated struct has one typed field per category declared
 in the `language!` definition. This preserves the natural-category invariant
 (§3) at the type level: Name bindings and Proc bindings are stored in
 separate vectors, eliminating category confusion at the point of use. The
-struct is generated by `macros/src/gen/term_ops/match_pattern.rs` alongside
+struct is generated by [match_pattern.rs](../../macros/src/gen/term_ops/match_pattern.rs) alongside
 the AST categories.
 
 ```rust
@@ -3530,7 +3439,7 @@ The `Option<MatchBindings>` return type encodes the matching semantics:
 `Some(bindings)` when all constructors align and all free variables bind
 successfully, `None` on any constructor clash or arity mismatch. The method
 bodies are generated by `generate_match_pattern()` in
-`macros/src/gen/term_ops/match_pattern.rs` and consist of a `match` block
+[match_pattern.rs](../../macros/src/gen/term_ops/match_pattern.rs) and consist of a `match` block
 over `(self, pattern)` pairs, with one arm per variant kind (§5 "Generation
 Rules per Variant Kind").
 
@@ -3571,7 +3480,7 @@ matching — see §6 line 832 for the rationale.
 
 The following table summarizes how the code generator handles each variant
 classification. Each row corresponds to a `VariantKind` in
-`macros/src/gen/term_ops/match_pattern.rs`. The match rule column describes
+[match_pattern.rs](../../macros/src/gen/term_ops/match_pattern.rs). The match rule column describes
 the algorithmic strategy, and the result column shows what `MatchBindings`
 value is produced on success. The table is read as a dispatch table: the
 code generator inspects each variant's `VariantKind` and emits the
@@ -3707,9 +3616,7 @@ HashSet elements match like HashBag without multiplicity. Each element
 sub-match re-enters `match_pattern()` via Thread-Local Storage (TLS), which is bounded by
 collection size, not nesting depth. The theoretical basis is AC-matching for
 commutative collections — see §8 (AC-Matching for Collection Guards) for the
-full partition enumeration algorithm and its LogicT integration. (The
-brainstorming document deferred collection matching; this section implements
-what was deferred.)
+full partition enumeration algorithm and its LogicT integration.
 
 **Binder/Scope.** Binder patterns open both ground and pattern scopes via
 `inner()` (NOT `unbind()` — no freshening), then match bodies structurally
@@ -3720,8 +3627,7 @@ opening. Using `unbind()` would generate fresh `FreeVar`s, which would differ
 between the ground and pattern terms and cause spurious mismatches. Binder
 names (`unsafe_pattern`) are scope-introducing positions and are NEVER
 extracted into `MatchBindings`. See §5 "Iterative Work Stack Architecture"
-for the full algorithm. (The brainstorming document deferred binder/scope
-matching; this section implements what was deferred.)
+for the full algorithm.
 
 **MultiBinder.** The rhocalc `PNew . ^[xs].p:[Name* -> Proc]` generates
 `PNew(Scope<Vec<Binder<String>>, Box<Proc>>)` — a single argument that is the
@@ -3824,9 +3730,9 @@ bindings regardless of the category at which matching began.
 
 ### Generated Code Location
 
-Module: `macros/src/gen/term_ops/match_pattern.rs`
+Module: [match_pattern.rs](../../macros/src/gen/term_ops/match_pattern.rs)
 
-Called from `generate_all()` in `macros/src/gen/mod.rs`, alongside
+Called from `generate_all()` in [mod.rs](../../macros/src/gen/mod.rs), alongside
 substitution and normalization generation.
 
 ### Iterative Work Stack Architecture
@@ -4032,7 +3938,7 @@ These variants require the Collection variant classification for proper matching
 When the language defines a `PGuardedInput` constructor, the macro
 auto-generates a corresponding rewrite rule. The user does not write this
 rule in the `rewrites {}` block. Detection occurs in
-`macros/src/logic/rules.rs` by inspecting the `TermParam::GuardBody` variant.
+[rules.rs](../../macros/src/logic/rules.rs) by inspecting the `TermParam::GuardBody` variant.
 
 ### Generated Datalog (Structural-Only)
 
@@ -4411,7 +4317,7 @@ the big picture before diving into any individual component.
 - **Predicated types role:** Dispatches to the parse rule for `for(φ ← channel)`
   and each constructor in the guard pattern. PathMap handles *syntactic
   disambiguation*; it does NOT evaluate guards.
-- **Key file:** `prattail/src/decision_tree.rs`
+- **Key file:** [decision_tree.rs](../../prattail/src/decision_tree.rs)
 
 The following diagram shows a concrete PathMap trie that disambiguates
 guarded receive (`PGuardedInput`) from unguarded receive (`PInput`). Read the
@@ -4464,7 +4370,7 @@ PathMap trie for parse dispatch:
   substitution); failure means the Comm rule does not fire.
 - **Distinction from unification:** One-directional (ground vs pattern), O(|pattern|),
   deterministic. No occurs check needed. No backtracking.
-- **Key file:** `macros/src/gen/term_ops/match_pattern.rs`
+- **Key file:** [match_pattern.rs](../../macros/src/gen/term_ops/match_pattern.rs)
 
 The following example demonstrates cross-category matching with a collection
 pattern containing both non-variable (`PSend(a, b)`) and variable (`...rest`)
@@ -4510,7 +4416,7 @@ by requiring binder count equality and matching each pair.
     Two guards φ₁ and φ₂ overlap iff `unify(φ₁, φ₂) ≠ ⊥`.
   - *Runtime (optional):* If the language enables unification-based matching,
     guard evaluation can use unification instead of first-order matching.
-- **Key file:** `prattail/src/unification.rs`
+- **Key file:** [unification.rs](../../prattail/src/unification.rs)
 
 The following comparison highlights the fundamental difference between the
 two matching strategies. First-order matching (used at runtime) is
@@ -4545,7 +4451,7 @@ In the guarded Comm rule pipeline:
   as an Ascent clause via this bridge. Behavioral predicate joins are appended
   after the structural clauses. BCG01 (join ordering) interleaves condition
   checks at their earliest valid positions for fail-fast evaluation.
-- **Key file:** `macros/src/ast/pattern.rs`
+- **Key file:** [pattern.rs](../../macros/src/ast/pattern.rs)
 
 The following example shows how a pattern AST node is lowered into Ascent
 Datalog clauses by `to_ascent_clauses()`. Each constructor becomes an `if let`
@@ -4890,8 +4796,7 @@ resolved at macro expansion time against the `logic {}` block's declared
 relations. The `PredArg::Var` variant stores the variable's `pretty_name`,
 which is matched against `match_bindings` entries during resolution.
 
-> **Note:** The brainstorming document's `BehavioralPred` had only
-> `relation_name` and `args`; `negated` extends the design for stratified
+> **Note:** The `negated` field on `BehavioralPred` enables stratified
 > negation support (§9).
 
 ### Conjunctions
@@ -4922,13 +4827,11 @@ semantics of the `Vec<BehavioralPred>` representation.
 > | Notation                                                                | Context                                                |
 > |-------------------------------------------------------------------------|--------------------------------------------------------|
 > | `,` (comma)                                                             | Surface syntax in the `where`-clause (§2 EBNF)         |
-> | `AND`                                                                   | English prose / pseudo-syntax (brainstorming document) |
+> | `AND`                                                                   | English prose / pseudo-syntax                          |
 > | `BehavioralPred::And(a, b)` / multiple entries in `Vec<BehavioralPred>` | AST representation                                     |
 >
-> The brainstorming document uses `AND` (e.g., `path(y, {}) AND
-> is_output(*(x))`); the §2 `where`-clause grammar uses comma-separated
-> literals; the runtime representation is a `Vec<BehavioralPred>` (implicit
-> conjunction).
+> The §2 `where`-clause grammar uses comma-separated literals; the runtime
+> representation is a `Vec<BehavioralPred>` (implicit conjunction).
 
 ### Scaling Analysis
 
@@ -5007,21 +4910,6 @@ the least new code. AWA requires the unimplemented `to_weighted_automaton()`
 composability. The cost-benefit framework can gate to AWA later once
 `to_weighted_automaton()` is implemented.
 
-Components added:
-
-| Component                                                 | File                         | Lines |
-|-----------------------------------------------------------|------------------------------|-------|
-| `QuantifiedFormula` enum (FOL AST)                        | `prattail/src/logict.rs`     | ~170  |
-| `QuantifiedDomain` / `QuantifiedArg` types                | `prattail/src/logict.rs`     | ~30   |
-| `evaluate_quantified()` evaluator                         | `prattail/src/logict.rs`     | ~80   |
-| `BehavioralPred` / `PredArg` / `Quantifier` types         | `macros/src/ast/language.rs` | ~180  |
-| `BehavioralPred::to_quantified_formula()` codegen         | `macros/src/ast/language.rs` | ~100  |
-| `Premise::BehavioralGuard` / `Condition::BehavioralGuard` | `macros/src/ast/language.rs` | ~10   |
-| `TermParam::GuardBody` variant                            | `macros/src/ast/grammar.rs`  | ~5    |
-| Predicate sublanguage parser (`parse_behavioral_pred`)    | `macros/src/ast/language.rs` | ~180  |
-| Guarded Comm rule codegen                                 | `macros/src/logic/rules.rs`  | ~80   |
-| Tests (22 new)                                            | `prattail/src/logict.rs`     | ~350  |
-
 Guard syntax (inside `language!` macro):
 ```text
 guard(forall(y, nodes, entails(reachable(x, y), safe(y))))
@@ -5052,18 +4940,16 @@ associative-commutative matching — the `PPar` bag is unordered, so matching
 
 **Solution:** Multiplicity-aware partition enumeration via `LogicStream`.
 
-- `multiset_partitions()` in `prattail/src/logict.rs`: lazily enumerates all
+- `multiset_partitions()` in [logict.rs](../../prattail/src/logict.rs): lazily enumerates all
   ways to select K elements from a multiset, producing
   `LogicStream<MultisetPartition<T>>`. Uses `interleave()` for fair exploration
   across branches. Generic over element type.
 - `multiset_select()`: convenience wrapper with `collect_bounded()` for T3 safety.
-- `BehavioralPred::AcMatch` variant in `macros/src/ast/language.rs`: parsed from
+- `BehavioralPred::AcMatch` variant in [language.rs](../../macros/src/ast/language.rs): parsed from
   `guard(ac_match(bag, {x, y, ...rest}))` syntax.
-- Codegen in `macros/src/logic/rules.rs`: generates partition enumeration code
+- Codegen in [rules.rs](../../macros/src/logic/rules.rs): generates partition enumeration code
   through `Condition::BehavioralGuard` pipeline. Cost 25 (higher than standard
   behavioral guards at 20).
-- 16 unit tests covering edge cases, invariants, fairness, and complement symmetry.
-- Criterion benchmarks in `prattail/benches/bench_logict.rs`.
 
 ---
 
@@ -5199,7 +5085,7 @@ The parser:
 
 ### Free-Variable Extraction with Natural Categories
 
-The existing `var_inference.rs` module infers variable categories from syntax
+The existing [`var_inference.rs`](../../macros/src/gen/syntax/var_inference.rs) module infers variable categories from syntax
 context. For the guard `@(x!(y))`:
 
 - `x` is in a Name-typed field (channel of `POutput`) → Name category
@@ -5269,7 +5155,7 @@ perfectly reasonable guard to write — but it cannot be evaluated in general.
 Rather than rejecting such predicates outright, the pipeline classifies every
 guard into one of four **decidability tiers** and applies the appropriate
 compilation strategy.
-(See `prattail/docs/design/weighted-mso.md` for the MSO classification
+(See [weighted-mso.md](../../prattail/docs/design/weighted-mso.md) for the MSO classification
 framework that informs decidability analysis.)
 
 ### Tier Classification
@@ -5318,7 +5204,7 @@ size (one automaton traversal), T3 multiplies that by the user-specified bound
 `k` (at most `k` unrollings of the bounded quantifier), and T4's O(1) reflects
 that the guard is trusted rather than evaluated — the "cost" is the risk of
 unsoundness if the user's assertion is wrong. The `classify_decidability()`
-function in `symbolic.rs` implements this classification (see the decision tree
+function in [`symbolic.rs`](../../prattail/src/symbolic.rs) implements this classification (see the decision tree
 below).
 
 ### Classification Criteria
@@ -5445,8 +5331,6 @@ because the SFA representation avoids the per-symbol blowup of explicit-alphabet
 automata. T3's linear-in-k compile cost reflects the k-bounded unrolling of
 quantifiers:
 
-| Tier | Compile Cost                | Runtime Cost per Receive | Guarantees               |
-|------|-----------------------------|--------------------------|--------------------------|
 | Tier | Compile Cost                | Runtime Cost per Receive | Guarantees               |
 |------|-----------------------------|--------------------------|--------------------------|
 | T1   | O(\|formula\|)              | 0 (eliminated)           | Complete + sound         |
@@ -5674,7 +5558,7 @@ The left path (determinize → minimize) is the standard SFA pipeline and
 handles the majority of T2 guards. Determinization applies subset construction
 over symbolic predicates (§15), and minimization applies Hopcroft's algorithm
 (Hopcroft, 1971) adapted for SFAs. The middle path invokes `mu_calculus_to_pata()` (see
-`prattail/docs/design/parity-tree-automata.md`) for formulas containing
+[parity-tree-automata.md](../../prattail/docs/design/parity-tree-automata.md)) for formulas containing
 fixpoint operators (νX, μX). The right path compiles to register automata
 (M6) for predicates that need to compare the current input against stored
 values. All three paths produce a typed automaton that Stage 5 can lower to
@@ -5877,7 +5761,7 @@ strategy routes these definitions through the mu-calculus — specifically,
 recursive predicate definitions map to fixpoint formulas (νX for greatest
 fixpoints, μX for least fixpoints), which are then compiled to parity
 alternating tree automata (PATA) via the construction in
-`prattail/docs/design/parity-tree-automata.md`. The PATA representation
+[parity-tree-automata.md](../../prattail/docs/design/parity-tree-automata.md). The PATA representation
 captures the alternation between universal and existential quantification in
 the predicate's recursive structure.
 
@@ -5922,13 +5806,10 @@ yielding T3 and compiling to a bounded depth-first checker that returns
 ### Generated Rust Code per Tier
 
 The five-stage pipeline (parse → classify → optimize → lower → codegen)
-culminates in code generation, where each decidability tier produces a
-qualitatively different code shape reflecting fundamental computability
-constraints. A T1 guard vanishes entirely; a T2 guard becomes a simple
-conditional or hash probe; a T3 guard becomes a bounded search; a T4 guard
-becomes a trust annotation. The following examples illustrate the generated
-code for each tier, with narrative explaining the theory, rationale, and
-runtime behavior.
+culminates in code generation, where each decidability tier (§11) produces
+a qualitatively different code shape. The following examples illustrate the
+generated code for each tier, with narrative explaining the theory, rationale,
+and runtime behavior.
 
 #### T1 — Static Elimination
 
@@ -6399,9 +6280,9 @@ semantics. Both paths converge in `generate_guard_function()` at the T3 codegen
 branch. The `assert_pred` function remains as the T4 codegen target — `#[tier(T4)]`
 simply routes through it explicitly rather than as a fallback.
 
-### Guard Codegen Architecture (`guard_codegen.rs`)
+### Guard Codegen Architecture ([`guard_codegen.rs`](../../macros/src/gen/runtime/guard_codegen.rs))
 
-The actual implementation in `macros/src/gen/runtime/guard_codegen.rs` provides:
+The actual implementation in [guard_codegen.rs](../../macros/src/gen/runtime/guard_codegen.rs) provides:
 
 **Entry point:** `generate_guard_codegen(language)` — scans all term rules for
 `TermParam::GuardBody` constructors, classifies each guard, and emits per-tier
@@ -6669,62 +6550,6 @@ and LogicT evaluation. Read top-to-bottom:
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Sequence Diagram — Runtime Guard Evaluation with Theory Pruning
-
-The following sequence diagram shows a concrete runtime evaluation of a
-`forall(y: Int, nodes, gt(y, 0))` guard. The Comm rule fires pattern matching,
-then delegates to the constraint theory for domain pruning before LogicT
-evaluation:
-
-```
-┌────────┐  ┌──────────┐  ┌────────────────┐  ┌──────────┐  ┌────────────┐
-│ Comm   │  │ match_   │  │ Constraint     │  │ LogicT   │  │ Ascent     │
-│ Rule   │  │ pattern  │  │ Theory         │  │ Evaluator│  │ Relations  │
-└───┬────┘  └────┬─────┘  └───────┬────────┘  └────┬─────┘  └─────┬──────┘
-    │            │                │                │              │
-    │ match(val, │                │                │              │
-    │  pattern)  │                │                │              │
-    ├───────────►│                │                │              │
-    │            │                │                │              │
-    │   σ = {x→3,│                │                │              │
-    │    y→?}    │                │                │              │
-    │◄───────────┤                │                │              │
-    │            │                │                │              │
-    │ evaluate guard:             │                │              │
-    │ forall(y:Int, nodes,        │                │              │
-    │   gt(y, 0))                 │                │              │
-    │            │                │                │              │
-    │            │  propagate(    │                │              │
-    │            │   store,       │                │              │
-    │            │   gt(y,0))     │                │              │
-    │            ├───────────────►│                │              │
-    │            │                │                │              │
-    │            │  refined_store │                │              │
-    │            │  {y > 0}       │                │              │
-    │            │◄───────────────┤                │              │
-    │            │                │                │              │
-    │            │ domain_enum    │                │              │
-    │            │ ("nodes",      │                │              │
-    │            │  y > 0 filter) │                │              │
-    │            ├────────────────┼───────────────►│              │
-    │            │                │                │ query tuples │
-    │            │                │                ├─────────────►│
-    │            │                │                │              │
-    │            │                │                │ pruned set   │
-    │            │                │                │◄─────────────┤
-    │            │                │                │              │
-    │            │                │  fair_conjoin  │              │
-    │            │                │  over pruned   │              │
-    │            │                │  candidates    │              │
-    │            │                │                │              │
-    │            │  result: true  │                │              │
-    │◄───────────┼────────────────┼────────────────┤              │
-    │            │                │                │              │
-    │ fire cont  │                │                │              │
-    │ with σ     │                │                │              │
-    ▼            ▼                ▼                ▼              ▼
-```
-
 ### Component Diagram — ConstraintTheory Ecosystem
 
 This diagram shows the three built-in `ConstraintTheory` implementations,
@@ -6824,7 +6649,7 @@ Without typed predicates, `label()` must guess the domain. With them, it
 knows exactly what to generate.
 
 **3. `RefinementTypeSystem` bridge.** The existing
-`RefinementTypeSystem<S, T>` in `type_system.rs` composes a base `TypeSystem`
+`RefinementTypeSystem<S, T>` in [`type_system.rs`](../../prattail/src/type_system.rs) composes a base `TypeSystem`
 with a `ConstraintTheory`. Typed predicates in guards create a natural bridge:
 
 - A guard `where gt(x, 0)` on a channel typed `{ x: Int | x > 0 }`
@@ -7149,7 +6974,7 @@ a deterministic SFA with the same language as the original.
 
 The final step of guard compilation for T2 guards is lowering the determinized,
 minimized SFA into a Rust function. The `generate_sfa_transition_table()`
-function in `guard_codegen.rs` emits a function that simulates the DFA by
+function in [`guard_codegen.rs`](../../macros/src/gen/runtime/guard_codegen.rs) emits a function that simulates the DFA by
 iterating over the input value's symbols and matching against the transition
 table. The intuition is that the DFA's state-transition graph becomes a nested
 Rust `match` expression: the outer level dispatches on the current state, and
@@ -7334,7 +7159,7 @@ delegate to LogicT's fair backtracking. The three associated types —
 satisfy), the *evidence* (a satisfying assignment), and the *state* (the
 accumulated constraint set).
 
-See `prattail/docs/design/constraint-theories/` for per-theory design docs.
+See [constraint-theories](../../prattail/docs/design/constraint-theories) for per-theory design docs.
 
 ```rust
 pub trait ConstraintTheory {
@@ -7423,14 +7248,21 @@ finite failure — it succeeds (with `()`) if the stream is empty, and fails
 if the stream produces any result, enabling stratified negation in quantified
 predicates (§8).
 
+**Source files and design documents:**
+
+| Module | Source | Design Doc |
+|--------|--------|------------|
+| M12 Presburger | [presburger.rs](../../prattail/src/presburger.rs) | [presburger-algebra.md](../../prattail/docs/design/constraint-theories/presburger-algebra.md) |
+| M13 Unification | [unification.rs](../../prattail/src/unification.rs) | [unification-theory.md](../../prattail/docs/design/constraint-theories/unification-theory.md) |
+| M14 Lattice | [lattice_theory.rs](../../prattail/src/lattice_theory.rs) | [lattice-theory.md](../../prattail/docs/design/constraint-theories/lattice-theory.md) |
+
 ### PresburgerAlgebra — Multi-Variable Linear Integer Arithmetic (M12)
 
 **Motivation.** Single-variable integer constraints like `x > 0 ∧ x < 1000`
 are handled by `IntervalAlgebra` (M1). But guards involving two or more
 variables — e.g., `x + y ≤ budget` or `count(ch1) + count(ch2) ≤ capacity`
 — require **Presburger arithmetic**: the first-order theory of the integers
-with addition (not multiplication). Source: `prattail/src/presburger.rs`.
-Design doc: `prattail/docs/design/constraint-theories/presburger-algebra.md`.
+with addition (not multiplication).
 
 **Intuition.** Variables are encoded as binary numbers read least-significant
 bit (LSB) first. Each "symbol" on the NFA's tape is a k-bit vector giving
@@ -7442,7 +7274,7 @@ shortest accepting path decoded back to integers.
 **Formal Definition.** Presburger arithmetic is the theory Th(ℤ, +, <, 0, 1).
 Its atomic predicates are **linear constraints**: inequalities of the form
 Σᵢ aᵢ · xᵢ ≤ b where aᵢ, b ∈ ℤ and xᵢ are integer variables. Büchi (1960)
-[§25, ref #5] proved that every Presburger formula defines a regular language
+[§23, ref #5] proved that every Presburger formula defines a regular language
 over the alphabet {0,1}ᵏ (one bit per variable), providing a fully decidable
 automata-theoretic decision procedure.
 
@@ -7481,7 +7313,7 @@ Bit-vector tape for k=2 variables (x, y), encoding x=5 (101₂), y=3 (11₂):
   r=b            r=⌊(b-a₁-a₂)/2⌋           r≥0 → accept
 ```
 
-**Key types** (from `prattail/src/presburger.rs`):
+**Key types** (from [presburger.rs](../../prattail/src/presburger.rs)):
 
 | Type                | Role                                                    |
 |---------------------|---------------------------------------------------------|
@@ -7511,29 +7343,7 @@ Algorithm ENCODE_CONSTRAINT(c: LinearConstraint, k: usize, w: usize) → NFA
   6. Return NFA
 ```
 
-**Literate code** — `encode_constraint` from `prattail/src/presburger.rs`:
-
-```rust
-// Step 1: Build the NFA for a single linear constraint.
-// The alphabet is {0,1}^k — one bit per variable, LSB-first.
-pub fn from_constraint(constraint: &LinearConstraint,
-                       num_vars: usize, bit_width: usize) -> Self {
-    // ... state range computed from coefficient magnitudes
-    // Step 2: For each bit position, compute transitions via
-    // r' = floor((r - sum(a_i * d_i)) / 2)
-    for bit in 0..bit_width {
-        for &r in &current_states {
-            for bits in 0..(1u32 << num_vars) {
-                // Decode bit-vector, compute new remainder
-                let delta: i64 = /* Σ a_i · bit_i */;
-                let new_r = (r - delta).div_euclid(2);
-                nfa.add_transition(r_state, bits, new_r_state);
-            }
-        }
-    }
-    // Step 3: Accept iff remainder ≥ 0
-}
-```
+Implementation: [presburger.rs](../../prattail/src/presburger.rs).
 
 **Boolean operations:** Intersection (NFA product construction), union (product +
 accept union), complement (depth-tracked determinization + terminal flip),
@@ -7552,8 +7362,7 @@ contains arithmetic relations over multiple integer-typed parameters.
 bindings. Two guard patterns may need to be checked for overlap ("can the same
 value match both?"), subsumption ("does pattern A always match when B does?"),
 or disjointness ("can they never match the same value?"). These questions reduce
-to first-order syntactic unification. Source: `prattail/src/unification.rs`.
-Design doc: `prattail/docs/design/constraint-theories/unification-theory.md`.
+to first-order syntactic unification.
 
 **Intuition.** Unification is like solving a jigsaw puzzle where some pieces have
 blank spots (variables). You try to fill in the blanks so that both sides of each
@@ -7606,7 +7415,7 @@ Occurs check diagram:
   └─────────┘
 ```
 
-**Key types** (from `prattail/src/unification.rs`):
+**Key types** (from [unification.rs](../../prattail/src/unification.rs)):
 
 | Type                  | Role                                                  |
 |-----------------------|-------------------------------------------------------|
@@ -7659,43 +7468,7 @@ Algorithm UNIFY(equations: [(TermExpr, TermExpr)]) → Option<Substitution>
   4. Return Some(σ)
 ```
 
-**Literate code** — core unification loop from `prattail/src/unification.rs`:
-
-```rust
-// Step 1: Initialize work stack with all pending equations.
-// Step 2: Pop equations, apply current substitution, pattern match.
-fn unify(&self, mut substitution: HashMap<usize, TermExpr>,
-         initial_equations: &[UnificationEquation])
-         -> Option<HashMap<usize, TermExpr>> {
-    let mut stack: Vec<(TermExpr, TermExpr)> = initial_equations
-        .iter()
-        .map(|eq| (eq.lhs.clone(), eq.rhs.clone()))
-        .collect();
-
-    while let Some((lhs, rhs)) = stack.pop() {
-        let lhs = lhs.apply_substitution(&substitution);
-        let rhs = rhs.apply_substitution(&substitution);
-        match (&lhs, &rhs) {
-            (TermExpr::Var(x), TermExpr::Var(y)) if x == y => continue,
-            (TermExpr::Var(x), t) | (t, TermExpr::Var(x)) => {
-                // Occurs check: x must not appear in t
-                if TermExpr::occurs_in(*x, t) { return None; }
-                substitution.insert(*x, t.clone());
-            }
-            (TermExpr::App { head: f, args: a },
-             TermExpr::App { head: g, args: b }) => {
-                if f != g || a.len() != b.len() { return None; }
-                // Decompose: push corresponding arguments
-                for (ai, bi) in a.iter().zip(b.iter()) {
-                    stack.push((ai.clone(), bi.clone()));
-                }
-            }
-            // ... constant and clash cases
-        }
-    }
-    Some(substitution)
-}
-```
+The implementation follows the pseudocode directly; see [unification.rs](../../prattail/src/unification.rs).
 
 **Subsumption:** σ₁ ⊑ σ₂ iff ∃θ. σ₂ = θ ∘ σ₁ (σ₁ is more general than σ₂).
 
@@ -7711,8 +7484,7 @@ like: Is `Nat` a subtype of `Number`? What is the most specific common
 supertype of `Int` and `Float` (join/LUB)? What is the most general type
 that is a subtype of both `Readable` and `Writable` (meet/GLB)? Does a
 pattern set cover all subtypes of `Value`? These reduce to operations on a
-finite partially ordered set of types. Source: `prattail/src/lattice_theory.rs`.
-Design doc: `prattail/docs/design/constraint-theories/lattice-theory.md`.
+finite partially ordered set of types.
 
 **Intuition.** The type hierarchy is a directed acyclic graph (DAG) where edges
 point from subtypes to supertypes. "Is A a subtype of B?" becomes "Is there a
@@ -7749,7 +7521,7 @@ Example Hasse diagram for a small type lattice:
   Int ⊓ Float = Nat     (meet: greatest common subtype)
 ```
 
-**Key types** (from `prattail/src/lattice_theory.rs`):
+**Key types** (from [lattice_theory.rs](../../prattail/src/lattice_theory.rs)):
 
 | Type                | Role                                               |
 |---------------------|----------------------------------------------------|
@@ -7797,7 +7569,7 @@ Algorithm JOIN(store: LatticeStore, a: TypeId, b: TypeId) → Option<TypeId>
      Else: return None (join does not exist — not a lattice)
 ```
 
-**Literate code** — Warshall closure from `prattail/src/lattice_theory.rs`:
+**Literate code** — Warshall closure from [lattice_theory.rs](../../prattail/src/lattice_theory.rs):
 
 ```rust
 // Step 1: Ensure transitive closure is up to date.
@@ -7868,19 +7640,6 @@ modules:
 | Lattice          | `lattice-theory`               | `lattice_theory.rs` | ~1,200 | 45    | Subtype lattice with join/meet              |
 | ProductAlgebra   | (always-on)                    | `symbolic.rs`       | ~250   | 12    | Compose two BooleanAlgebra instances        |
 
-### Rocq Formal Verification
-
-The constraint theory suite is backed by Rocq proofs:
-
-| Proof File                                          | Theorems                                                                                   | Lines |
-|-----------------------------------------------------|--------------------------------------------------------------------------------------------|-------|
-| `formal/rocq/logict/LogicTFairness.v`               | 23 theorems: msplit laws, interleave fairness, mplus/once/gnot/ifte properties             | 447   |
-| `formal/rocq/presburger/PresburgerBooleanAlgebra.v` | 22 theorems: Boolean algebra axioms, De Morgan, NFA bridge correctness                     | 352   |
-| `formal/rocq/unification/UnificationSoundness.v`    | 21 theorems: unification soundness, occurs check, clash unsatisfiability, TheoryAlgebra BA | 577   |
-| `formal/rocq/lattice/LatticeTheoryCorrectness.v`    | 20 theorems: closure correctness, join/meet commutativity/associativity/absorption         | 480   |
-
-All proofs have zero `Admitted` or `Axiom` statements.
-
 > **Citations:**
 >
 > - Kiselyov, O., Shan, C., Friedman, D. P. & Sabry, A. "Backtracking,
@@ -7899,8 +7658,8 @@ All proofs have zero `Admitted` or `Axiom` statements.
 
 #### Structural Analysis Pattern
 
-Like all 22+ existing `analyze_from_bundle()` functions (e.g., `symbolic.rs`,
-`nominal.rs`, `buchi.rs`), constraint theory analyses extract information
+Like all 22+ existing `analyze_from_bundle()` functions (e.g., [`symbolic.rs`](../../prattail/src/symbolic.rs),
+[`nominal.rs`](../../prattail/src/nominal.rs), [`buchi.rs`](../../prattail/src/buchi.rs)), constraint theory analyses extract information
 from `all_syntax: &[(String, String, Vec<SyntaxItemSpec>)]` without requiring
 explicit guard fields on `RuleSpec`:
 
@@ -7967,7 +7726,7 @@ subtype edges; LT01 warns when LogicT search exceeds its depth bound.
 ### Dispatch Gating
 
 When `predicate-dispatch` is enabled, `classify_grammar()` in
-`predicate_dispatch.rs` sets `PredicateSignature` bits M12, M13, M14 based
+[`predicate_dispatch.rs`](../../prattail/src/predicate_dispatch.rs) sets `PredicateSignature` bits M12, M13, M14 based
 on grammar structure heuristics. Each analysis checks
 `dispatch_plan.requires(ModuleId::...)` before running. Grammars without
 numeric terminals skip Presburger; grammars without overlapping patterns skip
@@ -7976,7 +7735,7 @@ Unification; grammars without category delegation skip Lattice.
 ### Relation Name Heuristics
 
 Module activation currently uses **hardcoded keyword lists** in
-`predicate_dispatch.rs` to classify `PredicateExpr::Relation` names into
+[`predicate_dispatch.rs`](../../prattail/src/predicate_dispatch.rs) to classify `PredicateExpr::Relation` names into
 theory modules. These heuristics (`is_arithmetic_relation()`,
 `is_unification_relation()`, `is_subtype_relation()`) represent a **first
 attempt** at automating predicate dispatch and are a **temporary, conservative
@@ -8113,9 +7872,9 @@ function (~2000 lines estimated).
 - Composable with SFA intersection for guard fusion
 
 **LogicT advantages (current approach):**
-- Already implemented and tested (22+ tests)
+- Already implemented and tested
 - Composable with existing `ConstraintTheory` infrastructure
-- Simpler implementation (~250 lines vs ~2000 estimated)
+- Simpler implementation
 - Supports bounded evaluation (T3) naturally via `collect_bounded()`
 
 The cost-benefit framework (`CostBenefitGate`) can gate between LogicT and AWA
@@ -8212,14 +7971,14 @@ by §16 (Presburger, Unification, Lattice). M15 is the SFT module (§16) for
 output-producing transductions.
 
 > **Module design docs** (all in `prattail/docs/design/`):
-> M1 → `symbolic-automata.md`, M2 → `weighted-buchi.md`,
-> M3 → `polynomial-awa.md`, M4 → `weighted-vpa.md`,
-> M5 → `parity-tree-automata.md`, M6 → `register-automata.md`,
-> M7 → `probabilistic-automata.md`, M8 → `multi-tape-automata.md`,
-> M9 → `multiset-automata.md`, M10 → `weighted-mso.md`,
-> M11 → `two-way-transducer.md`, M12 → `presburger.md`,
-> M13 → `unification.md`, M14 → `lattice-theory.md`,
-> M15 → `symbolic-finite-transducer.md`.
+> M1 → [symbolic-automata.md](../../prattail/docs/design/symbolic-automata.md), M2 → [weighted-buchi.md](../../prattail/docs/design/weighted-buchi.md),
+> M3 → [polynomial-awa.md](../../prattail/docs/design/polynomial-awa.md), M4 → [weighted-vpa.md](../../prattail/docs/design/weighted-vpa.md),
+> M5 → [parity-tree-automata.md](../../prattail/docs/design/parity-tree-automata.md), M6 → [register-automata.md](../../prattail/docs/design/register-automata.md),
+> M7 → [probabilistic-automata.md](../../prattail/docs/design/probabilistic-automata.md), M8 → [multi-tape-automata.md](../../prattail/docs/design/multi-tape-automata.md),
+> M9 → [multiset-automata.md](../../prattail/docs/design/multiset-automata.md), M10 → [weighted-mso.md](../../prattail/docs/design/weighted-mso.md),
+> M11 → [two-way-transducer.md](../../prattail/docs/design/two-way-transducer.md), M12 → [presburger.md](../../prattail/docs/design/presburger.md),
+> M13 → [unification.md](../../prattail/docs/design/unification.md), M14 → [lattice-theory.md](../../prattail/docs/design/lattice-theory.md),
+> M15 → [symbolic-finite-transducer.md](../../prattail/docs/design/symbolic-finite-transducer.md).
 
 
 ### Module Subsections (M1–M15)
@@ -8256,23 +8015,9 @@ M = (Q, A, δ, I, F) where:
 - I ⊆ Q is the set of initial states
 - F ⊆ Q is the set of accepting states
 
-The `BooleanAlgebra` trait requires (from `prattail/src/symbolic.rs:115`):
-
-```rust
-pub trait BooleanAlgebra: Clone + Debug + Send + Sync + 'static {
-    type Predicate: Clone + Debug + Eq + Hash + Send + Sync + 'static;
-    type Domain: Clone + Debug + Send + Sync + 'static;
-
-    fn true_pred(&self) -> Self::Predicate;      // ⊤
-    fn false_pred(&self) -> Self::Predicate;     // ⊥
-    fn and(&self, a, b) -> Self::Predicate;      // φ ∧ ψ
-    fn or(&self, a, b) -> Self::Predicate;       // φ ∨ ψ
-    fn not(&self, a) -> Self::Predicate;         // ¬φ
-    fn is_satisfiable(&self, a) -> bool;         // ∃x ∈ 𝒟. ⟦φ⟧(x) = true
-    fn witness(&self, a) -> Option<Self::Domain>; // Concrete satisfying element
-    fn evaluate(&self, pred, elem) -> bool;      // ⟦φ⟧(x)
-}
-```
+The `BooleanAlgebra` trait (in [symbolic.rs](../../prattail/src/symbolic.rs))
+provides ⊤, ⊥, ∧, ∨, ¬, satisfiability checking, witness generation, and
+predicate evaluation over a generic domain.
 
 **Key operations:**
 
@@ -8287,14 +8032,7 @@ pub trait BooleanAlgebra: Clone + Debug + Send + Sync + 'static {
 | `analyze`       | `SFA`       | `SymbolicAnalysis` | Guard satisfiability / overlap analysis        |
 
 **Decidability tier classification.** `classify_decidability(expr)` assigns
-each predicate expression to one of four tiers:
-
-| Tier | Name                 | Description                             |
-|------|----------------------|-----------------------------------------|
-| T1   | CompileTimeDecidable | Propositional + finite quantifiers      |
-| T2   | RuntimeDecidable     | Database relations available at runtime |
-| T3   | SemiDecidable        | Bounded infinite quantifiers            |
-| T4   | Undecidable          | Unbounded infinite quantifiers          |
+each predicate expression to one of four tiers (T1–T4, defined in §11).
 
 **Concrete algebras:**
 
@@ -8302,11 +8040,11 @@ each predicate expression to one of four tiers:
 - `CharClassAlgebra` — Unicode character class predicates
 - `ProductAlgebra<A, B>` — cross-product of two algebras (multi-domain guards)
 
-**Pipeline role:** Always-on. Cost 1. M1 is activated for every guard (bit 0
+**Pipeline role:** Always-on. M1 is activated for every guard (bit 0
 of the 15-bit `PredicateSignature`). All guard predicates compile to SFAs.
 
-> Reference: D'Antoni & Veanes, POPL 2014 [§25, ref #9].
-> See §15 for detailed BooleanAlgebra theory. See `prattail/docs/design/symbolic-automata.md`.
+> Reference: D'Antoni & Veanes, POPL 2014 [§23, ref #9].
+> See §15 for detailed BooleanAlgebra theory. See [symbolic-automata.md](../../prattail/docs/design/symbolic-automata.md).
 
 #### M2: Weighted Büchi Automata — Infinite Behavior *(design-only)*
 
@@ -8331,12 +8069,12 @@ and alphabet Σ is a tuple M = (Q, Σ, δ, I, F) where:
   (closure operation a* = 1 ⊕ a ⊕ a² ⊕ ⋯) to sum over infinite paths
 
 **Status:** Design-only (not yet implemented). Design doc:
-`prattail/docs/design/weighted-buchi.md`.
+[weighted-buchi.md](../../prattail/docs/design/weighted-buchi.md).
 
 **Pipeline role:** Feature gate `omega`. Cost 3. Would be activated by guards
 on infinite streams or recursive channel types.
 
-> Reference: Büchi 1960 [§25, ref #5]; Droste & Gastin 2007 [§25, ref #13].
+> Reference: Büchi 1960 [§23, ref #5]; Droste & Gastin 2007 [§23, ref #13].
 
 #### M3: Polynomial Alternating Weighted Automata — Quantifier Evaluation *(design-only)*
 
@@ -8363,13 +8101,13 @@ over semiring W is a tuple M = (Q⊕, Q⊗, Σ, δ, I, F) where:
   nested quantifier patterns without exponential blowup
 
 **Status:** Design-only (not yet implemented). Design doc:
-`prattail/docs/design/polynomial-awa.md`.
+[polynomial-awa.md](../../prattail/docs/design/polynomial-awa.md).
 
 **Pipeline role:** Feature gate `alternating`. Cost 3. Would be activated
 by quantified behavioral predicates with mixed ∀/∃ nesting.
 
-> Reference: Chandra, Kozen & Stockmeyer 1981 [§25, ref #7];
-> Kostolanyi & Misun 2018 [§25, ref #24].
+> Reference: Chandra, Kozen & Stockmeyer 1981 [§23, ref #7];
+> Kostolanyi & Misun 2018 [§23, ref #24].
 
 #### M4: Weighted Visibly Pushdown Automata — Scope Nesting *(design-only)*
 
@@ -8396,7 +8134,7 @@ M = (Q, Σ_c, Σ_r, Σ_int, Γ, δ, I, F) where:
   - δ_int ⊆ Q × Σ_int × Q × W (internal: no stack change)
 
 **Status:** Design-only (not yet implemented). Design doc:
-`prattail/docs/design/weighted-vpa.md`.
+[weighted-vpa.md](../../prattail/docs/design/weighted-vpa.md).
 
 **Pipeline role:** Feature gate `vpa`. Cost 4. Would be activated by guards
 with nested quantifier scopes or parenthesized expressions.
@@ -8436,7 +8174,7 @@ Mu-calculus formulae:
       | νX.φ    (greatest fixpoint — infinite unfolding)
 ```
 
-**Key types** (from `prattail/src/parity_tree.rs`):
+**Key types** (from [parity_tree.rs](../../prattail/src/parity_tree.rs)):
 
 | Type                                | Role                                              |
 |-------------------------------------|---------------------------------------------------|
@@ -8480,8 +8218,8 @@ Algorithm MU_CALCULUS_TO_PATA(φ: MuCalculusFormula, arity: usize) → PATA
 **Pipeline role:** Feature gate `parity-tree`. Cost 4. Activated by `letprop`
 recursive behavioral predicates.
 
-> Reference: Emerson & Jutla 1991 [§25, ref #14]; Comon et al. TATA 2007 [§25, ref #8].
-> See `prattail/docs/design/parity-tree-automata.md`.
+> Reference: Emerson & Jutla 1991 [§23, ref #14]; Comon et al. TATA 2007 [§23, ref #8].
+> See [parity-tree-automata.md](../../prattail/docs/design/parity-tree-automata.md).
 
 #### M6: Register Automata — Data-Aware Predicates
 
@@ -8510,7 +8248,7 @@ semiring W and data domain 𝒟 is a tuple M = (Q, k, Σ, δ, q₀, R₀, F) whe
 - R₀ ∈ (𝒟 ∪ {⊥})^k is the initial register valuation
 - F ⊆ Q is the set of accepting states
 
-Register operations (from `prattail/src/register_automata.rs:69`):
+Register operations (from [register_automata.rs](../../prattail/src/register_automata.rs)):
 
 ```rust
 pub enum RegisterOp {
@@ -8557,8 +8295,8 @@ Algorithm SIMULATE_RA(M: RA, input: DataValue[]) → bool
 **Pipeline role:** Feature gate `register-automata`. Cost 2. Activated by
 equality (`eq`), inequality, or freshness (`fresh`) predicates in guards.
 
-> Reference: Kaminski & Francez 1994 [§25, ref #21].
-> See `prattail/docs/design/register-automata.md`.
+> Reference: Kaminski & Francez 1994 [§23, ref #21].
+> See [register-automata.md](../../prattail/docs/design/register-automata.md).
 
 #### M7: Probabilistic Automata — Selectivity Estimation
 
@@ -8583,7 +8321,7 @@ automaton where weights are log-probabilities (`LogWeight`):
 - Selectivity: sel(M) = Σ_w ⟦M⟧(w), the total acceptance probability
 - Entropy: H(M) = −Σ_w ⟦M⟧(w) · log ⟦M⟧(w), the uncertainty measure
 
-**Key types** (from `prattail/src/probabilistic.rs`):
+**Key types** (from [probabilistic.rs](../../prattail/src/probabilistic.rs)):
 
 | Type                     | Role                                            |
 |--------------------------|-------------------------------------------------|
@@ -8605,20 +8343,20 @@ automaton where weights are log-probabilities (`LogWeight`):
 **Pipeline role:** Always-on. Cost 5. M7 determines guard evaluation order for
 all rules with multiple guards. Feeds M8/M11 pipeline (§2A).
 
-> See `prattail/docs/design/probabilistic-automata.md`.
+> See [probabilistic-automata.md](../../prattail/docs/design/probabilistic-automata.md).
 
 #### M8: Multi-Tape Automata — Traversal Fusion
 
 See **§2A, "Part I — Multi-Tape Automata (M8): Traversal Fusion"** for the
 complete treatment: motivation, intuition (DJ turntables analogy), formal
 Definition 2A.1, pair construction with three transition classes, pseudocode
-(PAIR and EVALUATE algorithms), literate code from `prattail/src/multi_tape.rs`,
+(PAIR and EVALUATE algorithms), literate code from [multi_tape.rs](../../prattail/src/multi_tape.rs),
 and complexity analysis.
 
 **Pipeline role:** Feature gate via `channels {}` or heuristic. Cost 5. Fuses
 N per-channel SFAs into a single K-tape product automaton.
 
-> Reference: Kempe 2004 [§25, ref #22].
+> Reference: Kempe 2004 [§23, ref #22].
 
 #### M9: Multiset Automata — Cardinality Predicates
 
@@ -8643,7 +8381,7 @@ feature set F is a tuple M = (Q, Σ, F, δ, q₀, A) where:
   each `{ feature: f, min: Option<u64>, max: Option<u64> }` bounds
   the total accumulated count of feature f along any accepting path
 
-The `HeapSemiring` trait (from `prattail/src/multiset_automata.rs`) enables
+The `HeapSemiring` trait (from [multiset_automata.rs](../../prattail/src/multiset_automata.rs)) enables
 semirings backed by `HashMap` (non-Copy types), bridging standard `Semiring`
 (Copy) and heap-allocated multiset domains:
 
@@ -8671,7 +8409,7 @@ semirings backed by `HashMap` (non-Copy types), bridging standard `Semiring`
 cardinality predicates (`count_ge`, `count_le`, `multiplicity`). PPar analysis
 with HashBag multiplicities.
 
-> See `prattail/docs/design/multiset-automata.md`.
+> See [multiset-automata.md](../../prattail/docs/design/multiset-automata.md).
 
 #### M10: Weighted MSO — Specification Language
 
@@ -8713,7 +8451,7 @@ This is the decidability boundary.
 | `FirstOrder`            | Only first-order quantifiers (∀x, ∃x) | T2           |
 | `Full`                  | Second-order quantifiers (∀X, ∃X)     | T3/T4        |
 
-**Key types** (from `prattail/src/weighted_mso.rs`):
+**Key types** (from [weighted_mso.rs](../../prattail/src/weighted_mso.rs)):
 
 | Type                 | Role                                                   |
 |----------------------|--------------------------------------------------------|
@@ -8725,8 +8463,8 @@ This is the decidability boundary.
 **Pipeline role:** Always-on. Cost 1. M10 classifies every guard's logical
 structure, routing it to the appropriate tier and evaluation strategy.
 
-> Reference: Droste & Gastin 2007 [§25, ref #13]; Büchi 1960 [§25, ref #5].
-> See `prattail/docs/design/weighted-mso.md`.
+> Reference: Droste & Gastin 2007 [§23, ref #13]; Büchi 1960 [§23, ref #5].
+> See [weighted-mso.md](../../prattail/docs/design/weighted-mso.md).
 
 #### M11: Two-Way Transducers — Value Space Pruning
 
@@ -8735,55 +8473,20 @@ the complete treatment: motivation (Cartesian product reduction), intuition
 (librarian analogy), formal Definition 2A.2, enhanced tape and head movement,
 crossing sequences with Theorem 2A.1 (Shepherdson 1959), ChannelConstraint
 struct, pseudocode (TRANSDUCE algorithm), and literate code from
-`prattail/src/two_way_transducer.rs`.
+[two_way_transducer.rs](../../prattail/src/two_way_transducer.rs).
 
 **Pipeline role:** Feature gate via `channels {}` or heuristic. Cost 6.
 Backward constraint propagation prunes channel value spaces.
 
-> Reference: Feng & Maletti 2022 [§25, ref #15].
+> Reference: Feng & Maletti 2022 [§23, ref #15].
 
-#### M12: Presburger Arithmetic — Linear Integer Constraints
+#### M12–M15: Constraint Theories and Transductions
 
-See **§16, "PresburgerAlgebra — Multi-Variable Linear Integer Arithmetic"**
-for the complete treatment: formal definition of Presburger arithmetic,
-NFA construction pseudocode (Bartzis-Bultan), literate code for
-`encode_constraint`, bit-vector tape diagram, and dual
-BooleanAlgebra/ConstraintTheory implementations.
-
-**Pipeline role:** Feature gate `presburger`. Cost 3. Activated when guard
-contains arithmetic relations over multiple integer-typed parameters.
-
-> Reference: Büchi 1960 [§25, ref #5].
-
-#### M13: Unification — Structural Pattern Matching
-
-See **§16, "UnificationTheory — Structural Unification"** for the complete
-treatment: formal definition of first-order unification, Martelli-Montanari
-pseudocode, literate code for `unify`, occurs-check diagram, and term
-representation.
-
-**Pipeline role:** Feature gate `unification`. Cost 3. Activated when guard
-contains pattern-matching relations requiring structural decomposition.
-
-#### M14: Lattice Theory — Subtype Hierarchy
-
-See **§16, "LatticeTheory — Subtype Lattice"** for the complete treatment:
-formal lattice definition (⊔, ⊓, ≤), Warshall closure pseudocode, literate
-code, and Hasse diagram example.
-
-**Pipeline role:** Feature gate `lattice-theory`. Cost 2. Activated when guard
-contains subtype relations or terminals referencing the type hierarchy.
-
-#### M15: Symbolic Finite Transducers — Output Transductions
-
-See **§17, "Symbolic Finite Transducers (M15)"** subsection below for the
-complete treatment: formal SFT definition, composition/pre-image pseudocode,
-literate code for `transduce`, data flow diagram, and factory functions.
-
-**Pipeline role:** Feature gate `sft`. Cost 5. Module ID M15. Activated when
-guard transforms input values (case fold, normalize, guard-conditional rewrite).
-
-> Reference: D'Antoni & Veanes, POPL 2014 [§25, ref #9].
+M12 (Presburger Arithmetic), M13 (Unification), and M14 (Subtype Lattice)
+are fully treated in §16 with formal definitions, pseudocode, and literate
+code. M15 (Symbolic Finite Transducers) is treated below in this section.
+Pipeline roles and feature gates are documented at the end of each
+module's §16/§17 subsection.
 
 
 ### Predicate Dispatch Controller
@@ -8843,8 +8546,8 @@ These modules run on every guard regardless of the predicate signature
 values before comparison. Case-folding (`"Hello" → "hello"`), whitespace
 normalization, and guard-conditional rewrites all produce output. SFTs extend
 SFAs with output functions: where SFAs accept/reject, SFTs transform inputs
-to outputs. Source: `prattail/src/sft.rs` (feature gate `sft`).
-Design doc: `prattail/docs/design/symbolic-finite-transducer.md`.
+to outputs. Source: [sft.rs](../../prattail/src/sft.rs) (feature gate `sft`).
+Design doc: [symbolic-finite-transducer.md](../../prattail/docs/design/symbolic-finite-transducer.md).
 
 **Intuition.** An SFA is a gatekeeper that says "yes" or "no." An SFT is a
 translator that reads input, transforms it according to predicate-guarded rules,
@@ -8925,7 +8628,25 @@ Algorithm COMPOSE(T₁: SFT<A,B>, T₂: SFT<B,C>) → SFT<A,C>
   4. Return composed SFT
 ```
 
-**Literate code** — `transduce` from `prattail/src/sft.rs`:
+**Pseudocode — Transduction:**
+
+```
+Algorithm TRANSDUCE(T: SFT<A,B>, word: [A.Domain]) → Set<[B.Domain]>
+──────────────────────────────────────────────────────────────────────
+  Input:  An SFT and a concrete input word
+  Output: Set of all possible output words
+
+  1. configs ← { (s, ε) | s ∈ T.initial_states }
+  2. For each symbol σ in word:
+       next ← ∅
+       For each (state, output) in configs:
+         For each transition (state →[φ/f] q) where φ(σ) = true:
+           next ← next ∪ { (q, output · f(σ)) }
+       configs ← next
+  3. Return { output | (s, output) ∈ configs, s ∈ T.accepting_states }
+```
+
+**Literate code** — `transduce` (implementing TRANSDUCE above) from [sft.rs](../../prattail/src/sft.rs):
 
 ```rust
 // Step 1: Simulate the SFT on a concrete input word.
@@ -8969,7 +8690,7 @@ dispatch M15:Sft. In the guard infrastructure, SFTs enable transducer-based
 guard compilation — guards that transform input values (e.g., case-folding
 before comparison) compile to SFT composition rather than post-hoc normalization.
 
-> Reference: D'Antoni & Veanes, POPL 2014 [§25, ref #9].
+> Reference: D'Antoni & Veanes, POPL 2014 [§23, ref #9].
 
 ### E-Graph Equality Saturation
 
@@ -8977,9 +8698,9 @@ before comparison) compile to SFT composition rather than post-hoc normalization
 (`x > 0 ∧ x > 0`), algebraic identities (`x + 0 → x`), or equivalent
 formulations that produce unnecessarily large SFAs. Equality saturation
 discovers these equivalences at compile time, simplifying guards before SFA
-compilation. Source: `prattail/src/egraph.rs` (~900 lines, 49 tests).
+compilation. Source: [egraph.rs](../../prattail/src/egraph.rs).
 Feature gate: `egraph = ["trs-analysis"]`.
-Design doc: `prattail/docs/design/egraph-equality-saturation.md`.
+Design doc: [egraph-equality-saturation.md](../../prattail/docs/design/egraph-equality-saturation.md).
 
 **Intuition.** An e-graph is a compact representation of many equivalent terms
 simultaneously. Unlike destructive rewriting (which replaces a term with its
@@ -9020,9 +8741,9 @@ An **equality saturation** run applies rewrite rules (l → r) to the e-graph:
 ```
 
 > Reference: Willsey et al., "egg: Fast and Extensible Equality Saturation,"
-> POPL 2021 [§25, ref #33].
+> POPL 2021 [§23, ref #33].
 
-**Key types** (from `prattail/src/egraph.rs`):
+**Key types** (from [egraph.rs](../../prattail/src/egraph.rs)):
 
 | Type            | Role                                                       |
 |-----------------|------------------------------------------------------------|
@@ -9059,43 +8780,7 @@ Algorithm SATURATE(G: EGraph, rules: [RewriteRule]) → SaturationResult
   2. Return { iterations, saturated: ¬changed }
 ```
 
-**Literate code** — `saturate` from `prattail/src/egraph.rs`:
-
-```rust
-// Step 1: Iterate match-apply-rebuild until fixpoint or resource limit.
-pub fn saturate(&mut self, rules: &[ERewriteRule]) -> SaturationResult {
-    let mut iterations = 0;
-    loop {
-        iterations += 1;
-        let mut changed = false;
-
-        // Step 2: Match — search for LHS pattern instances.
-        let mut all_matches = Vec::new();
-        for rule in rules {
-            let matches = self.search_pattern(&rule.lhs);
-            all_matches.push((rule, matches));
-        }
-
-        // Step 3: Apply — instantiate RHS, merge equivalence classes.
-        for (rule, matches) in &all_matches {
-            for (class_id, subst) in matches {
-                let rhs_id = rule.rhs.instantiate(self, subst);
-                if self.find(*class_id) != self.find(rhs_id) {
-                    self.merge(*class_id, rhs_id);
-                    changed = true;
-                }
-            }
-        }
-
-        // Step 4: Rebuild — restore congruence closure after merges.
-        self.rebuild();
-
-        if !changed || self.node_count() > self.config.max_nodes {
-            return SaturationResult { iterations, saturated: !changed };
-        }
-    }
-}
-```
+Implementation: [egraph.rs](../../prattail/src/egraph.rs).
 
 **Cost-based extraction.** After saturation, `extract_best(class_id)` finds
 the smallest (by AST size) equivalent term in the class, using a bottom-up
@@ -9115,8 +8800,8 @@ The **poststar** and **prestar** algorithms compute forward and backward
 reachability over all possible stack configurations, weighted by a semiring.
 This enables interprocedural analysis of guard evaluation chains — determining
 which guard sequences are reachable and at what cost. Source:
-`prattail/src/wpds.rs` (~3,150 lines). Extensions: `ewpds.rs`, `ara.rs`,
-`relational.rs`.
+[wpds.rs](../../prattail/src/wpds.rs). Extensions: [`ewpds.rs`](../../prattail/src/ewpds.rs), [`ara.rs`](../../prattail/src/ara.rs),
+[`relational.rs`](../../prattail/src/relational.rs).
 
 **Intuition.** Think of a WPDS as a program call stack where each function call
 pushes a frame and each return pops one. The semiring weight on each
@@ -9138,7 +8823,7 @@ cost?" Prestar asks the reverse: "What initial stacks can reach this target?"
 A **P-automaton** represents sets of stack configurations. States correspond to
 stack symbols; transitions read stack symbols bottom-to-top.
 
-**Key types** (from `prattail/src/wpds.rs`):
+**Key types** (from [wpds.rs](../../prattail/src/wpds.rs)):
 
 | Type                      | Role                                                  |
 |---------------------------|-------------------------------------------------------|
@@ -9197,14 +8882,14 @@ Algorithm POSTSTAR(wpds: WPDS, init: PAutomaton) → PAutomaton
 
 **Extension modules:**
 
-- **EWPDS** (`ewpds.rs`, feature `wpds-extended`): Extends WPDS with **merging
+- **EWPDS** ([`ewpds.rs`](../../prattail/src/ewpds.rs), feature `wpds-extended`): Extends WPDS with **merging
   functions** at call/return boundaries for local variable analysis. At a return
   point, the merge function combines the callee's summary with the caller's
   local state. Pipeline: `EwpdsAnalysis`.
-- **ARA** (`ara.rs`, feature `wpds-ara`, dep: `wpds-relational`): **Affine-Relation
+- **ARA** ([`ara.rs`](../../prattail/src/ara.rs), feature `wpds-ara`, dep: `wpds-relational`): **Affine-Relation
   Analysis** — vector space weight domain discovering interprocedural affine
   invariants (e.g., "variable y = 2x + 1 at this point"). Pipeline: `AraAnalysis`.
-- **Relational** (`relational.rs`, feature `wpds-relational`): `HeapSemiring`
+- **Relational** ([`relational.rs`](../../prattail/src/relational.rs), feature `wpds-relational`): `HeapSemiring`
   trait + `RelationalWeight<G>` binary relation semiring. Weight domain
   foundation for ARA — models sets of (input, output) state pairs.
 
@@ -9220,7 +8905,7 @@ produces a node whose children are the sub-parses. WTAs evaluate terms
 bottom-up, assigning a semiring weight to each subtree. This enables term
 recognition (does this tree conform to the grammar?), ranking (which parse is
 cheapest?), and set-theoretic subtype checking (is the tree language of type A
-included in the tree language of type B?). Source: `prattail/src/tree_automaton.rs`
+included in the tree language of type B?). Source: [tree_automaton.rs](../../prattail/src/tree_automaton.rs)
 (feature `tree-automata`).
 
 **Intuition.** Think of a WTA as a team of inspectors at each node of a tree.
@@ -9248,7 +8933,7 @@ The automaton's semantics:
 
   ⟦M⟧(t) = ⊕{ w(ρ) | ρ is an accepting run on t }
 
-**Key types** (from `prattail/src/tree_automaton.rs`):
+**Key types** (from [tree_automaton.rs](../../prattail/src/tree_automaton.rs)):
 
 | Type                | Role                                                 |
 |---------------------|------------------------------------------------------|
@@ -9300,7 +8985,7 @@ Used by `SetTheoreticTypeSystem` for subtype checking as language inclusion:
 type A ≤ type B iff L(WTA_A) ⊆ L(WTA_B). Hot-path analysis identifies
 frequently-used subtree patterns for specialization.
 
-> Reference: Comon et al., TATA (2007) [§25, ref #8].
+> Reference: Comon et al., TATA (2007) [§23, ref #8].
 
 ### Linear Temporal Logic (LTL)
 
@@ -9308,7 +8993,7 @@ frequently-used subtree patterns for specialization.
 call is eventually matched by a return" (liveness), "no two consecutive shifts
 without a reduce" (safety), "a lock is always released before re-acquisition"
 (mutual exclusion). LTL provides a declarative syntax for such properties.
-Source: `prattail/src/ltl.rs` (feature `ltl`, dep: `omega`).
+Source: [ltl.rs](../../prattail/src/ltl.rs) (feature `ltl`, dep: `omega`).
 
 **Intuition.** LTL extends propositional logic with time. "p holds now" becomes
 "p holds *eventually*" (◇p), "p holds *always*" (□p), "p holds *next* step"
@@ -9340,7 +9025,7 @@ Derived: ◇φ ≡ true U φ, □φ ≡ ¬◇¬φ, φ W ψ ≡ (φ U ψ) ∨ □
 - σ, i ⊨ ◇φ     iff ∃j ≥ i. σ, j ⊨ φ
 - σ, i ⊨ φ U ψ  iff ∃j ≥ i. σ, j ⊨ ψ ∧ ∀k ∈ [i,j). σ, k ⊨ φ
 
-**Key types** (from `prattail/src/ltl.rs`):
+**Key types** (from [ltl.rs](../../prattail/src/ltl.rs)):
 
 | Type             | Role                                                                                                                |
 |------------------|---------------------------------------------------------------------------------------------------------------------|
@@ -9585,110 +9270,9 @@ glossaries.
 **Cell value semantics:**
 
 - A filled cell indicates the automaton participates in that pipeline phase.
-- The cell text names the specific contribution (defined in the glossary
-  tables below).
+- The cell text names the specific contribution (defined in the
+  corresponding M1–M15 module subsections above).
 - An empty cell means the automaton does not participate in that phase.
-
-**Analyze column — cell value glossary:**
-
-| Cell Value                       | Meaning                                                                                |
-|----------------------------------|----------------------------------------------------------------------------------------|
-| Guard reachability               | Stack-aware reachability analysis for guard evaluation call chains                     |
-| SFA compilation                  | Compile guard formula to Symbolic Finite Automaton for satisfiability/overlap          |
-| Infinite-behavior acceptance     | Omega-regular acceptance for infinite-stream behavioral predicates                     |
-| ∀/∃ quantifier evaluation        | Alternating universal (⊗) / existential (⊕) state evaluation for quantifiers           |
-| Scope nesting verification       | Verify well-formed quantifier scope nesting via pushdown call/return matching          |
-| Recursive predicate compilation  | Compile recursive predicate definitions (letprop) via mu-calculus fixpoints            |
-| Data equality/freshness analysis | Data-equality and freshness analysis using register contents (x == y, fresh(x))        |
-| Selectivity estimation           | Estimate guard acceptance probability for short-circuit evaluation ordering            |
-| Multi-channel guard construction | Analyze multi-channel receive guards via multi-tape automaton construction             |
-| Cardinality constraint analysis  | Analyze collection cardinality predicates (count(ch) >= k) via multiset bags           |
-| Formula classification           | Classify guard formula structure (FirstOrder / Existential / Restricted / Full)        |
-| Cross-channel propagation        | Detect and propagate constraints across channels via two-way transducer pre-image      |
-| Linear arithmetic decision       | Decide multi-variable linear integer constraints (Σ aᵢ·xᵢ ≤ b) via Presburger NFA      |
-| Pattern overlap detection        | Detect structural pattern overlaps via Martelli-Montanari unification                  |
-| Subtype relationship computation | Compute subtype relationships via transitive closure over type hierarchy DAG           |
-| Guard transduction analysis      | Analyze output-producing guard transformations (case fold, normalize) via SFT          |
-| Equality saturation              | Discover algebraic identities in guard predicates via e-graph equality saturation      |
-| Term classification/ranking      | Bottom-up term classification and ranking; set-theoretic subtyping via WTA inclusion   |
-| Temporal property verification   | Verify temporal safety/liveness properties (G, F, X, U) over WPDS call graphs          |
-| Guard cost metering              | Meter quantitative guard evaluation cost and detect anomalies                          |
-| Call/return merge analysis       | Analyze local variable behavior at function call/return boundaries via merge functions |
-| Affine invariant discovery       | Discover interprocedural affine invariants (x' = ax + b) over guard evaluation         |
-| Heap relationship analysis       | Analyze heap-shape relationships using binary relation weight domain                   |
-| Guard completeness checking      | Check guard coverage: does every possible input match at least one guard?              |
-| Abstraction ladder construction  | Build Boolean → Counting → Tropical abstraction ladder for iterative refinement        |
-| CFG path expression summary      | Summarize guard evaluation control-flow graph via algebraic path expressions           |
-| Fixpoint acceleration            | Accelerate Ascent fixpoint convergence (h+1 iterations for idempotent semirings)       |
-| Hot/cold path classification     | Classify guard evaluation paths as hot (frequently taken) or cold (rarely taken)       |
-
-**Optimize column — cell value glossary:**
-
-| Cell Value           | Meaning                                                                    |
-|----------------------|----------------------------------------------------------------------------|
-| Predicate simplify   | Simplify guard predicates by discovering and applying algebraic identities |
-| Hot-path priority    | Prioritize optimization effort on frequently-evaluated guard paths         |
-| Anomaly detection    | Flag guards with abnormal cost profiles for investigation                  |
-| Iterative refinement | Iteratively refine abstraction when coarser level is insufficient          |
-| Convergence speedup  | Accelerate fixpoint computation to reach convergence faster                |
-
-**Codegen column — cell value glossary:**
-
-| Cell Value                   | Meaning                                                                            |
-|------------------------------|------------------------------------------------------------------------------------|
-| Dead rule elimination        | Eliminate guard evaluation code for rules proven unreachable                       |
-| Guard disambiguation         | Generate disambiguation logic when multiple guards overlap on a channel            |
-| Dead binder elimination      | Eliminate unused variable bindings from generated guard evaluation code            |
-| Entropy-based guard ordering | Emit guard evaluation order based on information-theoretic entropy ranking         |
-| Independent category codegen | Generate independent per-category guard evaluation when channels are independent   |
-| Guard input transformation   | Generate SFT-based input transformations (case fold, normalize) before guard check |
-| Scope instrumentation        | Generate scope entry/exit instrumentation at call/return boundaries                |
-| #[inline] / #[cold] attrs    | Annotate generated guard functions with `#[inline]` (hot) or `#[cold]` (cold)      |
-
-#### FOL Feature Glossary
-
-Each row's **FOL Feature** column identifies the first-order logic feature or
-guard predicate class that the automaton handles:
-
-| FOL Feature                                 | Definition                                                                               |
-|---------------------------------------------|------------------------------------------------------------------------------------------|
-| Stack-aware guard evaluation                | Stack-aware reachability analysis for guard evaluation chains via WPDS                   |
-| Propositional predicates, range constraints | Boolean combinations of range predicates (x ∈ [a,b]) over finite or infinite domains     |
-| Liveness (omega-regular quantifiers)        | Omega-regular properties over infinite streams: "always eventually" / "infinitely often" |
-| First-order quantifiers (⊗/⊕ states)        | ∀/∃ quantification over values (first-order), compiled to alternating automaton states   |
-| Well-formed quantifier nesting              | Balanced scope/quantifier nesting checked via pushdown stack discipline                  |
-| Mu-calculus fixpoints (letprop)             | Recursive predicate definitions via fixpoint operators (νX, μX) in the modal mu-calculus |
-| Equality (x == y), freshness (fresh(x))     | Data-aware predicates comparing register contents: x == y, fresh(x)                      |
-| Guard short-circuit performance             | Guard selectivity estimation for short-circuit evaluation ordering                       |
-| Multi-channel receive guards                | Guards spanning multiple receive channels, compiled to multi-tape automata               |
-| Collection predicates (count(ch) >= k)      | Cardinality predicates on collections: count(ch) >= k                                    |
-| Guard specification language (∧,∨,¬,∀,∃)    | The guard predicate language itself (∧, ∨, ¬, ∀, ∃) as weighted MSO                      |
-| Backward constraint propagation             | Cross-channel constraint propagation via two-way transducer pre-image                    |
-| Multi-variable integer (Σ aᵢ·xᵢ ≤ b)        | Multi-variable linear arithmetic (Σ aᵢ·xᵢ ≤ b) via Presburger NFA                        |
-| Structural term unification                 | First-order term unification for pattern overlap detection                               |
-| Type hierarchy constraints (a <: b)         | Subtype lattice constraints (a <: b) via transitive closure                              |
-| String transforms (case fold, normalize)    | Output-producing guard transductions (case fold, normalize) via SFT                      |
-| Algebraic identity discovery                | Guard predicate simplification via equality saturation (x>0 ∧ x>0 → x>0)                 |
-| Term recognition, set-theoretic subtyping   | Bottom-up term classification and ranking; set-theoretic subtyping                       |
-| Safety/liveness (G, F, X, U operators)      | Temporal properties (G, F, X, U) over guard evaluation call graphs                       |
-| Quantitative evaluation cost                | Guard evaluation cost metering and anomaly detection                                     |
-| Local variable analysis at boundaries       | Local variable analysis at function call/return boundaries via merge functions           |
-| Interprocedural affine relations (x'=ax+b)  | Interprocedural affine invariant discovery (x' = ax + b)                                 |
-| Binary relation heap reasoning              | Binary relation weight domain for heap-shape reasoning                                   |
-| Input coverage (every input matches ≥1)     | Completeness: does every possible input match at least one guard?                        |
-| Boolean→Counting→Tropical abstraction       | Iterative refinement: Boolean → Counting → Tropical abstraction hierarchy                |
-| Guard evaluation control-flow summarization | Path expression summaries of guard evaluation control-flow graphs                        |
-| Idempotent semiring convergence (h+1 iters) | Accelerated fixpoint computation (h+1 iterations for idempotent semirings)               |
-| Generated function annotation               | Hot/cold path classification → #[inline] / #[cold] on generated guard functions          |
-
-> **Citations:**
->
-> - Droste, M. & Gastin, P. "Weighted Automata and Weighted Logics."
->   *Theoretical Computer Science*, 380:69–86, 2007.
-> - Emerson, E. A. & Jutla, C. S. "Tree Automata, Mu-Calculus and
->   Determinacy." *Proceedings of FOCS*, 1991.
-> - Kostolanyi, A. & Misun, F. "Alternating Weighted Automata over
->   Commutative Semirings." *Theoretical Computer Science*, 740:1–27, 2018.
 
 ---
 
@@ -10075,61 +9659,6 @@ are constant-folded away (the `if` guard is always true or the rule is
 eliminated), T2 predicates incur O(|value|) per population rule firing, and T3
 predicates incur O(k · |value|) with the user-specified bound `k`.
 
-### Infrastructure
-
-| Component                     | Location                                 |
-|-------------------------------|------------------------------------------|
-| `ConstraintTheory` trait      | `prattail/src/logict.rs`                 |
-| `TheoryAlgebra<T>` bridge     | `prattail/src/logict.rs`                 |
-| `BooleanAlgebra` trait        | `prattail/src/symbolic.rs`               |
-| `ProductAlgebra<A,B>`         | `prattail/src/symbolic.rs`               |
-| `SymbolicAutomaton<A>` (SFA)  | `prattail/src/symbolic.rs`               |
-| `LatticeTheory`               | `prattail/src/lattice_theory.rs`         |
-| `UnificationTheory`           | `prattail/src/unification.rs`            |
-| `PresburgerTheory`            | `prattail/src/presburger.rs`             |
-| `WeightedTreeAutomaton<W>`    | `prattail/src/tree_automaton.rs`         |
-| `IntervalAlgebra`             | `prattail/src/symbolic.rs`               |
-| `TypeExpr` AST                | `macros/src/ast/types.rs`                |
-| `BehavioralPred` + codegen    | `macros/src/ast/language.rs`, `rules.rs` |
-| `QuantifiedFormula` evaluator | `prattail/src/logict.rs`                 |
-| `LanguageSpec`                | `prattail/src/lib.rs`                    |
-| Pipeline + lints              | `prattail/src/pipeline.rs`, `lint.rs`    |
-
-### Feature Gating
-
-The type system framework uses Cargo feature gates to control compilation
-scope. The `type-system` feature is the base — it pulls in `logict` (for
-`ConstraintTheory` and `TheoryAlgebra`) and `lattice-theory` (for the
-`LatticeTypeSystem` reference implementation). The `set-theoretic-types`
-feature adds the `SetTheoreticTypeSystem` with its tree automaton
-infrastructure. The convenience features `predicated-types` and
-`full-analysis` include both:
-
-```toml
-type-system = ["logict", "lattice-theory"]
-set-theoretic-types = ["type-system"]
-predicated-types = [ ..., "type-system", "set-theoretic-types" ]
-full-analysis = [ ..., "type-system", "set-theoretic-types" ]
-```
-
-This feature hierarchy ensures that users who don't need type system analysis
-pay zero compile-time cost — the ~2400 lines of `type_system.rs` and its
-dependencies are not compiled unless the feature is enabled.
-
-### Key Files
-
-- `prattail/src/type_system.rs`: TypeSystem trait + 3 implementations + TypeSystemAlgebra + dispatch analysis (~2400 lines)
-- `macros/src/ast/language.rs`: RefinementTypeDef parser, RefinementPredicate AST, ConstraintDomain classification
-- `macros/src/logic/rules.rs`: Refinement codegen (relations, population rules, guard generation, substitution propagation)
-- `macros/src/logic/relations.rs`: `is_refined_*` relation declarations + extraction
-- `prattail/src/pipeline.rs`: `analyze_refinement_types()` + `RefinementAnalysisResult` + dispatch integration
-- `prattail/src/lint.rs`: RT01–RT06 lint functions (9 tests)
-- `prattail/src/cost_benefit.rs`: `RefinementTypeCheck` optimization gate
-- `prattail/src/lib.rs`: `RefinementTypeSpec` + `RefinementPredKind` pipeline types
-- Design doc: `prattail/docs/design/type-system-framework.md`
-- Diagnostic pages: `prattail/docs/diagnostics/refinement/RT01.md`–`RT06.md`
-- Benchmarks: `prattail/benches/bench_type_system.rs` (feature-gated `type-system`)
-
 ### References
 
 - Rondon, P., Kawaguchi, M., & Jhala, R. (2008). "Liquid Types." PLDI 2008.
@@ -10266,206 +9795,7 @@ configuration:
 
 ---
 
-## 22. Verification Plan
-
-### Property-Based Testing (Proptest)
-
-- Guard satisfiability ↔ SFA emptiness correspondence
-- Pattern matching symmetry: `match_pattern(a, pattern) = Some(σ)` implies
-  `substitute(pattern, σ) = a`
-- Stratification: randomly generated negated relation sets never violate
-  stratum ordering
-
-### Integration Testing
-
-- §7 worked example: end-to-end trace to expected normal form
-- Multi-guard dispatch: 3 guards on same channel, each fires for specific input
-- T1–T4 decidability examples classified and compiled correctly
-- Behavioral predicate join: fires only when relation holds in fixpoint
-- Negated predicate: fires only when relation does NOT hold
-
-### Rocq Formal Verification
-
-- Guard compilation soundness: SFA accepts iff formula satisfied
-- Quantifier correspondence: AWA Q⊗ ↔ ∀, Q⊕ ↔ ∃
-- Pattern matching correctness: `match_pattern` is injective
-- Stratification validation: negated-relation well-ordering implies no
-  circular dependency
-
-### Performance Testing
-
-- Benchmark guard evaluation overhead vs unguarded Comm rules
-- Measure SFA compilation time for guards of increasing complexity
-- Verify trampoline frame variants don't degrade non-guard parsing
-
-### Concrete Test Scenarios
-
-The brainstorming document (Phase 6) established the following minimum
-validation suite. Each scenario exercises a distinct aspect of the guarded
-receive mechanism:
-
-1. **Basic structural guard:**
-   `(n ? @(x!(y))).{@(y)!(*(x))}` — verifies cross-category binding and
-   two-pass substitution.
-
-2. **Nested patterns:**
-   `(n ? @(x!(y!(z)))).{ @(z)!(*(y)) }` — verifies recursive descent
-   through multiple constructors with three bindings (`x: Name, y: Name,
-   z: Proc`).
-
-3. **Guard failure (no match):**
-   `(n ? @(x!(y))).{...} | n!({})` — verifies that `match_pattern_name`
-   returns `None` for a constructor mismatch (`PZero` vs `POutput`) and
-   the Comm rule does not fire.
-
-4. **Guard with parallel context:**
-   `{(n ? @(x!(y))).{...} | n!(a!(b)) | observer}` — verifies that the
-   rest-bag correctly removes both the `PGuardedInput` and matched
-   `POutput`, preserving `observer`.
-
-5. **Variable shadowing:**
-   `new(x, (c ? @(x!(y))).{...})` — verifies that De Bruijn encoding
-   correctly separates the outer `x` (bound by `new`) from the inner `x`
-   (guard pattern variable).
-
-6. **Behavioral predicate:**
-   `(n ? @(x!(y)), path(y, {})).{...}` — verifies per-relation Comm rule
-   specialization and predicate argument resolution from match bindings.
-
----
-
-## 23. Risks and Mitigations
-
-| Risk                                           | Impact                   | Mitigation                                  |
-|------------------------------------------------|--------------------------|---------------------------------------------|
-| Guard uses `unsafe_body` with BoundVars        | Match fails silently     | Use `unbind()` to get FreeVars (§6)         |
-| Binder ordering mismatch guard↔continuation    | Wrong substitution       | Parser enforces same order, same extraction |
-| Duplicate variable names in guard              | Ambiguous bindings       | Parser rejects duplicates                   |
-| Large collection in guard pattern              | Combinatorial AC-match   | Re-entrant engine bounds by collection size |
-| `match_pattern_name` per candidate pair        | Slowdown for large bags  | O(\|pattern\|) per call; acceptable         |
-| Category mismatch in continuation              | Wrong substitution pass  | Parser infers categories from guard         |
-| Behavioral pred references undeclared relation | No matching Comm rule    | Parser validates against declared relations |
-| Combinatorial explosion for conjunction rules  | Too many generated rules | Practical for K ≤ 2–3; interpreter fallback |
-
----
-
-## 24. Relationship to Brainstorming Document
-
-The brainstorming document (`02-23-pattern-matching.md`) established the
-foundational design for guarded receive with type predicates. This document
-extends and restructures that content:
-
-| Layer       | Scope                              | Document Section                                 |
-|-------------|------------------------------------|--------------------------------------------------|
-| **Layer 1** | Structural patterns + Ascent joins | §§3-10 (core design)                             |
-| **Layer 2** | First-order predicate logic        | §§11-14 (formal framework)                       |
-| **Layer 3** | Analysis and verification          | §§15-18 (BooleanAlgebra, constraints, automata)  |
-| **Layer 4** | Extended infrastructure            | §§19-25 (lints, types, architecture, references) |
-
-Layer 1's `BehavioralPred { relation_name, args }` becomes a special case of
-the general `BooleanAlgebra::Predicate` from M1.
-
-### Preserved
-
-The following design decisions from the brainstorming document are preserved
-faithfully in this specification:
-
-- **Surface syntax:** `(n ? guard).{body}` as the generic/internal form
-  (§§3, 4, 6, 7, 8, 10). The `for(... <- ch)` Rholang sugar is explicitly
-  mapped to this form in §2 (Syntax Mapping).
-- **Core data structures:** `PGuardedInput` constructor with dual scopes
-  (§4), `MatchBindings` with `name_bindings` / `proc_bindings` (§5),
-  `BehavioralPred` / `PredArg` types (§8).
-- **Algorithms:** First-order matching via `match_pattern` /
-  `match_pattern_name` (§5), two-pass substitution (§3, §6),
-  per-relation Comm rule specialization (§8).
-- **Correctness analysis:** Soundness, binding correctness, capture
-  avoidance, compositionality, equational integration, reflective
-  consistency (§10 — corresponding to brainstorming §9).
-- **Natural-category binding:** Variables bind at their syntactic category
-  (§3 — corresponding to brainstorming §§3–4).
-- **Implementation plan structure:** The six phases (match_pattern,
-  constructor support, Comm rule, parser, behavioral predicates, testing)
-  are preserved in the §21 architecture.
-- **Worked example:** §7's end-to-end trace matches the brainstorming
-  §13 example.
-
-### Extended
-
-This specification extends the brainstorming document in the following
-areas:
-
-- **Collection matching:** The brainstorming document deferred collection
-  patterns (`return None`). This spec fully implements order-independent
-  matching via `claimed` bitvector with re-entrant TLS (§5).
-- **Binder/Scope matching:** The brainstorming document deferred binder
-  patterns. This spec implements scope-open + structural body matching (§5).
-- **Quantified behavioral predicates:** LogicT-based `∀`/`∃` evaluation
-  with `gnot` for universals (§8), extending the simple existential join
-  from the brainstorming.
-- **AC-matching:** `multiset_partitions()` / `multiset_select()` for
-  collection guard patterns (§8).
-- **Decidability tiering:** T1–T4 classification with compilation
-  strategies (§11–§14).
-- **Automata modules:** SFA (M1), WTA (M2), AWA (M3), nominal (M4),
-  multi-tape (M5), SFT (M6), e-graphs (M7) (§18).
-- **Constraint theories:** Presburger arithmetic, unification,
-  subtype lattice, LogicT (§16).
-- **BooleanAlgebra foundation:** Algebraic framework for guard predicates
-  (§15).
-- **Pluggable type system framework:** Refinement types, set-theoretic
-  types, Hindley-Milner (§20).
-- **Lint integration:** Guard-related diagnostics (§19).
-- **Iterative work stack:** Stack-safe matching via `Vec<MatchTask>`
-  instead of recursive calls (§5).
-- **Negated predicates:** `negated: bool` field for stratified negation
-  (§8, §9).
-
-### Changed
-
-The following design decisions differ from the brainstorming document:
-
-- **`MatchBindings::get()` → typed accessors:** The brainstorming's
-  generic `get(var_name) → Option<MatchValue>` was replaced with
-  per-category typed accessors (`get_name(var) → Option<&Name>`,
-  `get_proc(var) → Option<&Proc>`) for type safety (§5).
-- **`BehavioralPred.negated` field:** Added `negated: bool` to support
-  stratified negation (§8, §9). The brainstorming had only
-  `relation_name` and `args`.
-- **Iterative work stack:** The brainstorming's recursive
-  `match_pattern` algorithm was replaced with an explicit
-  `Vec<MatchTask>` work stack for stack safety at 100K+ nesting depth
-  (§5). The semantics are identical.
-
-### Component Mapping
-
-The following table maps each brainstorming document component to its
-location in this specification, noting what was preserved, extended, or
-added:
-
-| Brainstorming Component    | Brainstorming § | Design Spec § | Status                                              |
-|----------------------------|-----------------|---------------|-----------------------------------------------------|
-| Motivation                 | §1              | §1            | Preserved                                           |
-| Scope                      | §2              | §1, §2        | Preserved                                           |
-| Terms as Patterns          | §3              | §3            | Preserved                                           |
-| Natural Categories         | §4              | §3            | Preserved                                           |
-| Term Representation        | §5              | §4            | Preserved                                           |
-| `match_pattern`            | §6              | §5            | Extended (work stack, Collection, Binder)           |
-| Comm Rule                  | §7              | §6            | Preserved                                           |
-| Parsing                    | §8              | §4, §21       | Preserved                                           |
-| Correctness Analysis       | §9              | §10           | Preserved                                           |
-| Ordering and Determinism   | §10             | §6            | Preserved                                           |
-| Behavioral Predicates      | §11             | §8            | Extended (quantified, negated, AC)                  |
-| Implementation Plan        | §12             | §21           | Preserved                                           |
-| Worked Example             | §13             | §7            | Preserved                                           |
-| Risks and Mitigations      | §14             | §23           | Extended                                            |
-| Relation to Infrastructure | §15             | §21, §24      | Preserved (this table)                              |
-| Summary                    | §16             | §1            | Preserved                                           |
-| *—*                        | —               | §§11–20       | **Added** (decidability, pipeline, automata, types) |
-
----
-
-## 25. Cross-References and References
+## 23. Cross-References and References
 
 ### Cross-References
 
@@ -10476,165 +9806,184 @@ added:
   representation
 - **§14A LogicT Theory Integration:** Theory-guided evaluation pipeline,
   TriState refinement, refinement type bridge, worked examples
-- **Guard config AST types:** `macros/src/ast/language.rs` (`GuardConfig`,
+- **Guard config AST types:** [language.rs](../../macros/src/ast/language.rs) (`GuardConfig`,
   `ConnectiveDecl`, `BuiltinPredicate`, `PredicateAnnotations`,
   `TheoryRegistration`, `ChannelConfig`, `ChannelDecl`, `JoinPatternDecl`,
   `ChannelParam`); `prattail` spec types: `GuardConfigSpec`,
   `TheoryRegistrationSpec`, `ConnectiveMap`
-- **Guard config parser:** `macros/src/ast/language.rs` (`parse_guards()`)
-- **Guard config merge:** `macros/src/ast/merge.rs` (`merge_guard_config()`)
+- **Guard config parser:** [language.rs](../../macros/src/ast/language.rs) (`parse_guards()`)
+- **Guard config merge:** [merge.rs](../../macros/src/ast/merge.rs) (`merge_guard_config()`)
 - **Channel dispatch:** `channels {}` sub-block for deterministic M8/M11
   activation; see §2A "Channel Declarations for Multi-Channel Guard Dispatch"
 
 **Core infrastructure:**
-- **Analysis pipeline overview:** `prattail/docs/design/analysis-pipeline-overview.md`
-- **Lint layer:** `prattail/docs/design/lint-layer.md`
-- **Predicate dispatch automaton:** `prattail/docs/design/predicate-dispatch-automaton.md`
-- **Composed dispatch:** `prattail/docs/design/composed-dispatch.md`
-- **Semiring catalog:** `prattail/docs/design/semiring-catalog.md`
-- **Diagnostics reference:** `prattail/docs/diagnostics/README.md`
-- **Error recovery:** `prattail/docs/design/wfst/error-recovery.md`
-- **Mathematical analyses:** `docs/design/mathematical-analyses.md`
+- **Analysis pipeline overview:** [analysis-pipeline-overview.md](../../prattail/docs/design/analysis-pipeline-overview.md)
+- **Lint layer:** [lint-layer.md](../../prattail/docs/design/lint-layer.md)
+- **Predicate dispatch automaton:** [predicate-dispatch-automaton.md](../../prattail/docs/design/predicate-dispatch-automaton.md)
+- **Composed dispatch:** [composed-dispatch.md](../../prattail/docs/design/composed-dispatch.md)
+- **Semiring catalog:** [semiring-catalog.md](../../prattail/docs/design/semiring-catalog.md)
+- **Diagnostics reference:** [README.md](../../prattail/docs/diagnostics/README.md)
+- **Error recovery:** [error-recovery.md](../../prattail/docs/design/wfst/error-recovery.md)
+- **Mathematical analyses:** [mathematical-analyses.md](mathematical-analyses.md)
 
 **Automata modules (M1–M11):**
-- **M1 Symbolic automata:** `prattail/docs/design/symbolic-automata.md`
-- **M2 Weighted Büchi:** `prattail/docs/design/weighted-buchi.md`
-- **M3 Polynomial AWA:** `prattail/docs/design/polynomial-awa.md`
-- **M4 Weighted VPA:** `prattail/docs/design/weighted-vpa.md`
-- **M5 Parity tree automata:** `prattail/docs/design/parity-tree-automata.md`
-- **M6 Register automata:** `prattail/docs/design/register-automata.md`
-- **M7 Probabilistic automata:** `prattail/docs/design/probabilistic-automata.md`
-- **M8 Multi-tape automata:** `prattail/docs/design/multi-tape-automata.md`
-- **M9 Multiset automata:** `prattail/docs/design/multiset-automata.md`
-- **M10 Weighted MSO:** `prattail/docs/design/weighted-mso.md`
-- **M11 Two-way transducer:** `prattail/docs/design/two-way-transducer.md`
-- **Advanced automata overview:** `prattail/docs/design/advanced-automata-overview.md`
+- **M1 Symbolic automata:** [symbolic-automata.md](../../prattail/docs/design/symbolic-automata.md)
+- **M2 Weighted Büchi:** [weighted-buchi.md](../../prattail/docs/design/weighted-buchi.md)
+- **M3 Polynomial AWA:** [polynomial-awa.md](../../prattail/docs/design/polynomial-awa.md)
+- **M4 Weighted VPA:** [weighted-vpa.md](../../prattail/docs/design/weighted-vpa.md)
+- **M5 Parity tree automata:** [parity-tree-automata.md](../../prattail/docs/design/parity-tree-automata.md)
+- **M6 Register automata:** [register-automata.md](../../prattail/docs/design/register-automata.md)
+- **M7 Probabilistic automata:** [probabilistic-automata.md](../../prattail/docs/design/probabilistic-automata.md)
+- **M8 Multi-tape automata:** [multi-tape-automata.md](../../prattail/docs/design/multi-tape-automata.md)
+- **M9 Multiset automata:** [multiset-automata.md](../../prattail/docs/design/multiset-automata.md)
+- **M10 Weighted MSO:** [weighted-mso.md](../../prattail/docs/design/weighted-mso.md)
+- **M11 Two-way transducer:** [two-way-transducer.md](../../prattail/docs/design/two-way-transducer.md)
+- **Advanced automata overview:** [advanced-automata-overview.md](../../prattail/docs/design/advanced-automata-overview.md)
 
 **Extended analyses (M15+):**
-- **M15 Symbolic finite transducer:** `prattail/docs/design/symbolic-finite-transducer.md`
-- **E-graph equality saturation:** `prattail/docs/design/egraph-equality-saturation.md`
+- **M15 Symbolic finite transducer:** [symbolic-finite-transducer.md](../../prattail/docs/design/symbolic-finite-transducer.md)
+- **E-graph equality saturation:** [egraph-equality-saturation.md](../../prattail/docs/design/egraph-equality-saturation.md)
 
 **Type system and constraints:**
-- **Type system framework design:** `prattail/docs/design/type-system-framework.md` (§20)
-- **Constraint theory design docs:** `prattail/docs/design/constraint-theories/`
-- **Constraint theory diagnostics:** `prattail/docs/diagnostics/{presburger,unification,subtype-lattice,logict}/`
-- **Refinement type diagnostics:** `prattail/docs/diagnostics/refinement/` (RT01–RT06)
-
-**Formal verification:**
-- **Rocq proofs:** `formal/rocq/{logict,presburger,unification,lattice}/`
-
-**Origins:**
-- **Original brainstorming:** `/home/dylon/Downloads/02-23-pattern-matching.md`
+- **Type system framework design:** [type-system-framework.md](../../prattail/docs/design/type-system-framework.md) (§20)
+- **Constraint theory design docs:** [constraint-theories](../../prattail/docs/design/constraint-theories)
+- **Constraint theory diagnostics:** [presburger](../../prattail/docs/diagnostics/presburger), [unification](../../prattail/docs/diagnostics/unification), [subtype-lattice](../../prattail/docs/diagnostics/subtype-lattice), [logict](../../prattail/docs/diagnostics/logict)
+- **Refinement type diagnostics:** [refinement](../../prattail/docs/diagnostics/refinement) (RT01–RT06)
 
 ### References
 
-1. Baader, F. & Snyder, W. "Unification Theory." In *Handbook of Automated
+1. Baader, F. & Snyder, W. ["Unification Theory."](https://www.cs.bu.edu/fac/snyder/publications/UnifChapter.pdf) In *Handbook of Automated
    Reasoning*, vol. 1, ch. 8, pp. 445–533. Elsevier, 2001.
+   DOI: [10.1016/B978-044450813-3/50011-0](https://doi.org/10.1016/B978-044450813-3/50011-0)
 
-2. Berry, G. & Boudol, G. "The Chemical Abstract Machine." *Theoretical
+2. Berry, G. & Boudol, G. ["The Chemical Abstract Machine."](https://www.lix.polytechnique.fr/~fvalenci/papers/cham.pdf) *Theoretical
    Computer Science*, 96(1):217–248, 1992.
+   DOI: [10.1016/0304-3975(92)90185-I](https://doi.org/10.1016/0304-3975(92)90185-I)
 
-3. Biere, A., Cimatti, A., Clarke, E., & Zhu, Y. "Symbolic Model Checking
-   without BDDs." *Proceedings of TACAS*, LNCS 1579, pp. 193–207. Springer,
+3. Biere, A., Cimatti, A., Clarke, E., & Zhu, Y. ["Symbolic Model Checking
+   without BDDs."](https://fmv.jku.at/papers/BiereCimattiClarkeZhu-TACAS99.pdf) *Proceedings of TACAS*, LNCS 1579, pp. 193–207. Springer,
    1999.
+   DOI: [10.1007/3-540-49059-0_14](https://doi.org/10.1007/3-540-49059-0_14)
 
-4. Birkhoff, G. *Lattice Theory*. AMS Colloquium Publications, vol. 25, 1940.
+4. Birkhoff, G. [*Lattice Theory*](https://archive.org/details/in.ernet.dli.2015.166886). AMS Colloquium Publications, vol. 25, 1940.
 
-5. Büchi, J. R. "Weak second-order arithmetic and finite automata."
+5. Büchi, J. R. ["Weak second-order arithmetic and finite automata."](https://deepblue.lib.umich.edu/handle/2027.42/3930)
    *Zeitschrift für mathematische Logik und Grundlagen der Mathematik*,
    6:66–92, 1960.
+   DOI: [10.1002/malq.19600060105](https://doi.org/10.1002/malq.19600060105)
 
-6. Ceri, S., Gottlob, G., & Tanca, L. *Logic Programming and Databases*.
+6. Ceri, S., Gottlob, G., & Tanca, L. [*Logic Programming and Databases*](https://doi.org/10.1007/978-3-642-83952-8).
    Springer, 1990.
+   DOI: [10.1007/978-3-642-83952-8](https://doi.org/10.1007/978-3-642-83952-8)
 
-7. Chandra, A. K., Kozen, D. C., & Stockmeyer, L. J. "Alternation."
+7. Chandra, A. K., Kozen, D. C., & Stockmeyer, L. J. ["Alternation."](https://doi.org/10.1145/322234.322243)
    *Journal of the ACM*, 28(1):114–133, 1981.
+   DOI: [10.1145/322234.322243](https://doi.org/10.1145/322234.322243)
 
-8. Comon, H. et al. "Tree Automata Techniques and Applications." (TATA),
-   2007. Available at: http://tata.gforge.inria.fr/
+8. Comon, H. et al. ["Tree Automata Techniques and Applications."](http://tata.gforge.inria.fr/) (TATA),
+   2007. Available at: [tata.gforge.inria.fr](http://tata.gforge.inria.fr/)
 
-9. D'Antoni, L. & Veanes, M. "Minimization of Symbolic Automata."
+9. D'Antoni, L. & Veanes, M. ["Minimization of Symbolic Automata."](https://cseweb.ucsd.edu/~ldantoni/papers/popl14.pdf)
    *Proceedings of POPL*, pp. 541–553. ACM, 2014.
    DOI: [10.1145/2535838.2535849](https://doi.org/10.1145/2535838.2535849)
 
-10. Damas, L. & Milner, R. "Principal Type-Schemes for Functional Programs."
+10. Damas, L. & Milner, R. ["Principal Type-Schemes for Functional Programs."](https://courses.cs.washington.edu/courses/cse503/10wi/readings/p207-damas.pdf)
     *Proceedings of POPL*, pp. 207–212. ACM, 1982.
+    DOI: [10.1145/582153.582176](https://doi.org/10.1145/582153.582176)
 
-11. Davey, B. A. & Priestley, H. A. *Introduction to Lattices and Order*.
+11. Davey, B. A. & Priestley, H. A. [*Introduction to Lattices and Order*](https://doi.org/10.1017/CBO9780511809088).
     2nd ed. Cambridge University Press, 2002.
+    DOI: [10.1017/CBO9780511809088](https://doi.org/10.1017/CBO9780511809088)
 
-12. de Bruijn, N. G. "Lambda Calculus Notation with Nameless Dummies."
+12. de Bruijn, N. G. ["Lambda Calculus Notation with Nameless Dummies."](https://lawrencecpaulson.github.io/papers/deBruijn-nameless-dummies.pdf)
     *Indagationes Mathematicae*, 75(5):381–392, 1972.
+    DOI: [10.1016/1385-7258(72)90034-0](https://doi.org/10.1016/1385-7258(72)90034-0)
 
-13. Droste, M. & Gastin, P. "Weighted Automata and Weighted Logics."
+13. Droste, M. & Gastin, P. ["Weighted Automata and Weighted Logics."](https://www.informatik.uni-leipzig.de/~droste/papers/Droste-Gastin-weighted-logic-TCS.pdf)
     *Theoretical Computer Science*, 380:69–86, 2007.
+    DOI: [10.1016/j.tcs.2007.02.055](https://doi.org/10.1016/j.tcs.2007.02.055)
 
-14. Emerson, E. A. & Jutla, C. S. "Tree Automata, Mu-Calculus and
-    Determinacy." *Proceedings of FOCS*, pp. 368–377. IEEE, 1991.
+14. Emerson, E. A. & Jutla, C. S. ["Tree Automata, Mu-Calculus and
+    Determinacy."](https://doi.org/10.1109/SFCS.1991.185392) *Proceedings of FOCS*, pp. 368–377. IEEE, 1991.
+    DOI: [10.1109/SFCS.1991.185392](https://doi.org/10.1109/SFCS.1991.185392)
 
-15. Feng, B. & Maletti, A. "Weighted Two-Way Transducers."
+15. Feng, B. & Maletti, A. ["Weighted Two-Way Transducers."](https://doi.org/10.1007/978-3-031-19685-0_8)
     *Proceedings of CAI*. LNCS, Springer, 2022.
+    DOI: [10.1007/978-3-031-19685-0_8](https://doi.org/10.1007/978-3-031-19685-0_8)
 
-16. Freeman, T. & Pfenning, F. "Refinement Types for ML." *Proceedings of
+16. Freeman, T. & Pfenning, F. ["Refinement Types for ML."](https://www.cs.cmu.edu/~fp/papers/pldi91.pdf) *Proceedings of
     PLDI*, pp. 268–277. ACM, 1991.
+    DOI: [10.1145/113445.113468](https://doi.org/10.1145/113445.113468)
 
-17. Frisch, A., Castagna, G., & Benzaken, V. "Semantic subtyping: Dealing
+17. Frisch, A., Castagna, G., & Benzaken, V. ["Semantic subtyping: Dealing
     set-theoretically with function, union, intersection, and negation
-    types." *Journal of the ACM*, 55(4):1–64, 2008.
+    types."](https://www.irif.fr/~gc/papers/semantic_subtyping.pdf) *Journal of the ACM*, 55(4):1–64, 2008.
+    DOI: [10.1145/1391289.1391293](https://doi.org/10.1145/1391289.1391293)
 
-18. Heeren, B., Hage, J., & Swierstra, S. D. "Generalizing Hindley-Milner
-    Type Inference Algorithms." Technical Report UU-CS-2002-031, Utrecht
+18. Heeren, B., Hage, J., & Swierstra, S. D. ["Generalizing Hindley-Milner
+    Type Inference Algorithms."](https://www.cs.uu.nl/research/techreps/repo/CS-2002/2002-031.pdf) Technical Report UU-CS-2002-031, Utrecht
     University, 2002.
 
-19. Hemann, J. & Friedman, D. P. "μKanren: A Minimal Functional Core for
-    Relational Programming." *Scheme Workshop*, 2013.
+19. Hemann, J. & Friedman, D. P. ["μKanren: A Minimal Functional Core for
+    Relational Programming."](http://webyrd.net/scheme-2013/papers/HemannMuKanren2013.pdf) *Scheme Workshop*, 2013.
 
-20. Hopcroft, J. E. "An n log n Algorithm for Minimizing States in a Finite
-    Automaton." In *Theory of Machines and Computations*, pp. 189–196.
+20. Hopcroft, J. E. ["An n log n Algorithm for Minimizing States in a Finite
+    Automaton."](http://i.stanford.edu/pub/cstr/reports/cs/tr/71/190/CS-TR-71-190.pdf) In *Theory of Machines and Computations*, pp. 189–196.
     Academic Press, 1971.
 
-21. Kaminski, M. & Francez, N. "Finite-Memory Automata." *Theoretical
+21. Kaminski, M. & Francez, N. ["Finite-Memory Automata."](https://doi.org/10.1016/0304-3975(94)90242-9) *Theoretical
     Computer Science*, 134(2):329–363, 1994.
+    DOI: [10.1016/0304-3975(94)90242-9](https://doi.org/10.1016/0304-3975(94)90242-9)
 
-22. Kempe, A. "Weighted Multi-Tape Automata and Transducers for Natural
-    Language Processing (NLP)." 2004.
+22. Kempe, A. ["Weighted Multi-Tape Automata and Transducers for Natural
+    Language Processing (NLP)."](https://arxiv.org/abs/cs/0406003) 2004.
 
-23. Kiselyov, O., Shan, C., Friedman, D. P. & Sabry, A. "Backtracking,
-    Interleaving, and Terminating Monad Transformers." *Proceedings of ICFP*,
+23. Kiselyov, O., Shan, C., Friedman, D. P. & Sabry, A. ["Backtracking,
+    Interleaving, and Terminating Monad Transformers."](https://okmij.org/ftp/Computation/LogicT.pdf) *Proceedings of ICFP*,
     pp. 192–203. ACM, 2005.
     DOI: [10.1145/1086365.1086390](https://doi.org/10.1145/1086365.1086390)
 
-24. Kostolanyi, A. & Misun, F. "Alternating Weighted Automata over
-    Commutative Semirings." *Theoretical Computer Science*, 740:1–27, 2018.
+24. Kostolanyi, A. & Misun, F. ["Alternating Weighted Automata over
+    Commutative Semirings."](https://doi.org/10.1016/j.tcs.2018.05.009) *Theoretical Computer Science*, 740:1–27, 2018.
+    DOI: [10.1016/j.tcs.2018.05.009](https://doi.org/10.1016/j.tcs.2018.05.009)
 
-25. Martelli, A. & Montanari, U. "An Efficient Unification Algorithm."
+25. Martelli, A. & Montanari, U. ["An Efficient Unification Algorithm."](http://moscova.inria.fr/~levy/courses/X/IF/03/pi/levy2/martelli-montanari.pdf)
     *ACM Transactions on Programming Languages and Systems*, 4(2):258–282,
     1982.
+    DOI: [10.1145/357162.357169](https://doi.org/10.1145/357162.357169)
 
-26. Meredith, L. G. & Radestock, M. "A Reflective Higher-Order Calculus."
+26. Meredith, L. G. & Radestock, M. ["A Reflective Higher-Order Calculus."](https://www.sciencedirect.com/science/article/pii/S1571066105051893)
     *Electronic Notes in Theoretical Computer Science*, 141(5):49–67, 2005.
+    DOI: [10.1016/j.entcs.2005.05.016](https://doi.org/10.1016/j.entcs.2005.05.016)
 
-27. Milner, R. "A Theory of Type Polymorphism in Programming." *Journal of
+27. Milner, R. ["A Theory of Type Polymorphism in Programming."](https://homepages.inf.ed.ac.uk/wadler/papers/papers-we-love/milner-type-polymorphism.pdf) *Journal of
     Computer and System Sciences*, 17(3):348–375, 1978.
+    DOI: [10.1016/0022-0000(78)90014-4](https://doi.org/10.1016/0022-0000(78)90014-4)
 
-28. Pierce, B. C. *Types and Programming Languages*. MIT Press, 2002.
+28. Pierce, B. C. [*Types and Programming Languages*](https://mitpress.mit.edu/9780262162098/types-and-programming-languages/). MIT Press, 2002.
 
-29. Pierce, B. C. & Turner, D. N. "Local Type Inference." *ACM Transactions
+29. Pierce, B. C. & Turner, D. N. ["Local Type Inference."](https://www.cis.upenn.edu/~bcpierce/papers/lti-toplas.pdf) *ACM Transactions
     on Programming Languages and Systems*, 22(1):1–44, 2000.
+    DOI: [10.1145/345099.345100](https://doi.org/10.1145/345099.345100)
 
-30. Robinson, J. A. "A Machine-Oriented Logic Based on the Resolution
-    Principle." *Journal of the ACM*, 12(1):23–41, 1965.
+30. Robinson, J. A. ["A Machine-Oriented Logic Based on the Resolution
+    Principle."](https://doi.org/10.1145/321250.321253) *Journal of the ACM*, 12(1):23–41, 1965.
+    DOI: [10.1145/321250.321253](https://doi.org/10.1145/321250.321253)
 
-31. Rondon, P., Kawaguchi, M., & Jhala, R. "Liquid Types." *Proceedings of
+31. Rondon, P., Kawaguchi, M., & Jhala, R. ["Liquid Types."](https://goto.ucsd.edu/~rjhala/liquid/liquid_types.pdf) *Proceedings of
     PLDI*, pp. 159–169. ACM, 2008.
+    DOI: [10.1145/1375581.1375602](https://doi.org/10.1145/1375581.1375602)
 
-32. Van Gelder, A., Ross, K. A., & Schlipf, J. S. "The Well-Founded
-    Semantics for General Logic Programs." *Journal of the ACM*,
+32. Van Gelder, A., Ross, K. A., & Schlipf, J. S. ["The Well-Founded
+    Semantics for General Logic Programs."](https://doi.org/10.1145/116825.116838) *Journal of the ACM*,
     38(3):620–650, 1991.
+    DOI: [10.1145/116825.116838](https://doi.org/10.1145/116825.116838)
 
 33. Willsey, M., Nandi, C., Wang, Y. R., Flatt, O., Tatlock, Z., &
-    Panchekha, P. "egg: Fast and Extensible Equality Saturation."
+    Panchekha, P. ["egg: Fast and Extensible Equality Saturation."](https://arxiv.org/abs/2004.03082)
     *Proceedings of POPL*, pp. 23:1–23:29. ACM, 2021.
+    DOI: [10.1145/3434304](https://doi.org/10.1145/3434304)
 
-34. Xi, H. & Pfenning, F. "Dependent Types in Practical Programming."
+34. Xi, H. & Pfenning, F. ["Dependent Types in Practical Programming."](https://www.cs.cmu.edu/~rwh/students/xi.pdf)
     *Proceedings of POPL*, pp. 214–227. ACM, 1999.
+    DOI: [10.1145/292540.292560](https://doi.org/10.1145/292540.292560)
