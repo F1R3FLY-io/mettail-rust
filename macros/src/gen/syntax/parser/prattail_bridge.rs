@@ -213,6 +213,32 @@ fn build_literal_config(
     let mut literal_eval: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
 
+    fn suffix_variant_for_native(native: &str) -> Option<&'static str> {
+        match native {
+            "i8" => Some("I8"),
+            "i16" => Some("I16"),
+            "i32" => Some("I32"),
+            "i64" => Some("I64"),
+            "i128" => Some("I128"),
+            "isize" => Some("Isize"),
+            "u8" => Some("U8"),
+            "u16" => Some("U16"),
+            "u32" => Some("U32"),
+            "u64" => Some("U64"),
+            "u128" => Some("U128"),
+            "usize" => Some("Usize"),
+            _ => {
+                if native.ends_with("BigInt") {
+                    Some("BigInt")
+                } else if native.ends_with("BigRat") {
+                    Some("BigRatStub")
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     // Map declared category name -> native Rust type string (if any), so literals can be
     // attached to arbitrary category names like Int32/UInt64/etc.
     let mut native_by_cat: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -222,54 +248,39 @@ fn build_literal_config(
         }
     }
 
-    // If the language declares integer categories beyond the default i64, widen the integer
-    // token regex to accept suffixed literals (e.g. `23u32`, `5i128`, `123n`).
-    //
-    // This keeps the global default pattern simple (`[0-9]+`) while letting each language
-    // opt into additional integer types via its `types { ... }` section.
-    let mut int_suffixes: Vec<&'static str> = Vec::new();
-    for native in native_by_cat.values() {
-        match native.as_str() {
-            // Signed ints
-            "i8" => int_suffixes.push("i8"),
-            "i16" => int_suffixes.push("i16"),
-            "i32" => int_suffixes.push("i32"),
-            "i64" => int_suffixes.push("i64"),
-            "i128" => int_suffixes.push("i128"),
-            "isize" => int_suffixes.push("isize"),
-            // Unsigned ints
-            "u8" => int_suffixes.push("u8"),
-            "u16" => int_suffixes.push("u16"),
-            "u32" => int_suffixes.push("u32"),
-            "u64" => int_suffixes.push("u64"),
-            "u128" => int_suffixes.push("u128"),
-            "usize" => int_suffixes.push("usize"),
-            _ => {
-                if native.ends_with("BigInt") {
-                    int_suffixes.push("n");
-                }
-                if native.ends_with("BigRat") {
-                    int_suffixes.push("r");
-                }
-            }
+    let maybe_infer_single_integer_default = |literal_patterns: &LiteralPatterns,
+                                              literal_eval: &mut std::collections::HashMap<
+        String,
+        String,
+    >| {
+        // Compatibility path: when language omits integer literals and declares exactly
+        // one integer-native category, default unsuffixed integers to that type.
+        // Explicit literal eval and per-category integer literals always win.
+        if literal_eval.contains_key("Int") || !literal_patterns.integer_by_category.is_empty() {
+            return;
         }
-    }
+        let integer_native_types: Vec<&str> = native_by_cat
+            .values()
+            .map(|s| s.as_str())
+            .filter(|native| suffix_variant_for_native(native).is_some())
+            .collect();
+        if integer_native_types.len() != 1 {
+            return;
+        }
+        if let Some(suffix) = suffix_variant_for_native(integer_native_types[0]) {
+            let eval_code = format!(
+                "{{ mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::{suffix})).map_err(|_| ()) }}"
+            );
+            literal_eval.insert("Int".to_string(), eval_code);
+        }
+    };
 
-    // De-duplicate while preserving a stable, long-first ordering (important for suffix splitting).
-    int_suffixes.sort_by_key(|s| std::cmp::Reverse(s.len()));
-    int_suffixes.dedup();
-
-    // Default is i64 decimal only; only add suffix support if needed.
-    if int_suffixes.iter().any(|s| *s != "i64") {
-        // Decimal digits with optional suffix from declared types.
-        // (Prefixes like 0x/0b and digit separators remain opt-in via `literals { Int { pattern } }`.)
-        literal_patterns.integer = format!(
-            r"[0-9]+({})?",
-            int_suffixes.join("|")
-        );
-    }
+    // Keep default integer pattern (`[0-9]+`) unchanged unless the language
+    // explicitly configures integer literal patterns in `literals { ... }`.
+    // Declaring integer native types alone should not implicitly enable suffixes.
 
     let Some(ref block) = language.literals else {
+        maybe_infer_single_integer_default(&literal_patterns, &mut literal_eval);
         return (literal_patterns, literal_eval);
     };
 
@@ -337,7 +348,72 @@ fn build_literal_config(
         literal_patterns.integer = default_patterns.integer;
     }
 
+    maybe_infer_single_integer_default(&literal_patterns, &mut literal_eval);
+
     (literal_patterns, literal_eval)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_literal_config;
+    use crate::ast::language::LanguageDef;
+
+    #[test]
+    fn infers_single_integer_default_suffix_without_literals() {
+        let src = r#"
+            name: OneInt,
+            types { ![i32] as Int },
+            terms { NumLit . Int ::= "0" ; }
+        "#;
+        let language = syn::parse_str::<LanguageDef>(src).expect("language should parse");
+        let (_patterns, eval) = build_literal_config(&language);
+        let int_eval = eval.get("Int").expect("bridge should infer Int eval");
+        assert!(
+            int_eval.contains("Suffix::I32"),
+            "expected inferred i32 default suffix, got: {int_eval}"
+        );
+    }
+
+    #[test]
+    fn does_not_infer_for_multiple_integer_types_without_literals() {
+        let src = r#"
+            name: TwoInts,
+            types { ![i32] as Int ![u32] as UInt32 },
+            terms { NumLit . Int ::= "0" ; }
+        "#;
+        let language = syn::parse_str::<LanguageDef>(src).expect("language should parse");
+        let (_patterns, eval) = build_literal_config(&language);
+        assert!(
+            !eval.contains_key("Int"),
+            "should not infer a single Int default for multi-int language: {eval:?}"
+        );
+    }
+
+    #[test]
+    fn explicit_int_literal_eval_wins_over_inference() {
+        let src = r#"
+            name: ExplicitInt,
+            types { ![i32] as Int },
+            literals {
+                Int {
+                    pattern: r"[0-9]+";
+                    eval: ![ { text.parse::<i32>().map_err(|_| ()) } ]
+                }
+            },
+            terms { NumLit . Int ::= "0" ; }
+        "#;
+        let language = syn::parse_str::<LanguageDef>(src).expect("language should parse");
+        let (_patterns, eval) = build_literal_config(&language);
+        let int_eval = eval.get("Int").expect("explicit eval should exist");
+        assert!(
+            int_eval.contains("parse :: < i32 >"),
+            "explicit Int eval should be preserved, got: {int_eval}"
+        );
+        assert!(
+            !int_eval.contains("Suffix::I32"),
+            "inference should not override explicit Int eval, got: {int_eval}"
+        );
+    }
 }
 
 /// Convert a single grammar rule to a PraTTaIL `RuleSpecInput`.
