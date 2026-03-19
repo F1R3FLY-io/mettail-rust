@@ -44,7 +44,7 @@ type-like discrimination into the process algebra without departing from the
 reflective "terms as patterns" discipline — the guard IS a term, not a
 separate type annotation. This design preserves the rho-calculus property
 that Names and Procs share a single syntactic universe. The matching
-function `match(φ, @(q))` returns an `Option<σ>`: `Some(σ)` on success, where
+function `match(φ, @(q))` returns `(σ | ⊥)`: `σ` on success, where
 `σ` maps the guard's free variables to sub-terms of `@(q)`, or `None` on
 failure.
 
@@ -311,11 +311,11 @@ either a substitution binding the pattern's free variables or failure:
 ```
 { n!(q) | (n ? φ).{c} } ⟶ c[σ]
   where σ = match(φ, @(q))
-        match : (T_pattern, T_ground) → Option<σ>
+        match : (T_pattern, T_ground) → (σ | ⊥)
         σ : Var → Term
 ```
 
-The type signature `match : (T_pattern, T_ground) → Option<σ>` makes explicit
+The type signature `match : (T_pattern, T_ground) → (σ | ⊥)` makes explicit
 that this is first-order matching, not unification — only the pattern may
 contain free variables. This distinction is formalized in §3 and ensures
 O(|pattern|) matching complexity. The rule is sound by construction: §9.1
@@ -1194,17 +1194,11 @@ and the pipeline uses type-agnostic analysis.
 The pipeline sets `PredicateSignature` bits by matching predicate names
 against hardcoded keyword lists:
 
-```rust
-// predicate_dispatch.rs (walk_predicate, PredicateExpr::Relation branch)
-if is_arithmetic_relation(name) {       // matches "gt","add",">",...
-    sig.set(M12_LINEAR_ARITHMETIC);     // → activates Presburger module
-}
-if is_unification_relation(name) {      // matches "match","unify","bind",...
-    sig.set(M13_UNIFICATION);           // → activates Unification module
-}
-if is_subtype_relation(name) {          // matches "subtype",":<","is_a",...
-    sig.set(M14_SUBTYPE_LATTICE);       // → activates Lattice module
-}
+```
+dispatch_predicate(name: String, sig: PredicateSignature) → ()
+  if name ∈ {"gt","add",">",…} then     sig |= M12    ▷ Presburger
+  if name ∈ {"match","unify",…} then    sig |= M13    ▷ Unification
+  if name ∈ {"subtype",":<",…} then     sig |= M14    ▷ Lattice
 ```
 
 These heuristics are acknowledged as "temporary, conservative, not extensible,
@@ -1493,47 +1487,40 @@ construction, `minimize()` reduces the product state space.
 ##### Pseudocode
 
 ```
-Algorithm PAIR(A₁: SFA, A₂: SFA) → WMA₂
-──────────────────────────────────────────
-  Input:  A₁ = (Q₁, Σ₁, δ₁, I₁, F₁),  A₂ = (Q₂, Σ₂, δ₂, I₂, F₂)
-  Output: 2-tape weighted multi-tape automaton
-
-  1. Allocate product state space: |Q₁| × |Q₂| states
-  2. For each (i₁, w₁) ∈ I₁ and (i₂, w₂) ∈ I₂:
-       mark id(i₁, i₂) as initial with weight w₁ ⊗ w₂
-  3. For each (f₁, w₁) ∈ F₁ and (f₂, w₂) ∈ F₂:
-       mark id(f₁, f₂) as accepting with weight w₁ ⊗ w₂
-  4. ── Synchronized transitions ──
-     For each t₁ = (p₁ →[a₁] q₁, w₁) ∈ δ₁:
-       For each t₂ = (p₂ →[a₂] q₂, w₂) ∈ δ₂:
-         add (id(p₁,p₂) →[a₁,a₂] id(q₁,q₂), w₁ ⊗ w₂)
-  5. ── Tape 1 advances, tape 2 idles ──
-     For each t₁ = (p₁ →[a₁] q₁, w₁) ∈ δ₁:
-       For each q₂ ∈ Q₂:
-         add (id(p₁,q₂) →[a₁,ε] id(q₁,q₂), w₁)
-  6. ── Tape 2 advances, tape 1 idles ──
-     For each t₂ = (p₂ →[a₂] q₂, w₂) ∈ δ₂:
-       For each q₁ ∈ Q₁:
-         add (id(q₁,p₂) →[ε,a₂] id(q₁,q₂), w₂)
-  7. Return result
+pair(A₁: SFA, A₂: SFA) → WMA₂
+  allocate product state space: |Q₁| × |Q₂| states
+  ∀ (i₁, w₁) ∈ I₁, (i₂, w₂) ∈ I₂:
+    mark id(i₁, i₂) as initial with weight w₁ ⊗ w₂
+  ∀ (f₁, w₁) ∈ F₁, (f₂, w₂) ∈ F₂:
+    mark id(f₁, f₂) as accepting with weight w₁ ⊗ w₂
+  ▷ synchronized transitions
+  ∀ t₁ = (p₁ →[a₁] q₁, w₁) ∈ δ₁:
+    ∀ t₂ = (p₂ →[a₂] q₂, w₂) ∈ δ₂:
+      add (id(p₁,p₂) →[a₁,a₂] id(q₁,q₂), w₁ ⊗ w₂)
+  ▷ tape 1 advances, tape 2 idles
+  ∀ t₁ = (p₁ →[a₁] q₁, w₁) ∈ δ₁:
+    ∀ q₂ ∈ Q₂:
+      add (id(p₁,q₂) →[a₁,ε] id(q₁,q₂), w₁)
+  ▷ tape 2 advances, tape 1 idles
+  ∀ t₂ = (p₂ →[a₂] q₂, w₂) ∈ δ₂:
+    ∀ q₁ ∈ Q₁:
+      add (id(q₁,p₂) →[ε,a₂] id(q₁,q₂), w₂)
+  return result
 ```
 
 ```
-Algorithm EVALUATE(M: WMA_K, x₁…x_K: String[K]) → W
-─────────────────────────────────────────────────────
-  Input:  K-tape automaton M, one input string per tape
-  Output: Semiring weight (0_W if rejected)
-
-  1. worklist ← { (q, [0; K], I(q)) | q ∈ initial states }
-  2. While worklist is not empty:
-       Pop (state, positions[K], path_weight)
-       If all positions[k] = |xₖ| and F(state) ≠ 0_W:
-         accumulate path_weight ⊗ F(state) into result via ⊕
-       For each transition (state →[a₁…a_K] state′, w) ∈ δ:
-         For each tape k: if aₖ ≠ ε then new_pos[k] ← positions[k]+1
-         If all aₖ match xₖ[positions[k]] (or aₖ = ε):
-           push (state′, new_pos, path_weight ⊗ w)
-  3. Return result  (0_W if no accepting run)
+evaluate(M: WMA_K, x₁…x_K: String[K]) → W
+  worklist ← { (q, [0; K], I(q)) | q ∈ initial states }
+  while worklist ≠ ∅ do
+    (state, positions[K], path_weight) ← pop(worklist)
+    if ∀k. positions[k] = |xₖ| ∧ F(state) ≠ 0_W then
+      result ← result ⊕ (path_weight ⊗ F(state))
+    ∀ (state →[a₁…a_K] state′, w) ∈ δ:               ▷ transition
+      ∀ k:                                           ▷ tape
+        if aₖ ≠ ε then new_pos[k] ← positions[k]+1
+      if ∀k. aₖ matches xₖ[positions[k]] (∨ aₖ = ε) then
+        push(worklist, (state′, new_pos, path_weight ⊗ w))
+  return result  (0_W if no accepting run)
 ```
 
 Implementation: [multi_tape.rs](../../prattail/src/multi_tape.rs).
@@ -1708,30 +1695,24 @@ materializing an intermediate channel).
 ##### Pseudocode
 
 ```
-Algorithm TRANSDUCE(M: W2T, input: a₁…aₙ) → (W, B*)
-───────────────────────────────────────────────────────
-  Input:  Two-way transducer M, input string a₁…aₙ
-  Output: Weight and output string (0_W, ε if rejected)
-
-  1. tape ← [⊢, a₁, a₂, …, aₙ, ⊣]
-  2. worklist ← { (q₀, 0, 1_W, ε, ∅) }    // (state, pos, weight, output, visited)
-  3. result ← (0_W, ε)
-  4. While worklist is not empty:
-       Pop (state, pos, w, out, visited)
-       ── Crossing sequence loop detection ──
-       Let config ← (state, pos, direction(state))
-       If config ∈ visited:
-         continue                              // Infinite loop — prune
-       visited′ ← visited ∪ {config}
-       ── Acceptance check ──
-       If state ∈ F and pos = n+1:
-         result ← result ⊕ (w, out)
-       ── Expand transitions ──
-       For each (state →[tape[pos]] state′, v, w′) ∈ T:
-         new_pos ← pos + 1 if state′ ∈ Q→, else pos − 1
-         If 0 ≤ new_pos ≤ n+1:
-           push (state′, new_pos, w ⊗ w′, out · v, visited′)
-  5. Return result
+transduce(M: W2T, input: a₁…aₙ) → (W, B*)
+  tape ← [⊢, a₁, a₂, …, aₙ, ⊣]
+  worklist ← { (q₀, 0, 1_W, ε, ∅) }    ▷ (state, pos, weight, output, visited)
+  result ← (0_W, ε)
+  while worklist ≠ ∅ do
+    (state, pos, w, out, visited) ← pop(worklist)
+    ▷ crossing sequence loop detection
+    config ← (state, pos, direction(state))
+    if config ∉ visited then               ▷ prune infinite loops
+      visited′ ← visited ∪ {config}
+      ▷ acceptance check
+      if state ∈ F ∧ pos = n+1 then
+        result ← result ⊕ (w, out)
+      ▷ expand transitions
+      ∀ (state →[tape[pos]] state′, v, w′) ∈ T:
+        new_pos ← pos + 1 if state′ ∈ Q→, else pos − 1
+        if 0 ≤ new_pos ≤ n+1 then
+          push(worklist, (state′, new_pos, w ⊗ w′, out · v, visited′))
 ```
 
 Crossing-sequence loop detection uses `(state, position, direction)` triples
@@ -3091,7 +3072,7 @@ complexity bound.
 |----------------------------|--------------------------------|------------------------------------|
 | Variables in concrete term | None (ground)                  | Allowed                            |
 | Variables in pattern       | Free variables → binding sites | Free variables                     |
-| Result                     | `Option<σ>` (match or fail)    | `Option<σ>` (most general unifier) |
+| Result                     | `(σ | ⊥)` (match or fail)      | `(σ | ⊥)` (most general unifier)   |
 | Complexity                 | O(\|pattern\|)                 | O(n · α(n)) with path compression  |
 
 The type signature below formalizes the matching contract. The `T_ground`
@@ -3103,7 +3084,7 @@ each free variable in the pattern to the corresponding sub-term of the
 ground term, partitioned by natural category (§3 "Natural Categories").
 
 ```
-match : (T_ground, T_pattern) → Option<σ>
+match : (T_ground, T_pattern) → (σ | ⊥)
   where σ : Var → Term
 ```
 
@@ -3306,9 +3287,10 @@ continuation binders is established by the parser invariant: both binder
 vectors are built from the same left-to-right, depth-first traversal of the
 guard pattern's free variables (§9.7).
 
-```rust
-let (guard_binders, guard_body) = guard_scope.clone().unbind();
-let (cont_binders, cont_body) = cont_scope.clone().unbind();
+```
+unbind(guard_scope: Scope, cont_scope: Scope) → ((Binder[], Term), (Binder[], Term))
+  (guard_binders, guard_body) ← unbind(guard_scope)
+  (cont_binders, cont_body)  ← unbind(cont_scope)
 ```
 
 The positional correspondence `guard_binders[i] ↔ cont_binders[i]` is
@@ -3408,8 +3390,8 @@ by the recursive matching algorithm.
 - `name(var, val)` — single Name binding
 - `proc(var, val)` — single Proc binding (one constructor per category)
 - `merge(other)` — concatenation
-- `get_name(var_name) → Option<&Name>` — typed lookup (one per category)
-- `get_proc(var_name) → Option<&Proc>` — typed lookup (one per category)
+- `get_name(var_name: String) → (Name | ⊥)` — typed lookup (one per category)
+- `get_proc(var_name: String) → (Proc | ⊥)` — typed lookup (one per category)
 
 ### Formal Specification
 
@@ -3435,7 +3417,7 @@ impl Name {
 }
 ```
 
-The `Option<MatchBindings>` return type encodes the matching semantics:
+The `(σ | ⊥)` return type encodes the matching semantics:
 `Some(bindings)` when all constructors align and all free variables bind
 successfully, `None` on any constructor clash or arity mismatch. The method
 bodies are generated by `generate_match_pattern()` in
@@ -3526,16 +3508,12 @@ the `FreeVar`, extracts the variable's `pretty_name` (the user-visible name
 from the source text), and constructs a single-entry `MatchBindings`. The
 wildcard `_` on the ground side means any constructor matches:
 
-```rust
-(_, Proc::PVar(OrdVar(Var::Free(fv)))) => {
-    let name = fv.pretty_name.clone()?;
-    Some(MatchBindings::proc(name, self.clone()))
-}
+```
+match_var(ground: Term, PVar(x): Term) → (σ | ⊥)
+  return { proc_bindings: [(name(x), ground)] }
 
-(_, Name::NVar(OrdVar(Var::Free(fv)))) => {
-    let name = fv.pretty_name.clone()?;
-    Some(MatchBindings::name(name, self.clone()))
-}
+match_var(ground: Term, NVar(x): Term) → (σ | ⊥)
+  return { name_bindings: [(name(x), ground)] }
 ```
 
 The cost is O(1) per variable binding — one clone of the ground term and one
@@ -3554,8 +3532,9 @@ equations — no sub-terms to recurse into, no variables to bind. The
 theoretical basis is the ground term identity: two nullary constructors are
 equal iff they have the same tag.
 
-```rust
-(Proc::PZero, Proc::PZero) => Some(MatchBindings::empty())
+```
+match_nullary(C(): Term, C(): Term) → (σ | ⊥)
+  if tag(ground) = tag(pattern) then return ∅;  else return ⊥
 ```
 
 The cost is O(1) — a single discriminant comparison. Empty `MatchBindings`
@@ -3572,12 +3551,11 @@ evaluation). Cross-category dispatch occurs naturally: Name-typed fields
 call `match_pattern_name`, Proc-typed fields call `match_pattern`, and the
 returned `MatchBindings` are merged.
 
-```rust
-(Proc::POutput(n1, p1), Proc::POutput(n2, p2)) => {
-    let mut bindings = (**n1).match_pattern_name(n2)?;
-    bindings.merge((**p1).match_pattern(p2)?);
-    Some(bindings)
-}
+```
+match_regular(C(t₁,…,tₙ): Term, C(π₁,…,πₙ): Term) → (σ | ⊥)
+  σ ← ∅
+  ∀ i ∈ 1…n: σ ← merge(σ, match(tᵢ, πᵢ))           ▷ cross-category dispatch
+  return σ
 ```
 
 The cost is O(|fields|) per constructor level, giving O(|pattern|) total
@@ -3595,9 +3573,9 @@ value. No bindings are produced because literals have no sub-terms. The
 match guard `if v1 == v2` performs the equality test before entering the
 arm body.
 
-```rust
-(Proc::CastInt(v1), Proc::CastInt(v2)) if v1 == v2 =>
-    Some(MatchBindings::empty())
+```
+match_literal(Lit(v₁): Term, Lit(v₂): Term) → (σ | ⊥)
+  if v₁ = v₂ then return ∅;  else return ⊥
 ```
 
 The cost is O(1) for integer and boolean literals, O(|string|) for string
@@ -3639,21 +3617,11 @@ body comparison. The arity check is the binder equation's precondition:
 `|b̄| = |b̄'|`. The `unsafe_pattern` field contains the `Vec<Binder<String>>`
 binder names, which are scope-introducing and never produce bindings in σ.
 
-```rust
-(Proc::PNew(g0), Proc::PNew(p0)) => {
-    let g_inner = g0.inner();
-    let p_inner = p0.inner();
-
-    if g_inner.unsafe_pattern.len() != p_inner.unsafe_pattern.len() {
-        return None;
-    }
-
-    let body_match = (*g_inner.unsafe_body).match_pattern(&*p_inner.unsafe_body);
-    match body_match {
-        Some(b) => bindings.merge(b),
-        None => return None,
-    }
-}
+```
+match_multi_binder(C(Scope(b̄, body)): Term, C(Scope(b̄', body')): Term) → (σ | ⊥)
+  g ← inner(Scope(b̄, body));  p ← inner(Scope(b̄', body'))
+  if |binders(g)| ≠ |binders(p)| then return ⊥
+  return match(body(g), body(p))
 ```
 
 The cost is O(1) for the arity check plus O(|body|) for the recursive body
@@ -3672,17 +3640,11 @@ scope. This ordering — pre-scope fields, then scope opening, then body — is
 essential because pre-scope fields may contain free variables that produce
 bindings, and these bindings must be accumulated before entering the body.
 
-```rust
-(Proc::PNew(g0), Proc::PNew(p0)) => {
-    let g_inner = g0.inner();
-    let p_inner = p0.inner();
-
-    let body_match = (*g_inner.unsafe_body).match_pattern(&*p_inner.unsafe_body);
-    match body_match {
-        Some(b) => bindings.merge(b),
-        None => return None,
-    }
-}
+```
+match_single_binder(C(f₁,…,fₖ, Scope(b,body)): Term, C(f₁',…,fₖ', Scope(b',body')): Term) → (σ | ⊥)
+  σ ← merge(match(f₁,f₁'), …, match(fₖ,fₖ'))       ▷ pre-scope fields first
+  g ← inner(Scope(b,body));  p ← inner(Scope(b',body'))
+  return merge(σ, match(body(g), body(p)))
 ```
 
 The code structure mirrors the MultiBinder case but without the arity check.
@@ -3692,7 +3654,7 @@ calls, producing bindings that are merged with the body match result.
 ### Cross-Category Consistency
 
 Both `match_pattern` and `match_pattern_name` return the same type
-(`Option<MatchBindings>`), enabling seamless cross-category recursion. The
+(`(σ | ⊥)`), enabling seamless cross-category recursion. The
 intuition is that matching flows freely between categories — a Name pattern
 may contain Proc sub-terms (via `NQuote`), and a Proc pattern may contain
 Name sub-terms (via `POutput`'s channel field). The uniform return type
@@ -3719,7 +3681,7 @@ source-level left-to-right order.
 
 ```
 ∀ call chain C through match_pattern / match_pattern_name:
-  C returns Option<MatchBindings>
+  C returns (σ | ⊥)
   ∧ MatchBindings stores both Name and Proc bindings
   ∧ merge() is associative and commutative on disjoint variable sets
 ```
@@ -3781,21 +3743,23 @@ arbitrary depth (100K+ nesting verified in tests) at the cost of heap
 allocation for the explicit stack.
 
 ```
-1. Push initial MatchTask::MatchCat(self, pattern) onto stack
-2. While stack non-empty:
-   a. Pop task
-   b. If pattern is FreeVar: bind to ground, continue
-   c. Match constructors:
-      - Var/Literal/Nullary: equality check (immediate)
-      - Regular: push MatchTask for each field (LIFO → left-to-right order)
-      - Collection: inline element matching with re-entrant match_pattern()
-      - Binder: match pre-scope fields (re-entrant match_pattern()),
-        open scope via inner(), re-entrant body match_pattern()
-      - MultiBinder: match pre-scope fields (re-entrant match_pattern()),
-        open scope via inner(), check arity (|g_binders| = |p_binders|),
-        re-entrant body match_pattern()
-      - Mismatch: return None
-3. Return Some(bindings)
+iterative_match(ground: Term, pattern: Term) → (σ | ⊥)
+  σ ← ∅;  stack ← [MatchTask(ground, pattern)]
+  while stack ≠ ∅ do
+    task ← pop(stack)
+    case task of
+      FreeVar(x)  → σ ← σ ∪ {x ↦ ground(task)}
+      Var/Literal/Nullary → if ground ≠ pattern then return ⊥
+      Regular(C(t₁,…,tₙ), C(π₁,…,πₙ)) →
+        ∀ i ∈ {n, …, 1}: push(stack, MatchTask(tᵢ, πᵢ))
+      Collection → σ ← merge(σ, match(elements))
+      Binder(Scope(b̄, body), Scope(b̄', body')) →
+        σ_pre ← match(pre-scope fields)
+        g ← inner(Scope(b̄, body));  p ← inner(Scope(b̄', body'))
+        if |binders(g)| ≠ |binders(p)| then return ⊥
+        σ ← merge(σ, σ_pre, match(body(g), body(p)))
+      Mismatch → return ⊥
+  return σ
 ```
 
 The algorithm is O(|pattern|) for Regular variants (one push per field) and
@@ -4362,9 +4326,9 @@ PathMap trie for parse dispatch:
   a pattern containing free variables. This is the structural decomposition step.
 - **Mechanism:** Generated per-category Rust methods that recurse through term
   constructors. Variable positions bind; literal/nullary positions check equality;
-  regular positions recurse into children. Returns `Option<MatchBindings>`.
+  regular positions recurse into children. Returns `(σ | ⊥)`.
 - **When:** Compile-time code generation, runtime per-Comm-rule firing.
-- **Contract:** `(ground_term, pattern) → Option<MatchBindings>`
+- **Contract:** `(ground_term, pattern) → (σ | ⊥)`
 - **Predicated types role:** When a Comm rule fires, `match_pattern_name` is called
   on the received value against the guard body pattern. Success yields σ (the
   substitution); failure means the Comm rule does not fire.
@@ -4410,7 +4374,7 @@ by requiring binder count equality and matching each pair.
   with `propagate()`, `label()`, `witness()`.
 - **When:** Compile-time (pattern overlap analysis, UN01–03 lints) and optionally
   runtime (MeTTa-style unification matching).
-- **Contract:** `(term₁, term₂) → Option<Substitution>` (most general unifier)
+- **Contract:** `(term₁, term₂) → (σ | ⊥)` (most general unifier)
 - **Predicated types role:**
   - *Compile-time:* Detects overlapping guard patterns (SYM02/SYM03 lints).
     Two guards φ₁ and φ₂ overlap iff `unify(φ₁, φ₂) ≠ ⊥`.
@@ -4571,7 +4535,7 @@ produce different code artifacts that are assembled into the same Ascent rule.
 │ Generate:                │  │ LHS Pattern → Ascent clauses:            │
 │   Name::match_pattern_   │  │   proc(s),                               │
 │     name(&self, pattern) │  │   if let Proc::PPar(bag) = s,            │
-│   → Option<MatchBindings>│  │   for (elem, _) in bag.iter(),           │
+│   → (σ | ⊥)             │  │   for (elem, _) in bag.iter(),           │
 │                          │  │   if let Proc::PSend(ch, val) = elem,    │
 │ Per-variant arms:        │  │   if ch == expected_channel,             │
 │   NQuote: recurse into   │  │   if let Some(mb) = val.match_pattern(φ),│
@@ -4809,13 +4773,13 @@ independently and chains the joins sequentially. BCG01 selectivity ordering
 (§13) may reorder the joins so the more selective relation is checked first,
 enabling earlier short-circuit pruning.
 
-```rust
-    // ... structural matching ...
-    let r1_arg0 = ..., let r1_arg1 = ...,
-    R1(r1_arg0, r1_arg1),
-    let r2_arg0 = ...,
-    R2(r2_arg0),
-    // ... continuation ...
+```
+  … structural matching …
+  (r₁_arg₀, r₁_arg₁) ← resolve_args(pred₁)
+  require (r₁_arg₀, r₁_arg₁) ∈ R₁                  // join clause 1
+  (r₂_arg₀) ← resolve_args(pred₂)
+  require (r₂_arg₀) ∈ R₂                             // join clause 2
+  … continuation …
 ```
 
 Both joins must succeed for the rule to fire — this is the conjunction
@@ -5867,10 +5831,9 @@ a direct range check — the simplest possible runtime evaluation at O(1). For
 disjunctions of k intervals, the generated code tests membership in the
 interval union, which is O(k) but typically k is small after minimization:
 
-```rust
-fn guard_check(x: i64) -> bool {
-    x > 0 && x < 100
-}
+```
+guard_check(x: Int) → 𝔹
+  return x > 0 ∧ x < 100                            ▷ compiled from SFA interval
 ```
 
 **Relation Lookup (Ascent Semi-Join)**
@@ -5890,10 +5853,9 @@ The generated code probes Ascent's internal hash index for the runtime value.
 If the tuple exists, the Comm rule fires and applies its continuation
 (substitution + normalization, §6):
 
-```rust
-if ascent_program.is_wellformed.contains(&(value.clone(),)) {
-    // fire Comm rule: execute continuation with bindings
-}
+```
+if (value) ∈ ascent.is_wellformed then               ▷ O(1) hash probe
+  fire Comm rule with σ
 ```
 
 For conjunctions of multiple relation queries,
@@ -5922,26 +5884,18 @@ Runtime cost is O(|value|) — one pass over the term, with O(1) work per
 register at each step. The number of registers is determined at compile time
 by the guard's data-flow analysis (M6):
 
-```rust
-fn register_guard(value: &Term, registers: &mut [Option<Term>; 4]) -> bool {
-    match value {
-        Term::App { head, args } if head == "cons" && args.len() == 2 => {
-            // Register 0: store first element for equality comparison
-            match &registers[0] {
-                None => {
-                    registers[0] = Some(args[0].clone());
-                    register_guard(&args[1], registers)  // recurse on tail
-                }
-                Some(stored) => {
-                    // Data equality test: compare current element against register
-                    *stored == args[0] && register_guard(&args[1], registers)
-                }
-            }
-        }
-        Term::Const(c) if c == "nil" => true,  // accept: end of list
-        _ => false,
-    }
-}
+```
+register_guard(value: Term, registers: [(Term | ⊥); R]) → 𝔹
+  case value of
+    App("cons", [head, tail]) →
+      if registers[0] = ⊥ then
+        registers[0] ← head
+        return register_guard(tail, registers)
+      else
+        if registers[0] ≠ head then return false   ▷ TestEq fails
+        return register_guard(tail, registers)
+    Const("nil") → return true
+    _            → return false
 ```
 
 This pattern handles precisely the class of data-aware predicates (equality,
@@ -6016,21 +5970,18 @@ call to `reduce()` produces the set of successor terms (one rewrite step). The
 `visited` set prevents re-exploration of shared subterms (DAG structure),
 bounding the work to O(k · |value|):
 
-```rust
-fn bounded_check(x: &Term, depth_limit: usize) -> TriState {
-    let mut visited = HashSet::new();
-    let mut queue = VecDeque::new();
-    queue.push_back((x.clone(), 0));
-    while let Some((term, depth)) = queue.pop_front() {
-        if depth > depth_limit { return TriState::Unknown; }
-        if is_halted(&term) { return TriState::True; }
-        if !visited.insert(term.clone()) { continue; }
-        for next in reduce(&term) {
-            queue.push_back((next, depth + 1));
-        }
-    }
-    TriState::False
-}
+```
+bounded_check(x: Term, k: ℕ) → TriState
+  visited ← ∅;  queue ← [(x, 0)]
+  while queue ≠ ∅ do
+    (term, depth) ← dequeue(queue)
+    if depth > k then return unknown
+    if is_halted(term) then return true
+    if term ∉ visited then
+      visited ← visited ∪ {term}
+      ∀ t ∈ reduce(term):
+        enqueue(queue, (t, depth + 1))
+  return false
 ```
 
 The choice of BFS (rather than DFS) ensures that the depth bound is respected
@@ -6060,12 +6011,10 @@ a valid proof silences the lint and provides the same confidence as T1–T3
 evaluation — the only difference is that the proof obligation was discharged
 externally rather than by the automaton tower:
 
-```rust
-fn assert_pred(value: &Term) -> bool {
-    // Trust user annotation or Rocq proof certificate.
-    // Emit MSO01 lint if no certificate provided.
-    true
-}
+```
+assert_pred(value: Term) → 𝔹
+  ▷ trust user annotation or Rocq proof certificate; MSO01 lint if absent
+  return true
 ```
 
 Runtime cost is O(1) — trivially. The correctness guarantee depends entirely
@@ -6194,23 +6143,15 @@ guard(forall(v, vertices, entails(reachable(src, v), safe(v))))
 
 Generated code (bounded checker):
 
-```rust
-fn __guard_reachable_safe(src: &Term, vertices: &[Term]) -> TriState {
-    let depth_limit: usize = 1000;
-    for v in vertices.iter() {
-        match check_reachable_bounded(src, v, depth_limit) {
-            TriState::True => {
-                // reachable(src, v) holds — now check safe(v)
-                if !evaluate_safe(v) {
-                    return TriState::False; // ∃ reachable but unsafe vertex
-                }
-            }
-            TriState::Unknown => return TriState::Unknown, // depth exhausted
-            TriState::False => {} // not reachable — implication vacuously true
-        }
-    }
-    TriState::True
-}
+```
+guard_reachable_safe(src: Term, vertices: [Term], k: ℕ = 1000) → TriState
+  ∀ v ∈ vertices:
+    result ← check_reachable_bounded(src, v, k)
+    case result of
+      true    → if ¬evaluate_safe(v) then return false ▷ reachable ∧ ¬safe
+      unknown → return unknown                         ▷ depth exhausted
+      false   →                                        ▷ vacuously true
+  return true
 ```
 
 **T4→T2 multi-step override with proof certificate.** The compiler classifies
@@ -6225,13 +6166,11 @@ guard(is_normalising(term))
 
 Generated code (decidable guard — no depth bound):
 
-```rust
-fn __guard_is_normalising(term: &Term) -> bool {
-    // Decision procedure: reduce to normal form.
-    // Termination guaranteed by strong_normalisation.rocq.
-    let nf = reduce_to_normal_form(term);
-    nf.is_some()
-}
+```
+guard_is_normalising(term: Term) → 𝔹
+  ▷ termination guaranteed by strong_normalisation.rocq certificate
+  nf ← reduce_to_normal_form(term)
+  return nf ≠ ⊥
 ```
 
 Because a valid proof certificate is provided, the TIER01 lint is silent.
@@ -6300,7 +6239,7 @@ The classifier walks the `BehavioralPred` AST:
 - T3: `Quantified` with `bound: Some(k)`, or unbounded with T1/T2 body
 - T4: Nested quantifiers or other undecidable structures
 
-**T1 elimination:** `evaluate_static_guard(pred) → Option<bool>` returns
+**T1 elimination:** `evaluate_static_guard(pred: φ) → (𝔹 | ⊥)` returns
 `Some(true)` for tautologies, `Some(false)` for contradictions. In
 `generate_guarded_comm_rules()`, always-false guards skip rule generation entirely,
 and always-true guards emit only the structural Comm rule (no behavioral check).
@@ -6325,12 +6264,10 @@ fewer tuples than the limit, the result is definitive; at the limit,
 **Standalone guard functions:** Each guard also gets a standalone `__guard_N()`
 function with signature:
 
-```rust
-fn __guard_N(
-    relation_query: &dyn Fn(&str, &[String]) -> bool,
-    domain_enumerate: &dyn Fn(&str) -> Vec<Vec<String>>,
-    env: &HashMap<String, String>,
-) -> bool  // (or TriState for T3)
+```
+guard_N(relation_query: (String, [String]) → 𝔹,
+        domain_enumerate: (String) → Set<Tuple>,
+        env: Map<String, String>) → 𝔹              // or TriState for T3
 ```
 
 These functions serve testing, external callers, and the selectivity analysis
@@ -6986,20 +6923,23 @@ DFA is inlined as native Rust pattern matching.
 The following generated function illustrates the pattern for a simple two-state
 DFA with two minterms:
 
-```rust
-fn __guard_sfa_N(value: &Term) -> bool {
-    let mut state: usize = 0; // initial state
-    for symbol in value.iter_symbols() {
-        state = match (state, /* minterm predicate */) {
-            (0, true) => 1,   // minterm partition A
-            (0, false) => 2,  // minterm partition B
-            (1, true) => 1,   // self-loop on accepting
-            (1, false) => 3,  // transition to sink
-            _ => return false, // implicit sink state
-        };
-    }
-    matches!(state, 1) // accepting states
-}
+```
+sfa_simulate(value: Term, δ: Table<(State, Minterm) → State>, F: Set<State>) → 𝔹
+  state ← q₀
+  ∀ σ ∈ value:                                   ▷ symbol
+    m ← minterm_partition(σ)
+    state ← δ[state, m]
+    if state = SINK then return false            ▷ early exit
+  return state ∈ F
+
+  Example (2 states, 2 minterms):
+  ┌───────┬──────────┬──────────┐
+  │ State │ m = true │ m = false│
+  ├───────┼──────────┼──────────┤
+  │   0   │    1     │    2     │
+  │   1   │    1     │   SINK   │
+  └───────┴──────────┴──────────┘
+  F = {1}
 ```
 
 The runtime cost is O(|value|) — one match dispatch per symbol in the input
@@ -7326,21 +7266,17 @@ Bit-vector tape for k=2 variables (x, y), encoding x=5 (101₂), y=3 (11₂):
 **Pseudocode:**
 
 ```
-Algorithm ENCODE_CONSTRAINT(c: LinearConstraint, k: usize, w: usize) → NFA
-──────────────────────────────────────────────────────────────────────────────
-  Input:  Constraint Σ aᵢ·xᵢ ≤ b, k variables, w bit-width
-  Output: NFA accepting exactly the satisfying k-variable assignments
-
-  1. Compute coefficient sum: S ← Σ|aᵢ|
-  2. State range: r ∈ [−S, max(|b|, S)]
-  3. Initial state: r₀ ← b
-  4. For each bit position j = 0 … w−1:
-       For each state r in range:
-         For each bit-vector d ∈ {0,1}ᵏ:
-           r′ ← ⌊(r − Σ aᵢ · dᵢ) / 2⌋
-           Add transition (r, d) → r′
-  5. Accept states: { r | r ≥ 0 }
-  6. Return NFA
+encode_constraint(c: LinearConstraint, k: ℕ, w: ℕ) → NFA
+  compute coefficient sum: S ← Σ|aᵢ|
+  State range: r ∈ [−S, max(|b|, S)]
+  Initial state: r₀ ← b
+  ∀ j ∈ 0…w−1:                                  ▷ bit position
+    ∀ r ∈ range:                                ▷ state
+      ∀ d ∈ {0,1}ᵏ:                             ▷ bit-vector
+        r′ ← ⌊(r − Σ aᵢ · dᵢ) / 2⌋
+        add transition (r, d) → r′
+  Accept states: { r | r ≥ 0 }
+  return NFA
 ```
 
 Implementation: [presburger.rs](../../prattail/src/presburger.rs).
@@ -7439,33 +7375,29 @@ pub enum TermExpr {
 **Pseudocode:**
 
 ```
-Algorithm UNIFY(equations: [(TermExpr, TermExpr)]) → Option<Substitution>
-──────────────────────────────────────────────────────────────────────────
-  Input:  List of term equations to unify
-  Output: Most general unifier, or None if unification fails
-
-  1. σ ← ∅                           // Empty substitution
-  2. stack ← equations               // Work stack of pending equations
-  3. While stack is not empty:
-       Pop (s, t) from stack
-       s′ ← apply(σ, s);  t′ ← apply(σ, t)
-       Match (s′, t′):
-         (Var(x), Var(x))         → continue         // Trivial identity
-         (Var(x), t)              →
-           If occurs(x, t): return None               // Occurs check
-           σ ← σ ∪ {x ↦ t}                            // Bind variable
-         (t, Var(x))              →
-           If occurs(x, t): return None
-           σ ← σ ∪ {x ↦ t}
-         (App(f, as), App(f, bs)) →
-           If |as| ≠ |bs|: return None                // Arity mismatch
-           For i = 0 … |as|−1: push (asᵢ, bsᵢ)       // Decompose
-         (App(f, _), App(g, _))   →
-           return None                                 // Clash: f ≠ g
-         (Const(a), Const(a))     → continue
-         (Const(a), Const(b))     → return None        // Clash: a ≠ b
-         _                        → return None
-  4. Return Some(σ)
+unify(equations: [(TermExpr, TermExpr)]) → (σ | ⊥)
+  σ ← ∅                           ▷ empty substitution
+  stack ← equations               ▷ work stack of pending equations
+  while stack ≠ ∅ do
+    (s, t) ← pop(stack)
+    s′ ← apply(σ, s);  t′ ← apply(σ, t)
+    case (s′, t′) of
+      (Var(x), Var(x))         →                     ▷ trivial identity
+      (Var(x), t)              →
+        if occurs(x, t) then return ⊥                ▷ occurs check
+        σ ← σ ∪ {x ↦ t}                              ▷ bind variable
+      (t, Var(x))              →
+        if occurs(x, t) then return ⊥
+        σ ← σ ∪ {x ↦ t}
+      (App(f, as), App(f, bs)) →
+        if |as| ≠ |bs| then return ⊥                 ▷ arity mismatch
+        ∀ i ∈ 0…|as|−1: push(stack, (asᵢ, bsᵢ))      ▷ decompose
+      (App(f, _), App(g, _))   →
+        return ⊥                                     ▷ clash: f ≠ g
+      (Const(a), Const(a))     →                     ▷ identity
+      (Const(a), Const(b))     → return ⊥            ▷ clash: a ≠ b
+      _                        → return ⊥
+  return σ
 ```
 
 The implementation follows the pseudocode directly; see [unification.rs](../../prattail/src/unification.rs).
@@ -7534,22 +7466,18 @@ Example Hasse diagram for a small type lattice:
 **Pseudocode — Warshall's Transitive Closure:**
 
 ```
-Algorithm WARSHALL_CLOSURE(edges: Set<(TypeId, TypeId)>, n: usize) → Set<(TypeId, TypeId)>
-──────────────────────────────────────────────────────────────────────────────────────────
-  Input:  Direct subtype edges, n = number of types
-  Output: Transitive closure (all reachable pairs)
-
-  1. closure ← edges ∪ { (a, a) | a ∈ 0…n−1 }     // Reflexive
-  2. For k = 0 … n−1:                                // Intermediate vertex
-       For i = 0 … n−1:
-         For j = 0 … n−1:
-           If (i, k) ∈ closure and (k, j) ∈ closure:
-             closure ← closure ∪ { (i, j) }
-  3. ── Cycle detection ──
-     For all (a, b) where a ≠ b:
-       If (a, b) ∈ closure and (b, a) ∈ closure:
-         Record cycle (a, b) — these types are equivalent
-  4. Return closure
+warshall_closure(edges: Set<(TypeId, TypeId)>, n: ℕ) → Set<(TypeId, TypeId)>
+  closure ← edges ∪ { (a, a) | a ∈ 0…n−1 }     ▷ reflexive
+  ∀ k ∈ 0…n−1:                                 ▷ intermediate vertex
+    ∀ i ∈ 0…n−1:
+      ∀ j ∈ 0…n−1:
+        if (i, k) ∈ closure ∧ (k, j) ∈ closure then
+          closure ← closure ∪ { (i, j) }
+  ▷ cycle detection
+  ∀ (a, b), a ≠ b:
+    if (a, b) ∈ closure ∧ (b, a) ∈ closure then
+      record cycle (a, b) — these types are equivalent
+  return closure
 
   Complexity: O(n³) time, O(n²) space. Computed once, cached with
   dirty-flag invalidation (recomputed only when new edges are added).
@@ -7558,53 +7486,18 @@ Algorithm WARSHALL_CLOSURE(edges: Set<(TypeId, TypeId)>, n: usize) → Set<(Type
 **Pseudocode — Join (LUB):**
 
 ```
-Algorithm JOIN(store: LatticeStore, a: TypeId, b: TypeId) → Option<TypeId>
-─────────────────────────────────────────────────────────────────────────
-  1. If (a, b) in LUB cache: return cached value
-  2. upper_a ← { t | (a, t) ∈ closure }          // All supertypes of a
-  3. upper_b ← { t | (b, t) ∈ closure }          // All supertypes of b
-  4. common ← upper_a ∩ upper_b                    // Common supertypes
-  5. minimal ← { c ∈ common | ¬∃c′ ∈ common. c′ < c }
-  6. If |minimal| = 1: cache and return the element
-     Else: return None (join does not exist — not a lattice)
+join(store: LatticeStore, a: TypeId, b: TypeId) → (TypeId | ⊥)
+  if (a, b) ∈ LUB cache then return cached value
+  upper_a ← { t | (a, t) ∈ closure }          ▷ all supertypes of a
+  upper_b ← { t | (b, t) ∈ closure }          ▷ all supertypes of b
+  common ← upper_a ∩ upper_b                  ▷ common supertypes
+  minimal ← { c ∈ common | ¬∃c′ ∈ common. c′ < c }
+  if |minimal| = 1 then cache and return the element
+  else return ⊥ (join does not exist — not a lattice)
 ```
 
-**Literate code** — Warshall closure from [lattice_theory.rs](../../prattail/src/lattice_theory.rs):
-
-```rust
-// Step 1: Ensure transitive closure is up to date.
-// The dirty flag is set whenever add_edge() is called.
-fn ensure_closure(&self, store: &mut LatticeStore) {
-    if !store.closure_dirty { return; }
-    store.closure.clear();
-    store.lub_cache.clear();
-    store.glb_cache.clear();
-
-    // Reflexive: every type is a subtype of itself
-    for &t in &self.universe {
-        store.closure.insert((t, t));
-    }
-    // Direct edges
-    for &(sub, sup) in &store.edges {
-        store.closure.insert((sub, sup));
-    }
-    // Warshall's algorithm: O(n³)
-    for &k in &self.universe {
-        for &i in &self.universe {
-            for &j in &self.universe {
-                if store.closure.contains(&(i, k))
-                    && store.closure.contains(&(k, j)) {
-                    store.closure.insert((i, j));
-                }
-            }
-        }
-    }
-    // Cycle detection: a ≤ b ≤ a with a ≠ b
-    store.cycles.clear();
-    // ... detect and record equivalent type pairs
-    store.closure_dirty = false;
-}
-```
+Implementation: [lattice_theory.rs — ensure_closure()](../../prattail/src/lattice_theory.rs).
+Dirty-flag guard, cache invalidation, and cycle recording are detailed below.
 
 **Implementation details:**
 - Subtype DAG constructed from explicit edges via `add_edge(sub, sup)`
@@ -8196,23 +8089,19 @@ Mu-calculus formulae:
 **Pseudocode — Mu-Calculus to PATA:**
 
 ```
-Algorithm MU_CALCULUS_TO_PATA(φ: MuCalculusFormula, arity: usize) → PATA
-─────────────────────────────────────────────────────────────────────────
-  Input:  Mu-calculus formula, maximum tree arity
-  Output: Parity alternating tree automaton
-
-  1. priority_counter ← 0
-  2. Match φ:
-       Var(X)      → state for variable X (looked up from environment)
-       True        → accepting state (priority 0, universal)
-       False       → rejecting state (priority 1, universal)
-       φ₁ ∧ φ₂    → universal state branching to PATA(φ₁) and PATA(φ₂)
-       φ₁ ∨ φ₂    → existential state branching to PATA(φ₁) and PATA(φ₂)
-       ⟨i⟩φ′      → existential state, direction = child i, recurse on φ′
-       [i]φ′      → universal state, direction = child i, recurse on φ′
-       μX.φ′      → priority ← next odd number; bind X; recurse on φ′
-       νX.φ′      → priority ← next even number; bind X; recurse on φ′
-  3. Return PATA
+mu_calculus_to_pata(φ: MuCalculusFormula, arity: ℕ) → PATA
+  priority_counter ← 0
+  case φ of
+    Var(X)   → state for variable X (looked up from environment)
+    True     → accepting state (priority 0, universal)
+    False    → rejecting state (priority 1, universal)
+    φ₁ ∧ φ₂ → universal state branching to PATA(φ₁) and PATA(φ₂)
+    φ₁ ∨ φ₂ → existential state branching to PATA(φ₁) and PATA(φ₂)
+    ⟨i⟩φ′   → existential state, direction = child i, recurse on φ′
+    [i]φ′   → universal state, direction = child i, recurse on φ′
+    μX.φ′   → priority ← next odd number; bind X; recurse on φ′
+    νX.φ′   → priority ← next even number; bind X; recurse on φ′
+  return PATA
 ```
 
 **Pipeline role:** Feature gate `parity-tree`. Cost 4. Activated by `letprop`
@@ -8272,24 +8161,20 @@ pub enum RegisterOp {
 **Pseudocode — Register Simulation:**
 
 ```
-Algorithm SIMULATE_RA(M: RA, input: DataValue[]) → bool
-────────────────────────────────────────────────────────
-  Input:  Register automaton M, data word
-  Output: Accept/reject
-
-  1. state ← q₀;  registers ← R₀
-  2. For each datum d in input:
-       For each transition (state →[ops] state′, w) ∈ δ:
-         ── Check guards ──
-         For each register r with ops[r]:
-           TestEq:    reject transition if registers[r] ≠ d
-           TestNeq:   reject transition if registers[r] = d
-           TestFresh: reject transition if d ∈ registers
-         ── Apply stores ──
-         For each register r with ops[r] = Store:
-           registers[r] ← d
-         state ← state′
-  3. Return state ∈ F
+simulate_ra(M: RA, input: DataValue[]) → 𝔹
+  state ← q₀;  registers ← R₀
+  ∀ d ∈ input:                                   ▷ datum
+    ∀ (state →[ops] state′, w) ∈ δ:              ▷ transition
+      ▷ check guards
+      ∀ r with ops[r]:                           ▷ register
+        TestEq:    reject transition if registers[r] ≠ d
+        TestNeq:   reject transition if registers[r] = d
+        TestFresh: reject transition if d ∈ registers
+      ▷ apply stores
+      ∀ r with ops[r] = Store:                   ▷ register
+        registers[r] ← d
+      state ← state′
+  return state ∈ F
 ```
 
 **Pipeline role:** Feature gate `register-automata`. Cost 2. Activated by
@@ -8610,77 +8495,35 @@ An SFA is a degenerate SFT where every transition has `Epsilon` output.
 **Pseudocode — Composition:**
 
 ```
-Algorithm COMPOSE(T₁: SFT<A,B>, T₂: SFT<B,C>) → SFT<A,C>
-──────────────────────────────────────────────────────────────
-  Input:  Two SFTs where T₁'s output algebra = T₂'s input algebra
-  Output: Composed SFT<A,C>
-
-  1. Product states: Q₁ × Q₂ (with lookahead buffer for multi-symbol output)
-  2. For each transition t₁ = (p₁ →[φ₁/f₁] q₁) ∈ T₁:
-       Compute output symbols: out₁ = f₁(witness(φ₁))
-       For each prefix of out₁ consumable by T₂:
-         Find matching T₂ transitions t₂ = (p₂ →[φ₂/f₂] q₂)
-         where φ₂ accepts the output symbols
-         Combined guard: φ₁ ∧ (f₁ satisfies φ₂)
-         Combined output: f₂(f₁(·))
-         Add transition (p₁,p₂) →[combined_guard/combined_output] (q₁,q₂)
-  3. Initial: I₁ × I₂.  Accepting: F₁ × F₂.
-  4. Return composed SFT
+compose(T₁: SFT<A,B>, T₂: SFT<B,C>) → SFT<A,C>
+  Product states: Q₁ × Q₂ (with lookahead buffer for multi-symbol output)
+  ∀ t₁ = (p₁ →[φ₁/f₁] q₁) ∈ T₁:               ▷ transition
+    compute output symbols: out₁ = f₁(witness(φ₁))
+    ∀ prefix ∈ prefixes(out₁) consumable by T₂:
+      find matching T₂ transitions t₂ = (p₂ →[φ₂/f₂] q₂)
+      where φ₂ accepts the output symbols
+      Combined guard: φ₁ ∧ (f₁ satisfies φ₂)
+      Combined output: f₂(f₁(·))
+      add transition (p₁,p₂) →[combined_guard/combined_output] (q₁,q₂)
+  Initial: I₁ × I₂.  Accepting: F₁ × F₂.
+  return composed SFT
 ```
 
 **Pseudocode — Transduction:**
 
 ```
-Algorithm TRANSDUCE(T: SFT<A,B>, word: [A.Domain]) → Set<[B.Domain]>
-──────────────────────────────────────────────────────────────────────
-  Input:  An SFT and a concrete input word
-  Output: Set of all possible output words
-
-  1. configs ← { (s, ε) | s ∈ T.initial_states }
-  2. For each symbol σ in word:
-       next ← ∅
-       For each (state, output) in configs:
-         For each transition (state →[φ/f] q) where φ(σ) = true:
-           next ← next ∪ { (q, output · f(σ)) }
-       configs ← next
-  3. Return { output | (s, output) ∈ configs, s ∈ T.accepting_states }
+transduce(T: SFT<A,B>, word: [A.Domain]) → Set<[B.Domain]>
+  configs ← { (s, ε) | s ∈ initial_states(T) }
+  ∀ σ ∈ word:                                       ▷ symbol
+    next ← ∅
+    ∀ (state, output) ∈ configs:
+      ∀ (state →[φ/f] q) where φ(σ) = true:         ▷ transition
+        next ← next ∪ { (q, output · f(σ)) }
+    configs ← next
+  return { output | (s, output) ∈ configs, s ∈ accepting_states(T) }
 ```
 
-**Literate code** — `transduce` (implementing TRANSDUCE above) from [sft.rs](../../prattail/src/sft.rs):
-
-```rust
-// Step 1: Simulate the SFT on a concrete input word.
-// Track all reachable (state, output_so_far) pairs.
-pub fn transduce(&self, word: &[A::Domain]) -> Vec<Vec<B::Domain>> {
-    let mut configs: Vec<(usize, Vec<B::Domain>)> = self.initial_states
-        .iter()
-        .map(|&s| (s, Vec::new()))
-        .collect();
-
-    // Step 2: For each input symbol, advance all configurations.
-    for symbol in word {
-        let mut next_configs = Vec::new();
-        for (state, output) in &configs {
-            for t in &self.transitions {
-                if t.from == *state
-                    && self.input_algebra.evaluate(&t.guard, symbol) {
-                    let mut new_output = output.clone();
-                    // Step 3: Apply output function to produce new symbols.
-                    new_output.extend(t.output.apply(symbol));
-                    next_configs.push((t.to, new_output));
-                }
-            }
-        }
-        configs = next_configs;
-    }
-
-    // Step 4: Collect outputs from accepting configurations.
-    configs.into_iter()
-        .filter(|(s, _)| self.accepting_states.contains(s))
-        .map(|(_, out)| out)
-        .collect()
-}
-```
+Implementation: [sft.rs — transduce()](../../prattail/src/sft.rs).
 
 **Factories:** `case_fold_sft()`, `whitespace_normalize_sft()`, `guard_transform_sft()`.
 
@@ -8757,27 +8600,22 @@ An **equality saturation** run applies rewrite rules (l → r) to the e-graph:
 **Pseudocode — Equality Saturation:**
 
 ```
-Algorithm SATURATE(G: EGraph, rules: [RewriteRule]) → SaturationResult
-──────────────────────────────────────────────────────────────────────
-  Input:  E-graph G, rewrite rules R
-  Output: Saturated e-graph (or resource-limited result)
-
-  1. Repeat:
-       changed ← false
-       ── Match phase ──
-       For each rule (l → r) ∈ R:
-         matches ← search_pattern(G, l)        // Find LHS pattern instances
-       ── Apply phase ──
-       For each match (class_id, substitution) ∈ matches:
-         rhs_id ← instantiate(G, r, substitution)  // Build RHS e-node
-         If find(class_id) ≠ find(rhs_id):
-           merge(G, class_id, rhs_id)               // Equate LHS and RHS
-           changed ← true
-       ── Rebuild phase ──
-       rebuild(G)                                    // Restore congruence closure
-       If ¬changed or |G.nodes| > max_nodes:
-         break
-  2. Return { iterations, saturated: ¬changed }
+saturate(G: EGraph, rules: [RewriteRule]) → SaturationResult
+  repeat
+    changed ← false
+    ▷ match phase
+    ∀ (l → r) ∈ R:                                 ▷ rule
+      matches ← search_pattern(G, l)               ▷ find LHS pattern instances
+    ▷ apply phase
+    ∀ (class_id, substitution) ∈ matches:          ▷ match
+      rhs_id ← instantiate(G, r, substitution)     ▷ build RHS e-node
+      if find(class_id) ≠ find(rhs_id) then
+        merge(G, class_id, rhs_id)                 ▷ equate LHS and RHS
+        changed ← true
+    ▷ rebuild phase
+    rebuild(G)                                     ▷ restore congruence closure
+  until ¬changed ∨ |nodes(G)| > max_nodes
+  return { iterations, saturated: ¬changed }
 ```
 
 Implementation: [egraph.rs](../../prattail/src/egraph.rs).
@@ -8836,31 +8674,27 @@ stack symbols; transitions read stack symbols bottom-to-top.
 **Pseudocode — Poststar:**
 
 ```
-Algorithm POSTSTAR(wpds: WPDS, init: PAutomaton) → PAutomaton
-──────────────────────────────────────────────────────────────
-  Input:  WPDS rules, initial configuration automaton
-  Output: Saturated P-automaton accepting all reachable configurations
-
-  1. result ← copy(init)
-  2. worklist ← all transitions in result
-  3. While worklist is not empty:
-       Pop transition t = (p →[γ] q, w)
-       For each rule r matching source symbol γ:
-         Match r:
-           Pop(γ, w_r):
-             ── Stack shrinks: merge q into accepting ──
-             update_weight(result, p, accepting, w ⊗ w_r)
-           Replace(γ, γ′, w_r):
-             ── Stack unchanged: relabel ──
-             add_or_update(result, p →[γ′] q, w ⊗ w_r)
-           Push(γ, γ_bot, γ_top, w_r):
-             ── Stack grows: new intermediate state ──
-             q_mid ← get_or_create_state(γ_bot)
-             add_or_update(result, p →[γ_top] q_mid, w ⊗ w_r)
-             ── Propagate existing transitions from q_mid ──
-             For each (q_mid →[γ″] q″, w″) in result:
-               push (p →[γ_top] q″, w ⊗ w_r ⊗ w″) to worklist
-  4. Return result
+poststar(wpds: WPDS, init: PAutomaton) → PAutomaton
+  result ← copy(init)
+  worklist ← all transitions in result
+  while worklist ≠ ∅ do
+    t ← pop(worklist)  where t = (p →[γ] q, w)
+    ∀ r matching source symbol γ:                  ▷ rule
+      case r of
+        Pop(γ, w_r) →
+          ▷ stack shrinks: merge q into accepting
+          update_weight(result, p, accepting, w ⊗ w_r)
+        Replace(γ, γ′, w_r) →
+          ▷ stack unchanged: relabel
+          add_or_update(result, p →[γ′] q, w ⊗ w_r)
+        Push(γ, γ_bot, γ_top, w_r) →
+          ▷ stack grows: new intermediate state
+          q_mid ← get_or_create_state(γ_bot)
+          add_or_update(result, p →[γ_top] q_mid, w ⊗ w_r)
+          ▷ propagate existing transitions from q_mid
+          ∀ (q_mid →[γ″] q″, w″) in result:
+            push(worklist, (p →[γ_top] q″, w ⊗ w_r ⊗ w″))
+  return result
 ```
 
 **Data flow diagram:**
@@ -8945,22 +8779,18 @@ The automaton's semantics:
 **Pseudocode — Bottom-Up Evaluation:**
 
 ```
-Algorithm BOTTOM_UP_EVALUATE(M: WTA, t: Term) → HashMap<StateId, W>
-────────────────────────────────────────────────────────────────────
-  Input:  WTA M, term t
-  Output: Map from states to weights at the root
-
-  1. If t is a leaf (arity 0):
-       For each transition ([], q, w) ∈ δ_{t.symbol}:
-         result[q] ⊕= w
-       Return result
-  2. For each child cᵢ of t:
-       child_states[i] ← BOTTOM_UP_EVALUATE(M, cᵢ)       // Recurse
-  3. For each transition (q₁…qₙ, q, w) ∈ δ_{t.symbol}:
-       If all qᵢ ∈ child_states[i]:
-         combined ← w ⊗ child_states[0][q₁] ⊗ ⋯ ⊗ child_states[n−1][qₙ]
-         result[q] ⊕= combined
-  4. Return result
+bottom_up_evaluate(M: WTA, t: Term) → Map<StateId, W>
+  if t is a leaf (arity 0) then
+    ∀ ([], q, w) ∈ δ_{symbol(t)}:                     ▷ transition
+      result[q] ⊕= w
+    return result
+  ∀ cᵢ ∈ children(t):
+    child_states[i] ← bottom_up_evaluate(M, cᵢ)       ▷ recurse
+  ∀ (q₁…qₙ, q, w) ∈ δ_{symbol(t)}:                    ▷ transition
+    if all qᵢ ∈ child_states[i] then
+      combined ← w ⊗ child_states[0][q₁] ⊗ ⋯ ⊗ child_states[n−1][qₙ]
+      result[q] ⊕= combined
+  return result
 ```
 
 **Term tree diagram:**
@@ -9041,18 +8871,14 @@ construction of Vardi & Wolper (1986).
 **Pseudocode — LTL Model Checking via WPDS:**
 
 ```
-Algorithm CHECK_LTL(wpds: WPDS, property: LtlFormula) → LtlCheckResult
-──────────────────────────────────────────────────────────────────────────
-  Input:  WPDS (grammar call graph), LTL property φ
-  Output: Satisfied, or counterexample (prefix + lasso)
-
-  1. büchi ← ltl_to_buchi(¬φ)        // Negate: find violations
-  2. product ← wpds × büchi           // Synchronous product
-  3. post ← poststar(product)          // Forward reachability
-  4. If ∃ accepting cycle in post:
-       Extract prefix (path to cycle) + lasso (cycle itself)
-       Return Violated { prefix, lasso }
-  5. Return Satisfied
+check_ltl(wpds: WPDS, property: LtlFormula) → LtlCheckResult
+  büchi ← ltl_to_buchi(¬φ)        ▷ negate: find violations
+  product ← wpds × büchi          ▷ synchronous product
+  post ← poststar(product)        ▷ forward reachability
+  if ∃ accepting cycle in post then
+    extract prefix (path to cycle) + lasso (cycle itself)
+    return Violated { prefix, lasso }
+  return Satisfied
 ```
 
 **Verification flow diagram:**
@@ -9394,12 +9220,12 @@ integration point where all three converge:
        │  check(env, term, type) → bool                   │
        │  infer(env, term) → Vec<Type>                    │
        │  is_subtype(env, sub, sup) → bool                │
-       │  join(env, a, b) → Option<Type>                  │
-       │  meet(env, a, b) → Option<Type>                  │
+       │  join(env, a, b) → (Type | ⊥)                     │
+       │  meet(env, a, b) → (Type | ⊥)                     │
        │  extend(env, var, type) → TypeEnv                │
        │  is_inhabited(env, type) → bool                  │
-       │  top() → Option<Type>                            │
-       │  bottom() → Option<Type>                         │
+       │  top() → (Type | ⊥)                              │
+       │  bottom() → (Type | ⊥)                           │
        └────────────────────────┬─────────────────────────┘
                                 │
               ┌─────────────────┼──────────────────────┐
