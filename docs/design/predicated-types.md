@@ -147,7 +147,9 @@ predicated types pipeline automatically. The pipeline is parametric in the
 term algebra, the guard predicate language, and the constraint theories
 available. Any `language!` with a `guards { theories {} }` block (§2A) gets
 theory-driven predicate dispatch, replacing the heuristic keyword lists in
-`predicate_dispatch.rs` with explicit, data-driven routing.
+`predicate_dispatch.rs` with explicit, data-driven routing. Languages with
+`guards { channels {} }` (§2A) get deterministic M8/M11 dispatch for
+multi-channel guards, replacing heuristic channel inference.
 
 ### Document Overview
 
@@ -218,8 +220,8 @@ also explained in context at its point of introduction.
 
 | Symbol | Meaning                                                       |
 |--------|---------------------------------------------------------------|
-| `⊗ `   | Tensor product / semiring multiplication / conjunction in AWA |
-| `⊕ `   | Direct sum / semiring addition / disjunction in AWA           |
+| `⊗`    | Tensor product / semiring multiplication / conjunction in AWA |
+| `⊕`    | Direct sum / semiring addition / disjunction in AWA           |
 | `⊔`    | Join: least upper bound (LUB) in a lattice                    |
 | `⊓`    | Meet: greatest lower bound (GLB) in a lattice                 |
 
@@ -259,8 +261,8 @@ also explained in context at its point of introduction.
 | `q₀`   | Initial state                              |
 | `F`    | Set of accepting (final) states            |
 | `δ`    | Transition function/relation               |
-| `Q⊗ `  | Universal (conjunction) states in an AWA   |
-| `Q⊕ `  | Existential (disjunction) states in an AWA |
+| `Q⊗`   | Universal (conjunction) states in an AWA   |
+| `Q⊕`   | Existential (disjunction) states in an AWA |
 
 **Acronyms:**
 
@@ -401,14 +403,14 @@ relation lookups).
 
 The surface syntax uses a `where` keyword to introduce **Datalog queries** —
 conjunctions of positive and negative literals compatible with Ascent's
-evaluation model. The `where` clause cleanly separates structural binding
-(the `@pattern <- channel` form, handled by first-order matching) from
-behavioral filtering (the Datalog literals that follow `where`). Each example
-below demonstrates a progressively more expressive guard, from pure structural
-matching (Layer 1, handled by existing Pratt/Recursive Descent (RD) matching) through behavioral
-predicates (Layer 2, Ascent relation joins) to quantified and bounded
-predicates (Layers 3-4, LogicT/AWA evaluation). The `@` prefix on patterns
-is still required — the compiler does not infer categories.
+evaluation model. The `where` clause cleanly separates structural binding (the
+`@pattern <- channel` form, handled by first-order matching) from behavioral
+filtering (the Datalog literals that follow `where`). Each example below
+demonstrates a progressively more expressive guard, from pure structural
+matching (Layer 1, handled by existing Pratt/Recursive Descent (RD) matching)
+through behavioral predicates (Layer 2, Ascent relation joins) to quantified and
+bounded predicates (Layers 3-4, LogicT/AWA evaluation). The `@` prefix on
+patterns is still required — the compiler does not infer categories.
 
 ```rholang
 // 1. Structural pattern only (no where) — unchanged
@@ -479,17 +481,18 @@ select {
 
 ### Where-Clause Sublanguage Grammar
 
-The `where` clause introduces a conjunction of Datalog literals — positive
-and negative relation applications, infix comparisons, and syntactic sugar
-for logical connectives, implications, and quantifiers. The design rationale
-for this particular fragment is decidability: every literal maps to a
+The `where` clause introduces a conjunction of Datalog literals — positive and
+negative relation applications, infix comparisons, and syntactic sugar for
+logical connectives, implications, and quantifiers. The design rationale for
+this particular fragment is decidability: every literal maps to a
 `WeightedMsoFormula` AST variant (§12, M10) that has a well-defined
 automaton-theoretic compilation target. Comma-separated literals map to
-conjunction (Symbolic Finite Automaton (SFA) intersection); `not()` maps to SFA complement; `or()` sugar
-desugars to auxiliary union relations with multiple Ascent rules; quantifiers
-desugar to auxiliary relations with negation-as-failure. The grammar is
-deliberately first-order — no second-order set quantification `∀X` — to
-stay within the Monadic Second-Order logic (MSO) decidability boundary for tree structures.
+conjunction (Symbolic Finite Automaton (SFA) intersection); `not()` maps to SFA
+complement; `or()` sugar desugars to auxiliary union relations with multiple
+Ascent rules; quantifiers desugar to auxiliary relations with
+negation-as-failure. The grammar is deliberately first-order — no second-order
+set quantification `∀X` — to stay within the Monadic Second-Order logic (MSO)
+decidability boundary for tree structures.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -874,22 +877,6 @@ explicitly declare its guard sublanguage — which logical connectives exist and
 what keywords spell them, which built-in predicates are available, and which
 constraint theories handle analysis — without modifying PraTTaIL internals.
 
-### What Existing Blocks Already Handle
-
-Before introducing the new block, it is important to clarify what is already
-covered:
-
-- **`terms {}`** handles the guard *surface syntax* via `?guard:Guard` and the
-  syntax template after `|-` (e.g., `"where" guard`). This is sufficient and
-  unchanged.
-- **`tokens {}`** handles guard *keyword lexing* via custom token definitions
-  with modal lexing (`push(guard_mode)`). This is sufficient and unchanged.
-- **`logic {}`** handles *user-defined relations*. This is sufficient and
-  unchanged.
-- **What is missing:** connective-to-keyword mappings, built-in predicate
-  declarations, and constraint theory registration — a configuration layer
-  that does not fit any existing block.
-
 ### Block Syntax
 
 ```rust
@@ -899,6 +886,46 @@ language! {
     tokens { ... },
 
     guards {
+        // ── Built-in predicates (direct items) ───────────────
+        // Predicates with hardcoded implementations (not Ascent
+        // relations).  Uses the SAME syntax template pattern as
+        // `terms {}`:
+        //   Label . params |- syntax_template ;
+        //
+        // The syntax template defines keyword spellings AND fixity.
+        // Multiple syntax forms for the same predicate use `|`.
+        // Params can have optional type annotations for type-
+        // dependent dispatch.  Variadic params use `+` suffix;
+        // syntax uses `#sep()` for separators.
+        //
+        // If no predicates are listed: all standard built-ins
+        // enabled with default syntax.
+        // If any are listed: only listed predicates available;
+        // unlisted ones produce a compile-time error.
+        // User-defined relations from `logic {}` are always
+        // available and do NOT need to be listed here.
+        //
+        // Predicate definitions are direct items of `guards {}`,
+        // mirroring the `tokens {}` architecture where token
+        // definitions are direct items alongside sub-blocks
+        // (mode {}, sync {}, tree_invariants {}).
+        eq  . x, y  |- x "==" y | "eq" "(" x "," y ")" ;
+        neq . x, y  |- x "!=" y | "neq" "(" x "," y ")" ;
+        gt  . x, y  |- x ">" y  | "gt" "(" x "," y ")" ;
+        lt  . x, y  |- x "<" y  | "lt" "(" x "," y ")" ;
+        ge  . x, y  |- x ">=" y | "ge" "(" x "," y ")" ;
+        le  . x, y  |- x "<=" y | "le" "(" x "," y ")" ;
+
+        fresh       . x        |- "fresh" "(" x ")" ;
+        ground      . x        |- "ground" "(" x ")" ;
+        rewrites_to . x, y     |- "rewrites_to" "(" x "," y ")"
+                               | x "→*" y ;
+        ac_match    . bag, pat  |- "ac_match" "(" bag "," pat ")" ;
+        count_ge    . ch, k     |- "count_ge" "(" ch "," k ")" ;
+        count_eq    . ch, k     |- "count_eq" "(" ch "," k ")" ;
+
+        // ── Configuration sub-blocks ─────────────────────────
+
         // ── Connectives ──────────────────────────────────────
         // Maps logical connective ROLES to their KEYWORD SPELLINGS.
         // Each entry: role = "primary" | "alt1" | "alt2" ;
@@ -921,41 +948,6 @@ language! {
             exists      = "exists"      | "∃";
         }
 
-        // ── Built-in predicates ──────────────────────────────
-        // Predicates with hardcoded implementations (not Ascent
-        // relations).  Uses the SAME syntax template pattern as
-        // `terms {}`:
-        //   Label . params |- syntax_template ;
-        //
-        // The syntax template defines keyword spellings AND fixity.
-        // Multiple syntax forms for the same predicate use `|`.
-        // Params can have optional type annotations for type-
-        // dependent dispatch.  Variadic params use `+` suffix;
-        // syntax uses `#sep()` for separators.
-        //
-        // If omitted: all standard built-ins enabled with default
-        // syntax.
-        // If present: only listed predicates available; unlisted
-        // ones produce a compile-time error.
-        // User-defined relations from `logic {}` are always
-        // available and do NOT need to be listed here.
-        predicates {
-            eq  . x, y  |- x "==" y | "eq" "(" x "," y ")" ;
-            neq . x, y  |- x "!=" y | "neq" "(" x "," y ")" ;
-            gt  . x, y  |- x ">" y  | "gt" "(" x "," y ")" ;
-            lt  . x, y  |- x "<" y  | "lt" "(" x "," y ")" ;
-            ge  . x, y  |- x ">=" y | "ge" "(" x "," y ")" ;
-            le  . x, y  |- x "<=" y | "le" "(" x "," y ")" ;
-
-            fresh       . x        |- "fresh" "(" x ")" ;
-            ground      . x        |- "ground" "(" x ")" ;
-            rewrites_to . x, y     |- "rewrites_to" "(" x "," y ")"
-                                    | x "→*" y ;
-            ac_match    . bag, pat  |- "ac_match" "(" bag "," pat ")" ;
-            count_ge    . ch, k     |- "count_ge" "(" ch "," k ")" ;
-            count_eq    . ch, k     |- "count_eq" "(" ch "," k ")" ;
-        }
-
         // ── Constraint theories ──────────────────────────────
         // Registers ConstraintTheory implementations for predicate
         // dispatch.  Replaces heuristic keyword lists in
@@ -963,9 +955,23 @@ language! {
         //
         // If omitted: falls back to existing heuristic dispatch.
         theories {
-            arithmetic: PresburgerAlgebra for [Int];
-            patterns:   UnificationTheory for [Proc, Name];
-            types:      LatticeTheory for [Proc, Name, Int, Str];
+            arithmetic = PresburgerAlgebra for [Int];
+            patterns   = UnificationTheory for [Proc, Name];
+            types      = LatticeTheory for [Proc, Name, Int, Str];
+        }
+
+        // ── Channels ──────────────────────────────────────────
+        // Declares which categories serve as communication
+        // channels and which term constructors are join patterns.
+        // Replaces heuristic M8/M11 inference with explicit,
+        // data-driven channel declarations.
+        //
+        // If omitted: falls back to existing heuristic dispatch.
+        // If present: only declared channels/joins activate
+        // M8/M11.
+        channels {
+            channel Name;
+            join PGuardedInput(ch: Name);
         }
     },
 
@@ -975,6 +981,22 @@ language! {
     logic { ... },
 }
 ```
+
+### What Existing Blocks Already Handle
+
+Before introducing the new block, it is important to clarify what is already
+covered:
+
+- **`terms {}`** handles the guard *surface syntax* via `?guard:Guard` and the
+  syntax template after `|-` (e.g., `"where" guard`). This is sufficient and
+  unchanged.
+- **`tokens {}`** handles guard *keyword lexing* via custom token definitions
+  with modal lexing (`push(guard_mode)`). This is sufficient and unchanged.
+- **`logic {}`** handles *user-defined relations*. This is sufficient and
+  unchanged.
+- **What is missing:** connective-to-keyword mappings, built-in predicate
+  declarations, and constraint theory registration — a configuration layer
+  that does not fit any existing block.
 
 ### Connective Role Mapping
 
@@ -1024,8 +1046,10 @@ connectives {
 
 ### Predicate Syntax Templates
 
-The `predicates {}` sub-section reuses the **same syntax template pattern** as
-`terms {}`. Each predicate declaration has the form:
+Predicate definitions are **direct items** of `guards {}` (not a sub-block),
+mirroring the `tokens {}` architecture where token definitions are direct
+items alongside configuration sub-blocks. Each predicate declaration reuses
+the **same syntax template pattern** as `terms {}` and has the form:
 
 ```
 Label . params |- syntax_template ;
@@ -1038,7 +1062,7 @@ fixity. The position of parameters relative to keyword literals determines
 whether the predicate is infix, prefix, postfix, or mixfix:
 
 ```rust
-predicates {
+guards {
     // Infix:   x > y
     gt  . x, y  |- x ">" y ;
 
@@ -1075,7 +1099,7 @@ disjunction syntax `(Type1|Type2)`, meaning each argument may be any of the
 listed types:
 
 ```rust
-predicates {
+guards {
     // 1-or-more: (== a, b, c) means eq(a,b) ∧ eq(b,c)
     eq_chain . xs+  |- "==" "(" xs.#sep(",") ")" ;
 
@@ -1104,7 +1128,7 @@ annotations from `types {}`. When the same label is declared with different
 type signatures, the codegen dispatches to the most specific match:
 
 ```rust
-predicates {
+guards {
     // Generic (any type): uses default PartialOrd
     gt . x, y       |- x ">" y ;
 
@@ -1121,16 +1145,16 @@ Resolution order: (a) exact type match, (b) generic (untyped) fallback,
 from the pattern binding context — e.g., if `x` was bound from an
 `Int`-typed constructor parameter, the `Int` overload is selected.
 
-**4. Relation between `predicates {}` and `logic {}` relations.**
+**4. Relation between `guards {}` predicates and `logic {}` relations.**
 
-- `predicates {}` declares **built-in** predicates with hardcoded
-  implementations (comparisons, freshness, structural checks). The compiler
-  knows how to codegen them.
+- `guards {}` predicate definitions declare **built-in** predicates with
+  hardcoded implementations (comparisons, freshness, structural checks).
+  The compiler knows how to codegen them.
 - `logic {}` declares **user-defined** Ascent relations populated by Datalog
   rules. The codegen generates hash-indexed membership tests.
 - A predicate name used in a guard is resolved first against
-  `predicates {}`, then against `logic {}` relations. If found in neither,
-  it is a compile error.
+  `guards {}` predicates, then against `logic {}` relations. If found in
+  neither, it is a compile error.
 - Custom predicates that are neither built-in nor Ascent relations should be
   defined as Ascent relations in `logic {}` with rules that check the
   desired property.
@@ -1190,7 +1214,7 @@ names miss theory-specific modules.
 **Proposed mechanism (type-driven, no new automata needed):**
 
 With typed predicates (`gt . x: Int, y: Int |- x ">" y ;`) and theory
-registrations (`theories { arithmetic: PresburgerAlgebra for [Int]; }`), the
+registrations (`theories { arithmetic = PresburgerAlgebra for [Int]; }`), the
 pipeline can route precisely:
 
 1. **Build a type→theory map** from `guards { theories {} }`. Each theory
@@ -1221,9 +1245,9 @@ pipeline can route precisely:
    categories. The explicit approach is cleanest:
    ```rust
    theories {
-       arithmetic: PresburgerAlgebra for [Int];
-       patterns:   UnificationTheory for [Proc, Name];
-       types:      LatticeTheory for [Proc, Name, Int, Str];
+       arithmetic = PresburgerAlgebra for [Int];
+       patterns   = UnificationTheory for [Proc, Name];
+       types      = LatticeTheory for [Proc, Name, Int, Str];
    }
    ```
 
@@ -1277,10 +1301,734 @@ Implementation: extend `PredicateProfile` with an optional
 types. The cost estimator in `cost_benefit.rs` can then adjust selectivity
 weights based on the type context.
 
+### Channel Declarations for Multi-Channel Guard Dispatch
+
+#### The Problem: Multi-Channel Guard Evaluation
+
+Any language with concurrent communication primitives can express guards that
+span multiple channels. This is not specific to Rholang — it arises wherever a
+guard predicate references variables bound by different synchronization points.
+Without cross-channel analysis, evaluation requires exhaustive Cartesian product
+scanning of all channel value combinations.
+
+A "channel" in this context is any binding site where a process waits for a
+value — a pi-calculus channel, an ambient boundary, a tuple space pattern, an
+actor mailbox, a Petri net place, or a CSP event. The `channels {}` block
+generalizes this: the spec author declares which categories in their language
+serve this role.
+
+Examples across paradigms:
+
+```rholang
+// Rholang — pi-calculus channels
+for (@x <- ch1; @y <- ch2) where gt(x, y) { P }
+
+// Ambient calculus — ambient boundaries as channels
+for (n1 <- ambients_at(loc1); n2 <- ambients_at(loc2))
+  where can_communicate(n1, n2) { P }
+
+// Session-typed pi-calculus — protocol-constrained channels
+for (x <- ch1: !Int ?Str; y <- ch2: !Bool ?Int)
+  where session_compatible(x, y) { P }
+
+// Linda tuple space — tuple patterns as channels
+for ((x, y, z) <- space; (a, b, c) <- space)
+  where x + a == 5 { P }
+
+// Petri net — places as channels, token guards
+transition t . p1: Place, p2: Place
+  |- guard(count_ge(p1, 2), gt(value(p1), value(p2)))
+```
+
+All these share the same structure: a guard predicate `f(x, y)` where `x` and
+`y` are bound by different synchronization points.
+
+#### Overview: Two Complementary Techniques
+
+Multi-channel guards require two distinct optimizations. **M8 (Multi-Tape
+Automata)** fuses N per-channel automata into a single synchronized traversal,
+eliminating redundant passes. **M11 (Two-Way Transducers)** prunes channel
+value spaces via backward constraint propagation, eliminating combinations
+that cannot satisfy the guard before they are ever tried. Together, M8 and
+M11 compose with M7's selectivity ordering to form a three-phase optimization
+pipeline (§12, Stage 4).
+
+**Acronyms and symbols used in this section:**
+- **SFA** — Symbolic Finite Automaton: finite automaton with predicate-guarded transitions over infinite domains (M1)
+- **W2T** — Weighted Two-Way Transducer: transducer whose head can move both left and right on the tape
+- **WMA** — Weighted Multi-tape Automaton: automaton reading K tapes simultaneously
+- **SCC** — Strongly Connected Component: maximal subgraph where every vertex reaches every other
+- **BFS** — Breadth-First Search
+- **W** — a semiring (W, ⊕, ⊗, 0_W, 1_W) where ⊕ is addition (combine parallel paths), ⊗ is multiplication (combine sequential steps), 0_W is the additive identity (no path), and 1_W is the multiplicative identity (trivial path)
+
+What follows: Part I treats M8 in full, Part II treats M11 in full, then
+their composition is shown as a concrete pipeline.
+
+#### Part I — Multi-Tape Automata (M8): Traversal Fusion
+
+##### Motivation
+
+Consider a join pattern binding three channels:
+
+```
+for (@x <- ch1; @y <- ch2; @z <- ch3) where f(x, y, z) { P }
+```
+
+Without M8, each channel guard compiles to its own SFA and runs independently:
+
+```
+Without M8 — N separate traversals:
+
+  ch1 guard ──► SFA₁ ──► accept/reject
+  ch2 guard ──► SFA₂ ──► accept/reject     N traversals, N state machines
+  ch3 guard ──► SFA₃ ──► accept/reject
+```
+
+For N channels this requires N automaton traversals, N sets of bookkeeping
+state, and N separate accept/reject decisions that must be combined afterward.
+The overhead is both computational (repeated loop control) and structural
+(no shared state across guards). Kempe (2004) [§25, ref #22] showed that
+multi-tape automata eliminate this redundancy via the **pair construction**.
+
+##### Intuition
+
+Think of a multi-tape automaton as a DJ with K turntables. Each turntable
+plays a different record (tape). On each step, the DJ can advance any subset
+of turntables — reading their next symbol — while leaving others paused
+(epsilon). The DJ selects transitions that match the current symbols on all
+active turntables simultaneously. The weight on each transition represents
+the DJ's preference for that particular mix. A single DJ at the mixing desk
+replaces K independent listeners.
+
+##### Formal Definition
+
+**Definition 2A.1** (Weighted Multi-Tape Automaton, after Kempe 2004).
+A K-tape weighted automaton over semiring W is a tuple M = (K, Q, Σ₁…Σ_K, δ, I, F) where:
+
+- K ∈ ℕ is the number of tapes (const-generic in the implementation)
+- Q is a finite set of states, each identified by a unique index q ∈ {0, …, |Q|−1}
+- Σₖ is the alphabet for tape k (1 ≤ k ≤ K)
+- ε denotes the empty symbol (no consumption on a given tape)
+- δ ⊆ Q × (Σ₁ ∪ {ε}) × ⋯ × (Σ_K ∪ {ε}) × Q × W is the transition relation.
+  Each transition (q, a₁, …, a_K, q′, w) reads symbol aₖ from tape k
+  (or ε to skip tape k), moves from state q to q′, and contributes weight w.
+- I: Q → W maps initial states to entry weights (0_W for non-initial states)
+- F: Q → W maps accepting states to exit weights (0_W for non-accepting states)
+
+The weight of an accepting run ρ = (q₀, t₁, q₁, …, tₙ, qₙ) is:
+
+  w(ρ) = I(q₀) ⊗ w(t₁) ⊗ w(t₂) ⊗ ⋯ ⊗ w(tₙ) ⊗ F(qₙ)
+
+The automaton's semantics assigns to each K-tuple of input strings the ⊕-sum
+over all accepting runs:
+
+  ⟦M⟧(x₁, …, x_K) = ⊕{ w(ρ) | ρ accepts (x₁, …, x_K) }
+
+With M8, the three-channel example becomes:
+
+```
+With M8 — 1 fused traversal:
+
+  ch1,ch2,ch3 ──► pair(pair(SFA₁, SFA₂), SFA₃) ──► accept/reject
+                  └─────────── 1 traversal ───────────┘
+```
+
+##### Pair Construction
+
+The core operation is `pair(A₁, A₂)`: given two 1-tape SFAs, build a 2-tape
+product automaton that synchronizes their transitions.
+
+**Product state encoding.** For automata with |Q₁| and |Q₂| states, the
+product state for (q₁, q₂) is identified by:
+
+  id(q₁, q₂) = q₁ × |Q₂| + q₂
+
+This bijection maps Q₁ × Q₂ → {0, …, |Q₁|×|Q₂|−1}, enabling O(1)
+state lookup without hashing.
+
+**Three transition classes.** The pair construction generates three classes of
+transitions in the product automaton:
+
+```
+ Class 1 — Synchronized (both tapes advance):
+ ┌─────────────────────────────────────────────────────────┐
+ │  (q₁, q₂) ──[a₁, a₂]──► (q₁′, q₂′)                      │
+ │  weight: w₁ ⊗ w₂                                        │
+ │  For every t₁ ∈ δ₁ and t₂ ∈ δ₂                          │
+ └─────────────────────────────────────────────────────────┘
+
+ Class 2 — Tape 1 advances, tape 2 idles (epsilon on tape 2):
+ ┌─────────────────────────────────────────────────────────┐
+ │  (q₁, q₂) ──[a₁, ε]──► (q₁′, q₂)                        │
+ │  weight: w₁                                             │
+ │  For every t₁ ∈ δ₁ and every q₂ ∈ Q₂                    │
+ └─────────────────────────────────────────────────────────┘
+
+ Class 3 — Tape 2 advances, tape 1 idles (epsilon on tape 1):
+ ┌─────────────────────────────────────────────────────────┐
+ │  (q₁, q₂) ──[ε, a₂]──► (q₁, q₂′)                        │
+ │  weight: w₂                                             │
+ │  For every t₂ ∈ δ₂ and every q₁ ∈ Q₁                    │
+ └─────────────────────────────────────────────────────────┘
+```
+
+**Chaining property.** The pair construction chains associatively:
+`pair(pair(SFA₁, SFA₂), SFA₃)` builds a 3-tape automaton. N-channel join
+patterns with N ≥ 2 channel parameters produce N-tape automata. After
+construction, `minimize()` reduces the product state space.
+
+**Complexity.** States: O(|Q₁| × |Q₂|). Transitions: O(|δ₁| × |δ₂| + |δ₁| × |Q₂| + |Q₁| × |δ₂|).
+
+##### Operations Summary
+
+| Operation              | Input         | Output                      | Description                                  |
+|------------------------|---------------|-----------------------------|----------------------------------------------|
+| `pair`                 | `SFA₁, SFA₂`  | `WMA(SFA₁ × SFA₂)` (2-tape) | Synchronize two SFAs into a 2-tape automaton |
+| `auto_intersect`       | `WMA`         | `SFA`                       | Collapse tapes with shared constraints       |
+| `project`              | `WMA, tape_i` | `SFA`                       | Extract single-tape projection               |
+| `multi_tape_intersect` | `WMA₁, WMA₂`  | `WMA`                       | Product of two multi-tape automata           |
+| `evaluate`             | `WMA, inputs` | `bool`                      | Simultaneous multi-tape acceptance test      |
+| `analyze`              | `WMA`         | `MultiTapeAnalysis`         | State/transition count, dead-tape detection  |
+
+##### Pseudocode
+
+```
+Algorithm PAIR(A₁: SFA, A₂: SFA) → WMA₂
+──────────────────────────────────────────
+  Input:  A₁ = (Q₁, Σ₁, δ₁, I₁, F₁),  A₂ = (Q₂, Σ₂, δ₂, I₂, F₂)
+  Output: 2-tape weighted multi-tape automaton
+
+  1. Allocate product state space: |Q₁| × |Q₂| states
+  2. For each (i₁, w₁) ∈ I₁ and (i₂, w₂) ∈ I₂:
+       mark id(i₁, i₂) as initial with weight w₁ ⊗ w₂
+  3. For each (f₁, w₁) ∈ F₁ and (f₂, w₂) ∈ F₂:
+       mark id(f₁, f₂) as accepting with weight w₁ ⊗ w₂
+  4. ── Synchronized transitions ──
+     For each t₁ = (p₁ →[a₁] q₁, w₁) ∈ δ₁:
+       For each t₂ = (p₂ →[a₂] q₂, w₂) ∈ δ₂:
+         add (id(p₁,p₂) →[a₁,a₂] id(q₁,q₂), w₁ ⊗ w₂)
+  5. ── Tape 1 advances, tape 2 idles ──
+     For each t₁ = (p₁ →[a₁] q₁, w₁) ∈ δ₁:
+       For each q₂ ∈ Q₂:
+         add (id(p₁,q₂) →[a₁,ε] id(q₁,q₂), w₁)
+  6. ── Tape 2 advances, tape 1 idles ──
+     For each t₂ = (p₂ →[a₂] q₂, w₂) ∈ δ₂:
+       For each q₁ ∈ Q₁:
+         add (id(q₁,p₂) →[ε,a₂] id(q₁,q₂), w₂)
+  7. Return result
+```
+
+```
+Algorithm EVALUATE(M: WMA_K, x₁…x_K: String[K]) → W
+─────────────────────────────────────────────────────
+  Input:  K-tape automaton M, one input string per tape
+  Output: Semiring weight (0_W if rejected)
+
+  1. worklist ← { (q, [0; K], I(q)) | q ∈ initial states }
+  2. While worklist is not empty:
+       Pop (state, positions[K], path_weight)
+       If all positions[k] = |xₖ| and F(state) ≠ 0_W:
+         accumulate path_weight ⊗ F(state) into result via ⊕
+       For each transition (state →[a₁…a_K] state′, w) ∈ δ:
+         For each tape k: if aₖ ≠ ε then new_pos[k] ← positions[k]+1
+         If all aₖ match xₖ[positions[k]] (or aₖ = ε):
+           push (state′, new_pos, path_weight ⊗ w)
+  3. Return result  (0_W if no accepting run)
+```
+
+##### Literate Code
+
+The `pair` function from `prattail/src/multi_tape.rs:238–315`:
+
+```rust
+// Step 1: Allocate product state space — |Q₁| × |Q₂| states.
+// Each product state (q₁, q₂) gets a composite label "(l₁,l₂)".
+result.states.reserve(n1 * n2);
+for s1 in &a1.states {
+    for s2 in &a2.states {
+        let label = match (&s1.label, &s2.label) {
+            (Some(l1), Some(l2)) => Some(format!("({l1},{l2})")),
+            // ... other label combinations
+        };
+        result.add_state(label);
+    }
+}
+
+// Step 2: Product state ID — O(1) bijection Q₁ × Q₂ → ℕ.
+let product_id = |q1: usize, q2: usize| -> usize { q1 * n2 + q2 };
+
+// Step 3: Initial states — (i₁, i₂) with weight w₁ ⊗ w₂.
+for (&i1, &w1) in &a1.initial {
+    for (&i2, &w2) in &a2.initial {
+        result.set_initial(product_id(i1, i2), w1.times(&w2));
+    }
+}
+
+// Step 4: Accepting states — (f₁, f₂) with weight w₁ ⊗ w₂.
+for (&f1, &w1) in &a1.accepting {
+    for (&f2, &w2) in &a2.accepting {
+        result.set_accepting(product_id(f1, f2), w1.times(&w2));
+    }
+}
+
+// Step 5: Class 1 — Synchronized transitions (both tapes advance).
+for t1 in &a1.transitions {
+    for t2 in &a2.transitions {
+        result.add_transition(
+            product_id(t1.from, t2.from),
+            product_id(t1.to, t2.to),
+            [t1.labels[0].clone(), t2.labels[0].clone()],
+            t1.weight.times(&t2.weight),
+        );
+    }
+}
+
+// Step 6: Class 2 — Tape 1 advances, tape 2 idles (ε on tape 2).
+for t1 in &a1.transitions {
+    for q2 in 0..n2 {
+        result.add_transition(
+            product_id(t1.from, q2),
+            product_id(t1.to, q2),
+            [t1.labels[0].clone(), None],   // None = ε
+            t1.weight,
+        );
+    }
+}
+
+// Step 7: Class 3 — Tape 2 advances, tape 1 idles (ε on tape 1).
+for t2 in &a2.transitions {
+    for q1 in 0..n1 {
+        result.add_transition(
+            product_id(q1, t2.from),
+            product_id(q1, t2.to),
+            [None, t2.labels[0].clone()],   // None = ε
+            t2.weight,
+        );
+    }
+}
+```
+
+##### M8's Limitation
+
+Multi-tape fusion reduces the *number of traversals* from N to 1, but it does
+not filter the *input values* fed to those traversals. If ch1 has 10 values,
+ch2 has 20, and ch3 has 15, the fused automaton still evaluates up to
+10 × 20 × 15 = 3,000 combinations. To reduce the number of combinations
+*before* they reach M8, we need backward constraint propagation — the
+subject of M11.
+
+#### Part II — Two-Way Transducers (M11): Value Space Pruning
+
+##### Motivation
+
+Where M8 fuses N automata into one traversal, M11 attacks the combinatorial
+explosion of the Cartesian product of channel values:
+
+```
+Without M11 — exhaustive Cartesian product:
+
+  ch1: {a,b,c} × ch2: {x,y,z} = 9 combinations tested
+  ┌───┬───┬───┐
+  │a,x│a,y│a,z│
+  ├───┼───┼───┤
+  │b,x│b,y│b,z│  ← all 9 tested, even if b never satisfies f(·,y)
+  ├───┼───┼───┤
+  │c,x│c,y│c,z│
+  └───┴───┴───┘
+
+With M11 — backward constraint pruning:
+
+  ch2 guard + backward transducer ──► ch1 pruned to {a,c}
+  ch1: {a,c} × ch2: {x,y,z} = 6 combinations tested
+  ┌───┬───┬───┐
+  │a,x│a,y│a,z│  ← b eliminated: no y exists s.t. f(b,y) holds
+  ├───┼───┼───┤
+  │c,x│c,y│c,z│
+  └───┴───┴───┘
+```
+
+The backward transducer computes the **pre-image**: the set of ch1 values
+that *can* participate in a satisfying combination. Values outside the
+pre-image are provably useless and are never tried.
+
+##### Intuition
+
+Think of a two-way transducer as a librarian scanning a bookshelf. A one-way
+librarian can only walk from left to right, reading titles. A two-way
+librarian can walk in both directions — she might scan right to find a
+reference, then walk back left to verify a citation, then continue rightward.
+The endmarkers ⊢ and ⊣ are the walls at each end of the shelf. Each scan
+produces output (notes) with a cost weight. The backward pass is what
+enables constraint propagation: the librarian reads later channels first,
+then walks back to prune earlier channels.
+
+##### Formal Definition
+
+**Definition 2A.2** (Weighted Two-Way Transducer, after Feng & Maletti 2022
+[§25, ref #15]). A weighted two-way transducer over semiring W is a tuple
+M = (Q→, Q←, A, B, T, ⊢, ⊣) where:
+
+- Q→ is a finite set of **forward states** (head moves right after transition)
+- Q← is a finite set of **backward states** (head moves left after transition)
+- Q = Q→ ∪ Q← is the full state set, with Q→ ∩ Q← = ∅
+- A is the input alphabet
+- B is the output alphabet; B* denotes the set of all finite strings over B
+- T ⊆ Q × (A ∪ {⊢, ⊣}) × Q × B* × W is the transition relation.
+  Each transition (q, a, q′, v, w) reads symbol a, moves to state q′
+  (direction determined by whether q′ ∈ Q→ or q′ ∈ Q←), emits output
+  string v ∈ B*, and contributes weight w.
+- ⊢ is the left endmarker (beginning of tape)
+- ⊣ is the right endmarker (end of tape)
+
+The **input tape** for a string a₁ a₂ … aₙ is:
+
+```
+Position:  0    1    2    ⋯    n   n+1
+Symbol:    ⊢    a₁   a₂   ⋯   aₙ   ⊣
+```
+
+The transducer begins in an initial state at position 0 (reading ⊢) and
+accepts by reaching a designated final state at position n+1 (reading ⊣).
+The head direction is determined by the *target* state of each transition:
+if q′ ∈ Q→, the head moves right (position + 1); if q′ ∈ Q←, the head moves
+left (position − 1).
+
+The semantics of M on input a₁…aₙ is:
+
+  ⟦M⟧(a₁…aₙ) = ⊕{ w(ρ) ⊗ output(ρ) | ρ is an accepting run on ⊢ a₁…aₙ ⊣ }
+
+where w(ρ) is the ⊗-product of transition weights along the run, and
+output(ρ) is the concatenation of output strings along the run.
+
+##### Enhanced Tape and Head Movement
+
+The tape ⊢ a₁ … aₙ ⊣ has n+2 positions. A configuration is a triple
+(state, position, accumulated_output). The direction of head movement is
+determined by the source state's partition membership:
+
+```
+Forward state (q ∈ Q→):    position ──► position + 1  (scan right)
+Backward state (q ∈ Q←):   position ◄── position − 1  (scan left)
+```
+
+Acceptance requires that the transducer reaches a final forward state at
+position n+1 (the right endmarker ⊣). The ability to reverse direction is
+what enables backward constraint propagation: the transducer reads downstream
+channel constraints, reverses, and prunes upstream values.
+
+##### Crossing Sequences
+
+**Definition 2A.3** (Crossing Sequence). The crossing sequence at position
+i of a run ρ is the subsequence of (state, direction) pairs observed each
+time the head crosses position i. Formally, for run ρ = (q₀,p₀), (q₁,p₁), …,
+the crossing sequence at position i is:
+
+  CS_i(ρ) = ⟨(qⱼ, dir(qⱼ)) | pⱼ = i and pⱼ₊₁ ≠ pⱼ⟩
+
+**Loop detection.** If the same (state, position, direction) triple is
+encountered twice during a run, the transducer is in an infinite loop.
+The triple (q, pos, dir) uniquely characterizes the transducer's future
+behavior from that point, so a repeated triple means unbounded cycling.
+
+**Theorem 2A.1** (Shepherdson 1959). Every weighted two-way transducer with
+|Q| states can be converted to an equivalent one-way transducer with at most
+2^O(|Q|) states. The crossing sequence at each position has length bounded
+by 2|Q| (each state can cross each position at most once in each direction
+before looping), giving the exponential blowup in the one-way conversion.
+
+##### ChannelConstraint
+
+The bridge between M11's transducer theory and the join optimization pipeline
+is the `ChannelConstraint` struct (from `two_way_transducer.rs:920`):
+
+```rust
+pub struct ChannelConstraint<W: Semiring> {
+    pub channels: Vec<String>,
+    pub transducer: WeightedTwoWayTransducer<W>,
+}
+```
+
+- **Forward transduction:** ch_i value → partial guard for ch_j.
+  Given a concrete value on channel i, the forward pass produces the
+  constraint that channel j's value must satisfy.
+- **Backward transduction:** ch_j guard → constraint on ch_i values.
+  Given the guard on channel j, the backward pass computes the pre-image:
+  which ch_i values can possibly lead to joint satisfaction.
+
+The backward transduction is the **SFT pre-image** operation (M15):
+`pre_image(guard_sfa) → pruned_sfa`. Values outside the pruned SFA's
+language are provably incompatible and need not be tried.
+
+The `JoinPatternAnalysis` struct aggregates results across all channels:
+
+```rust
+pub struct JoinPatternAnalysis<W: Semiring> {
+    pub optimal_order: Vec<usize>,            // Channel indices, most selective first
+    pub reorder_cost: W,                      // Cost of reordering
+    pub deadlock_cycles: Vec<Vec<usize>>,     // Circular dependencies
+    pub constraint_graph: HashMap<(usize, usize), W>,  // Inter-channel weights
+}
+```
+
+Here, **SCC** (Strongly Connected Component) detection on the constraint graph
+identifies deadlock cycles — groups of channels whose constraints form circular
+dependencies that require special handling (e.g., breaking the cycle by
+materializing an intermediate channel).
+
+##### Pseudocode
+
+```
+Algorithm TRANSDUCE(M: W2T, input: a₁…aₙ) → (W, B*)
+───────────────────────────────────────────────────────
+  Input:  Two-way transducer M, input string a₁…aₙ
+  Output: Weight and output string (0_W, ε if rejected)
+
+  1. tape ← [⊢, a₁, a₂, …, aₙ, ⊣]
+  2. worklist ← { (q₀, 0, 1_W, ε, ∅) }    // (state, pos, weight, output, visited)
+  3. result ← (0_W, ε)
+  4. While worklist is not empty:
+       Pop (state, pos, w, out, visited)
+       ── Crossing sequence loop detection ──
+       Let config ← (state, pos, direction(state))
+       If config ∈ visited:
+         continue                              // Infinite loop — prune
+       visited′ ← visited ∪ {config}
+       ── Acceptance check ──
+       If state ∈ F and pos = n+1:
+         result ← result ⊕ (w, out)
+       ── Expand transitions ──
+       For each (state →[tape[pos]] state′, v, w′) ∈ T:
+         new_pos ← pos + 1 if state′ ∈ Q→, else pos − 1
+         If 0 ≤ new_pos ≤ n+1:
+           push (state′, new_pos, w ⊗ w′, out · v, visited′)
+  5. Return result
+```
+
+##### Literate Code
+
+Crossing sequence check from `prattail/src/two_way_transducer.rs:434–441`:
+
+```rust
+// Loop detection: include direction per the Rocq-verified
+// CrossingEntry := (State × Direction) — forward and backward
+// traversals through the same (state, position) are distinct
+// configurations.
+let config_key = (t.to, new_pos, self.states[t.to].direction);
+if config.visited.contains(&config_key) {
+    continue;   // Same (state, pos, dir) seen before → infinite loop
+}
+```
+
+#### Composition: The M7 → M11 → M8 Optimization Pipeline
+
+##### Three-Phase Pipeline
+
+The Stage 4 optimizer (§12) applies M7, M11, and M8 in sequence:
+
+1. **M7 — Selectivity ordering:** Estimate per-channel selectivity (probability
+   that a random value satisfies the guard). Reorder channels most-selective-first
+   to maximize early pruning.
+2. **M11 — Backward constraint propagation:** For each adjacent pair in the
+   reordered sequence, build a backward transducer and compute the pre-image,
+   pruning the earlier channel's value space.
+3. **M8 — Multi-tape fusion:** Fuse the (now smaller) per-channel SFAs into a
+   single K-tape product automaton. Minimize the result.
+
+##### Worked 3-Channel Example
+
+Consider the join pattern `for (@x <- ch1; @y <- ch2; @z <- ch3) where f(x,y,z) { P }`.
+
+**Phase 1 — M7 Selectivity ordering:**
+
+  sel(ch1) = 0.3,  sel(ch2) = 0.7,  sel(ch3) = 0.5
+  Reorder: ch1 (0.3), ch3 (0.5), ch2 (0.7) — most selective first
+
+**Phase 2 — M11 Backward constraint propagation:**
+
+  |ch1| = 10, |ch3| = 15, |ch2| = 20  (before pruning)
+
+  Step 2a: backward(ch3 → ch1) prunes ch1: 10 → 10 × sel(ch3) ≈ 6 values
+  Step 2b: backward(ch2 → ch3) prunes ch3: 15 → 15 × sel(ch2) ≈ 12 values
+  Effective product: 6 × 12 × 20 = 1,440 (vs. original 10 × 15 × 20 = 3,000)
+
+**Phase 3 — M8 Multi-tape fusion:**
+
+  pair(pair(SFA_ch1_pruned, SFA_ch3_pruned), SFA_ch2) → 3-tape automaton
+  minimize(product) → minimal state space
+  Single traversal evaluates all 1,440 remaining combinations
+
+**Result:** 3,000 → 1,440 combinations (52% reduction), evaluated in 1 traversal
+instead of 3.
+
+##### Data Flow Diagram
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                    Stage 4: Optimize (§12)                 │
+│                                                            │
+│  Guard predicates                                          │
+│       │                                                    │
+│       ▼                                                    │
+│  ┌──────────────┐   channel order  ┌────────────────────┐  │
+│  │ M7 Selectiv. │ ───────────────► │ M11 Backward W2T   │  │
+│  │ (estimate)   │                  │ (prune values)     │  │
+│  └──────────────┘                  └────────┬───────────┘  │
+│                                             │ pruned SFAs  │
+│                                             ▼              │
+│                                    ┌────────────────────┐  │
+│                                    │ M8 Multi-Tape      │  │
+│                                    │ (fuse into 1)      │  │
+│                                    └────────┬───────────┘  │
+│                                             │ fused WMA    │
+│                                             ▼              │
+│                                    ┌────────────────────┐  │
+│                                    │ Codegen            │  │
+│                                    │ (single traversal) │  │
+│                                    └────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
+```
+
+##### Complexity Table
+
+| Configuration   | Combinations Tested       | Traversals | Pre-processing Cost                |
+|-----------------|---------------------------|------------|------------------------------------|
+| No optimization | \|ch1\|×\|ch2\|×⋯×\|chN\| | N          | —                                  |
+| M7 only         | same (reordered)          | N          | O(N log N) sorting                 |
+| M7 + M11        | reduced by pruning        | N          | O(N² × \|Q_W2T\|²) backward passes |
+| M7 + M11 + M8   | reduced by pruning        | **1**      | + O(\|Q₁\|×\|Q₂\|) pair per step   |
+
+#### Applicability Across Language Paradigms
+
+The following table maps paradigms to their "channel" constructs and the
+combined M8 + M11 benefit:
+
+| Paradigm                 | "Channel" Construct    | Multi-Channel Pattern                                     | Combined M8 + M11 Benefit                                                          |
+|--------------------------|------------------------|-----------------------------------------------------------|------------------------------------------------------------------------------------|
+| **Rholang (π-calculus)** | Named channels `n`     | `for (@x <- ch1; @y <- ch2)` join patterns                | Fuse per-channel guards into one traversal; prune values via backward constraints  |
+| **Ambient Calculus**     | Ambient boundaries     | `in(n1)`, `out(n2)` mobility predicates spanning ambients | One-pass ambient checking; eliminate ambients that can't satisfy mobility guard    |
+| **Session-Typed π**      | Typed linear channels  | Protocol-constrained multi-channel communication          | Multi-tape protocol compliance; backward-prune incompatible protocol prefixes      |
+| **CSP**                  | Synchronization events | Parallel event guards: `c1 → P ‖ c2 → Q`                  | Fused event precedence; eliminate events that make synchronization impossible      |
+| **Actor Model**          | Mailboxes              | Pattern-matched message dispatch across actors            | Fused mailbox guards; pre-image filters incompatible messages before dispatch      |
+| **Linda Tuple Space**    | Tuple patterns         | `in(p1); in(p2)` multi-tuple coordination                 | Parallel tuple constraints; backward-prune tuples that fail combined constraint    |
+| **Petri Nets**           | Places + token counts  | Multi-place transition guards                             | Token count guards in one automaton; prune token distributions that prevent firing |
+
+**Languages where M8/M11 do not apply:**
+- Purely sequential languages without communication (lambda calculus, arithmetic DSLs)
+- Languages with single-channel constructs only (no cross-channel guard references)
+
+The key insight: M8 and M11 provide a unified compilation framework for any
+`language!` spec with multi-channel guards, regardless of whether the "channels"
+are message-passing endpoints, spatial boundaries, pattern-matching domains, or
+resource containers.
+
+#### Current Mechanism (Heuristic)
+
+Currently, `classify_grammar()` infers channels by treating every grammar
+category as a potential channel:
+- `SyntaxItemSpec::NonTerminal/Binder/Collection` items bind
+  `param_name → category`
+- Cross-category references in guard predicates trigger M8/M11 conservatively
+- This can over-activate: a Lambda calculus with `Term` and `Type` categories
+  would trigger M8 on any rule referencing both, even though there are no
+  channels
+
+This heuristic approach is acknowledged as temporary, conservative, and not
+extensible — the same limitation that §16 acknowledges for heuristic theory
+dispatch prior to explicit `theories {}` declarations.
+
+#### Proposed Mechanism (Data-Driven)
+
+The `channels {}` sub-block follows the `theories {}` precedent: an explicit,
+declarative block that replaces heuristic inference with data-driven dispatch.
+
+```rust
+channels {
+    // Channel category declarations:
+    //   channel <Category> ;
+    channel Name;
+
+    // Join pattern declarations:
+    //   join <Label>(<param>: <Category>, ...) ;
+    // Lists only channel-binding parameters (not all constructor params).
+    // N channel params supported (not limited to 2).
+    join PGuardedInput(ch: Name);
+    join PJoin(ch1: Name, ch2: Name, ch3: Name);
+}
+```
+
+**Activation rules** (deterministic):
+- **M8 activates** when any declared join pattern has ≥2 channel params
+- **M11 additionally activates** when ≥2 distinct channel categories appear
+  across join patterns
+- When `channels {}` is **omitted**, falls back to heuristic dispatch
+  (backward-compatible)
+
+#### Concrete `channels {}` Examples Across Paradigms
+
+```rust
+// ── Rholang ──
+guards {
+    channels {
+        channel Name;
+        join PGuardedInput(ch: Name);
+        join PJoin(ch1: Name, ch2: Name);
+    }
+}
+
+// ── Ambient Calculus ──
+guards {
+    channels {
+        channel Name;  // Ambient boundaries
+        join AmbientMove(src: Name, dst: Name);
+    }
+}
+
+// ── Session-Typed Pi ──
+guards {
+    channels {
+        channel Session;  // Typed session endpoints
+        join SessionPair(client: Session, server: Session);
+    }
+}
+
+// ── Linda Tuple Space ──
+guards {
+    channels {
+        channel Pattern;  // Tuple patterns
+        join MultiIn(p1: Pattern, p2: Pattern, p3: Pattern);
+    }
+}
+
+// ── Petri Net ──
+guards {
+    channels {
+        channel Place;  // Petri net places
+        join Transition(input1: Place, input2: Place);
+    }
+}
+```
+
+Languages without channels (lambda calculus, calculator) simply omit
+`channels {}`.
+
+#### Join Pattern Analysis and Lints
+
+The pipeline validates `channels {}` declarations and emits diagnostics for
+common configuration issues:
+
+| Lint   | Severity | Condition                                                            | Message                                                     |
+|--------|----------|----------------------------------------------------------------------|-------------------------------------------------------------|
+| `MT01` | Warning  | Declared channel category not referenced in any join pattern         | `channel category 'X' is declared but unused`               |
+| `MT02` | Error    | Join pattern references a category not declared as channel           | `join pattern references undeclared channel category 'X'`   |
+| `TW01` | Note     | M11 activated but all join patterns use the same channel category    | `backward propagation has no cross-category dependencies`   |
+| `TW02` | Warning  | Join pattern has only 1 channel param (M8 not needed)                | `single-channel join 'X' does not benefit from M8`          |
+| `TW03` | Error    | Join pattern label does not match any term constructor in `terms {}` | `join pattern 'X' has no corresponding term constructor`    |
+| `PD04` | Note     | `channels {}` omitted; heuristic dispatch is active                  | `M8/M11 dispatch is heuristic; consider adding channels {}` |
+
 ### Token References and String Literals in Syntax Templates
 
 **Design principle:** In all `language!` syntax templates (`terms {}`,
-`guards { predicates {} }`, `guards { connectives {} }`, `equations {}`,
+`guards {}` predicates, `guards { connectives {} }`, `equations {}`,
 `rewrites {}`), **token names from `tokens {}` are interchangeable with
 string literals**. When a token name is used, it matches ALL of that token's
 alternatives (disjunctions, regex patterns), not just a single literal.
@@ -1328,6 +2076,13 @@ terms {
 }
 
 guards {
+    // Token reference in syntax template:
+    gt . x, y |- x Gt y ;
+    // Inline disjunction:
+    le . x, y |- x ("<=" | "≤") y ;
+    // String literal (single match):
+    lt . x, y |- x "<" y ;
+
     connectives {
         // Token reference: and matches "and", "∧", or "&&"
         and = And;
@@ -1335,14 +2090,6 @@ guards {
         or  = "or" | "∨";
         // Inline regex:
         not = /not|¬/;
-    }
-    predicates {
-        // Token reference in syntax template:
-        gt . x, y |- x Gt y ;
-        // Inline disjunction:
-        le . x, y |- x ("<=" | "≤") y ;
-        // String literal (single match):
-        lt . x, y |- x "<" y ;
     }
 }
 ```
@@ -1380,8 +2127,9 @@ string literals.
 | Guard surface syntax   | `terms {}`                  | Syntax template after `\|-` with `?guard:Guard` param |
 | Guard keyword lexing   | `tokens {}`                 | `push(guard_mode)` on keyword token                   |
 | Connective keywords    | `guards { connectives {} }` | Role → keyword mapping **(NEW)**                      |
-| Built-in predicates    | `guards { predicates {} }`  | Name + arity declarations **(NEW)**                   |
+| Built-in predicates    | `guards {}` (direct items)  | Name + arity declarations **(NEW)**                   |
 | Constraint theories    | `guards { theories {} }`    | Theory registrations **(NEW)**                        |
+| Channel dispatch       | `guards { channels {} }`    | Explicit M8/M11 activation **(NEW)**                  |
 | User-defined relations | `logic {}`                  | `relation R(T1, T2);` declarations                    |
 | Refinement type guards | `types {}`                  | `PosInt = { x: Int \| x > 0 };`                       |
 
@@ -1418,6 +2166,20 @@ language! {
     },
 
     guards {
+        eq  . x, y  |- x "==" y | "eq" "(" x "," y ")" ;
+        neq . x, y  |- x "!=" y | "neq" "(" x "," y ")" ;
+        gt  . x, y  |- x ">" y  | "gt" "(" x "," y ")" ;
+        lt  . x, y  |- x "<" y  | "lt" "(" x "," y ")" ;
+        ge  . x, y  |- x ">=" y | "ge" "(" x "," y ")" ;
+        le  . x, y  |- x "<=" y | "le" "(" x "," y ")" ;
+        fresh       . x        |- "fresh" "(" x ")" ;
+        ground      . x        |- "ground" "(" x ")" ;
+        rewrites_to . x, y     |- x "→*" y
+                                | "rewrites_to" "(" x "," y ")" ;
+        ac_match    . bag, pat  |- "ac_match" "(" bag "," pat ")" ;
+        count_ge    . ch, k     |- "count_ge" "(" ch "," k ")" ;
+        count_eq    . ch, k     |- "count_eq" "(" ch "," k ")" ;
+
         connectives {
             and         = "and"         | "∧";
             or          = "or"          | "∨";
@@ -1428,25 +2190,14 @@ language! {
             forall      = "forall"      | "∀";
             exists      = "exists"      | "∃";
         }
-        predicates {
-            eq  . x, y  |- x "==" y | "eq" "(" x "," y ")" ;
-            neq . x, y  |- x "!=" y | "neq" "(" x "," y ")" ;
-            gt  . x, y  |- x ">" y  | "gt" "(" x "," y ")" ;
-            lt  . x, y  |- x "<" y  | "lt" "(" x "," y ")" ;
-            ge  . x, y  |- x ">=" y | "ge" "(" x "," y ")" ;
-            le  . x, y  |- x "<=" y | "le" "(" x "," y ")" ;
-            fresh       . x        |- "fresh" "(" x ")" ;
-            ground      . x        |- "ground" "(" x ")" ;
-            rewrites_to . x, y     |- x "→*" y
-                                    | "rewrites_to" "(" x "," y ")" ;
-            ac_match    . bag, pat  |- "ac_match" "(" bag "," pat ")" ;
-            count_ge    . ch, k     |- "count_ge" "(" ch "," k ")" ;
-            count_eq    . ch, k     |- "count_eq" "(" ch "," k ")" ;
-        }
         theories {
-            arithmetic: PresburgerAlgebra for [Int];
-            patterns:   UnificationTheory for [Proc, Name];
-            types:      LatticeTheory for [Proc, Name, Int, Str];
+            arithmetic = PresburgerAlgebra for [Int];
+            patterns   = UnificationTheory for [Proc, Name];
+            types      = LatticeTheory for [Proc, Name, Int, Str];
+        }
+        channels {
+            channel Name;
+            join PGuardedInput(ch: Name);
         }
     },
 
@@ -1482,20 +2233,21 @@ language! {
     },
 
     guards {
+        eq  . x, y  |- x "==" y ;
+        neq . x, y  |- x "!=" y ;
+
         // MeTTa uses && for conjunction and ~ for negation.
         // No quantifiers, no disjunction, no implications.
         connectives {
             and = "&&";
             not = "~";
         }
-        predicates {
-            eq  . x, y  |- x "==" y ;
-            neq . x, y  |- x "!=" y ;
-        }
         theories {
-            patterns: UnificationTheory for [Atom];
-            types:    LatticeTheory for [Atom, Expression];
+            patterns = UnificationTheory for [Atom];
+            types    = LatticeTheory for [Atom, Expression];
         }
+        // MeTTa does not have join patterns; `channels {}` is omitted.
+        // Heuristic dispatch applies if cross-category guards exist.
     },
 
     terms {
@@ -1521,6 +2273,8 @@ language! {
     types { Term },
 
     guards {
+        eq . x, y  |- x "==" y ;
+
         // Only negation (via "not") and equality predicate.
         // Comma-separated predicates (implicit conjunction) are
         // ALWAYS available regardless of connectives {} — comma is
@@ -1528,10 +2282,9 @@ language! {
         connectives {
             not = "not";
         }
-        predicates {
-            eq . x, y  |- x "==" y ;
-        }
         // No theories — purely behavioral (Ascent lookup)
+        // No concurrent communication; M8/M11 do not apply.
+        // `channels {}` is omitted.
     },
 
     terms {
@@ -1557,30 +2310,30 @@ language! {
     types { Expr, ![i64] as Int, ![String] as Str },
 
     guards {
+        // 1-or-more: (= a b c) → eq(a,b) ∧ eq(b,c)
+        eq . xs+  |- "=" "(" xs.#sep(",") ")" ;
+
+        // 2-to-5 args with range quantifier:
+        between . x, bounds{2,5}
+            |- "between?" "(" x "," bounds.#sep(",") ")" ;
+
+        // Union-typed variadic: each arg can be Int or Str
+        comparable . xs:(Int|Str)+
+            |- "comparable?" "(" xs.#sep(",") ")" ;
+
+        // Type-specific comparison:
+        gt . x: Int, y: Int  |- ">" "(" x "," y ")" ;
+        gt . x: Str, y: Str  |- ">" "(" x "," y ")" ;
+
+        // Prefix-only predicate:
+        nil_q . x  |- "nil?" "(" x ")" ;
+
         connectives {
             and = "and";
             or  = "or";
             not = "not";
         }
-        predicates {
-            // 1-or-more: (= a b c) → eq(a,b) ∧ eq(b,c)
-            eq . xs+  |- "=" "(" xs.#sep(",") ")" ;
-
-            // 2-to-5 args with range quantifier:
-            between . x, bounds{2,5}
-                |- "between?" "(" x "," bounds.#sep(",") ")" ;
-
-            // Union-typed variadic: each arg can be Int or Str
-            comparable . xs:(Int|Str)+
-                |- "comparable?" "(" xs.#sep(",") ")" ;
-
-            // Type-specific comparison:
-            gt . x: Int, y: Int  |- ">" "(" x "," y ")" ;
-            gt . x: Str, y: Str  |- ">" "(" x "," y ")" ;
-
-            // Prefix-only predicate:
-            nil_q . x  |- "nil?" "(" x ")" ;
-        }
+        // No join patterns; `channels {}` omitted.
     },
 
     terms { /* ... */ },
@@ -1592,11 +2345,12 @@ language! {
 
 When `guards {}` is absent, the language gets the current behavior:
 
-| Sub-section   | Default                                                                                                                                     |
-|---------------|---------------------------------------------------------------------------------------------------------------------------------------------|
-| `connectives` | All roles enabled with standard keywords (`"and"`, `"or"`, `"not"`, `"forall"`, `"exists"`, `"entails"`, `"implied_by"`, `"iff"` + Unicode) |
-| `predicates`  | All standard built-ins enabled with default syntax (infix operators + prefix call forms)                                                    |
-| `theories`    | None registered → heuristic keyword dispatch fallback                                                                                       |
+| Component               | Default                                                                                                                                     |
+|-------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
+| predicates (direct)     | All standard built-ins enabled with default syntax (infix operators + prefix call forms)                                                    |
+| `connectives` sub-block | All roles enabled with standard keywords (`"and"`, `"or"`, `"not"`, `"forall"`, `"exists"`, `"entails"`, `"implied_by"`, `"iff"` + Unicode) |
+| `theories` sub-block    | None registered → heuristic keyword dispatch fallback                                                                                       |
+| `channels` sub-block    | None → heuristic M8/M11 inference from grammar structure                                                                                    |
 
 Existing languages (`RhoCalc`, `Lambda`, `Ambient`, `Calculator`) work
 unchanged. Languages without `?guard:Guard` in `terms {}` or `guard(...)` in
@@ -1604,15 +2358,17 @@ premises pay zero cost — the block is entirely optional.
 
 ### Composition Semantics
 
-| Sub-section   | `extends`                                                                    | `includes`    | `mixins`      |
-|---------------|------------------------------------------------------------------------------|---------------|---------------|
-| `connectives` | Intersect roles; keyword sets union per shared role (error on role conflict) | Not inherited | Not inherited |
-| `predicates`  | Union (error on name+type conflict)                                          | Not inherited | Not inherited |
-| `theories`    | Union (error on name/type conflict)                                          | Not inherited | Not inherited |
+| Component               | `extends`                                                                    | `includes`    | `mixins`      |
+|-------------------------|------------------------------------------------------------------------------|---------------|---------------|
+| predicates (direct)     | Union (error on name+type conflict)                                          | Not inherited | Not inherited |
+| `connectives` sub-block | Intersect roles; keyword sets union per shared role (error on role conflict) | Not inherited | Not inherited |
+| `theories` sub-block    | Union (error on name/type conflict)                                          | Not inherited | Not inherited |
+| `channels` sub-block    | Union categories; union join patterns (error on conflict)                    | Not inherited | Not inherited |
 
 **Rationale:** `includes` imports grammar (types + terms) only. `mixins`
 import types + terms from fragments. Guard configuration is semantic, not
-syntactic, so it stays with the defining language. `extends` inherits
+syntactic, so it stays with the defining language — `channels {}` follows the
+same pattern as `connectives`, predicates, and `theories`. `extends` inherits
 everything, but connective intersection prevents unsound widening (a child
 cannot add `forall` if the parent did not declare it — the parent's guard
 parser would not recognize it).
@@ -1623,18 +2379,24 @@ The AST types for `guards {}` live in `macros/src/ast/language.rs`:
 
 ```rust
 /// Guard configuration from the `guards { ... }` block.
+/// Predicate definitions are direct items (like token defs in `tokens {}`);
+/// connectives, theories, and channels are configuration sub-blocks.
 pub struct GuardConfig {
-    /// Connective role → keyword mappings.
-    /// `None` → all connectives with default keywords.
-    pub connectives: Option<Vec<ConnectiveDecl>>,
-
-    /// Built-in predicates available in guard expressions.
+    /// Built-in predicate definitions (direct items of `guards {}`).
     /// `None` → all standard built-ins enabled.
     pub builtin_predicates: Option<Vec<BuiltinPredicate>>,
 
-    /// Constraint theory registrations for predicate dispatch.
+    /// Connective role → keyword mappings (sub-block).
+    /// `None` → all connectives with default keywords.
+    pub connectives: Option<Vec<ConnectiveDecl>>,
+
+    /// Constraint theory registrations for predicate dispatch (sub-block).
     /// Empty → fall back to heuristic keyword dispatch.
     pub theories: Vec<TheoryRegistration>,
+
+    /// Channel configuration for M8/M11 dispatch (sub-block).
+    /// `None` → fall back to heuristic channel inference.
+    pub channels: Option<ChannelConfig>,
 }
 
 /// Fixed set of connective roles the compiler recognizes.
@@ -1675,11 +2437,34 @@ pub enum ParamQuantifier {
     Range { min: usize, max: Option<usize> },  // {m,n}
 }
 
-/// A constraint theory registration.
+/// A constraint theory registration: `name = TheoryType for [Types] ;`
 pub struct TheoryRegistration {
     pub name: Ident,
     pub theory_type: syn::Type,
     pub handled_types: Option<Vec<Ident>>,
+}
+
+/// Channel configuration from `channels { ... }` sub-block.
+pub struct ChannelConfig {
+    pub channel_categories: Vec<ChannelDecl>,
+    pub join_patterns: Vec<JoinPatternDecl>,
+}
+
+/// `channel <category> ;`
+pub struct ChannelDecl {
+    pub category: Ident,
+}
+
+/// `join <Label>(<param>: <Category>, ...) ;`
+pub struct JoinPatternDecl {
+    pub label: Ident,
+    pub channel_params: Vec<ChannelParam>,
+}
+
+/// A channel-binding parameter in a join pattern.
+pub struct ChannelParam {
+    pub param_name: Ident,
+    pub category: Ident,
 }
 ```
 
@@ -1690,6 +2475,688 @@ pub struct LanguageDef {
     pub guard_config: Option<GuardConfig>,
 }
 ```
+
+### Per-Predicate Selectivity and Cost Annotations
+
+The pipeline orders guard evaluation by **selectivity** — the estimated
+fraction of inputs satisfying a predicate — and breaks ties by **cost** — the
+relative computational expense of evaluating the predicate. Currently, both
+values are hardcoded per-predicate-pattern in `predicate_dispatch.rs` (§12
+of that module) and `guard_codegen.rs`. Grammar authors with domain knowledge
+can provide tighter estimates via `@[...]` annotations on predicate
+declarations.
+
+**Notation.** Throughout this subsection and the following five subsections,
+the following additional notation is used:
+
+| Notation     | Meaning                                                                                                                             |
+|--------------|-------------------------------------------------------------------------------------------------------------------------------------|
+| sel(P)       | Selectivity estimate for predicate P: a value in [0.0, 1.0] where 0.0 means "rejects all inputs" and 1.0 means "accepts all inputs" |
+| cost(P)      | Relative evaluation cost for predicate P: a value in ℕ (natural numbers) where lower values indicate cheaper evaluation             |
+| \|D\|        | Cardinality (number of elements) of a finite domain D                                                                               |
+| arity        | Number of parameters a predicate accepts                                                                                            |
+| arity factor | Diminishing correction `1 / √(arity + 1)` that reduces selectivity estimates as arity increases                                     |
+| √x           | Square root of x                                                                                                                    |
+| AST          | Abstract Syntax Tree — the in-memory tree representation of parsed source code                                                      |
+| k            | Quantifier bound (maximum iteration count) in bounded quantification                                                                |
+| n            | Number of elements in an AC-match pattern (see §8 "AC-Matching for Collections")                                                    |
+
+**Syntax.** The existing `BuiltinPredicate` declaration (shown above in "AST
+Representation") is extended with optional trailing annotations. Annotations
+appear inside `@[...]` after the predicate's syntax forms and before the `;`
+terminator:
+
+```rust
+guards {
+    eq    . x, y |- x "==" y    @[selectivity(0.1), cost(2)] ;
+    gt    . x, y |- x ">"  y    @[selectivity(0.5)] ;
+    fresh . x    |- "fresh" "(" x ")" @[cost(1)] ;
+    // When no @[...] appears, the pipeline uses heuristic defaults.
+    neq   . x, y |- x "!=" y ;
+}
+```
+
+The `@[...]` syntax reuses the annotation bracket convention already
+established in the `language!` macro for other metadata. Multiple annotations
+are comma-separated within a single `@[...]` bracket.
+
+**Annotation semantics:**
+
+| Annotation       | Domain         | Feeds                                                        | Omission behavior                   |
+|------------------|----------------|--------------------------------------------------------------|-------------------------------------|
+| `selectivity(s)` | s ∈ [0.0, 1.0] | `estimate_predicate_selectivity()`, `estimate_selectivity()` | Heuristic default (see table below) |
+| `cost(c)`        | c ∈ ℕ          | `condition_cost()`, `estimate_guard_cost()`                  | Heuristic default (see table below) |
+
+Both annotations are optional and independent — a predicate may specify one,
+both, or neither. When both are omitted, the predicate falls through to the
+same heuristic estimation that the pipeline uses today, preserving backward
+compatibility.
+
+**Selectivity algebra for Boolean combinators.** Annotations apply to
+**leaf predicates** only — atomic predicate invocations like `eq(x, y)` or
+`fresh(x)`, not compound expressions built with connectives. The selectivity
+of compound predicates is derived from leaf selectivities using standard
+probability-theoretic identities (under an independence assumption for ∧,
+meaning the satisfaction of P is assumed to be statistically independent of
+the satisfaction of Q):
+
+| Compound form       | Selectivity formula                       | Derivation                                                   |
+|---------------------|-------------------------------------------|--------------------------------------------------------------|
+| ¬P                  | sel(¬P) = 1 − sel(P)                      | Complement probability                                       |
+| P ∧ Q               | sel(P ∧ Q) = sel(P) · sel(Q)              | Independence assumption: Pr(A ∩ B) = Pr(A) · Pr(B)           |
+| P ∨ Q               | sel(P ∨ Q) = 1 − (1 − sel(P))(1 − sel(Q)) | Inclusion-exclusion: Pr(A ∪ B) = 1 − Pr(Ā) · Pr(B̄)           |
+| P ⟹ Q               | sel(P ⟹ Q) = 1 − sel(P) · (1 − sel(Q))    | Material implication: P ⟹ Q ≡ ¬P ∨ Q                         |
+| ∀x ∈ D. P(x)        | sel(∀) = sel(P)^\|D\|                     | Universal: all \|D\| elements must satisfy P                 |
+| ∃x ∈ D. P(x)        | sel(∃) = 1 − (1 − sel(P))^\|D\|           | Existential: at least one of \|D\| elements must satisfy P   |
+| ∀x (infinite). P(x) | sel(∀∞) = sel(P) · 0.05                   | Heuristic: 5% of body selectivity (very restrictive)         |
+| ∃x (infinite). P(x) | sel(∃∞) = 1 − (1 − sel(P))^10             | Heuristic: 10-element proxy for unknown infinite domain size |
+
+These formulas are implemented identically in both
+`estimate_predicate_selectivity()` (in `predicate_dispatch.rs`, operating on
+`PredicateExpr` AST nodes from the `prattail` crate) and
+`estimate_selectivity()` (in `guard_codegen.rs`, operating on
+`BehavioralPred` AST nodes from the `macros` crate). The `@[selectivity(...)]`
+annotation overrides only the **leaf** estimate; the combinator algebra
+remains unchanged.
+
+**Updated AST.** The `BuiltinPredicate` struct gains an `annotations` field.
+When the parser encounters `@[...]` after the syntax forms of a predicate
+declaration, it populates the corresponding `PredicateAnnotations` fields:
+
+```rust
+pub struct BuiltinPredicate {
+    pub name: Ident,
+    pub params: Vec<PredicateParam>,
+    pub syntax_forms: Vec<Vec<SyntaxExpr>>,
+    pub annotations: PredicateAnnotations,   // ← NEW
+}
+
+/// Optional per-predicate hints that override heuristic estimates.
+/// Both fields default to `None` (fall back to pipeline heuristics).
+#[derive(Debug, Clone, Default)]
+pub struct PredicateAnnotations {
+    /// Selectivity ∈ [0.0, 1.0]: estimated fraction of inputs satisfying the
+    /// predicate. Overrides the heuristic in `estimate_predicate_selectivity()`.
+    pub selectivity: Option<f64>,
+    /// Relative evaluation cost ∈ ℕ: lower = cheaper. Overrides the heuristic
+    /// in `estimate_predicate_cost()` and `estimate_guard_cost()`.
+    pub cost: Option<u32>,
+}
+```
+
+**Heuristic defaults.** The following table enumerates every hardcoded
+selectivity and cost value that `@[selectivity, cost]` annotations can
+override. Each row shows the predicate pattern, the current heuristic value,
+the source location, and the function that consumes it. The column
+"Heuristic sel" gives the selectivity estimate; the column "Heuristic cost"
+gives the cost estimate. A `—` entry indicates the function estimates cost
+only, not selectivity (or vice versa):
+
+| Predicate pattern                   | Heuristic sel      | Heuristic cost | Source location                   | Consumer function(s)                                            |
+|-------------------------------------|--------------------|----------------|-----------------------------------|-----------------------------------------------------------------|
+| Equality (`eq`, `==`, `fresh`)      | 0.1 × arity factor | 2 + arity      | `predicate_dispatch.rs:1438–1440` | `estimate_predicate_selectivity()`, `estimate_predicate_cost()` |
+| Cardinality (`count`, `size`)       | 0.3 × arity factor | 2 + arity      | `predicate_dispatch.rs:1441–1442` | `estimate_predicate_selectivity()`, `estimate_predicate_cost()` |
+| Default (unrecognized) relation     | 0.5 × arity factor | 2 + arity      | `predicate_dispatch.rs:1443–1444` | `estimate_predicate_selectivity()`, `estimate_predicate_cost()` |
+| Negated relation query              | 0.1                | 2              | `guard_codegen.rs:725`            | `estimate_selectivity()`                                        |
+| Positive relation query             | 0.5                | 2              | `guard_codegen.rs:727`            | `estimate_selectivity()`                                        |
+| Universal quantifier (bounded, k)   | 0.05 / √k          | k + body cost  | `guard_codegen.rs:740–744`        | `estimate_selectivity()`, `estimate_guard_cost()`               |
+| Existential quantifier (bounded, k) | 0.3 / √k           | k + body cost  | `guard_codegen.rs:748–752`        | `estimate_selectivity()`, `estimate_guard_cost()`               |
+| AC-match (n elements)               | 0.3 / n            | 10 + 5n        | `guard_codegen.rs:756, 775`       | `estimate_selectivity()`, `estimate_guard_cost()`               |
+| Freshness check                     | —                  | 2              | `rules.rs:234`                    | `condition_cost()`                                              |
+| Environment query                   | —                  | 5              | `rules.rs:235`                    | `condition_cost()`                                              |
+| ForAll (condition-level)            | —                  | 10 + body cost | `rules.rs:236`                    | `condition_cost()`                                              |
+| BehavioralGuard (general)           | —                  | 20             | `rules.rs:242`                    | `condition_cost()`                                              |
+| BehavioralGuard (AC-match)          | —                  | 25             | `rules.rs:241`                    | `condition_cost()`                                              |
+
+
+### Comprehensive Heuristic Inventory
+
+Not all heuristics should be surfaced to grammar authors. The guiding
+principle is a two-part test:
+
+- **Semantic intent heuristics** — heuristics that guess the grammar author's
+  intent from naming conventions or keyword presence — should be
+  configurable, because the compiler cannot reliably infer intent from
+  naming alone. Example: the heuristic that treats a predicate named `"gt"`
+  as an arithmetic comparison (activating module M12, Linear Arithmetic)
+  is semantic — the grammar author knows whether `"gt"` is Presburger
+  arithmetic or something else entirely.
+
+- **Structural grammar heuristics** — heuristics that derive module
+  activation from directly observable grammar structure (recursion, branching
+  factor, paired delimiters) — should remain internal, because the compiler
+  can see the structure directly and the grammar author would gain nothing
+  from restating it.
+
+This inventory partitions every heuristic in `predicate_dispatch.rs` and
+`guard_codegen.rs` into one of three tables based on that test. Each entry
+lists the current heuristic mechanism, the source location, and either the
+`guards {}` sub-block that replaces it (Tables A and B) or the rationale for
+keeping it internal (Table C).
+
+**Table A — Heuristics surfaced by `theories {}`.** Theory registrations
+replace the `is_*_relation()` keyword-matching functions and the
+terminal-based inference heuristics in `classify_grammar()`. Each row maps a
+heuristic function (or terminal check) to the explicit theory registration
+syntax that replaces it. The "Module activated" column indicates which of the
+15 automata modules (M1–M15, defined in `predicate_dispatch.rs` §1) the
+heuristic triggers:
+
+| Heuristic function          | Keywords matched                                                 | Module activated        | Source location              | Replacement `theories {}` syntax                    |
+|-----------------------------|------------------------------------------------------------------|-------------------------|------------------------------|-----------------------------------------------------|
+| `is_equality_relation()`    | `eq`, `neq`, `==`, `!=`, `fresh`, `equal`, `related`             | M6 Register             | `predicate_dispatch.rs:432`  | `equality = RegisterTheory for [Name, Proc];`       |
+| `is_cardinality_relation()` | `count`, `size`, `>=`, `<=`, `at_least`, `at_most`               | M9 Multiset             | `predicate_dispatch.rs:443`  | `cardinality = MultisetTheory for [Collection];`    |
+| `is_fixpoint_relation()`    | `letprop`, `fixpoint`, `mu`, `nu`, `letrec`, `recursive`         | M4 VPA + M5 Parity Tree | `predicate_dispatch.rs:454`  | `fixpoints = FixpointTheory for [Proc, Name];`      |
+| `is_arithmetic_relation()`  | `add`, `sub`, `gt`, `lt`, `>=`, `<=`, `bounded`, `range`, ...    | M12 Linear Arithmetic   | `predicate_dispatch.rs:465`  | `arithmetic = PresburgerAlgebra for [Int];`         |
+| `is_unification_relation()` | `match`, `unify`, `bind`, `pattern`, `substitute`, ...           | M13 Unification         | `predicate_dispatch.rs:485`  | `patterns = UnificationTheory for [Proc, Name];`    |
+| `is_subtype_relation()`     | `subtype`, `:<`, `:>`, `is_a`, `join`, `meet`, `lub`, `glb`, ... | M14 Subtype Lattice     | `predicate_dispatch.rs:502`  | `types = LatticeTheory for [Proc, Name, Int, Str];` |
+| Arithmetic terminals        | `+`, `-`, `*`, `/`, `%`, `mod`, `div`                            | M12 Linear Arithmetic   | `predicate_dispatch.rs:1022` | Same `arithmetic` theory registration               |
+| Unification terminals       | `match`, `case`, `with`, `=>`, `->`, `\|`                        | M13 Unification         | `predicate_dispatch.rs:1032` | Same `patterns` theory registration                 |
+| Subtype terminals           | `extends`, `implements`, `:`, `::`, `:<`, `is`                   | M14 Subtype Lattice     | `predicate_dispatch.rs:1042` | Same `types` theory registration                    |
+
+When `theories {}` is present and non-empty, the pipeline skips all
+`is_*_relation()` calls and terminal-based inference for the theories
+that are explicitly registered. Unregistered theories still fall through to
+heuristic dispatch, so partial registration is safe — a grammar may register
+`arithmetic = PresburgerAlgebra for [Int];` without registering a unification
+theory, and the `is_unification_relation()` heuristic continues to operate
+for unification-like predicate names.
+
+**Table B — Heuristics surfaced by `channels {}`, `connectives {}`, and
+`@[selectivity, cost]`.** These heuristics encode semantic information that
+the grammar author can provide more precisely than the compiler can infer:
+
+| Heuristic                             | Current mechanism                                          | Source location              | Replacement mechanism                              |
+|---------------------------------------|------------------------------------------------------------|------------------------------|----------------------------------------------------|
+| Cross-category → M8 Multi-Tape        | `referenced_categories.len() >= 2` in `classify_grammar()` | `predicate_dispatch.rs:954`  | `channels { channel C; join J(p: C, q: C); }`      |
+| Cross-category → M11 Two-Way          | Cross-category ref differs from rule's own category        | `predicate_dispatch.rs:957`  | `channels {}` with ≥ 2 distinct channel categories |
+| Multi-channel → M7 Probabilistic + M8 | `channels_seen.len() >= 2` in `extract_features()`         | `predicate_dispatch.rs:551`  | `channels {}` declarations                         |
+| Cross-channel variable detection      | `ChannelContext.is_cross_channel()` per relation argument  | `predicate_dispatch.rs:656`  | `channels {}` channel parameter bindings           |
+| Hardcoded connective keywords         | `&&`, `\|\|`, `~`, `!`, `=>` as Rust tokens in parser      | `language.rs:2165`           | `connectives { and = "keyword"; ... }`             |
+| Leaf predicate selectivity            | Pattern-matched defaults (0.1, 0.3, 0.5, ...)              | See heuristic defaults table | `@[selectivity(s)]` annotation                     |
+| Leaf predicate cost                   | Pattern-matched defaults (2, 5, 10, ...)                   | See heuristic defaults table | `@[cost(c)]` annotation                            |
+
+**Table C — Heuristics that remain internal.** These heuristics derive from
+grammar structure or encode mathematical identities. The "Trigger condition"
+column describes the grammar property the compiler detects; the "Rationale"
+column explains why the heuristic should not be surfaced. The notation
+`refs(C)` denotes the set of grammar categories referenced by category C's
+production rules:
+
+| Heuristic                       | Trigger condition                                                                                                            | Module(s)        | Source location                                          | Rationale                                                                     |
+|---------------------------------|------------------------------------------------------------------------------------------------------------------------------|------------------|----------------------------------------------------------|-------------------------------------------------------------------------------|
+| Recursive category detection    | C ∈ refs(C) (direct self-reference in category graph)                                                                        | M2 Büchi         | `predicate_dispatch.rs:975`                              | Structural: the compiler sees the category reference graph directly           |
+| Multi-branch universal rules    | Rule has ≥ 3 non-terminal children                                                                                           | M3 AWA           | `predicate_dispatch.rs:939`                              | Structural: branching factor is visible from syntax item count                |
+| Bracket/delimiter detection     | Paired call/return terminals (`()`/`{}`/`[]`/`begin`/`end`)                                                                  | M4 VPA           | `predicate_dispatch.rs:988`                              | Structural: terminal symbols are directly enumerable from grammar             |
+| Recursive + branching           | Both recursion and ≥ 3-child branching present                                                                               | M5 Parity Tree   | `predicate_dispatch.rs:999`                              | Structural: conjunction of two structural properties                          |
+| Binder item detection           | Grammar contains `Binder` syntax items                                                                                       | M6 Register      | `predicate_dispatch.rs:1006`                             | Structural: `Binder` is a syntactic category the compiler sees directly       |
+| Parse ambiguity                 | ≥ 3 rules in same grammar category                                                                                           | M7 Probabilistic | `predicate_dispatch.rs:1013`                             | Structural: rule count per category is directly computable                    |
+| Collection/Sep items            | Grammar contains `Collection` or `Sep` syntax items                                                                          | M9 Multiset      | `predicate_dispatch.rs:964`                              | Structural: `Collection`/`Sep` are syntactic categories visible to compiler   |
+| Recursion + M11 → M15           | Recursive grammar with M11 Two-Way already activated                                                                         | M15 SFT          | `predicate_dispatch.rs:1052`                             | Derived: conjunction of structural (recursion) and semantic (M11) properties  |
+| Module cost tiers               | `ModuleId::estimated_cost()` returns 1–6 per module                                                                          | All              | `predicate_dispatch.rs:268`                              | Implementation detail: scheduling order is internal compiler policy           |
+| Selectivity algebra formulas    | Boolean combinator identities (¬, ∧, ∨, ⟹)                                                                                   | —                | `predicate_dispatch.rs:1447`                             | Mathematical identity: correct by construction, not configurable              |
+| Arity factor formula            | `1 / √(arity + 1)` diminishing correction                                                                                    | —                | `predicate_dispatch.rs:1437`                             | Mathematical identity: diminishing correction derived from probability theory |
+| Compilation strategy thresholds | `COMPUTED_GOTO_THRESHOLD` (20), `COLD_THRESHOLD` (1.0), `BP_TABLE_LOOKUP_THRESHOLD` (8), `DIRECT_CODED_THRESHOLD` (30), etc. | —                | `dispatch.rs`, `trampoline.rs`, `pratt.rs`, `codegen.rs` | Implementation detail: codegen strategy selection is internal compiler policy |
+| Cost-benefit gate ratios        | Per-optimization `GateId` thresholds in `cost_benefit.rs`                                                                    | —                | `cost_benefit.rs`                                        | Implementation detail: optimization gating is internal policy                 |
+
+
+### Spec-Level Representation and Override Flow
+
+The `GuardConfig` AST type (shown in "AST Representation" above) contains
+`syn` types (`Ident`, `syn::Type`) that are available only during macro
+expansion. The `prattail` crate's pipeline, which runs after macro expansion,
+cannot depend on the `syn` crate. Therefore, a **lowered representation** —
+`GuardConfigSpec` — carries only the information the pipeline needs, using
+plain `String` and `HashMap` types instead of `syn` AST nodes.
+
+The lowering is performed by the existing `language_def_to_spec()` function
+(in `prattail_bridge.rs`), which already converts `LanguageDef` (syn-based)
+to `LanguageSpec` (syn-free). The `GuardConfigSpec` is a new field on
+`LanguageSpec`, populated during this conversion. The following diagram shows
+the data flow from source to pipeline. Abbreviations: "sel" = selectivity,
+"pred" = predicate. Arrows (→) denote data flow direction:
+
+```text
+┌──────────────┐   parse_guards()    ┌───────────────┐  language_def_to_spec() ┌───────────────────┐
+│ language! {  │ ──────────────────► │  GuardConfig  │ ──────────────────────► │  GuardConfigSpec  │
+│   guards {…} │                     │  (syn types)  │                         │  (String/HashMap) │
+└──────────────┘                     └───────────────┘                         └─────────┬─────────┘
+                                                                                         │
+                            ┌────────────────────────────────────────────────────────────┘
+                            │
+              ┌─────────────┼──────────────────┬──────────────────┐
+              ▼             ▼                  ▼                  ▼
+     classify_grammar()  estimate_pred_sel()  estimate_sel()   condition_cost()
+     (theories → module  (selectivity         (selectivity     (cost
+      activation)         overrides)           overrides)       overrides)
+```
+
+The `GuardConfigSpec` struct carries the lowered guard configuration. Each
+field corresponds to one pipeline concern, and the doc comments explain
+which pipeline function consumes it:
+
+```rust
+/// Lowered guard configuration for pipeline consumption.
+///
+/// Produced by `language_def_to_spec()` from the `GuardConfig` AST.
+/// All `syn` types have been resolved to plain strings; all annotation
+/// values have been extracted into lookup tables.
+#[derive(Debug, Clone, Default)]
+pub struct GuardConfigSpec {
+    /// Theory registrations: each entry maps a theory name to its type
+    /// and the set of grammar categories it handles. Used by
+    /// `classify_grammar()` to replace heuristic `is_*_relation()`
+    /// dispatch with data-driven module activation.
+    pub theories: Vec<TheoryRegistrationSpec>,
+
+    /// Explicit channel categories. When `Some`, only the listed
+    /// categories are treated as channels for M8/M11 dispatch.
+    /// When `None`, the pipeline falls back to heuristic channel
+    /// inference from cross-category references.
+    pub channel_categories: Option<Vec<String>>,
+
+    /// Per-predicate selectivity overrides, keyed by predicate name.
+    /// Values are in [0.0, 1.0]. When a predicate name appears in
+    /// this map, `estimate_predicate_selectivity()` returns the
+    /// override value instead of computing a heuristic estimate.
+    pub selectivity_overrides: HashMap<String, f64>,
+
+    /// Per-predicate cost overrides, keyed by predicate name.
+    /// Values are in ℕ. When a predicate name appears in this map,
+    /// `estimate_predicate_cost()` and `condition_cost()` return the
+    /// override value instead of computing a heuristic estimate.
+    pub cost_overrides: HashMap<String, u32>,
+
+    /// Whether the grammar author provided an explicit `connectives {}`
+    /// sub-block. When `true`, the parser uses the declared connective
+    /// keywords; when `false`, default Rust-token connectives apply.
+    pub has_explicit_connectives: bool,
+
+    /// Whether the grammar author provided explicit predicate
+    /// declarations (direct items in `guards {}`). When `true`,
+    /// closed-world validation is active (see "Predicate Resolution
+    /// and Closed-World Validation" below).
+    pub has_explicit_predicates: bool,
+}
+```
+
+The `TheoryRegistrationSpec` carries one theory's lowered data. The
+`theory_type` field is the fully-qualified Rust type path as a string
+(e.g., `"PresburgerAlgebra"`), and `handled_types` lists the grammar
+categories the theory is responsible for:
+
+```rust
+/// A single theory registration, lowered from `TheoryRegistration`.
+///
+/// Corresponds to one `name = TheoryType for [Types];` declaration
+/// in the `theories {}` sub-block.
+#[derive(Debug, Clone)]
+pub struct TheoryRegistrationSpec {
+    /// Theory name (e.g., `"arithmetic"`, `"patterns"`).
+    pub name: String,
+    /// Fully-qualified Rust type path (e.g., `"PresburgerAlgebra"`).
+    pub theory_type: String,
+    /// Grammar categories this theory handles (e.g., `["Int"]`).
+    /// When `None`, the theory handles all categories.
+    pub handled_types: Option<Vec<String>>,
+}
+```
+
+**Override precedence.** When the pipeline estimates selectivity or cost for
+a predicate, it consults three sources in priority order. The first source
+that provides a value wins:
+
+1. **Explicit annotation** — `@[selectivity(s)]` or `@[cost(c)]` on the
+   predicate declaration. These are stored in the `selectivity_overrides` /
+   `cost_overrides` maps of `GuardConfigSpec`.
+2. **Type-informed heuristic** — when a theory registration in `theories {}`
+   covers the predicate's parameter types, the theory's characteristic
+   selectivity applies (e.g., Presburger predicates over bounded integers
+   have tighter selectivity bounds than the generic default).
+3. **Default heuristic** — the pattern-matched estimates in
+   `estimate_predicate_selectivity()` and `estimate_predicate_cost()` (the
+   values shown in the "Heuristic defaults" table above).
+
+The following pseudocode shows the lookup chain. The symbol `∈` denotes
+membership in a map (key lookup), and `∃` denotes "there exists":
+
+```text
+fn resolve_selectivity(pred_name, spec, expr):
+    // Priority 1: explicit annotation
+    if pred_name ∈ spec.selectivity_overrides:
+        return spec.selectivity_overrides[pred_name]
+
+    // Priority 2: theory-informed estimate
+    if ∃ theory ∈ spec.theories such that theory covers pred_name:
+        return theory.characteristic_selectivity(expr)
+
+    // Priority 3: default heuristic
+    return estimate_predicate_selectivity(expr)
+```
+
+
+### Extended Merge Semantics for Guard Config
+
+When language B `extends` language A, their `guards {}` blocks must compose.
+The "Composition Semantics" table above (in the subsection of the same name)
+gives the high-level strategy for each sub-block. This subsection elaborates
+the detailed merge rules, including how `@[selectivity, cost]` annotations
+interact with inheritance, and provides concrete examples.
+
+**Rules.** Each sub-block has a merge strategy chosen to preserve soundness
+(no incorrect module activations) and respect the grammar author's intent
+(the extending language's declarations take priority where appropriate):
+
+| Sub-block                  | Merge strategy                          | Conflict resolution                                          | Rationale                                                                 |
+|----------------------------|-----------------------------------------|--------------------------------------------------------------|---------------------------------------------------------------------------|
+| Builtin predicates         | Union by name                           | Error if same name with different parameter types or arities | Same pattern as `terms {}` merge — predicate names are unique identifiers |
+| Predicate annotations      | Extension wins (per-predicate override) | Extension's `@[selectivity, cost]` replaces base's           | The extending language has more specific domain knowledge                 |
+| `connectives {}` sub-block | Extension replaces base entirely        | No per-role merge — entire block is replaced                 | Connective semantics are language-specific, not additive                  |
+| `theories {}` sub-block    | Union by name                           | Error if same theory name maps to different theory types     | Conflicting theory dispatch would be unsound                              |
+| `channels {}` sub-block    | Extension replaces base entirely        | No per-channel merge — entire block is replaced              | Channel topology is language-specific                                     |
+
+**Annotation inheritance.** When language B extends language A and both
+declare a predicate with the same name (e.g., `eq`), the merge of
+per-predicate `@[selectivity, cost]` annotations follows field-level
+override semantics — for each annotation field independently, B's value
+takes precedence if present; otherwise A's value is inherited:
+
+- If A declares `eq @[selectivity(0.1), cost(2)]` and B declares
+  `eq @[selectivity(0.05)]` (cost omitted), the merged predicate has
+  selectivity = 0.05 (B's override) and cost = 2 (inherited from A).
+- If A declares `eq @[selectivity(0.1)]` and B declares `eq` with no
+  annotations, B inherits A's selectivity = 0.1.
+- If A declares `eq @[cost(2)]` and B declares `eq @[cost(5)]`, the merged
+  cost is 5 (B wins).
+
+**Example 1 — Predicate union with annotation override:**
+
+```rust
+// Base language:
+language! {
+    name: BaseCalc,
+    types { Expr, ![i64] as Int },
+    guards {
+        eq  . x, y |- x "==" y @[selectivity(0.1), cost(2)] ;
+        gt  . x, y |- x ">"  y @[selectivity(0.5), cost(2)] ;
+        theories {
+            arithmetic = PresburgerAlgebra for [Int];
+        }
+    },
+    terms { /* ... */ },
+}
+
+// Extension — overrides gt's selectivity for a domain where ">" is
+// less discriminating (e.g., floating-point comparisons):
+language! {
+    name: TypedCalc,
+    extends: BaseCalc,
+    types { ![f64] as Float },
+    guards {
+        // Override gt's selectivity. Cost is inherited from BaseCalc.
+        gt  . x, y |- x ">"  y @[selectivity(0.7)] ;
+        // New predicate, not in base:
+        is_nan . x |- "is_nan" "(" x ")" @[selectivity(0.01), cost(1)] ;
+        theories {
+            // New theory; arithmetic is inherited from BaseCalc.
+            float_arith = FloatTheory for [Float];
+        }
+    },
+    terms { /* ... */ },
+}
+```
+
+The merged `TypedCalc` guard config contains:
+- `eq` with selectivity = 0.1, cost = 2 (inherited unchanged from `BaseCalc`)
+- `gt` with selectivity = 0.7 (overridden by `TypedCalc`), cost = 2
+  (inherited from `BaseCalc`)
+- `is_nan` with selectivity = 0.01, cost = 1 (new in `TypedCalc`)
+- Theories: `arithmetic` (inherited from `BaseCalc`) + `float_arith` (new)
+
+**Example 2 — Connective replacement:**
+
+```rust
+// Base language uses verbose keywords:
+language! {
+    name: StdLang,
+    types { Term },
+    guards {
+        eq . x, y |- x "==" y ;
+        connectives {
+            and = "and" | "∧";
+            or  = "or"  | "∨";
+            not = "not" | "¬";
+        }
+    },
+    terms { /* ... */ },
+}
+
+// Extension replaces connectives entirely with operator-style keywords:
+language! {
+    name: OperatorLang,
+    extends: StdLang,
+    guards {
+        // Connectives are replaced, not merged:
+        connectives {
+            and = "&&";
+            not = "~";
+            // `or` is not declared — OperatorLang does not support
+            // disjunction in guards. This is intentional: the
+            // extension restricts the guard sublanguage.
+        }
+    },
+    terms { /* ... */ },
+}
+```
+
+In `OperatorLang`, the only available connectives are `&&` (conjunction) and
+`~` (negation). The base language's `"and"`, `"∧"`, `"or"`, `"∨"`, `"not"`,
+`"¬"` are all replaced — not merged. This replacement semantics prevents
+accidental widening: if `OperatorLang` intends to restrict the guard
+sublanguage to conjunction and negation only, inheriting the base's `or`
+connective would undermine that intent.
+
+
+### Predicate Resolution and Closed-World Validation
+
+When the grammar author provides explicit predicate declarations in
+`guards {}`, those declarations define a **closed world**: any predicate
+name used in a `guard(...)` premise or `where` clause that does not appear
+in the declared set (and is not a user-defined relation from `logic {}`)
+is a compile error. This opt-in validation catches typos, undeclared
+predicates, and references to predicates from a base language that were
+not inherited.
+
+**Resolution order.** When the compiler encounters a predicate name R in a
+`BehavioralPred::RelationQuery` node (the AST variant for named predicate
+invocations) within a `Premise::BehavioralGuard` (the AST variant for guard
+premises in rewrite rules), it resolves R against three sources, checked in
+order:
+
+1. **`guards {}` builtin predicates** — the `builtin_predicates` list in
+   `GuardConfig`. If R matches a declared predicate name, resolution
+   succeeds and the predicate's parameter types and arity are validated
+   against the declaration.
+
+2. **`logic {}` user-defined relations** — the `relation R(T1, T2, ...);`
+   declarations in the `logic {}` block. These are Ascent relations
+   populated by Datalog rules, not built-in predicates. Resolution succeeds
+   if R matches a declared relation name with compatible arity.
+
+3. **Compile error** — if R is not found in either source, the compiler
+   emits a diagnostic with a help message listing available predicate names:
+
+   ```text
+   error[GUARD01]: unknown predicate `R` in guard expression
+     --> src/main.rs:42:15
+      |
+   42 |     guard(R(x, y))
+      |           ^ not found in `guards {}` or `logic {}` declarations
+      |
+      = help: declare `R` in `guards { R . x, y |- ... ; }` or
+              `logic { relation R(Type1, Type2); }`
+      = note: available predicates: eq, neq, gt, lt, fresh, path, safe
+   ```
+
+**Open world (default).** When `builtin_predicates` is `None` — that is,
+the `guards {}` block is absent or contains only sub-blocks like
+`connectives {}` without direct predicate declarations — all standard
+built-in predicates are available. This is the default and preserves
+backward compatibility with existing `language!` definitions. The standard
+built-ins include all predicates recognized by the `is_*_relation()`
+heuristic functions (see Table A in "Comprehensive Heuristic Inventory"
+above).
+
+The distinction between open and closed worlds is captured by the
+`has_explicit_predicates` flag in `GuardConfigSpec`:
+
+| `has_explicit_predicates` | Resolution behavior                                                                  |
+|---------------------------|--------------------------------------------------------------------------------------|
+| `false` (default)         | All standard built-ins available; no validation errors for known predicates          |
+| `true`                    | Only declared predicates + `logic {}` relations; unknown names produce error GUARD01 |
+
+**Validation walk.** The compiler validates predicate names during the
+lowering pass (`language_def_to_spec()`), before any pipeline analysis runs.
+The validation traverses every `BehavioralPred` AST node in every
+`Premise::BehavioralGuard` and `Condition::BehavioralGuard` across all
+rules in the language definition. The `resolution_table` is the union of
+`guards {}` predicate names and `logic {}` relation names:
+
+```text
+for each rule R in language.rules:
+    for each premise P in R.premises:
+        if P is BehavioralGuard(pred):
+            validate_pred_names(pred, resolution_table)
+
+fn validate_pred_names(pred, table):
+    match pred:
+        RelationQuery { relation_name, args, .. }:
+            if relation_name ∉ table:
+                emit error GUARD01 with available names from table
+            else:
+                check arity: |args| = table[relation_name].arity
+        And(a, b) | Or(a, b) | Implies(a, b):
+            validate_pred_names(a, table)
+            validate_pred_names(b, table)
+        Not(inner):
+            validate_pred_names(inner, table)
+        Quantified { body, .. }:
+            validate_pred_names(body, table)
+        AcMatch { .. }:
+            // AC-match is a structural form, not a named predicate;
+            // no name resolution needed.
+            pass
+```
+
+When `has_explicit_predicates` is `false`, the `resolution_table` is
+pre-populated with all standard built-in predicate names (the same set that
+the `is_*_relation()` heuristic functions recognize), so all currently valid
+guard expressions continue to compile without changes.
+
+
+### Connective Parser Integration
+
+The guard sublanguage parser — `parse_behavioral_pred()` and its
+sub-parsers `parse_pred_implies()`, `parse_pred_or()`, `parse_pred_and()`,
+`parse_pred_not()`, `parse_pred_atom()` (all in `macros/src/ast/language.rs`)
+— currently recognizes a fixed set of Rust tokens as logical connectives:
+`&&` for conjunction, `||` for disjunction, `~` and `!` for negation, `=>`
+for implication, and the identifiers `forall` and `exists` for quantifiers.
+When `connectives {}` remaps these roles to different keywords, the parser
+must recognize the new keywords without changing the recursive descent
+structure.
+
+**`ConnectiveMap` design.** A `ConnectiveMap` is a bidirectional lookup
+table built from the `Vec<ConnectiveDecl>` in `GuardConfig` (the AST type
+for connective declarations, defined in "AST Representation" above). It maps
+each `ConnectiveRole` (the fixed enum of logical roles: `And`, `Or`, `Not`,
+`Entails`, `ImpliedBy`, `Iff`, `Forall`, `Exists`) to its set of recognized
+keywords, and each keyword back to its role:
+
+```rust
+/// Bidirectional mapping between connective roles and their surface keywords.
+///
+/// Built from `connectives {}` declarations in `GuardConfig`. When `None`
+/// is passed to the parser, default Rust-token recognition applies.
+#[derive(Debug, Clone)]
+pub struct ConnectiveMap {
+    /// Role → keywords: for each `ConnectiveRole`, the set of keywords
+    /// that can represent it in the guard sublanguage. Multiple keywords
+    /// per role are supported (e.g., `and = "and" | "∧";` maps both
+    /// `"and"` and `"∧"` to `ConnectiveRole::And`).
+    pub role_to_keywords: HashMap<ConnectiveRole, Vec<String>>,
+    /// Keyword → role: reverse mapping for parser lookups. Each keyword
+    /// maps to exactly one role (enforced by validation — see below).
+    pub keyword_to_role: HashMap<String, ConnectiveRole>,
+}
+```
+
+The parser functions receive an `Option<&ConnectiveMap>` parameter threaded
+through the recursive descent call chain:
+
+- When `None` (no `connectives {}` block), the existing Rust-token parsing
+  applies unchanged — `&&` matches conjunction, `||` matches disjunction,
+  etc.
+- When `Some(map)`, each parser function peeks at the input and consults the
+  map instead of checking hardcoded tokens.
+
+**Keyword recognition.** Connective keywords fall into two categories
+depending on whether they are valid Rust punctuation tokens or plain
+identifiers. The parser uses different peek strategies for each:
+
+| Keyword type       | Examples                        | Parser peek strategy                                                |
+|--------------------|---------------------------------|---------------------------------------------------------------------|
+| Rust punctuation   | `&&`, `\|\|`, `~`, `!`, `=>`    | `input.peek(Token![&&])`, `input.peek(Token![=>])`, etc.            |
+| Identifier keyword | `"and"`, `"or"`, `"not"`, `"∧"` | `input.peek(Ident)` then match string against `map.keyword_to_role` |
+
+For identifier keywords, the parser peeks `Ident`, reads its string value,
+and looks it up in `keyword_to_role`. For Rust-token keywords, the parser
+uses the standard `syn` crate `Token![]` macro for peeking. The
+`ConnectiveMap` stores both forms uniformly as strings; the peek strategy is
+determined at parse time by checking whether the keyword string corresponds
+to a known Rust punctuation token.
+
+The recursive descent structure remains unchanged: `parse_pred_implies()`
+still calls `parse_pred_or()`, which calls `parse_pred_and()`, which calls
+`parse_pred_not()`, which calls `parse_pred_atom()`. Only the
+token-matching logic at each precedence level is parameterized by the map.
+
+**Validation.** When `connectives {}` is present (i.e., `Some`), two
+validation rules apply during parsing:
+
+1. **No duplicate keywords across roles.** Each keyword string must map to
+   exactly one `ConnectiveRole`. If the same keyword is declared for
+   multiple roles, the parser emits an error:
+
+   ```text
+   error[CONN01]: keyword "and" is mapped to multiple connective roles
+     --> src/main.rs:12:9
+      |
+   12 |     and = "and";
+      |           ^^^^^ first mapped to `And` here
+   ...
+   15 |     or  = "and";
+      |           ^^^^^ also mapped to `Or` here
+   ```
+
+2. **Unlisted connective rejection.** When a guard expression uses a
+   connective token that is not in the map, the parser emits an error
+   suggesting that the keyword be added to the `connectives {}` block:
+
+   ```text
+   error[CONN02]: unrecognized connective keyword `||` in guard expression
+     --> src/main.rs:42:20
+      |
+   42 |     guard(eq(x, y) || gt(x, z))
+      |                    ^^ not declared in `connectives {}`
+      |
+      = help: add `or = "||";` to the `connectives {}` block
+      = note: declared connectives: and = "&&", not = "~"
+   ```
+
+   This validation fires only when `connectives {}` is explicitly provided.
+   When the block is absent (open-world default), all standard connective
+   tokens are accepted without restriction.
 
 ---
 
@@ -1852,9 +3319,10 @@ syntax: field names with type annotations, caret-bracket binder notation
 (`^[xs]` for multi-binder scopes), and a surface syntax template after `|-`.
 The rationale for encoding the guard as a scoped Name (not a raw Name) is
 that the guard's free variables must be protected from outer substitutions
-by De Bruijn encoding (de Bruijn, 1972) — the same reason `PInputs` uses scoped bodies. The
-`[Name* -> Name]` type signature indicates a multi-binder scope (`Name*`
-means zero or more Name binders) whose body is a `Name` (the guard pattern).
+by De Bruijn encoding (de Bruijn, 1972) — the same reason `PInputs` uses
+scoped bodies. The `[Name* -> Name]` type signature indicates a multi-binder
+scope (`Name*` means zero or more Name binders) whose body is a `Name` (the
+guard pattern).
 
 ```rust
 PGuardedInput . n:Name, ^[xs].guard:[Name* -> Name], ^[ys].p:[Name* -> Proc]
@@ -1879,9 +3347,9 @@ predicates, then body.
 ```rust
 PGuardedInput(
     Box<Name>,                                   // channel
-    Scope<Vec<Binder<String>>, Box<Name>>,        // guard pattern
-    Vec<BehavioralPred>,                          // behavioral predicates
-    Scope<Vec<Binder<String>>, Box<Proc>>,         // continuation
+    Scope<Vec<Binder<String>>, Box<Name>>,       // guard pattern
+    Vec<BehavioralPred>,                         // behavioral predicates
+    Scope<Vec<Binder<String>>, Box<Proc>>,       // continuation
 )
 ```
 
@@ -4252,7 +5720,11 @@ individual guards.
 
 For multi-channel predicates, M8 (multi-tape) fuses cross-channel constraints
 into a single multi-tape automaton that processes values from different channels
-simultaneously (see §17 for the multi-tape construction). M7 (probabilistic)
+simultaneously (see §17 for the multi-tape construction). When the `channels {}`
+sub-block is present (§2A), M8/M11 activation is deterministic — only declared
+join patterns trigger multi-tape or two-way transducer construction. When
+`channels {}` is omitted, the optimizer falls back to heuristic channel
+inference from the grammar structure. M7 (probabilistic)
 orders guards by selectivity — the probability that a random input passes the
 guard. The rationale is that checking the most selective guard first maximizes
 the probability of early rejection, avoiding the cost of evaluating subsequent
@@ -4353,7 +5825,10 @@ channel's guard independently (reusing the single-channel pipeline), then
 detects cross-channel data dependencies by scanning for free variables that
 originate from other channels. The key insight is that cross-channel references
 create a *dependency graph* among channels, and the compilation strategy must
-respect this graph's topological order.
+respect this graph's topological order. When the `channels {}` sub-block is
+present (§2A), the dependency graph is built from explicit join pattern
+declarations rather than heuristic grammar scanning. When `channels {}` is
+omitted, the pipeline falls back to heuristic channel inference.
 
 ```
 for (@x <- ch1; @y <- ch2) where f(x, y) { P }
@@ -4387,11 +5862,11 @@ for (@x <- ch1; @y <- ch2) where f(x, y) { P }
 ```
 
 The `forward_transducer` maps a consumed `ch1` value to a partially-evaluated
-guard for `ch2` (substituting the concrete `x` value). The
-`backward_transducer` inverts this: given `ch2`'s guard, it computes a
-predicate on `ch1` values that filters out values guaranteed to make the
-combined guard fail. This backward propagation is the Symbolic Finite Transducer (SFT) pre-image operation
-(§16) applied to the guard's transducer representation.
+guard for `ch2` (substituting the concrete `x` value). The `backward_transducer`
+inverts this: given `ch2`'s guard, it computes a predicate on `ch1` values that
+filters out values guaranteed to make the combined guard fail. This backward
+propagation is the Symbolic Finite Transducer (SFT) pre-image operation (§16)
+applied to the guard's transducer representation.
 
 ### Recursive Predicates (letprop)
 
@@ -5120,7 +6595,7 @@ For the end-to-end flow diagram, see §1A (End-to-End Composition Diagram).
 
 The `guards { theories {} }` block (§2A) registers `ConstraintTheory`
 implementations per type category. When combined with typed predicates in
-`guards { predicates {} }`, the pipeline gains **theory-guided domain pruning**
+`guards {}` predicate definitions, the pipeline gains **theory-guided domain pruning**
 at runtime: instead of enumerating all tuples in a domain and checking each
 against a guard predicate, the registered theory's `propagate()` narrows the
 domain *before* enumeration, and `label()` generates only satisfying
@@ -5138,7 +6613,7 @@ and LogicT evaluation. Read top-to-bottom:
 │                  Theory-Guided LogicT Evaluation Pipeline                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  guards { theories { arithmetic: PresburgerAlgebra for [Int]; } }           │
+│  guards { theories { arithmetic = PresburgerAlgebra for [Int]; } }           │
 │                              │                                              │
 │                              ▼                                              │
 │  ┌──────────────────────────────────────────┐                               │
@@ -5321,7 +6796,7 @@ how they compose through the `ConstraintTheory` trait, and how
 **1. Theory-guided domain restriction.** For
 `forall(y: Int, nodes, gt(y, 0))`, the typed parameter `y: Int` tells LogicT
 that `y` ranges over `Int` values. Combined with
-`theories { arithmetic: PresburgerAlgebra; }`, LogicT can use `propagate()`
+`theories { arithmetic = PresburgerAlgebra; }`, LogicT can use `propagate()`
 from `PresburgerAlgebra` to prune the domain before enumeration:
 
 ```rust
@@ -5465,7 +6940,7 @@ zero runtime cost):
 **Example 1: Theory-guided domain pruning (Rholang)**
 
 Guard: `forall y in nodes. (gt(y, 0))`
-With: `theories { arithmetic: PresburgerAlgebra for [Int]; }`
+With: `theories { arithmetic = PresburgerAlgebra for [Int]; }`
 
 1. Pipeline sees `forall` → activates M3 (AWA), plus typed `y: Int` →
    activates M12 (Presburger) via theory routing
@@ -5482,7 +6957,7 @@ checks `gt(y, 0)` for each — potentially much slower for large domains.
 **Example 2: TriState refinement (MeTTa)**
 
 Guard: `forall y _{k=100} in atoms. (compatible(y, target))`
-With: `theories { types: LatticeTheory for [Atom]; }`
+With: `theories { types = LatticeTheory for [Atom]; }`
 
 1. LogicT evaluates with bound k=100. If the domain has >100 elements,
    evaluation returns `TriState::Unknown`
@@ -5948,85 +7423,427 @@ finite failure — it succeeds (with `()`) if the stream is empty, and fails
 if the stream produces any result, enabling stratified negation in quantified
 predicates (§8).
 
-### PresburgerAlgebra — Multi-Variable Linear Integer Arithmetic
+### PresburgerAlgebra — Multi-Variable Linear Integer Arithmetic (M12)
 
-**Theory:** Presburger arithmetic is the first-order theory of the natural
-numbers with addition: `Th(ℤ, +, <, 0, 1)`. Büchi (1960) proved that every
-Presburger formula defines a regular language over `{0,1}ᵏ`, providing an
+**Motivation.** Single-variable integer constraints like `x > 0 ∧ x < 1000`
+are handled by `IntervalAlgebra` (M1). But guards involving two or more
+variables — e.g., `x + y ≤ budget` or `count(ch1) + count(ch2) ≤ capacity`
+— require **Presburger arithmetic**: the first-order theory of the integers
+with addition (not multiplication). Source: `prattail/src/presburger.rs`.
+Design doc: `prattail/docs/design/constraint-theories/presburger-algebra.md`.
+
+**Intuition.** Variables are encoded as binary numbers read least-significant
+bit (LSB) first. Each "symbol" on the NFA's tape is a k-bit vector giving
+the current bit of each variable. The NFA tracks the carry/remainder as it
+reads bits from left to right. Satisfiability reduces to NFA language
+non-emptiness; validity reduces to language universality; a witness is the
+shortest accepting path decoded back to integers.
+
+**Formal Definition.** Presburger arithmetic is the theory Th(ℤ, +, <, 0, 1).
+Its atomic predicates are **linear constraints**: inequalities of the form
+Σᵢ aᵢ · xᵢ ≤ b where aᵢ, b ∈ ℤ and xᵢ are integer variables. Büchi (1960)
+[§25, ref #5] proved that every Presburger formula defines a regular language
+over the alphabet {0,1}ᵏ (one bit per variable), providing a fully decidable
 automata-theoretic decision procedure.
 
-**NFA Construction (Bartzis-Bultan):** For an atomic constraint
-`Σ aᵢ·xᵢ ≤ b` over k variables:
+A `PresburgerPred` is a Boolean combination of `LinearConstraint` atoms:
 
-- **Alphabet:** `{0,1}ᵏ` — one bit per variable, read LSB-first
-- **States:** Remainder values tracking `r = ⌊(b - Sⱼ) / 2ʲ⌋`
-- **Transition:** `r' = ⌊(r - Σ aᵢ · dᵢ) / 2⌋`
-- **Acceptance:** After `w` bits, accept iff `r ≥ 0`
+```
+PresburgerPred ::= True | False
+                 | Atom(LinearConstraint)             — Σ aᵢ·xᵢ ≤ b
+                 | And(PresburgerPred, PresburgerPred)
+                 | Or(PresburgerPred, PresburgerPred)
+                 | Not(PresburgerPred)
+                 | Exists { var: usize, body: PresburgerPred }
+```
+
+**NFA Construction (Bartzis-Bultan).** For an atomic constraint
+Σ aᵢ · xᵢ ≤ b over k variables:
+
+- **Alphabet:** {0,1}ᵏ — one bit per variable, read LSB-first
+- **States:** Remainder values tracking r = ⌊(b − Sⱼ) / 2ʲ⌋ where Sⱼ is the
+  partial sum through bit position j
+- **Transition:** r′ = ⌊(r − Σ aᵢ · dᵢ) / 2⌋ where dᵢ ∈ {0,1} is the current
+  bit of variable xᵢ
+- **Acceptance:** After w bits, accept iff r ≥ 0
 - **State bound:** O((Σ|aᵢ| + |b|) · 2ᵏ)
+
+```
+Bit-vector tape for k=2 variables (x, y), encoding x=5 (101₂), y=3 (11₂):
+
+  Position:   0     1     2
+  Symbol:   (1,1) (0,1) (1,0)    ← LSB-first: bit 0 of (x,y), bit 1, bit 2
+              │     │     │
+              ▼     │     │
+  ┌────┐  (1,1)  ┌────┐ (0,1) ┌────┐ (1,0) ╔════╗
+  │ q₀ │────────►│ q₁ │──────►│ q₂ │──────►║ q₃ ║  (accept)
+  └────┘         └────┘       └────┘       ╚════╝
+  r=b            r=⌊(b-a₁-a₂)/2⌋           r≥0 → accept
+```
+
+**Key types** (from `prattail/src/presburger.rs`):
+
+| Type                | Role                                                    |
+|---------------------|---------------------------------------------------------|
+| `LinearConstraint`  | Atomic Σ aᵢ·xᵢ ≤ b with `terms: Vec<(usize, i64)>`      |
+| `PresburgerPred`    | Boolean combination of `LinearConstraint` atoms         |
+| `PresburgerNfa`     | NFA over {0,1}ᵏ alphabet with `transitions: HashMap`    |
+| `PresburgerTheory`  | `ConstraintTheory` impl (LogicT integration path)       |
+| `PresburgerAlgebra` | `BooleanAlgebra` impl (fast compile-time analysis path) |
+
+**Pseudocode:**
+
+```
+Algorithm ENCODE_CONSTRAINT(c: LinearConstraint, k: usize, w: usize) → NFA
+──────────────────────────────────────────────────────────────────────────────
+  Input:  Constraint Σ aᵢ·xᵢ ≤ b, k variables, w bit-width
+  Output: NFA accepting exactly the satisfying k-variable assignments
+
+  1. Compute coefficient sum: S ← Σ|aᵢ|
+  2. State range: r ∈ [−S, max(|b|, S)]
+  3. Initial state: r₀ ← b
+  4. For each bit position j = 0 … w−1:
+       For each state r in range:
+         For each bit-vector d ∈ {0,1}ᵏ:
+           r′ ← ⌊(r − Σ aᵢ · dᵢ) / 2⌋
+           Add transition (r, d) → r′
+  5. Accept states: { r | r ≥ 0 }
+  6. Return NFA
+```
+
+**Literate code** — `encode_constraint` from `prattail/src/presburger.rs`:
+
+```rust
+// Step 1: Build the NFA for a single linear constraint.
+// The alphabet is {0,1}^k — one bit per variable, LSB-first.
+pub fn from_constraint(constraint: &LinearConstraint,
+                       num_vars: usize, bit_width: usize) -> Self {
+    // ... state range computed from coefficient magnitudes
+    // Step 2: For each bit position, compute transitions via
+    // r' = floor((r - sum(a_i * d_i)) / 2)
+    for bit in 0..bit_width {
+        for &r in &current_states {
+            for bits in 0..(1u32 << num_vars) {
+                // Decode bit-vector, compute new remainder
+                let delta: i64 = /* Σ a_i · bit_i */;
+                let new_r = (r - delta).div_euclid(2);
+                nfa.add_transition(r_state, bits, new_r_state);
+            }
+        }
+    }
+    // Step 3: Accept iff remainder ≥ 0
+}
+```
+
+**Boolean operations:** Intersection (NFA product construction), union (product +
+accept union), complement (depth-tracked determinization + terminal flip),
+existential projection (drop bit dimension, merge transitions).
 
 **Dual implementation:** Direct `BooleanAlgebra` (fast path for compile-time
 analysis) + `ConstraintTheory` (validation path via LogicT integration).
 
-**Boolean operations:** Intersection (product construction), union (product +
-accept union), complement (depth-tracked determinization + terminal flip),
-existential projection (drop bit dimension, merge transitions).
+**Pipeline role:** Feature gate `presburger`. Cost 3. Activated when guard
+contains arithmetic relations over multiple integer-typed parameters.
 
-### UnificationTheory — Structural Unification
+### UnificationTheory — Structural Unification (M13)
 
-Structural unification determines whether two term expressions can be made
-identical by finding a substitution for their variables. Unlike first-order
-matching (§5), which is one-directional (the ground term is fixed), unification
-is bidirectional — both terms may contain variables. The Martelli & Montanari
-(1982) algorithm implements unification in near-linear time O(n · α(n)) using
-a stack-based approach with union-find for variable binding. The key recursion
-decomposes constructor applications by matching heads and recursively unifying
-corresponding arguments:
+**Motivation.** When a Rholang `for` receive binds `@{x!(y)}` or MeTTa evaluates
+`(= (foo $x) (foo (bar 42)))`, the system must decompose terms to extract
+bindings. Two guard patterns may need to be checked for overlap ("can the same
+value match both?"), subsumption ("does pattern A always match when B does?"),
+or disjointness ("can they never match the same value?"). These questions reduce
+to first-order syntactic unification. Source: `prattail/src/unification.rs`.
+Design doc: `prattail/docs/design/constraint-theories/unification-theory.md`.
+
+**Intuition.** Unification is like solving a jigsaw puzzle where some pieces have
+blank spots (variables). You try to fill in the blanks so that both sides of each
+equation look identical. If a blank appears on both sides, they must eventually
+be filled with the same value. If two different constructors collide (e.g.,
+`Cons` vs. `Nil`), the puzzle is unsolvable.
+
+**Formal Definition.** The term language over a signature Σ with variable set V is:
 
 ```
-unify(f(t₁,…,tₙ), f(s₁,…,sₙ)) = compose(unify(t₁,s₁), …, unify(tₙ,sₙ))
+  t ::= x                     (variable, x ∈ V)
+      | c                     (constant, c ∈ Σ with arity 0)
+      | f(t₁, …, tₙ)          (application, f ∈ Σ with arity n)
 ```
+
+A **substitution** σ is a finite mapping {x₁ ↦ t₁, …, xₖ ↦ tₖ} from variables
+to terms. Applying σ to a term t (written σ(t) or tσ) replaces each xᵢ by tᵢ
+simultaneously.
+
+A **unifier** of terms s and t is a substitution σ such that σ(s) = σ(t).
+The **most general unifier** (MGU) θ is a unifier such that for every other
+unifier σ, there exists θ′ with σ = θ′ ∘ θ. The MGU is unique up to variable
+renaming.
+
+The Martelli & Montanari (1982) algorithm computes the MGU in near-linear time
+O(n · α(n)) using a stack-based approach with union-find for variable binding.
 
 | Case                                | Action                            |
 |-------------------------------------|-----------------------------------|
 | `Var(x) ≡ Var(x)`                   | Skip (trivial identity)           |
-| `Var(x) ≡ t`                        | Occurs check; bind `x ↦ t`        |
-| `App(f, args₁) ≡ App(f, args₂)`     | Decompose: push `argsᵢ₁ ≡ argsᵢ₂` |
+| `Var(x) ≡ t`                        | Occurs check; bind x ↦ t          |
+| `App(f, args₁) ≡ App(f, args₂)`     | Decompose: push argsᵢ₁ ≡ argsᵢ₂   |
 | `App(f, _) ≡ App(g, _)` where f ≠ g | Constructor clash → failure       |
 
-**Term representation:** The `TermExpr` type captures the three fundamental
-cases of first-order terms: variables (unification targets), constants (nullary
-constructors), and constructor applications (recursive structure). Variables
-are identified by `usize` indices rather than names to avoid alpha-equivalence
-complications during unification:
+The **occurs check** prevents circular bindings: before binding x ↦ t, verify
+that x does not appear in t. Without this check, `x ≡ f(x)` would produce the
+infinite term `f(f(f(…)))`.
+
+```
+Occurs check diagram:
+
+  Var(x) ≡ App("f", [Var(x)])
+
+  Does x occur in f(x)?
+       │
+  ┌────▼────┐
+  │ f(...)  │ → recurse into children
+  │   │     │
+  │ Var(x)  │ → YES! x occurs in t → FAIL (circular)
+  └─────────┘
+```
+
+**Key types** (from `prattail/src/unification.rs`):
+
+| Type                  | Role                                                  |
+|-----------------------|-------------------------------------------------------|
+| `TermExpr`            | `Var(usize) \| Const(String) \| App { head, args }`   |
+| `UnificationEquation` | Pair (lhs: TermExpr, rhs: TermExpr) to be unified     |
+| `Substitution`        | Map `usize → TermExpr` (variable bindings)            |
+| `UnificationStore`    | Pending equations + accumulated substitution          |
+| `UnificationTheory`   | `ConstraintTheory` impl with optional `TermSignature` |
+
+**Term representation.** Variables are identified by `usize` indices rather than
+names to avoid alpha-equivalence complications during unification:
 
 ```rust
 pub enum TermExpr {
-    Var(usize),
-    Const(String),
-    App { head: String, args: Vec<TermExpr> },
+    Var(usize),                                  // Unification variable
+    Const(String),                               // Nullary constructor
+    App { head: String, args: Vec<TermExpr> },   // Constructor application
 }
 ```
 
-**Subsumption:** `σ₁ ⊑ σ₂` iff `∃θ. σ₂ = θ ∘ σ₁`
+**Pseudocode:**
+
+```
+Algorithm UNIFY(equations: [(TermExpr, TermExpr)]) → Option<Substitution>
+──────────────────────────────────────────────────────────────────────────
+  Input:  List of term equations to unify
+  Output: Most general unifier, or None if unification fails
+
+  1. σ ← ∅                           // Empty substitution
+  2. stack ← equations               // Work stack of pending equations
+  3. While stack is not empty:
+       Pop (s, t) from stack
+       s′ ← apply(σ, s);  t′ ← apply(σ, t)
+       Match (s′, t′):
+         (Var(x), Var(x))         → continue         // Trivial identity
+         (Var(x), t)              →
+           If occurs(x, t): return None               // Occurs check
+           σ ← σ ∪ {x ↦ t}                            // Bind variable
+         (t, Var(x))              →
+           If occurs(x, t): return None
+           σ ← σ ∪ {x ↦ t}
+         (App(f, as), App(f, bs)) →
+           If |as| ≠ |bs|: return None                // Arity mismatch
+           For i = 0 … |as|−1: push (asᵢ, bsᵢ)       // Decompose
+         (App(f, _), App(g, _))   →
+           return None                                 // Clash: f ≠ g
+         (Const(a), Const(a))     → continue
+         (Const(a), Const(b))     → return None        // Clash: a ≠ b
+         _                        → return None
+  4. Return Some(σ)
+```
+
+**Literate code** — core unification loop from `prattail/src/unification.rs`:
+
+```rust
+// Step 1: Initialize work stack with all pending equations.
+// Step 2: Pop equations, apply current substitution, pattern match.
+fn unify(&self, mut substitution: HashMap<usize, TermExpr>,
+         initial_equations: &[UnificationEquation])
+         -> Option<HashMap<usize, TermExpr>> {
+    let mut stack: Vec<(TermExpr, TermExpr)> = initial_equations
+        .iter()
+        .map(|eq| (eq.lhs.clone(), eq.rhs.clone()))
+        .collect();
+
+    while let Some((lhs, rhs)) = stack.pop() {
+        let lhs = lhs.apply_substitution(&substitution);
+        let rhs = rhs.apply_substitution(&substitution);
+        match (&lhs, &rhs) {
+            (TermExpr::Var(x), TermExpr::Var(y)) if x == y => continue,
+            (TermExpr::Var(x), t) | (t, TermExpr::Var(x)) => {
+                // Occurs check: x must not appear in t
+                if TermExpr::occurs_in(*x, t) { return None; }
+                substitution.insert(*x, t.clone());
+            }
+            (TermExpr::App { head: f, args: a },
+             TermExpr::App { head: g, args: b }) => {
+                if f != g || a.len() != b.len() { return None; }
+                // Decompose: push corresponding arguments
+                for (ai, bi) in a.iter().zip(b.iter()) {
+                    stack.push((ai.clone(), bi.clone()));
+                }
+            }
+            // ... constant and clash cases
+        }
+    }
+    Some(substitution)
+}
+```
+
+**Subsumption:** σ₁ ⊑ σ₂ iff ∃θ. σ₂ = θ ∘ σ₁ (σ₁ is more general than σ₂).
 
 **Applications:** MeTTa pattern matching, Rholang quoted process patterns.
 
-### LatticeTheory — Subtype Lattice
+**Pipeline role:** Feature gate `unification`. Cost 3. Activated when guard
+contains pattern-matching relations requiring structural decomposition.
 
-**Theory:** A finite partially ordered set of types with:
-- **Subtyping:** `a ≤ b` (a is subtype of b)
-- **Join / least upper bound (LUB):** smallest common supertype — `a ≤ a ⊔ b` and `b ≤ a ⊔ b`
-- **Meet / greatest lower bound (GLB):** largest common subtype — `a ⊓ b ≤ a` and `a ⊓ b ≤ b`
-- **Lattice order:** `a ≤ b ⟺ a ⊔ b = b`
+### LatticeTheory — Subtype Lattice (M14)
 
-**Implementation:**
-- Subtype directed acyclic graph (DAG) constructed from explicit edges
-- Warshall's transitive closure: O(n³) once, cached with dirty-flag
-  invalidation
-- LUB/GLB computed lazily and cached
-- Cycle detection: `a ≤ b ≤ a` with `a ≠ b` represents type equivalence
+**Motivation.** Languages with subtype polymorphism need to answer questions
+like: Is `Nat` a subtype of `Number`? What is the most specific common
+supertype of `Int` and `Float` (join/LUB)? What is the most general type
+that is a subtype of both `Readable` and `Writable` (meet/GLB)? Does a
+pattern set cover all subtypes of `Value`? These reduce to operations on a
+finite partially ordered set of types. Source: `prattail/src/lattice_theory.rs`.
+Design doc: `prattail/docs/design/constraint-theories/lattice-theory.md`.
+
+**Intuition.** The type hierarchy is a directed acyclic graph (DAG) where edges
+point from subtypes to supertypes. "Is A a subtype of B?" becomes "Is there a
+path from A to B?" — a graph reachability question. Computing the transitive
+closure once (via Warshall's algorithm) converts all future subtype queries to
+O(1) set membership checks.
+
+**Formal Definition.** A **lattice** is a partially ordered set (L, ≤) where
+every pair of elements has a **join** (least upper bound, LUB) and a **meet**
+(greatest lower bound, GLB):
+
+- **Subtyping:** a ≤ b means "a is a subtype of b"
+- **Join (⊔):** a ⊔ b is the smallest c such that a ≤ c and b ≤ c
+- **Meet (⊓):** a ⊓ b is the largest c such that c ≤ a and c ≤ b
+- **Lattice order equivalence:** a ≤ b ⟺ a ⊔ b = b ⟺ a ⊓ b = a
+
+Example Hasse diagram for a small type lattice:
+
+```
+              ⊤ (Any)
+             ╱ ╲
+            ╱   ╲
+        Number  String
+       ╱    ╲
+     Int    Float
+       ╲    ╱
+        Nat
+         │
+         ⊥ (Nothing)
+
+  Nat ≤ Int ≤ Number ≤ ⊤
+  Nat ≤ Float ≤ Number ≤ ⊤
+  Int ⊔ Float = Number  (join: least common supertype)
+  Int ⊓ Float = Nat     (meet: greatest common subtype)
+```
+
+**Key types** (from `prattail/src/lattice_theory.rs`):
+
+| Type                | Role                                               |
+|---------------------|----------------------------------------------------|
+| `TypeId` (= usize)  | Unique identifier for each type in the lattice     |
+| `SubtypeConstraint` | Edge `{ sub: TypeId, sup: TypeId }` — sub ≤ sup    |
+| `TypeAssignment`    | Map `usize → TypeId` (variable bindings)           |
+| `LatticeStore`      | Edge set + transitive closure + LUB/GLB caches     |
+| `LatticeTheory`     | `ConstraintTheory` impl with type universe + names |
+
+**Pseudocode — Warshall's Transitive Closure:**
+
+```
+Algorithm WARSHALL_CLOSURE(edges: Set<(TypeId, TypeId)>, n: usize) → Set<(TypeId, TypeId)>
+──────────────────────────────────────────────────────────────────────────────────────────
+  Input:  Direct subtype edges, n = number of types
+  Output: Transitive closure (all reachable pairs)
+
+  1. closure ← edges ∪ { (a, a) | a ∈ 0…n−1 }     // Reflexive
+  2. For k = 0 … n−1:                                // Intermediate vertex
+       For i = 0 … n−1:
+         For j = 0 … n−1:
+           If (i, k) ∈ closure and (k, j) ∈ closure:
+             closure ← closure ∪ { (i, j) }
+  3. ── Cycle detection ──
+     For all (a, b) where a ≠ b:
+       If (a, b) ∈ closure and (b, a) ∈ closure:
+         Record cycle (a, b) — these types are equivalent
+  4. Return closure
+
+  Complexity: O(n³) time, O(n²) space. Computed once, cached with
+  dirty-flag invalidation (recomputed only when new edges are added).
+```
+
+**Pseudocode — Join (LUB):**
+
+```
+Algorithm JOIN(store: LatticeStore, a: TypeId, b: TypeId) → Option<TypeId>
+─────────────────────────────────────────────────────────────────────────
+  1. If (a, b) in LUB cache: return cached value
+  2. upper_a ← { t | (a, t) ∈ closure }          // All supertypes of a
+  3. upper_b ← { t | (b, t) ∈ closure }          // All supertypes of b
+  4. common ← upper_a ∩ upper_b                    // Common supertypes
+  5. minimal ← { c ∈ common | ¬∃c′ ∈ common. c′ < c }
+  6. If |minimal| = 1: cache and return the element
+     Else: return None (join does not exist — not a lattice)
+```
+
+**Literate code** — Warshall closure from `prattail/src/lattice_theory.rs`:
+
+```rust
+// Step 1: Ensure transitive closure is up to date.
+// The dirty flag is set whenever add_edge() is called.
+fn ensure_closure(&self, store: &mut LatticeStore) {
+    if !store.closure_dirty { return; }
+    store.closure.clear();
+    store.lub_cache.clear();
+    store.glb_cache.clear();
+
+    // Reflexive: every type is a subtype of itself
+    for &t in &self.universe {
+        store.closure.insert((t, t));
+    }
+    // Direct edges
+    for &(sub, sup) in &store.edges {
+        store.closure.insert((sub, sup));
+    }
+    // Warshall's algorithm: O(n³)
+    for &k in &self.universe {
+        for &i in &self.universe {
+            for &j in &self.universe {
+                if store.closure.contains(&(i, k))
+                    && store.closure.contains(&(k, j)) {
+                    store.closure.insert((i, j));
+                }
+            }
+        }
+    }
+    // Cycle detection: a ≤ b ≤ a with a ≠ b
+    store.cycles.clear();
+    // ... detect and record equivalent type pairs
+    store.closure_dirty = false;
+}
+```
+
+**Implementation details:**
+- Subtype DAG constructed from explicit edges via `add_edge(sub, sup)`
+- Warshall's transitive closure: O(n³) once, cached with dirty-flag invalidation
+- LUB/GLB computed lazily and cached in `HashMap<(TypeId, TypeId), Option<TypeId>>`
+- Cycle detection: a ≤ b ≤ a with a ≠ b represents type equivalence
 
 **Applications:** MeTTa `(:< sub super)`, Rholang bundle capabilities.
+
+**Pipeline role:** Feature gate `lattice-theory`. Cost 2. Activated when guard
+contains subtype relations or terminals referencing the type hierarchy.
 
 ### Predicate Dispatch Integration (M12–M14)
 
@@ -6189,7 +8006,10 @@ leverages these declarations at runtime.
 #### Three-Layer Design
 
 The constraint theory system is designed for extension. Users add new theories
-through three layers:
+through three layers. The `channels {}` sub-block (§2A) follows the same
+pattern — explicit, data-driven declarations replace heuristic inference, just
+as `theories {}` replaced heuristic keyword dispatch for constraint theories.
+The three layers for theories are:
 
 **Layer 1 — Rust Implementation.** The first step is implementing the
 `ConstraintTheory` trait for the new domain. The example below shows a
@@ -6238,15 +8058,14 @@ language! {
     types { Proc, Name, ![i64] as Int },
 
     guards {
-        predicates {
-            gt . x: Int, y: Int  |- x ">" y ;
-            // ... other typed predicates
-        }
+        gt . x: Int, y: Int  |- x ">" y ;
+        // ... other typed predicates
+
         theories {
-            resources:  ResourceTheory    for [Proc];  // user-defined
-            arithmetic: PresburgerAlgebra for [Int];   // built-in fast path
-            patterns:   UnificationTheory for [Proc, Name]; // LogicT search
-            types:      LatticeTheory     for [Proc, Name, Int]; // decidable
+            resources  = ResourceTheory    for [Proc];  // user-defined
+            arithmetic = PresburgerAlgebra for [Int];   // built-in fast path
+            patterns   = UnificationTheory for [Proc, Name]; // LogicT search
+            types      = LatticeTheory     for [Proc, Name, Int]; // decidable
         }
     },
     // ...
@@ -6321,16 +8140,16 @@ The predicate dispatch controller determines the minimal set needed per guard.
 
 ### Module Table
 
-The following table lists all 15 predicate-dispatched modules and their role
-in the predicated types pipeline. The modules are numbered M1–M15, matching the
-bit positions in the 15-bit `PredicateSignature` bitvector that the dispatch
+The following table lists all 15 predicate-dispatched modules and their role in
+the predicated types pipeline. The modules are numbered M1–M15, matching the bit
+positions in the 15-bit `PredicateSignature` bitvector that the dispatch
 controller uses to determine which modules to activate per guard. Each module
-corresponds to a specific automaton-theoretic formalism (SFA, Büchi, AWA, Visibly Pushdown Automaton (VPA),
-PATA, register, multi-tape, etc.) and handles a specific class of guard
-predicates. The table is ordered by module number, which roughly corresponds
-to increasing complexity — M1 (propositional) is simplest, M15 (transduction)
-is most complex. Read the "Role" column to understand what kind of guard
-predicate triggers each module:
+corresponds to a specific automaton-theoretic formalism (SFA, Büchi, AWA,
+Visibly Pushdown Automaton (VPA), PATA, register, multi-tape, etc.) and handles
+a specific class of guard predicates. The table is ordered by module number,
+which roughly corresponds to increasing complexity — M1 (propositional) is
+simplest, M15 (transduction) is most complex. Read the "Role" column to
+understand what kind of guard predicate triggers each module:
 
 ```
 ┌──────────────────────┬──────────────────────────────────────────────────┐
@@ -6343,7 +8162,7 @@ predicate triggers each module:
 │                      │ guards on streams. "Channel always eventually    │
 │                      │ delivers."                                       │
 ├──────────────────────┼──────────────────────────────────────────────────┤
-│ M3  Poly. AWA        │ ∀/∃ quantifier evaluation as ⊗ /⊕  states.       │
+│ M3  Poly. AWA        │ ∀/∃ quantifier evaluation as ⊗/⊕ states.         │
 │                      │ H-polynomial fixpoints for letprop.              │
 ├──────────────────────┼──────────────────────────────────────────────────┤
 │ M4  W. VPA           │ Quantifier scope nesting → call/return.          │
@@ -6360,6 +8179,7 @@ predicate triggers each module:
 ├──────────────────────┼──────────────────────────────────────────────────┤
 │ M8  Multi-Tape       │ Multi-channel receives → multi-tape.             │
 │                      │ Cross-tape auto-intersection.                    │
+│                      │ Activated by `channels {}` or heuristic.         │
 ├──────────────────────┼──────────────────────────────────────────────────┤
 │ M9  Multiset         │ Cardinality predicates: count(chan) >= 3.        │
 │                      │ PPar analysis with HashBag multiplicities.       │
@@ -6369,6 +8189,7 @@ predicate triggers each module:
 ├──────────────────────┼──────────────────────────────────────────────────┤
 │ M11 W. Two-Way       │ Cross-channel constraint propagation.            │
 │                      │ Backward constraints for join reordering.        │
+│                      │ Activated by `channels {}` or heuristic.         │
 ├──────────────────────┼──────────────────────────────────────────────────┤
 │ M12 Linear Arith.    │ Presburger arithmetic guards. NFA-based          │
 │                      │ decision procedure for Σ aᵢ·xᵢ ≤ b.              │
@@ -6399,6 +8220,571 @@ output-producing transductions.
 > M11 → `two-way-transducer.md`, M12 → `presburger.md`,
 > M13 → `unification.md`, M14 → `lattice-theory.md`,
 > M15 → `symbolic-finite-transducer.md`.
+
+
+### Module Subsections (M1–M15)
+
+The following subsections provide in-depth coverage of each module. Modules
+M8 and M11 have full treatments in §2A; modules M12–M14 have full treatments
+in §16. These are cross-referenced below rather than duplicated.
+
+#### M1: Symbolic Automata — BooleanAlgebra Core
+
+**Motivation.** Every guard predicate compiles to an SFA. M1 provides the
+foundational `BooleanAlgebra` trait and `SymbolicAutomaton<A>` type that all
+other modules build upon. A guard like `x ∈ [0, 1000)` becomes a transition
+guarded by an `IntervalPred::Range(0, 999)` rather than 1,000 individual
+character transitions.
+
+**Intuition.** A classical finite automaton labels each transition with a single
+symbol from a finite alphabet. An SFA replaces the symbol with a *predicate*
+over an infinite domain. Think of a museum guard who checks badge numbers: instead
+of memorizing every valid number, the guard has a rule "badge numbers 100–200 are
+allowed." The predicate `Range(100, 200)` replaces 101 individual transitions
+with one.
+
+**Formal Definition.** A **Symbolic Finite Automaton** (SFA) over effective
+Boolean algebra A = (𝒟, Ψ, ⟦·⟧, ⊥, ⊤, ∧, ∨, ¬) is a tuple
+M = (Q, A, δ, I, F) where:
+
+- 𝒟 is the (potentially infinite) domain
+- Ψ is the set of predicates (closed under ∧, ∨, ¬, with satisfiability
+  decidable and witness generation)
+- Q is a finite set of states
+- δ ⊆ Q × Ψ × Q is the transition relation — each transition (q, φ, q′)
+  fires when the current input element satisfies predicate φ
+- I ⊆ Q is the set of initial states
+- F ⊆ Q is the set of accepting states
+
+The `BooleanAlgebra` trait requires (from `prattail/src/symbolic.rs:115`):
+
+```rust
+pub trait BooleanAlgebra: Clone + Debug + Send + Sync + 'static {
+    type Predicate: Clone + Debug + Eq + Hash + Send + Sync + 'static;
+    type Domain: Clone + Debug + Send + Sync + 'static;
+
+    fn true_pred(&self) -> Self::Predicate;      // ⊤
+    fn false_pred(&self) -> Self::Predicate;     // ⊥
+    fn and(&self, a, b) -> Self::Predicate;      // φ ∧ ψ
+    fn or(&self, a, b) -> Self::Predicate;       // φ ∨ ψ
+    fn not(&self, a) -> Self::Predicate;         // ¬φ
+    fn is_satisfiable(&self, a) -> bool;         // ∃x ∈ 𝒟. ⟦φ⟧(x) = true
+    fn witness(&self, a) -> Option<Self::Domain>; // Concrete satisfying element
+    fn evaluate(&self, pred, elem) -> bool;      // ⟦φ⟧(x)
+}
+```
+
+**Key operations:**
+
+| Operation       | Input       | Output             | Description                                    |
+|-----------------|-------------|--------------------|------------------------------------------------|
+| `intersect`     | `SFA, SFA`  | `SFA`              | Product construction (guard conjunction)       |
+| `complement`    | `SFA`       | `SFA`              | Determinize + flip acceptance (guard negation) |
+| `determinize`   | `SFA`       | `SFA`              | Minterm-based subset construction              |
+| `is_empty`      | `SFA`       | `bool`             | BFS reachability to accepting state            |
+| `is_equivalent` | `SFA, SFA`  | `bool`             | Symmetric difference emptiness check           |
+| `accepts`       | `SFA, word` | `bool`             | Simulate word through transitions              |
+| `analyze`       | `SFA`       | `SymbolicAnalysis` | Guard satisfiability / overlap analysis        |
+
+**Decidability tier classification.** `classify_decidability(expr)` assigns
+each predicate expression to one of four tiers:
+
+| Tier | Name                 | Description                             |
+|------|----------------------|-----------------------------------------|
+| T1   | CompileTimeDecidable | Propositional + finite quantifiers      |
+| T2   | RuntimeDecidable     | Database relations available at runtime |
+| T3   | SemiDecidable        | Bounded infinite quantifiers            |
+| T4   | Undecidable          | Unbounded infinite quantifiers          |
+
+**Concrete algebras:**
+
+- `IntervalAlgebra { min_val, max_val }` — integer range predicates
+- `CharClassAlgebra` — Unicode character class predicates
+- `ProductAlgebra<A, B>` — cross-product of two algebras (multi-domain guards)
+
+**Pipeline role:** Always-on. Cost 1. M1 is activated for every guard (bit 0
+of the 15-bit `PredicateSignature`). All guard predicates compile to SFAs.
+
+> Reference: D'Antoni & Veanes, POPL 2014 [§25, ref #9].
+> See §15 for detailed BooleanAlgebra theory. See `prattail/docs/design/symbolic-automata.md`.
+
+#### M2: Weighted Büchi Automata — Infinite Behavior *(design-only)*
+
+**Motivation.** Finite automata accept/reject finite words. But some guard
+predicates concern infinite behaviors: "channel ch always eventually delivers
+a message" (liveness), "every request is eventually acknowledged" (fairness).
+These are omega-regular properties requiring Büchi acceptance.
+
+**Intuition.** A train loops forever around a circular track. A Büchi automaton
+accepts the infinite journey if the train passes through a "checkpoint" station
+infinitely often. The weighted extension assigns a cost to each infinite loop,
+computed via `StarSemiring` and matrix Kleene closure.
+
+**Formal Definition.** A **Weighted Büchi Automaton** (WBA) over semiring W
+and alphabet Σ is a tuple M = (Q, Σ, δ, I, F) where:
+
+- Q, Σ, δ, I are as in a standard weighted finite automaton
+- F ⊆ Q is the set of **Büchi accepting states**
+- An infinite run ρ = q₀ q₁ q₂ … is accepting iff inf(ρ) ∩ F ≠ ∅,
+  where inf(ρ) is the set of states visited infinitely often
+- The weight of an accepting run requires the `StarSemiring` extension
+  (closure operation a* = 1 ⊕ a ⊕ a² ⊕ ⋯) to sum over infinite paths
+
+**Status:** Design-only (not yet implemented). Design doc:
+`prattail/docs/design/weighted-buchi.md`.
+
+**Pipeline role:** Feature gate `omega`. Cost 3. Would be activated by guards
+on infinite streams or recursive channel types.
+
+> Reference: Büchi 1960 [§25, ref #5]; Droste & Gastin 2007 [§25, ref #13].
+
+#### M3: Polynomial Alternating Weighted Automata — Quantifier Evaluation *(design-only)*
+
+**Motivation.** Guards with universal and existential quantifiers —
+`forall x in nodes. safe(x)` or `exists y in types. compatible(x, y)` —
+require branching evaluation: universal quantifiers require *all* branches to
+accept, existential quantifiers require *at least one*. Alternating automata
+model this directly.
+
+**Intuition.** An alternating automaton plays a two-player game. At an
+**existential state** (Q⊕), the "prover" picks one successor — if any branch
+accepts, the whole computation accepts. At a **universal state** (Q⊗), the
+"refuter" picks — all branches must accept. Semiring weights generalize this:
+existential combines via ⊕ (sum), universal via ⊗ (product).
+
+**Formal Definition.** A **Polynomial Alternating Weighted Automaton** (AWA)
+over semiring W is a tuple M = (Q⊕, Q⊗, Σ, δ, I, F) where:
+
+- Q⊕ is the set of existential states (combine successors via ⊕)
+- Q⊗ is the set of universal states (combine successors via ⊗)
+- Q = Q⊕ ∪ Q⊗, Q⊕ ∩ Q⊗ = ∅
+- Σ, δ, I, F are as in standard weighted automata
+- H-polynomial fixpoints (Kostolanyi & Misun 2018) enable evaluation of
+  nested quantifier patterns without exponential blowup
+
+**Status:** Design-only (not yet implemented). Design doc:
+`prattail/docs/design/polynomial-awa.md`.
+
+**Pipeline role:** Feature gate `alternating`. Cost 3. Would be activated
+by quantified behavioral predicates with mixed ∀/∃ nesting.
+
+> Reference: Chandra, Kozen & Stockmeyer 1981 [§25, ref #7];
+> Kostolanyi & Misun 2018 [§25, ref #24].
+
+#### M4: Weighted Visibly Pushdown Automata — Scope Nesting *(design-only)*
+
+**Motivation.** Quantifier scoping — e.g., `forall x. exists y. P(x, y)` vs.
+`exists y. forall x. P(x, y)` — has a natural call/return structure. Visibly
+Pushdown Automata (VPA) model this: the input alphabet is partitioned into
+call symbols (open scope), return symbols (close scope), and internal symbols,
+with the stack discipline determined entirely by the input.
+
+**Intuition.** A security guard at a revolving door verifies that every entry
+(call) is matched by an exit (return) without knowing the building's internals.
+The guard just watches the door: push on entry, pop on exit. Unlike general
+pushdown automata, VPAs have decidable equivalence, intersection, and
+complement — crucial for guard analysis.
+
+**Formal Definition.** A **Weighted VPA** over semiring W is a tuple
+M = (Q, Σ_c, Σ_r, Σ_int, Γ, δ, I, F) where:
+
+- Σ_c, Σ_r, Σ_int are disjoint call, return, and internal alphabets
+- Γ is the stack alphabet
+- δ = δ_c ∪ δ_r ∪ δ_int with:
+  - δ_c ⊆ Q × Σ_c × Q × Γ × W (call: push stack symbol)
+  - δ_r ⊆ Q × Σ_r × Γ × Q × W (return: pop and match)
+  - δ_int ⊆ Q × Σ_int × Q × W (internal: no stack change)
+
+**Status:** Design-only (not yet implemented). Design doc:
+`prattail/docs/design/weighted-vpa.md`.
+
+**Pipeline role:** Feature gate `vpa`. Cost 4. Would be activated by guards
+with nested quantifier scopes or parenthesized expressions.
+
+#### M5: Parity Alternating Tree Automata — Mu-Calculus
+
+**Motivation.** Recursive behavioral predicates defined via `letprop` create
+fixpoint definitions: `letprop safe(x) = base(x) ∨ (step(x) ∧ safe(child(x)))`.
+These correspond to mu-calculus formulae, which compile directly to **Parity
+Alternating Tree Automata** (PATA). The parity acceptance condition (minimum
+priority visited infinitely often must be even) distinguishes least (μ) and
+greatest (ν) fixpoints.
+
+**Intuition.** A team of auditors inspects a corporate hierarchy (tree). At
+each node, they check the symbol and branch into children. Even-priority states
+mark "all clear" checkpoints; odd-priority states flag issues. The parity
+condition ensures that the deepest recurring issue is resolved (even priority
+wins).
+
+**Formal Definition.** A **PATA** over Boolean semiring is a tuple
+M = (Q, Σ, δ, q₀, Ω) where:
+
+- Q = Q∃ ∪ Q∀ (existential and universal states)
+- Σ is a ranked tree alphabet
+- δ maps (state, symbol) → set of direction vectors (child_index, target_state, weight)
+- q₀ is the initial state
+- Ω: Q → ℕ assigns priorities (even = accepting, odd = rejecting)
+- Acceptance: in any infinite branch, min{Ω(q) | q visited infinitely often} is even
+
+Mu-calculus formulae:
+
+```
+  φ ::= X | ⊤ | ⊥ | p(a) | ¬φ | φ ∧ ψ | φ ∨ ψ
+      | ⟨i⟩φ    (diamond: some child i satisfies φ)
+      | [i]φ    (box: all children i satisfy φ)
+      | μX.φ    (least fixpoint — finite unfolding)
+      | νX.φ    (greatest fixpoint — infinite unfolding)
+```
+
+**Key types** (from `prattail/src/parity_tree.rs`):
+
+| Type                                | Role                                              |
+|-------------------------------------|---------------------------------------------------|
+| `ParityAlternatingTreeAutomaton<W>` | Tree automaton with parity acceptance             |
+| `ParityTreeState`                   | `{ id, branching, priority, label }`              |
+| `MuCalculusFormula`                 | Recursive enum: Var, True, False, Atom, …, Mu, Nu |
+| `ParityTreeCompiler`                | PredicateCompiler impl for M5                     |
+| `Term`                              | Concrete tree for evaluation                      |
+
+**Key operations:**
+
+| Operation            | Input           | Output              | Description                           |
+|----------------------|-----------------|----------------------|---------------------------------------|
+| `mu_calculus_to_pata`| `MuCalculusFormula` | `PATA`           | Compile mu-calculus to tree automaton |
+| `evaluate_term`      | `PATA, Term`    | `bool`               | Bottom-up evaluation on concrete tree |
+| `check_emptiness`    | `PATA`          | `bool`               | Parity game fixpoint iteration        |
+| `check_inclusion`    | `PATA, PATA`    | `bool`               | Complement + product + emptiness      |
+
+**Pseudocode — Mu-Calculus to PATA:**
+
+```
+Algorithm MU_CALCULUS_TO_PATA(φ: MuCalculusFormula, arity: usize) → PATA
+─────────────────────────────────────────────────────────────────────────
+  Input:  Mu-calculus formula, maximum tree arity
+  Output: Parity alternating tree automaton
+
+  1. priority_counter ← 0
+  2. Match φ:
+       Var(X)      → state for variable X (looked up from environment)
+       True        → accepting state (priority 0, universal)
+       False       → rejecting state (priority 1, universal)
+       φ₁ ∧ φ₂    → universal state branching to PATA(φ₁) and PATA(φ₂)
+       φ₁ ∨ φ₂    → existential state branching to PATA(φ₁) and PATA(φ₂)
+       ⟨i⟩φ′      → existential state, direction = child i, recurse on φ′
+       [i]φ′      → universal state, direction = child i, recurse on φ′
+       μX.φ′      → priority ← next odd number; bind X; recurse on φ′
+       νX.φ′      → priority ← next even number; bind X; recurse on φ′
+  3. Return PATA
+```
+
+**Pipeline role:** Feature gate `parity-tree`. Cost 4. Activated by `letprop`
+recursive behavioral predicates.
+
+> Reference: Emerson & Jutla 1991 [§25, ref #14]; Comon et al. TATA 2007 [§25, ref #8].
+> See `prattail/docs/design/parity-tree-automata.md`.
+
+#### M6: Register Automata — Data-Aware Predicates
+
+**Motivation.** Some guards compare data values: `eq(x, y)` (the value on
+channel x equals the value on channel y), `fresh(x)` (x has never been seen
+before). Classical automata cannot express these — they have no memory for
+previously seen values. Register automata add a fixed number of **registers**
+that can store and compare data values from an infinite domain.
+
+**Intuition.** A customs agent at a border has a clipboard with K slots
+(registers). For each traveler (input symbol), the agent can: store the
+passport number in a slot (`Store`), check if the number matches a stored slot
+(`TestEq`), check if it differs from a stored slot (`TestNeq`), or check if
+it differs from *all* stored slots (`TestFresh`). The agent's finite state
+plus K register values determine the decision.
+
+**Formal Definition.** A **Register Automaton** (RA) with k registers over
+semiring W and data domain 𝒟 is a tuple M = (Q, k, Σ, δ, q₀, R₀, F) where:
+
+- Q is a finite set of states
+- k is the number of registers (each holds an element of 𝒟 or ⊥)
+- Σ is a finite label alphabet (optional; may be data-only)
+- δ ⊆ Q × (Σ ∪ {ε}) × RegisterOp^k × Q × W — each transition specifies one
+  operation per register: `Nop`, `Store`, `TestEq`, `TestNeq`, or `TestFresh`
+- q₀ is the initial state
+- R₀ ∈ (𝒟 ∪ {⊥})^k is the initial register valuation
+- F ⊆ Q is the set of accepting states
+
+Register operations (from `prattail/src/register_automata.rs:69`):
+
+```rust
+pub enum RegisterOp {
+    Nop,        // No operation on this register
+    Store,      // Store current input value into this register
+    TestEq,     // Guard: input equals this register's value
+    TestNeq,    // Guard: input differs from this register's value
+    TestFresh,  // Guard: input differs from ALL registers
+}
+```
+
+**Key types:**
+
+| Type                     | Role                                              |
+|--------------------------|---------------------------------------------------|
+| `RegisterAutomaton<W>`   | RA with `num_registers`, states, transitions       |
+| `DataValue`              | `Integer(i64) \| Symbol(String) \| Unit`            |
+| `RegisterOp`             | Per-register operation on each transition           |
+| `RegisterAnalysis`       | Dead registers, unbound references                  |
+
+**Pseudocode — Register Simulation:**
+
+```
+Algorithm SIMULATE_RA(M: RA, input: DataValue[]) → bool
+────────────────────────────────────────────────────────
+  Input:  Register automaton M, data word
+  Output: Accept/reject
+
+  1. state ← q₀;  registers ← R₀
+  2. For each datum d in input:
+       For each transition (state →[ops] state′, w) ∈ δ:
+         ── Check guards ──
+         For each register r with ops[r]:
+           TestEq:    reject transition if registers[r] ≠ d
+           TestNeq:   reject transition if registers[r] = d
+           TestFresh: reject transition if d ∈ registers
+         ── Apply stores ──
+         For each register r with ops[r] = Store:
+           registers[r] ← d
+         state ← state′
+  3. Return state ∈ F
+```
+
+**Pipeline role:** Feature gate `register-automata`. Cost 2. Activated by
+equality (`eq`), inequality, or freshness (`fresh`) predicates in guards.
+
+> Reference: Kaminski & Francez 1994 [§25, ref #21].
+> See `prattail/docs/design/register-automata.md`.
+
+#### M7: Probabilistic Automata — Selectivity Estimation
+
+**Motivation.** When multiple guards protect different rules, evaluating them in
+the right order is critical. A guard with 5% selectivity (rejects 95% of inputs)
+should be evaluated before one with 80% selectivity (rejects only 20%). M7
+estimates guard selectivity using probabilistic automata, enabling optimal
+short-circuit ordering.
+
+**Intuition.** A weather forecaster with multiple prediction models. Each model
+(guard) assigns a probability to each outcome. The forward algorithm computes
+total probability (how selective is this guard?), the Viterbi algorithm finds
+the most likely path (what is the guard's best-case behavior?), and entropy
+measures uncertainty (how discriminating is this guard?).
+
+**Formal Definition.** A **Probabilistic Automaton** (PA) is a weighted
+automaton where weights are log-probabilities (`LogWeight`):
+
+- All weights are in the log-probability domain: w = −log(p) where p ∈ [0, 1]
+- Initial distribution: Σ_q I(q) = 1 (normalized)
+- Transition probabilities: for each state q, Σ_{(q,a,q′)} p(q,a,q′) = 1
+- Selectivity: sel(M) = Σ_w ⟦M⟧(w), the total acceptance probability
+- Entropy: H(M) = −Σ_w ⟦M⟧(w) · log ⟦M⟧(w), the uncertainty measure
+
+**Key types** (from `prattail/src/probabilistic.rs`):
+
+| Type                     | Role                                            |
+|--------------------------|-------------------------------------------------|
+| `ProbabilisticAutomaton` | States + `LogWeight` transitions + initial dist |
+| `ProbabilisticAnalysis`  | Selectivity, entropy, low-selectivity rules     |
+| `ProbabilisticCompiler`  | PredicateCompiler impl for M7                   |
+
+**Key operations:**
+
+| Operation             | Input        | Output           | Description                                |
+|-----------------------|--------------|------------------|--------------------------------------------|
+| `probability_of`      | `PA, word`   | `LogWeight`      | Forward algorithm: total probability       |
+| `viterbi`             | `PA, word`   | `(Weight, path)` | Most likely state sequence                 |
+| `entropy`             | `PA`         | `f64`            | Shannon entropy of the distribution        |
+| `selectivity`         | `PA`         | `LogWeight`      | Total acceptance probability               |
+| `train_from_corpus`   | `PA, corpus` | `()`             | Baum-Welch EM parameter learning           |
+| `optimal_guard_order` | `[PA]`       | `[usize]`        | Sort by selectivity (most selective first) |
+
+**Pipeline role:** Always-on. Cost 5. M7 determines guard evaluation order for
+all rules with multiple guards. Feeds M8/M11 pipeline (§2A).
+
+> See `prattail/docs/design/probabilistic-automata.md`.
+
+#### M8: Multi-Tape Automata — Traversal Fusion
+
+See **§2A, "Part I — Multi-Tape Automata (M8): Traversal Fusion"** for the
+complete treatment: motivation, intuition (DJ turntables analogy), formal
+Definition 2A.1, pair construction with three transition classes, pseudocode
+(PAIR and EVALUATE algorithms), literate code from `prattail/src/multi_tape.rs`,
+and complexity analysis.
+
+**Pipeline role:** Feature gate via `channels {}` or heuristic. Cost 5. Fuses
+N per-channel SFAs into a single K-tape product automaton.
+
+> Reference: Kempe 2004 [§25, ref #22].
+
+#### M9: Multiset Automata — Cardinality Predicates
+
+**Motivation.** Guards like `count(chan) ≥ 3` or `multiplicity(token, "x") ∈ [2,5]`
+involve counting — not just accepting/rejecting symbols, but tracking how many
+times features occur. Multiset automata extend weighted automata with
+**feature accumulators** that count occurrences along paths.
+
+**Intuition.** A bakery production line with ingredient counters at each station.
+As a batch moves through stations (transitions), counters accumulate: "2 cups
+flour," "3 eggs," "1 cup sugar." At the end, a quality inspector checks that
+each ingredient falls within required bounds (cardinality constraints).
+
+**Formal Definition.** A **Multiset Automaton** over heap semiring W with
+feature set F is a tuple M = (Q, Σ, F, δ, q₀, A) where:
+
+- Q, Σ, q₀ are standard automaton components
+- F = {f₁, …, fₘ} is a finite set of feature names
+- δ ⊆ Q × Σ × Q × W × (F → ℕ) — each transition carries a weight *and*
+  feature effect map (how many of each feature this transition contributes)
+- A is a set of `CardinalityConstraint` predicates:
+  each `{ feature: f, min: Option<u64>, max: Option<u64> }` bounds
+  the total accumulated count of feature f along any accepting path
+
+The `HeapSemiring` trait (from `prattail/src/multiset_automata.rs`) enables
+semirings backed by `HashMap` (non-Copy types), bridging standard `Semiring`
+(Copy) and heap-allocated multiset domains:
+
+- `MultisetWeight` — natural-number multiset with pointwise max/add
+- `TropicalMultisetWeight` — tropical (min/+) over multiset features
+
+**Key types:**
+
+| Type                    | Role                                              |
+|-------------------------|---------------------------------------------------|
+| `MultisetAutomaton<W>`  | Automaton with feature accumulators               |
+| `CardinalityConstraint` | `{ feature, min, max }` — bounds on feature count |
+| `MultisetWeight`        | `HashMap<String, u64>` — counting semiring        |
+| `MultisetCompiler`      | PredicateCompiler impl for M9                     |
+
+**Key operations:**
+
+| Operation               | Input                  | Output | Description                         |
+|-------------------------|------------------------|--------|-------------------------------------|
+| `multiplicity_of`       | `MA, feature, word`    | `u64`  | Total feature count along best path |
+| `satisfies_cardinality` | `MA, constraint, word` | `bool` | Does the count meet bounds?         |
+| `feature_interaction`   | `MA, f₁, f₂`           | `bool` | Do features co-occur on paths?      |
+
+**Pipeline role:** Feature gate `multiset-automata`. Cost 2. Activated by
+cardinality predicates (`count_ge`, `count_le`, `multiplicity`). PPar analysis
+with HashBag multiplicities.
+
+> See `prattail/docs/design/multiset-automata.md`.
+
+#### M10: Weighted MSO — Specification Language
+
+**Motivation.** M10 is **the** specification language. The `where`-clause syntax
+— `not()`, `and()`, `or()`, `forall()`, `exists()` — *is* weighted monadic
+second-order (MSO) logic. M10 classifies each guard formula, determines its
+decidability tier, and routes it to the appropriate evaluation strategy.
+
+**Intuition.** MSO is like a spreadsheet formula language where each cell is a
+position in a word. Atomic predicates check which symbol is at a position (`label_a(x)`
+means "position x has symbol a"). First-order quantifiers (`∀x`, `∃x`) range over
+positions. Second-order quantifiers (`∀X`, `∃X`) range over *sets* of positions.
+Weights replace Boolean true/false with quantitative measures.
+
+**Formal Definition.** A **Weighted MSO formula** over alphabet Σ and semiring W:
+
+```
+  φ ::= const(s)                       (semiring constant)
+      | label_a(x)                     (position x has symbol a)
+      | ¬label_a(x)                    (negated atomic)
+      | x < y                          (position order)
+      | x ∈ X                          (set membership)
+      | φ ∧ ψ | φ ∨ ψ                  (Boolean connectives)
+      | ∃x. φ | ∀x. φ                  (first-order quantifiers)
+      | ∃X. φ | ∀X. φ                  (second-order quantifiers)
+```
+
+**Büchi-Elgot-Trakhtenbrot Theorem.** The recognizable formal power series
+(those definable by weighted automata) are exactly those definable in the
+**restricted** MSO fragment: no `∀X` or `∀x` except with step-function bodies.
+This is the decidability boundary.
+
+**Formula classification** (`MsoFormulaClass`):
+
+| Class                   | Description                           | Decidability |
+|-------------------------|---------------------------------------|--------------|
+| `Restricted`            | No quantifiers                        | T1           |
+| `RestrictedExistential` | Only ∃x, ∃X quantifiers               | T1           |
+| `FirstOrder`            | Only first-order quantifiers (∀x, ∃x) | T2           |
+| `Full`                  | Second-order quantifiers (∀X, ∃X)     | T3/T4        |
+
+**Key types** (from `prattail/src/weighted_mso.rs`):
+
+| Type                 | Role                                                   |
+|----------------------|--------------------------------------------------------|
+| `WeightedMsoFormula` | Recursive enum: AtomicPos, And, Or, ExistsFirst, etc.  |
+| `MsoFormulaClass`    | Classification: Restricted / FirstOrder / Full         |
+| `MsoAnalysis`        | Formula class + decidability + free vars + is_sentence |
+| `MsoCompiler`        | PredicateCompiler impl for M10                         |
+
+**Pipeline role:** Always-on. Cost 1. M10 classifies every guard's logical
+structure, routing it to the appropriate tier and evaluation strategy.
+
+> Reference: Droste & Gastin 2007 [§25, ref #13]; Büchi 1960 [§25, ref #5].
+> See `prattail/docs/design/weighted-mso.md`.
+
+#### M11: Two-Way Transducers — Value Space Pruning
+
+See **§2A, "Part II — Two-Way Transducers (M11): Value Space Pruning"** for
+the complete treatment: motivation (Cartesian product reduction), intuition
+(librarian analogy), formal Definition 2A.2, enhanced tape and head movement,
+crossing sequences with Theorem 2A.1 (Shepherdson 1959), ChannelConstraint
+struct, pseudocode (TRANSDUCE algorithm), and literate code from
+`prattail/src/two_way_transducer.rs`.
+
+**Pipeline role:** Feature gate via `channels {}` or heuristic. Cost 6.
+Backward constraint propagation prunes channel value spaces.
+
+> Reference: Feng & Maletti 2022 [§25, ref #15].
+
+#### M12: Presburger Arithmetic — Linear Integer Constraints
+
+See **§16, "PresburgerAlgebra — Multi-Variable Linear Integer Arithmetic"**
+for the complete treatment: formal definition of Presburger arithmetic,
+NFA construction pseudocode (Bartzis-Bultan), literate code for
+`encode_constraint`, bit-vector tape diagram, and dual
+BooleanAlgebra/ConstraintTheory implementations.
+
+**Pipeline role:** Feature gate `presburger`. Cost 3. Activated when guard
+contains arithmetic relations over multiple integer-typed parameters.
+
+> Reference: Büchi 1960 [§25, ref #5].
+
+#### M13: Unification — Structural Pattern Matching
+
+See **§16, "UnificationTheory — Structural Unification"** for the complete
+treatment: formal definition of first-order unification, Martelli-Montanari
+pseudocode, literate code for `unify`, occurs-check diagram, and term
+representation.
+
+**Pipeline role:** Feature gate `unification`. Cost 3. Activated when guard
+contains pattern-matching relations requiring structural decomposition.
+
+#### M14: Lattice Theory — Subtype Hierarchy
+
+See **§16, "LatticeTheory — Subtype Lattice"** for the complete treatment:
+formal lattice definition (⊔, ⊓, ≤), Warshall closure pseudocode, literate
+code, and Hasse diagram example.
+
+**Pipeline role:** Feature gate `lattice-theory`. Cost 2. Activated when guard
+contains subtype relations or terminals referencing the type hierarchy.
+
+#### M15: Symbolic Finite Transducers — Output Transductions
+
+See **§17, "Symbolic Finite Transducers (M15)"** subsection below for the
+complete treatment: formal SFT definition, composition/pre-image pseudocode,
+literate code for `transduce`, data flow diagram, and factory functions.
+
+**Pipeline role:** Feature gate `sft`. Cost 5. Module ID M15. Activated when
+guard transforms input values (case fold, normalize, guard-conditional rewrite).
+
+> Reference: D'Antoni & Veanes, POPL 2014 [§25, ref #9].
+
 
 ### Predicate Dispatch Controller
 
@@ -6453,57 +8839,562 @@ These modules run on every guard regardless of the predicate signature
 
 ### Symbolic Finite Transducers (M15)
 
-Output-producing transductions over infinite domains implemented in
-`prattail/src/sft.rs` (feature gate `sft`). Includes:
-`SymbolicFiniteTransducer<A, B>` with composition, pre/post-image,
-functionality/equivalence checks, practical factories (case fold, whitespace
-normalize, guard transform), pipeline integration (SftAnalysis, 4 lints
-SFT01-SFT04, cost-benefit gate, predicate dispatch M15:Sft).
-See `prattail/docs/design/symbolic-finite-transducer.md` for architecture.
+**Motivation.** Some guards do not merely accept or reject — they *transform*
+values before comparison. Case-folding (`"Hello" → "hello"`), whitespace
+normalization, and guard-conditional rewrites all produce output. SFTs extend
+SFAs with output functions: where SFAs accept/reject, SFTs transform inputs
+to outputs. Source: `prattail/src/sft.rs` (feature gate `sft`).
+Design doc: `prattail/docs/design/symbolic-finite-transducer.md`.
 
-Reference: D'Antoni & Veanes, POPL 2014. In the guard infrastructure, SFTs
-enable transducer-based guard compilation — guards that transform input values
-(e.g., case-folding before comparison) compile to SFT composition rather than
-post-hoc normalization.
+**Intuition.** An SFA is a gatekeeper that says "yes" or "no." An SFT is a
+translator that reads input, transforms it according to predicate-guarded rules,
+and writes output. Composition chains translators: the output of one SFT becomes
+the input of the next. The pre-image operation asks: "what inputs could have
+produced outputs in this target set?" — enabling backward reasoning about
+transformations.
+
+**Formal Definition.** A **Symbolic Finite Transducer** (SFT) over input
+Boolean algebra A and output Boolean algebra B is a tuple
+M = (Q, A, B, δ, I, F) where:
+
+- Q is a finite set of states
+- A is the input Boolean algebra (predicates over infinite input domain)
+- B is the output Boolean algebra (predicates over infinite output domain)
+- δ ⊆ Q × Pred(A) × (A.Domain → B.Domain*) × Q is the transition relation.
+  Each transition (q, φ, f, q′) reads an input satisfying predicate φ,
+  produces output f(input), and moves to state q′.
+- I ⊆ Q is the set of initial states
+- F ⊆ Q is the set of accepting states
+
+The output function f on each transition is one of:
+- `Epsilon` — no output produced
+- `Constant(v)` — fixed output sequence v ∈ B.Domain*
+- `Identity` — copy input to output unchanged
+- `Map(g)` — apply function g: A.Domain → B.Domain
+- `FlatMap(g)` — apply function g: A.Domain → Vec<B.Domain>
+
+An SFA is a degenerate SFT where every transition has `Epsilon` output.
+
+**Key operations:**
+
+| Operation                  | Input                | Output               | Description                                              |
+|----------------------------|----------------------|----------------------|----------------------------------------------------------|
+| `transduce`                | `SFT, word`          | `Vec<Vec<B.Domain>>` | Apply transducer, collect all output sequences           |
+| `compose`                  | `SFT<A,B>, SFT<B,C>` | `SFT<A,C>`           | Chain two transducers: output of first → input of second |
+| `pre_image`                | `SFT<A,B>, SFA<B>`   | `SFA<A>`             | Input language whose outputs land in the target          |
+| `post_image`               | `SFT<A,B>, SFA<A>`   | `SFA<B>`             | Output language reachable from the input language        |
+| `domain_sfa`               | `SFT<A,B>`           | `SFA<A>`             | Input language accepted by the transducer                |
+| `is_functional`            | `SFT<A,B>`           | `bool`               | Does each input produce exactly one output?              |
+| `is_equivalent_functional` | `SFT, SFT`           | `bool`               | Same transduction on all inputs?                         |
+
+**Data flow diagram:**
+
+```
+┌────────────┐  input  ┌───────────┐  output ┌────────────┐
+│ Input SFA  │────────►│ SFT<A,B>  │────────►│ Output SFA │
+│ (domain)   │         │ transduce │         │ (range)    │
+└────────────┘         └───────────┘         └────────────┘
+                            │
+        ┌───────────────────┤
+        │ pre_image         │ post_image
+        ▼                   ▼
+  ┌────────────┐     ┌────────────┐
+  │ SFA<A>     │     │ SFA<B>     │
+  │ (backward) │     │ (forward)  │
+  └────────────┘     └────────────┘
+```
+
+**Pseudocode — Composition:**
+
+```
+Algorithm COMPOSE(T₁: SFT<A,B>, T₂: SFT<B,C>) → SFT<A,C>
+──────────────────────────────────────────────────────────────
+  Input:  Two SFTs where T₁'s output algebra = T₂'s input algebra
+  Output: Composed SFT<A,C>
+
+  1. Product states: Q₁ × Q₂ (with lookahead buffer for multi-symbol output)
+  2. For each transition t₁ = (p₁ →[φ₁/f₁] q₁) ∈ T₁:
+       Compute output symbols: out₁ = f₁(witness(φ₁))
+       For each prefix of out₁ consumable by T₂:
+         Find matching T₂ transitions t₂ = (p₂ →[φ₂/f₂] q₂)
+         where φ₂ accepts the output symbols
+         Combined guard: φ₁ ∧ (f₁ satisfies φ₂)
+         Combined output: f₂(f₁(·))
+         Add transition (p₁,p₂) →[combined_guard/combined_output] (q₁,q₂)
+  3. Initial: I₁ × I₂.  Accepting: F₁ × F₂.
+  4. Return composed SFT
+```
+
+**Literate code** — `transduce` from `prattail/src/sft.rs`:
+
+```rust
+// Step 1: Simulate the SFT on a concrete input word.
+// Track all reachable (state, output_so_far) pairs.
+pub fn transduce(&self, word: &[A::Domain]) -> Vec<Vec<B::Domain>> {
+    let mut configs: Vec<(usize, Vec<B::Domain>)> = self.initial_states
+        .iter()
+        .map(|&s| (s, Vec::new()))
+        .collect();
+
+    // Step 2: For each input symbol, advance all configurations.
+    for symbol in word {
+        let mut next_configs = Vec::new();
+        for (state, output) in &configs {
+            for t in &self.transitions {
+                if t.from == *state
+                    && self.input_algebra.evaluate(&t.guard, symbol) {
+                    let mut new_output = output.clone();
+                    // Step 3: Apply output function to produce new symbols.
+                    new_output.extend(t.output.apply(symbol));
+                    next_configs.push((t.to, new_output));
+                }
+            }
+        }
+        configs = next_configs;
+    }
+
+    // Step 4: Collect outputs from accepting configurations.
+    configs.into_iter()
+        .filter(|(s, _)| self.accepting_states.contains(s))
+        .map(|(_, out)| out)
+        .collect()
+}
+```
+
+**Factories:** `case_fold_sft()`, `whitespace_normalize_sft()`, `guard_transform_sft()`.
+
+**Pipeline role:** Feature gate `sft`. Cost 5. Module ID M15.
+Pipeline: `SftAnalysis`, lints SFT01–SFT04, cost-benefit gate, predicate
+dispatch M15:Sft. In the guard infrastructure, SFTs enable transducer-based
+guard compilation — guards that transform input values (e.g., case-folding
+before comparison) compile to SFT composition rather than post-hoc normalization.
+
+> Reference: D'Antoni & Veanes, POPL 2014 [§25, ref #9].
 
 ### E-Graph Equality Saturation
 
-Implemented in `prattail/src/egraph.rs` (~900 lines, 49 tests).
-Feature gate: `egraph = ["trs-analysis"]`. Provides equality saturation
-(Willsey et al., POPL 2021) for enhanced joinability checking, term
-simplification, and equivalence discovery beyond what normalization alone
-achieves. Pipeline integration via `EGraphAnalysis`, lints EG01-EG04,
+**Motivation.** Guard predicates may contain redundant subexpressions
+(`x > 0 ∧ x > 0`), algebraic identities (`x + 0 → x`), or equivalent
+formulations that produce unnecessarily large SFAs. Equality saturation
+discovers these equivalences at compile time, simplifying guards before SFA
+compilation. Source: `prattail/src/egraph.rs` (~900 lines, 49 tests).
+Feature gate: `egraph = ["trs-analysis"]`.
+Design doc: `prattail/docs/design/egraph-equality-saturation.md`.
+
+**Intuition.** An e-graph is a compact representation of many equivalent terms
+simultaneously. Unlike destructive rewriting (which replaces a term with its
+reduct, losing the original), an e-graph *adds* the reduct as a new member of
+the same equivalence class, preserving all prior representations. Equality
+saturation applies all rewrite rules to fixpoint, then extracts the cheapest
+equivalent term.
+
+**Formal Definition.** An **e-graph** is a tuple (E, M, U) where:
+
+- E is a set of **e-classes** (equivalence classes of terms)
+- M: ENode → EClassId is the **memo table** mapping e-nodes to their class
+- U is a **union-find** data structure maintaining the equivalence partition
+
+An **e-node** is a function application f(c₁, …, cₙ) where each cᵢ is an
+e-class ID (not a concrete term). The central invariant is **congruence
+closure**: if two e-nodes f(c₁, …, cₙ) and f(c₁′, …, cₙ′) have
+find(cᵢ) = find(cᵢ′) for all i, they must be in the same e-class.
+
+An **equality saturation** run applies rewrite rules (l → r) to the e-graph:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                 Equality Saturation Loop                        │
+│                                                                 │
+│  ┌───────────┐  matches  ┌───────────┐ new e-nodes ┌──────────┐ │
+│  │  Match    │──────────►│  Apply    │────────────►│ Rebuild  │ │
+│  │  (search  │           │  (instan- │             │ (restore │ │
+│  │   LHS     │           │   tiate   │             │  congru- │ │
+│  │   pattern)│           │   RHS,    │             │  ence)   │ │
+│  └───────────┘           │   merge)  │             └────┬─────┘ │
+│       ▲                  └───────────┘                  │       │
+│       │                                                 │       │
+│       └─────────────────────────────────────────────────┘       │
+│                                                                 │
+│      Terminate when: no new merges, or resource limit hit       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+> Reference: Willsey et al., "egg: Fast and Extensible Equality Saturation,"
+> POPL 2021 [§25, ref #33].
+
+**Key types** (from `prattail/src/egraph.rs`):
+
+| Type            | Role                                                       |
+|-----------------|------------------------------------------------------------|
+| `EClassId(u32)` | Unique equivalence class identifier                        |
+| `ENode`         | Function application `{ symbol, children: Vec<EClassId> }` |
+| `EClass`        | Equivalence class `{ id, nodes, parents }`                 |
+| `EGraph`        | Core structure with union-find, memo table, pending merges |
+| `ERewriteRule`  | Pattern-based rewrite `{ lhs: Pattern, rhs: Pattern }`     |
+| `EGraphConfig`  | Resource limits `{ max_nodes, max_iterations }`            |
+
+**Pseudocode — Equality Saturation:**
+
+```
+Algorithm SATURATE(G: EGraph, rules: [RewriteRule]) → SaturationResult
+──────────────────────────────────────────────────────────────────────
+  Input:  E-graph G, rewrite rules R
+  Output: Saturated e-graph (or resource-limited result)
+
+  1. Repeat:
+       changed ← false
+       ── Match phase ──
+       For each rule (l → r) ∈ R:
+         matches ← search_pattern(G, l)        // Find LHS pattern instances
+       ── Apply phase ──
+       For each match (class_id, substitution) ∈ matches:
+         rhs_id ← instantiate(G, r, substitution)  // Build RHS e-node
+         If find(class_id) ≠ find(rhs_id):
+           merge(G, class_id, rhs_id)               // Equate LHS and RHS
+           changed ← true
+       ── Rebuild phase ──
+       rebuild(G)                                    // Restore congruence closure
+       If ¬changed or |G.nodes| > max_nodes:
+         break
+  2. Return { iterations, saturated: ¬changed }
+```
+
+**Literate code** — `saturate` from `prattail/src/egraph.rs`:
+
+```rust
+// Step 1: Iterate match-apply-rebuild until fixpoint or resource limit.
+pub fn saturate(&mut self, rules: &[ERewriteRule]) -> SaturationResult {
+    let mut iterations = 0;
+    loop {
+        iterations += 1;
+        let mut changed = false;
+
+        // Step 2: Match — search for LHS pattern instances.
+        let mut all_matches = Vec::new();
+        for rule in rules {
+            let matches = self.search_pattern(&rule.lhs);
+            all_matches.push((rule, matches));
+        }
+
+        // Step 3: Apply — instantiate RHS, merge equivalence classes.
+        for (rule, matches) in &all_matches {
+            for (class_id, subst) in matches {
+                let rhs_id = rule.rhs.instantiate(self, subst);
+                if self.find(*class_id) != self.find(rhs_id) {
+                    self.merge(*class_id, rhs_id);
+                    changed = true;
+                }
+            }
+        }
+
+        // Step 4: Rebuild — restore congruence closure after merges.
+        self.rebuild();
+
+        if !changed || self.node_count() > self.config.max_nodes {
+            return SaturationResult { iterations, saturated: !changed };
+        }
+    }
+}
+```
+
+**Cost-based extraction.** After saturation, `extract_best(class_id)` finds
+the smallest (by AST size) equivalent term in the class, using a bottom-up
+dynamic programming pass over the e-graph.
+
+**Pipeline role:** Pipeline integration via `EGraphAnalysis`, lints EG01–EG04,
 cost-benefit gate `EGraphSaturation`. In the guard infrastructure, e-graphs
 simplify guard predicates via equality saturation — discovering algebraic
-identities (e.g., `x > 0, x > 0` → `x > 0`) before SFA compilation,
-producing smaller automata and faster runtime checks.
-See `prattail/docs/design/egraph-equality-saturation.md` for details.
+identities before SFA compilation, producing smaller automata and faster
+runtime checks.
 
 ### WPDS Extension Family (EWPDS, ARA, Relational)
 
-- `ewpds.rs` (feature `wpds-extended`): Extends WPDS with merging functions at
-  call/return boundaries for local variable analysis. Pipeline: `EwpdsAnalysis`.
-- `ara.rs` (feature `wpds-ara`, dep: `wpds-relational`): Affine-Relation
-  Analysis — vector space weight domain discovering interprocedural affine
-  invariants. Pipeline: `AraAnalysis`.
-- `relational.rs` (feature `wpds-relational`): `HeapSemiring` trait +
-  `RelationalWeight<G>` binary relation semiring. Weight domain foundation for
-  ARA.
-- Reference: Reps, Lal & Kidd, CAV 2007.
+**Motivation.** A **Weighted Pushdown System** (WPDS) models recursive grammar
+structures: each rule expansion is a stack push, each completion is a pop.
+The **poststar** and **prestar** algorithms compute forward and backward
+reachability over all possible stack configurations, weighted by a semiring.
+This enables interprocedural analysis of guard evaluation chains — determining
+which guard sequences are reachable and at what cost. Source:
+`prattail/src/wpds.rs` (~3,150 lines). Extensions: `ewpds.rs`, `ara.rs`,
+`relational.rs`.
+
+**Intuition.** Think of a WPDS as a program call stack where each function call
+pushes a frame and each return pops one. The semiring weight on each
+push/pop/replace rule captures the "cost" of that transition. Poststar asks:
+"Starting from this initial stack, what stacks can I reach, and at what total
+cost?" Prestar asks the reverse: "What initial stacks can reach this target?"
+
+**Formal Definition.** A WPDS is a triple (P, Γ, Δ, W) where:
+
+- P = {p} is a singleton control location (grammar has one "program point")
+- Γ is the **stack alphabet** — one `StackSymbol` per grammar position
+  (category entry, rule position). Each symbol carries `{ category, rule_label, position }`.
+- Δ is a finite set of **rules**, each of three kinds:
+  - **Pop:** ⟨p, γ⟩ ↪ ⟨p, ε⟩ with weight w (rule completes, stack shrinks)
+  - **Replace:** ⟨p, γ⟩ ↪ ⟨p, γ′⟩ with weight w (advance within a rule)
+  - **Push:** ⟨p, γ⟩ ↪ ⟨p, γ′ γ″⟩ with weight w (enter sub-category)
+- W is a semiring over which weights are computed
+
+A **P-automaton** represents sets of stack configurations. States correspond to
+stack symbols; transitions read stack symbols bottom-to-top.
+
+**Key types** (from `prattail/src/wpds.rs`):
+
+| Type                      | Role                                                  |
+|---------------------------|-------------------------------------------------------|
+| `StackSymbol`             | `{ category, rule_label, position }` — stack alphabet |
+| `WpdsRule<W>`             | `Pop \| Replace \| Push` with semiring weight         |
+| `Wpds<W>`                 | Rule set + symbol index + initial symbol              |
+| `PAutomaton<W>`           | Weighted P-automaton for configuration sets           |
+| `PAutomatonTransition<W>` | `(from, symbol, to, weight)` — one automaton edge     |
+
+**Pseudocode — Poststar:**
+
+```
+Algorithm POSTSTAR(wpds: WPDS, init: PAutomaton) → PAutomaton
+──────────────────────────────────────────────────────────────
+  Input:  WPDS rules, initial configuration automaton
+  Output: Saturated P-automaton accepting all reachable configurations
+
+  1. result ← copy(init)
+  2. worklist ← all transitions in result
+  3. While worklist is not empty:
+       Pop transition t = (p →[γ] q, w)
+       For each rule r matching source symbol γ:
+         Match r:
+           Pop(γ, w_r):
+             ── Stack shrinks: merge q into accepting ──
+             update_weight(result, p, accepting, w ⊗ w_r)
+           Replace(γ, γ′, w_r):
+             ── Stack unchanged: relabel ──
+             add_or_update(result, p →[γ′] q, w ⊗ w_r)
+           Push(γ, γ_bot, γ_top, w_r):
+             ── Stack grows: new intermediate state ──
+             q_mid ← get_or_create_state(γ_bot)
+             add_or_update(result, p →[γ_top] q_mid, w ⊗ w_r)
+             ── Propagate existing transitions from q_mid ──
+             For each (q_mid →[γ″] q″, w″) in result:
+               push (p →[γ_top] q″, w ⊗ w_r ⊗ w″) to worklist
+  4. Return result
+```
+
+**Data flow diagram:**
+
+```
+┌──────────────┐         ┌──────────────┐         ┌──────────────┐
+│  Grammar     │ build   │    WPDS      │ poststar│ P-Automaton  │
+│  Categories  │────────►│  (rules +    │────────►│ (reachable   │
+│  & Rules     │         │   symbols)   │         │  configs)    │
+└──────────────┘         └──────┬───────┘         └──────┬───────┘
+                                │ prestar                │
+                                ▼                        │ extract
+                         ┌──────────────┐         ┌──────▼───────┐
+                         │ P-Automaton  │         │ Call Graph   │
+                         │ (backward    │         │ + SCC + Depth│
+                         │  reachable)  │         │  Bounds      │
+                         └──────────────┘         └──────────────┘
+```
+
+**Extension modules:**
+
+- **EWPDS** (`ewpds.rs`, feature `wpds-extended`): Extends WPDS with **merging
+  functions** at call/return boundaries for local variable analysis. At a return
+  point, the merge function combines the callee's summary with the caller's
+  local state. Pipeline: `EwpdsAnalysis`.
+- **ARA** (`ara.rs`, feature `wpds-ara`, dep: `wpds-relational`): **Affine-Relation
+  Analysis** — vector space weight domain discovering interprocedural affine
+  invariants (e.g., "variable y = 2x + 1 at this point"). Pipeline: `AraAnalysis`.
+- **Relational** (`relational.rs`, feature `wpds-relational`): `HeapSemiring`
+  trait + `RelationalWeight<G>` binary relation semiring. Weight domain
+  foundation for ARA — models sets of (input, output) state pairs.
+
+> Reference: Reps, Lal & Kidd, CAV 2007.
+
+**Pipeline role:** Always-on (core WPDS). Stack-aware reachability for guard
+evaluation chains. Extensions are feature-gated. 43 WPDS tests.
 
 ### Weighted Tree Automata (WTA)
 
-`tree_automaton.rs` (feature `tree-automata`): Bottom-up term recognition,
-top-down hot-path analysis, `WtaAnalysis` pipeline result. Used by
-`SetTheoreticTypeSystem` for subtype checking as language inclusion.
-Reference: Comon et al., TATA (2007).
+**Motivation.** Parse trees are terms over a ranked alphabet — each grammar rule
+produces a node whose children are the sub-parses. WTAs evaluate terms
+bottom-up, assigning a semiring weight to each subtree. This enables term
+recognition (does this tree conform to the grammar?), ranking (which parse is
+cheapest?), and set-theoretic subtype checking (is the tree language of type A
+included in the tree language of type B?). Source: `prattail/src/tree_automaton.rs`
+(feature `tree-automata`).
+
+**Intuition.** Think of a WTA as a team of inspectors at each node of a tree.
+Each inspector checks the node's symbol and the states assigned to its children,
+then assigns a weighted state to the current node. The tree is accepted if the
+root receives a final state. Bottom-up evaluation ensures that every subtree is
+validated before its parent.
+
+**Formal Definition.** A **Weighted Tree Automaton** (WTA) over semiring W and
+ranked alphabet Σ is a tuple M = (Q, Σ, δ, F) where:
+
+- Q is a finite set of states
+- Σ is a ranked alphabet: each symbol f ∈ Σ has a fixed arity rank(f) ∈ ℕ
+- δ is the transition relation. For each symbol f with rank(f) = n:
+  δ_f ⊆ Qⁿ × Q × W — a transition (q₁, …, qₙ, q, w) means: if child 1 is
+  in state q₁, …, child n in state qₙ, then the f-node can be assigned state q
+  with weight w.
+- F ⊆ Q is the set of final (accepting) states
+
+The weight of a run ρ on term t is the ⊗-product of all transition weights used:
+
+  w(ρ) = ⊗{ w(v) | v is a node in t }
+
+The automaton's semantics:
+
+  ⟦M⟧(t) = ⊕{ w(ρ) | ρ is an accepting run on t }
+
+**Key types** (from `prattail/src/tree_automaton.rs`):
+
+| Type                | Role                                                 |
+|---------------------|------------------------------------------------------|
+| `TreeState`         | `{ id, label, is_final }` — automaton state          |
+| `TreeTransition<W>` | `{ symbol, child_states, target_state, weight }`     |
+| `TreeAutomaton<W>`  | States + transitions + ranked alphabet               |
+| `Term`              | Concrete term tree `{ symbol, children: Vec<Term> }` |
+
+**Pseudocode — Bottom-Up Evaluation:**
+
+```
+Algorithm BOTTOM_UP_EVALUATE(M: WTA, t: Term) → HashMap<StateId, W>
+────────────────────────────────────────────────────────────────────
+  Input:  WTA M, term t
+  Output: Map from states to weights at the root
+
+  1. If t is a leaf (arity 0):
+       For each transition ([], q, w) ∈ δ_{t.symbol}:
+         result[q] ⊕= w
+       Return result
+  2. For each child cᵢ of t:
+       child_states[i] ← BOTTOM_UP_EVALUATE(M, cᵢ)       // Recurse
+  3. For each transition (q₁…qₙ, q, w) ∈ δ_{t.symbol}:
+       If all qᵢ ∈ child_states[i]:
+         combined ← w ⊗ child_states[0][q₁] ⊗ ⋯ ⊗ child_states[n−1][qₙ]
+         result[q] ⊕= combined
+  4. Return result
+```
+
+**Term tree diagram:**
+
+```
+  Term: f(g(a, b), h(c))       WTA evaluation (bottom-up):
+
+        f                            f: q_f (w₃)
+       ╱ ╲                          ╱ ╲
+      g    h                       g    h
+     ╱ ╲    ╲            →        ╱ ╲    ╲
+    a    b   c                   a    b   c
+                                q_a  q_b  q_c
+                                (w₀) (w₀) (w₀)
+
+  Weight at root: w₃ ⊗ (w₁ ⊗ w₀ ⊗ w₀) ⊗ (w₂ ⊗ w₀)
+  Accept if q_f ∈ F
+```
+
+**Pipeline role:** Feature gate `tree-automata`. `WtaAnalysis` pipeline result.
+Used by `SetTheoreticTypeSystem` for subtype checking as language inclusion:
+type A ≤ type B iff L(WTA_A) ⊆ L(WTA_B). Hot-path analysis identifies
+frequently-used subtree patterns for specialization.
+
+> Reference: Comon et al., TATA (2007) [§25, ref #8].
 
 ### Linear Temporal Logic (LTL)
 
-`ltl.rs` (feature `ltl`, dep: `omega`): Full temporal operators (G, F, X, U, R,
-W). Compiles to Büchi automata via `ltl_to_buchi()`. Pipeline:
-`check_from_bundle()` → `Vec<LtlCheckResult>`. Verifies temporal invariants over
-WPDS call graphs. Reference: Vardi & Wolper (1986).
+**Motivation.** Some grammar properties are inherently temporal: "every function
+call is eventually matched by a return" (liveness), "no two consecutive shifts
+without a reduce" (safety), "a lock is always released before re-acquisition"
+(mutual exclusion). LTL provides a declarative syntax for such properties.
+Source: `prattail/src/ltl.rs` (feature `ltl`, dep: `omega`).
+
+**Intuition.** LTL extends propositional logic with time. "p holds now" becomes
+"p holds *eventually*" (◇p), "p holds *always*" (□p), "p holds *next* step"
+(Xp), or "p holds *until* q becomes true" (p U q). These temporal operators
+compose: □◇p means "p holds infinitely often."
+
+**Formal Definition.** LTL formulae over atomic propositions AP:
+
+```
+  φ ::= p           (atom, p ∈ AP)
+      | ¬φ          (negation)
+      | φ ∧ ψ       (conjunction)
+      | φ ∨ ψ       (disjunction)
+      | Xφ          (**neXt**: φ holds in the next state)
+      | ◇φ          (**eventually**/Finally: φ holds at some future state)
+      | □φ          (**always**/Globally: φ holds at all future states)
+      | φ U ψ       (**until**: φ holds until ψ becomes true)
+      | φ R ψ       (**release**: dual of until — ψ holds until φ ∧ ψ, or forever)
+      | φ W ψ       (**weak until**: like U but φ may hold forever without ψ)
+```
+
+Derived: ◇φ ≡ true U φ, □φ ≡ ¬◇¬φ, φ W ψ ≡ (φ U ψ) ∨ □φ.
+
+**LTL semantics** over an infinite word σ = s₀ s₁ s₂ … ∈ (2^AP)^ω:
+
+- σ, i ⊨ p      iff p ∈ sᵢ
+- σ, i ⊨ Xφ     iff σ, i+1 ⊨ φ
+- σ, i ⊨ □φ     iff ∀j ≥ i. σ, j ⊨ φ
+- σ, i ⊨ ◇φ     iff ∃j ≥ i. σ, j ⊨ φ
+- σ, i ⊨ φ U ψ  iff ∃j ≥ i. σ, j ⊨ ψ ∧ ∀k ∈ [i,j). σ, k ⊨ φ
+
+**Key types** (from `prattail/src/ltl.rs`):
+
+| Type             | Role                                                                                                                |
+|------------------|---------------------------------------------------------------------------------------------------------------------|
+| `LtlFormula`     | Recursive enum: `True \| Atom \| Not \| And \| Or \| Next \| Eventually \| Always \| Until \| Release \| WeakUntil` |
+| `LtlProperty`    | Named formula with safety/liveness classification                                                                   |
+| `LtlCheckResult` | `Satisfied \| Violated { prefix, lasso } \| Inconclusive`                                                           |
+
+**Büchi translation.** `ltl_to_buchi(φ)` converts an LTL formula to a
+**Büchi automaton** — an automaton over infinite words that accepts by visiting
+an accepting state infinitely often. The translation uses the tableau
+construction of Vardi & Wolper (1986).
+
+**Pseudocode — LTL Model Checking via WPDS:**
+
+```
+Algorithm CHECK_LTL(wpds: WPDS, property: LtlFormula) → LtlCheckResult
+──────────────────────────────────────────────────────────────────────────
+  Input:  WPDS (grammar call graph), LTL property φ
+  Output: Satisfied, or counterexample (prefix + lasso)
+
+  1. büchi ← ltl_to_buchi(¬φ)        // Negate: find violations
+  2. product ← wpds × büchi           // Synchronous product
+  3. post ← poststar(product)          // Forward reachability
+  4. If ∃ accepting cycle in post:
+       Extract prefix (path to cycle) + lasso (cycle itself)
+       Return Violated { prefix, lasso }
+  5. Return Satisfied
+```
+
+**Verification flow diagram:**
+
+```
+┌──────────┐  ¬φ  ┌──────────┐  ×   ┌──────────────┐  poststar ┌──────────┐
+│ LTL φ    │─────►│ Büchi    │─────►│ WPDS × Büchi │──────────►│ Reachable│
+│ property │      │ automaton│      │ (product)    │           │ configs  │
+└──────────┘      └──────────┘      └──────────────┘           └────┬─────┘
+                                                                    │
+                                                          accepting cycle?
+                                                          ╱             ╲
+                                                        Yes              No
+                                                         │               │
+                                                  ┌──────▼──────┐  ┌─────▼─────┐
+                                                  │ Violated    │  │ Satisfied │
+                                                  │ (prefix +   │  │           │
+                                                  │  lasso)     │  └───────────┘
+                                                  └─────────────┘
+```
+
+**Pipeline role:** Feature gate `ltl` (dep: `omega`). Full temporal operators
+(□, ◇, X, U, R, W). Pipeline: `check_from_bundle()` → `Vec<LtlCheckResult>`.
+Verifies temporal safety and liveness invariants over WPDS call graphs.
+
+> Reference: Vardi & Wolper, "An Automata-Theoretic Approach to Automatic
+> Program Verification," 1986.
 
 ---
 
@@ -6520,27 +9411,27 @@ shows the mapping from logical operators to compilation strategies. The left
 column lists the surface syntax operators from §2; the right column shows the
 automaton operation that implements each:
 
-| Operator                         | Compilation                                       |
-|----------------------------------|---------------------------------------------------|
-| Conjunction (`,` / `and()`)      | SFA intersection → minimize                       |
-| Disjunction (`or()`)             | SFA union → minimize                              |
-| Negation (`not()`)               | SFA complement                                    |
-| Universal (`forall()`)           | AWA Q⊗  branching: all successors must accept     |
-| Existential (`exists()`)         | AWA Q⊕  branching: at least one accepts           |
-| Implication (`entails()`)        | Desugar to `not(a), b`, then SFA ops              |
-| Recursive (`letprop`)            | Mu-calculus → PATA → Zielonka solver              |
-| Data equality (`eq(x, y)`)       | Register automaton TestEq                         |
-| Freshness (`fresh(x)`)           | Register automaton TestFresh                      |
-| Cardinality (`count_ge(ch, k)`)  | Multiset automaton constraint check               |
-| Multi-channel                    | Multi-tape product + two-way backward propagation |
-| Infinite behavior                | Buchi acceptance condition                        |
-| Rewrite closure (`rewrites_to`)  | Reflexive-transitive closure via SFA compilation  |
-| AC-matching (`ac_match`)         | Multiset partition enumeration via LogicT         |
+| Operator                        | Compilation                                       |
+|---------------------------------|---------------------------------------------------|
+| Conjunction (`,` / `and()`)     | SFA intersection → minimize                       |
+| Disjunction (`or()`)            | SFA union → minimize                              |
+| Negation (`not()`)              | SFA complement                                    |
+| Universal (`forall()`)          | AWA Q⊗ branching: all successors must accept      |
+| Existential (`exists()`)        | AWA Q⊕ branching: at least one accepts            |
+| Implication (`entails()`)       | Desugar to `not(a), b`, then SFA ops              |
+| Recursive (`letprop`)           | Mu-calculus → PATA → Zielonka solver              |
+| Data equality (`eq(x, y)`)      | Register automaton TestEq                         |
+| Freshness (`fresh(x)`)          | Register automaton TestFresh                      |
+| Cardinality (`count_ge(ch, k)`) | Multiset automaton constraint check               |
+| Multi-channel                   | Multi-tape product + two-way backward propagation |
+| Infinite behavior               | Buchi acceptance condition                        |
+| Rewrite closure (`rewrites_to`) | Reflexive-transitive closure via SFA compilation  |
+| AC-matching (`ac_match`)        | Multiset partition enumeration via LogicT         |
 
 The propositional connectives (∧, ∨, ¬) use SFA product and complement — these
 are closed operations on regular languages. The quantifiers (∀, ∃) require the
 richer AWA (alternating weighted automaton) model, where universal quantifiers
-produce tensor (⊗ ) states and existential quantifiers produce direct-sum (⊕ )
+produce tensor (⊗) states and existential quantifiers produce direct-sum (⊕)
 states. Recursive predicates step up to the mu-calculus and parity tree
 automata, which can express fixpoint properties that alternating automata
 cannot.
@@ -6551,22 +9442,22 @@ The following equations define the formal semantics of the compilation mapping
 from logical formulas to automaton constructs. The notation `⟦·⟧` denotes the
 *interpretation function* — the denotational semantics that maps each formula
 to its automaton representation. The universal quantifier maps to the
-tensor-product state `Q⊗ `, which requires *all* successor computations to
+tensor-product state `Q⊗`, which requires *all* successor computations to
 accept (the semiring tensor product takes the weight product of all branches).
-The existential quantifier maps to the direct-sum state `Q⊕ `, which requires
+The existential quantifier maps to the direct-sum state `Q⊕`, which requires
 *at least one* successor to accept (the semiring sum takes the weight sum).
 Implication desugars to its classical equivalent via `⟦¬φ ∨ ψ⟧`. Recursive
 predicates compile to the greatest fixpoint `νX` in the mu-calculus, with the
 box modality `□` quantifying over the reduction relation:
 
 ```
-Universal:   ⟦∀y. φ(y)⟧ = Q⊗     all successors accept; weight = ⊗
-Existential: ⟦∃y. φ(y)⟧ = Q⊕     at least one accepts; weight = ⊕
+Universal:   ⟦∀y. φ(y)⟧ = Q⊗    all successors accept; weight = ⊗
+Existential: ⟦∃y. φ(y)⟧ = Q⊕    at least one accepts; weight = ⊕
 Implication: ⟦φ ⇒ ψ⟧   = ⟦¬φ ∨ ψ⟧
 Recursive:   ⟦letprop P x = ∀x'. ¬(x →* x')⟧ = νX. □_{→*}(¬X)
 ```
 
-The tensor/sum duality (⊗  vs ⊕ ) mirrors the standard AND/OR duality in
+The tensor/sum duality (⊗ vs ⊕) mirrors the standard AND/OR duality in
 alternating automata theory (Chandra, Kozen & Stockmeyer, 1981). The choice
 of greatest fixpoint (νX) for the recursive example reflects that `halt` is
 a safety property — it must hold at every step of the computation, which is
@@ -6607,7 +9498,7 @@ User Predicate: ∀y. (reachable(x, y) ⟹ safe(y))
                  │
     ┌────────────▼────────────┐
     │ M3 (AWA): quantifiers   │
-    │ ∀ → Q⊗  branching       │
+    │ ∀ → Q⊗ branching        │
     │ ⟹ desugars to ¬a ∨ b    │
     │ polynomial transitions  │
     └────────────┬────────────┘
@@ -6652,7 +9543,7 @@ glossaries.
 | WPDS             |        Guard reachability        |                      |    Dead rule elimination     | Stack-aware guard evaluation                |
 | M1 Symbolic      |         SFA compilation          |                      |     Guard disambiguation     | Propositional predicates, range constraints |
 | M2 Buchi         |   Infinite-behavior acceptance   |                      |                              | Liveness (omega-regular quantifiers)        |
-| M3 AWA           |    ∀/∃ quantifier evaluation     |                      |                              | First-order quantifiers (⊗ /⊕  states)      |
+| M3 AWA           |    ∀/∃ quantifier evaluation     |                      |                              | First-order quantifiers (⊗/⊕ states)        |
 | M4 VPA           |    Scope nesting verification    |                      |                              | Well-formed quantifier nesting              |
 | M5 PATA          | Recursive predicate compilation  |                      |                              | Mu-calculus fixpoints (letprop)             |
 | M6 Register      | Data equality/freshness analysis |                      |   Dead binder elimination    | Equality (x == y), freshness (fresh(x))     |
@@ -6764,7 +9655,7 @@ guard predicate class that the automaton handles:
 | Stack-aware guard evaluation                | Stack-aware reachability analysis for guard evaluation chains via WPDS                   |
 | Propositional predicates, range constraints | Boolean combinations of range predicates (x ∈ [a,b]) over finite or infinite domains     |
 | Liveness (omega-regular quantifiers)        | Omega-regular properties over infinite streams: "always eventually" / "infinitely often" |
-| First-order quantifiers (⊗ /⊕  states)      | ∀/∃ quantification over values (first-order), compiled to alternating automaton states   |
+| First-order quantifiers (⊗/⊕ states)        | ∀/∃ quantification over values (first-order), compiled to alternating automaton states   |
 | Well-formed quantifier nesting              | Balanced scope/quantifier nesting checked via pushdown stack discipline                  |
 | Mu-calculus fixpoints (letprop)             | Recursive predicate definitions via fixpoint operators (νX, μX) in the modal mu-calculus |
 | Equality (x == y), freshness (fresh(x))     | Data-aware predicates comparing register contents: x == y, fresh(x)                      |
@@ -6959,7 +9850,7 @@ independent checks — `S <: T` via the base type system and `∀x. P(x) ⟹ Q(x
 via the constraint theory (see Refinement Types below).
 
 **Typed predicates and the refinement type bridge.** When a language declares
-typed predicates in `guards { predicates {} }` (§2A), the pipeline can
+typed predicates in `guards {}` (§2A), the pipeline can
 identify cases where a guard predicate structurally matches the refinement
 predicate of the channel's type — e.g., `gt(val, 0)` on a channel typed
 `{ x: Int | x > 0 }`. In such cases, `RefinementTypeSystem::predicate_entails()`
@@ -7091,7 +9982,7 @@ otherwise), and `NonEmpty` uses a cardinality predicate (`count(b) >= 1`)
 handled by the multiset module M9.
 
 Refinement predicates support:
-- **Linear arithmetic**: `a₁*x₁ + a₂*x₂ + ... ⊕  c` (Presburger)
+- **Linear arithmetic**: `a₁*x₁ + a₂*x₂ + ... ⊕ c` (Presburger)
 - **Relation queries**: `R(args)` (behavioral)
 - **Quantified formulas**: `forall()`/`exists()` with optional domain and bound
 - **Logical connectives**: `not()`, `and()`, `or()`, `entails()`
@@ -7356,15 +10247,19 @@ configuration:
 1. **`connectives {}`** — maps logical connective roles (and, or, not,
    forall, exists, entails, implied_by, iff) to language-specific keyword
    spellings; restricts the available connective set per language
-2. **`predicates {}`** — declares built-in predicates with syntax templates
-   (fixity, n-ary, type overloads) using the same `terms {}` pattern syntax;
-   establishes the resolution order for guard predicate names
+2. **predicates (direct items)** — declares built-in predicates with syntax
+   templates (fixity, n-ary, type overloads) using the same `terms {}` pattern
+   syntax; establishes the resolution order for guard predicate names
 3. **`theories {}`** — registers `ConstraintTheory` implementations with
    `for [...]` type category clauses; enables type-driven
    `PredicateSignature` module activation, theory-guided domain pruning in
    LogicT (§14A), TriState refinement, and refinement type bridge
    optimization
-4. **Token references** — syntax templates accept token names from
+4. **`channels {}`** — declares which categories are communication
+   channels and which term constructors are join patterns; enables
+   deterministic M8 (multi-tape) and M11 (two-way transducer) activation
+   for multi-channel guard dispatch, replacing heuristic inference
+5. **Token references** — syntax templates accept token names from
    `tokens {}` (e.g., `Gt` instead of `">"`) to inherit priority, modal
    lexing, and stream routing properties; `TOK01` lint warns on unmatched
    string literals
@@ -7392,7 +10287,7 @@ configuration:
 ### Rocq Formal Verification
 
 - Guard compilation soundness: SFA accepts iff formula satisfied
-- Quantifier correspondence: AWA Q⊗  ↔ ∀, Q⊕  ↔ ∃
+- Quantifier correspondence: AWA Q⊗ ↔ ∀, Q⊕ ↔ ∃
 - Pattern matching correctness: `match_pattern` is injective
 - Stratification validation: negated-relation well-ordering implies no
   circular dependency
@@ -7577,13 +10472,19 @@ added:
 **Guard configuration (§2A, §14A):**
 - **§2A Language-Generic Guard Configuration:** `guards {}` block syntax,
   connective mappings, predicate syntax templates, theory registrations,
-  token references, composition semantics, AST representation
+  channel declarations, token references, composition semantics, AST
+  representation
 - **§14A LogicT Theory Integration:** Theory-guided evaluation pipeline,
   TriState refinement, refinement type bridge, worked examples
 - **Guard config AST types:** `macros/src/ast/language.rs` (`GuardConfig`,
-  `ConnectiveDecl`, `BuiltinPredicate`, `TheoryRegistration`)
+  `ConnectiveDecl`, `BuiltinPredicate`, `PredicateAnnotations`,
+  `TheoryRegistration`, `ChannelConfig`, `ChannelDecl`, `JoinPatternDecl`,
+  `ChannelParam`); `prattail` spec types: `GuardConfigSpec`,
+  `TheoryRegistrationSpec`, `ConnectiveMap`
 - **Guard config parser:** `macros/src/ast/language.rs` (`parse_guards()`)
 - **Guard config merge:** `macros/src/ast/merge.rs` (`merge_guard_config()`)
+- **Channel dispatch:** `channels {}` sub-block for deterministic M8/M11
+  activation; see §2A "Channel Declarations for Multi-Channel Guard Dispatch"
 
 **Core infrastructure:**
 - **Analysis pipeline overview:** `prattail/docs/design/analysis-pipeline-overview.md`
