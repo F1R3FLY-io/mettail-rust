@@ -145,3 +145,7 @@ With backend choice fixed to `num-bigint`, Signed BigInt implementation should f
 - strict category mapping for bigint literals (no unintended cross-casting),
 - clear behavior for unsuffixed literals (language-controlled default),
 - tests for tokenization/parsing/evaluation of large signed literals.
+
+## See also
+
+- [Signed BigRat design](./signed-bigrat-design.md) — options for replacing the `…r` / `BigRatStub` rational placeholder with real arbitrary-precision rationals.
