@@ -292,7 +292,12 @@ pub fn extract_terminals(
             Some("str") | Some("String") => {
                 needs.string_lit = true;
             },
-            _ => {},
+            Some(other) => {
+                if other.ends_with("BigInt") || other.ends_with("BigRat") {
+                    needs.integer = true;
+                }
+            }
+            None => {}
         }
     }
 

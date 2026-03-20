@@ -414,6 +414,37 @@ mod tests {
             "inference should not override explicit Int eval, got: {int_eval}"
         );
     }
+
+    #[test]
+    fn infers_single_bigint_default_suffix_without_literals() {
+        let src = r#"
+            name: OneBigInt,
+            types { ![num_bigint::BigInt] as Int },
+            terms { NumLit . Int ::= "0" ; }
+        "#;
+        let language = syn::parse_str::<LanguageDef>(src).expect("language should parse");
+        let (_patterns, eval) = build_literal_config(&language);
+        let int_eval = eval.get("Int").expect("bridge should infer Int eval");
+        assert!(
+            int_eval.contains("Suffix::BigInt"),
+            "expected inferred BigInt default suffix, got: {int_eval}"
+        );
+    }
+
+    #[test]
+    fn does_not_infer_single_default_for_bigint_and_i32() {
+        let src = r#"
+            name: MixedInts,
+            types { ![num_bigint::BigInt] as BigInt ![i32] as Int },
+            terms { NumLit . Int ::= "0" ; }
+        "#;
+        let language = syn::parse_str::<LanguageDef>(src).expect("language should parse");
+        let (_patterns, eval) = build_literal_config(&language);
+        assert!(
+            !eval.contains_key("Int"),
+            "should not infer a single Int default for mixed integer natives: {eval:?}"
+        );
+    }
 }
 
 /// Convert a single grammar rule to a PraTTaIL `RuleSpecInput`.

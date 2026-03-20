@@ -137,6 +137,13 @@ impl IntLit {
             _ => None,
         }
     }
+
+    pub fn to_bigint(&self) -> Option<BigInt> {
+        match self {
+            IntLit::BigInt(v) => Some(v.clone()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

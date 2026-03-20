@@ -149,6 +149,24 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// Proc Big Int: ...
+	{
+		type: "proc_proc_big_int",
+		tooltip: "Proc Big Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigInt",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Tern: ... ... ...
 	{
 		type: "int_tern",
@@ -868,6 +886,28 @@ const definitions = [
 		inputsInline: true,
 		output: "UInt32",
 		colour: "e05172",
+	},
+
+	// Add Big Int: ... ...
+	{
+		type: "bigint_add_big_int",
+		tooltip: "Add Big Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigInt",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigInt",
+			},
+		],
+		inputsInline: true,
+		output: "BigInt",
+		colour: "db51e0",
 	},
 
 	// Add Int: ... ...

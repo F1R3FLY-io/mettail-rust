@@ -48,6 +48,28 @@ fn term_context_params_with_eval(
     out
 }
 
+fn native_type_is_copy(type_str: &str) -> bool {
+    matches!(
+        type_str,
+        "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+    )
+}
+
 pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
     let mut impls = Vec::new();
 
@@ -118,10 +140,10 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         let is_collection = lang_type.collection_kind.is_some();
         if !has_literal_rule && !is_collection {
             let type_str = native_type_to_string(native_type);
-            let literal_arm = if type_str == "str" || type_str == "String" {
-                quote! { #category::#literal_label(n) => n.clone(), }
-            } else {
+            let literal_arm = if native_type_is_copy(&type_str) {
                 quote! { #category::#literal_label(n) => *n, }
+            } else {
+                quote! { #category::#literal_label(n) => n.clone(), }
             };
             match_arms.push(literal_arm);
         }
@@ -141,10 +163,10 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
 
         if !has_literal_rule {
             let type_str = native_type_to_string(native_type);
-            let try_literal_arm = if type_str == "str" || type_str == "String" {
-                quote! { #category::#literal_label(n) => Some(n.clone()), }
-            } else {
+            let try_literal_arm = if native_type_is_copy(&type_str) {
                 quote! { #category::#literal_label(n) => Some(*n), }
+            } else {
+                quote! { #category::#literal_label(n) => Some(n.clone()), }
             };
             try_eval_arms.push(try_literal_arm);
         }
@@ -157,7 +179,9 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
 
             // Literal rule: copy or clone depending on nonterminal (StringLiteral => clone)
             if is_literal_rule(rule) {
-                let use_clone = literal_rule_nonterminal(rule).as_deref() == Some("StringLiteral");
+                let type_str = native_type_to_string(native_type);
+                let use_clone = !native_type_is_copy(&type_str)
+                    || literal_rule_nonterminal(rule).as_deref() == Some("StringLiteral");
                 if use_clone {
                     match_arms.push(quote! {
                         #category::#label(n) => n.clone(),

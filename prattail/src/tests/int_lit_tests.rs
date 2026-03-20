@@ -1,4 +1,4 @@
-use crate::{parse_int_lit, IntLit};
+use crate::{parse_int_lit, IntLit, Suffix};
 
 #[test]
 fn parses_default_i64_decimal() {
@@ -73,6 +73,42 @@ fn parses_bigint_n_suffix() {
 }
 
 #[test]
+fn parses_very_large_bigint_values() {
+    let huge_dec = "12345678901234567890123456789012345678901234567890n";
+    match parse_int_lit(huge_dec, None).unwrap() {
+        IntLit::BigInt(v) => assert_eq!(v.to_string(), "12345678901234567890123456789012345678901234567890"),
+        other => panic!("expected BigInt, got {other:?}"),
+    }
+
+    let huge_hex = "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFn";
+    match parse_int_lit(huge_hex, None).unwrap() {
+        IntLit::BigInt(v) => assert_eq!(v.to_string(), "1461501637330902918203684832716283019655932542975"),
+        other => panic!("expected BigInt, got {other:?}"),
+    }
+}
+
+#[test]
+fn bigint_default_suffix_is_respected() {
+    match parse_int_lit("42", Some(Suffix::BigInt)).unwrap() {
+        IntLit::BigInt(v) => assert_eq!(v.to_string(), "42"),
+        other => panic!("expected BigInt, got {other:?}"),
+    }
+
+    // Explicit suffix must win over provided default suffix.
+    match parse_int_lit("42n", Some(Suffix::I32)).unwrap() {
+        IntLit::BigInt(v) => assert_eq!(v.to_string(), "42"),
+        other => panic!("expected BigInt, got {other:?}"),
+    }
+}
+
+#[test]
+fn invalid_bigint_digits_fail() {
+    assert!(parse_int_lit("0b102n", None).is_err());
+    assert!(parse_int_lit("0xGFn", None).is_err());
+    assert!(parse_int_lit("n", None).is_err());
+}
+
+#[test]
 fn parses_bigrat_stub_r_suffix() {
     // Stub should lex as a distinct token (not split into `1` then `r`).
     match parse_int_lit("1r", None).unwrap() {
@@ -90,5 +126,13 @@ fn strict_integer_conversions_do_not_cross_types() {
     let i = parse_int_lit("12i32", None).unwrap();
     assert_eq!(i.to_i32(), Some(12));
     assert_eq!(i.to_u32(), None);
+
+    let b = parse_int_lit("12n", None).unwrap();
+    assert_eq!(b.to_i32(), None);
+    assert_eq!(b.to_u32(), None);
+
+    let r = parse_int_lit("12r", None).unwrap();
+    assert_eq!(r.to_i32(), None);
+    assert_eq!(r.to_u32(), None);
 }
 

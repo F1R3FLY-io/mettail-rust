@@ -34,6 +34,29 @@ fn test_int_add() {
 }
 
 #[test]
+fn test_bigint_literal_and_add() {
+    calc_normal_form("34n", "34");
+    calc_normal_form("34n + 8n", "42");
+}
+
+#[test]
+fn test_bigint_parse_eval_large_value() {
+    mettail_runtime::clear_var_cache();
+    let value = calc::BigInt::parse("123456789012345678901234567890n").expect("parse bigint");
+    assert_eq!(value.eval().to_string(), "123456789012345678901234567890");
+}
+
+#[test]
+fn test_bigint_and_i32_are_distinct() {
+    mettail_runtime::clear_var_cache();
+    let parse_result = calc::Int::parse("1n + 2n");
+    assert!(
+        parse_result.is_err(),
+        "BigInt literals should not parse as Int without explicit cast/coercion"
+    );
+}
+
+#[test]
 fn test_int_sub() {
     calc_normal_form("10 - 4", "6");
     calc_normal_form("5 - -3", "8");

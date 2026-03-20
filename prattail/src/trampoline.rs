@@ -1954,6 +1954,28 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
             )
             .unwrap();
         }
+        _ if native_type.ends_with("CanonicalBigInt") => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_bigint() {{ *pos += 1; break 'prefix {}::NumLit(mettail_runtime::CanonicalBigInt::from(val)); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"BigInt literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
+                cat,
+            )
+            .unwrap();
+        }
+        _ if native_type.ends_with("BigInt") => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_bigint() {{ *pos += 1; break 'prefix {}::NumLit(val); }} \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"BigInt literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }},",
+                cat,
+            )
+            .unwrap();
+        }
         "f32" | "f64" => {
             write!(
                 buf,

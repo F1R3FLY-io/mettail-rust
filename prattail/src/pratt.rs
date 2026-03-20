@@ -598,6 +598,20 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
                 }}",
                 cat,
             )),
+            _ if native_type.ends_with("CanonicalBigInt") => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_bigint() {{ *pos += 1; Ok({}::NumLit(mettail_runtime::CanonicalBigInt::from(val))) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"BigInt literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            _ if native_type.ends_with("BigInt") => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_bigint() {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"BigInt literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
             "f32" | "f64" => {
                 match_arms.push(format!(
                     "Token::Float(v) => {{ let val = (*v).into(); *pos += 1; Ok({}::FloatLit(val)) }}",

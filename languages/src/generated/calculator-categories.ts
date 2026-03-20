@@ -10,6 +10,12 @@ export const categoryInfo = {
 		],
 		colour: "e0d451",
 	},
+	BigInt: {
+		constructors: [
+			"AddBigInt"
+		],
+		colour: "db51e0",
+	},
 	Bool: {
 		constructors: [
 			"EqInt",
@@ -107,6 +113,7 @@ export const categoryInfo = {
 			"ProcBag",
 			"ProcMap",
 			"ProcUInt32",
+			"ProcBigInt",
 			"ElemList",
 			"GetMap"
 		],

@@ -200,3 +200,40 @@ fn test_lexer_stats_rhocalc() {
         stats.num_minimized_states
     );
 }
+
+#[test]
+fn test_generate_lexer_with_bigint_category_literal_eval() {
+    let rules = vec![GrammarRuleInfo {
+        label: "NumLit".to_string(),
+        category: "BigInt".to_string(),
+        terminals: vec![],
+        is_infix: false,
+    }];
+
+    let types = vec![TypeInfo {
+        name: "BigInt".to_string(),
+        language_name: "BigIntLang".to_string(),
+        native_type_name: Some("num_bigint::BigInt".to_string()),
+    }];
+
+    let mut input = extract_terminals(&rules, &types, false, &[]);
+    input.literal_patterns.integer_by_category.insert(
+        "BigInt".to_string(),
+        r"[0-9](_?[0-9])*n".to_string(),
+    );
+    input.literal_eval.insert(
+        "BigInt".to_string(),
+        "{ mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::BigInt)).map_err(|_| ()) }"
+            .to_string(),
+    );
+
+    let (code, _stats) = generate_lexer(&input);
+    let code_str = code.to_string();
+
+    assert!(
+        code_str.contains("Suffix :: BigInt")
+            || code_str.contains("Suffix::BigInt")
+            || code_str.contains("parse_int_lit"),
+        "generated lexer should include BigInt literal eval path"
+    );
+}

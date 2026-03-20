@@ -12,6 +12,7 @@ language! {
         Proc
         ![i32] as Int
         ![u32] as UInt32
+        ![mettail_runtime::CanonicalBigInt] as BigInt
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
@@ -31,6 +32,12 @@ language! {
             pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32)?";
             eval: ![ {
                 mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::I32)).map_err(|_| ())
+            } ]
+        }
+        BigInt {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n";
+            eval: ![ {
+                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
             } ]
         }
         Float {
@@ -79,6 +86,7 @@ language! {
         ProcBag . b:Bag |- b : Proc ;
         ProcMap . m:Map |- m : Proc ;
         ProcUInt32 . u:UInt32 |- u : Proc ;
+        ProcBigInt . n:BigInt |- n : Proc ;
         // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
         // Comparison operations
@@ -120,6 +128,7 @@ language! {
         AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
         //
         AddUInt32 . a:UInt32, b:UInt32 |- a "+" b : UInt32 ![a + b] fold;
+        AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ![a + b] fold;
         // Int operations
         AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
         SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
@@ -401,5 +410,8 @@ language! {
         ProcUInt32Cong . | S ~> T |- (ProcUInt32 S) ~> (ProcUInt32 T);
         AddUInt32CongL . | S ~> T |- (AddUInt32 S R) ~> (AddUInt32 T R);
         AddUInt32CongR . | S ~> T |- (AddUInt32 L S) ~> (AddUInt32 L T);
+        ProcBigIntCong . | S ~> T |- (ProcBigInt S) ~> (ProcBigInt T);
+        AddBigIntCongL . | S ~> T |- (AddBigInt S R) ~> (AddBigInt T R);
+        AddBigIntCongR . | S ~> T |- (AddBigInt L S) ~> (AddBigInt L T);
     },
 }
