@@ -167,6 +167,129 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// Proc Big Rat: ...
+	{
+		type: "proc_proc_big_rat",
+		tooltip: "Proc Big Rat: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Fraction: ... ...
+	{
+		type: "bigrat_fraction",
+		tooltip: "Fraction: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigInt",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigInt",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
+	// Add Big Rat: ... ...
+	{
+		type: "bigrat_add_big_rat",
+		tooltip: "Add Big Rat: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
+	// Mul Big Rat: ... ...
+	{
+		type: "bigrat_mul_big_rat",
+		tooltip: "Mul Big Rat: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
+	// Div Big Rat: ... ...
+	{
+		type: "bigrat_div_big_rat",
+		tooltip: "Div Big Rat: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
+	// Neg Big Rat: ...
+	{
+		type: "bigrat_neg_big_rat",
+		tooltip: "Neg Big Rat: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
 	// Tern: ... ... ...
 	{
 		type: "int_tern",

@@ -419,6 +419,7 @@ fn write_token_pattern(buf: &mut String, token: &str) {
     match token {
         "Ident" => buf.push_str("Token::Ident(_)"),
         "Integer" => buf.push_str("Token::Integer(_)"),
+        "Rational" => buf.push_str("Token::Rational(_)"),
         "Float" => buf.push_str("Token::Float(_)"),
         "Boolean" => buf.push_str("Token::Boolean(_)"),
         "StringLit" => buf.push_str("Token::StringLit(_)"),
@@ -595,6 +596,14 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
                 "Token::Integer(v) => {{ \
                     if let Some(val) = v.to_u64().and_then(|x| usize::try_from(x).ok()) {{ *pos += 1; Ok({}::NumLit(val)) }} \
                     else {{ Err(ParseError::UnexpectedToken {{ expected: \"usize literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            _ if native_type.ends_with("CanonicalBigRat") => match_arms.push(format!(
+                "Token::Rational(r) => {{ \
+                    let val = mettail_runtime::CanonicalBigRat::from(r.ratio().clone()); \
+                    *pos += 1; \
+                    Ok({}::RatLit(val)) \
                 }}",
                 cat,
             )),

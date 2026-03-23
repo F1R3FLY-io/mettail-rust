@@ -13,6 +13,7 @@ language! {
         ![i32] as Int
         ![u32] as UInt32
         ![mettail_runtime::CanonicalBigInt] as BigInt
+        ![mettail_runtime::CanonicalBigRat] as BigRat
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
@@ -38,6 +39,13 @@ language! {
             pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n";
             eval: ![ {
                 mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+            } ]
+        }
+        // BigRat sugar: `<int>r` (whole) or `<int>r/<int>r` (composite); radix/`_` parity with BigInt `n` literals.
+        BigRat {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r(/(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r)?";
+            eval: ![ {
+                mettail_prattail::parse_rational_lit(text).map_err(|_| ())
             } ]
         }
         Float {
@@ -87,6 +95,15 @@ language! {
         ProcMap . m:Map |- m : Proc ;
         ProcUInt32 . u:UInt32 |- u : Proc ;
         ProcBigInt . n:BigInt |- n : Proc ;
+        ProcBigRat . r:BigRat |- r : Proc ;
+        Fraction . a:BigInt, b:BigInt |- "fraction" "(" a "," b ")" : BigRat ![{
+            mettail_runtime::CanonicalBigRat::try_from_nd(a.get().clone(), b.get().clone())
+                .expect("fraction: zero denominator")
+        }] step;
+        AddBigRat . a:BigRat, b:BigRat |- a "+" b : BigRat ![a + b] fold;
+        MulBigRat . a:BigRat, b:BigRat |- a "*" b : BigRat ![a * b] fold;
+        DivBigRat . a:BigRat, b:BigRat |- a "/" b : BigRat ![a / b] fold;
+        NegBigRat . a:BigRat |- "-" a : BigRat ![(-a)] fold;
         // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
         // Comparison operations
@@ -413,5 +430,15 @@ language! {
         ProcBigIntCong . | S ~> T |- (ProcBigInt S) ~> (ProcBigInt T);
         AddBigIntCongL . | S ~> T |- (AddBigInt S R) ~> (AddBigInt T R);
         AddBigIntCongR . | S ~> T |- (AddBigInt L S) ~> (AddBigInt L T);
+        ProcBigRatCong . | S ~> T |- (ProcBigRat S) ~> (ProcBigRat T);
+        FractionCongN . | S ~> T |- (Fraction S R) ~> (Fraction T R);
+        FractionCongD . | S ~> T |- (Fraction L S) ~> (Fraction L T);
+        AddBigRatCongL . | S ~> T |- (AddBigRat S R) ~> (AddBigRat T R);
+        AddBigRatCongR . | S ~> T |- (AddBigRat L S) ~> (AddBigRat L T);
+        MulBigRatCongL . | S ~> T |- (MulBigRat S R) ~> (MulBigRat T R);
+        MulBigRatCongR . | S ~> T |- (MulBigRat L S) ~> (MulBigRat L T);
+        DivBigRatCongL . | S ~> T |- (DivBigRat S R) ~> (DivBigRat T R);
+        DivBigRatCongR . | S ~> T |- (DivBigRat L S) ~> (DivBigRat L T);
+        NegBigRatCong . | S ~> T |- (NegBigRat S) ~> (NegBigRat T);
     },
 }

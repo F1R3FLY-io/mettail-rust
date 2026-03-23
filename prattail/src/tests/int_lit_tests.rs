@@ -109,12 +109,8 @@ fn invalid_bigint_digits_fail() {
 }
 
 #[test]
-fn parses_bigrat_stub_r_suffix() {
-    // Stub should lex as a distinct token (not split into `1` then `r`).
-    match parse_int_lit("1r", None).unwrap() {
-        IntLit::BigRatStub(v) => assert_eq!(v.to_string(), "1"),
-        other => panic!("expected BigRatStub, got {other:?}"),
-    }
+fn r_suffix_is_not_an_integer_literal() {
+    assert!(parse_int_lit("1r", None).is_err());
 }
 
 #[test]
@@ -130,9 +126,5 @@ fn strict_integer_conversions_do_not_cross_types() {
     let b = parse_int_lit("12n", None).unwrap();
     assert_eq!(b.to_i32(), None);
     assert_eq!(b.to_u32(), None);
-
-    let r = parse_int_lit("12r", None).unwrap();
-    assert_eq!(r.to_i32(), None);
-    assert_eq!(r.to_u32(), None);
 }
 

@@ -126,6 +126,11 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind]) {
                     buf.push_str("Integer(mettail_prattail::IntLit),");
                 }
             }
+            TokenKind::RationalLit(_) => {
+                if seen.insert("Rational".to_string()) {
+                    buf.push_str("Rational(mettail_prattail::RationalLit),");
+                }
+            }
             TokenKind::Float => {
                 if seen.insert("Float".to_string()) {
                     buf.push_str("Float(f64),");
@@ -410,6 +415,26 @@ fn write_token_constructor(
                 buf.push_str(
                     "match mettail_prattail::parse_int_lit(text, None) { \
                      Ok(v) => Some(Token::Integer(v)), \
+                     Err(_) => None \
+                     }",
+                );
+            }
+        }
+        TokenKind::RationalLit(cat) => {
+            if let Some(eval) = integer_literal_eval.get(cat) {
+                write!(
+                    buf,
+                    "match {{ let text = text; {} }} {{ \
+                     Ok(v) => Some(Token::Rational(v)), \
+                     Err(_) => None \
+                     }}",
+                    eval
+                )
+                .unwrap();
+            } else {
+                buf.push_str(
+                    "match mettail_prattail::parse_rational_lit(text) { \
+                     Ok(v) => Some(Token::Rational(v)), \
                      Err(_) => None \
                      }",
                 );
@@ -1328,6 +1353,14 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                 }
             },
             TokenKind::IntegerLit(_) => {}
+            TokenKind::RationalLit(_) => {
+                if seen.insert("Rational".to_string()) {
+                    variants.push(quote! {
+                        /// Rational literal (arbitrary-precision)
+                        Rational(mettail_prattail::RationalLit)
+                    });
+                }
+            }
             TokenKind::Float => {
                 if seen.insert("Float".to_string()) {
                     variants.push(quote! {
@@ -1730,6 +1763,9 @@ pub fn token_kind_to_constructor(kind: &TokenKind) -> TokenStream {
         },
         TokenKind::IntegerLit(_) => quote! {
             Token::Integer(mettail_prattail::parse_int_lit(text, None).expect("invalid integer literal"))
+        },
+        TokenKind::RationalLit(_) => quote! {
+            Token::Rational(mettail_prattail::parse_rational_lit(text).expect("invalid rational literal"))
         },
         TokenKind::Float => quote! {
             Token::Float(text.parse::<f64>().expect("invalid float literal"))

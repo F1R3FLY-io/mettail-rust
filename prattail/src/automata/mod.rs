@@ -41,6 +41,8 @@ pub enum TokenKind {
     Integer,
     /// Integer literal for a specific category (e.g. Int, UInt32).
     IntegerLit(String),
+    /// Rational literal for a specific category (e.g. BigRat).
+    RationalLit(String),
     /// Float literal
     Float,
     /// Boolean literal `true`
@@ -67,7 +69,7 @@ impl TokenKind {
         match self {
             TokenKind::Eof => 0,
             TokenKind::Ident => 1,
-            TokenKind::Integer | TokenKind::IntegerLit(_) => 2,
+            TokenKind::Integer | TokenKind::IntegerLit(_) | TokenKind::RationalLit(_) => 2,
             TokenKind::Float => 3,
             TokenKind::True | TokenKind::False | TokenKind::BooleanLit => 10,
             TokenKind::StringLit => 2,

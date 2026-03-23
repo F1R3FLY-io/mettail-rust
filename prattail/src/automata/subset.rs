@@ -207,6 +207,7 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);
@@ -245,6 +246,7 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);

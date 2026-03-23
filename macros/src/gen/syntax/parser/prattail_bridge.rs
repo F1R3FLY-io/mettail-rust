@@ -205,6 +205,7 @@ fn build_literal_config(
     let mut literal_patterns = LiteralPatterns {
         integer: default_patterns.integer.clone(),
         integer_by_category: std::collections::HashMap::new(),
+        rational_by_category: std::collections::HashMap::new(),
         float: default_patterns.float.clone(),
         string: default_patterns.string.clone(),
         ident: default_patterns.ident.clone(),
@@ -230,8 +231,6 @@ fn build_literal_config(
             _ => {
                 if native.ends_with("BigInt") {
                     Some("BigInt")
-                } else if native.ends_with("BigRat") {
-                    Some("BigRatStub")
                 } else {
                     None
                 }
@@ -300,6 +299,8 @@ fn build_literal_config(
                 // External types: support num-bigint BigInt as integer literal class.
                 if native.ends_with("BigInt") {
                     Some("Int")
+                } else if native.ends_with("BigRat") {
+                    Some("Rat")
                 } else {
                     None
                 }
@@ -337,6 +338,12 @@ fn build_literal_config(
             Some("Bool") => {
                 literal_patterns.boolean = Some(spec.pattern.clone());
                 literal_eval.insert("Bool".to_string(), eval_code);
+            }
+            Some("Rat") => {
+                literal_patterns
+                    .rational_by_category
+                    .insert(name.clone(), spec.pattern.clone());
+                literal_eval.insert(name.clone(), eval_code);
             }
             _ => {}
         }
@@ -444,6 +451,30 @@ mod tests {
             !eval.contains_key("Int"),
             "should not infer a single Int default for mixed integer natives: {eval:?}"
         );
+    }
+
+    #[test]
+    fn rational_literal_patterns_use_rational_by_category() {
+        let src = r#"
+            name: RatLang,
+            types { ![mettail_runtime::CanonicalBigRat] as BigRat },
+            literals {
+                BigRat {
+                    pattern: r"[0-9]+r(/[0-9]+r)?";
+                    eval: ![ { mettail_prattail::parse_rational_lit(text).map_err(|_| ()) } ]
+                }
+            },
+            terms { RatLit . BigRat ::= "0" ; }
+        "#;
+        let language = syn::parse_str::<LanguageDef>(src).expect("language should parse");
+        let (patterns, eval) = build_literal_config(&language);
+        assert!(
+            patterns.rational_by_category.contains_key("BigRat"),
+            "expected rational_by_category[\"BigRat\"], got: {:?}",
+            patterns.rational_by_category
+        );
+        let ev = eval.get("BigRat").expect("BigRat eval");
+        assert!(ev.contains("parse_rational_lit"), "eval: {ev}");
     }
 }
 

@@ -14,9 +14,6 @@ pub enum IntLit {
     U64(u64),
     U128(u128),
     BigInt(BigInt),
-    /// Placeholder for future rational literals. Lexes `<digits>r` as a distinct variant
-    /// so inputs like `1r/3r` don't silently tokenize as `1` then `r`.
-    BigRatStub(BigInt),
 }
 
 impl From<i8> for IntLit {
@@ -161,7 +158,6 @@ pub enum Suffix {
     U128,
     Usize,
     BigInt,
-    BigRatStub,
 }
 
 fn split_suffix(s: &str) -> (&str, Option<Suffix>) {
@@ -180,7 +176,6 @@ fn split_suffix(s: &str) -> (&str, Option<Suffix>) {
         ("i8", Suffix::I8),
         ("u8", Suffix::U8),
         ("n", Suffix::BigInt),
-        ("r", Suffix::BigRatStub),
     ] {
         if let Some(body) = s.strip_suffix(suffix) {
             return (body, Some(tag));
@@ -257,9 +252,6 @@ pub fn parse_int_lit(text: &str, default_suffix: Option<Suffix>) -> Result<IntLi
 
         Suffix::BigInt => BigInt::from_str_radix(digits, radix)
             .map(IntLit::BigInt)
-            .map_err(|_| ()),
-        Suffix::BigRatStub => BigInt::from_str_radix(digits, radix)
-            .map(IntLit::BigRatStub)
             .map_err(|_| ()),
     }
 }

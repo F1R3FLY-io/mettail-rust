@@ -21,6 +21,7 @@ proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
 num-bigint = "0.4"
+num-rational = { version = "0.4", features = ["num-bigint-std"] }
 num-traits = "0.2"
 serde = { version = "1", features = ["derive"], optional = true }
 postcard = { version = "1", features = ["alloc"], optional = true }

@@ -431,6 +431,9 @@ fn generate_lexer_code(bundle: &LexerBundle) -> String {
     );
     lexer_input.literal_patterns = bundle.literal_patterns.clone();
     lexer_input.literal_eval = bundle.literal_eval.clone();
+    if !lexer_input.literal_patterns.rational_by_category.is_empty() {
+        lexer_input.needs.rational = true;
+    }
     if bundle.literal_patterns.boolean.is_some() {
         lexer_input.terminals.retain(|t| {
             !matches!(t.kind, crate::automata::TokenKind::True | crate::automata::TokenKind::False)
@@ -466,6 +469,9 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
                     },
                     "str" | "String" => {
                         first_set.insert("StringLit");
+                    },
+                    _ if native_type.ends_with("CanonicalBigRat") => {
+                        first_set.insert("Rational");
                     },
                     _ => {},
                 }
@@ -1294,6 +1300,7 @@ fn generate_wfst_recovery_fn(
         .map(|name| match name {
             "Ident" => "Token::Ident(_)".to_string(),
             "Integer" => "Token::Integer(_)".to_string(),
+            "Rational" => "Token::Rational(_)".to_string(),
             "Float" => "Token::Float(_)".to_string(),
             "Boolean" => "Token::Boolean(_)".to_string(),
             "StringLit" => "Token::StringLit(_)".to_string(),

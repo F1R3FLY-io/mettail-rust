@@ -57,6 +57,42 @@ fn test_bigint_and_i32_are_distinct() {
 }
 
 #[test]
+fn test_bigrat_literal_whole_and_composite() {
+    // Lone `<digits>r` (no `/…r`); composite `<digits>r/<digits>r`
+    calc_normal_form("3r", "3");
+    calc_normal_form("3r/4r", "3/4");
+    calc_normal_form("0xAr", "10");
+    calc_normal_form("1_0r", "10");
+    // 12/2 reduces to 6/1
+    calc_normal_form("0xCr/0x2r", "6");
+    calc_normal_form("0x5r/0x7r", "5/7");
+}
+
+#[test]
+fn test_fraction_constructor_and_arithmetic() {
+    calc_normal_form("fraction(3n, 4n)", "3/4");
+    calc_normal_form("fraction(10n, 3n)", "10/3");
+    calc_normal_form("fraction(3n, 1n) + fraction(1n, 3n)", "10/3");
+    calc_normal_form("fraction(1n, 2n) * fraction(2n, 3n)", "1/3");
+    calc_normal_form("fraction(1n, 2n) / fraction(3n, 4n)", "2/3");
+}
+
+#[test]
+#[should_panic(expected = "fraction: zero denominator")]
+fn test_fraction_zero_denominator_panics_on_eval() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let term = lang.parse_term("fraction(1n, 0n)").expect("parse");
+    let _ = lang.run_ascent(term.as_ref());
+}
+
+#[test]
+fn test_fraction_requires_bigint_args() {
+    mettail_runtime::clear_var_cache();
+    assert!(calc::BigRat::parse("fraction(1, 2)").is_err());
+}
+
+#[test]
 fn test_int_sub() {
     calc_normal_form("10 - 4", "6");
     calc_normal_form("5 - -3", "8");

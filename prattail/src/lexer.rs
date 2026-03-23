@@ -97,6 +97,11 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
     if input.needs.string_lit {
         token_kinds.push(TokenKind::StringLit);
     }
+    if input.needs.rational {
+        for cat in input.literal_patterns.rational_by_category.keys() {
+            token_kinds.push(TokenKind::RationalLit(cat.clone()));
+        }
+    }
     for terminal in &input.terminals {
         token_kinds.push(terminal.kind.clone());
     }
@@ -176,6 +181,11 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     }
     if input.needs.string_lit {
         token_kinds.push(TokenKind::StringLit);
+    }
+    if input.needs.rational {
+        for cat in input.literal_patterns.rational_by_category.keys() {
+            token_kinds.push(TokenKind::RationalLit(cat.clone()));
+        }
     }
     for terminal in &input.terminals {
         token_kinds.push(terminal.kind.clone());
@@ -293,7 +303,10 @@ pub fn extract_terminals(
                 needs.string_lit = true;
             },
             Some(other) => {
-                if other.ends_with("BigInt") || other.ends_with("BigRat") {
+                // BigInt (incl. CanonicalBigInt) needs integer tokenization. BigRat / CanonicalBigRat
+                // uses the separate rational literal path when configured in `literals { ... }`;
+                // constructor-only languages should not pull in the legacy `…r` integer stub.
+                if other.ends_with("BigInt") {
                     needs.integer = true;
                 }
             }

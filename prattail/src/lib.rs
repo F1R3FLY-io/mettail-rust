@@ -221,6 +221,8 @@ pub struct LiteralPatterns {
     /// Key = category name from `types {}` (e.g., `Int`, `UInt32`), value = regex pattern.
     /// When non-empty, lexer generation can build separate integer token paths per category.
     pub integer_by_category: std::collections::HashMap<String, String>,
+    /// Per-category rational literal regex patterns (e.g. `…r/…r`, optional `…r`).
+    pub rational_by_category: std::collections::HashMap<String, String>,
     /// Float literal pattern (e.g., `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?`).
     pub float: String,
     /// String literal pattern (e.g., `"([^"\\]|\\.)*"`).
@@ -232,7 +234,9 @@ pub struct LiteralPatterns {
 }
 
 pub mod int_lit;
+pub mod rational_lit;
 pub use int_lit::{parse_int_lit, IntLit, Suffix};
+pub use rational_lit::{parse_rational_lit, RationalLit};
 
 /// The embedded content of `literal_patterns.ebnf`, compiled into the binary.
 const DEFAULT_LITERAL_PATTERNS_EBNF: &str = include_str!("literal_patterns.ebnf");

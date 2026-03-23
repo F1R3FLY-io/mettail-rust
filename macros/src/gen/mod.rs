@@ -320,6 +320,7 @@ pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
         "f32" | "f64" => quote::format_ident!("FloatLit"),
         "bool" => quote::format_ident!("BoolLit"),
         "str" | "String" => quote::format_ident!("StringLit"),
+        "CanonicalBigRat" => quote::format_ident!("RatLit"),
         _ if type_str.ends_with("BigInt") => quote::format_ident!("NumLit"),
         _ => quote::format_ident!("Lit"), // Generic fallback
     }

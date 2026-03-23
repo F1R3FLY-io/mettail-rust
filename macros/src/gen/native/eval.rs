@@ -67,6 +67,8 @@ fn native_type_is_copy(type_str: &str) -> bool {
             | "f64"
             | "bool"
             | "char"
+            | "CanonicalBigInt"
+            | "CanonicalBigRat"
     )
 }
 

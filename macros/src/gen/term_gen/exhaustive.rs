@@ -200,6 +200,7 @@ fn generate_depth_0_cases(
                     // Check if this is NumLit with a native type
                     let label_str = label.to_string();
                     let is_numlit = label_str == "NumLit";
+                    let is_ratlit = label_str == "RatLit";
                     let has_native = language
                         .types
                         .iter()
@@ -211,6 +212,21 @@ fn generate_depth_0_cases(
                         cases.push(quote! {
                             // Generate some sample native values
                             for val in [0i32, 1i32, 2i32, 42i32] {
+                                terms.push(#cat_name::#label(val));
+                            }
+                        });
+                    } else if has_native && is_ratlit {
+                        cases.push(quote! {
+                            for val in [
+                                mettail_runtime::CanonicalBigRat::try_from_nd(
+                                    ::num_bigint::BigInt::from(0),
+                                    ::num_bigint::BigInt::from(1),
+                                ).unwrap(),
+                                mettail_runtime::CanonicalBigRat::try_from_nd(
+                                    ::num_bigint::BigInt::from(1),
+                                    ::num_bigint::BigInt::from(2),
+                                ).unwrap(),
+                            ] {
                                 terms.push(#cat_name::#label(val));
                             }
                         });

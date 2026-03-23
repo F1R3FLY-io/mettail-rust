@@ -16,6 +16,16 @@ export const categoryInfo = {
 		],
 		colour: "db51e0",
 	},
+	BigRat: {
+		constructors: [
+			"Fraction",
+			"AddBigRat",
+			"MulBigRat",
+			"DivBigRat",
+			"NegBigRat"
+		],
+		colour: "e051c8",
+	},
 	Bool: {
 		constructors: [
 			"EqInt",
@@ -114,6 +124,7 @@ export const categoryInfo = {
 			"ProcMap",
 			"ProcUInt32",
 			"ProcBigInt",
+			"ProcBigRat",
 			"ElemList",
 			"GetMap"
 		],

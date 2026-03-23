@@ -16,6 +16,7 @@ wfst-log = ["mettail-macros/wfst-log"]
 mettail-macros = { path = "../macros" }
 mettail-runtime = { path = "../runtime" }
 mettail-prattail = { path = "../prattail" }
+num-bigint = "0.4"
 moniker = { workspace = true }
 rand = { workspace = true }
 indexmap = { workspace = true }

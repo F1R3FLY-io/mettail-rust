@@ -1954,6 +1954,18 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
             )
             .unwrap();
         }
+        _ if native_type.ends_with("CanonicalBigRat") => {
+            write!(
+                buf,
+                "Token::Rational(r) => {{ \
+                    let val = mettail_runtime::CanonicalBigRat::from(r.ratio().clone()); \
+                    *pos += 1; \
+                    break 'prefix {}::RatLit(val); \
+                }},",
+                cat,
+            )
+            .unwrap();
+        }
         _ if native_type.ends_with("CanonicalBigInt") => {
             write!(
                 buf,
