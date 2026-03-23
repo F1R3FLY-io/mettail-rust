@@ -43,7 +43,7 @@ language! {
         }
         // BigRat sugar: `<int>r` (whole) or `<int>r/<int>r` (composite); radix/`_` parity with BigInt `n` literals.
         BigRat {
-            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r(/(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r)?";
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r";
             eval: ![ {
                 mettail_prattail::parse_rational_lit(text).map_err(|_| ())
             } ]
