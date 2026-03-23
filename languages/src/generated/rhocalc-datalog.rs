@@ -134,19 +134,11 @@ proc(sub.clone()) <--
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
         },
-        Proc::Add(f0, f1) => {
+        Proc::Or(f0, f1) => {
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
         },
-        Proc::Sub(f0, f1) => {
-            buf.push(f0.as_ref().clone());
-            buf.push(f1.as_ref().clone());
-        },
-        Proc::Mul(f0, f1) => {
-            buf.push(f0.as_ref().clone());
-            buf.push(f1.as_ref().clone());
-        },
-        Proc::Div(f0, f1) => {
+        Proc::And(f0, f1) => {
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
         },
@@ -171,6 +163,22 @@ proc(sub.clone()) <--
             buf.push(f1.as_ref().clone());
         },
         Proc::LtEq(f0, f1) => {
+            buf.push(f0.as_ref().clone());
+            buf.push(f1.as_ref().clone());
+        },
+        Proc::Add(f0, f1) => {
+            buf.push(f0.as_ref().clone());
+            buf.push(f1.as_ref().clone());
+        },
+        Proc::Sub(f0, f1) => {
+            buf.push(f0.as_ref().clone());
+            buf.push(f1.as_ref().clone());
+        },
+        Proc::Mul(f0, f1) => {
+            buf.push(f0.as_ref().clone());
+            buf.push(f1.as_ref().clone());
+        },
+        Proc::Div(f0, f1) => {
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
         },
@@ -227,14 +235,6 @@ proc(sub.clone()) <--
         },
         Proc::Not(f0) => {
             buf.push(f0.as_ref().clone());
-        },
-        Proc::And(f0, f1) => {
-            buf.push(f0.as_ref().clone());
-            buf.push(f1.as_ref().clone());
-        },
-        Proc::Or(f0, f1) => {
-            buf.push(f0.as_ref().clone());
-            buf.push(f1.as_ref().clone());
         },
         Proc::Len(f0) => {
             buf.push(f0.as_ref().clone());
@@ -3312,16 +3312,10 @@ eq_proc(s.clone(), t.clone()) <--
         (Proc::FractionProc(sf0, sf1), Proc::FractionProc(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
-        (Proc::Add(sf0, sf1), Proc::Add(tf0, tf1)) => {
+        (Proc::Or(sf0, sf1), Proc::Or(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
-        (Proc::Sub(sf0, sf1), Proc::Sub(tf0, tf1)) => {
-            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
-        },
-        (Proc::Mul(sf0, sf1), Proc::Mul(tf0, tf1)) => {
-            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
-        },
-        (Proc::Div(sf0, sf1), Proc::Div(tf0, tf1)) => {
+        (Proc::And(sf0, sf1), Proc::And(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         (Proc::Eq(sf0, sf1), Proc::Eq(tf0, tf1)) => {
@@ -3340,6 +3334,18 @@ eq_proc(s.clone(), t.clone()) <--
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         (Proc::LtEq(sf0, sf1), Proc::LtEq(tf0, tf1)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
+        },
+        (Proc::Add(sf0, sf1), Proc::Add(tf0, tf1)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
+        },
+        (Proc::Sub(sf0, sf1), Proc::Sub(tf0, tf1)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
+        },
+        (Proc::Mul(sf0, sf1), Proc::Mul(tf0, tf1)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
+        },
+        (Proc::Div(sf0, sf1), Proc::Div(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         (Proc::ConcatList(sf0, sf1), Proc::ConcatList(tf0, tf1)) => {
@@ -3370,12 +3376,6 @@ eq_proc(s.clone(), t.clone()) <--
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         (Proc::HasMap(sf0, sf1), Proc::HasMap(tf0, tf1)) => {
-            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
-        },
-        (Proc::And(sf0, sf1), Proc::And(tf0, tf1)) => {
-            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
-        },
-        (Proc::Or(sf0, sf1), Proc::Or(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         _ => {},
@@ -3503,69 +3503,26 @@ fold_proc(t.clone(), t.clone()) <--
 
 fold_proc(s.clone(), res) <--
     proc(s),
-    if let Proc::Add(left, right) = s,
+    if let Proc::Or(left, right) = s,
     fold_proc(left.as_ref().clone(), lv),
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
     let res = ({ match (& a, & b) {
-        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() + * b.clone())),
-        (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&** a, &** b) { (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x + y))), _ => Proc::Err, },
-        (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&** a, &** b) { (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() + y.get())))), _ => Proc::Err, },
-        (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&** a, &** b) { (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(* x + * y))), _ => Proc::Err, },
-        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() + * b.clone())),
-        (Proc::CastStr(a), Proc::CastStr(b)) => match (&** a, &** b) { (Str::StringLit(x), Str::StringLit(y)) => Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y)))), _ => Proc::Err, },
+        (Proc::CastBool(a), Proc::CastBool(b)) => match (&** a, &** b) { (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(* x || * y))), _ => Proc::Err, },
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
     proc(s),
-    if let Proc::Sub(left, right) = s,
+    if let Proc::And(left, right) = s,
     fold_proc(left.as_ref().clone(), lv),
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
     let res = ({ match (& a, & b) {
-        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() - * b.clone())),
-        (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&** a, &** b) { (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x - y))), _ => Proc::Err, },
-        (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&** a, &** b) { (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() - y.get())))), _ => Proc::Err, },
-        (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&** a, &** b) { (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(* x - * y))), _ => Proc::Err, },
-        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() - * b.clone())),
-        _ => Proc::Err,
-    } }),
-    if (match & res { Proc::Err => false, _ => true });
-
-fold_proc(s.clone(), res) <--
-    proc(s),
-    if let Proc::Mul(left, right) = s,
-    fold_proc(left.as_ref().clone(), lv),
-    fold_proc(right.as_ref().clone(), rv),
-    let a = lv,
-    let b = rv,
-    let res = ({ match (& a, & b) {
-        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() * * b.clone())),
-        (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&** a, &** b) { (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x * y))), _ => Proc::Err, },
-        (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&** a, &** b) { (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() * y.get())))), _ => Proc::Err, },
-        (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&** a, &** b) { (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(* x * * y))), _ => Proc::Err, },
-        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() * * b.clone())),
-        _ => Proc::Err,
-    } }),
-    if (match & res { Proc::Err => false, _ => true });
-
-fold_proc(s.clone(), res) <--
-    proc(s),
-    if let Proc::Div(left, right) = s,
-    fold_proc(left.as_ref().clone(), lv),
-    fold_proc(right.as_ref().clone(), rv),
-    let a = lv,
-    let b = rv,
-    let res = ({ match (& a, & b) {
-        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() / * b.clone())),
-        (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&** a, &** b) { (UInt32::NumLit(x), UInt32::NumLit(y)) => { if * y == 0 { Proc::Err } else { Proc::CastUInt32(Box::new(UInt32::NumLit(x / y))) } } _ => Proc::Err, },
-        (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&** a, &** b) { (BigInt::NumLit(x), BigInt::NumLit(y)) => { if y.get().is_zero() { Proc::Err } else { Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() / y.get())))) } } _ => Proc::Err, },
-        (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&** a, &** b) { (BigRat::RatLit(x), BigRat::RatLit(y)) => { if y.get().is_zero() { Proc::Err } else { Proc::CastBigRat(Box::new(BigRat::RatLit(* x / * y))) } } _ => Proc::Err, },
-        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() / * b.clone())),
+        (Proc::CastBool(a), Proc::CastBool(b)) => match (&** a, &** b) { (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(* x &&* y))), _ => Proc::Err, },
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
@@ -3668,6 +3625,75 @@ fold_proc(s.clone(), res) <--
         (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&** a, &** b) { (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))), _ => Proc::Err, },
         (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&** a, &** b) { (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))), _ => Proc::Err, },
         (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x <= y))), _ => Proc::Err, },
+        _ => Proc::Err,
+    } }),
+    if (match & res { Proc::Err => false, _ => true });
+
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Add(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
+    let a = lv,
+    let b = rv,
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() + * b.clone())),
+        (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&** a, &** b) { (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x + y))), _ => Proc::Err, },
+        (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&** a, &** b) { (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() + y.get())))), _ => Proc::Err, },
+        (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&** a, &** b) { (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(* x + * y))), _ => Proc::Err, },
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() + * b.clone())),
+        (Proc::CastStr(a), Proc::CastStr(b)) => match (&** a, &** b) { (Str::StringLit(x), Str::StringLit(y)) => Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y)))), _ => Proc::Err, },
+        _ => Proc::Err,
+    } }),
+    if (match & res { Proc::Err => false, _ => true });
+
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Sub(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
+    let a = lv,
+    let b = rv,
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() - * b.clone())),
+        (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&** a, &** b) { (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x - y))), _ => Proc::Err, },
+        (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&** a, &** b) { (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() - y.get())))), _ => Proc::Err, },
+        (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&** a, &** b) { (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(* x - * y))), _ => Proc::Err, },
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() - * b.clone())),
+        _ => Proc::Err,
+    } }),
+    if (match & res { Proc::Err => false, _ => true });
+
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Mul(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
+    let a = lv,
+    let b = rv,
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() * * b.clone())),
+        (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&** a, &** b) { (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x * y))), _ => Proc::Err, },
+        (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&** a, &** b) { (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() * y.get())))), _ => Proc::Err, },
+        (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&** a, &** b) { (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(* x * * y))), _ => Proc::Err, },
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() * * b.clone())),
+        _ => Proc::Err,
+    } }),
+    if (match & res { Proc::Err => false, _ => true });
+
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Div(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
+    let a = lv,
+    let b = rv,
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() / * b.clone())),
+        (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&** a, &** b) { (UInt32::NumLit(x), UInt32::NumLit(y)) => { if * y == 0 { Proc::Err } else { Proc::CastUInt32(Box::new(UInt32::NumLit(x / y))) } } _ => Proc::Err, },
+        (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&** a, &** b) { (BigInt::NumLit(x), BigInt::NumLit(y)) => { if y.get().is_zero() { Proc::Err } else { Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() / y.get())))) } } _ => Proc::Err, },
+        (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&** a, &** b) { (BigRat::RatLit(x), BigRat::RatLit(y)) => { if y.get().is_zero() { Proc::Err } else { Proc::CastBigRat(Box::new(BigRat::RatLit(* x / * y))) } } _ => Proc::Err, },
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() / * b.clone())),
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
@@ -3872,32 +3898,6 @@ fold_proc(s.clone(), res) <--
 
 fold_proc(s.clone(), res) <--
     proc(s),
-    if let Proc::And(left, right) = s,
-    fold_proc(left.as_ref().clone(), lv),
-    fold_proc(right.as_ref().clone(), rv),
-    let a = lv,
-    let b = rv,
-    let res = ({ match (& a, & b) {
-        (Proc::CastBool(a), Proc::CastBool(b)) => match (&** a, &** b) { (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(* x &&* y))), _ => Proc::Err, },
-        _ => Proc::Err,
-    } }),
-    if (match & res { Proc::Err => false, _ => true });
-
-fold_proc(s.clone(), res) <--
-    proc(s),
-    if let Proc::Or(left, right) = s,
-    fold_proc(left.as_ref().clone(), lv),
-    fold_proc(right.as_ref().clone(), rv),
-    let a = lv,
-    let b = rv,
-    let res = ({ match (& a, & b) {
-        (Proc::CastBool(a), Proc::CastBool(b)) => match (&** a, &** b) { (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(* x || * y))), _ => Proc::Err, },
-        _ => Proc::Err,
-    } }),
-    if (match & res { Proc::Err => false, _ => true });
-
-fold_proc(s.clone(), res) <--
-    proc(s),
     if let Proc::Len(inner) = s,
     fold_proc(inner.as_ref().clone(), lv),
     let p = lv,
@@ -3980,16 +3980,18 @@ fold_proc(s.clone(), res) <--
 rw_proc(s.clone(), t.clone()) <--
     proc(s),
     if (match s {
-        Proc::Add(_, _) => true,
-        Proc::Sub(_, _) => true,
-        Proc::Mul(_, _) => true,
-        Proc::Div(_, _) => true,
+        Proc::Or(_, _) => true,
+        Proc::And(_, _) => true,
         Proc::Eq(_, _) => true,
         Proc::Ne(_, _) => true,
         Proc::Gt(_, _) => true,
         Proc::Lt(_, _) => true,
         Proc::GtEq(_, _) => true,
         Proc::LtEq(_, _) => true,
+        Proc::Add(_, _) => true,
+        Proc::Sub(_, _) => true,
+        Proc::Mul(_, _) => true,
+        Proc::Div(_, _) => true,
         Proc::ConcatList(_, _) => true,
         Proc::ElemList(_, _) => true,
         Proc::DeleteList(_, _) => true,
@@ -4004,8 +4006,6 @@ rw_proc(s.clone(), t.clone()) <--
         Proc::KeysMap(_) => true,
         Proc::ValuesMap(_) => true,
         Proc::Not(_) => true,
-        Proc::And(_, _) => true,
-        Proc::Or(_, _) => true,
         Proc::Len(_) => true,
         Proc::ToInt(_) => true,
         Proc::ToFloat(_) => true,

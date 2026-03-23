@@ -403,6 +403,12 @@ mod native_ops {
         fn eq_true() {
             assert_reduces_to("{1 == 1}", "true");
         }
+
+        #[test]
+        fn eq_rational_slash_binds_tighter_than_eq() {
+            // Regression: `==` must not bind tighter than `/` (would parse as `15/(6==30)/12`).
+            assert_reduces_to("{15r/6r == 30r/12r}", "true");
+        }
         #[test]
         fn eq_false() {
             assert_reduces_to("{1 == 2}", "false");

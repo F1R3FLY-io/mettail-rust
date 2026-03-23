@@ -353,10 +353,10 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Add: ... ...
+	// Or: ... ...
 	{
-		type: "proc_add",
-		tooltip: "Add: ... ...",
+		type: "proc_or",
+		tooltip: "Or: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
@@ -376,56 +376,10 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Sub: ... ...
+	// And: ... ...
 	{
-		type: "proc_sub",
-		tooltip: "Sub: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
-				check: "Proc",
-			},
-			{
-				type: "input_value",
-				name: "MESSAGE",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Mul: ... ...
-	{
-		type: "proc_mul",
-		tooltip: "Mul: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
-				check: "Proc",
-			},
-			{
-				type: "input_value",
-				name: "MESSAGE",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Div: ... ...
-	{
-		type: "proc_div",
-		tooltip: "Div: ... ...",
+		type: "proc_and",
+		tooltip: "And: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
@@ -564,6 +518,98 @@ const definitions = [
 	{
 		type: "proc_lt_eq",
 		tooltip: "Lt Eq: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Add: ... ...
+	{
+		type: "proc_add",
+		tooltip: "Add: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Sub: ... ...
+	{
+		type: "proc_sub",
+		tooltip: "Sub: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Mul: ... ...
+	{
+		type: "proc_mul",
+		tooltip: "Mul: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Div: ... ...
+	{
+		type: "proc_div",
+		tooltip: "Div: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
@@ -908,52 +954,6 @@ const definitions = [
 			{
 				type: "input_value",
 				name: "BODY",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// And: ... ...
-	{
-		type: "proc_and",
-		tooltip: "And: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
-				check: "Proc",
-			},
-			{
-				type: "input_value",
-				name: "MESSAGE",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Or: ... ...
-	{
-		type: "proc_or",
-		tooltip: "Or: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
-				check: "Proc",
-			},
-			{
-				type: "input_value",
-				name: "MESSAGE",
 				check: "Proc",
 			},
 		],
