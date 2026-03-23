@@ -473,6 +473,9 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
                     _ if native_type.ends_with("CanonicalBigRat") => {
                         first_set.insert("Rational");
                     },
+                    _ if native_type.ends_with("CanonicalBigInt") => {
+                        first_set.insert("Integer");
+                    },
                     _ => {},
                 }
             }

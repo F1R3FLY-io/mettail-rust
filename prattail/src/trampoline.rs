@@ -23,6 +23,7 @@
 //! - `fn parse_Cat(tokens, pos, min_bp) -> Result<Cat, ParseError>` — trampolined parser
 //! - `fn parse_Cat_recovering(tokens, pos, min_bp, errors) -> Option<Cat>` — recovery variant
 
+use std::collections::HashMap;
 use std::fmt::Write;
 
 use crate::automata::codegen::terminal_to_variant_name;
@@ -1327,22 +1328,65 @@ fn write_prefix_match_arms(
     // ── Cast rule prefix arms ──
     // Use source_first (not unique_to_source): target's own_first includes these tokens
     // precisely because of the cast rule, so difference would be empty and we'd miss the arm.
+    //
+    // Multiple casts may share one token (e.g. Int, UInt32, BigInt all use Integer). Emit a
+    // single match arm that tries parse_* in `cast_rules` declaration order so Rust does not
+    // see duplicate `Token::Integer(_)` patterns.
+    let mut casts_by_token: HashMap<String, Vec<&CastRule>> = HashMap::new();
     for cast_rule in &config.cast_rules {
         if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
             for token in &source_first.tokens {
-                let mut arm = String::new();
-                crate::pratt::write_token_pattern_pub(&mut arm, token);
+                let v = casts_by_token.entry(token.clone()).or_default();
+                if !v.iter().any(|r| {
+                    r.label == cast_rule.label && r.source_category == cast_rule.source_category
+                }) {
+                    v.push(cast_rule);
+                }
+            }
+        }
+    }
+    let mut token_keys: Vec<String> = casts_by_token.keys().cloned().collect();
+    token_keys.sort();
+    for token in token_keys {
+        let rules = casts_by_token.get(&token).expect("key from iter");
+        if rules.len() == 1 {
+            let cast_rule = rules[0];
+            let mut arm = String::new();
+            crate::pratt::write_token_pattern_pub(&mut arm, &token);
+            write!(
+                arm,
+                " => {{ \
+                    let val = parse_{}(tokens, pos, 0)?; \
+                    break 'prefix {}::{}(Box::new(val)); \
+                }},",
+                cast_rule.source_category, cat, cast_rule.label,
+            )
+            .unwrap();
+            buf.push_str(&arm);
+        } else {
+            let mut arm = String::new();
+            crate::pratt::write_token_pattern_pub(&mut arm, &token);
+            arm.push_str(" => { let __cast_saved = *pos;");
+            for cast_rule in rules {
+                arm.push_str("*pos = __cast_saved;");
                 write!(
                     arm,
-                    " => {{ \
-                        let val = parse_{}(tokens, pos, 0)?; \
-                        break 'prefix {}::{}(Box::new(val)); \
-                    }},",
+                    "if let Ok(v) = parse_{}(tokens, pos, 0) {{ break 'prefix {}::{}(Box::new(v)); }} ",
                     cast_rule.source_category, cat, cast_rule.label,
                 )
                 .unwrap();
-                buf.push_str(&arm);
             }
+            write!(
+                arm,
+                "return Err(ParseError::UnexpectedToken {{ \
+                    expected: \"literal matching one of {} casts\", \
+                    found: format!(\"{{:?}}\", &tokens[__cast_saved].0), \
+                    range: tokens[__cast_saved].1, \
+                }}); }},",
+                rules.len(),
+            )
+            .unwrap();
+            buf.push_str(&arm);
         }
     }
 

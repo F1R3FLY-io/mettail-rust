@@ -364,6 +364,36 @@ mod native_ops {
                 nfs
             );
         }
+
+        #[test]
+        fn bigint_add() {
+            assert_reduces_to("{1n + 2n}", "3n");
+        }
+
+        #[test]
+        fn u32_add() {
+            assert_reduces_to("{1u32 + 2u32}", "3u32");
+        }
+
+        #[test]
+        fn bigrat_add_normalized() {
+            assert_reduces_to("{3r/4r + 1r/4r}", "1r");
+        }
+
+        #[test]
+        fn int_literal_optional_i64_suffix() {
+            assert_reduces_to("{7i64 + 1}", "8");
+        }
+
+        #[test]
+        fn fraction_builds_rational() {
+            assert_reduces_to("{fraction(1n, 2n) + 1r/2r}", "1r");
+        }
+
+        #[test]
+        fn bigint_div_by_zero_is_error() {
+            assert_reduces_to("{1n / 0n}", "error");
+        }
     }
 
     mod comparison {
@@ -396,6 +426,16 @@ mod native_ops {
         #[test]
         fn lte() {
             assert_reduces_to("{2 <= 3}", "true");
+        }
+
+        #[test]
+        fn bigint_gt() {
+            assert_reduces_to("{2n > 1n}", "true");
+        }
+
+        #[test]
+        fn u32_eq() {
+            assert_reduces_to("{3u32 == 3u32}", "true");
         }
     }
 
@@ -531,6 +571,16 @@ mod native_ops {
         fn int_to_str() {
             assert_reduces_to(r#"{str(42)}"#, r#""42""#);
         }
+
+        #[test]
+        fn int_from_bigint_fits_i64() {
+            assert_reduces_to("{int(99n)}", "99");
+        }
+
+        #[test]
+        fn str_from_bigint() {
+            assert_reduces_to(r#"{str(10n)}"#, r#""10""#);
+        }
     }
 }
 
@@ -540,6 +590,11 @@ mod native_ops {
 
 mod parsing {
     use super::*;
+
+    #[test]
+    fn fraction_zero_denominator_is_error() {
+        assert_reduces_to("{fraction(1n, 0n)}", "error");
+    }
 
     #[test]
     fn zero() {

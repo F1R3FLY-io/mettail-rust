@@ -17,6 +17,7 @@ mettail-macros = { path = "../macros" }
 mettail-runtime = { path = "../runtime" }
 mettail-prattail = { path = "../prattail" }
 num-bigint = "0.4"
+num-traits = "0.2"
 moniker = { workspace = true }
 rand = { workspace = true }
 indexmap = { workspace = true }
