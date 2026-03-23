@@ -390,6 +390,16 @@ mod native_ops {
             assert_reduces_to("{fraction(1n, 2n) + 1r/2r}", "1r");
         }
 
+        /// Regression: `fraction` must use `fold` on Proc (not `step`), or Ascent never emits rw_proc.
+        #[test]
+        fn fraction_at_top_level_reduces() {
+            assert_reduces_to("fraction(2n, 3n)", "2r/3r");
+            assert_reduces_to(
+                "fraction(2n, 3n) + fraction(1n, 2n)",
+                "7r/6r",
+            );
+        }
+
         #[test]
         fn bigint_div_by_zero_is_error() {
             assert_reduces_to("{1n / 0n}", "error");

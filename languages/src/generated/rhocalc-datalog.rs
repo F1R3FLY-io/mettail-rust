@@ -3497,9 +3497,21 @@ fold_proc(t.clone(), t.clone()) <--
         Proc::CastList(_) => true,
         Proc::CastBag(_) => true,
         Proc::CastMap(_) => true,
-        Proc::FractionProc(_, _) => true,
         _ => false,
     });
+
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::FractionProc(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
+    let a = lv,
+    let b = rv,
+    let res = ({ match (& a, & b) {
+        (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&** a, &** b) { (BigInt::NumLit(na), BigInt::NumLit(nb)) => { match mettail_runtime::CanonicalBigRat::try_from_nd(na.get().clone(), nb.get().clone()) { Some(r) => Proc::CastBigRat(Box::new(BigRat::RatLit(r))), None => Proc::Err, } } _ => Proc::Err, },
+        _ => Proc::Err,
+    } }),
+    if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
     proc(s),
@@ -3980,6 +3992,7 @@ fold_proc(s.clone(), res) <--
 rw_proc(s.clone(), t.clone()) <--
     proc(s),
     if (match s {
+        Proc::FractionProc(_, _) => true,
         Proc::Or(_, _) => true,
         Proc::And(_, _) => true,
         Proc::Eq(_, _) => true,

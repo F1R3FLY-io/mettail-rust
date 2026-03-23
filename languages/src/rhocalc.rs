@@ -99,6 +99,7 @@ language! {
         CastBag . b:Bag |- b : Proc;
         CastMap . m:Map |- m : Proc;
 
+        // `fold` (not `step`): `step` HOL rules are skipped for non-native categories like Proc.
         FractionProc . a:Proc, b:Proc |- "fraction" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
                 (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
@@ -112,7 +113,7 @@ language! {
                 },
                 _ => Proc::Err,
             }}
-        ] step;
+        ] fold;
 
         // Infix precedence (declaration order = loosest → tightest for PraTTaIL):
         // or/and, then comparisons, then arithmetic — so `a/b == c/d` and `x==y and z==w` parse correctly.
