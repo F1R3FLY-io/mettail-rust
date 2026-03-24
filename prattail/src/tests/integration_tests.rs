@@ -148,7 +148,9 @@ fn test_backward_compat_empty_literal_eval_uses_default_parse() {
     let code_str = code.to_string();
     // Integer tokens should still be present in the generated lexer code, and use parse_int_lit().
     assert!(
-        code_str.contains("parse_int_lit") || code_str.contains("IntLit") || code_str.contains("Token :: Integer"),
+        code_str.contains("parse_int_lit")
+            || code_str.contains("IntLit")
+            || code_str.contains("Token :: Integer"),
         "default spec should mention Integer tokens in generated lexer"
     );
 }
@@ -487,6 +489,7 @@ mod wfst_lexer_weight_tests {
             &partition,
             &token_kinds,
             "test",
+            &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
         );
         code

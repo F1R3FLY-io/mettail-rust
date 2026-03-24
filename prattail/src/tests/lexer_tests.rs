@@ -217,10 +217,10 @@ fn test_generate_lexer_with_bigint_category_literal_eval() {
     }];
 
     let mut input = extract_terminals(&rules, &types, false, &[]);
-    input.literal_patterns.integer_by_category.insert(
-        "BigInt".to_string(),
-        r"[0-9](_?[0-9])*n".to_string(),
-    );
+    input
+        .literal_patterns
+        .integer_by_category
+        .insert("BigInt".to_string(), r"[0-9](_?[0-9])*n".to_string());
     input.literal_eval.insert(
         "BigInt".to_string(),
         "{ mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::BigInt)).map_err(|_| ()) }"

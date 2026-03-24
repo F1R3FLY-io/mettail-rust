@@ -185,7 +185,10 @@ mod tests {
         // assert that digits and letters are distinguishable in general.
         let digit_class = partition.classify(b'8');
         let letter_class = partition.classify(b'p');
-        assert_ne!(digit_class, letter_class, "digits and letters should be in different equivalence classes");
+        assert_ne!(
+            digit_class, letter_class,
+            "digits and letters should be in different equivalence classes"
+        );
 
         // Letters and digits should be in different classes (they behave differently
         // as first character of identifier)

@@ -45,15 +45,14 @@ pub fn generate_lexer_code(
     literal_eval: &std::collections::HashMap<String, String>,
     integer_literal_eval: &std::collections::HashMap<String, String>,
 ) -> (TokenStream, CodegenStrategy) {
-    let (buf, strategy) =
-        generate_lexer_string(
-            dfa,
-            partition,
-            token_kinds,
-            language_name,
-            literal_eval,
-            integer_literal_eval,
-        );
+    let (buf, strategy) = generate_lexer_string(
+        dfa,
+        partition,
+        token_kinds,
+        language_name,
+        literal_eval,
+        integer_literal_eval,
+    );
     let ts = buf
         .parse::<TokenStream>()
         .expect("generated lexer code must be valid Rust");
@@ -125,12 +124,12 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind]) {
                 if seen.insert("Integer".to_string()) {
                     buf.push_str("Integer(mettail_prattail::IntLit),");
                 }
-            }
+            },
             TokenKind::RationalLit(_) => {
                 if seen.insert("Rational".to_string()) {
                     buf.push_str("Rational(mettail_prattail::RationalLit),");
                 }
-            }
+            },
             TokenKind::Float => {
                 if seen.insert("Float".to_string()) {
                     buf.push_str("Float(f64),");
@@ -419,7 +418,7 @@ fn write_token_constructor(
                      }",
                 );
             }
-        }
+        },
         TokenKind::RationalLit(cat) => {
             if let Some(eval) = integer_literal_eval.get(cat) {
                 write!(
@@ -439,7 +438,7 @@ fn write_token_constructor(
                      }",
                 );
             }
-        }
+        },
         TokenKind::Float => {
             if let Some(eval) = literal_eval.get("Float") {
                 // Custom float eval: expected to return Result<f64, E>.
@@ -1352,7 +1351,7 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                     });
                 }
             },
-            TokenKind::IntegerLit(_) => {}
+            TokenKind::IntegerLit(_) => {},
             TokenKind::RationalLit(_) => {
                 if seen.insert("Rational".to_string()) {
                     variants.push(quote! {
@@ -1360,7 +1359,7 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                         Rational(mettail_prattail::RationalLit)
                     });
                 }
-            }
+            },
             TokenKind::Float => {
                 if seen.insert("Float".to_string()) {
                     variants.push(quote! {

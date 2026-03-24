@@ -277,9 +277,9 @@ pub fn extract_terminals(
     // Check for native types
     for ty in types {
         match ty.native_type_name.as_deref() {
-            Some("i8") | Some("i16") | Some("i32") | Some("i64") | Some("i128")
-            | Some("u8") | Some("u16") | Some("u32") | Some("u64") | Some("u128")
-            | Some("isize") | Some("usize") => {
+            Some("i8") | Some("i16") | Some("i32") | Some("i64") | Some("i128") | Some("u8")
+            | Some("u16") | Some("u32") | Some("u64") | Some("u128") | Some("isize")
+            | Some("usize") => {
                 needs.integer = true;
             },
             Some("f32") | Some("f64") => {
@@ -309,8 +309,8 @@ pub fn extract_terminals(
                 if other.ends_with("BigInt") {
                     needs.integer = true;
                 }
-            }
-            None => {}
+            },
+            None => {},
         }
     }
 

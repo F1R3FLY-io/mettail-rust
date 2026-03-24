@@ -51,8 +51,7 @@ fn term_context_params_with_eval(
 fn native_type_is_copy(type_str: &str) -> bool {
     matches!(
         type_str,
-        "i8"
-            | "i16"
+        "i8" | "i16"
             | "i32"
             | "i64"
             | "i128"

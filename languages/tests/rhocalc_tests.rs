@@ -394,10 +394,7 @@ mod native_ops {
         #[test]
         fn fraction_at_top_level_reduces() {
             assert_reduces_to("fraction(2n, 3n)", "2r/3r");
-            assert_reduces_to(
-                "fraction(2n, 3n) + fraction(1n, 2n)",
-                "7r/6r",
-            );
+            assert_reduces_to("fraction(2n, 3n) + fraction(1n, 2n)", "7r/6r");
         }
 
         #[test]

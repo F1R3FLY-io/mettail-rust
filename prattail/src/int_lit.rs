@@ -196,6 +196,7 @@ fn split_radix_prefix(s: &str) -> (u32, &str) {
     }
 }
 
+#[allow(clippy::result_unit_err)]
 pub fn parse_int_lit(text: &str, default_suffix: Option<Suffix>) -> Result<IntLit, ()> {
     let cleaned = text.replace('_', "");
     let (body, suffix) = split_suffix(cleaned.as_str());
@@ -255,4 +256,3 @@ pub fn parse_int_lit(text: &str, default_suffix: Option<Suffix>) -> Result<IntLi
             .map_err(|_| ()),
     }
 }
-

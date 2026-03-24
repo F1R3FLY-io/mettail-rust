@@ -1876,7 +1876,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         "i16" => {
             write!(
                 buf,
@@ -1887,7 +1887,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         "i32" => {
             write!(
                 buf,
@@ -1898,7 +1898,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         "i64" => {
             write!(
                 buf,
@@ -1909,7 +1909,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         "i128" => {
             write!(
                 buf,
@@ -1920,7 +1920,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         "isize" => {
             write!(
                 buf,
@@ -1931,7 +1931,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         "u8" => {
             write!(
                 buf,
@@ -1942,7 +1942,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         "u16" => {
             write!(
                 buf,
@@ -1953,7 +1953,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         "u32" => {
             write!(
                 buf,
@@ -1964,7 +1964,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         "u64" => {
             write!(
                 buf,
@@ -1975,7 +1975,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         "u128" => {
             write!(
                 buf,
@@ -1986,7 +1986,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         "usize" => {
             write!(
                 buf,
@@ -1997,7 +1997,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         _ if native_type.ends_with("CanonicalBigRat") => {
             write!(
                 buf,
@@ -2009,7 +2009,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         _ if native_type.ends_with("CanonicalBigInt") => {
             write!(
                 buf,
@@ -2020,7 +2020,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         _ if native_type.ends_with("BigInt") => {
             write!(
                 buf,
@@ -2031,7 +2031,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 cat,
             )
             .unwrap();
-        }
+        },
         "f32" | "f64" => {
             write!(
                 buf,

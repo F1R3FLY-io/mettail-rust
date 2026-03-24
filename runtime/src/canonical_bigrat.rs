@@ -56,7 +56,7 @@ impl Eq for CanonicalBigRat {}
 
 impl PartialOrd for CanonicalBigRat {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.get().partial_cmp(other.get())
+        Some(self.cmp(other))
     }
 }
 impl Ord for CanonicalBigRat {

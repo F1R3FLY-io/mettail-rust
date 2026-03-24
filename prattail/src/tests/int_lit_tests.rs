@@ -76,13 +76,17 @@ fn parses_bigint_n_suffix() {
 fn parses_very_large_bigint_values() {
     let huge_dec = "12345678901234567890123456789012345678901234567890n";
     match parse_int_lit(huge_dec, None).unwrap() {
-        IntLit::BigInt(v) => assert_eq!(v.to_string(), "12345678901234567890123456789012345678901234567890"),
+        IntLit::BigInt(v) => {
+            assert_eq!(v.to_string(), "12345678901234567890123456789012345678901234567890")
+        },
         other => panic!("expected BigInt, got {other:?}"),
     }
 
     let huge_hex = "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFn";
     match parse_int_lit(huge_hex, None).unwrap() {
-        IntLit::BigInt(v) => assert_eq!(v.to_string(), "1461501637330902918203684832716283019655932542975"),
+        IntLit::BigInt(v) => {
+            assert_eq!(v.to_string(), "1461501637330902918203684832716283019655932542975")
+        },
         other => panic!("expected BigInt, got {other:?}"),
     }
 }
@@ -127,4 +131,3 @@ fn strict_integer_conversions_do_not_cross_types() {
     assert_eq!(b.to_i32(), None);
     assert_eq!(b.to_u32(), None);
 }
-

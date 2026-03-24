@@ -39,6 +39,7 @@ fn parse_bigint_body(body: &str) -> Result<BigInt, ()> {
 }
 
 /// Parse `…r` or `…r/…r` (with optional `_` in digit runs).
+#[allow(clippy::result_unit_err)]
 pub fn parse_rational_lit(text: &str) -> Result<RationalLit, ()> {
     let cleaned: String = text.chars().filter(|&c| c != '_').collect();
     if let Some(idx) = cleaned.find('/') {

@@ -197,10 +197,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
 /// When literals is None, returns default patterns and empty eval map.
 fn build_literal_config(
     language: &LanguageDef,
-) -> (
-    LiteralPatterns,
-    std::collections::HashMap<String, String>,
-) {
+) -> (LiteralPatterns, std::collections::HashMap<String, String>) {
     let default_patterns = LiteralPatterns::default();
     let mut literal_patterns = LiteralPatterns {
         integer: default_patterns.integer.clone(),
@@ -234,13 +231,14 @@ fn build_literal_config(
                 } else {
                     None
                 }
-            }
+            },
         }
     }
 
     // Map declared category name -> native Rust type string (if any), so literals can be
     // attached to arbitrary category names like Int32/UInt64/etc.
-    let mut native_by_cat: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut native_by_cat: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for t in &language.types {
         if let Some(ref native) = t.native_type {
             native_by_cat.insert(t.name.to_string(), quote::quote! { #native }.to_string());
@@ -326,26 +324,26 @@ fn build_literal_config(
                     .integer_by_category
                     .insert(name.clone(), spec.pattern.clone());
                 literal_eval.insert(name.clone(), eval_code);
-            }
+            },
             Some("Float") => {
                 literal_patterns.float = spec.pattern.clone();
                 literal_eval.insert("Float".to_string(), eval_code);
-            }
+            },
             Some("Str") => {
                 literal_patterns.string = spec.pattern.clone();
                 literal_eval.insert("Str".to_string(), eval_code);
-            }
+            },
             Some("Bool") => {
                 literal_patterns.boolean = Some(spec.pattern.clone());
                 literal_eval.insert("Bool".to_string(), eval_code);
-            }
+            },
             Some("Rat") => {
                 literal_patterns
                     .rational_by_category
                     .insert(name.clone(), spec.pattern.clone());
                 literal_eval.insert(name.clone(), eval_code);
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
