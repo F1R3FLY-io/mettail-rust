@@ -185,6 +185,16 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// Err
+	{
+		type: "bigrat_err",
+		tooltip: "Err",
+		message0: "",
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
 	// Fraction: ... ...
 	{
 		type: "bigrat_fraction",

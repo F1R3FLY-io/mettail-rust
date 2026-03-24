@@ -96,9 +96,13 @@ language! {
         ProcUInt32 . u:UInt32 |- u : Proc ;
         ProcBigInt . n:BigInt |- n : Proc ;
         ProcBigRat . r:BigRat |- r : Proc ;
+        // BigRat error normal form: concrete syntax `error`, not a CanonicalBigRat. Step rules
+        // reduce invalid rationals (e.g. fraction with zero denominator) here instead of panicking.
+        // The procedural macro keys off the zero-ary `Err` name on BigRat when lowering Fraction.
+        Err . |- "error" : BigRat ;
+        // try_from_nd is None when the denominator is zero; the step rule maps that to `Err`.
         Fraction . a:BigInt, b:BigInt |- "fraction" "(" a "," b ")" : BigRat ![{
             mettail_runtime::CanonicalBigRat::try_from_nd(a.get().clone(), b.get().clone())
-                .expect("fraction: zero denominator")
         }] step;
         AddBigRat . a:BigRat, b:BigRat |- a "+" b : BigRat ![a + b] fold;
         MulBigRat . a:BigRat, b:BigRat |- a "*" b : BigRat ![a * b] fold;

@@ -4382,7 +4382,7 @@ rw_bigrat(s.clone(), t) <--
     let a = a_ref.clone(),
     if let BigInt::NumLit(b_ref) = right.as_ref(),
     let b = b_ref.clone(),
-    let t = BigRat::RatLit(({ mettail_runtime::CanonicalBigRat::try_from_nd(a.get().clone(), b.get().clone()).expect("fraction: zero denominator") }));
+    let t = match ({ mettail_runtime::CanonicalBigRat::try_from_nd(a.get().clone(), b.get().clone()) }) { Some(r) => BigRat::RatLit(r), None => BigRat::Err, };
 
 rw_bool(s.clone(), t) <--
     bool(s),
@@ -4992,6 +4992,10 @@ fold_bigrat(t.clone(), t.clone()) <--
     bigrat(t),
     if let BigRat::RatLit(_) = t;
 
+fold_bigrat(t.clone(), t.clone()) <--
+    bigrat(t),
+    if let BigRat::Err = t;
+
 fold_bigrat(s.clone(), res) <--
     bigrat(s),
     if let BigRat::AddBigRat(left, right) = s,
@@ -5023,7 +5027,7 @@ fold_bigrat(s.clone(), res) <--
     if let BigRat::RatLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let res = BigRat::RatLit((a / b));
+    let res = match (if::num_traits::Zero::is_zero(b.get()) { std::option::Option::None } else { std::option::Option::Some((a / b)) }) { Some(__q) => BigRat::RatLit(__q), None => BigRat::Err, };
 
 fold_bigrat(s.clone(), res) <--
     bigrat(s),

@@ -18,6 +18,7 @@ export const categoryInfo = {
 	},
 	BigRat: {
 		constructors: [
+			"Err",
 			"Fraction",
 			"AddBigRat",
 			"MulBigRat",

@@ -78,12 +78,14 @@ fn test_fraction_constructor_and_arithmetic() {
 }
 
 #[test]
-#[should_panic(expected = "fraction: zero denominator")]
-fn test_fraction_zero_denominator_panics_on_eval() {
-    mettail_runtime::clear_var_cache();
-    let lang = calc::CalculatorLanguage;
-    let term = lang.parse_term("fraction(1n, 0n)").expect("parse");
-    let _ = lang.run_ascent(term.as_ref());
+fn test_fraction_zero_denominator_is_error() {
+    calc_normal_form("fraction(1n, 0n)", "error");
+}
+
+#[test]
+fn test_bigrat_literal_division_by_zero_is_error() {
+    // Parses as `(1r) / (0r)`, not a single `1r/0r` literal (which `parse_rational_lit` rejects).
+    calc_normal_form("1r/0r", "error");
 }
 
 #[test]

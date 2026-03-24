@@ -71,6 +71,39 @@ fn native_type_is_copy(type_str: &str) -> bool {
     )
 }
 
+/// Calculator `Fraction` uses `try_from_nd` → `Option`; Ascent maps `None` to `BigRat::Err`.
+/// `eval`/`try_eval` must accept that `Option` here so the generated `impl` type-checks.
+fn hol_bigrat_fraction_try_from_nd_option(
+    language: &LanguageDef,
+    category: &syn::Ident,
+    label: &syn::Ident,
+) -> bool {
+    let err_ident = quote::format_ident!("Err");
+    let category_has_err = language
+        .terms
+        .iter()
+        .any(|r| r.category == *category && r.label == err_ident);
+    category_has_err
+        && label.to_string() == "Fraction"
+        && category.to_string() == "BigRat"
+}
+
+/// `DivBigRat` must not call `num-rational` division when the divisor is zero (panics in `reduce`).
+fn hol_bigrat_div_zero_guard(
+    language: &LanguageDef,
+    category: &syn::Ident,
+    label: &syn::Ident,
+) -> bool {
+    let err_ident = quote::format_ident!("Err");
+    let category_has_err = language
+        .terms
+        .iter()
+        .any(|r| r.category == *category && r.label == err_ident);
+    category_has_err
+        && label.to_string() == "DivBigRat"
+        && category.to_string() == "BigRat"
+}
+
 pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
     let mut impls = Vec::new();
 
@@ -229,7 +262,34 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     })
                     .collect();
                 let rust_code = &rust_code_block.code;
-                let match_arm = if param_count == 0 {
+                let fraction_option = hol_bigrat_fraction_try_from_nd_option(language, category, label);
+                let div_zero_guard = hol_bigrat_div_zero_guard(language, category, label);
+                let match_arm = if fraction_option && param_count > 0 {
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#param_bindings)*
+                            match (#rust_code) {
+                                Some(__r) => __r,
+                                None => panic!(
+                                    "zero denominator in fraction; normalize with rewrite rules to error",
+                                ),
+                            }
+                        },
+                    }
+                } else if div_zero_guard && param_count == 2 {
+                    let b_name = &param_names[1];
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#param_bindings)*
+                            if ::num_traits::Zero::is_zero(#b_name.get()) {
+                                panic!(
+                                    "division by zero in BigRat; normalize with fold rules to error",
+                                );
+                            }
+                            (#rust_code)
+                        },
+                    }
+                } else if param_count == 0 {
                     quote! {
                         #category::#label => (#rust_code),
                     }
@@ -247,7 +307,29 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 let skip_try_eval = rule.eval_mode == Some(EvalMode::Fold)
                     && params.iter().any(|(_, use_eval)| !use_eval);
                 if !skip_try_eval {
-                    let try_arm = if param_count == 0 {
+                    let try_arm = if fraction_option && param_count > 0 {
+                        quote! {
+                            #category::#label(#(#param_names),*) => {
+                                #(#try_param_bindings)*
+                                match (#rust_code) {
+                                    Some(__r) => Some(__r),
+                                    None => None,
+                                }
+                            },
+                        }
+                    } else if div_zero_guard && param_count == 2 {
+                        let b_name = &param_names[1];
+                        quote! {
+                            #category::#label(#(#param_names),*) => {
+                                #(#try_param_bindings)*
+                                if ::num_traits::Zero::is_zero(#b_name.get()) {
+                                    None
+                                } else {
+                                    Some((#rust_code))
+                                }
+                            },
+                        }
+                    } else if param_count == 0 {
                         quote! { #category::#label => Some((#rust_code)), }
                     } else {
                         quote! {
