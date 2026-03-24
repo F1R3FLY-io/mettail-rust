@@ -372,14 +372,36 @@ fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -
                         quote! { let b = right.as_ref().clone(), },
                     ),
                 };
-                binary_rust_rules.push(quote! {
-                    #rw_rel(s.clone(), t) <--
-                        #cat_rel(s),
-                        if let #category::#label(left, right) = s,
-                        #left_bind
-                        #right_bind
-                        let t = #category::#result_lit_label((#rust_code));
-                });
+                // Calculator `Fraction` on `BigRat`: `try_from_nd` returns `Option`; map `None` to `Err` variant
+                // when this category defines a zero-ary `Err` constructor (same pattern as `Proc::Err` on RhoCalc).
+                let err_ident = format_ident!("Err");
+                let category_has_err_variant = language
+                    .terms
+                    .iter()
+                    .any(|r| r.category == *category && r.label == err_ident);
+                let is_bigrat_fraction = *label == "Fraction" && *category == "BigRat";
+                if category_has_err_variant && is_bigrat_fraction {
+                    binary_rust_rules.push(quote! {
+                        #rw_rel(s.clone(), t) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, right) = s,
+                            #left_bind
+                            #right_bind
+                            let t = match (#rust_code) {
+                                Some(r) => #category::#result_lit_label(r),
+                                None => #category::#err_ident,
+                            };
+                    });
+                } else {
+                    binary_rust_rules.push(quote! {
+                        #rw_rel(s.clone(), t) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, right) = s,
+                            #left_bind
+                            #right_bind
+                            let t = #category::#result_lit_label((#rust_code));
+                    });
+                }
             },
             1 => {
                 // Unary step rule (e.g. Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step)
@@ -564,6 +586,17 @@ fn generate_fold_big_step_rules(
                         #cat_rel(t),
                         if let #category::#num_lit(_) = t;
                 });
+                // Zero-ary `Err` is already a value (e.g. `BigRat::Err` for zero denominator).
+                let err_ident = format_ident!("Err");
+                if language.terms.iter().any(|r| {
+                    r.category == *category && r.label == err_ident && fold_field_count(r) == 0
+                }) {
+                    rules.push(quote! {
+                        #fold_rel(t.clone(), t.clone()) <--
+                            #cat_rel(t),
+                            if let #category::#err_ident = t;
+                    });
+                }
             }
 
             for rule in &language.terms {
@@ -585,11 +618,32 @@ fn generate_fold_big_step_rules(
                 }
                 let label = &rule.label;
 
+                let err_ident = format_ident!("Err");
+                let div_bigrat_zero_to_err = param_count == 2
+                    && *category == "BigRat"
+                    && *label == "DivBigRat"
+                    && language.terms.iter().any(|r| {
+                        r.category == *category && r.label == err_ident && fold_field_count(r) == 0
+                    });
+
                 let (res_expr, is_collection) = if let Some(ref rust_block) = rule.rust_code {
                     let rust_code = &rust_block.code;
                     let is_col = common::is_collection_category(language, category);
                     let res = if is_col {
                         quote! { (#rust_code) }
+                    } else if div_bigrat_zero_to_err {
+                        // `1r/0r` parses as `1r / 0r` (division), not a single rational literal; avoid
+                        // num-rational panics when the divisor is zero (same normal form as `fraction(1n,0n)`).
+                        quote! {
+                            match (if ::num_traits::Zero::is_zero(b.get()) {
+                                std::option::Option::None
+                            } else {
+                                std::option::Option::Some((#rust_code))
+                            }) {
+                                Some(__q) => #category::#num_lit(__q),
+                                None => #category::#err_ident,
+                            }
+                        }
                     } else {
                         quote! { #category::#num_lit((#rust_code)) }
                     };

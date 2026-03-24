@@ -34,6 +34,67 @@ fn test_int_add() {
 }
 
 #[test]
+fn test_bigint_literal_and_add() {
+    calc_normal_form("34n", "34");
+    calc_normal_form("34n + 8n", "42");
+}
+
+#[test]
+fn test_bigint_parse_eval_large_value() {
+    mettail_runtime::clear_var_cache();
+    let value = calc::BigInt::parse("123456789012345678901234567890n").expect("parse bigint");
+    assert_eq!(value.eval().to_string(), "123456789012345678901234567890");
+}
+
+#[test]
+fn test_bigint_and_i32_are_distinct() {
+    mettail_runtime::clear_var_cache();
+    let parse_result = calc::Int::parse("1n + 2n");
+    assert!(
+        parse_result.is_err(),
+        "BigInt literals should not parse as Int without explicit cast/coercion"
+    );
+}
+
+#[test]
+fn test_bigrat_literal_whole_and_composite() {
+    // Lone `<digits>r` (no `/…r`); composite `<digits>r/<digits>r`
+    calc_normal_form("3r", "3");
+    calc_normal_form("3r/4r", "3/4");
+    calc_normal_form("0xAr", "10");
+    calc_normal_form("1_0r", "10");
+    // 12/2 reduces to 6/1
+    calc_normal_form("0xCr/0x2r", "6");
+    calc_normal_form("0x5r/0x7r", "5/7");
+}
+
+#[test]
+fn test_fraction_constructor_and_arithmetic() {
+    calc_normal_form("fraction(3n, 4n)", "3/4");
+    calc_normal_form("fraction(10n, 3n)", "10/3");
+    calc_normal_form("fraction(3n, 1n) + fraction(1n, 3n)", "10/3");
+    calc_normal_form("fraction(1n, 2n) * fraction(2n, 3n)", "1/3");
+    calc_normal_form("fraction(1n, 2n) / fraction(3n, 4n)", "2/3");
+}
+
+#[test]
+fn test_fraction_zero_denominator_is_error() {
+    calc_normal_form("fraction(1n, 0n)", "error");
+}
+
+#[test]
+fn test_bigrat_literal_division_by_zero_is_error() {
+    // Parses as `(1r) / (0r)`, not a single `1r/0r` literal (which `parse_rational_lit` rejects).
+    calc_normal_form("1r/0r", "error");
+}
+
+#[test]
+fn test_fraction_requires_bigint_args() {
+    mettail_runtime::clear_var_cache();
+    assert!(calc::BigRat::parse("fraction(1, 2)").is_err());
+}
+
+#[test]
 fn test_int_sub() {
     calc_normal_form("10 - 4", "6");
     calc_normal_form("5 - -3", "8");

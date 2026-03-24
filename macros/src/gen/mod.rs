@@ -315,10 +315,13 @@ pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
     use native::native_type_to_string;
     let type_str = native_type_to_string(native_type);
     match type_str.as_str() {
-        "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => quote::format_ident!("NumLit"),
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+        | "usize" => quote::format_ident!("NumLit"),
         "f32" | "f64" => quote::format_ident!("FloatLit"),
         "bool" => quote::format_ident!("BoolLit"),
         "str" | "String" => quote::format_ident!("StringLit"),
+        "CanonicalBigRat" => quote::format_ident!("RatLit"),
+        _ if type_str.ends_with("BigInt") => quote::format_ident!("NumLit"),
         _ => quote::format_ident!("Lit"), // Generic fallback
     }
 }

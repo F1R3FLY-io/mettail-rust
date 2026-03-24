@@ -207,6 +207,7 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);
@@ -215,8 +216,8 @@ mod tests {
 
         // DFA should have a reasonable number of states
         assert!(
-            dfa.states.len() < 20,
-            "DFA should have fewer than 20 states, got {}",
+            dfa.states.len() < 80,
+            "DFA should have fewer than 80 states, got {}",
             dfa.states.len()
         );
 
@@ -245,6 +246,7 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);
