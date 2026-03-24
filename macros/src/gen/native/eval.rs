@@ -83,9 +83,7 @@ fn hol_bigrat_fraction_try_from_nd_option(
         .terms
         .iter()
         .any(|r| r.category == *category && r.label == err_ident);
-    category_has_err
-        && label.to_string() == "Fraction"
-        && category.to_string() == "BigRat"
+    category_has_err && label.to_string() == "Fraction" && category.to_string() == "BigRat"
 }
 
 /// `DivBigRat` must not call `num-rational` division when the divisor is zero (panics in `reduce`).
@@ -99,9 +97,7 @@ fn hol_bigrat_div_zero_guard(
         .terms
         .iter()
         .any(|r| r.category == *category && r.label == err_ident);
-    category_has_err
-        && label.to_string() == "DivBigRat"
-        && category.to_string() == "BigRat"
+    category_has_err && label.to_string() == "DivBigRat" && category.to_string() == "BigRat"
 }
 
 pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
@@ -262,7 +258,8 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     })
                     .collect();
                 let rust_code = &rust_code_block.code;
-                let fraction_option = hol_bigrat_fraction_try_from_nd_option(language, category, label);
+                let fraction_option =
+                    hol_bigrat_fraction_try_from_nd_option(language, category, label);
                 let div_zero_guard = hol_bigrat_div_zero_guard(language, category, label);
                 let match_arm = if fraction_option && param_count > 0 {
                     quote! {

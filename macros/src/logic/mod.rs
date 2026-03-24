@@ -379,8 +379,7 @@ fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -
                     .terms
                     .iter()
                     .any(|r| r.category == *category && r.label == err_ident);
-                let is_bigrat_fraction =
-                    label.to_string() == "Fraction" && category.to_string() == "BigRat";
+                let is_bigrat_fraction = *label == "Fraction" && *category == "BigRat";
                 if category_has_err_variant && is_bigrat_fraction {
                     binary_rust_rules.push(quote! {
                         #rw_rel(s.clone(), t) <--
@@ -590,9 +589,7 @@ fn generate_fold_big_step_rules(
                 // Zero-ary `Err` is already a value (e.g. `BigRat::Err` for zero denominator).
                 let err_ident = format_ident!("Err");
                 if language.terms.iter().any(|r| {
-                    r.category == *category
-                        && r.label == err_ident
-                        && fold_field_count(r) == 0
+                    r.category == *category && r.label == err_ident && fold_field_count(r) == 0
                 }) {
                     rules.push(quote! {
                         #fold_rel(t.clone(), t.clone()) <--
@@ -623,8 +620,8 @@ fn generate_fold_big_step_rules(
 
                 let err_ident = format_ident!("Err");
                 let div_bigrat_zero_to_err = param_count == 2
-                    && category.to_string() == "BigRat"
-                    && label.to_string() == "DivBigRat"
+                    && *category == "BigRat"
+                    && *label == "DivBigRat"
                     && language.terms.iter().any(|r| {
                         r.category == *category && r.label == err_ident && fold_field_count(r) == 0
                     });
