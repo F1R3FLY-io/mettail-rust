@@ -1,5 +1,7 @@
 # Signed BigInt Library Selection
 
+**Status:** Implemented — `num-bigint` with a **`Copy`-compatible** runtime wrapper `CanonicalBigInt` in `mettail-runtime` (`runtime/src/canonical_bigint.rs`); integer literals flow through `prattail::parse_int_lit` (`prattail/src/int_lit.rs`) and per-language `literals` blocks (e.g. `…n` for `BigInt` in Calculator / RhoCalc).
+
 ## Context
 
 We need to add **signed bigint literals** in MeTTaIL (`<digits>n`).
@@ -135,17 +137,15 @@ If future profiling shows bigint arithmetic as a dominant bottleneck:
 
 This should be done only after workload-driven profiling demonstrates clear need.
 
-## Implementation implications (next step)
+## Implementation (done)
 
-With backend choice fixed to `num-bigint`, Signed BigInt implementation should focus on:
+With backend choice fixed to `num-bigint`, the tree includes:
 
-- adding bigint dependency plumbing where needed (`prattail` + generated code paths),
-- introducing bigint variant(s) in literal value representation (`IntLit` and conversion surfaces),
-- enabling `n` suffix end-to-end where per-language patterns permit it,
-- strict category mapping for bigint literals (no unintended cross-casting),
-- clear behavior for unsuffixed literals (language-controlled default),
-- tests for tokenization/parsing/evaluation of large signed literals.
+- `prattail`: `IntLit::BigInt` and `parse_int_lit` / suffix handling for large integers.
+- `mettail-runtime`: `CanonicalBigInt` for `BoundTerm` / Ascent-friendly literals.
+- Languages: e.g. `![mettail_runtime::CanonicalBigInt] as BigInt` and a `BigInt` literal pattern ending in `n` in `languages/src/calculator.rs`, `languages/src/rhocalc.rs`.
+- Tests: language and prattail tests for parsing and evaluation of large literals.
 
 ## See also
 
-- [Signed BigRat design](./signed-bigrat-design.md) — options for replacing the `…r` / `BigRatStub` rational placeholder with real arbitrary-precision rationals.
+- [Signed BigRat design](./signed-bigrat-design.md) — rationals, `…r` literals, `fraction`, and `CanonicalBigRat`.

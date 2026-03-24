@@ -6,8 +6,8 @@
 ## Implementation (Option A)
 
 - **Runtime:** `runtime/src/canonical_float.rs` defines `CanonicalFloat64` and `CanonicalFloat32` with canonicalization (NaN → single pattern, -0 → +0), `Eq`/`Hash`/`Ord`, `BoundTerm`, and arithmetic ops. Re-exported from `runtime/src/lib.rs`.
-- **Macros:** In `macros/src/gen/types/enums.rs`, float categories use the canonical type as the literal payload and derive full `Eq`/`Hash`/`Ord`; `literal_payload_type` and `type_expr_to_field_type` return the wrapper for FloatLiteral. Parser in `macros/src/gen/syntax/parser/lalrpop.rs` wraps parsed floats with `CanonicalFloat64::from(f)` (or `CanonicalFloat32`). Display, term_gen/random, and native/eval use the wrapper; eval return type for float categories is the wrapper.
-- **Languages:** Float enabled in `languages/src/calculator.rs` with `![f64] as Float`, `EqFloat`, `AddFloat`, and congruence rules. Integration test in `languages/tests/calculator.rs` (`test_float_literal_parse`) parses a float and checks the canonical wrapper.
+- **Macros:** In `macros/src/gen/types/enums.rs`, float categories use the canonical type as the literal payload and derive full `Eq`/`Hash`/`Ord`; `literal_payload_type` and `type_expr_to_field_type` return the wrapper for FloatLiteral. The PraTTaIL bridge in `macros/src/gen/syntax/parser/prattail_bridge.rs` maps native float categories and literal eval hooks (there is no `lalrpop.rs` in this pipeline). Display, term_gen/random, and native/eval use the wrapper; eval return type for float categories is the wrapper.
+- **Languages:** Float is enabled in `languages/src/calculator.rs` and `languages/src/rhocalc.rs` with `![f64] as Float` and float operations / casts as defined in each language. Integration coverage includes `languages/tests/calculator.rs` (e.g. `test_float_literal_parse`) and RhoCalc tests where floats participate in `Proc`.
 
 The options and rationale below are preserved for reference.
 

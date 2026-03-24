@@ -20,11 +20,13 @@
 **Semantics:** List equality: same length and element-wise equality. Bag = multiset equality (element, count). Element bounds: Bag requires `Clone + Eq + Hash`; List elements in relations need `Eq + Hash`.
 
 **Type declaration (language macro):** In **types**, collection categories are declared as:
-- `![Vec<Proc>] as List` — List, default delimiters `[`, `]`, `,`.
-- `![mettail_runtime::HashBag<Proc>] as Bag` — Bag, default `{`, `}`, `,`.
-- Optional custom delimiters: `as Bag [ "#{", "}#", "|" ]` (e.g. rhocalc). One parameterised PraTTaIL rule per collection kind; element category can differ from collection category (e.g. parse **Proc** into List/Bag via ElemParse frame and `pending_elem` in the trampoline).
+- `![Vec<Proc>] as List` — List; **default** delimiters are `list(`, `)`, `,` (see `CollectionCategory::list_defaults()` in `macros/src/ast/language.rs`). Languages may override, e.g. RhoCalc: `![Vec<Proc>] as List ["[", "]", ","]`.
+- `![mettail_runtime::HashBag<Proc>] as Bag` — Bag; **default** delimiters are `bag(`, `)`, `,`. RhoCalc uses `![mettail_runtime::HashBag<Proc>] as Bag [ "#{", "}#", "|" ]` to avoid clashing with PPar `{ … }`.
+- Optional 4-string bracket form for **Map**: open, close, entry separator, key/value separator (see map design doc).
 
-**Literals:** Elements separated by the delimiter; empty `[]` and `{}` valid. List: `[ a, b, c ]`. Bag: repeated elements denote multiplicity, e.g. `{ 1, 1, 2 }` = 1 twice, 2 once. Custom delimiters allow language-specific surface syntax (e.g. element|count).
+One parameterised PraTTaIL rule per collection kind; element category can differ from collection category (e.g. parse **Proc** into List/Bag via `ElemParse` and `pending_elem` in the trampoline).
+
+**Literals:** Elements separated by the language’s configured separators; empty collections use the declared open/close pair (e.g. `list()` / `bag()` with defaults, or `[]` / `#{ }#` on RhoCalc). With **default** delimiters: `list(a, b, c)`, `bag(1, 1, 2)` (repeated elements = multiplicity). Custom delimiters allow language-specific surface syntax (e.g. `[a, b, c]`, `#{ a | b }#`).
 
 **Rewrites:** **Rewrites allowed everywhere** within list elements (single global policy; no per-list knob). Aligns with [f1r3node/rholang](https://github.com/F1R3FLY-io/f1r3node/tree/rust/dev/rholang) (element-wise normalization).
 
