@@ -302,14 +302,15 @@ pub fn extract_terminals(
             Some("str") | Some("String") => {
                 needs.string_lit = true;
             },
-            Some(other) => {
+            Some(other)
                 // BigInt (incl. CanonicalBigInt) needs integer tokenization. BigRat / CanonicalBigRat
                 // uses the separate rational literal path when configured in `literals { ... }`;
                 // constructor-only languages should not pull in the legacy `…r` integer stub.
-                if other.ends_with("BigInt") {
-                    needs.integer = true;
-                }
+                if other.ends_with("BigInt") =>
+            {
+                needs.integer = true;
             },
+            Some(_) => {},
             None => {},
         }
     }
