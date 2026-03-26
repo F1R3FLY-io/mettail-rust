@@ -203,6 +203,7 @@ fn build_literal_config(
         integer: default_patterns.integer.clone(),
         integer_by_category: std::collections::HashMap::new(),
         rational_by_category: std::collections::HashMap::new(),
+        fixed_by_category: std::collections::HashMap::new(),
         float: default_patterns.float.clone(),
         string: default_patterns.string.clone(),
         ident: default_patterns.ident.clone(),
@@ -299,6 +300,8 @@ fn build_literal_config(
                     Some("Int")
                 } else if native.ends_with("BigRat") {
                     Some("Rat")
+                } else if native.ends_with("CanonicalFixedPoint") {
+                    Some("Fixed")
                 } else {
                     None
                 }
@@ -340,6 +343,12 @@ fn build_literal_config(
             Some("Rat") => {
                 literal_patterns
                     .rational_by_category
+                    .insert(name.clone(), spec.pattern.clone());
+                literal_eval.insert(name.clone(), eval_code);
+            },
+            Some("Fixed") => {
+                literal_patterns
+                    .fixed_by_category
                     .insert(name.clone(), spec.pattern.clone());
                 literal_eval.insert(name.clone(), eval_code);
             },

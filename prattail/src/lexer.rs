@@ -102,6 +102,11 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
             token_kinds.push(TokenKind::RationalLit(cat.clone()));
         }
     }
+    if input.needs.fixed_point {
+        for cat in input.literal_patterns.fixed_by_category.keys() {
+            token_kinds.push(TokenKind::FixedPointLit(cat.clone()));
+        }
+    }
     for terminal in &input.terminals {
         token_kinds.push(terminal.kind.clone());
     }
@@ -185,6 +190,11 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     if input.needs.rational {
         for cat in input.literal_patterns.rational_by_category.keys() {
             token_kinds.push(TokenKind::RationalLit(cat.clone()));
+        }
+    }
+    if input.needs.fixed_point {
+        for cat in input.literal_patterns.fixed_by_category.keys() {
+            token_kinds.push(TokenKind::FixedPointLit(cat.clone()));
         }
     }
     for terminal in &input.terminals {
@@ -309,6 +319,9 @@ pub fn extract_terminals(
                 if other.ends_with("BigInt") =>
             {
                 needs.integer = true;
+            },
+            Some(other) if other.ends_with("CanonicalFixedPoint") => {
+                needs.fixed_point = true;
             },
             Some(_) => {},
             None => {},

@@ -349,6 +349,28 @@ mod native_ops {
         }
 
         #[test]
+        fn float_literal_f32_suffix() {
+            let results = run("{1.0f32 + 0.5f32}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf.contains("1.5")),
+                "expected 1.5 in a normal form, got: {:?}",
+                nfs
+            );
+        }
+
+        #[test]
+        fn fixed_div_and_mod() {
+            assert_reduces_to("{10p1 / 3p1}", "3.3p1");
+            assert_reduces_to("{10p1 % 3p1}", "0.1p1");
+        }
+
+        #[test]
+        fn fixed_bitand() {
+            assert_reduces_to("{5p0 bitand 3p0}", "1p0");
+        }
+
+        #[test]
         fn chained_add() {
             // fold evaluates full expression trees
             assert_reduces_to("{1 + 2 + 3}", "6");

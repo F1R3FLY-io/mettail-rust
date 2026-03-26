@@ -164,6 +164,26 @@ fn test_float_scientific() {
     calc_normal_form("1.23e10", "12300000000.0");
 }
 
+#[test]
+fn test_float_optional_width_suffix() {
+    calc_normal_form("1.0f64", "1.0");
+    calc_normal_form("2.5f32", "2.5");
+    // Exact in binary32 so widening to f64 display is stable (unlike e.g. 123.4).
+    calc_normal_form("-1.25f32", "-1.25");
+}
+
+#[test]
+fn test_fixed_literal_and_div_mod() {
+    calc_normal_form("10p1", "10.0p1");
+    calc_normal_form("10p1 / 3p1", "3.3p1");
+    calc_normal_form("10p1 % 3p1", "0.1p1");
+}
+
+#[test]
+fn test_fixed_bitand() {
+    calc_normal_form("5p0 bitand 3p0", "1p0");
+}
+
 // --- Bool ---
 
 #[test]

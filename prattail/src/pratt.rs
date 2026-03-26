@@ -420,6 +420,7 @@ fn write_token_pattern(buf: &mut String, token: &str) {
         "Ident" => buf.push_str("Token::Ident(_)"),
         "Integer" => buf.push_str("Token::Integer(_)"),
         "Rational" => buf.push_str("Token::Rational(_)"),
+        "FixedPoint" => buf.push_str("Token::FixedPoint(_)"),
         "Float" => buf.push_str("Token::Float(_)"),
         "Boolean" => buf.push_str("Token::Boolean(_)"),
         "StringLit" => buf.push_str("Token::StringLit(_)"),
@@ -607,6 +608,10 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
                 }}",
                 cat,
             )),
+            _ if native_type.ends_with("CanonicalFixedPoint") => match_arms.push(format!(
+                "Token::FixedPoint(v) => {{ let val = *v; *pos += 1; Ok({}::FixedLit(val)) }}",
+                cat,
+            )),
             _ if native_type.ends_with("CanonicalBigInt") => match_arms.push(format!(
                 "Token::Integer(v) => {{ \
                     if let Some(val) = v.to_bigint() {{ *pos += 1; Ok({}::NumLit(mettail_runtime::CanonicalBigInt::from(val))) }} \
@@ -623,7 +628,7 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
             )),
             "f32" | "f64" => {
                 match_arms.push(format!(
-                    "Token::Float(v) => {{ let val = (*v).into(); *pos += 1; Ok({}::FloatLit(val)) }}",
+                    "Token::Float(v) => {{ let val = *v; *pos += 1; Ok({}::FloatLit(val)) }}",
                     cat,
                 ));
             },

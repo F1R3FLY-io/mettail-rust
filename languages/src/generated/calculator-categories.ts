@@ -53,6 +53,12 @@ export const categoryInfo = {
 			"NeFloat",
 			"NeBool",
 			"NeStr",
+			"EqFixed",
+			"GtFixed",
+			"LtFixed",
+			"LtEqFixed",
+			"GtEqFixed",
+			"NeFixed",
 			"Not",
 			"And",
 			"Or",
@@ -61,6 +67,20 @@ export const categoryInfo = {
 			"HasMap"
 		],
 		colour: "7a51e0",
+	},
+	Fixed: {
+		constructors: [
+			"AddFixed",
+			"SubFixed",
+			"MulFixed",
+			"DivFixed",
+			"ModFixed",
+			"NegFixed",
+			"BitAndFixed",
+			"BitOrFixed",
+			"BitXorFixed"
+		],
+		colour: "e05158",
 	},
 	Float: {
 		constructors: [
@@ -126,6 +146,7 @@ export const categoryInfo = {
 			"ProcUInt32",
 			"ProcBigInt",
 			"ProcBigRat",
+			"ProcFixed",
 			"ElemList",
 			"GetMap"
 		],

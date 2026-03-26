@@ -161,6 +161,7 @@ mod tests {
             string_lit: false,
             boolean: false,
             rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);

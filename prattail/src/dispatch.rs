@@ -47,6 +47,8 @@ fn write_token_pattern(buf: &mut String, token: &str) {
     match token {
         "Ident" => buf.push_str("Token::Ident(_)"),
         "Integer" => buf.push_str("Token::Integer(_)"),
+        "Rational" => buf.push_str("Token::Rational(_)"),
+        "FixedPoint" => buf.push_str("Token::FixedPoint(_)"),
         "Float" => buf.push_str("Token::Float(_)"),
         "Boolean" => buf.push_str("Token::Boolean(_)"),
         "StringLit" => buf.push_str("Token::StringLit(_)"),

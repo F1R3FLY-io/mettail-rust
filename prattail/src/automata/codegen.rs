@@ -130,9 +130,14 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind]) {
                     buf.push_str("Rational(mettail_prattail::RationalLit),");
                 }
             },
+            TokenKind::FixedPointLit(_) => {
+                if seen.insert("FixedPoint".to_string()) {
+                    buf.push_str("FixedPoint(mettail_runtime::CanonicalFixedPoint),");
+                }
+            },
             TokenKind::Float => {
                 if seen.insert("Float".to_string()) {
-                    buf.push_str("Float(f64),");
+                    buf.push_str("Float(mettail_runtime::CanonicalFloat64),");
                 }
             },
             TokenKind::True | TokenKind::False | TokenKind::BooleanLit => {
@@ -439,9 +444,28 @@ fn write_token_constructor(
                 );
             }
         },
+        TokenKind::FixedPointLit(cat) => {
+            if let Some(eval) = integer_literal_eval.get(cat) {
+                write!(
+                    buf,
+                    "match {{ let text = text; {} }} {{ \
+                     Ok(v) => Some(Token::FixedPoint(v)), \
+                     Err(_) => None \
+                     }}",
+                    eval
+                )
+                .unwrap();
+            } else {
+                buf.push_str(
+                    "match mettail_prattail::parse_fixed_lit(text) { \
+                     Ok(v) => Some(Token::FixedPoint(v)), \
+                     Err(_) => None \
+                     }",
+                );
+            }
+        },
         TokenKind::Float => {
             if let Some(eval) = literal_eval.get("Float") {
-                // Custom float eval: expected to return Result<f64, E>.
                 write!(
                     buf,
                     "match {{ let text = text; {} }} {{ \
@@ -452,9 +476,8 @@ fn write_token_constructor(
                 )
                 .unwrap();
             } else {
-                // Default float parse: use Result to avoid panics.
                 buf.push_str(
-                    "match text.parse::<f64>() { \
+                    "match mettail_prattail::parse_float_lit(text) { \
                      Ok(v) => Some(Token::Float(v)), \
                      Err(_) => None \
                      }",
@@ -1360,11 +1383,19 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                     });
                 }
             },
+            TokenKind::FixedPointLit(_) => {
+                if seen.insert("FixedPoint".to_string()) {
+                    variants.push(quote! {
+                        /// Fixed-point decimal literal
+                        FixedPoint(mettail_runtime::CanonicalFixedPoint)
+                    });
+                }
+            },
             TokenKind::Float => {
                 if seen.insert("Float".to_string()) {
                     variants.push(quote! {
                         /// Float literal
-                        Float(f64)
+                        Float(mettail_runtime::CanonicalFloat64)
                     });
                 }
             },
@@ -1766,8 +1797,11 @@ pub fn token_kind_to_constructor(kind: &TokenKind) -> TokenStream {
         TokenKind::RationalLit(_) => quote! {
             Token::Rational(mettail_prattail::parse_rational_lit(text).expect("invalid rational literal"))
         },
+        TokenKind::FixedPointLit(_) => quote! {
+            Token::FixedPoint(mettail_prattail::parse_fixed_lit(text).expect("invalid fixed-point literal"))
+        },
         TokenKind::Float => quote! {
-            Token::Float(text.parse::<f64>().expect("invalid float literal"))
+            Token::Float(mettail_prattail::parse_float_lit(text).expect("invalid float literal"))
         },
         TokenKind::True => quote! { Token::Boolean(true) },
         TokenKind::False => quote! { Token::Boolean(false) },

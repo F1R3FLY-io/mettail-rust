@@ -1199,6 +1199,7 @@ pub fn build_dispatch_action_tables(
                 "bool" => vec!["Boolean"],
                 "str" | "String" => vec!["StringLit"],
                 _ if native_type.ends_with("CanonicalBigRat") => vec!["Rational"],
+                _ if native_type.ends_with("CanonicalFixedPoint") => vec!["FixedPoint"],
                 _ => vec![],
             };
             for variant in literal_variants {
@@ -1366,6 +1367,7 @@ fn token_to_match_pattern(token: &str) -> String {
         "Ident" => "Token::Ident(_)".to_string(),
         "Integer" => "Token::Integer(_)".to_string(),
         "Rational" => "Token::Rational(_)".to_string(),
+        "FixedPoint" => "Token::FixedPoint(_)".to_string(),
         "Float" => "Token::Float(_)".to_string(),
         "Boolean" => "Token::Boolean(_)".to_string(),
         "StringLit" => "Token::StringLit(_)".to_string(),
@@ -1388,6 +1390,7 @@ pub fn generate_first_set_check(first_set: &FirstSet, token_var: &str) -> TokenS
                 "Ident" => quote! { Token::Ident(_) },
                 "Integer" => quote! { Token::Integer(_) },
                 "Rational" => quote! { Token::Rational(_) },
+                "FixedPoint" => quote! { Token::FixedPoint(_) },
                 "Float" => quote! { Token::Float(_) },
                 "Boolean" => quote! { Token::Boolean(_) },
                 "StringLit" => quote! { Token::StringLit(_) },
