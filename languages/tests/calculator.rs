@@ -167,9 +167,8 @@ fn test_float_scientific() {
 #[test]
 fn test_float_optional_width_suffix() {
     calc_normal_form("1.0f64", "1.0");
-    calc_normal_form("2.5f32", "2.5");
-    // Exact in binary32 so widening to f64 display is stable (unlike e.g. 123.4).
-    calc_normal_form("-1.25f32", "-1.25");
+    calc_normal_form("2.5f64", "2.5");
+    calc_normal_form("-1.25f64", "-1.25");
 }
 
 #[test]

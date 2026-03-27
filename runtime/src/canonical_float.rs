@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn roundtrip_normal() {
-        let x = 3.14_f64;
+        let x = 1.25_f64;
         assert_eq!(CanonicalFloat64::from(x).get(), x);
     }
 

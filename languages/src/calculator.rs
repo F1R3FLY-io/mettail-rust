@@ -56,8 +56,8 @@ language! {
             eval: ![ { mettail_prattail::parse_fixed_lit(text).map_err(|_| ()) } ]
         }
         Float {
-            // Decimal or exponent; optional f32 suffix (default f64 in parser); leading `-` in the token (unary is not split).
-            pattern: r"-?([0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)(f32)?|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?(f32)?)";
+            // Decimal or exponent; optional explicit f64 suffix; leading `-` in the token (unary is not split).
+            pattern: r"-?([0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)(f64)?|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?(f64)?)";
             eval: ![ { mettail_prattail::parse_float_lit(text).map_err(|_| ()) } ]
         }
         Bool {

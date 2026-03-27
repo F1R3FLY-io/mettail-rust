@@ -6,7 +6,7 @@
 
 ### Implemented behavior (summary)
 
-- **Float literals:** `mettail_prattail::parse_float_lit` — optional `f32` / `f64` suffix (reject `f128` / `f256`); no suffix defaults to `f64`. RhoCalc and Calculator float regexes call this helper. Single `Float` category remains `CanonicalFloat64`; `f32` literals are widened to `f64` for storage.
+- **Float literals:** `mettail_prattail::parse_float_lit` accepts unsuffixed, `f32`, or `f64` (reject `f128` / `f256`); `f32` is widened to `f64` for `CanonicalFloat64`. **Calculator and RhoCalc** only include optional `f64` in their float **lexer** pattern (no `f32` token in surface syntax, since neither language exposes `f32` as a type).
 - **Fixed-point:** `mettail_runtime::CanonicalFixedPoint` (`unscaled` / `places`, value `unscaled / 10^places`). Literals use `…p…` forms parsed by `parse_fixed_lit`. Lexer uses `fixed_by_category` parallel to rationals. Calculator has `Fixed` terms and `ProcFixed`; RhoCalc uses `CastFixed` on `Proc` with `+` / `-` / `*` / `/` / `%` and `bitand` / `bitor` / `bitxor` on fixed values only.
 - **Float restrictions:** No `%` or bitwise operators on `Float` in these languages (only on `Fixed` / integers as before).
 

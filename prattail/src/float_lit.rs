@@ -1,4 +1,8 @@
 //! Floating-point literal parsing: decimal / exponent forms with optional `f32` / `f64` suffix.
+//!
+//! `f32` is parsed and widened to [`CanonicalFloat64`]. Calculator and RhoCalc only **lex** optional
+//! `f64` in their float patterns (no `f32` surface token), but other callers may still pass `f32`
+//! strings into [`parse_float_lit`].
 
 use mettail_runtime::CanonicalFloat64;
 
@@ -46,6 +50,12 @@ mod tests {
     #[test]
     fn exponent_f32_suffix() {
         let x = parse_float_lit("-1.234e5f32").unwrap();
+        assert_eq!(x.get(), -123400.0_f64);
+    }
+
+    #[test]
+    fn exponent_f64_suffix() {
+        let x = parse_float_lit("-1.234e5f64").unwrap();
         assert_eq!(x.get(), -123400.0_f64);
     }
 

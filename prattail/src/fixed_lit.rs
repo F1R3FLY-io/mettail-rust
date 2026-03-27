@@ -78,7 +78,6 @@ pub fn parse_fixed_lit(text: &str) -> Result<CanonicalFixedPoint, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use num_traits::Zero;
 
     #[test]
     fn integral_mantissa() {

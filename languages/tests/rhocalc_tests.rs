@@ -349,8 +349,8 @@ mod native_ops {
         }
 
         #[test]
-        fn float_literal_f32_suffix() {
-            let results = run("{1.0f32 + 0.5f32}");
+        fn float_literal_f64_suffix_tokens() {
+            let results = run("{1.0f64 + 0.5f64}");
             let nfs = normal_form_displays(&results);
             assert!(
                 nfs.iter().any(|nf| nf.contains("1.5")),

@@ -136,12 +136,7 @@ impl Hash for CanonicalFixedPoint {
 
 impl fmt::Debug for CanonicalFixedPoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Fixed({}/{})",
-            self.unscaled.get(),
-            pow10(self.places)
-        )
+        write!(f, "Fixed({}/{})", self.unscaled.get(), pow10(self.places))
     }
 }
 
@@ -157,7 +152,9 @@ impl fmt::Display for CanonicalFixedPoint {
         let digits = if neg { &us[1..] } else { &us[..] };
         if digits.len() <= p {
             let pad = p - digits.len();
-            let frac: String = std::iter::repeat('0').take(pad).chain(digits.chars()).collect();
+            let frac: String = std::iter::repeat_n('0', pad)
+                .chain(digits.chars())
+                .collect();
             if neg {
                 write!(f, "-0.{frac}p{}", self.places)
             } else {
