@@ -201,6 +201,9 @@ fn build_literal_config(
     let default_patterns = LiteralPatterns::default();
     let mut literal_patterns = LiteralPatterns {
         integer: default_patterns.integer.clone(),
+        integer_by_category: std::collections::HashMap::new(),
+        rational_by_category: std::collections::HashMap::new(),
+        fixed_by_category: std::collections::HashMap::new(),
         float: default_patterns.float.clone(),
         string: default_patterns.string.clone(),
         ident: default_patterns.ident.clone(),
@@ -209,36 +212,277 @@ fn build_literal_config(
     let mut literal_eval: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
 
+    fn suffix_variant_for_native(native: &str) -> Option<&'static str> {
+        match native {
+            "i8" => Some("I8"),
+            "i16" => Some("I16"),
+            "i32" => Some("I32"),
+            "i64" => Some("I64"),
+            "i128" => Some("I128"),
+            "isize" => Some("Isize"),
+            "u8" => Some("U8"),
+            "u16" => Some("U16"),
+            "u32" => Some("U32"),
+            "u64" => Some("U64"),
+            "u128" => Some("U128"),
+            "usize" => Some("Usize"),
+            _ => {
+                if native.ends_with("BigInt") {
+                    Some("BigInt")
+                } else {
+                    None
+                }
+            },
+        }
+    }
+
+    // Map declared category name -> native Rust type string (if any), so literals can be
+    // attached to arbitrary category names like Int32/UInt64/etc.
+    let mut native_by_cat: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for t in &language.types {
+        if let Some(ref native) = t.native_type {
+            native_by_cat.insert(t.name.to_string(), quote::quote! { #native }.to_string());
+        }
+    }
+
+    let maybe_infer_single_integer_default = |literal_patterns: &LiteralPatterns,
+                                              literal_eval: &mut std::collections::HashMap<
+        String,
+        String,
+    >| {
+        // Compatibility path: when language omits integer literals and declares exactly
+        // one integer-native category, default unsuffixed integers to that type.
+        // Explicit literal eval and per-category integer literals always win.
+        if literal_eval.contains_key("Int") || !literal_patterns.integer_by_category.is_empty() {
+            return;
+        }
+        let integer_native_types: Vec<&str> = native_by_cat
+            .values()
+            .map(|s| s.as_str())
+            .filter(|native| suffix_variant_for_native(native).is_some())
+            .collect();
+        if integer_native_types.len() != 1 {
+            return;
+        }
+        if let Some(suffix) = suffix_variant_for_native(integer_native_types[0]) {
+            let eval_code = format!(
+                "{{ mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::{suffix})).map_err(|_| ()) }}"
+            );
+            literal_eval.insert("Int".to_string(), eval_code);
+        }
+    };
+
+    // Keep default integer pattern (`[0-9]+`) unchanged unless the language
+    // explicitly configures integer literal patterns in `literals { ... }`.
+    // Declaring integer native types alone should not implicitly enable suffixes.
+
     let Some(ref block) = language.literals else {
+        maybe_infer_single_integer_default(&literal_patterns, &mut literal_eval);
         return (literal_patterns, literal_eval);
     };
+
+    fn class_for_native_type(native: &str) -> Option<&'static str> {
+        match native {
+            // Signed integers
+            "i8" | "i16" | "i32" | "i64" | "i128" | "isize" |
+            // Unsigned integers
+            "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => Some("Int"),
+            // Floats
+            "f32" | "f64" => Some("Float"),
+            // Strings
+            "str" | "String" => Some("Str"),
+            // Booleans
+            "bool" => Some("Bool"),
+            _ => {
+                // External types: support num-bigint BigInt as integer literal class.
+                if native.ends_with("BigInt") {
+                    Some("Int")
+                } else if native.ends_with("BigRat") {
+                    Some("Rat")
+                } else if native.ends_with("CanonicalFixedPoint") {
+                    Some("Fixed")
+                } else {
+                    None
+                }
+            }
+        }
+    }
 
     for spec in &block.specs {
         let name = spec.type_name.to_string();
         let expr = &spec.eval;
         let eval_code = quote::quote! { #expr }.to_string();
-        match name.as_str() {
-            "Int" => {
-                literal_patterns.integer = spec.pattern.clone();
-                literal_eval.insert(name, eval_code);
+        let class = match name.as_str() {
+            "Int" | "Float" | "Str" | "Bool" => Some(name.as_str()),
+            _ => native_by_cat
+                .get(&name)
+                .and_then(|native| class_for_native_type(native.as_str())),
+        };
+
+        match class {
+            Some("Int") => {
+                // Integer categories coexist; avoid overriding by storing each category separately.
+                literal_patterns
+                    .integer_by_category
+                    .insert(name.clone(), spec.pattern.clone());
+                literal_eval.insert(name.clone(), eval_code);
             },
-            "Float" => {
+            Some("Float") => {
                 literal_patterns.float = spec.pattern.clone();
-                literal_eval.insert(name, eval_code);
+                literal_eval.insert("Float".to_string(), eval_code);
             },
-            "Str" => {
+            Some("Str") => {
                 literal_patterns.string = spec.pattern.clone();
-                literal_eval.insert(name, eval_code);
+                literal_eval.insert("Str".to_string(), eval_code);
             },
-            "Bool" => {
+            Some("Bool") => {
                 literal_patterns.boolean = Some(spec.pattern.clone());
-                literal_eval.insert(name, eval_code);
+                literal_eval.insert("Bool".to_string(), eval_code);
+            },
+            Some("Rat") => {
+                literal_patterns
+                    .rational_by_category
+                    .insert(name.clone(), spec.pattern.clone());
+                literal_eval.insert(name.clone(), eval_code);
+            },
+            Some("Fixed") => {
+                literal_patterns
+                    .fixed_by_category
+                    .insert(name.clone(), spec.pattern.clone());
+                literal_eval.insert(name.clone(), eval_code);
             },
             _ => {},
         }
     }
 
+    // If any integer categories were provided, keep the old single integer path disabled.
+    // Integer lexing/codegen uses the per-category maps instead.
+    if !literal_patterns.integer_by_category.is_empty() {
+        literal_patterns.integer = default_patterns.integer;
+    }
+
+    maybe_infer_single_integer_default(&literal_patterns, &mut literal_eval);
+
     (literal_patterns, literal_eval)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_literal_config;
+    use crate::ast::language::LanguageDef;
+
+    #[test]
+    fn infers_single_integer_default_suffix_without_literals() {
+        let src = r#"
+            name: OneInt,
+            types { ![i32] as Int },
+            terms { NumLit . Int ::= "0" ; }
+        "#;
+        let language = syn::parse_str::<LanguageDef>(src).expect("language should parse");
+        let (_patterns, eval) = build_literal_config(&language);
+        let int_eval = eval.get("Int").expect("bridge should infer Int eval");
+        assert!(
+            int_eval.contains("Suffix::I32"),
+            "expected inferred i32 default suffix, got: {int_eval}"
+        );
+    }
+
+    #[test]
+    fn does_not_infer_for_multiple_integer_types_without_literals() {
+        let src = r#"
+            name: TwoInts,
+            types { ![i32] as Int ![u32] as UInt32 },
+            terms { NumLit . Int ::= "0" ; }
+        "#;
+        let language = syn::parse_str::<LanguageDef>(src).expect("language should parse");
+        let (_patterns, eval) = build_literal_config(&language);
+        assert!(
+            !eval.contains_key("Int"),
+            "should not infer a single Int default for multi-int language: {eval:?}"
+        );
+    }
+
+    #[test]
+    fn explicit_int_literal_eval_wins_over_inference() {
+        let src = r#"
+            name: ExplicitInt,
+            types { ![i32] as Int },
+            literals {
+                Int {
+                    pattern: r"[0-9]+";
+                    eval: ![ { text.parse::<i32>().map_err(|_| ()) } ]
+                }
+            },
+            terms { NumLit . Int ::= "0" ; }
+        "#;
+        let language = syn::parse_str::<LanguageDef>(src).expect("language should parse");
+        let (_patterns, eval) = build_literal_config(&language);
+        let int_eval = eval.get("Int").expect("explicit eval should exist");
+        assert!(
+            int_eval.contains("parse :: < i32 >"),
+            "explicit Int eval should be preserved, got: {int_eval}"
+        );
+        assert!(
+            !int_eval.contains("Suffix::I32"),
+            "inference should not override explicit Int eval, got: {int_eval}"
+        );
+    }
+
+    #[test]
+    fn infers_single_bigint_default_suffix_without_literals() {
+        let src = r#"
+            name: OneBigInt,
+            types { ![num_bigint::BigInt] as Int },
+            terms { NumLit . Int ::= "0" ; }
+        "#;
+        let language = syn::parse_str::<LanguageDef>(src).expect("language should parse");
+        let (_patterns, eval) = build_literal_config(&language);
+        let int_eval = eval.get("Int").expect("bridge should infer Int eval");
+        assert!(
+            int_eval.contains("Suffix::BigInt"),
+            "expected inferred BigInt default suffix, got: {int_eval}"
+        );
+    }
+
+    #[test]
+    fn does_not_infer_single_default_for_bigint_and_i32() {
+        let src = r#"
+            name: MixedInts,
+            types { ![num_bigint::BigInt] as BigInt ![i32] as Int },
+            terms { NumLit . Int ::= "0" ; }
+        "#;
+        let language = syn::parse_str::<LanguageDef>(src).expect("language should parse");
+        let (_patterns, eval) = build_literal_config(&language);
+        assert!(
+            !eval.contains_key("Int"),
+            "should not infer a single Int default for mixed integer natives: {eval:?}"
+        );
+    }
+
+    #[test]
+    fn rational_literal_patterns_use_rational_by_category() {
+        let src = r#"
+            name: RatLang,
+            types { ![mettail_runtime::CanonicalBigRat] as BigRat },
+            literals {
+                BigRat {
+                    pattern: r"[0-9]+r(/[0-9]+r)?";
+                    eval: ![ { mettail_prattail::parse_rational_lit(text).map_err(|_| ()) } ]
+                }
+            },
+            terms { RatLit . BigRat ::= "0" ; }
+        "#;
+        let language = syn::parse_str::<LanguageDef>(src).expect("language should parse");
+        let (patterns, eval) = build_literal_config(&language);
+        assert!(
+            patterns.rational_by_category.contains_key("BigRat"),
+            "expected rational_by_category[\"BigRat\"], got: {:?}",
+            patterns.rational_by_category
+        );
+        let ev = eval.get("BigRat").expect("BigRat eval");
+        assert!(ev.contains("parse_rational_lit"), "eval: {ev}");
+    }
 }
 
 /// Convert a single grammar rule to a PraTTaIL `RuleSpecInput`.

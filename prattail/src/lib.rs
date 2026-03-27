@@ -216,6 +216,15 @@ impl DispatchStrategy {
 pub struct LiteralPatterns {
     /// Integer literal pattern (e.g., `[0-9]+`).
     pub integer: String,
+    /// Optional per-category integer literal patterns.
+    ///
+    /// Key = category name from `types {}` (e.g., `Int`, `UInt32`), value = regex pattern.
+    /// When non-empty, lexer generation can build separate integer token paths per category.
+    pub integer_by_category: std::collections::HashMap<String, String>,
+    /// Per-category rational literal regex patterns (e.g. `…r/…r`, optional `…r`).
+    pub rational_by_category: std::collections::HashMap<String, String>,
+    /// Per-category fixed-point literal regex patterns (`<mantissa>p<scale>`).
+    pub fixed_by_category: std::collections::HashMap<String, String>,
     /// Float literal pattern (e.g., `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?`).
     pub float: String,
     /// String literal pattern (e.g., `"([^"\\]|\\.)*"`).
@@ -225,6 +234,15 @@ pub struct LiteralPatterns {
     /// Optional boolean literal pattern (e.g. `yes|no`). When `None`, default `true`/`false` keywords are used.
     pub boolean: Option<String>,
 }
+
+pub mod fixed_lit;
+pub mod float_lit;
+pub mod int_lit;
+pub mod rational_lit;
+pub use fixed_lit::parse_fixed_lit;
+pub use float_lit::parse_float_lit;
+pub use int_lit::{parse_int_lit, IntLit, Suffix};
+pub use rational_lit::{parse_rational_lit, RationalLit};
 
 /// The embedded content of `literal_patterns.ebnf`, compiled into the binary.
 const DEFAULT_LITERAL_PATTERNS_EBNF: &str = include_str!("literal_patterns.ebnf");

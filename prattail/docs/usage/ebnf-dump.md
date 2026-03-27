@@ -80,6 +80,7 @@ Angle brackets for parameterized token classes:
 |---|---|
 | `<integer>` | Integer literal: `digit, { digit }` |
 | `<float>` | Float literal: `digit, { digit }, ".", digit, { digit }` |
+| `<fixedpoint>` | Fixed-point literal (per-language regex; surface form `…p…` with decimal mantissa and scale) |
 | `<boolean>` | Boolean literal: `"true" \| "false"` |
 | `<string>` | String literal (double-quoted with escapes) |
 | `<ident>` | Identifier: `letter \| "_", { letter \| digit \| "_" }` |

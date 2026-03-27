@@ -561,6 +561,7 @@ fn write_category(
             "f32" | "f64" => ("<float>", "FloatLit"),
             "bool" => ("<boolean>", "BoolLit"),
             "str" | "String" => ("<string>", "StringLit"),
+            _ if native_type.ends_with("CanonicalFixedPoint") => ("<fixedpoint>", "FixedLit"),
             _ => ("?native?", "Lit"),
         };
         productions.push((token_name.to_string(), format!("(* {} *)", label)));

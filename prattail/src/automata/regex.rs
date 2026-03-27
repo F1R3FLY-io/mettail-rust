@@ -467,6 +467,9 @@ pub fn parse_literal_patterns_ebnf(content: &str) -> Result<LiteralPatterns, Reg
 
     Ok(LiteralPatterns {
         integer: integer.expect("validated above"),
+        integer_by_category: std::collections::HashMap::new(),
+        rational_by_category: std::collections::HashMap::new(),
+        fixed_by_category: std::collections::HashMap::new(),
         float: float.expect("validated above"),
         string: string.expect("validated above"),
         ident: ident.expect("validated above"),

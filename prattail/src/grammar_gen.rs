@@ -188,7 +188,7 @@ fn arb_expression_inner(
     // The closure receives an `inner` strategy representing the current depth level.
     let rules_by_cat_owned: BTreeMap<String, Vec<RuleSpecOwned>> = rules_by_cat
         .iter()
-        .map(|(k, v)| (k.clone(), v.iter().map(|r| RuleSpecOwned::from(*r)).collect()))
+        .map(|(k, v)| (k.clone(), v.iter().map(|r| RuleSpecOwned::from(r)).collect()))
         .collect();
     let cat_names_owned = cat_names.to_vec();
     let category_owned = category.to_string();

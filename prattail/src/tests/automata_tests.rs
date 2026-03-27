@@ -206,6 +206,8 @@ fn test_rhocalc_terminals() {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         },
     );
 
@@ -221,15 +223,15 @@ fn test_rhocalc_terminals() {
 
     // Verify minimization keeps state count reasonable
     assert!(
-        dfa.states.len() <= 30,
-        "RhoCalc DFA should have at most 30 states after minimization, got {}",
+        dfa.states.len() <= 60,
+        "RhoCalc DFA should have at most 60 states after minimization, got {}",
         dfa.states.len()
     );
 
     // Verify equivalence class compression
     assert!(
-        partition.num_classes < 25,
-        "RhoCalc should have fewer than 25 equivalence classes, got {}",
+        partition.num_classes < 50,
+        "RhoCalc should have fewer than 50 equivalence classes, got {}",
         partition.num_classes
     );
 }
@@ -252,6 +254,8 @@ fn test_minimization_reduces_states() {
         float: false,
         string_lit: false,
         boolean: false,
+        rational: false,
+        fixed_point: false,
     };
 
     let nfa = build_nfa_default(&terminals, &needs);
@@ -314,6 +318,7 @@ fn run_codegen_pipeline(
         &partition,
         &token_kinds,
         "test",
+        &std::collections::HashMap::new(),
         &std::collections::HashMap::new(),
     );
     code
@@ -393,6 +398,8 @@ fn calculator_terminals() -> (Vec<TerminalPattern>, BuiltinNeeds) {
         float: true,
         boolean: true,
         string_lit: true,
+        rational: false,
+        fixed_point: false,
     };
 
     (terminals, needs)

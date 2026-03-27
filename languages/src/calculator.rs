@@ -11,6 +11,10 @@ language! {
     types {
         Proc
         ![i32] as Int
+        ![u32] as UInt32
+        ![mettail_runtime::CanonicalBigInt] as BigInt
+        ![mettail_runtime::CanonicalBigRat] as BigRat
+        ![mettail_runtime::CanonicalFixedPoint] as Fixed
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
@@ -19,29 +23,42 @@ language! {
         ![HashMap<Proc, Proc>] as Map
     },
     literals {
-        Int {
-            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)";
+        UInt32 {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)u32";
             eval: ![ {
-                // Strip digit separators (e.g. 1_000_000 or 0xFF_FF_FF) before parsing.
-                let s = text.replace('_', "");
-                let body = s.as_str();
-                let (radix, digits) = if let Some(h) = body.strip_prefix("0x") { (16, h) }
-                    else if let Some(o) = body.strip_prefix("0o") { (8, o) }
-                    else if let Some(b) = body.strip_prefix("0b") { (2, b) }
-                    else { (10, body) };
-
-                // Lexer expects Result<i64, E>; Token::Integer(i64). Native type (e.g. i32) is applied in the trampoline.
-                i64::from_str_radix(digits, radix)
+                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
             } ]
         }
-        Float {
-            // Require decimal point or exponent so e.g. "3" is not matched (stays integer).
-            pattern: r"[0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?";
+        Int {
+            // Int (i32) literals; unsuffixed defaults to i32.
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32)?";
             eval: ![ {
-                // Strip digit separators (e.g. 1_000_000.5) before parsing.
-                let cleaned = text.replace('_', "");
-                cleaned.parse::<f64>()
+                mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::I32)).map_err(|_| ())
             } ]
+        }
+        BigInt {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n";
+            eval: ![ {
+                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+            } ]
+        }
+        // BigRat sugar: `<int>r` (whole) or `<int>r/<int>r` (composite); radix/`_` parity with BigInt `n` literals.
+        BigRat {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r";
+            eval: ![ {
+                mettail_prattail::parse_rational_lit(text).map_err(|_| ())
+            } ]
+        }
+        // Before Float: float pattern allows digit runs without `.`/`e`, which would steal `10` from `10p1`.
+        Fixed {
+            // Scale after `p` is one or more digits: `p1`, `p12`, `p1_0` — not `p` + two-digit-only tail.
+            pattern: r"-?([0-9](_?[0-9])*(\.[0-9](_?[0-9])*)?|\.[0-9](_?[0-9])*)p[0-9](_?[0-9])*";
+            eval: ![ { mettail_prattail::parse_fixed_lit(text).map_err(|_| ()) } ]
+        }
+        Float {
+            // Decimal or exponent; optional explicit f64 suffix; leading `-` in the token (unary is not split).
+            pattern: r"-?([0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)(f64)?|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?(f64)?)";
+            eval: ![ { mettail_prattail::parse_float_lit(text).map_err(|_| ()) } ]
         }
         Bool {
             pattern: r"yeap|nope|true|false";
@@ -79,6 +96,22 @@ language! {
         ProcList . l:List |- l : Proc ;
         ProcBag . b:Bag |- b : Proc ;
         ProcMap . m:Map |- m : Proc ;
+        ProcUInt32 . u:UInt32 |- u : Proc ;
+        ProcBigInt . n:BigInt |- n : Proc ;
+        ProcBigRat . r:BigRat |- r : Proc ;
+        ProcFixed . f:Fixed |- f : Proc ;
+        // BigRat error normal form: concrete syntax `error`, not a CanonicalBigRat. Step rules
+        // reduce invalid rationals (e.g. fraction with zero denominator) here instead of panicking.
+        // The procedural macro keys off the zero-ary `Err` name on BigRat when lowering Fraction.
+        Err . |- "error" : BigRat ;
+        // try_from_nd is None when the denominator is zero; the step rule maps that to `Err`.
+        Fraction . a:BigInt, b:BigInt |- "fraction" "(" a "," b ")" : BigRat ![{
+            mettail_runtime::CanonicalBigRat::try_from_nd(a.get().clone(), b.get().clone())
+        }] step;
+        AddBigRat . a:BigRat, b:BigRat |- a "+" b : BigRat ![a + b] fold;
+        MulBigRat . a:BigRat, b:BigRat |- a "*" b : BigRat ![a * b] fold;
+        DivBigRat . a:BigRat, b:BigRat |- a "/" b : BigRat ![a / b] fold;
+        NegBigRat . a:BigRat |- "-" a : BigRat ![(-a)] fold;
         // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
         // Comparison operations
@@ -106,6 +139,12 @@ language! {
         NeFloat . a:Float, b:Float |- a "!=" b : Bool ![a != b] step;
         NeBool . a:Bool, b:Bool |- a "!=" b : Bool ![a != b] step;
         NeStr . a:Str, b:Str |- a "!=" b : Bool ![a != b] step;
+        EqFixed . a:Fixed, b:Fixed |- a "==" b : Bool ![a == b] step;
+        GtFixed . a:Fixed, b:Fixed |- a ">" b : Bool ![a > b] step;
+        LtFixed . a:Fixed, b:Fixed |- a "<" b : Bool ![a < b] step;
+        LtEqFixed . a:Fixed, b:Fixed |- a "<=" b : Bool ![a <= b] step;
+        GtEqFixed . a:Fixed, b:Fixed |- a ">=" b : Bool ![a >= b] step;
+        NeFixed . a:Fixed, b:Fixed |- a "!=" b : Bool ![a != b] step;
         // Boolean operations
         Not . a:Bool |- "not" a : Bool ![{match a {
             true => false,
@@ -118,6 +157,9 @@ language! {
         Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step;
         Concat . a:Str, b:Str |- a "++" b : Str ![[a, b].concat()] step;
         AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
+        //
+        AddUInt32 . a:UInt32, b:UInt32 |- a "+" b : UInt32 ![a + b] fold;
+        AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ![a + b] fold;
         // Int operations
         AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
         SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
@@ -137,12 +179,22 @@ language! {
         CosFloat . a:Float |- "cos" "(" a ")" : Float ![a.cos()] step;
         ExpFloat . a:Float |- "exp" "(" a ")" : Float ![a.exp()] step;
         LnFloat . a:Float |- "ln" "(" a ")" : Float ![a.ln()] step;
+        AddFixed . a:Fixed, b:Fixed |- a "+" b : Fixed ![a + b] fold;
+        SubFixed . a:Fixed, b:Fixed |- a "-" b : Fixed ![a - b] fold;
+        MulFixed . a:Fixed, b:Fixed |- a "*" b : Fixed ![a * b] fold;
+        DivFixed . a:Fixed, b:Fixed |- a "/" b : Fixed ![a / b] fold;
+        ModFixed . a:Fixed, b:Fixed |- a "%" b : Fixed ![a % b] fold;
+        NegFixed . a:Fixed |- "-" a : Fixed ![(-a)] fold;
+        BitAndFixed . a:Fixed, b:Fixed |- a "bitand" b : Fixed ![a & b] fold;
+        BitOrFixed . a:Fixed, b:Fixed |- a "bitor" b : Fixed ![a | b] fold;
+        BitXorFixed . a:Fixed, b:Fixed |- a "bitxor" b : Fixed ![a ^ b] fold;
         // Proc → concrete type projections (runtime type extraction)
         // These are fold rules: fold_proc reduces ElemList → injection variant before rust_code runs
         ProcToInt . a:Proc |- "int" "(" a ")" : Int ![{
             match a {
                 Proc::ProcInt(i) => i.as_ref().eval(),
                 Proc::ProcFloat(f) => f.as_ref().eval().get() as i32,
+                Proc::ProcFixed(x) => x.as_ref().eval().unscaled().to_string().parse().unwrap_or(0),
                 Proc::ProcBool(b) => if b.as_ref().eval() { 1 } else { 0 },
                 Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(0),
                 Proc::ElemList(list, index) => {
@@ -151,6 +203,7 @@ language! {
                     match elem {
                         Proc::ProcInt(i) => i.as_ref().eval(),
                         Proc::ProcFloat(f) => f.as_ref().eval().get() as i32,
+                        Proc::ProcFixed(x) => x.as_ref().eval().unscaled().to_string().parse().unwrap_or(0),
                         Proc::ProcBool(b) => if b.as_ref().eval() { 1 } else { 0 },
                         Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(0),
                         other => panic!("int(): cannot convert list element to Int: {:?}", other),
@@ -162,6 +215,10 @@ language! {
         ProcToFloat . a:Proc |- "float" "(" a ")" : Float ![{
             match a {
                 Proc::ProcFloat(f) => f.as_ref().eval(),
+                Proc::ProcFixed(x) => mettail_runtime::CanonicalFloat64::from(
+                    num_traits::ToPrimitive::to_f64(&x.as_ref().eval().unscaled().clone()).unwrap_or(0.0)
+                        / 10f64.powi(x.as_ref().eval().places() as i32),
+                ),
                 Proc::ProcInt(i) => mettail_runtime::CanonicalFloat64::from(i.as_ref().eval() as f64),
                 Proc::ProcBool(b) => mettail_runtime::CanonicalFloat64::from(if b.as_ref().eval() { 1.0 } else { 0.0 }),
                 Proc::ProcStr(s) => mettail_runtime::CanonicalFloat64::from(s.as_ref().eval().parse::<f64>().unwrap_or(0.0)),
@@ -170,6 +227,10 @@ language! {
                     let elem = match list.as_ref() { List::ListLit(v) => v.get(idx).cloned().expect("ElemList: index out of bounds"), _ => panic!("float(): ElemList list not a literal") };
                     match elem {
                         Proc::ProcFloat(f) => f.as_ref().eval(),
+                        Proc::ProcFixed(x) => mettail_runtime::CanonicalFloat64::from(
+                            num_traits::ToPrimitive::to_f64(&x.as_ref().eval().unscaled().clone()).unwrap_or(0.0)
+                                / 10f64.powi(x.as_ref().eval().places() as i32),
+                        ),
                         Proc::ProcInt(i) => mettail_runtime::CanonicalFloat64::from(i.as_ref().eval() as f64),
                         Proc::ProcBool(b) => mettail_runtime::CanonicalFloat64::from(if b.as_ref().eval() { 1.0 } else { 0.0 }),
                         Proc::ProcStr(s) => mettail_runtime::CanonicalFloat64::from(s.as_ref().eval().parse::<f64>().unwrap_or(0.0)),
@@ -184,6 +245,7 @@ language! {
                 Proc::ProcBool(b) => b.as_ref().eval(),
                 Proc::ProcInt(i) => i.as_ref().eval() != 0,
                 Proc::ProcFloat(f) => f.as_ref().eval().get() != 0.0,
+                Proc::ProcFixed(x) => !num_traits::Zero::is_zero(x.as_ref().eval().unscaled()),
                 Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(false),
                 Proc::ElemList(list, index) => {
                     let idx = match index.as_ref() { Int::NumLit(n) => *n as usize, _ => panic!("ElemList: expected Int literal") };
@@ -192,6 +254,7 @@ language! {
                         Proc::ProcBool(b) => b.as_ref().eval(),
                         Proc::ProcInt(i) => i.as_ref().eval() != 0,
                         Proc::ProcFloat(f) => f.as_ref().eval().get() != 0.0,
+                        Proc::ProcFixed(x) => !num_traits::Zero::is_zero(x.as_ref().eval().unscaled()),
                         Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(false),
                         other => panic!("bool(): cannot convert list element to Bool: {:?}", other),
                     }
@@ -204,6 +267,7 @@ language! {
                 Proc::ProcStr(s) => s.as_ref().eval(),
                 Proc::ProcInt(i) => i.as_ref().eval().to_string(),
                 Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
+                Proc::ProcFixed(x) => x.as_ref().eval().to_string(),
                 Proc::ProcBool(b) => b.as_ref().eval().to_string(),
                 Proc::ElemList(list, index) => {
                     let idx = match index.as_ref() { Int::NumLit(n) => *n as usize, _ => panic!("ElemList: expected Int literal") };
@@ -212,6 +276,7 @@ language! {
                         Proc::ProcStr(s) => s.as_ref().eval(),
                         Proc::ProcInt(i) => i.as_ref().eval().to_string(),
                         Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
+                        Proc::ProcFixed(x) => x.as_ref().eval().to_string(),
                         Proc::ProcBool(b) => b.as_ref().eval().to_string(),
                         other => panic!("str(): cannot convert list element to Str: {:?}", other),
                     }
@@ -317,6 +382,18 @@ language! {
         NeBoolCongR . | S ~> T |- (NeBool L S) ~> (NeBool L T);
         NeStrCongL . | S ~> T |- (NeStr S R) ~> (NeStr T R);
         NeStrCongR . | S ~> T |- (NeStr L S) ~> (NeStr L T);
+        EqFixedCongL . | S ~> T |- (EqFixed S R) ~> (EqFixed T R);
+        EqFixedCongR . | S ~> T |- (EqFixed L S) ~> (EqFixed L T);
+        GtFixedCongL . | S ~> T |- (GtFixed S R) ~> (GtFixed T R);
+        GtFixedCongR . | S ~> T |- (GtFixed L S) ~> (GtFixed L T);
+        LtFixedCongL . | S ~> T |- (LtFixed S R) ~> (LtFixed T R);
+        LtFixedCongR . | S ~> T |- (LtFixed L S) ~> (LtFixed L T);
+        LtEqFixedCongL . | S ~> T |- (LtEqFixed S R) ~> (LtEqFixed T R);
+        LtEqFixedCongR . | S ~> T |- (LtEqFixed L S) ~> (LtEqFixed L T);
+        GtEqFixedCongL . | S ~> T |- (GtEqFixed S R) ~> (GtEqFixed T R);
+        GtEqFixedCongR . | S ~> T |- (GtEqFixed L S) ~> (GtEqFixed L T);
+        NeFixedCongL . | S ~> T |- (NeFixed S R) ~> (NeFixed T R);
+        NeFixedCongR . | S ~> T |- (NeFixed L S) ~> (NeFixed L T);
         // Boolean operations
         AndCongL . | S ~> T |- (And S R) ~> (And T R);
         AndCongR . | S ~> T |- (And L S) ~> (And L T);
@@ -360,6 +437,23 @@ language! {
         CosFloatCong . | S ~> T |- (CosFloat S) ~> (CosFloat T);
         ExpFloatCong . | S ~> T |- (ExpFloat S) ~> (ExpFloat T);
         LnFloatCong . | S ~> T |- (LnFloat S) ~> (LnFloat T);
+        AddFixedCongL . | S ~> T |- (AddFixed S R) ~> (AddFixed T R);
+        AddFixedCongR . | S ~> T |- (AddFixed L S) ~> (AddFixed L T);
+        SubFixedCongL . | S ~> T |- (SubFixed S R) ~> (SubFixed T R);
+        SubFixedCongR . | S ~> T |- (SubFixed L S) ~> (SubFixed L T);
+        MulFixedCongL . | S ~> T |- (MulFixed S R) ~> (MulFixed T R);
+        MulFixedCongR . | S ~> T |- (MulFixed L S) ~> (MulFixed L T);
+        DivFixedCongL . | S ~> T |- (DivFixed S R) ~> (DivFixed T R);
+        DivFixedCongR . | S ~> T |- (DivFixed L S) ~> (DivFixed L T);
+        ModFixedCongL . | S ~> T |- (ModFixed S R) ~> (ModFixed T R);
+        ModFixedCongR . | S ~> T |- (ModFixed L S) ~> (ModFixed L T);
+        NegFixedCong . | S ~> T |- (NegFixed S) ~> (NegFixed T);
+        BitAndFixedCongL . | S ~> T |- (BitAndFixed S R) ~> (BitAndFixed T R);
+        BitAndFixedCongR . | S ~> T |- (BitAndFixed L S) ~> (BitAndFixed L T);
+        BitOrFixedCongL . | S ~> T |- (BitOrFixed S R) ~> (BitOrFixed T R);
+        BitOrFixedCongR . | S ~> T |- (BitOrFixed L S) ~> (BitOrFixed L T);
+        BitXorFixedCongL . | S ~> T |- (BitXorFixed S R) ~> (BitXorFixed T R);
+        BitXorFixedCongR . | S ~> T |- (BitXorFixed L S) ~> (BitXorFixed L T);
         // Proc → concrete type projection congruence
         ProcToIntCong . | S ~> T |- (ProcToInt S) ~> (ProcToInt T);
         ProcToFloatCong . | S ~> T |- (ProcToFloat S) ~> (ProcToFloat T);
@@ -396,5 +490,22 @@ language! {
         TernCongT . | S ~> T |- (Tern L S R) ~> (Tern L T R);
         TernCongE . | S ~> T |- (Tern L R S) ~> (Tern L R T);
         // No List/Bag congruence: only Proc congruence (e.g. ProcList/ProcBag) is needed.
+        ProcUInt32Cong . | S ~> T |- (ProcUInt32 S) ~> (ProcUInt32 T);
+        AddUInt32CongL . | S ~> T |- (AddUInt32 S R) ~> (AddUInt32 T R);
+        AddUInt32CongR . | S ~> T |- (AddUInt32 L S) ~> (AddUInt32 L T);
+        ProcBigIntCong . | S ~> T |- (ProcBigInt S) ~> (ProcBigInt T);
+        AddBigIntCongL . | S ~> T |- (AddBigInt S R) ~> (AddBigInt T R);
+        AddBigIntCongR . | S ~> T |- (AddBigInt L S) ~> (AddBigInt L T);
+        ProcBigRatCong . | S ~> T |- (ProcBigRat S) ~> (ProcBigRat T);
+        ProcFixedCong . | S ~> T |- (ProcFixed S) ~> (ProcFixed T);
+        FractionCongN . | S ~> T |- (Fraction S R) ~> (Fraction T R);
+        FractionCongD . | S ~> T |- (Fraction L S) ~> (Fraction L T);
+        AddBigRatCongL . | S ~> T |- (AddBigRat S R) ~> (AddBigRat T R);
+        AddBigRatCongR . | S ~> T |- (AddBigRat L S) ~> (AddBigRat L T);
+        MulBigRatCongL . | S ~> T |- (MulBigRat S R) ~> (MulBigRat T R);
+        MulBigRatCongR . | S ~> T |- (MulBigRat L S) ~> (MulBigRat L T);
+        DivBigRatCongL . | S ~> T |- (DivBigRat S R) ~> (DivBigRat T R);
+        DivBigRatCongR . | S ~> T |- (DivBigRat L S) ~> (DivBigRat L T);
+        NegBigRatCong . | S ~> T |- (NegBigRat S) ~> (NegBigRat T);
     },
 }

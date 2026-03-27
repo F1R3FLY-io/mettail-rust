@@ -131,6 +131,193 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// Proc U Int32: ...
+	{
+		type: "proc_proc_uint32",
+		tooltip: "Proc U Int32: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "UInt32",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc Big Int: ...
+	{
+		type: "proc_proc_big_int",
+		tooltip: "Proc Big Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigInt",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc Big Rat: ...
+	{
+		type: "proc_proc_big_rat",
+		tooltip: "Proc Big Rat: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc Fixed: ...
+	{
+		type: "proc_proc_fixed",
+		tooltip: "Proc Fixed: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Err
+	{
+		type: "bigrat_err",
+		tooltip: "Err",
+		message0: "",
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
+	// Fraction: ... ...
+	{
+		type: "bigrat_fraction",
+		tooltip: "Fraction: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigInt",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigInt",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
+	// Add Big Rat: ... ...
+	{
+		type: "bigrat_add_big_rat",
+		tooltip: "Add Big Rat: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
+	// Mul Big Rat: ... ...
+	{
+		type: "bigrat_mul_big_rat",
+		tooltip: "Mul Big Rat: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
+	// Div Big Rat: ... ...
+	{
+		type: "bigrat_div_big_rat",
+		tooltip: "Div Big Rat: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
+	// Neg Big Rat: ...
+	{
+		type: "bigrat_neg_big_rat",
+		tooltip: "Neg Big Rat: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
 	// Tern: ... ... ...
 	{
 		type: "int_tern",
@@ -686,6 +873,138 @@ const definitions = [
 		colour: "7a51e0",
 	},
 
+	// Eq Fixed: ... ...
+	{
+		type: "bool_eq_fixed",
+		tooltip: "Eq Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Gt Fixed: ... ...
+	{
+		type: "bool_gt_fixed",
+		tooltip: "Gt Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Lt Fixed: ... ...
+	{
+		type: "bool_lt_fixed",
+		tooltip: "Lt Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Lt Eq Fixed: ... ...
+	{
+		type: "bool_lt_eq_fixed",
+		tooltip: "Lt Eq Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Gt Eq Fixed: ... ...
+	{
+		type: "bool_gt_eq_fixed",
+		tooltip: "Gt Eq Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Ne Fixed: ... ...
+	{
+		type: "bool_ne_fixed",
+		tooltip: "Ne Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
 	// Not: ...
 	{
 		type: "bool_not",
@@ -828,6 +1147,50 @@ const definitions = [
 		inputsInline: true,
 		output: "Str",
 		colour: "51e05f",
+	},
+
+	// Add U Int32: ... ...
+	{
+		type: "uint32_add_uint32",
+		tooltip: "Add U Int32: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "UInt32",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "UInt32",
+			},
+		],
+		inputsInline: true,
+		output: "UInt32",
+		colour: "e05172",
+	},
+
+	// Add Big Int: ... ...
+	{
+		type: "bigint_add_big_int",
+		tooltip: "Add Big Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigInt",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigInt",
+			},
+		],
+		inputsInline: true,
+		output: "BigInt",
+		colour: "db51e0",
 	},
 
 	// Add Int: ... ...
@@ -1172,6 +1535,199 @@ const definitions = [
 		inputsInline: true,
 		output: "Float",
 		colour: "e05196",
+	},
+
+	// Add Fixed: ... ...
+	{
+		type: "fixed_add_fixed",
+		tooltip: "Add Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Fixed",
+		colour: "e05158",
+	},
+
+	// Sub Fixed: ... ...
+	{
+		type: "fixed_sub_fixed",
+		tooltip: "Sub Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Fixed",
+		colour: "e05158",
+	},
+
+	// Mul Fixed: ... ...
+	{
+		type: "fixed_mul_fixed",
+		tooltip: "Mul Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Fixed",
+		colour: "e05158",
+	},
+
+	// Div Fixed: ... ...
+	{
+		type: "fixed_div_fixed",
+		tooltip: "Div Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Fixed",
+		colour: "e05158",
+	},
+
+	// Mod Fixed: ... ...
+	{
+		type: "fixed_mod_fixed",
+		tooltip: "Mod Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Fixed",
+		colour: "e05158",
+	},
+
+	// Neg Fixed: ...
+	{
+		type: "fixed_neg_fixed",
+		tooltip: "Neg Fixed: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Fixed",
+		colour: "e05158",
+	},
+
+	// Bit And Fixed: ... ...
+	{
+		type: "fixed_bit_and_fixed",
+		tooltip: "Bit And Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Fixed",
+		colour: "e05158",
+	},
+
+	// Bit Or Fixed: ... ...
+	{
+		type: "fixed_bit_or_fixed",
+		tooltip: "Bit Or Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Fixed",
+		colour: "e05158",
+	},
+
+	// Bit Xor Fixed: ... ...
+	{
+		type: "fixed_bit_xor_fixed",
+		tooltip: "Bit Xor Fixed: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Fixed",
+		colour: "e05158",
 	},
 
 	// Proc To Int: ...

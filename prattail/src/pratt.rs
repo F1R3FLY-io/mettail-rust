@@ -419,6 +419,8 @@ fn write_token_pattern(buf: &mut String, token: &str) {
     match token {
         "Ident" => buf.push_str("Token::Ident(_)"),
         "Integer" => buf.push_str("Token::Integer(_)"),
+        "Rational" => buf.push_str("Token::Rational(_)"),
+        "FixedPoint" => buf.push_str("Token::FixedPoint(_)"),
         "Float" => buf.push_str("Token::Float(_)"),
         "Boolean" => buf.push_str("Token::Boolean(_)"),
         "StringLit" => buf.push_str("Token::StringLit(_)"),
@@ -514,33 +516,119 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
     // Add native literal match arms for this category's own native type
     if let Some(ref native_type) = config.native_type {
         match native_type.as_str() {
-            "i32" => {
-                match_arms.push(format!(
-                    "Token::Integer(v) => {{ let val = *v as i32; *pos += 1; Ok({}::NumLit(val)) }}",
-                    cat,
-                ));
-            },
-            "i64" | "isize" => {
-                match_arms.push(format!(
-                    "Token::Integer(v) => {{ let val = *v; *pos += 1; Ok({}::NumLit(val)) }}",
-                    cat,
-                ));
-            },
-            "u32" => {
-                match_arms.push(format!(
-                    "Token::Integer(v) => {{ let val = *v as u32; *pos += 1; Ok({}::NumLit(val)) }}",
-                    cat,
-                ));
-            },
-            "u64" | "usize" => {
-                match_arms.push(format!(
-                    "Token::Integer(v) => {{ let val = *v as u64; *pos += 1; Ok({}::NumLit(val)) }}",
-                    cat,
-                ));
-            },
+            "i8" => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_i8() {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"i8 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            "i16" => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_i16() {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"i16 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            "i32" => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_i32() {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"i32 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            "i64" => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_i64() {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"i64 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            "i128" => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_i128() {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"i128 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            "isize" => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_i64().and_then(|x| isize::try_from(x).ok()) {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"isize literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            "u8" => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_u8() {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"u8 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            "u16" => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_u16() {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"u16 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            "u32" => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_u32() {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"u32 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            "u64" => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_u64() {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"u64 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            "u128" => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_u128() {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"u128 literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            "usize" => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_u64().and_then(|x| usize::try_from(x).ok()) {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"usize literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            _ if native_type.ends_with("CanonicalBigRat") => match_arms.push(format!(
+                "Token::Rational(r) => {{ \
+                    let val = mettail_runtime::CanonicalBigRat::from(r.ratio().clone()); \
+                    *pos += 1; \
+                    Ok({}::RatLit(val)) \
+                }}",
+                cat,
+            )),
+            _ if native_type.ends_with("CanonicalFixedPoint") => match_arms.push(format!(
+                "Token::FixedPoint(v) => {{ let val = *v; *pos += 1; Ok({}::FixedLit(val)) }}",
+                cat,
+            )),
+            _ if native_type.ends_with("CanonicalBigInt") => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_bigint() {{ *pos += 1; Ok({}::NumLit(mettail_runtime::CanonicalBigInt::from(val))) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"BigInt literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
+            _ if native_type.ends_with("BigInt") => match_arms.push(format!(
+                "Token::Integer(v) => {{ \
+                    if let Some(val) = v.to_bigint() {{ *pos += 1; Ok({}::NumLit(val)) }} \
+                    else {{ Err(ParseError::UnexpectedToken {{ expected: \"BigInt literal\", found: format!(\"{{:?}}\", &tokens[*pos].0), range: tokens[*pos].1 }}) }} \
+                }}",
+                cat,
+            )),
             "f32" | "f64" => {
                 match_arms.push(format!(
-                    "Token::Float(v) => {{ let val = (*v).into(); *pos += 1; Ok({}::FloatLit(val)) }}",
+                    "Token::Float(v) => {{ let val = *v; *pos += 1; Ok({}::FloatLit(val)) }}",
                     cat,
                 ));
             },
