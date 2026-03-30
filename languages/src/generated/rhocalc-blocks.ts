@@ -150,16 +150,16 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Cast Int: ...
+	// Cast Big Rat: ...
 	{
-		type: "proc_cast_int",
-		tooltip: "Cast Int: ...",
+		type: "proc_cast_big_rat",
+		tooltip: "Cast Big Rat: ...",
 		message0: "%1",
 		args0: [
 			{
 				type: "input_value",
 				name: "ARG1",
-				check: "Int",
+				check: "BigRat",
 			},
 		],
 		inputsInline: true,
@@ -178,6 +178,60 @@ const definitions = [
 				type: "input_value",
 				name: "ARG1",
 				check: "Float",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Cast Big Int: ...
+	{
+		type: "proc_cast_big_int",
+		tooltip: "Cast Big Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigInt",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Cast U Int32: ...
+	{
+		type: "proc_cast_uint32",
+		tooltip: "Cast U Int32: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "UInt32",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Cast Int: ...
+	{
+		type: "proc_cast_int",
+		tooltip: "Cast Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
 			},
 		],
 		inputsInline: true,
@@ -276,10 +330,10 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Add: ... ...
+	// Fraction Proc: ... ...
 	{
-		type: "proc_add",
-		tooltip: "Add: ... ...",
+		type: "proc_fraction_proc",
+		tooltip: "Fraction Proc: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
@@ -299,10 +353,10 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Sub: ... ...
+	// Or: ... ...
 	{
-		type: "proc_sub",
-		tooltip: "Sub: ... ...",
+		type: "proc_or",
+		tooltip: "Or: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
@@ -322,33 +376,10 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Mul: ... ...
+	// And: ... ...
 	{
-		type: "proc_mul",
-		tooltip: "Mul: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
-				check: "Proc",
-			},
-			{
-				type: "input_value",
-				name: "MESSAGE",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Div: ... ...
-	{
-		type: "proc_div",
-		tooltip: "Div: ... ...",
+		type: "proc_and",
+		tooltip: "And: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
@@ -487,6 +518,98 @@ const definitions = [
 	{
 		type: "proc_lt_eq",
 		tooltip: "Lt Eq: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Add: ... ...
+	{
+		type: "proc_add",
+		tooltip: "Add: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Sub: ... ...
+	{
+		type: "proc_sub",
+		tooltip: "Sub: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Mul: ... ...
+	{
+		type: "proc_mul",
+		tooltip: "Mul: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Div: ... ...
+	{
+		type: "proc_div",
+		tooltip: "Div: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
@@ -831,52 +954,6 @@ const definitions = [
 			{
 				type: "input_value",
 				name: "BODY",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// And: ... ...
-	{
-		type: "proc_and",
-		tooltip: "And: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
-				check: "Proc",
-			},
-			{
-				type: "input_value",
-				name: "MESSAGE",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Or: ... ...
-	{
-		type: "proc_or",
-		tooltip: "Or: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
-				check: "Proc",
-			},
-			{
-				type: "input_value",
-				name: "MESSAGE",
 				check: "Proc",
 			},
 		],

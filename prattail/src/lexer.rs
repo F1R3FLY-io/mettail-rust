@@ -75,7 +75,13 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
         token_kinds.push(TokenKind::Ident);
     }
     if input.needs.integer {
-        token_kinds.push(TokenKind::Integer);
+        if input.literal_patterns.integer_by_category.is_empty() {
+            token_kinds.push(TokenKind::Integer);
+        } else {
+            for cat in input.literal_patterns.integer_by_category.keys() {
+                token_kinds.push(TokenKind::IntegerLit(cat.clone()));
+            }
+        }
     }
     if input.needs.float {
         token_kinds.push(TokenKind::Float);
@@ -91,6 +97,11 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
     if input.needs.string_lit {
         token_kinds.push(TokenKind::StringLit);
     }
+    if input.needs.rational {
+        for cat in input.literal_patterns.rational_by_category.keys() {
+            token_kinds.push(TokenKind::RationalLit(cat.clone()));
+        }
+    }
     for terminal in &input.terminals {
         token_kinds.push(terminal.kind.clone());
     }
@@ -104,6 +115,7 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
         &partition,
         &token_kinds,
         &input.language_name,
+        &input.literal_eval,
         &input.literal_eval,
     );
 
@@ -148,7 +160,13 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
         token_kinds.push(TokenKind::Ident);
     }
     if input.needs.integer {
-        token_kinds.push(TokenKind::Integer);
+        if input.literal_patterns.integer_by_category.is_empty() {
+            token_kinds.push(TokenKind::Integer);
+        } else {
+            for cat in input.literal_patterns.integer_by_category.keys() {
+                token_kinds.push(TokenKind::IntegerLit(cat.clone()));
+            }
+        }
     }
     if input.needs.float {
         token_kinds.push(TokenKind::Float);
@@ -164,6 +182,11 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     if input.needs.string_lit {
         token_kinds.push(TokenKind::StringLit);
     }
+    if input.needs.rational {
+        for cat in input.literal_patterns.rational_by_category.keys() {
+            token_kinds.push(TokenKind::RationalLit(cat.clone()));
+        }
+    }
     for terminal in &input.terminals {
         token_kinds.push(terminal.kind.clone());
     }
@@ -177,6 +200,7 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
         &partition,
         &token_kinds,
         &input.language_name,
+        &input.literal_eval,
         &input.literal_eval,
     );
 
@@ -253,7 +277,8 @@ pub fn extract_terminals(
     // Check for native types
     for ty in types {
         match ty.native_type_name.as_deref() {
-            Some("i32") | Some("i64") | Some("u32") | Some("u64") | Some("isize")
+            Some("i8") | Some("i16") | Some("i32") | Some("i64") | Some("i128") | Some("u8")
+            | Some("u16") | Some("u32") | Some("u64") | Some("u128") | Some("isize")
             | Some("usize") => {
                 needs.integer = true;
             },
@@ -277,7 +302,16 @@ pub fn extract_terminals(
             Some("str") | Some("String") => {
                 needs.string_lit = true;
             },
-            _ => {},
+            Some(other)
+                // BigInt (incl. CanonicalBigInt) needs integer tokenization. BigRat / CanonicalBigRat
+                // uses the separate rational literal path when configured in `literals { ... }`;
+                // constructor-only languages should not pull in the legacy `…r` integer stub.
+                if other.ends_with("BigInt") =>
+            {
+                needs.integer = true;
+            },
+            Some(_) => {},
+            None => {},
         }
     }
 

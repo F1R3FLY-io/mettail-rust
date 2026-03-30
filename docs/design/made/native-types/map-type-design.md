@@ -1,27 +1,27 @@
 # Map Type Design
 
-**Status:** Design  
-**Context:** MeTTaIL collection types; List and Bag already implemented via `![Vec<Proc>] as List` and `![HashBag<Proc>] as Bag`.
+**Status:** Implemented (Calculator and RhoCalc)  
+**Context:** MeTTaIL collection types; List and Bag are implemented with configurable delimiters (defaults `list(…)`, `bag(…)`; see [lists-and-bags-support.md](./lists-and-bags-support.md)).
 
 ---
 
 ## 1. Goal and Scope
 
-**Goal:** Add a first-class **Map** category for key-value collections.
+**Goal:** First-class **Map** category for key-value collections — **met** in the current tree.
 
-**Scope:** Map as a native-backed collection type, declared via `![HashMap] as Map` with implicit key and value types. Collections (List, Bag, Map) are disambiguated by keyword-prefixed delimiters.
+**Scope:** Map is a native-backed collection type. In source languages you write `![HashMap<Proc, Proc>] as Map` **or** shorthand `![HashMap] as Map`; the macro normalizes both to the runtime newtype `mettail_runtime::HashMapLit<Proc, Proc>` (deterministic `Hash` / `Ord` for Ascent). Default literal delimiters are `map(`, `)`, `,` between entries, and `:` between key and value (see `CollectionCategory::map_defaults()` in `macros/src/ast/language.rs`). Optional `[ "open", "close", "sep", "key_val_sep" ]` overrides the four strings.
 
 ---
 
 ## 2. Declaration and Parameters
 
-### 2.1 Implicit Parameters
+### 2.1 Implicit parameters (as implemented)
 
-**Proposal:** `![HashMap] as Map` — parameters left implicit.
+**Syntax:** `![HashMap] as Map` **or** explicit `![HashMap<Proc, Proc>] as Map` (both accepted).
 
-**Rationale:** List and Bag use single element type (Proc). Map has two parameters (K, V). Making both implicit keeps the declaration minimal and aligns with "leave parameters implicit for all of them."
+**Rationale:** List and Bag use a single element type (`Proc`). Map is fixed to **Proc–Proc** entries for the current languages.
 
-**Implicit convention:** `HashMap<Proc, Proc>`. Key and value categories are Proc. This matches Proc-centric languages (RhoCalc, Calculator) where all values flow through Proc.
+**Effective type:** `mettail_runtime::HashMapLit<Proc, Proc>` in generated code (wrapper around `HashMap` with a stable hasher). Key and value categories are `Proc` for literal parsing and for Calculator / RhoCalc map operations.
 
 | Option | Syntax | Pros | Cons |
 |--------|--------|------|------|
@@ -132,13 +132,13 @@ Map is not a simple `*sep(delim)` collection. Each "element" is a pair `key : va
 
 ## 6. Runtime and AST
 
-### 6.1 Rust Type
+### 6.1 Rust type
 
-`std::collections::HashMap<Proc, Proc>` (or `HashMap<Box<Proc>, Box<Proc>>` if boxing is required for recursion). Use `rustc_hash::FxHasher` / `BuildHasherDefault` if needed for consistency with HashBag.
+Category **Map** uses the wrapper **`HashMapLit<Proc, Proc>`** from `mettail-runtime` (`runtime/src/hashmap_lit.rs`), not a raw `std::collections::HashMap` in the enum payload, so `Eq`/`Hash`/`Ord` match Ascent’s needs.
 
-### 6.2 Enum Variant
+### 6.2 Enum variant
 
-`Proc::MapLit(HashMap<Proc, Proc>)` — analogous to `ListLit` and `BagLit`.
+Generated languages use a **Map** enum with **`MapLit`** payload (e.g. `Map::MapLit` holding `HashMapLit<Proc, Proc>`). Calculator injects maps into **Proc** via **`ProcMap`**; RhoCalc uses **`CastMap`** for `Proc`-level map values.
 
 ### 6.3 Congruence and Substitution
 
@@ -153,32 +153,13 @@ With keyword-prefixed defaults (`list(`, `bag(`, `map(`), collections are lexica
 
 ---
 
-## 8. Implementation Phases
+## 8. Implementation phases (status)
 
-### Phase 1: Foundation
+**Done — foundation & parser:** `CollectionCategory::Map`, `CollectionType::HashMap`, `key_val_sep` on `CollectionDelimiters`, `![HashMap] as Map` / `![HashMap<Proc, Proc>] as Map`, default `map(…)` literals, `CollectionKind::HashMap` and trampoline support in PraTTaIL, `MapLit` / `HashMapLit` in generated code.
 
-- Add `CollectionCategory::Map` and `CollectionType::HashMap`
-- Extend `CollectionDelimiters` with `key_val_sep: Option<String>`
-- Parse `![HashMap] as Map` in types; default delimiters `map(`, `)`, `,`, `:`
-- Add `MapLit` variant and `HashMap<Proc, Proc>` to generated enum
-- Update List and Bag defaults to `list(`, `)`, `,` and `bag(`, `)`, `,` respectively
+**Done — operations (at least Calculator):** `get`, `put`, `delete`, `merge`, `has`, `keys`, `values`, `maplength`, plus congruence rules — see `languages/src/calculator.rs`. RhoCalc exposes map operations on **`CastMap`** / `Map::MapLit` in `languages/src/rhocalc.rs`.
 
-### Phase 2: Parser
-
-- Add `CollectionKind::HashMap` in prattail
-- Extend trampoline for Map entry parsing (`key : value`)
-- Bridge: map `CollectionCategory::Map` to `SyntaxItemSpec::Collection` with `kind: HashMap`
-
-### Phase 3: Operations and Congruence
-
-- Substitution for Map (key and value)
-- Congruence for Map
-- Basic operations (get, insert, remove) as term rules if needed
-
-### Phase 4: Delimiter Parsing
-
-- Support 4-tuple delimiter syntax for Map: `[ "open", "close", "entry_sep", "key_val_sep" ]`
-- Ensure keyword-prefixed defaults (`list(`, `bag(`, `map(`) parse correctly
+**Optional later:** extra delimiter overrides per language beyond defaults; pattern matching on maps in rewrite rules (still out of scope for many use cases).
 
 ---
 
@@ -208,7 +189,8 @@ With keyword-prefixed defaults (`list(`, `bag(`, `map(`), collections are lexica
 
 ## 11. References
 
-- `docs/design/made/lists-and-bags-support.md` — List/Bag design
+- [lists-and-bags-support.md](./lists-and-bags-support.md) — List/Bag design
 - `docs/manual/language/features/collections/00-overview.md` — Collection pipeline
-- `macros/src/ast/language.rs` — `CollectionCategory`, `LangType`
-- `prattail/src/recursive.rs` — `CollectionKind`, collection parse loop
+- `macros/src/ast/language.rs` — `CollectionCategory`, `LangType`, `map_defaults`
+- `prattail` — `CollectionKind::HashMap`, collection / map entry parsing in the trampoline
+- `languages/src/calculator.rs`, `languages/src/rhocalc.rs` — concrete Map terms and `Proc` injection

@@ -160,6 +160,7 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);
@@ -172,15 +173,22 @@ mod tests {
             "'+' and '*' should be in different equivalence classes"
         );
 
-        // All lowercase letters (except special ones) should be in the same class
-        let a_class = partition.classify(b'a');
-        let b_class = partition.classify(b'b');
-        assert_eq!(a_class, b_class, "'a' and 'b' should be in the same equivalence class");
+        // Some letters may split into separate classes when additional literal syntax is enabled
+        // (e.g. `0b...` prefixes and `u32`/`i128` suffix letters). Pick letters that are not
+        // used by built-in numeric literal syntax and should behave identically.
+        let p_class = partition.classify(b'p');
+        let q_class = partition.classify(b'q');
+        assert_eq!(p_class, q_class, "'p' and 'q' should be in the same equivalence class");
 
-        // Digits should be in their own class
-        let zero_class = partition.classify(b'0');
-        let nine_class = partition.classify(b'9');
-        assert_eq!(zero_class, nine_class, "'0' and '9' should be in the same equivalence class");
+        // Digits may split into multiple classes under richer numeric literal syntax
+        // (radix prefixes, digit constraints for 0b/0o, suffix letters, etc.). We only
+        // assert that digits and letters are distinguishable in general.
+        let digit_class = partition.classify(b'8');
+        let letter_class = partition.classify(b'p');
+        assert_ne!(
+            digit_class, letter_class,
+            "digits and letters should be in different equivalence classes"
+        );
 
         // Letters and digits should be in different classes (they behave differently
         // as first character of identifier)

@@ -5,6 +5,7 @@
 )]
 
 use mettail_macros::language;
+use num_traits::{ToPrimitive, Zero};
 
 language! {
     name: RhoCalc,
@@ -13,6 +14,9 @@ language! {
         Proc
         Name
         ![i64] as Int
+        ![u32] as UInt32
+        ![mettail_runtime::CanonicalBigInt] as BigInt
+        ![mettail_runtime::CanonicalBigRat] as BigRat
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
@@ -22,18 +26,28 @@ language! {
     },
 
     literals {
-        Int {
-            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)";
+        UInt32 {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)u32";
             eval: ![ {
-                // Strip digit separators (e.g. 1_000_000 or 0xFF_FF_FF) before parsing.
-                let s = text.replace('_', "");
-                let body = s.as_str();
-                let (radix, digits) = if let Some(h) = body.strip_prefix("0x") { (16, h) }
-                    else if let Some(o) = body.strip_prefix("0o") { (8, o) }
-                    else if let Some(b) = body.strip_prefix("0b") { (2, b) }
-                    else { (10, body) };
-
-                i64::from_str_radix(digits, radix)
+                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+            } ]
+        }
+        Int {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i64)?";
+            eval: ![ {
+                mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::I64)).map_err(|_| ())
+            } ]
+        }
+        BigInt {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n";
+            eval: ![ {
+                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+            } ]
+        }
+        BigRat {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r";
+            eval: ![ {
+                mettail_prattail::parse_rational_lit(text).map_err(|_| ())
             } ]
         }
         Float {
@@ -72,47 +86,53 @@ language! {
         Err . |- "error" : Proc;
 
         // cast rust-native types as processes
-        CastInt . k:Int |- k : Proc;
+        // Order matters for literals: more specific integer kinds (u32, BigInt) before i64 Int
+        // so tokens like `1n` / `1u32` are not rejected by the Int prefix arm.
+        CastBigRat . r:BigRat |- r : Proc;
         CastFloat . k:Float |- k : Proc;
+        CastBigInt . n:BigInt |- n : Proc;
+        CastUInt32 . u:UInt32 |- u : Proc;
+        CastInt . k:Int |- k : Proc;
         CastBool . k:Bool |- k : Proc;
         CastStr . s:Str |- s : Proc;
         CastList . l:List |- l : Proc;
         CastBag . b:Bag |- b : Proc;
         CastMap . m:Map |- m : Proc;
 
-        // and invoke any methods on them
-        Add . a:Proc, b:Proc |- a "+" b : Proc ![
+        // `fold` (not `step`): `step` HOL rules are skipped for non-native categories like Proc.
+        FractionProc . a:Proc, b:Proc |- "fraction" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() + *b.clone())),
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() + *b.clone())),
-                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
-                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y)))),
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(na), BigInt::NumLit(nb)) => {
+                        match mettail_runtime::CanonicalBigRat::try_from_nd(na.get().clone(), nb.get().clone()) {
+                            Some(r) => Proc::CastBigRat(Box::new(BigRat::RatLit(r))),
+                            None => Proc::Err,
+                        }
+                    }
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
             }}
         ] fold;
 
-        Sub . a:Proc, b:Proc |- a "-" b : Proc ![
+        // Infix precedence (declaration order = loosest → tightest for PraTTaIL):
+        // or/and, then comparisons, then arithmetic — so `a/b == c/d` and `x==y and z==w` parse correctly.
+        Or . a:Proc, b:Proc |- a "or" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() - *b.clone())),
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() - *b.clone())),
+                (Proc::CastBool(a), Proc::CastBool(b)) => match (&**a, &**b) {
+                    (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(*x || *y))),
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }}
         ] fold;
 
-        Mul . a:Proc, b:Proc |- a "*" b : Proc ![
+        And . a:Proc, b:Proc |- a "and" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() * *b.clone())),
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() * *b.clone())),
-                _ => Proc::Err,
-            }}
-        ] fold;
-
-        Div . a:Proc, b:Proc |- a "/" b : Proc ![
-            { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() / *b.clone())),
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() / *b.clone())),
+                (Proc::CastBool(a), Proc::CastBool(b)) => match (&**a, &**b) {
+                    (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(*x && *y))),
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }}
         ] fold;
@@ -121,6 +141,18 @@ language! {
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
                     (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(i), UInt32::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))),
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
@@ -137,6 +169,18 @@ language! {
                     (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))),
                     _ => Proc::Err,
                 },
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(i), UInt32::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))),
+                    _ => Proc::Err,
+                },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
                     (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))),
                     _ => Proc::Err,
@@ -149,6 +193,18 @@ language! {
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
                     (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(i), UInt32::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))),
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
@@ -165,6 +221,18 @@ language! {
                     (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))),
                     _ => Proc::Err,
                 },
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(i), UInt32::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))),
+                    _ => Proc::Err,
+                },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
                     (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x < y))),
                     _ => Proc::Err,
@@ -177,6 +245,18 @@ language! {
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
                     (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(i), UInt32::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))),
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
@@ -193,10 +273,113 @@ language! {
                     (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))),
                     _ => Proc::Err,
                 },
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(i), UInt32::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))),
+                    _ => Proc::Err,
+                },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
                     (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x <= y))),
                     _ => Proc::Err,
                 },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        // Arithmetic (tighter than == and and/or)
+        Add . a:Proc, b:Proc |- a "+" b : Proc ![
+            { match (&a, &b) {
+                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() + *b.clone())),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x + y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() + y.get())))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(*x + *y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() + *b.clone())),
+                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
+                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y)))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        Sub . a:Proc, b:Proc |- a "-" b : Proc ![
+            { match (&a, &b) {
+                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() - *b.clone())),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x - y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() - y.get())))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(*x - *y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() - *b.clone())),
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        Mul . a:Proc, b:Proc |- a "*" b : Proc ![
+            { match (&a, &b) {
+                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() * *b.clone())),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x * y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() * y.get())))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(*x * *y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() * *b.clone())),
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        Div . a:Proc, b:Proc |- a "/" b : Proc ![
+            { match (&a, &b) {
+                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() / *b.clone())),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(x), UInt32::NumLit(y)) => {
+                        if *y == 0 { Proc::Err } else { Proc::CastUInt32(Box::new(UInt32::NumLit(x / y))) }
+                    }
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(x), BigInt::NumLit(y)) => {
+                        if y.get().is_zero() { Proc::Err } else { Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() / y.get())))) }
+                    }
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(x), BigRat::RatLit(y)) => {
+                        if y.get().is_zero() { Proc::Err } else { Proc::CastBigRat(Box::new(BigRat::RatLit(*x / *y))) }
+                    }
+                    _ => Proc::Err,
+                },
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() / *b.clone())),
                 _ => Proc::Err,
             }}
         ] fold;
@@ -345,26 +528,6 @@ language! {
             }}
         ] fold;
 
-        And . a:Proc, b:Proc |- a "and" b : Proc ![
-            { match (&a, &b) {
-                (Proc::CastBool(a), Proc::CastBool(b)) => match (&**a, &**b) {
-                    (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(*x && *y))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
-        Or . a:Proc, b:Proc |- a "or" b : Proc ![
-            { match (&a, &b) {
-                (Proc::CastBool(a), Proc::CastBool(b)) => match (&**a, &**b) {
-                    (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(*x || *y))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
         Len . p:Proc |- "len" "(" p ")" : Proc ![
             { match &p {
                 Proc::CastStr(inner) => match &**inner {
@@ -386,6 +549,24 @@ language! {
         ToInt . p:Proc |- "int" "(" p ")" : Proc ![
             { match &p {
                 Proc::CastInt(x) => Proc::CastInt(x.clone()),
+                Proc::CastUInt32(x) => match &**x {
+                    UInt32::NumLit(u) => Proc::CastInt(Box::new(Int::NumLit(*u as i64))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigInt(x) => match &**x {
+                    BigInt::NumLit(n) => match ToPrimitive::to_i64(n.get()) {
+                        Some(v) => Proc::CastInt(Box::new(Int::NumLit(v))),
+                        None => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                Proc::CastBigRat(x) => match &**x {
+                    BigRat::RatLit(r) => match ToPrimitive::to_f64(r.get()) {
+                        Some(f) => Proc::CastInt(Box::new(Int::NumLit(f as i64))),
+                        None => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
                 Proc::CastFloat(x) => match &**x {
                     Float::FloatLit(f) => Proc::CastInt(Box::new(Int::NumLit(f.get() as i64))),
                     _ => Proc::Err,
@@ -409,6 +590,24 @@ language! {
                     Int::NumLit(i) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(*i as f64)))),
                     _ => Proc::Err,
                 },
+                Proc::CastUInt32(x) => match &**x {
+                    UInt32::NumLit(u) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(*u as f64)))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigInt(x) => match &**x {
+                    BigInt::NumLit(n) => match ToPrimitive::to_f64(n.get()) {
+                        Some(f) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(f)))),
+                        None => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                Proc::CastBigRat(x) => match &**x {
+                    BigRat::RatLit(r) => match ToPrimitive::to_f64(r.get()) {
+                        Some(f) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(f)))),
+                        None => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
                 Proc::CastBool(x) => match &**x {
                     Bool::BoolLit(b) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(if *b { 1.0 } else { 0.0 })))),
                     _ => Proc::Err,
@@ -428,6 +627,18 @@ language! {
                     Int::NumLit(i) => Proc::CastBool(Box::new(Bool::BoolLit(*i != 0))),
                     _ => Proc::Err,
                 },
+                Proc::CastUInt32(x) => match &**x {
+                    UInt32::NumLit(u) => Proc::CastBool(Box::new(Bool::BoolLit(*u != 0))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigInt(x) => match &**x {
+                    BigInt::NumLit(n) => Proc::CastBool(Box::new(Bool::BoolLit(!n.get().is_zero()))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigRat(x) => match &**x {
+                    BigRat::RatLit(r) => Proc::CastBool(Box::new(Bool::BoolLit(!r.get().is_zero()))),
+                    _ => Proc::Err,
+                },
                 Proc::CastFloat(x) => match &**x {
                     Float::FloatLit(f) => Proc::CastBool(Box::new(Bool::BoolLit(f.get() != 0.0))),
                     _ => Proc::Err,
@@ -445,6 +656,18 @@ language! {
                 Proc::CastStr(x) => Proc::CastStr(x.clone()),
                 Proc::CastInt(x) => match &**x {
                     Int::NumLit(i) => Proc::CastStr(Box::new(Str::StringLit(i.to_string()))),
+                    _ => Proc::Err,
+                },
+                Proc::CastUInt32(x) => match &**x {
+                    UInt32::NumLit(u) => Proc::CastStr(Box::new(Str::StringLit(u.to_string()))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigInt(x) => match &**x {
+                    BigInt::NumLit(n) => Proc::CastStr(Box::new(Str::StringLit(n.to_string()))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigRat(x) => match &**x {
+                    BigRat::RatLit(r) => Proc::CastStr(Box::new(Str::StringLit(r.to_string()))),
                     _ => Proc::Err,
                 },
                 Proc::CastFloat(x) => match &**x {
@@ -551,6 +774,11 @@ language! {
 
         CastMapCong . | S ~> T |- (CastMap S) ~> (CastMap T);
         CastIntCong . | S ~> T |- (CastInt S) ~> (CastInt T);
+        CastUInt32Cong . | S ~> T |- (CastUInt32 S) ~> (CastUInt32 T);
+        CastBigIntCong . | S ~> T |- (CastBigInt S) ~> (CastBigInt T);
+        CastBigRatCong . | S ~> T |- (CastBigRat S) ~> (CastBigRat T);
+        FractionProcCongL . | S ~> T |- (FractionProc S X) ~> (FractionProc T X);
+        FractionProcCongR . | S ~> T |- (FractionProc X S) ~> (FractionProc X T);
         ToIntCong . | S ~> T |- (ToInt S) ~> (ToInt T);
         ToFloatCong . | S ~> T |- (ToFloat S) ~> (ToFloat T);
         ToBoolCong . | S ~> T |- (ToBool S) ~> (ToBool T);

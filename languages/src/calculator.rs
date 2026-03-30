@@ -11,6 +11,9 @@ language! {
     types {
         Proc
         ![i32] as Int
+        ![u32] as UInt32
+        ![mettail_runtime::CanonicalBigInt] as BigInt
+        ![mettail_runtime::CanonicalBigRat] as BigRat
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
@@ -19,19 +22,30 @@ language! {
         ![HashMap<Proc, Proc>] as Map
     },
     literals {
-        Int {
-            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)";
+        UInt32 {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)u32";
             eval: ![ {
-                // Strip digit separators (e.g. 1_000_000 or 0xFF_FF_FF) before parsing.
-                let s = text.replace('_', "");
-                let body = s.as_str();
-                let (radix, digits) = if let Some(h) = body.strip_prefix("0x") { (16, h) }
-                    else if let Some(o) = body.strip_prefix("0o") { (8, o) }
-                    else if let Some(b) = body.strip_prefix("0b") { (2, b) }
-                    else { (10, body) };
-
-                // Lexer expects Result<i64, E>; Token::Integer(i64). Native type (e.g. i32) is applied in the trampoline.
-                i64::from_str_radix(digits, radix)
+                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+            } ]
+        }
+        Int {
+            // Int (i32) literals; unsuffixed defaults to i32.
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32)?";
+            eval: ![ {
+                mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::I32)).map_err(|_| ())
+            } ]
+        }
+        BigInt {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n";
+            eval: ![ {
+                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+            } ]
+        }
+        // BigRat sugar: `<int>r` (whole) or `<int>r/<int>r` (composite); radix/`_` parity with BigInt `n` literals.
+        BigRat {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r";
+            eval: ![ {
+                mettail_prattail::parse_rational_lit(text).map_err(|_| ())
             } ]
         }
         Float {
@@ -79,6 +93,21 @@ language! {
         ProcList . l:List |- l : Proc ;
         ProcBag . b:Bag |- b : Proc ;
         ProcMap . m:Map |- m : Proc ;
+        ProcUInt32 . u:UInt32 |- u : Proc ;
+        ProcBigInt . n:BigInt |- n : Proc ;
+        ProcBigRat . r:BigRat |- r : Proc ;
+        // BigRat error normal form: concrete syntax `error`, not a CanonicalBigRat. Step rules
+        // reduce invalid rationals (e.g. fraction with zero denominator) here instead of panicking.
+        // The procedural macro keys off the zero-ary `Err` name on BigRat when lowering Fraction.
+        Err . |- "error" : BigRat ;
+        // try_from_nd is None when the denominator is zero; the step rule maps that to `Err`.
+        Fraction . a:BigInt, b:BigInt |- "fraction" "(" a "," b ")" : BigRat ![{
+            mettail_runtime::CanonicalBigRat::try_from_nd(a.get().clone(), b.get().clone())
+        }] step;
+        AddBigRat . a:BigRat, b:BigRat |- a "+" b : BigRat ![a + b] fold;
+        MulBigRat . a:BigRat, b:BigRat |- a "*" b : BigRat ![a * b] fold;
+        DivBigRat . a:BigRat, b:BigRat |- a "/" b : BigRat ![a / b] fold;
+        NegBigRat . a:BigRat |- "-" a : BigRat ![(-a)] fold;
         // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
         // Comparison operations
@@ -118,6 +147,9 @@ language! {
         Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step;
         Concat . a:Str, b:Str |- a "++" b : Str ![[a, b].concat()] step;
         AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
+        //
+        AddUInt32 . a:UInt32, b:UInt32 |- a "+" b : UInt32 ![a + b] fold;
+        AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ![a + b] fold;
         // Int operations
         AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
         SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
@@ -396,5 +428,21 @@ language! {
         TernCongT . | S ~> T |- (Tern L S R) ~> (Tern L T R);
         TernCongE . | S ~> T |- (Tern L R S) ~> (Tern L R T);
         // No List/Bag congruence: only Proc congruence (e.g. ProcList/ProcBag) is needed.
+        ProcUInt32Cong . | S ~> T |- (ProcUInt32 S) ~> (ProcUInt32 T);
+        AddUInt32CongL . | S ~> T |- (AddUInt32 S R) ~> (AddUInt32 T R);
+        AddUInt32CongR . | S ~> T |- (AddUInt32 L S) ~> (AddUInt32 L T);
+        ProcBigIntCong . | S ~> T |- (ProcBigInt S) ~> (ProcBigInt T);
+        AddBigIntCongL . | S ~> T |- (AddBigInt S R) ~> (AddBigInt T R);
+        AddBigIntCongR . | S ~> T |- (AddBigInt L S) ~> (AddBigInt L T);
+        ProcBigRatCong . | S ~> T |- (ProcBigRat S) ~> (ProcBigRat T);
+        FractionCongN . | S ~> T |- (Fraction S R) ~> (Fraction T R);
+        FractionCongD . | S ~> T |- (Fraction L S) ~> (Fraction L T);
+        AddBigRatCongL . | S ~> T |- (AddBigRat S R) ~> (AddBigRat T R);
+        AddBigRatCongR . | S ~> T |- (AddBigRat L S) ~> (AddBigRat L T);
+        MulBigRatCongL . | S ~> T |- (MulBigRat S R) ~> (MulBigRat T R);
+        MulBigRatCongR . | S ~> T |- (MulBigRat L S) ~> (MulBigRat L T);
+        DivBigRatCongL . | S ~> T |- (DivBigRat S R) ~> (DivBigRat T R);
+        DivBigRatCongR . | S ~> T |- (DivBigRat L S) ~> (DivBigRat L T);
+        NegBigRatCong . | S ~> T |- (NegBigRat S) ~> (NegBigRat T);
     },
 }

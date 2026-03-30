@@ -1,12 +1,12 @@
 # HOL-Based Method Specification: Design Document
 
 **Date**: January 2026  
-**Status**: Design Exploration  
-**Related**: 
+**Status**: Design reference (lives under **made** with other shipped-adjacent docs). HOL blocks and eval/fold generation match today’s `language!` pipeline; theory-level `imports { }` / hybrid import propagation remains partly aspirational.  
+**Related**:
 
-- [hol_syntax.md](hol_syntax.md) - HOL syntax specification
-- [string_float_bool_methods.md](string_float_bool_methods.md) - String, float, and bool operation design
-- [native_types_and_operations.md](../made/native_types_and_operations.md)
+- [hol-syntax.md](../exploring/hol-syntax.md) — HOL syntax specification (still in **exploring**)
+- [string_float_bool_methods.md](./native-types/string_float_bool_methods.md) — string, float, and bool operation design
+- [Ascent generation](./ascent_generation.md), [Data structures](./data_structures.md) — evaluation and relation generation
 
 ---
 
@@ -18,8 +18,8 @@ Semantics are defined in grammar rules using HOL syntax with native Rust code bl
 - Standard library import propagation to Rust code blocks
 - Implementation details for code generation and type checking
 
-For HOL syntax specification, see [hol_syntax.md](hol_syntax.md).  
-For string, float, and bool operation requirements, see [string_float_bool_methods.md](string_float_bool_methods.md).
+For HOL syntax specification, see [hol-syntax.md](../exploring/hol-syntax.md).  
+For string, float, and bool operation requirements, see [string_float_bool_methods.md](./native-types/string_float_bool_methods.md).
 
 **Current Implementation:**
 
@@ -55,7 +55,7 @@ HOL syntax allows embedding native Rust code directly in grammar rules using `![
 - Standard library imports (via import propagation)
 - External crate imports (via import propagation)
 
-**Syntax Reference:** See [hol_syntax.md](hol_syntax.md) for complete HOL syntax specification.
+**Syntax Reference:** See [hol-syntax.md](../exploring/hol-syntax.md) for complete HOL syntax specification.
 
 **Example:**
 
@@ -561,7 +561,7 @@ terms {
 }
 ```
 
-For detailed discussion of cross-type operations, see [string_float_bool_methods.md](string_float_bool_methods.md).
+For detailed discussion of cross-type operations, see [string_float_bool_methods.md](./native-types/string_float_bool_methods.md).
 
 ---
 
@@ -574,7 +574,7 @@ For detailed discussion of cross-type operations, see [string_float_bool_methods
 **Changes:**
 
 1. Extend `GrammarRule` AST with parameters, return type, Rust code, eval mode
-2. Update parser to recognize HOL syntax (see [hol_syntax.md](hol_syntax.md))
+2. Update parser to recognize HOL syntax (see [hol-syntax.md](../exploring/hol-syntax.md))
 3. Generate `eval()` method from Rust code blocks
 4. Support basic evaluation modes
 
@@ -758,9 +758,9 @@ For detailed discussion of cross-type operations, see [string_float_bool_methods
 
 **Success Criteria:**
 
-- All string, float, and bool operations supported (see [string_float_bool_methods.md](string_float_bool_methods.md))
+- All string, float, and bool operations supported (see [string_float_bool_methods.md](./native-types/string_float_bool_methods.md))
 - Type safety preserved at compile time
-- Clear, readable syntax (see [hol_syntax.md](hol_syntax.md))
+- Clear, readable syntax (see [hol-syntax.md](../exploring/hol-syntax.md))
 - Standard library imports work correctly
 - Evaluation modes work correctly
 

@@ -46,9 +46,17 @@ pub fn build_nfa(
         fragments.push(frag);
     }
     if needs.integer {
-        let frag = regex::compile_regex(&patterns.integer, &mut nfa, TokenKind::Integer)
-            .expect("integer pattern should be a valid regex");
-        fragments.push(frag);
+        if patterns.integer_by_category.is_empty() {
+            let frag = regex::compile_regex(&patterns.integer, &mut nfa, TokenKind::Integer)
+                .expect("integer pattern should be a valid regex");
+            fragments.push(frag);
+        } else {
+            for (cat, pat) in &patterns.integer_by_category {
+                let frag = regex::compile_regex(pat, &mut nfa, TokenKind::IntegerLit(cat.clone()))
+                    .expect("integer-by-category pattern should be a valid regex");
+                fragments.push(frag);
+            }
+        }
     }
     if needs.float {
         let frag = regex::compile_regex(&patterns.float, &mut nfa, TokenKind::Float)
@@ -64,6 +72,13 @@ pub fn build_nfa(
         if let Some(ref boolean_pattern) = patterns.boolean {
             let frag = regex::compile_regex(boolean_pattern, &mut nfa, TokenKind::BooleanLit)
                 .expect("boolean pattern should be a valid regex");
+            fragments.push(frag);
+        }
+    }
+    if needs.rational {
+        for (cat, pat) in &patterns.rational_by_category {
+            let frag = regex::compile_regex(pat, &mut nfa, TokenKind::RationalLit(cat.clone()))
+                .expect("rational-by-category pattern should be a valid regex");
             fragments.push(frag);
         }
     }
@@ -96,6 +111,8 @@ pub struct BuiltinNeeds {
     pub string_lit: bool,
     /// Whether any type has a native bool type (keywords `true`/`false`).
     pub boolean: bool,
+    /// Whether rational literal regexes are registered (`rational_by_category` non-empty).
+    pub rational: bool,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -617,6 +634,7 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);
@@ -914,6 +932,7 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);
@@ -1323,6 +1342,7 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);
@@ -1425,6 +1445,7 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);

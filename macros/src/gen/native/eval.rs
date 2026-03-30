@@ -9,6 +9,7 @@ use crate::gen::native::native_type_to_string;
 use crate::gen::{
     generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
 };
+use crate::logic::common::fold_field_count;
 
 /// True if the type is a category with native_type (e.g. Int, Float). False for List, Bag, or non-native.
 fn type_has_native_eval(ty: &TypeExpr, language: &LanguageDef) -> bool {
@@ -46,6 +47,58 @@ fn term_context_params_with_eval(
         }
     }
     out
+}
+
+fn native_type_is_copy(type_str: &str) -> bool {
+    matches!(
+        type_str,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+            | "CanonicalBigInt"
+            | "CanonicalBigRat"
+    )
+}
+
+/// Calculator `Fraction` uses `try_from_nd` → `Option`; Ascent maps `None` to `BigRat::Err`.
+/// `eval`/`try_eval` must accept that `Option` here so the generated `impl` type-checks.
+fn hol_bigrat_fraction_try_from_nd_option(
+    language: &LanguageDef,
+    category: &syn::Ident,
+    label: &syn::Ident,
+) -> bool {
+    let err_ident = quote::format_ident!("Err");
+    let category_has_err = language
+        .terms
+        .iter()
+        .any(|r| r.category == *category && r.label == err_ident);
+    category_has_err && label.to_string() == "Fraction" && category.to_string() == "BigRat"
+}
+
+/// `DivBigRat` must not call `num-rational` division when the divisor is zero (panics in `reduce`).
+fn hol_bigrat_div_zero_guard(
+    language: &LanguageDef,
+    category: &syn::Ident,
+    label: &syn::Ident,
+) -> bool {
+    let err_ident = quote::format_ident!("Err");
+    let category_has_err = language
+        .terms
+        .iter()
+        .any(|r| r.category == *category && r.label == err_ident);
+    category_has_err && label.to_string() == "DivBigRat" && category.to_string() == "BigRat"
 }
 
 pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
@@ -118,10 +171,10 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         let is_collection = lang_type.collection_kind.is_some();
         if !has_literal_rule && !is_collection {
             let type_str = native_type_to_string(native_type);
-            let literal_arm = if type_str == "str" || type_str == "String" {
-                quote! { #category::#literal_label(n) => n.clone(), }
-            } else {
+            let literal_arm = if native_type_is_copy(&type_str) {
                 quote! { #category::#literal_label(n) => *n, }
+            } else {
+                quote! { #category::#literal_label(n) => n.clone(), }
             };
             match_arms.push(literal_arm);
         }
@@ -141,10 +194,10 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
 
         if !has_literal_rule {
             let type_str = native_type_to_string(native_type);
-            let try_literal_arm = if type_str == "str" || type_str == "String" {
-                quote! { #category::#literal_label(n) => Some(n.clone()), }
-            } else {
+            let try_literal_arm = if native_type_is_copy(&type_str) {
                 quote! { #category::#literal_label(n) => Some(*n), }
+            } else {
+                quote! { #category::#literal_label(n) => Some(n.clone()), }
             };
             try_eval_arms.push(try_literal_arm);
         }
@@ -157,7 +210,9 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
 
             // Literal rule: copy or clone depending on nonterminal (StringLiteral => clone)
             if is_literal_rule(rule) {
-                let use_clone = literal_rule_nonterminal(rule).as_deref() == Some("StringLiteral");
+                let type_str = native_type_to_string(native_type);
+                let use_clone = !native_type_is_copy(&type_str)
+                    || literal_rule_nonterminal(rule).as_deref() == Some("StringLiteral");
                 if use_clone {
                     match_arms.push(quote! {
                         #category::#label(n) => n.clone(),
@@ -204,7 +259,35 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     })
                     .collect();
                 let rust_code = &rust_code_block.code;
-                let match_arm = if param_count == 0 {
+                let fraction_option =
+                    hol_bigrat_fraction_try_from_nd_option(language, category, label);
+                let div_zero_guard = hol_bigrat_div_zero_guard(language, category, label);
+                let match_arm = if fraction_option && param_count > 0 {
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#param_bindings)*
+                            match (#rust_code) {
+                                Some(__r) => __r,
+                                None => panic!(
+                                    "zero denominator in fraction; normalize with rewrite rules to error",
+                                ),
+                            }
+                        },
+                    }
+                } else if div_zero_guard && param_count == 2 {
+                    let b_name = &param_names[1];
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#param_bindings)*
+                            if ::num_traits::Zero::is_zero(#b_name.get()) {
+                                panic!(
+                                    "division by zero in BigRat; normalize with fold rules to error",
+                                );
+                            }
+                            (#rust_code)
+                        },
+                    }
+                } else if param_count == 0 {
                     quote! {
                         #category::#label => (#rust_code),
                     }
@@ -222,7 +305,29 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 let skip_try_eval = rule.eval_mode == Some(EvalMode::Fold)
                     && params.iter().any(|(_, use_eval)| !use_eval);
                 if !skip_try_eval {
-                    let try_arm = if param_count == 0 {
+                    let try_arm = if fraction_option && param_count > 0 {
+                        quote! {
+                            #category::#label(#(#param_names),*) => {
+                                #(#try_param_bindings)*
+                                match (#rust_code) {
+                                    Some(__r) => Some(__r),
+                                    None => None,
+                                }
+                            },
+                        }
+                    } else if div_zero_guard && param_count == 2 {
+                        let b_name = &param_names[1];
+                        quote! {
+                            #category::#label(#(#param_names),*) => {
+                                #(#try_param_bindings)*
+                                if ::num_traits::Zero::is_zero(#b_name.get()) {
+                                    None
+                                } else {
+                                    Some((#rust_code))
+                                }
+                            },
+                        }
+                    } else if param_count == 0 {
                         quote! { #category::#label => Some((#rust_code)), }
                     } else {
                         quote! {
@@ -261,6 +366,23 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     });
                 }
             }
+        }
+
+        let err_ident = quote::format_ident!("Err");
+        if rules
+            .iter()
+            .any(|r| r.label == err_ident && fold_field_count(r) == 0)
+        {
+            match_arms.push(quote! {
+                #category::#err_ident => {
+                    panic!(
+                        "`error` normal form has no native value; inspect the term or use display"
+                    );
+                }
+            });
+            try_eval_arms.push(quote! {
+                #category::#err_ident => None,
+            });
         }
 
         if !match_arms.is_empty() {

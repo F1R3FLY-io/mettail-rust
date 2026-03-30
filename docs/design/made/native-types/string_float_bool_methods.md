@@ -1,8 +1,8 @@
 # String, Float, and Bool Method Specification: Design Options
 
 **Date**: January 2026  
-**Status**: Design Exploration  
-**Related**: [native_types_and_operations.md](../made/native_types_and_operations.md)
+**Status**: Design exploration (not a separate `semantics { }` DSL) — today, operations are implemented per language with the `language!` macro: HOL blocks `![{ … }]` on `terms` rules, optional `fold` / `step`, and generated Ascent relations (`macros/src/logic/mod.rs`, `macros/src/gen/native/`).  
+**Related**: [Ascent generation](../ascent_generation.md), [Data structures](../data_structures.md), [HOL syntax](../../exploring/hol-syntax.md), [HOL methods / imports design](../hol_syntax_methods.md)
 
 ---
 
@@ -17,8 +17,8 @@ Operations are defined per constructor via HOL `![RustCode]` in the `terms` sect
 - Unary operations: negation, length, trigonometric functions
 - Custom methods: user-defined or standard library methods
 
-**Current Implementation:**
-- Grammar rules in `terms` use optional `rust_code` blocks; `eval` and rewrite/fold rules are generated from these (e.g. `macros/src/gen/native/eval.rs`, `macros/src/logic/mod.rs`).
+**Current implementation**
+- Grammar rules in the `language!` / `terms` section use optional `![{ … }]` (HOL) blocks; fold, step, and congruence rules are generated from these (e.g. `macros/src/gen/native/eval.rs`, `macros/src/logic/mod.rs`). There is no separate top-level `semantics { }` block as in the hypothetical `theory!` snippets below — those illustrate possible future syntax.
 
 **Constraints:**
 - Type safety must be preserved at compile time
@@ -441,7 +441,7 @@ semantics {
 - `step`: Educational/debugging, see all intermediate steps
 - `both`: Default, flexible evaluation
 
-See [native_types_and_operations.md](../made/native_types_and_operations.md) for detailed evaluation mode design.
+See [Ascent generation](../ascent_generation.md) and `macros/src/logic/mod.rs` for how `fold` vs `step` affects generated rules (including the constraint that **`step` HOL on non-native categories like `Proc` is not emitted** — use `fold` for `Proc`-valued rewrites such as `fraction` in RhoCalc).
 
 ---
 

@@ -10,6 +10,23 @@ export const categoryInfo = {
 		],
 		colour: "e0d451",
 	},
+	BigInt: {
+		constructors: [
+			"AddBigInt"
+		],
+		colour: "db51e0",
+	},
+	BigRat: {
+		constructors: [
+			"Err",
+			"Fraction",
+			"AddBigRat",
+			"MulBigRat",
+			"DivBigRat",
+			"NegBigRat"
+		],
+		colour: "e051c8",
+	},
 	Bool: {
 		constructors: [
 			"EqInt",
@@ -106,6 +123,9 @@ export const categoryInfo = {
 			"ProcList",
 			"ProcBag",
 			"ProcMap",
+			"ProcUInt32",
+			"ProcBigInt",
+			"ProcBigRat",
 			"ElemList",
 			"GetMap"
 		],
@@ -118,6 +138,12 @@ export const categoryInfo = {
 			"ProcToStr"
 		],
 		colour: "51e05f",
+	},
+	UInt32: {
+		constructors: [
+			"AddUInt32"
+		],
+		colour: "e05172",
 	}
 };
 
