@@ -267,6 +267,10 @@ impl BitXor for CanonicalFixedPoint {
 
 #[cfg(test)]
 mod tests {
+    use std::cmp::Ordering;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::Hasher;
+
     use super::*;
 
     fn fp(s_int: i64, s_frac: i64, places: u32) -> CanonicalFixedPoint {
@@ -274,6 +278,12 @@ mod tests {
         let ten_p = 10i64.pow(places);
         let u = BigInt::from(s_int) * BigInt::from(ten_p) + BigInt::from(s_frac);
         CanonicalFixedPoint::new(u, places)
+    }
+
+    fn hash_val(x: &CanonicalFixedPoint) -> u64 {
+        let mut h = DefaultHasher::new();
+        x.hash(&mut h);
+        h.finish()
     }
 
     #[test]
@@ -291,10 +301,105 @@ mod tests {
     }
 
     #[test]
+    fn div_mod_with_negatives() {
+        let a = CanonicalFixedPoint::new(BigInt::from(-100), 2);
+        let b = CanonicalFixedPoint::new(BigInt::from(25), 2);
+        let q = a.checked_div(b).expect("q");
+        let r = a.checked_rem(b).expect("r");
+        let back = q * b + r;
+        assert_eq!(back, a);
+    }
+
+    #[test]
+    fn checked_div_rem_by_zero() {
+        let a = fp(1, 0, 0);
+        let z = fp(0, 0, 0);
+        assert!(a.checked_div(z).is_none());
+        assert!(a.checked_rem(z).is_none());
+    }
+
+    #[test]
     fn normalize_zero() {
         let z = CanonicalFixedPoint::new(BigInt::from(0), 5);
         assert!(z.unscaled.get().is_zero());
         assert_eq!(z.places(), 0);
+    }
+
+    #[test]
+    fn display_zero_and_integer_p0() {
+        let z = CanonicalFixedPoint::new(BigInt::from(0), 0);
+        assert_eq!(z.to_string(), "0p0");
+        let n = CanonicalFixedPoint::new(BigInt::from(-42), 0);
+        assert_eq!(n.to_string(), "-42p0");
+    }
+
+    #[test]
+    fn display_padding_frac_only() {
+        // unscaled 5, places 2 → 0.05p2
+        let x = CanonicalFixedPoint::new(BigInt::from(5), 2);
+        assert_eq!(x.to_string(), "0.05p2");
+        let y = CanonicalFixedPoint::new(BigInt::from(-3), 3);
+        assert_eq!(y.to_string(), "-0.003p3");
+    }
+
+    #[test]
+    fn display_int_and_frac_parts() {
+        let x = CanonicalFixedPoint::new(BigInt::from(12345), 3);
+        assert_eq!(x.to_string(), "12.345p3");
+    }
+
+    #[test]
+    fn eq_same_rational_different_places() {
+        let a = CanonicalFixedPoint::new(BigInt::from(100), 1);
+        let b = CanonicalFixedPoint::new(BigInt::from(10), 0);
+        assert_eq!(a, b);
+        assert_ne!(a.to_string(), b.to_string());
+    }
+
+    #[test]
+    fn ord_and_partial_ord() {
+        let a = fp(1, 0, 0);
+        let b = fp(2, 0, 0);
+        assert_eq!(a.cmp(&b), Ordering::Less);
+        assert_eq!(b.cmp(&a), Ordering::Greater);
+        assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
+    }
+
+    #[test]
+    fn hash_matches_eq() {
+        let x = CanonicalFixedPoint::new(BigInt::from(100), 1);
+        let y = CanonicalFixedPoint::new(BigInt::from(10), 0);
+        assert_eq!(hash_val(&x), hash_val(&y));
+        let z = fp(1, 0, 0);
+        assert_ne!(hash_val(&x), hash_val(&z));
+    }
+
+    #[test]
+    fn add_sub_misaligned_places() {
+        let one = fp(1, 0, 0);
+        let half = fp(0, 5, 1);
+        let s = one + half;
+        let expected = fp(1, 5, 1);
+        assert_eq!(s, expected);
+        assert_eq!(s - half, one);
+    }
+
+    #[test]
+    fn mul_sums_places() {
+        let a = fp(2, 0, 1);
+        let b = fp(3, 0, 1);
+        let p = a * b;
+        assert_eq!(p.places(), 2);
+        assert_eq!(p, fp(6, 0, 2));
+    }
+
+    #[test]
+    fn neg_flips_unscaled_keeps_places() {
+        let x = fp(3, 3, 1);
+        let n = -x;
+        assert_eq!(n.unscaled.get(), &BigInt::from(-33));
+        assert_eq!(n.places(), 1);
+        assert_eq!(-(-x), x);
     }
 
     #[test]
@@ -304,5 +409,31 @@ mod tests {
         let c = a & b;
         assert_eq!(c.unscaled.get(), &BigInt::from(8));
         assert_eq!(c.places(), 1);
+    }
+
+    #[test]
+    fn bitwise_misaligned_places() {
+        let a = CanonicalFixedPoint::new(BigInt::from(15), 0);
+        let b = CanonicalFixedPoint::new(BigInt::from(14), 1);
+        let c = a & b;
+        // 15p0 → 150p1 aligned; 150 & 14 = 6
+        assert_eq!(c.unscaled.get(), &BigInt::from(6));
+        assert_eq!(c.places(), 1);
+    }
+
+    #[test]
+    fn bitwise_or_xor() {
+        let a = fp(5, 0, 0);
+        let b = fp(3, 0, 0);
+        assert_eq!(a | b, fp(7, 0, 0));
+        assert_eq!(a ^ b, fp(6, 0, 0));
+    }
+
+    #[test]
+    fn bitwise_negative_unscaled() {
+        let a = CanonicalFixedPoint::new(BigInt::from(-4), 0);
+        let b = CanonicalFixedPoint::new(BigInt::from(2), 0);
+        let c = a & b;
+        assert_eq!(c.unscaled.get(), &(BigInt::from(-4) & BigInt::from(2)));
     }
 }

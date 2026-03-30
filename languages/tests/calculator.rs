@@ -300,6 +300,97 @@ fn test_fixed_bitand() {
     calc_normal_form("5p0 bitand 3p0", "1p0");
 }
 
+/// Float: exponent-only form and more `f64` / underscore cases (surface matches [`mettail_prattail::parse_float_lit`]).
+#[test]
+fn test_float_exponent_suffix_and_underscores() {
+    calc_normal_form("1e2", "100.0");
+    calc_normal_form("1e3f64", "1000.0");
+    calc_normal_form(".25f64", "0.25");
+    calc_normal_form("1_000.0f64", "1000.0");
+    calc_normal_form("-2.5e-1", "-0.25");
+}
+
+#[test]
+fn test_float_int_disambiguation() {
+    // Integer token `10` stays Int; `10.0` is a float literal.
+    calc_normal_form("10", "10");
+    calc_normal_form("10.0", "10.0");
+    // `+` / `*` are per-category: use float on both sides for cross-literal smoke.
+    calc_normal_form("1.0 + 2.0", "3.0");
+    calc_normal_form("2.5 * 2.0", "5.0");
+}
+
+// --- Fixed-point: literals, folds, comparisons, projections ---
+
+#[test]
+fn test_fixed_literals_normal_form() {
+    calc_normal_form("0p0", "0p0");
+    calc_normal_form("-1.25p2", "-1.25p2");
+    calc_normal_form("1_0p1", "10.0p1");
+    calc_normal_form(".25p2", "0.25p2");
+}
+
+#[test]
+fn test_fixed_add_sub_mul_neg_mixed_scale() {
+    calc_normal_form("1p0 + 0.5p1", "1.5p1");
+    calc_normal_form("2.0p1 - 0.5p1", "1.5p1");
+    calc_normal_form("3p0 * 2p0", "6p0");
+    calc_normal_form("-10p1", "-10.0p1");
+}
+
+#[test]
+fn test_fixed_comparisons_and_cross_scale_eq() {
+    calc_normal_form("10p1 == 10.0p1", "true");
+    // Same rational: 1 and 1.0 with one decimal place.
+    calc_normal_form("1p0 == 1.0p1", "true");
+    calc_normal_form("10p1 < 11p1", "true");
+    calc_normal_form("10p1 > 11p1", "false");
+    calc_normal_form("10p1 <= 10.0p1", "true");
+    calc_normal_form("10p1 >= 9p1", "true");
+    calc_normal_form("10p1 != 9p1", "true");
+}
+
+#[test]
+fn test_fixed_bitor_bitxor() {
+    calc_normal_form("5p0 bitor 3p0", "7p0");
+    calc_normal_form("5p0 bitxor 3p0", "6p0");
+}
+
+#[test]
+fn test_fixed_projections_proc() {
+    // `int` uses string parse of unscaled integer (100 for literal 10p1).
+    calc_normal_form("int(10p1)", "100");
+    calc_normal_form("float(10p1)", "10.0");
+    calc_normal_form("bool(0p0)", "false");
+    calc_normal_form("bool(1p0)", "true");
+    calc_normal_form("str(1.5p1)", "1.5p1");
+}
+
+#[test]
+fn test_fixed_parse_rejects_malformed() {
+    mettail_runtime::clear_var_cache();
+    assert!(calc::Fixed::parse("10px").is_err());
+    assert!(calc::Fixed::parse("1.23p1").is_err());
+    assert!(calc::Float::parse("").is_err());
+}
+
+/// Fixed `/` and `%` with divisor zero follow Rust `Div`/`Rem` on [`CanonicalFixedPoint`] (panic).
+///
+/// Ignored by default: `#[should_panic]` depends on unwinding; dev Cranelift can differ from LLVM.
+#[test]
+#[ignore]
+#[should_panic]
+fn test_fixed_div_by_zero_panics() {
+    calc_normal_form("10p1 / 0p0", "");
+}
+
+#[test]
+#[ignore]
+#[should_panic]
+fn test_fixed_mod_by_zero_panics() {
+    calc_normal_form("10p1 % 0p0", "");
+}
+
 // --- Bool ---
 
 #[test]

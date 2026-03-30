@@ -76,4 +76,40 @@ mod tests {
         assert!(parse_float_lit("1.0f128").is_err());
         assert!(parse_float_lit("1.0f256").is_err());
     }
+
+    #[test]
+    fn leading_dot_and_negative() {
+        assert_eq!(parse_float_lit(".5").unwrap().get(), 0.5);
+        assert_eq!(parse_float_lit("-.5").unwrap().get(), -0.5);
+        assert_eq!(parse_float_lit("-.25e1").unwrap().get(), -2.5);
+    }
+
+    #[test]
+    fn exponent_forms_no_decimal_point() {
+        assert_eq!(parse_float_lit("1e10").unwrap().get(), 1e10);
+        assert_eq!(parse_float_lit("1E+10").unwrap().get(), 1e10);
+        assert_eq!(parse_float_lit("-2.5e-3").unwrap().get(), -0.0025);
+    }
+
+    #[test]
+    fn underscores_in_exponent_and_suffix() {
+        let x = parse_float_lit("1_0e1_f64").unwrap();
+        assert_eq!(x.get(), 100.0);
+        assert_eq!(parse_float_lit(".25f64").unwrap().get(), 0.25);
+        assert_eq!(parse_float_lit("1_000.0f64").unwrap().get(), 1000.0);
+    }
+
+    #[test]
+    fn f32_widen_matches_f64_parse_where_exact() {
+        let x = parse_float_lit("1.25f32").unwrap();
+        assert_eq!(x.get(), 1.25_f64);
+    }
+
+    #[test]
+    fn invalid_inputs() {
+        assert!(parse_float_lit("").is_err());
+        assert!(parse_float_lit("f64").is_err());
+        assert!(parse_float_lit("1.0e").is_err());
+        assert!(parse_float_lit("_").is_err());
+    }
 }

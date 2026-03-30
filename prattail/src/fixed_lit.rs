@@ -108,4 +108,39 @@ mod tests {
         assert_eq!(q.unscaled(), &BigInt::from(33));
         assert_eq!(q.places(), 1);
     }
+
+    #[test]
+    fn underscores_zero_negative_large_scale() {
+        assert_eq!(parse_fixed_lit("1_0p2").unwrap().unscaled(), &BigInt::from(1000));
+        assert_eq!(parse_fixed_lit("0p0").unwrap().unscaled(), &BigInt::from(0));
+        assert_eq!(parse_fixed_lit("0p0").unwrap().places(), 0);
+        let n = parse_fixed_lit("-1.25p3").unwrap();
+        assert_eq!(n.unscaled(), &BigInt::from(-1250));
+        assert_eq!(n.places(), 3);
+        let wide = parse_fixed_lit("100p2").unwrap();
+        assert_eq!(wide.unscaled(), &BigInt::from(10000));
+        assert_eq!(wide.places(), 2);
+    }
+
+    #[test]
+    fn parse_matches_canonical_fixed_point_eq() {
+        let a = parse_fixed_lit("10p1").unwrap();
+        let b = CanonicalFixedPoint::new(BigInt::from(100), 1);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn invalid_inputs() {
+        assert!(parse_fixed_lit("nop").is_err());
+        assert!(parse_fixed_lit("p1").is_err());
+        assert!(parse_fixed_lit("10p").is_err());
+        assert!(parse_fixed_lit("10px").is_err());
+        assert!(parse_fixed_lit("10p-1").is_err());
+        assert!(parse_fixed_lit(".").is_err());
+        assert!(parse_fixed_lit("-.").is_err());
+        assert!(parse_fixed_lit("1..2p1").is_err());
+        assert!(parse_fixed_lit("1.23p1").is_err());
+        assert!(parse_fixed_lit("1.2.3p1").is_err());
+        assert!(parse_fixed_lit("").is_err());
+    }
 }
