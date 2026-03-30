@@ -17,20 +17,41 @@ fn parses_radix_prefixes() {
 
 #[test]
 fn parses_signed_suffixes() {
+    assert_eq!(parse_int_lit("-128i8", None).unwrap(), IntLit::I8(-128));
+    assert!(parse_int_lit("-129i8", None).is_err());
+
     assert_eq!(parse_int_lit("127i8", None).unwrap(), IntLit::I8(127));
     assert!(parse_int_lit("128i8", None).is_err());
+
+    assert_eq!(parse_int_lit("-32768i16", None).unwrap(), IntLit::I16(-32768));
+    assert!(parse_int_lit("-32769i16", None).is_err());
 
     assert_eq!(parse_int_lit("32767i16", None).unwrap(), IntLit::I16(32767));
     assert!(parse_int_lit("32768i16", None).is_err());
 
+    assert_eq!(parse_int_lit("-2147483648i32", None).unwrap(), IntLit::I32(i32::MIN));
+    assert!(parse_int_lit("-2147483649i32", None).is_err());
+
     assert_eq!(parse_int_lit("2147483647i32", None).unwrap(), IntLit::I32(2_147_483_647));
     assert!(parse_int_lit("2147483648i32", None).is_err());
+
+    assert_eq!(
+        parse_int_lit("-9223372036854775808i64", None).unwrap(),
+        IntLit::I64(i64::MIN)
+    );
+    assert!(parse_int_lit("-9223372036854775809i64", None).is_err());
 
     assert_eq!(
         parse_int_lit("9223372036854775807i64", None).unwrap(),
         IntLit::I64(9_223_372_036_854_775_807)
     );
     assert!(parse_int_lit("9223372036854775808i64", None).is_err());
+
+    assert_eq!(
+        parse_int_lit("-170141183460469231731687303715884105728i128", None).unwrap(),
+        IntLit::I128(i128::MIN)
+    );
+    assert!(parse_int_lit("-170141183460469231731687303715884105729i128", None).is_err());
 
     assert_eq!(
         parse_int_lit("170141183460469231731687303715884105727i128", None).unwrap(),
@@ -53,6 +74,7 @@ fn parses_unsigned_suffixes() {
         parse_int_lit("18446744073709551615u64", None).unwrap(),
         IntLit::U64(18_446_744_073_709_551_615)
     );
+    assert!(parse_int_lit("18446744073709551616u64", None).is_err());
 
     assert_eq!(parse_int_lit("0xFFu32", None).unwrap(), IntLit::U32(255));
     assert_eq!(parse_int_lit("0b1010u16", None).unwrap(), IntLit::U16(10));
@@ -115,6 +137,14 @@ fn invalid_bigint_digits_fail() {
 #[test]
 fn r_suffix_is_not_an_integer_literal() {
     assert!(parse_int_lit("1r", None).is_err());
+}
+
+#[test]
+fn calculator_int_literal_uses_i32_default_suffix() {
+    assert_eq!(
+        parse_int_lit("7", Some(Suffix::I32)).unwrap(),
+        IntLit::I32(7)
+    );
 }
 
 #[test]

@@ -375,6 +375,20 @@ mod native_ops {
             assert_reduces_to("{1u32 + 2u32}", "3u32");
         }
 
+        /// C analogy: `unsigned x = 0; x = x - 1` → `UINT_MAX`. Rust `u32`: debug panics, release wraps.
+        #[cfg(debug_assertions)]
+        #[test]
+        #[should_panic]
+        fn u32_sub_underflow_panics_in_debug() {
+            let _ = run("{0u32 - 1u32}");
+        }
+
+        #[cfg(not(debug_assertions))]
+        #[test]
+        fn u32_sub_underflow_wraps_to_uint_max_in_release() {
+            assert_reduces_to("{0u32 - 1u32}", "4294967295u32");
+        }
+
         #[test]
         fn bigrat_add_normalized() {
             assert_reduces_to("{3r/4r + 1r/4r}", "1r");
