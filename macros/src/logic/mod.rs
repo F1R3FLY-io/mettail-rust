@@ -619,12 +619,13 @@ fn generate_fold_big_step_rules(
                 let label = &rule.label;
 
                 let err_ident = format_ident!("Err");
+                let category_has_err = language.terms.iter().any(|r| {
+                    r.category == *category && r.label == err_ident && fold_field_count(r) == 0
+                });
                 let div_bigrat_zero_to_err = param_count == 2
                     && *category == "BigRat"
                     && *label == "DivBigRat"
-                    && language.terms.iter().any(|r| {
-                        r.category == *category && r.label == err_ident && fold_field_count(r) == 0
-                    });
+                    && category_has_err;
 
                 let (res_expr, is_collection) = if let Some(ref rust_block) = rule.rust_code {
                     let rust_code = &rust_block.code;

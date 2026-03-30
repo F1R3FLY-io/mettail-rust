@@ -9,6 +9,7 @@ use crate::gen::native::native_type_to_string;
 use crate::gen::{
     generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
 };
+use crate::logic::common::fold_field_count;
 
 /// True if the type is a category with native_type (e.g. Int, Float). False for List, Bag, or non-native.
 fn type_has_native_eval(ty: &TypeExpr, language: &LanguageDef) -> bool {
@@ -365,6 +366,22 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     });
                 }
             }
+        }
+
+        let err_ident = quote::format_ident!("Err");
+        if rules.iter().any(|r| {
+            r.label == err_ident && fold_field_count(r) == 0
+        }) {
+            match_arms.push(quote! {
+                #category::#err_ident => {
+                    panic!(
+                        "`error` normal form has no native value; inspect the term or use display"
+                    );
+                }
+            });
+            try_eval_arms.push(quote! {
+                #category::#err_ident => None,
+            });
         }
 
         if !match_arms.is_empty() {

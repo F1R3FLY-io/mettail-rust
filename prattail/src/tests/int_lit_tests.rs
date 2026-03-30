@@ -35,10 +35,7 @@ fn parses_signed_suffixes() {
     assert_eq!(parse_int_lit("2147483647i32", None).unwrap(), IntLit::I32(2_147_483_647));
     assert!(parse_int_lit("2147483648i32", None).is_err());
 
-    assert_eq!(
-        parse_int_lit("-9223372036854775808i64", None).unwrap(),
-        IntLit::I64(i64::MIN)
-    );
+    assert_eq!(parse_int_lit("-9223372036854775808i64", None).unwrap(), IntLit::I64(i64::MIN));
     assert!(parse_int_lit("-9223372036854775809i64", None).is_err());
 
     assert_eq!(
@@ -141,10 +138,7 @@ fn r_suffix_is_not_an_integer_literal() {
 
 #[test]
 fn calculator_int_literal_uses_i32_default_suffix() {
-    assert_eq!(
-        parse_int_lit("7", Some(Suffix::I32)).unwrap(),
-        IntLit::I32(7)
-    );
+    assert_eq!(parse_int_lit("7", Some(Suffix::I32)).unwrap(), IntLit::I32(7));
 }
 
 #[test]
