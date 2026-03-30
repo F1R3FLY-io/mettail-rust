@@ -369,9 +369,10 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         }
 
         let err_ident = quote::format_ident!("Err");
-        if rules.iter().any(|r| {
-            r.label == err_ident && fold_field_count(r) == 0
-        }) {
+        if rules
+            .iter()
+            .any(|r| r.label == err_ident && fold_field_count(r) == 0)
+        {
             match_arms.push(quote! {
                 #category::#err_ident => {
                     panic!(
