@@ -121,6 +121,123 @@ fn test_int_custom_op() {
     calc_normal_form("1 ~ 2", "8");
 }
 
+// --- Int: division, modulus (%), div/mod by zero ---
+
+#[test]
+fn test_int_div_and_mod_basic() {
+    calc_normal_form("10 / 3", "3");
+    calc_normal_form("10 % 3", "1");
+    calc_normal_form("-10 / 3", "-3");
+    // Rust `%`: sign follows dividend (first operand)
+    calc_normal_form("10 % -3", "1");
+    calc_normal_form("-10 % 3", "-1");
+    calc_normal_form("-10 % -3", "-1");
+}
+
+#[test]
+fn test_int_mod_congruence_inner_add_reduces() {
+    calc_normal_form("(10 + 5) % 3", "0");
+}
+
+/// Integer `/` with divisor zero matches Rust `i32` (panic).
+///
+/// Ignored in the default test run: `#[should_panic]` depends on unwinding, which does not match
+/// `#[profile.dev] codegen-backend = "cranelift"` and breaks some CI targets. To assert the
+/// panic locally, run with `cargo test -p mettail-languages --test calculator -- --ignored`.
+#[test]
+#[ignore]
+#[should_panic]
+fn test_int_div_by_zero_panics() {
+    calc_normal_form("10 / 0", "");
+}
+
+/// Integer `%` with divisor zero matches Rust `i32` (panic). See [`test_int_div_by_zero_panics`].
+#[test]
+#[ignore]
+#[should_panic]
+fn test_int_mod_by_zero_panics() {
+    calc_normal_form("10 % 0", "");
+}
+
+// --- Int: literal bounds (i32), optional i32 suffix ---
+
+#[test]
+fn test_int_literal_min_max() {
+    calc_normal_form("2147483647", "2147483647");
+    // `2147483648` does not parse as an Int literal; unary `-2147483648` is therefore split into
+    // `-` and `2147483648` (invalid). Use arithmetic for `i32::MIN`.
+    calc_normal_form("-2147483647 - 1", "-2147483648");
+}
+
+#[test]
+fn test_int_literal_explicit_i32_suffix() {
+    calc_normal_form("42i32", "42");
+    calc_normal_form("42i32 + 1", "43");
+}
+
+#[test]
+fn test_int_literal_rejects_above_i32_max() {
+    mettail_runtime::clear_var_cache();
+    assert!(calc::Int::parse("2147483648").is_err());
+    assert!(calc::Int::parse("2147483648i32").is_err());
+}
+
+// --- UInt32: literals and AddUInt32 ---
+
+#[test]
+fn test_uint32_literal_and_add() {
+    calc_normal_form("0u32", "0");
+    calc_normal_form("4294967295u32", "4294967295");
+    calc_normal_form("1u32 + 2u32", "3");
+    calc_normal_form("0xFFu32", "255");
+}
+
+#[test]
+fn test_uint32_parse_rejects_overflow_literal() {
+    mettail_runtime::clear_var_cache();
+    assert!(calc::UInt32::parse("4294967296u32").is_err());
+}
+
+#[test]
+fn test_int_parse_rejects_u32_suffix() {
+    mettail_runtime::clear_var_cache();
+    assert!(calc::Int::parse("1u32").is_err());
+}
+
+// --- Int / UInt32: overflow (release wraps; debug uses checked ops and may panic — not asserted in tests) ---
+
+#[cfg(not(debug_assertions))]
+#[test]
+fn test_int_add_overflow_wraps_in_release() {
+    calc_normal_form("2147483647 + 1", "-2147483648");
+}
+
+#[cfg(not(debug_assertions))]
+#[test]
+fn test_int_sub_underflow_wraps_in_release() {
+    calc_normal_form("-2147483648 - 1", "2147483647");
+}
+
+#[cfg(not(debug_assertions))]
+#[test]
+fn test_uint32_add_overflow_wraps_in_release() {
+    calc_normal_form("4294967295u32 + 1u32", "0");
+}
+
+// --- Int: PowInt edge cases ---
+
+#[test]
+fn test_int_pow_small() {
+    calc_normal_form("2 ^ 30", "1073741824");
+}
+
+#[cfg(not(debug_assertions))]
+#[test]
+fn test_int_pow_31_wraps_in_release() {
+    // `2^31` does not fit in `i32`; release build wraps (same as Rust `2_i32.pow(31)`).
+    calc_normal_form("2 ^ 31", "-2147483648");
+}
+
 // --- Int: corner ---
 
 #[test]
