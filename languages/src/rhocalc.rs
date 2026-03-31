@@ -166,7 +166,7 @@ language! {
             }}
         ] fold;
 
-        BitAnd . a:Proc, b:Proc |- a "&" b : Proc ![
+        BitAnd . a:Proc, b:Proc |- a "bitand" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
                     (Int::NumLit(x), Int::NumLit(y)) => Proc::CastInt(Box::new(Int::NumLit(x & y))),
@@ -192,7 +192,7 @@ language! {
             }}
         ] fold;
 
-        BitNot . a:Proc |- "~" a : Proc ![
+        BitNot . a:Proc |- "bitnot" a : Proc ![
             { match &a {
                 Proc::CastInt(x) => match &**x {
                     Int::NumLit(v) => Proc::CastInt(Box::new(Int::NumLit(!v))),
