@@ -5,78 +5,6 @@
 )]
 
 use mettail_macros::language;
-use num_bigint::BigInt as NumBigInt;
-use num_integer::Integer;
-use num_traits::Zero;
-
-fn cbigint_and(
-    a: mettail_runtime::CanonicalBigInt,
-    b: mettail_runtime::CanonicalBigInt,
-) -> mettail_runtime::CanonicalBigInt {
-    mettail_runtime::CanonicalBigInt::from(a.get() & b.get())
-}
-
-fn cbigint_or(
-    a: mettail_runtime::CanonicalBigInt,
-    b: mettail_runtime::CanonicalBigInt,
-) -> mettail_runtime::CanonicalBigInt {
-    mettail_runtime::CanonicalBigInt::from(a.get() | b.get())
-}
-
-fn cbigint_not(a: mettail_runtime::CanonicalBigInt) -> mettail_runtime::CanonicalBigInt {
-    mettail_runtime::CanonicalBigInt::from(!a.get())
-}
-
-fn lcm_pos(a: &NumBigInt, b: &NumBigInt) -> NumBigInt {
-    if a.is_zero() || b.is_zero() {
-        NumBigInt::from(0)
-    } else {
-        let g = a.gcd(b);
-        (a / &g) * b
-    }
-}
-
-fn cbigrat_and(
-    a: mettail_runtime::CanonicalBigRat,
-    b: mettail_runtime::CanonicalBigRat,
-) -> mettail_runtime::CanonicalBigRat {
-    let (n1, d1) = (a.get().numer().clone(), a.get().denom().clone());
-    let (n2, d2) = (b.get().numer().clone(), b.get().denom().clone());
-    let d = lcm_pos(&d1, &d2);
-    debug_assert!(!d.is_zero());
-    let s1 = &d / &d1;
-    let s2 = &d / &d2;
-    let nn1 = n1 * s1;
-    let nn2 = n2 * s2;
-    mettail_runtime::CanonicalBigRat::try_from_nd(nn1 & nn2, d)
-        .expect("aligned BigRat denominator is non-zero")
-}
-
-fn cbigrat_or(
-    a: mettail_runtime::CanonicalBigRat,
-    b: mettail_runtime::CanonicalBigRat,
-) -> mettail_runtime::CanonicalBigRat {
-    let (n1, d1) = (a.get().numer().clone(), a.get().denom().clone());
-    let (n2, d2) = (b.get().numer().clone(), b.get().denom().clone());
-    let d = lcm_pos(&d1, &d2);
-    debug_assert!(!d.is_zero());
-    let s1 = &d / &d1;
-    let s2 = &d / &d2;
-    let nn1 = n1 * s1;
-    let nn2 = n2 * s2;
-    mettail_runtime::CanonicalBigRat::try_from_nd(nn1 | nn2, d)
-        .expect("aligned BigRat denominator is non-zero")
-}
-
-fn cbigrat_not(a: mettail_runtime::CanonicalBigRat) -> mettail_runtime::CanonicalBigRat {
-    let n = a.get().numer().clone();
-    let d = a.get().denom().clone();
-    mettail_runtime::CanonicalBigRat::try_from_nd(!n, d).expect("BigRat denominator is non-zero")
-}
-
-fn cfixed_not(a: mettail_runtime::CanonicalFixedPoint) -> mettail_runtime::CanonicalFixedPoint {
-    mettail_runtime::CanonicalFixedPoint::new(!a.unscaled().clone(), a.places())
-}
 
 language! {
     name: Calculator,
@@ -184,9 +112,9 @@ language! {
         MulBigRat . a:BigRat, b:BigRat |- a "*" b : BigRat ![a * b] fold;
         DivBigRat . a:BigRat, b:BigRat |- a "/" b : BigRat ![a / b] fold;
         NegBigRat . a:BigRat |- "-" a : BigRat ![(-a)] fold;
-        BitAndBigRat . a:BigRat, b:BigRat |- a "&" b : BigRat ![cbigrat_and(a, b)] fold;
-        BitOrBigRat . a:BigRat, b:BigRat |- a "|" b : BigRat ![cbigrat_or(a, b)] fold;
-        BitNotBigRat . a:BigRat |- "~" a : BigRat ![cbigrat_not(a)] fold;
+        BitAndBigRat . a:BigRat, b:BigRat |- a "&" b : BigRat ![a.bitand_aligned(b)] fold;
+        BitOrBigRat . a:BigRat, b:BigRat |- a "|" b : BigRat ![a.bitor_aligned(b)] fold;
+        BitNotBigRat . a:BigRat |- "~" a : BigRat ![a.bitnot()] fold;
         // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
         // Comparison operations
@@ -238,9 +166,9 @@ language! {
         BitOrUInt32 . a:UInt32, b:UInt32 |- a "|" b : UInt32 ![a | b] fold;
         BitNotUInt32 . a:UInt32 |- "~" a : UInt32 ![!a] fold;
         AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ![a + b] fold;
-        BitAndBigInt . a:BigInt, b:BigInt |- a "&" b : BigInt ![cbigint_and(a, b)] fold;
-        BitOrBigInt . a:BigInt, b:BigInt |- a "|" b : BigInt ![cbigint_or(a, b)] fold;
-        BitNotBigInt . a:BigInt |- "~" a : BigInt ![cbigint_not(a)] fold;
+        BitAndBigInt . a:BigInt, b:BigInt |- a "&" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() & b.get())] fold;
+        BitOrBigInt . a:BigInt, b:BigInt |- a "|" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() | b.get())] fold;
+        BitNotBigInt . a:BigInt |- "~" a : BigInt ![mettail_runtime::CanonicalBigInt::from(!a.get())] fold;
         // Int operations
         AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
         SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
@@ -271,7 +199,7 @@ language! {
         NegFixed . a:Fixed |- "-" a : Fixed ![(-a)] fold;
         BitAndFixed . a:Fixed, b:Fixed |- a "&" b : Fixed ![a & b] fold;
         BitOrFixed . a:Fixed, b:Fixed |- a "|" b : Fixed ![a | b] fold;
-        BitNotFixed . a:Fixed |- "~" a : Fixed ![cfixed_not(a)] fold;
+        BitNotFixed . a:Fixed |- "~" a : Fixed ![mettail_runtime::CanonicalFixedPoint::new(!a.unscaled().clone(), a.places())] fold;
         BitXorFixed . a:Fixed, b:Fixed |- a "bitxor" b : Fixed ![a ^ b] fold;
         // Proc → concrete type projections (runtime type extraction)
         // These are fold rules: fold_proc reduces ElemList → injection variant before rust_code runs
