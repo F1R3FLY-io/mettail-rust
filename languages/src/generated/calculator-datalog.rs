@@ -512,6 +512,17 @@ int(sub.clone()) <--
             buf.push(f1.as_ref().clone());
             buf.push(f2.as_ref().clone());
         },
+        Int::BitOrInt(f0, f1) => {
+            buf.push(f0.as_ref().clone());
+            buf.push(f1.as_ref().clone());
+        },
+        Int::BitAndInt(f0, f1) => {
+            buf.push(f0.as_ref().clone());
+            buf.push(f1.as_ref().clone());
+        },
+        Int::BitNotInt(f0) => {
+            buf.push(f0.as_ref().clone());
+        },
         Int::Len(f0) => {
             buf.push(Int::Len(Box::new(f0.as_ref().clone())));
         },
@@ -538,17 +549,6 @@ int(sub.clone()) <--
         Int::PowInt(f0, f1) => {
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
-        },
-        Int::BitAndInt(f0, f1) => {
-            buf.push(f0.as_ref().clone());
-            buf.push(f1.as_ref().clone());
-        },
-        Int::BitOrInt(f0, f1) => {
-            buf.push(f0.as_ref().clone());
-            buf.push(f1.as_ref().clone());
-        },
-        Int::BitNotInt(f0) => {
-            buf.push(f0.as_ref().clone());
         },
         Int::Neg(f0) => {
             buf.push(f0.as_ref().clone());
@@ -849,7 +849,7 @@ map(sub.clone()) <--
 uint32(sub.clone()) <--
     uint32(t),
     for sub in { std::thread_local! { static POOL_UINT32_UINT32 : std::cell::Cell < Vec < UInt32 >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_UINT32_UINT32.with(| p | p.take()); buf.clear(); match t {
-        UInt32::AddUInt32(f0, f1) => {
+        UInt32::BitOrUInt32(f0, f1) => {
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
         },
@@ -857,12 +857,12 @@ uint32(sub.clone()) <--
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
         },
-        UInt32::BitOrUInt32(f0, f1) => {
-            buf.push(f0.as_ref().clone());
-            buf.push(f1.as_ref().clone());
-        },
         UInt32::BitNotUInt32(f0) => {
             buf.push(f0.as_ref().clone());
+        },
+        UInt32::AddUInt32(f0, f1) => {
+            buf.push(f0.as_ref().clone());
+            buf.push(f1.as_ref().clone());
         },
         UInt32::ApplyProc(lam, _) => {
             buf.push(lam.as_ref().clone());
@@ -1016,7 +1016,7 @@ uint32(sub.clone()) <--
 bigint(sub.clone()) <--
     bigint(t),
     for sub in { std::thread_local! { static POOL_BIGINT_BIGINT : std::cell::Cell < Vec < BigInt >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_BIGINT_BIGINT.with(| p | p.take()); buf.clear(); match t {
-        BigInt::AddBigInt(f0, f1) => {
+        BigInt::BitOrBigInt(f0, f1) => {
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
         },
@@ -1024,12 +1024,12 @@ bigint(sub.clone()) <--
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
         },
-        BigInt::BitOrBigInt(f0, f1) => {
-            buf.push(f0.as_ref().clone());
-            buf.push(f1.as_ref().clone());
-        },
         BigInt::BitNotBigInt(f0) => {
             buf.push(f0.as_ref().clone());
+        },
+        BigInt::AddBigInt(f0, f1) => {
+            buf.push(f0.as_ref().clone());
+            buf.push(f1.as_ref().clone());
         },
         BigInt::ApplyProc(lam, _) => {
             buf.push(lam.as_ref().clone());
@@ -1214,11 +1214,11 @@ bigrat(sub.clone()) <--
         BigRat::NegBigRat(f0) => {
             buf.push(f0.as_ref().clone());
         },
-        BigRat::BitAndBigRat(f0, f1) => {
+        BigRat::BitOrBigRat(f0, f1) => {
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
         },
-        BigRat::BitOrBigRat(f0, f1) => {
+        BigRat::BitAndBigRat(f0, f1) => {
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
         },
@@ -1377,6 +1377,17 @@ bigrat(sub.clone()) <--
 fixed(sub.clone()) <--
     fixed(t),
     for sub in { std::thread_local! { static POOL_FIXED_FIXED : std::cell::Cell < Vec < Fixed >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_FIXED_FIXED.with(| p | p.take()); buf.clear(); match t {
+        Fixed::BitOrFixed(f0, f1) => {
+            buf.push(f0.as_ref().clone());
+            buf.push(f1.as_ref().clone());
+        },
+        Fixed::BitAndFixed(f0, f1) => {
+            buf.push(f0.as_ref().clone());
+            buf.push(f1.as_ref().clone());
+        },
+        Fixed::BitNotFixed(f0) => {
+            buf.push(f0.as_ref().clone());
+        },
         Fixed::AddFixed(f0, f1) => {
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
@@ -1398,17 +1409,6 @@ fixed(sub.clone()) <--
             buf.push(f1.as_ref().clone());
         },
         Fixed::NegFixed(f0) => {
-            buf.push(f0.as_ref().clone());
-        },
-        Fixed::BitAndFixed(f0, f1) => {
-            buf.push(f0.as_ref().clone());
-            buf.push(f1.as_ref().clone());
-        },
-        Fixed::BitOrFixed(f0, f1) => {
-            buf.push(f0.as_ref().clone());
-            buf.push(f1.as_ref().clone());
-        },
-        Fixed::BitNotFixed(f0) => {
             buf.push(f0.as_ref().clone());
         },
         Fixed::BitXorFixed(f0, f1) => {
@@ -4335,13 +4335,13 @@ eq_bigint(s.clone(), t.clone()) <--
     bigint(s),
     bigint(t),
     for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_BIGINT_EQ_CONG_3 : std::cell::Cell < Vec < (BigInt, BigInt, BigInt, BigInt) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_BIGINT_EQ_CONG_3.with(| p | p.take()); buf.clear(); match (s, t) {
-        (BigInt::AddBigInt(sf0, sf1), BigInt::AddBigInt(tf0, tf1)) => {
+        (BigInt::BitOrBigInt(sf0, sf1), BigInt::BitOrBigInt(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         (BigInt::BitAndBigInt(sf0, sf1), BigInt::BitAndBigInt(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
-        (BigInt::BitOrBigInt(sf0, sf1), BigInt::BitOrBigInt(tf0, tf1)) => {
+        (BigInt::AddBigInt(sf0, sf1), BigInt::AddBigInt(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         _ => {},
@@ -4388,10 +4388,10 @@ eq_bigrat(s.clone(), t.clone()) <--
         (BigRat::DivBigRat(sf0, sf1), BigRat::DivBigRat(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
-        (BigRat::BitAndBigRat(sf0, sf1), BigRat::BitAndBigRat(tf0, tf1)) => {
+        (BigRat::BitOrBigRat(sf0, sf1), BigRat::BitOrBigRat(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
-        (BigRat::BitOrBigRat(sf0, sf1), BigRat::BitOrBigRat(tf0, tf1)) => {
+        (BigRat::BitAndBigRat(sf0, sf1), BigRat::BitAndBigRat(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         _ => {},
@@ -4581,10 +4581,10 @@ eq_fixed(s.clone(), t.clone()) <--
     fixed(s),
     fixed(t),
     for (s_f0, t_f0) in { std::thread_local! { static POOL_FIXED_EQ_CONG_15 : std::cell::Cell < Vec < (Fixed, Fixed) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_FIXED_EQ_CONG_15.with(| p | p.take()); buf.clear(); match (s, t) {
-        (Fixed::NegFixed(sf0), Fixed::NegFixed(tf0)) => {
+        (Fixed::BitNotFixed(sf0), Fixed::BitNotFixed(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
-        (Fixed::BitNotFixed(sf0), Fixed::BitNotFixed(tf0)) => {
+        (Fixed::NegFixed(sf0), Fixed::NegFixed(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
         _ => {},
@@ -4595,6 +4595,12 @@ eq_fixed(s.clone(), t.clone()) <--
     fixed(s),
     fixed(t),
     for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_FIXED_EQ_CONG_16 : std::cell::Cell < Vec < (Fixed, Fixed, Fixed, Fixed) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_FIXED_EQ_CONG_16.with(| p | p.take()); buf.clear(); match (s, t) {
+        (Fixed::BitOrFixed(sf0, sf1), Fixed::BitOrFixed(tf0, tf1)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
+        },
+        (Fixed::BitAndFixed(sf0, sf1), Fixed::BitAndFixed(tf0, tf1)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
+        },
         (Fixed::AddFixed(sf0, sf1), Fixed::AddFixed(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
@@ -4608,12 +4614,6 @@ eq_fixed(s.clone(), t.clone()) <--
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         (Fixed::ModFixed(sf0, sf1), Fixed::ModFixed(tf0, tf1)) => {
-            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
-        },
-        (Fixed::BitAndFixed(sf0, sf1), Fixed::BitAndFixed(tf0, tf1)) => {
-            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
-        },
-        (Fixed::BitOrFixed(sf0, sf1), Fixed::BitOrFixed(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         (Fixed::BitXorFixed(sf0, sf1), Fixed::BitXorFixed(tf0, tf1)) => {
@@ -4712,6 +4712,12 @@ eq_int(s.clone(), t.clone()) <--
     int(s),
     int(t),
     for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_INT_EQ_CONG_22 : std::cell::Cell < Vec < (Int, Int, Int, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_INT_EQ_CONG_22.with(| p | p.take()); buf.clear(); match (s, t) {
+        (Int::BitOrInt(sf0, sf1), Int::BitOrInt(tf0, tf1)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
+        },
+        (Int::BitAndInt(sf0, sf1), Int::BitAndInt(tf0, tf1)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
+        },
         (Int::AddInt(sf0, sf1), Int::AddInt(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
@@ -4728,12 +4734,6 @@ eq_int(s.clone(), t.clone()) <--
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         (Int::PowInt(sf0, sf1), Int::PowInt(tf0, tf1)) => {
-            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
-        },
-        (Int::BitAndInt(sf0, sf1), Int::BitAndInt(tf0, tf1)) => {
-            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
-        },
-        (Int::BitOrInt(sf0, sf1), Int::BitOrInt(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         _ => {},
@@ -5059,13 +5059,13 @@ eq_uint32(s.clone(), t.clone()) <--
     uint32(s),
     uint32(t),
     for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_UINT32_EQ_CONG_50 : std::cell::Cell < Vec < (UInt32, UInt32, UInt32, UInt32) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_UINT32_EQ_CONG_50.with(| p | p.take()); buf.clear(); match (s, t) {
-        (UInt32::AddUInt32(sf0, sf1), UInt32::AddUInt32(tf0, tf1)) => {
+        (UInt32::BitOrUInt32(sf0, sf1), UInt32::BitOrUInt32(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         (UInt32::BitAndUInt32(sf0, sf1), UInt32::BitAndUInt32(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
-        (UInt32::BitOrUInt32(sf0, sf1), UInt32::BitOrUInt32(tf0, tf1)) => {
+        (UInt32::AddUInt32(sf0, sf1), UInt32::AddUInt32(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         _ => {},
@@ -5526,6 +5526,36 @@ fold_int(t.clone(), t.clone()) <--
 
 fold_int(s.clone(), res) <--
     int(s),
+    if let Int::BitOrInt(left, right) = s,
+    fold_int(left.as_ref().clone(), lv),
+    fold_int(right.as_ref().clone(), rv),
+    if let Int::NumLit(a_ref) = & lv,
+    if let Int::NumLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = Int::NumLit((a | b));
+
+fold_int(s.clone(), res) <--
+    int(s),
+    if let Int::BitAndInt(left, right) = s,
+    fold_int(left.as_ref().clone(), lv),
+    fold_int(right.as_ref().clone(), rv),
+    if let Int::NumLit(a_ref) = & lv,
+    if let Int::NumLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = Int::NumLit((a & b));
+
+fold_int(s.clone(), res) <--
+    int(s),
+    if let Int::BitNotInt(inner) = s,
+    fold_int(inner.as_ref().clone(), iv),
+    if let Int::NumLit(a_ref) = & iv,
+    let a = a_ref.clone(),
+    let res = Int::NumLit((! a));
+
+fold_int(s.clone(), res) <--
+    int(s),
     if let Int::AddInt(left, right) = s,
     fold_int(left.as_ref().clone(), lv),
     fold_int(right.as_ref().clone(), rv),
@@ -5592,36 +5622,6 @@ fold_int(s.clone(), res) <--
 
 fold_int(s.clone(), res) <--
     int(s),
-    if let Int::BitAndInt(left, right) = s,
-    fold_int(left.as_ref().clone(), lv),
-    fold_int(right.as_ref().clone(), rv),
-    if let Int::NumLit(a_ref) = & lv,
-    if let Int::NumLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = Int::NumLit((a & b));
-
-fold_int(s.clone(), res) <--
-    int(s),
-    if let Int::BitOrInt(left, right) = s,
-    fold_int(left.as_ref().clone(), lv),
-    fold_int(right.as_ref().clone(), rv),
-    if let Int::NumLit(a_ref) = & lv,
-    if let Int::NumLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = Int::NumLit((a | b));
-
-fold_int(s.clone(), res) <--
-    int(s),
-    if let Int::BitNotInt(inner) = s,
-    fold_int(inner.as_ref().clone(), iv),
-    if let Int::NumLit(a_ref) = & iv,
-    let a = a_ref.clone(),
-    let res = Int::NumLit((! a));
-
-fold_int(s.clone(), res) <--
-    int(s),
     if let Int::Neg(inner) = s,
     fold_int(inner.as_ref().clone(), iv),
     if let Int::NumLit(a_ref) = & iv,
@@ -5639,14 +5639,14 @@ fold_int(s.clone(), res) <--
 rw_int(s.clone(), t.clone()) <--
     int(s),
     if (match s {
+        Int::BitOrInt(_, _) => true,
+        Int::BitAndInt(_, _) => true,
+        Int::BitNotInt(_) => true,
         Int::AddInt(_, _) => true,
         Int::SubInt(_, _) => true,
         Int::MulInt(_, _) => true,
         Int::DivInt(_, _) => true,
         Int::ModInt(_, _) => true,
-        Int::BitAndInt(_, _) => true,
-        Int::BitOrInt(_, _) => true,
-        Int::BitNotInt(_) => true,
         Int::Neg(_) => true,
         Int::ProcToInt(_) => true,
         Int::LenList(_) => true,
@@ -5700,14 +5700,14 @@ fold_int(s.clone(), res) <--
 rw_int(s.clone(), t.clone()) <--
     int(s),
     if (match s {
+        Int::BitOrInt(_, _) => true,
+        Int::BitAndInt(_, _) => true,
+        Int::BitNotInt(_) => true,
         Int::AddInt(_, _) => true,
         Int::SubInt(_, _) => true,
         Int::MulInt(_, _) => true,
         Int::DivInt(_, _) => true,
         Int::ModInt(_, _) => true,
-        Int::BitAndInt(_, _) => true,
-        Int::BitOrInt(_, _) => true,
-        Int::BitNotInt(_) => true,
         Int::Neg(_) => true,
         Int::ProcToInt(_) => true,
         Int::LenList(_) => true,
@@ -5723,14 +5723,14 @@ fold_uint32(t.clone(), t.clone()) <--
 
 fold_uint32(s.clone(), res) <--
     uint32(s),
-    if let UInt32::AddUInt32(left, right) = s,
+    if let UInt32::BitOrUInt32(left, right) = s,
     fold_uint32(left.as_ref().clone(), lv),
     fold_uint32(right.as_ref().clone(), rv),
     if let UInt32::NumLit(a_ref) = & lv,
     if let UInt32::NumLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let res = UInt32::NumLit((a + b));
+    let res = UInt32::NumLit((a | b));
 
 fold_uint32(s.clone(), res) <--
     uint32(s),
@@ -5745,30 +5745,30 @@ fold_uint32(s.clone(), res) <--
 
 fold_uint32(s.clone(), res) <--
     uint32(s),
-    if let UInt32::BitOrUInt32(left, right) = s,
-    fold_uint32(left.as_ref().clone(), lv),
-    fold_uint32(right.as_ref().clone(), rv),
-    if let UInt32::NumLit(a_ref) = & lv,
-    if let UInt32::NumLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = UInt32::NumLit((a | b));
-
-fold_uint32(s.clone(), res) <--
-    uint32(s),
     if let UInt32::BitNotUInt32(inner) = s,
     fold_uint32(inner.as_ref().clone(), iv),
     if let UInt32::NumLit(a_ref) = & iv,
     let a = a_ref.clone(),
     let res = UInt32::NumLit((! a));
 
+fold_uint32(s.clone(), res) <--
+    uint32(s),
+    if let UInt32::AddUInt32(left, right) = s,
+    fold_uint32(left.as_ref().clone(), lv),
+    fold_uint32(right.as_ref().clone(), rv),
+    if let UInt32::NumLit(a_ref) = & lv,
+    if let UInt32::NumLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = UInt32::NumLit((a + b));
+
 rw_uint32(s.clone(), t.clone()) <--
     uint32(s),
     if (match s {
-        UInt32::AddUInt32(_, _) => true,
-        UInt32::BitAndUInt32(_, _) => true,
         UInt32::BitOrUInt32(_, _) => true,
+        UInt32::BitAndUInt32(_, _) => true,
         UInt32::BitNotUInt32(_) => true,
+        UInt32::AddUInt32(_, _) => true,
         _ => false,
     }),
     fold_uint32(s, t);
@@ -5776,10 +5776,10 @@ rw_uint32(s.clone(), t.clone()) <--
 rw_uint32(s.clone(), t.clone()) <--
     uint32(s),
     if (match s {
-        UInt32::AddUInt32(_, _) => true,
-        UInt32::BitAndUInt32(_, _) => true,
         UInt32::BitOrUInt32(_, _) => true,
+        UInt32::BitAndUInt32(_, _) => true,
         UInt32::BitNotUInt32(_) => true,
+        UInt32::AddUInt32(_, _) => true,
         _ => false,
     }),
     fold_uint32(s, t);
@@ -5787,28 +5787,6 @@ rw_uint32(s.clone(), t.clone()) <--
 fold_bigint(t.clone(), t.clone()) <--
     bigint(t),
     if let BigInt::NumLit(_) = t;
-
-fold_bigint(s.clone(), res) <--
-    bigint(s),
-    if let BigInt::AddBigInt(left, right) = s,
-    fold_bigint(left.as_ref().clone(), lv),
-    fold_bigint(right.as_ref().clone(), rv),
-    if let BigInt::NumLit(a_ref) = & lv,
-    if let BigInt::NumLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = BigInt::NumLit((a + b));
-
-fold_bigint(s.clone(), res) <--
-    bigint(s),
-    if let BigInt::BitAndBigInt(left, right) = s,
-    fold_bigint(left.as_ref().clone(), lv),
-    fold_bigint(right.as_ref().clone(), rv),
-    if let BigInt::NumLit(a_ref) = & lv,
-    if let BigInt::NumLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = BigInt::NumLit((cbigint_and(a, b)));
 
 fold_bigint(s.clone(), res) <--
     bigint(s),
@@ -5823,19 +5801,41 @@ fold_bigint(s.clone(), res) <--
 
 fold_bigint(s.clone(), res) <--
     bigint(s),
+    if let BigInt::BitAndBigInt(left, right) = s,
+    fold_bigint(left.as_ref().clone(), lv),
+    fold_bigint(right.as_ref().clone(), rv),
+    if let BigInt::NumLit(a_ref) = & lv,
+    if let BigInt::NumLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = BigInt::NumLit((cbigint_and(a, b)));
+
+fold_bigint(s.clone(), res) <--
+    bigint(s),
     if let BigInt::BitNotBigInt(inner) = s,
     fold_bigint(inner.as_ref().clone(), iv),
     if let BigInt::NumLit(a_ref) = & iv,
     let a = a_ref.clone(),
     let res = BigInt::NumLit((cbigint_not(a)));
 
+fold_bigint(s.clone(), res) <--
+    bigint(s),
+    if let BigInt::AddBigInt(left, right) = s,
+    fold_bigint(left.as_ref().clone(), lv),
+    fold_bigint(right.as_ref().clone(), rv),
+    if let BigInt::NumLit(a_ref) = & lv,
+    if let BigInt::NumLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = BigInt::NumLit((a + b));
+
 rw_bigint(s.clone(), t.clone()) <--
     bigint(s),
     if (match s {
-        BigInt::AddBigInt(_, _) => true,
-        BigInt::BitAndBigInt(_, _) => true,
         BigInt::BitOrBigInt(_, _) => true,
+        BigInt::BitAndBigInt(_, _) => true,
         BigInt::BitNotBigInt(_) => true,
+        BigInt::AddBigInt(_, _) => true,
         _ => false,
     }),
     fold_bigint(s, t);
@@ -5843,10 +5843,10 @@ rw_bigint(s.clone(), t.clone()) <--
 rw_bigint(s.clone(), t.clone()) <--
     bigint(s),
     if (match s {
-        BigInt::AddBigInt(_, _) => true,
-        BigInt::BitAndBigInt(_, _) => true,
         BigInt::BitOrBigInt(_, _) => true,
+        BigInt::BitAndBigInt(_, _) => true,
         BigInt::BitNotBigInt(_) => true,
+        BigInt::AddBigInt(_, _) => true,
         _ => false,
     }),
     fold_bigint(s, t);
@@ -5902,17 +5902,6 @@ fold_bigrat(s.clone(), res) <--
 
 fold_bigrat(s.clone(), res) <--
     bigrat(s),
-    if let BigRat::BitAndBigRat(left, right) = s,
-    fold_bigrat(left.as_ref().clone(), lv),
-    fold_bigrat(right.as_ref().clone(), rv),
-    if let BigRat::RatLit(a_ref) = & lv,
-    if let BigRat::RatLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = BigRat::RatLit((cbigrat_and(a, b)));
-
-fold_bigrat(s.clone(), res) <--
-    bigrat(s),
     if let BigRat::BitOrBigRat(left, right) = s,
     fold_bigrat(left.as_ref().clone(), lv),
     fold_bigrat(right.as_ref().clone(), rv),
@@ -5921,6 +5910,17 @@ fold_bigrat(s.clone(), res) <--
     let a = a_ref.clone(),
     let b = b_ref.clone(),
     let res = BigRat::RatLit((cbigrat_or(a, b)));
+
+fold_bigrat(s.clone(), res) <--
+    bigrat(s),
+    if let BigRat::BitAndBigRat(left, right) = s,
+    fold_bigrat(left.as_ref().clone(), lv),
+    fold_bigrat(right.as_ref().clone(), rv),
+    if let BigRat::RatLit(a_ref) = & lv,
+    if let BigRat::RatLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = BigRat::RatLit((cbigrat_and(a, b)));
 
 fold_bigrat(s.clone(), res) <--
     bigrat(s),
@@ -5937,8 +5937,8 @@ rw_bigrat(s.clone(), t.clone()) <--
         BigRat::MulBigRat(_, _) => true,
         BigRat::DivBigRat(_, _) => true,
         BigRat::NegBigRat(_) => true,
-        BigRat::BitAndBigRat(_, _) => true,
         BigRat::BitOrBigRat(_, _) => true,
+        BigRat::BitAndBigRat(_, _) => true,
         BigRat::BitNotBigRat(_) => true,
         _ => false,
     }),
@@ -5951,8 +5951,8 @@ rw_bigrat(s.clone(), t.clone()) <--
         BigRat::MulBigRat(_, _) => true,
         BigRat::DivBigRat(_, _) => true,
         BigRat::NegBigRat(_) => true,
-        BigRat::BitAndBigRat(_, _) => true,
         BigRat::BitOrBigRat(_, _) => true,
+        BigRat::BitAndBigRat(_, _) => true,
         BigRat::BitNotBigRat(_) => true,
         _ => false,
     }),
@@ -5961,6 +5961,36 @@ rw_bigrat(s.clone(), t.clone()) <--
 fold_fixed(t.clone(), t.clone()) <--
     fixed(t),
     if let Fixed::FixedLit(_) = t;
+
+fold_fixed(s.clone(), res) <--
+    fixed(s),
+    if let Fixed::BitOrFixed(left, right) = s,
+    fold_fixed(left.as_ref().clone(), lv),
+    fold_fixed(right.as_ref().clone(), rv),
+    if let Fixed::FixedLit(a_ref) = & lv,
+    if let Fixed::FixedLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = Fixed::FixedLit((a | b));
+
+fold_fixed(s.clone(), res) <--
+    fixed(s),
+    if let Fixed::BitAndFixed(left, right) = s,
+    fold_fixed(left.as_ref().clone(), lv),
+    fold_fixed(right.as_ref().clone(), rv),
+    if let Fixed::FixedLit(a_ref) = & lv,
+    if let Fixed::FixedLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = Fixed::FixedLit((a & b));
+
+fold_fixed(s.clone(), res) <--
+    fixed(s),
+    if let Fixed::BitNotFixed(inner) = s,
+    fold_fixed(inner.as_ref().clone(), iv),
+    if let Fixed::FixedLit(a_ref) = & iv,
+    let a = a_ref.clone(),
+    let res = Fixed::FixedLit((cfixed_not(a)));
 
 fold_fixed(s.clone(), res) <--
     fixed(s),
@@ -6027,36 +6057,6 @@ fold_fixed(s.clone(), res) <--
 
 fold_fixed(s.clone(), res) <--
     fixed(s),
-    if let Fixed::BitAndFixed(left, right) = s,
-    fold_fixed(left.as_ref().clone(), lv),
-    fold_fixed(right.as_ref().clone(), rv),
-    if let Fixed::FixedLit(a_ref) = & lv,
-    if let Fixed::FixedLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = Fixed::FixedLit((a & b));
-
-fold_fixed(s.clone(), res) <--
-    fixed(s),
-    if let Fixed::BitOrFixed(left, right) = s,
-    fold_fixed(left.as_ref().clone(), lv),
-    fold_fixed(right.as_ref().clone(), rv),
-    if let Fixed::FixedLit(a_ref) = & lv,
-    if let Fixed::FixedLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = Fixed::FixedLit((a | b));
-
-fold_fixed(s.clone(), res) <--
-    fixed(s),
-    if let Fixed::BitNotFixed(inner) = s,
-    fold_fixed(inner.as_ref().clone(), iv),
-    if let Fixed::FixedLit(a_ref) = & iv,
-    let a = a_ref.clone(),
-    let res = Fixed::FixedLit((cfixed_not(a)));
-
-fold_fixed(s.clone(), res) <--
-    fixed(s),
     if let Fixed::BitXorFixed(left, right) = s,
     fold_fixed(left.as_ref().clone(), lv),
     fold_fixed(right.as_ref().clone(), rv),
@@ -6069,15 +6069,15 @@ fold_fixed(s.clone(), res) <--
 rw_fixed(s.clone(), t.clone()) <--
     fixed(s),
     if (match s {
+        Fixed::BitOrFixed(_, _) => true,
+        Fixed::BitAndFixed(_, _) => true,
+        Fixed::BitNotFixed(_) => true,
         Fixed::AddFixed(_, _) => true,
         Fixed::SubFixed(_, _) => true,
         Fixed::MulFixed(_, _) => true,
         Fixed::DivFixed(_, _) => true,
         Fixed::ModFixed(_, _) => true,
         Fixed::NegFixed(_) => true,
-        Fixed::BitAndFixed(_, _) => true,
-        Fixed::BitOrFixed(_, _) => true,
-        Fixed::BitNotFixed(_) => true,
         Fixed::BitXorFixed(_, _) => true,
         _ => false,
     }),
@@ -6086,15 +6086,15 @@ rw_fixed(s.clone(), t.clone()) <--
 rw_fixed(s.clone(), t.clone()) <--
     fixed(s),
     if (match s {
+        Fixed::BitOrFixed(_, _) => true,
+        Fixed::BitAndFixed(_, _) => true,
+        Fixed::BitNotFixed(_) => true,
         Fixed::AddFixed(_, _) => true,
         Fixed::SubFixed(_, _) => true,
         Fixed::MulFixed(_, _) => true,
         Fixed::DivFixed(_, _) => true,
         Fixed::ModFixed(_, _) => true,
         Fixed::NegFixed(_) => true,
-        Fixed::BitAndFixed(_, _) => true,
-        Fixed::BitOrFixed(_, _) => true,
-        Fixed::BitNotFixed(_) => true,
         Fixed::BitXorFixed(_, _) => true,
         _ => false,
     }),

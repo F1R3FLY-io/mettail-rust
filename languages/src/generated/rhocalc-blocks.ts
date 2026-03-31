@@ -417,6 +417,70 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// Bit Or: ... ...
+	{
+		type: "proc_bit_or",
+		tooltip: "Bit Or: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Bit And: ... ...
+	{
+		type: "proc_bit_and",
+		tooltip: "Bit And: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Bit Not: ...
+	{
+		type: "proc_bit_not",
+		tooltip: "Bit Not: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Eq: ... ...
 	{
 		type: "proc_eq",
@@ -670,52 +734,6 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Bit And: ... ...
-	{
-		type: "proc_bit_and",
-		tooltip: "Bit And: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
-				check: "Proc",
-			},
-			{
-				type: "input_value",
-				name: "MESSAGE",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Bit Or: ... ...
-	{
-		type: "proc_bit_or",
-		tooltip: "Bit Or: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
-				check: "Proc",
-			},
-			{
-				type: "input_value",
-				name: "MESSAGE",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
 	// Bit Xor: ... ...
 	{
 		type: "proc_bit_xor",
@@ -730,24 +748,6 @@ const definitions = [
 			{
 				type: "input_value",
 				name: "MESSAGE",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Bit Not: ...
-	{
-		type: "proc_bit_not",
-		tooltip: "Bit Not: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
 				check: "Proc",
 			},
 		],

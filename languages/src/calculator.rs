@@ -170,9 +170,6 @@ language! {
         MulBigRat . a:BigRat, b:BigRat |- a "*" b : BigRat ![a * b] fold;
         DivBigRat . a:BigRat, b:BigRat |- a "/" b : BigRat ![a / b] fold;
         NegBigRat . a:BigRat |- "-" a : BigRat ![(-a)] fold;
-        BitAndBigRat . a:BigRat, b:BigRat |- a "&" b : BigRat ![cbigrat_and(a, b)] fold;
-        BitOrBigRat . a:BigRat, b:BigRat |- a "|" b : BigRat ![cbigrat_or(a, b)] fold;
-        BitNotBigRat . a:BigRat |- "~" a : BigRat ![cbigrat_not(a)] fold;
         // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
         // Comparison operations
@@ -214,19 +211,29 @@ language! {
         And . a:Bool, b:Bool |- a "and" b : Bool ![a && b] step;
         Or . a:Bool, b:Bool |- a "or" b : Bool ![a || b] step;
         Xor . a:Bool, b:Bool |- a "xor" b : Bool ![a ^ b] step;
+        // Bitwise operations (looser precedence than arithmetic)
+        BitOrInt . a:Int, b:Int |- a "|" b : Int ![a | b] fold;
+        BitAndInt . a:Int, b:Int |- a "&" b : Int ![a & b] fold;
+        BitNotInt . a:Int |- "~" a : Int ![!a] fold;
+        BitOrUInt32 . a:UInt32, b:UInt32 |- a "|" b : UInt32 ![a | b] fold;
+        BitAndUInt32 . a:UInt32, b:UInt32 |- a "&" b : UInt32 ![a & b] fold;
+        BitNotUInt32 . a:UInt32 |- "~" a : UInt32 ![!a] fold;
+        BitOrBigInt . a:BigInt, b:BigInt |- a "|" b : BigInt ![cbigint_or(a, b)] fold;
+        BitAndBigInt . a:BigInt, b:BigInt |- a "&" b : BigInt ![cbigint_and(a, b)] fold;
+        BitNotBigInt . a:BigInt |- "~" a : BigInt ![cbigint_not(a)] fold;
+        BitOrBigRat . a:BigRat, b:BigRat |- a "|" b : BigRat ![cbigrat_or(a, b)] fold;
+        BitAndBigRat . a:BigRat, b:BigRat |- a "&" b : BigRat ![cbigrat_and(a, b)] fold;
+        BitNotBigRat . a:BigRat |- "~" a : BigRat ![cbigrat_not(a)] fold;
+        BitOrFixed . a:Fixed, b:Fixed |- a "|" b : Fixed ![a | b] fold;
+        BitAndFixed . a:Fixed, b:Fixed |- a "&" b : Fixed ![a & b] fold;
+        BitNotFixed . a:Fixed |- "~" a : Fixed ![cfixed_not(a)] fold;
         // String operations
         Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step;
         Concat . a:Str, b:Str |- a "++" b : Str ![[a, b].concat()] step;
         AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
         //
         AddUInt32 . a:UInt32, b:UInt32 |- a "+" b : UInt32 ![a + b] fold;
-        BitAndUInt32 . a:UInt32, b:UInt32 |- a "&" b : UInt32 ![a & b] fold;
-        BitOrUInt32 . a:UInt32, b:UInt32 |- a "|" b : UInt32 ![a | b] fold;
-        BitNotUInt32 . a:UInt32 |- "~" a : UInt32 ![!a] fold;
         AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ![a + b] fold;
-        BitAndBigInt . a:BigInt, b:BigInt |- a "&" b : BigInt ![cbigint_and(a, b)] fold;
-        BitOrBigInt . a:BigInt, b:BigInt |- a "|" b : BigInt ![cbigint_or(a, b)] fold;
-        BitNotBigInt . a:BigInt |- "~" a : BigInt ![cbigint_not(a)] fold;
         // Int operations
         AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
         SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
@@ -234,9 +241,6 @@ language! {
         DivInt . a:Int, b:Int |- a "/" b : Int ![a / b] fold;
         ModInt . a:Int, b:Int |- a "%" b : Int ![a % b] fold;
         PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] step right;
-        BitAndInt . a:Int, b:Int |- a "&" b : Int ![a & b] fold;
-        BitOrInt . a:Int, b:Int |- a "|" b : Int ![a | b] fold;
-        BitNotInt . a:Int |- "~" a : Int ![!a] fold;
         Neg . a:Int |- "-" a : Int ![(-a)] fold;
         Fact . a:Int |- a "!" : Int ![{ (1..=a.max(0)).product::<i32>() }] step;
         // Float operations
@@ -255,9 +259,6 @@ language! {
         DivFixed . a:Fixed, b:Fixed |- a "/" b : Fixed ![a / b] fold;
         ModFixed . a:Fixed, b:Fixed |- a "%" b : Fixed ![a % b] fold;
         NegFixed . a:Fixed |- "-" a : Fixed ![(-a)] fold;
-        BitAndFixed . a:Fixed, b:Fixed |- a "&" b : Fixed ![a & b] fold;
-        BitOrFixed . a:Fixed, b:Fixed |- a "|" b : Fixed ![a | b] fold;
-        BitNotFixed . a:Fixed |- "~" a : Fixed ![cfixed_not(a)] fold;
         BitXorFixed . a:Fixed, b:Fixed |- a "bitxor" b : Fixed ![a ^ b] fold;
         // Proc → concrete type projections (runtime type extraction)
         // These are fold rules: fold_proc reduces ElemList → injection variant before rust_code runs

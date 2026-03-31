@@ -12,10 +12,10 @@ export const categoryInfo = {
 	},
 	BigInt: {
 		constructors: [
-			"AddBigInt",
-			"BitAndBigInt",
 			"BitOrBigInt",
-			"BitNotBigInt"
+			"BitAndBigInt",
+			"BitNotBigInt",
+			"AddBigInt"
 		],
 		colour: "db51e0",
 	},
@@ -27,8 +27,8 @@ export const categoryInfo = {
 			"MulBigRat",
 			"DivBigRat",
 			"NegBigRat",
-			"BitAndBigRat",
 			"BitOrBigRat",
+			"BitAndBigRat",
 			"BitNotBigRat"
 		],
 		colour: "e051c8",
@@ -76,15 +76,15 @@ export const categoryInfo = {
 	},
 	Fixed: {
 		constructors: [
+			"BitOrFixed",
+			"BitAndFixed",
+			"BitNotFixed",
 			"AddFixed",
 			"SubFixed",
 			"MulFixed",
 			"DivFixed",
 			"ModFixed",
 			"NegFixed",
-			"BitAndFixed",
-			"BitOrFixed",
-			"BitNotFixed",
 			"BitXorFixed"
 		],
 		colour: "e05158",
@@ -107,6 +107,9 @@ export const categoryInfo = {
 	Int: {
 		constructors: [
 			"Tern",
+			"BitOrInt",
+			"BitAndInt",
+			"BitNotInt",
 			"Len",
 			"AddInt",
 			"SubInt",
@@ -114,9 +117,6 @@ export const categoryInfo = {
 			"DivInt",
 			"ModInt",
 			"PowInt",
-			"BitAndInt",
-			"BitOrInt",
-			"BitNotInt",
 			"Neg",
 			"Fact",
 			"ProcToInt",
@@ -171,10 +171,10 @@ export const categoryInfo = {
 	},
 	UInt32: {
 		constructors: [
-			"AddUInt32",
-			"BitAndUInt32",
 			"BitOrUInt32",
-			"BitNotUInt32"
+			"BitAndUInt32",
+			"BitNotUInt32",
+			"AddUInt32"
 		],
 		colour: "e05172",
 	}
