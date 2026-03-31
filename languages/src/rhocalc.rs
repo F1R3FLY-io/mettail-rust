@@ -5,7 +5,47 @@
 )]
 
 use mettail_macros::language;
+use num_bigint::BigInt as NumBigInt;
+use num_integer::Integer;
 use num_traits::{ToPrimitive, Zero};
+
+fn lcm_pos(a: &NumBigInt, b: &NumBigInt) -> NumBigInt {
+    if a.is_zero() || b.is_zero() {
+        NumBigInt::from(0)
+    } else {
+        let g = a.gcd(b);
+        (a / &g) * b
+    }
+}
+
+fn cbigrat_aligned_binop<F>(
+    a: mettail_runtime::CanonicalBigRat,
+    b: mettail_runtime::CanonicalBigRat,
+    op: F,
+) -> mettail_runtime::CanonicalBigRat
+where
+    F: FnOnce(NumBigInt, NumBigInt) -> NumBigInt,
+{
+    let (n1, d1) = (a.get().numer().clone(), a.get().denom().clone());
+    let (n2, d2) = (b.get().numer().clone(), b.get().denom().clone());
+    let d = lcm_pos(&d1, &d2);
+    debug_assert!(!d.is_zero());
+    let s1 = &d / &d1;
+    let s2 = &d / &d2;
+    let nn1 = n1 * s1;
+    let nn2 = n2 * s2;
+    mettail_runtime::CanonicalBigRat::try_from_nd(op(nn1, nn2), d).expect("aligned BigRat denominator is non-zero")
+}
+
+fn cbigrat_not(a: mettail_runtime::CanonicalBigRat) -> mettail_runtime::CanonicalBigRat {
+    let n = a.get().numer().clone();
+    let d = a.get().denom().clone();
+    mettail_runtime::CanonicalBigRat::try_from_nd(!n, d).expect("BigRat denominator is non-zero")
+}
+
+fn cfixed_not(a: mettail_runtime::CanonicalFixedPoint) -> mettail_runtime::CanonicalFixedPoint {
+    mettail_runtime::CanonicalFixedPoint::new(!a.unscaled().clone(), a.places())
+}
 
 language! {
     name: RhoCalc,
@@ -458,8 +498,24 @@ language! {
             }}
         ] fold;
 
-        BitAnd . a:Proc, b:Proc |- a "bitand" b : Proc ![
+        BitAnd . a:Proc, b:Proc |- a "&" b : Proc ![
             { match (&a, &b) {
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
+                    (Int::NumLit(x), Int::NumLit(y)) => Proc::CastInt(Box::new(Int::NumLit(x & y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x & y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() & y.get())))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(cbigrat_aligned_binop(*x, *y, |p, q| p & q)))),
+                    _ => Proc::Err,
+                },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x & *y))),
                     _ => Proc::Err,
@@ -467,8 +523,24 @@ language! {
                 _ => Proc::Err,
             }}
         ] fold;
-        BitOr . a:Proc, b:Proc |- a "bitor" b : Proc ![
+        BitOr . a:Proc, b:Proc |- a "|" b : Proc ![
             { match (&a, &b) {
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
+                    (Int::NumLit(x), Int::NumLit(y)) => Proc::CastInt(Box::new(Int::NumLit(x | y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x | y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() | y.get())))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(cbigrat_aligned_binop(*x, *y, |p, q| p | q)))),
+                    _ => Proc::Err,
+                },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x | *y))),
                     _ => Proc::Err,
@@ -480,6 +552,32 @@ language! {
             { match (&a, &b) {
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x ^ *y))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        BitNot . a:Proc |- "~" a : Proc ![
+            { match &a {
+                Proc::CastInt(x) => match &**x {
+                    Int::NumLit(v) => Proc::CastInt(Box::new(Int::NumLit(!v))),
+                    _ => Proc::Err,
+                },
+                Proc::CastUInt32(x) => match &**x {
+                    UInt32::NumLit(v) => Proc::CastUInt32(Box::new(UInt32::NumLit(!v))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigInt(x) => match &**x {
+                    BigInt::NumLit(n) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(!n.get())))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigRat(x) => match &**x {
+                    BigRat::RatLit(r) => Proc::CastBigRat(Box::new(BigRat::RatLit(cbigrat_not(*r)))),
+                    _ => Proc::Err,
+                },
+                Proc::CastFixed(x) => match &**x {
+                    Fixed::FixedLit(fp) => Proc::CastFixed(Box::new(Fixed::FixedLit(cfixed_not(*fp)))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -860,6 +958,8 @@ language! {
         BitXorCongL . | S ~> T |- (BitXor S X) ~> (BitXor T X);
 
         BitXorCongR . | S ~> T |- (BitXor X S) ~> (BitXor X T);
+
+        BitNotCong . | S ~> T |- (BitNot S) ~> (BitNot T);
 
         EqCongL . | S ~> T |- (Eq S X) ~> (Eq T X);
         EqCongR . | S ~> T |- (Eq X S) ~> (Eq X T);

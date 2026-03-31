@@ -739,6 +739,24 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// Bit Not: ...
+	{
+		type: "proc_bit_not",
+		tooltip: "Bit Not: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Concat List: ... ...
 	{
 		type: "proc_concat_list",

@@ -207,6 +207,9 @@ proc(sub.clone()) <--
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
         },
+        Proc::BitNot(f0) => {
+            buf.push(f0.as_ref().clone());
+        },
         Proc::ConcatList(f0, f1) => {
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
@@ -441,7 +444,7 @@ proc(sub.clone()) <--
             buf.push(Proc::CastBag(Box::new(f0.as_ref().clone())));
         },
         _ => {
-            buf.push(Proc::KeysMap(Box::new(t.clone())));
+            buf.push(Proc::BitNot(Box::new(t.clone())));
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_PROC.with(| p | p.set(buf)); iter_buf }.into_iter();
@@ -3724,6 +3727,9 @@ eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
     for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_13 : std::cell::Cell < Vec < (Proc, Proc) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_13.with(| p | p.take()); buf.clear(); match (s, t) {
+        (Proc::BitNot(sf0), Proc::BitNot(tf0)) => {
+            buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
+        },
         (Proc::KeysMap(sf0), Proc::KeysMap(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
@@ -4204,6 +4210,10 @@ fold_proc(s.clone(), res) <--
     let a = lv,
     let b = rv,
     let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(x), Int::NumLit(y)) => Proc::CastInt(Box::new(Int::NumLit(x & y))), _ => Proc::Err, },
+        (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&** a, &** b) { (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x & y))), _ => Proc::Err, },
+        (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&** a, &** b) { (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() & y.get())))), _ => Proc::Err, },
+        (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&** a, &** b) { (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(cbigrat_aligned_binop(* x, * y, | p, q | p & q)))), _ => Proc::Err, },
         (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&** a, &** b) { (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(* x &* y))), _ => Proc::Err, },
         _ => Proc::Err,
     } }),
@@ -4217,6 +4227,10 @@ fold_proc(s.clone(), res) <--
     let a = lv,
     let b = rv,
     let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(x), Int::NumLit(y)) => Proc::CastInt(Box::new(Int::NumLit(x | y))), _ => Proc::Err, },
+        (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&** a, &** b) { (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x | y))), _ => Proc::Err, },
+        (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&** a, &** b) { (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() | y.get())))), _ => Proc::Err, },
+        (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&** a, &** b) { (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(cbigrat_aligned_binop(* x, * y, | p, q | p | q)))), _ => Proc::Err, },
         (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&** a, &** b) { (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(* x | * y))), _ => Proc::Err, },
         _ => Proc::Err,
     } }),
@@ -4231,6 +4245,21 @@ fold_proc(s.clone(), res) <--
     let b = rv,
     let res = ({ match (& a, & b) {
         (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&** a, &** b) { (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(* x ^ * y))), _ => Proc::Err, },
+        _ => Proc::Err,
+    } }),
+    if (match & res { Proc::Err => false, _ => true });
+
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::BitNot(inner) = s,
+    fold_proc(inner.as_ref().clone(), lv),
+    let a = lv,
+    let res = ({ match & a {
+        Proc::CastInt(x) => match &** x { Int::NumLit(v) => Proc::CastInt(Box::new(Int::NumLit(! v))), _ => Proc::Err, },
+        Proc::CastUInt32(x) => match &** x { UInt32::NumLit(v) => Proc::CastUInt32(Box::new(UInt32::NumLit(! v))), _ => Proc::Err, },
+        Proc::CastBigInt(x) => match &** x { BigInt::NumLit(n) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(! n.get())))), _ => Proc::Err, },
+        Proc::CastBigRat(x) => match &** x { BigRat::RatLit(r) => Proc::CastBigRat(Box::new(BigRat::RatLit(cbigrat_not(* r)))), _ => Proc::Err, },
+        Proc::CastFixed(x) => match &** x { Fixed::FixedLit(fp) => Proc::CastFixed(Box::new(Fixed::FixedLit(cfixed_not(* fp)))), _ => Proc::Err, },
         _ => Proc::Err,
     } }),
     if (match & res { Proc::Err => false, _ => true });
@@ -4541,6 +4570,7 @@ rw_proc(s.clone(), t.clone()) <--
         Proc::BitAnd(_, _) => true,
         Proc::BitOr(_, _) => true,
         Proc::BitXor(_, _) => true,
+        Proc::BitNot(_) => true,
         Proc::ConcatList(_, _) => true,
         Proc::ElemList(_, _) => true,
         Proc::DeleteList(_, _) => true,
@@ -4703,55 +4733,56 @@ rw_proc(lhs.clone(), match (lhs, vi) {
     (Proc::BitOr(x0, _), 13usize) => Proc::BitOr(x0.clone(), Box::new(t.clone())),
     (Proc::BitXor(_, x1), 14usize) => Proc::BitXor(Box::new(t.clone()), x1.clone()),
     (Proc::BitXor(x0, _), 15usize) => Proc::BitXor(x0.clone(), Box::new(t.clone())),
-    (Proc::Eq(_, x1), 16usize) => Proc::Eq(Box::new(t.clone()), x1.clone()),
-    (Proc::Eq(x0, _), 17usize) => Proc::Eq(x0.clone(), Box::new(t.clone())),
-    (Proc::Ne(_, x1), 18usize) => Proc::Ne(Box::new(t.clone()), x1.clone()),
-    (Proc::Ne(x0, _), 19usize) => Proc::Ne(x0.clone(), Box::new(t.clone())),
-    (Proc::Gt(_, x1), 20usize) => Proc::Gt(Box::new(t.clone()), x1.clone()),
-    (Proc::Gt(x0, _), 21usize) => Proc::Gt(x0.clone(), Box::new(t.clone())),
-    (Proc::Lt(_, x1), 22usize) => Proc::Lt(Box::new(t.clone()), x1.clone()),
-    (Proc::Lt(x0, _), 23usize) => Proc::Lt(x0.clone(), Box::new(t.clone())),
-    (Proc::GtEq(_, x1), 24usize) => Proc::GtEq(Box::new(t.clone()), x1.clone()),
-    (Proc::GtEq(x0, _), 25usize) => Proc::GtEq(x0.clone(), Box::new(t.clone())),
-    (Proc::LtEq(_, x1), 26usize) => Proc::LtEq(Box::new(t.clone()), x1.clone()),
-    (Proc::LtEq(x0, _), 27usize) => Proc::LtEq(x0.clone(), Box::new(t.clone())),
-    (Proc::Not(_), 28usize) => Proc::Not(Box::new(t.clone())),
-    (Proc::And(_, x1), 29usize) => Proc::And(Box::new(t.clone()), x1.clone()),
-    (Proc::And(x0, _), 30usize) => Proc::And(x0.clone(), Box::new(t.clone())),
-    (Proc::Or(_, x1), 31usize) => Proc::Or(Box::new(t.clone()), x1.clone()),
-    (Proc::Or(x0, _), 32usize) => Proc::Or(x0.clone(), Box::new(t.clone())),
-    (Proc::Len(_), 33usize) => Proc::Len(Box::new(t.clone())),
-    (Proc::ConcatList(_, x1), 34usize) => Proc::ConcatList(Box::new(t.clone()), x1.clone()),
-    (Proc::ConcatList(x0, _), 35usize) => Proc::ConcatList(x0.clone(), Box::new(t.clone())),
-    (Proc::ElemList(_, x1), 36usize) => Proc::ElemList(Box::new(t.clone()), x1.clone()),
-    (Proc::ElemList(x0, _), 37usize) => Proc::ElemList(x0.clone(), Box::new(t.clone())),
-    (Proc::DeleteList(_, x1), 38usize) => Proc::DeleteList(Box::new(t.clone()), x1.clone()),
-    (Proc::DeleteList(x0, _), 39usize) => Proc::DeleteList(x0.clone(), Box::new(t.clone())),
-    (Proc::UnionBag(_, x1), 40usize) => Proc::UnionBag(Box::new(t.clone()), x1.clone()),
-    (Proc::UnionBag(x0, _), 41usize) => Proc::UnionBag(x0.clone(), Box::new(t.clone())),
-    (Proc::RemoveBag(_, x1), 42usize) => Proc::RemoveBag(Box::new(t.clone()), x1.clone()),
-    (Proc::RemoveBag(x0, _), 43usize) => Proc::RemoveBag(x0.clone(), Box::new(t.clone())),
-    (Proc::DiffBag(_, x1), 44usize) => Proc::DiffBag(Box::new(t.clone()), x1.clone()),
-    (Proc::DiffBag(x0, _), 45usize) => Proc::DiffBag(x0.clone(), Box::new(t.clone())),
-    (Proc::GetMap(_, x1), 46usize) => Proc::GetMap(Box::new(t.clone()), x1.clone()),
-    (Proc::GetMap(x0, _), 47usize) => Proc::GetMap(x0.clone(), Box::new(t.clone())),
-    (Proc::PutMap(_, x1, x2), 48usize) => Proc::PutMap(Box::new(t.clone()), x1.clone(), x2.clone()),
-    (Proc::PutMap(x0, _, x2), 49usize) => Proc::PutMap(x0.clone(), Box::new(t.clone()), x2.clone()),
-    (Proc::PutMap(x0, x1, _), 50usize) => Proc::PutMap(x0.clone(), x1.clone(), Box::new(t.clone())),
-    (Proc::DeleteMap(_, x1), 51usize) => Proc::DeleteMap(Box::new(t.clone()), x1.clone()),
-    (Proc::DeleteMap(x0, _), 52usize) => Proc::DeleteMap(x0.clone(), Box::new(t.clone())),
-    (Proc::MergeMap(_, x1), 53usize) => Proc::MergeMap(Box::new(t.clone()), x1.clone()),
-    (Proc::MergeMap(x0, _), 54usize) => Proc::MergeMap(x0.clone(), Box::new(t.clone())),
-    (Proc::HasMap(_, x1), 55usize) => Proc::HasMap(Box::new(t.clone()), x1.clone()),
-    (Proc::HasMap(x0, _), 56usize) => Proc::HasMap(x0.clone(), Box::new(t.clone())),
-    (Proc::KeysMap(_), 57usize) => Proc::KeysMap(Box::new(t.clone())),
-    (Proc::ValuesMap(_), 58usize) => Proc::ValuesMap(Box::new(t.clone())),
-    (Proc::FractionProc(_, x1), 59usize) => Proc::FractionProc(Box::new(t.clone()), x1.clone()),
-    (Proc::FractionProc(x0, _), 60usize) => Proc::FractionProc(x0.clone(), Box::new(t.clone())),
-    (Proc::ToInt(_), 61usize) => Proc::ToInt(Box::new(t.clone())),
-    (Proc::ToFloat(_), 62usize) => Proc::ToFloat(Box::new(t.clone())),
-    (Proc::ToBool(_), 63usize) => Proc::ToBool(Box::new(t.clone())),
-    (Proc::ToStr(_), 64usize) => Proc::ToStr(Box::new(t.clone())),
+    (Proc::BitNot(_), 16usize) => Proc::BitNot(Box::new(t.clone())),
+    (Proc::Eq(_, x1), 17usize) => Proc::Eq(Box::new(t.clone()), x1.clone()),
+    (Proc::Eq(x0, _), 18usize) => Proc::Eq(x0.clone(), Box::new(t.clone())),
+    (Proc::Ne(_, x1), 19usize) => Proc::Ne(Box::new(t.clone()), x1.clone()),
+    (Proc::Ne(x0, _), 20usize) => Proc::Ne(x0.clone(), Box::new(t.clone())),
+    (Proc::Gt(_, x1), 21usize) => Proc::Gt(Box::new(t.clone()), x1.clone()),
+    (Proc::Gt(x0, _), 22usize) => Proc::Gt(x0.clone(), Box::new(t.clone())),
+    (Proc::Lt(_, x1), 23usize) => Proc::Lt(Box::new(t.clone()), x1.clone()),
+    (Proc::Lt(x0, _), 24usize) => Proc::Lt(x0.clone(), Box::new(t.clone())),
+    (Proc::GtEq(_, x1), 25usize) => Proc::GtEq(Box::new(t.clone()), x1.clone()),
+    (Proc::GtEq(x0, _), 26usize) => Proc::GtEq(x0.clone(), Box::new(t.clone())),
+    (Proc::LtEq(_, x1), 27usize) => Proc::LtEq(Box::new(t.clone()), x1.clone()),
+    (Proc::LtEq(x0, _), 28usize) => Proc::LtEq(x0.clone(), Box::new(t.clone())),
+    (Proc::Not(_), 29usize) => Proc::Not(Box::new(t.clone())),
+    (Proc::And(_, x1), 30usize) => Proc::And(Box::new(t.clone()), x1.clone()),
+    (Proc::And(x0, _), 31usize) => Proc::And(x0.clone(), Box::new(t.clone())),
+    (Proc::Or(_, x1), 32usize) => Proc::Or(Box::new(t.clone()), x1.clone()),
+    (Proc::Or(x0, _), 33usize) => Proc::Or(x0.clone(), Box::new(t.clone())),
+    (Proc::Len(_), 34usize) => Proc::Len(Box::new(t.clone())),
+    (Proc::ConcatList(_, x1), 35usize) => Proc::ConcatList(Box::new(t.clone()), x1.clone()),
+    (Proc::ConcatList(x0, _), 36usize) => Proc::ConcatList(x0.clone(), Box::new(t.clone())),
+    (Proc::ElemList(_, x1), 37usize) => Proc::ElemList(Box::new(t.clone()), x1.clone()),
+    (Proc::ElemList(x0, _), 38usize) => Proc::ElemList(x0.clone(), Box::new(t.clone())),
+    (Proc::DeleteList(_, x1), 39usize) => Proc::DeleteList(Box::new(t.clone()), x1.clone()),
+    (Proc::DeleteList(x0, _), 40usize) => Proc::DeleteList(x0.clone(), Box::new(t.clone())),
+    (Proc::UnionBag(_, x1), 41usize) => Proc::UnionBag(Box::new(t.clone()), x1.clone()),
+    (Proc::UnionBag(x0, _), 42usize) => Proc::UnionBag(x0.clone(), Box::new(t.clone())),
+    (Proc::RemoveBag(_, x1), 43usize) => Proc::RemoveBag(Box::new(t.clone()), x1.clone()),
+    (Proc::RemoveBag(x0, _), 44usize) => Proc::RemoveBag(x0.clone(), Box::new(t.clone())),
+    (Proc::DiffBag(_, x1), 45usize) => Proc::DiffBag(Box::new(t.clone()), x1.clone()),
+    (Proc::DiffBag(x0, _), 46usize) => Proc::DiffBag(x0.clone(), Box::new(t.clone())),
+    (Proc::GetMap(_, x1), 47usize) => Proc::GetMap(Box::new(t.clone()), x1.clone()),
+    (Proc::GetMap(x0, _), 48usize) => Proc::GetMap(x0.clone(), Box::new(t.clone())),
+    (Proc::PutMap(_, x1, x2), 49usize) => Proc::PutMap(Box::new(t.clone()), x1.clone(), x2.clone()),
+    (Proc::PutMap(x0, _, x2), 50usize) => Proc::PutMap(x0.clone(), Box::new(t.clone()), x2.clone()),
+    (Proc::PutMap(x0, x1, _), 51usize) => Proc::PutMap(x0.clone(), x1.clone(), Box::new(t.clone())),
+    (Proc::DeleteMap(_, x1), 52usize) => Proc::DeleteMap(Box::new(t.clone()), x1.clone()),
+    (Proc::DeleteMap(x0, _), 53usize) => Proc::DeleteMap(x0.clone(), Box::new(t.clone())),
+    (Proc::MergeMap(_, x1), 54usize) => Proc::MergeMap(Box::new(t.clone()), x1.clone()),
+    (Proc::MergeMap(x0, _), 55usize) => Proc::MergeMap(x0.clone(), Box::new(t.clone())),
+    (Proc::HasMap(_, x1), 56usize) => Proc::HasMap(Box::new(t.clone()), x1.clone()),
+    (Proc::HasMap(x0, _), 57usize) => Proc::HasMap(x0.clone(), Box::new(t.clone())),
+    (Proc::KeysMap(_), 58usize) => Proc::KeysMap(Box::new(t.clone())),
+    (Proc::ValuesMap(_), 59usize) => Proc::ValuesMap(Box::new(t.clone())),
+    (Proc::FractionProc(_, x1), 60usize) => Proc::FractionProc(Box::new(t.clone()), x1.clone()),
+    (Proc::FractionProc(x0, _), 61usize) => Proc::FractionProc(x0.clone(), Box::new(t.clone())),
+    (Proc::ToInt(_), 62usize) => Proc::ToInt(Box::new(t.clone())),
+    (Proc::ToFloat(_), 63usize) => Proc::ToFloat(Box::new(t.clone())),
+    (Proc::ToBool(_), 64usize) => Proc::ToBool(Box::new(t.clone())),
+    (Proc::ToStr(_), 65usize) => Proc::ToStr(Box::new(t.clone())),
     _ => unreachable!(),
 }) <--
     proc(lhs),
@@ -4761,12 +4792,15 @@ rw_proc(lhs.clone(), match (lhs, vi) {
             buf.push(((** x1).clone(), 1usize));
         },
         Proc::And(x0, x1) => {
-            buf.push(((** x0).clone(), 29usize));
-            buf.push(((** x1).clone(), 30usize));
+            buf.push(((** x0).clone(), 30usize));
+            buf.push(((** x1).clone(), 31usize));
         },
         Proc::BitAnd(x0, x1) => {
             buf.push(((** x0).clone(), 10usize));
             buf.push(((** x1).clone(), 11usize));
+        },
+        Proc::BitNot(x0) => {
+            buf.push(((** x0).clone(), 16usize));
         },
         Proc::BitOr(x0, x1) => {
             buf.push(((** x0).clone(), 12usize));
@@ -4777,70 +4811,70 @@ rw_proc(lhs.clone(), match (lhs, vi) {
             buf.push(((** x1).clone(), 15usize));
         },
         Proc::ConcatList(x0, x1) => {
-            buf.push(((** x0).clone(), 34usize));
-            buf.push(((** x1).clone(), 35usize));
+            buf.push(((** x0).clone(), 35usize));
+            buf.push(((** x1).clone(), 36usize));
         },
         Proc::DeleteList(x0, x1) => {
-            buf.push(((** x0).clone(), 38usize));
-            buf.push(((** x1).clone(), 39usize));
+            buf.push(((** x0).clone(), 39usize));
+            buf.push(((** x1).clone(), 40usize));
         },
         Proc::DeleteMap(x0, x1) => {
-            buf.push(((** x0).clone(), 51usize));
-            buf.push(((** x1).clone(), 52usize));
+            buf.push(((** x0).clone(), 52usize));
+            buf.push(((** x1).clone(), 53usize));
         },
         Proc::DiffBag(x0, x1) => {
-            buf.push(((** x0).clone(), 44usize));
-            buf.push(((** x1).clone(), 45usize));
+            buf.push(((** x0).clone(), 45usize));
+            buf.push(((** x1).clone(), 46usize));
         },
         Proc::Div(x0, x1) => {
             buf.push(((** x0).clone(), 6usize));
             buf.push(((** x1).clone(), 7usize));
         },
         Proc::ElemList(x0, x1) => {
-            buf.push(((** x0).clone(), 36usize));
-            buf.push(((** x1).clone(), 37usize));
+            buf.push(((** x0).clone(), 37usize));
+            buf.push(((** x1).clone(), 38usize));
         },
         Proc::Eq(x0, x1) => {
-            buf.push(((** x0).clone(), 16usize));
-            buf.push(((** x1).clone(), 17usize));
+            buf.push(((** x0).clone(), 17usize));
+            buf.push(((** x1).clone(), 18usize));
         },
         Proc::FractionProc(x0, x1) => {
-            buf.push(((** x0).clone(), 59usize));
-            buf.push(((** x1).clone(), 60usize));
+            buf.push(((** x0).clone(), 60usize));
+            buf.push(((** x1).clone(), 61usize));
         },
         Proc::GetMap(x0, x1) => {
-            buf.push(((** x0).clone(), 46usize));
-            buf.push(((** x1).clone(), 47usize));
+            buf.push(((** x0).clone(), 47usize));
+            buf.push(((** x1).clone(), 48usize));
         },
         Proc::Gt(x0, x1) => {
-            buf.push(((** x0).clone(), 20usize));
-            buf.push(((** x1).clone(), 21usize));
+            buf.push(((** x0).clone(), 21usize));
+            buf.push(((** x1).clone(), 22usize));
         },
         Proc::GtEq(x0, x1) => {
-            buf.push(((** x0).clone(), 24usize));
-            buf.push(((** x1).clone(), 25usize));
+            buf.push(((** x0).clone(), 25usize));
+            buf.push(((** x1).clone(), 26usize));
         },
         Proc::HasMap(x0, x1) => {
-            buf.push(((** x0).clone(), 55usize));
-            buf.push(((** x1).clone(), 56usize));
+            buf.push(((** x0).clone(), 56usize));
+            buf.push(((** x1).clone(), 57usize));
         },
         Proc::KeysMap(x0) => {
-            buf.push(((** x0).clone(), 57usize));
+            buf.push(((** x0).clone(), 58usize));
         },
         Proc::Len(x0) => {
-            buf.push(((** x0).clone(), 33usize));
+            buf.push(((** x0).clone(), 34usize));
         },
         Proc::Lt(x0, x1) => {
-            buf.push(((** x0).clone(), 22usize));
-            buf.push(((** x1).clone(), 23usize));
+            buf.push(((** x0).clone(), 23usize));
+            buf.push(((** x1).clone(), 24usize));
         },
         Proc::LtEq(x0, x1) => {
-            buf.push(((** x0).clone(), 26usize));
-            buf.push(((** x1).clone(), 27usize));
+            buf.push(((** x0).clone(), 27usize));
+            buf.push(((** x1).clone(), 28usize));
         },
         Proc::MergeMap(x0, x1) => {
-            buf.push(((** x0).clone(), 53usize));
-            buf.push(((** x1).clone(), 54usize));
+            buf.push(((** x0).clone(), 54usize));
+            buf.push(((** x1).clone(), 55usize));
         },
         Proc::Mod(x0, x1) => {
             buf.push(((** x0).clone(), 8usize));
@@ -4851,47 +4885,47 @@ rw_proc(lhs.clone(), match (lhs, vi) {
             buf.push(((** x1).clone(), 5usize));
         },
         Proc::Ne(x0, x1) => {
-            buf.push(((** x0).clone(), 18usize));
-            buf.push(((** x1).clone(), 19usize));
+            buf.push(((** x0).clone(), 19usize));
+            buf.push(((** x1).clone(), 20usize));
         },
         Proc::Not(x0) => {
-            buf.push(((** x0).clone(), 28usize));
+            buf.push(((** x0).clone(), 29usize));
         },
         Proc::Or(x0, x1) => {
-            buf.push(((** x0).clone(), 31usize));
-            buf.push(((** x1).clone(), 32usize));
+            buf.push(((** x0).clone(), 32usize));
+            buf.push(((** x1).clone(), 33usize));
         },
         Proc::PutMap(x0, x1, x2) => {
-            buf.push(((** x0).clone(), 48usize));
-            buf.push(((** x1).clone(), 49usize));
-            buf.push(((** x2).clone(), 50usize));
+            buf.push(((** x0).clone(), 49usize));
+            buf.push(((** x1).clone(), 50usize));
+            buf.push(((** x2).clone(), 51usize));
         },
         Proc::RemoveBag(x0, x1) => {
-            buf.push(((** x0).clone(), 42usize));
-            buf.push(((** x1).clone(), 43usize));
+            buf.push(((** x0).clone(), 43usize));
+            buf.push(((** x1).clone(), 44usize));
         },
         Proc::Sub(x0, x1) => {
             buf.push(((** x0).clone(), 2usize));
             buf.push(((** x1).clone(), 3usize));
         },
         Proc::ToBool(x0) => {
-            buf.push(((** x0).clone(), 63usize));
-        },
-        Proc::ToFloat(x0) => {
-            buf.push(((** x0).clone(), 62usize));
-        },
-        Proc::ToInt(x0) => {
-            buf.push(((** x0).clone(), 61usize));
-        },
-        Proc::ToStr(x0) => {
             buf.push(((** x0).clone(), 64usize));
         },
+        Proc::ToFloat(x0) => {
+            buf.push(((** x0).clone(), 63usize));
+        },
+        Proc::ToInt(x0) => {
+            buf.push(((** x0).clone(), 62usize));
+        },
+        Proc::ToStr(x0) => {
+            buf.push(((** x0).clone(), 65usize));
+        },
         Proc::UnionBag(x0, x1) => {
-            buf.push(((** x0).clone(), 40usize));
-            buf.push(((** x1).clone(), 41usize));
+            buf.push(((** x0).clone(), 41usize));
+            buf.push(((** x1).clone(), 42usize));
         },
         Proc::ValuesMap(x0) => {
-            buf.push(((** x0).clone(), 58usize));
+            buf.push(((** x0).clone(), 59usize));
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),

@@ -51,6 +51,7 @@ export const categoryInfo = {
 			"BitAnd",
 			"BitOr",
 			"BitXor",
+			"BitNot",
 			"ConcatList",
 			"ElemList",
 			"DeleteList",

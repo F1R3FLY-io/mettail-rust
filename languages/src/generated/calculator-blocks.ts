@@ -318,6 +318,67 @@ const definitions = [
 		colour: "e051c8",
 	},
 
+	// Bit And Big Rat: ... ...
+	{
+		type: "bigrat_bit_and_big_rat",
+		tooltip: "Bit And Big Rat: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
+	// Bit Or Big Rat: ... ...
+	{
+		type: "bigrat_bit_or_big_rat",
+		tooltip: "Bit Or Big Rat: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
+	// Bit Not Big Rat: ...
+	{
+		type: "bigrat_bit_not_big_rat",
+		tooltip: "Bit Not Big Rat: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigRat",
+			},
+		],
+		inputsInline: true,
+		output: "BigRat",
+		colour: "e051c8",
+	},
+
 	// Tern: ... ... ...
 	{
 		type: "int_tern",
@@ -1171,6 +1232,67 @@ const definitions = [
 		colour: "e05172",
 	},
 
+	// Bit And U Int32: ... ...
+	{
+		type: "uint32_bit_and_uint32",
+		tooltip: "Bit And U Int32: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "UInt32",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "UInt32",
+			},
+		],
+		inputsInline: true,
+		output: "UInt32",
+		colour: "e05172",
+	},
+
+	// Bit Or U Int32: ... ...
+	{
+		type: "uint32_bit_or_uint32",
+		tooltip: "Bit Or U Int32: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "UInt32",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "UInt32",
+			},
+		],
+		inputsInline: true,
+		output: "UInt32",
+		colour: "e05172",
+	},
+
+	// Bit Not U Int32: ...
+	{
+		type: "uint32_bit_not_uint32",
+		tooltip: "Bit Not U Int32: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "UInt32",
+			},
+		],
+		inputsInline: true,
+		output: "UInt32",
+		colour: "e05172",
+	},
+
 	// Add Big Int: ... ...
 	{
 		type: "bigint_add_big_int",
@@ -1185,6 +1307,67 @@ const definitions = [
 			{
 				type: "input_value",
 				name: "ARG2",
+				check: "BigInt",
+			},
+		],
+		inputsInline: true,
+		output: "BigInt",
+		colour: "db51e0",
+	},
+
+	// Bit And Big Int: ... ...
+	{
+		type: "bigint_bit_and_big_int",
+		tooltip: "Bit And Big Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigInt",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigInt",
+			},
+		],
+		inputsInline: true,
+		output: "BigInt",
+		colour: "db51e0",
+	},
+
+	// Bit Or Big Int: ... ...
+	{
+		type: "bigint_bit_or_big_int",
+		tooltip: "Bit Or Big Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "BigInt",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "BigInt",
+			},
+		],
+		inputsInline: true,
+		output: "BigInt",
+		colour: "db51e0",
+	},
+
+	// Bit Not Big Int: ...
+	{
+		type: "bigint_bit_not_big_int",
+		tooltip: "Bit Not Big Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
 				check: "BigInt",
 			},
 		],
@@ -1317,6 +1500,67 @@ const definitions = [
 			{
 				type: "input_value",
 				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Bit And Int: ... ...
+	{
+		type: "int_bit_and_int",
+		tooltip: "Bit And Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Bit Or Int: ... ...
+	{
+		type: "int_bit_or_int",
+		tooltip: "Bit Or Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Bit Not Int: ...
+	{
+		type: "int_bit_not_int",
+		tooltip: "Bit Not Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
 				check: "Int",
 			},
 		],
@@ -1708,6 +1952,23 @@ const definitions = [
 		colour: "e05158",
 	},
 
+	// Bit Not Fixed: ...
+	{
+		type: "fixed_bit_not_fixed",
+		tooltip: "Bit Not Fixed: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Fixed",
+			},
+		],
+		inputsInline: true,
+		output: "Fixed",
+		colour: "e05158",
+	},
+
 	// Bit Xor Fixed: ... ...
 	{
 		type: "fixed_bit_xor_fixed",
@@ -1796,28 +2057,6 @@ const definitions = [
 		inputsInline: true,
 		output: "Str",
 		colour: "51e05f",
-	},
-
-	// Custom Op: ... ...
-	{
-		type: "int_custom_op",
-		tooltip: "Custom Op: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-			{
-				type: "input_value",
-				name: "ARG2",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
 	},
 
 	// Concat List: ... ...
