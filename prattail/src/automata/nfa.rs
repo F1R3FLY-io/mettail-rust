@@ -82,6 +82,13 @@ pub fn build_nfa(
             fragments.push(frag);
         }
     }
+    if needs.fixed_point {
+        for (cat, pat) in &patterns.fixed_by_category {
+            let frag = regex::compile_regex(pat, &mut nfa, TokenKind::FixedPointLit(cat.clone()))
+                .expect("fixed-point-by-category pattern should be a valid regex");
+            fragments.push(frag);
+        }
+    }
 
     // Combine character-class fragments via alternation
     for frag in &fragments {
@@ -113,6 +120,8 @@ pub struct BuiltinNeeds {
     pub boolean: bool,
     /// Whether rational literal regexes are registered (`rational_by_category` non-empty).
     pub rational: bool,
+    /// Whether fixed-point literal regexes are registered (`fixed_by_category` non-empty).
+    pub fixed_point: bool,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -635,6 +644,7 @@ mod tests {
             string_lit: false,
             boolean: false,
             rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);
@@ -933,6 +943,7 @@ mod tests {
             string_lit: false,
             boolean: false,
             rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);
@@ -1343,6 +1354,7 @@ mod tests {
             string_lit: false,
             boolean: false,
             rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);
@@ -1446,6 +1458,7 @@ mod tests {
             string_lit: false,
             boolean: false,
             rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa_default(&terminals, &needs);

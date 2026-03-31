@@ -17,6 +17,7 @@ wfst-log = ["wfst", "dep:serde", "dep:postcard"]
 grammar-gen = ["dep:proptest"]
 
 [dependencies]
+mettail-runtime = { path = "../runtime" }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }

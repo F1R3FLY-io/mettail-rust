@@ -321,6 +321,7 @@ pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
         "bool" => quote::format_ident!("BoolLit"),
         "str" | "String" => quote::format_ident!("StringLit"),
         "CanonicalBigRat" => quote::format_ident!("RatLit"),
+        "CanonicalFixedPoint" => quote::format_ident!("FixedLit"),
         _ if type_str.ends_with("BigInt") => quote::format_ident!("NumLit"),
         _ => quote::format_ident!("Lit"), // Generic fallback
     }

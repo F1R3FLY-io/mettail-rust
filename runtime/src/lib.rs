@@ -18,6 +18,8 @@ mod canonical_bigint;
 pub use canonical_bigint::CanonicalBigInt;
 mod canonical_bigrat;
 pub use canonical_bigrat::CanonicalBigRat;
+mod canonical_fixed_point;
+pub use canonical_fixed_point::CanonicalFixedPoint;
 
 // Collection types
 mod hashbag;

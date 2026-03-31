@@ -964,6 +964,7 @@ pub fn prepare_wfst(spec: &LanguageSpec) -> WfstPreparedSpec {
             TokenKind::Integer => "Integer".to_string(),
             TokenKind::IntegerLit(_) => "Integer".to_string(),
             TokenKind::RationalLit(_) => "Rational".to_string(),
+            TokenKind::FixedPointLit(_) => "FixedPoint".to_string(),
             TokenKind::Float => "Float".to_string(),
             TokenKind::True => "True".to_string(),
             TokenKind::False => "False".to_string(),

@@ -349,6 +349,83 @@ mod native_ops {
         }
 
         #[test]
+        fn float_literal_f64_suffix_tokens() {
+            let results = run("{1.0f64 + 0.5f64}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf.contains("1.5")),
+                "expected 1.5 in a normal form, got: {:?}",
+                nfs
+            );
+        }
+
+        #[test]
+        fn fixed_div_and_mod() {
+            assert_reduces_to("{10p1 / 3p1}", "3.3p1");
+            assert_reduces_to("{10p1 % 3p1}", "0.1p1");
+        }
+
+        #[test]
+        fn fixed_bitand() {
+            assert_reduces_to("{5p0 bitand 3p0}", "1p0");
+        }
+
+        #[test]
+        fn fixed_bitor_bitxor() {
+            assert_reduces_to("{5p0 bitor 3p0}", "7p0");
+            assert_reduces_to("{5p0 bitxor 3p0}", "6p0");
+        }
+
+        #[test]
+        fn fixed_comparisons() {
+            assert_reduces_to("{10p1 == 10.0p1}", "true");
+            assert_reduces_to("{1p0 == 1.0p1}", "true");
+            assert_reduces_to("{10p1 != 9p1}", "true");
+            assert_reduces_to("{10p1 < 11p1}", "true");
+            assert_reduces_to("{10p1 > 9p1}", "true");
+            assert_reduces_to("{10p1 <= 10.0p1}", "true");
+            assert_reduces_to("{10p1 >= 10.0p1}", "true");
+        }
+
+        #[test]
+        fn fixed_arithmetic_add_sub_mul() {
+            assert_reduces_to("{1p0 + 0.5p1}", "1.5p1");
+            assert_reduces_to("{2.0p1 - 0.5p1}", "1.5p1");
+            assert_reduces_to("{3p0 * 2p0}", "6p0");
+            assert_reduces_to("{-10p1}", "-10.0p1");
+        }
+
+        #[test]
+        fn fixed_div_by_zero_is_error() {
+            assert_reduces_to("{10p1 / 0p0}", "error");
+        }
+
+        #[test]
+        fn fixed_mod_by_zero_is_error() {
+            assert_reduces_to("{10p1 % 0p0}", "error");
+        }
+
+        #[test]
+        fn float_more_f64_suffix() {
+            let results = run("{1e2f64 + 1.0f64}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf.contains("101")),
+                "expected 101 in a normal form, got: {:?}",
+                nfs
+            );
+        }
+
+        #[test]
+        fn cast_to_int_float_bool_str_from_fixed() {
+            assert_reduces_to("{int(10p1)}", "10");
+            assert_reduces_to("{float(10p1)}", "10.0");
+            assert_reduces_to("{bool(0p0)}", "false");
+            assert_reduces_to("{bool(1p0)}", "true");
+            assert_reduces_to(r#"{str(1.5p1)}"#, r#""1.5p1""#);
+        }
+
+        #[test]
         fn chained_add() {
             // fold evaluates full expression trees
             assert_reduces_to("{1 + 2 + 3}", "6");
