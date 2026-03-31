@@ -9,11 +9,17 @@ use num_bigint::BigInt as NumBigInt;
 use num_integer::Integer;
 use num_traits::Zero;
 
-fn cbigint_and(a: mettail_runtime::CanonicalBigInt, b: mettail_runtime::CanonicalBigInt) -> mettail_runtime::CanonicalBigInt {
+fn cbigint_and(
+    a: mettail_runtime::CanonicalBigInt,
+    b: mettail_runtime::CanonicalBigInt,
+) -> mettail_runtime::CanonicalBigInt {
     mettail_runtime::CanonicalBigInt::from(a.get() & b.get())
 }
 
-fn cbigint_or(a: mettail_runtime::CanonicalBigInt, b: mettail_runtime::CanonicalBigInt) -> mettail_runtime::CanonicalBigInt {
+fn cbigint_or(
+    a: mettail_runtime::CanonicalBigInt,
+    b: mettail_runtime::CanonicalBigInt,
+) -> mettail_runtime::CanonicalBigInt {
     mettail_runtime::CanonicalBigInt::from(a.get() | b.get())
 }
 
@@ -30,7 +36,10 @@ fn lcm_pos(a: &NumBigInt, b: &NumBigInt) -> NumBigInt {
     }
 }
 
-fn cbigrat_and(a: mettail_runtime::CanonicalBigRat, b: mettail_runtime::CanonicalBigRat) -> mettail_runtime::CanonicalBigRat {
+fn cbigrat_and(
+    a: mettail_runtime::CanonicalBigRat,
+    b: mettail_runtime::CanonicalBigRat,
+) -> mettail_runtime::CanonicalBigRat {
     let (n1, d1) = (a.get().numer().clone(), a.get().denom().clone());
     let (n2, d2) = (b.get().numer().clone(), b.get().denom().clone());
     let d = lcm_pos(&d1, &d2);
@@ -39,10 +48,14 @@ fn cbigrat_and(a: mettail_runtime::CanonicalBigRat, b: mettail_runtime::Canonica
     let s2 = &d / &d2;
     let nn1 = n1 * s1;
     let nn2 = n2 * s2;
-    mettail_runtime::CanonicalBigRat::try_from_nd(nn1 & nn2, d).expect("aligned BigRat denominator is non-zero")
+    mettail_runtime::CanonicalBigRat::try_from_nd(nn1 & nn2, d)
+        .expect("aligned BigRat denominator is non-zero")
 }
 
-fn cbigrat_or(a: mettail_runtime::CanonicalBigRat, b: mettail_runtime::CanonicalBigRat) -> mettail_runtime::CanonicalBigRat {
+fn cbigrat_or(
+    a: mettail_runtime::CanonicalBigRat,
+    b: mettail_runtime::CanonicalBigRat,
+) -> mettail_runtime::CanonicalBigRat {
     let (n1, d1) = (a.get().numer().clone(), a.get().denom().clone());
     let (n2, d2) = (b.get().numer().clone(), b.get().denom().clone());
     let d = lcm_pos(&d1, &d2);
@@ -51,7 +64,8 @@ fn cbigrat_or(a: mettail_runtime::CanonicalBigRat, b: mettail_runtime::Canonical
     let s2 = &d / &d2;
     let nn1 = n1 * s1;
     let nn2 = n2 * s2;
-    mettail_runtime::CanonicalBigRat::try_from_nd(nn1 | nn2, d).expect("aligned BigRat denominator is non-zero")
+    mettail_runtime::CanonicalBigRat::try_from_nd(nn1 | nn2, d)
+        .expect("aligned BigRat denominator is non-zero")
 }
 
 fn cbigrat_not(a: mettail_runtime::CanonicalBigRat) -> mettail_runtime::CanonicalBigRat {

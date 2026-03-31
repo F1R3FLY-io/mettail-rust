@@ -34,7 +34,8 @@ where
     let s2 = &d / &d2;
     let nn1 = n1 * s1;
     let nn2 = n2 * s2;
-    mettail_runtime::CanonicalBigRat::try_from_nd(op(nn1, nn2), d).expect("aligned BigRat denominator is non-zero")
+    mettail_runtime::CanonicalBigRat::try_from_nd(op(nn1, nn2), d)
+        .expect("aligned BigRat denominator is non-zero")
 }
 
 fn cbigrat_not(a: mettail_runtime::CanonicalBigRat) -> mettail_runtime::CanonicalBigRat {
@@ -179,7 +180,8 @@ language! {
         ] fold;
 
         // Bitwise (looser precedence than arithmetic)
-        BitOr . a:Proc, b:Proc |- a "|" b : Proc ![
+        // Use `bitor` (not `|`) so `{ P | Q }` stays parallel composition (PPar separator).
+        BitOr . a:Proc, b:Proc |- a "bitor" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
                     (Int::NumLit(x), Int::NumLit(y)) => Proc::CastInt(Box::new(Int::NumLit(x | y))),

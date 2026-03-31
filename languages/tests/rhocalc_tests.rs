@@ -367,12 +367,12 @@ mod native_ops {
 
         #[test]
         fn fixed_bitand() {
-            assert_reduces_to("{5p0 bitand 3p0}", "1p0");
+            assert_reduces_to("{5p0 & 3p0}", "1p0");
         }
 
         #[test]
         fn fixed_bitor_bitxor() {
-            assert_reduces_to("{5p0 bitor 3p0}", "7p0");
+            assert_reduces_to("{5p0 | 3p0}", "7p0");
             assert_reduces_to("{5p0 bitxor 3p0}", "6p0");
         }
 
@@ -484,6 +484,84 @@ mod native_ops {
         #[test]
         fn bigint_div_by_zero_is_error() {
             assert_reduces_to("{1n / 0n}", "error");
+        }
+    }
+
+    mod bitwise {
+        use super::*;
+
+        #[test]
+        fn int_and_or_not() {
+            assert_reduces_to("{5 & 3}", "1");
+            assert_reduces_to("{5 bitor 3}", "7");
+            let results = run("{~0}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf == "-1"),
+                "expected `-1` in normal forms, got: {:?}",
+                nfs
+            );
+        }
+
+        #[test]
+        fn u32_and_or_not() {
+            assert_reduces_to("{5u32 & 3u32}", "1u32");
+            assert_reduces_to("{5u32 bitor 3u32}", "7u32");
+            assert_reduces_to("{~0u32}", "4294967295u32");
+        }
+
+        #[test]
+        fn bigint_and_or_not() {
+            assert_reduces_to("{3n & 1n}", "1n");
+            assert_reduces_to("{3n bitor 1n}", "3n");
+            let results = run("{~0n}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf == "-1n" || nf == "-1"),
+                "expected `-1n` or `-1` in normal forms, got: {:?}",
+                nfs
+            );
+        }
+
+        #[test]
+        fn bigrat_and_or_not() {
+            assert_reduces_to("{3r/4r & 1r/4r}", "1r/4r");
+            assert_reduces_to("{1r/2r & 1r/3r}", "1r/3r");
+            let results = run("{~0r}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf == "-1r" || nf == "-1"),
+                "expected `-1r` (or `-1`) in normal forms, got: {:?}",
+                nfs
+            );
+        }
+
+        #[test]
+        fn fixed_and_or_not_bitxor() {
+            assert_reduces_to("{~0p0}", "-1p0");
+            assert_reduces_to("{15p0 & 14p1}", "13.2p1");
+        }
+
+        #[test]
+        fn type_mismatch_bitand_is_error() {
+            assert_reduces_to("{1 & 1.0}", "error");
+            assert_reduces_to("{1 & true}", "error");
+        }
+
+        #[test]
+        fn type_mismatch_bitnot_is_error() {
+            assert_reduces_to("{~true}", "error");
+        }
+
+        #[test]
+        fn bitnot_under_congruence_smoke() {
+            let results = run("{~*(@(0))}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf == "-1"),
+                "expected `-1` in normal forms, got: {:?}",
+                nfs
+            );
         }
     }
 

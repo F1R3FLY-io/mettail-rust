@@ -40,6 +40,13 @@ fn test_bigint_literal_and_add() {
 }
 
 #[test]
+fn test_bigint_bitwise() {
+    calc_normal_form("3n & 1n", "1");
+    calc_normal_form("3n | 1n", "3");
+    calc_normal_form("~0n", "-1");
+}
+
+#[test]
 fn test_bigint_parse_eval_large_value() {
     mettail_runtime::clear_var_cache();
     let value = calc::BigInt::parse("123456789012345678901234567890n").expect("parse bigint");
@@ -89,6 +96,25 @@ fn test_bigrat_literal_division_by_zero_is_error() {
 }
 
 #[test]
+fn test_bigrat_bitwise_lcm_and_not() {
+    // Parentheses: `/` binds tighter than `&`/`|` so use explicit rat operands.
+    calc_normal_form("(3r/4r) & (1r/4r)", "1/4");
+    calc_normal_form("(3r/4r) | (1r/4r)", "3/4");
+    calc_normal_form("(1r/2r) & (1r/3r)", "1/3");
+    calc_normal_form("(1r/2r) | (1r/3r)", "1/2");
+    // NOT: bitwise complement of numerator only, denominator unchanged
+    calc_normal_form("~(0r)", "-1");
+    calc_normal_form("~(1r)", "-2");
+}
+
+#[test]
+fn test_int_bitwise_precedence() {
+    // `&` tighter than `|` (like C/Rust): `1 | 2 & 3` → `1 | (2 & 3)` → 3
+    calc_normal_form("1 | 2 & 3", "3");
+    calc_normal_form("(1 | 2) & 3", "3");
+}
+
+#[test]
 fn test_fraction_requires_bigint_args() {
     mettail_runtime::clear_var_cache();
     assert!(calc::BigRat::parse("fraction(1, 2)").is_err());
@@ -117,8 +143,12 @@ fn test_int_power() {
 }
 
 #[test]
-fn test_int_custom_op() {
-    calc_normal_form("1 ~ 2", "8");
+fn test_int_bitwise() {
+    calc_normal_form("5 & 3", "1");
+    calc_normal_form("5 | 3", "7");
+    // Rust `!` on `i32`: sign-extended bit pattern
+    calc_normal_form("~0", "-1");
+    calc_normal_form("~(-1)", "0");
 }
 
 // --- Int: division, modulus (%), div/mod by zero ---
@@ -190,6 +220,13 @@ fn test_uint32_literal_and_add() {
     calc_normal_form("4294967295u32", "4294967295");
     calc_normal_form("1u32 + 2u32", "3");
     calc_normal_form("0xFFu32", "255");
+}
+
+#[test]
+fn test_uint32_bitwise() {
+    calc_normal_form("5u32 & 3u32", "1");
+    calc_normal_form("5u32 | 3u32", "7");
+    calc_normal_form("~0u32", "4294967295");
 }
 
 #[test]
@@ -297,7 +334,7 @@ fn test_fixed_literal_and_div_mod() {
 
 #[test]
 fn test_fixed_bitand() {
-    calc_normal_form("5p0 bitand 3p0", "1p0");
+    calc_normal_form("5p0 & 3p0", "1p0");
 }
 
 /// Float: exponent-only form and more `f64` / underscore cases (surface matches [`mettail_prattail::parse_float_lit`]).
@@ -352,8 +389,16 @@ fn test_fixed_comparisons_and_cross_scale_eq() {
 
 #[test]
 fn test_fixed_bitor_bitxor() {
-    calc_normal_form("5p0 bitor 3p0", "7p0");
+    calc_normal_form("5p0 | 3p0", "7p0");
     calc_normal_form("5p0 bitxor 3p0", "6p0");
+}
+
+#[test]
+fn test_fixed_bitwise_not_and_mixed_scale() {
+    calc_normal_form("~0p0", "-1p0");
+    calc_normal_form("~1p0", "-2p0");
+    // Align to max places (1): 15p0 → 150, 14.0p1 → 140 unscaled; 150 & 140 = 132 → 13.2p1
+    calc_normal_form("15p0 & 14p1", "13.2p1");
 }
 
 #[test]
