@@ -61,8 +61,10 @@ perf*.data.*
 *.dylib
 *.dll
 
-# Generated files (languages/src/generated is committed so CI build script can find .lalrpop files)
-# /languages/src/generated - do not ignore; build script needs these before macro runs
+# Macro inspection outputs (theory! writes Ascent dumps; Blockly writes *.ts — created at compile time, not include.)
+languages/src/generated/
+# Binary crates using the same writer fallback (root `generated/`)
+/generated/
 
 # trybuild artifacts
 target/tests/trybuild/
