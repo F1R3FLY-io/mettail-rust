@@ -142,6 +142,10 @@ language! {
         // Use `bitor` (not `|`) so `{ P | Q }` stays parallel composition (PPar separator).
         BitOr . a:Proc, b:Proc |- a "bitor" b : Proc ![
             { match (&a, &b) {
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x | *y))),
+                    _ => Proc::Err,
+                },
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
                     (Int::NumLit(x), Int::NumLit(y)) => Proc::CastInt(Box::new(Int::NumLit(x | y))),
                     _ => Proc::Err,
@@ -158,16 +162,16 @@ language! {
                     (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(x.bitor_aligned(*y)))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x | *y))),
-                    _ => Proc::Err,
-                },
                 _ => Proc::Err,
             }}
         ] fold;
 
         BitAnd . a:Proc, b:Proc |- a "bitand" b : Proc ![
             { match (&a, &b) {
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x & *y))),
+                    _ => Proc::Err,
+                },
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
                     (Int::NumLit(x), Int::NumLit(y)) => Proc::CastInt(Box::new(Int::NumLit(x & y))),
                     _ => Proc::Err,
@@ -182,10 +186,6 @@ language! {
                 },
                 (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
                     (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(x.bitand_aligned(*y)))),
-                    _ => Proc::Err,
-                },
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x & *y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
