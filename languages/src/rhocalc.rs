@@ -138,6 +138,88 @@ language! {
             }}
         ] fold;
 
+        // Bitwise (looser precedence than arithmetic)
+        // Use `bitor` (not `|`) so `{ P | Q }` stays parallel composition (PPar separator).
+        BitOr . a:Proc, b:Proc |- a "bitor" b : Proc ![
+            { match (&a, &b) {
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x | *y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
+                    (Int::NumLit(x), Int::NumLit(y)) => Proc::CastInt(Box::new(Int::NumLit(x | y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x | y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() | y.get())))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(x.bitor_aligned(*y)))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        BitAnd . a:Proc, b:Proc |- a "bitand" b : Proc ![
+            { match (&a, &b) {
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
+                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x & *y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
+                    (Int::NumLit(x), Int::NumLit(y)) => Proc::CastInt(Box::new(Int::NumLit(x & y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
+                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x & y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
+                    (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() & y.get())))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(x.bitand_aligned(*y)))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        BitNot . a:Proc |- "bitnot" a : Proc ![
+            { match &a {
+                Proc::CastInt(x) => match &**x {
+                    Int::NumLit(v) => Proc::CastInt(Box::new(Int::NumLit(!v))),
+                    _ => Proc::Err,
+                },
+                Proc::CastUInt32(x) => match &**x {
+                    UInt32::NumLit(v) => Proc::CastUInt32(Box::new(UInt32::NumLit(!v))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigInt(x) => match &**x {
+                    BigInt::NumLit(n) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(!n.get())))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigRat(x) => match &**x {
+                    BigRat::RatLit(r) => Proc::CastBigRat(Box::new(BigRat::RatLit(r.bitnot()))),
+                    _ => Proc::Err,
+                },
+                Proc::CastFixed(x) => match &**x {
+                    Fixed::FixedLit(fp) => Proc::CastFixed(Box::new(Fixed::FixedLit(
+                        mettail_runtime::CanonicalFixedPoint::new(!fp.unscaled().clone(), fp.places()),
+                    ))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
         Eq . a:Proc, b:Proc |- a "==" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
@@ -452,34 +534,6 @@ language! {
                             None => Proc::Err,
                         }
                     }
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
-        BitAnd . a:Proc, b:Proc |- a "bitand" b : Proc ![
-            { match (&a, &b) {
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x & *y))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        BitOr . a:Proc, b:Proc |- a "bitor" b : Proc ![
-            { match (&a, &b) {
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x | *y))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        BitXor . a:Proc, b:Proc |- a "bitxor" b : Proc ![
-            { match (&a, &b) {
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x ^ *y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -857,9 +911,7 @@ language! {
 
         BitOrCongR . | S ~> T |- (BitOr X S) ~> (BitOr X T);
 
-        BitXorCongL . | S ~> T |- (BitXor S X) ~> (BitXor T X);
-
-        BitXorCongR . | S ~> T |- (BitXor X S) ~> (BitXor X T);
+        BitNotCong . | S ~> T |- (BitNot S) ~> (BitNot T);
 
         EqCongL . | S ~> T |- (Eq S X) ~> (Eq T X);
         EqCongR . | S ~> T |- (Eq X S) ~> (Eq X T);

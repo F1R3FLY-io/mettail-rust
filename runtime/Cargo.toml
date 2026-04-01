@@ -17,5 +17,6 @@ rustc-hash = "2.0"
 syn = { workspace = true }
 proc-macro2 = { workspace = true }
 num-bigint = "0.4"
+num-integer = "0.1"
 num-rational = { version = "0.4", features = ["num-bigint-std"] }
 num-traits = "0.2"

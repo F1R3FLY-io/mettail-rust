@@ -13,6 +13,7 @@ use std::{
 
 use moniker::{BoundTerm, Var};
 use num_bigint::BigInt;
+use num_integer::Integer;
 use num_rational::Ratio;
 use num_traits::Zero;
 
@@ -36,6 +37,51 @@ impl CanonicalBigRat {
     pub fn get(&self) -> &Ratio<BigInt> {
         // SAFETY: points at a leaked allocation which is never freed.
         unsafe { self.0.as_ref() }
+    }
+
+    fn lcm_pos(a: &BigInt, b: &BigInt) -> BigInt {
+        // Denominators produced by Ratio are positive, but keep this helper robust.
+        if a.is_zero() || b.is_zero() {
+            BigInt::from(0)
+        } else {
+            let g = a.gcd(b);
+            (a / &g) * b
+        }
+    }
+
+    /// Bitwise AND on rationals by aligning to a common denominator and applying `&` to the
+    /// aligned numerators (language-defined semantics).
+    pub fn bitand_aligned(self, rhs: Self) -> Self {
+        let (n1, d1) = (self.get().numer().clone(), self.get().denom().clone());
+        let (n2, d2) = (rhs.get().numer().clone(), rhs.get().denom().clone());
+        let d = Self::lcm_pos(&d1, &d2);
+        debug_assert!(!d.is_zero());
+        let s1 = &d / &d1;
+        let s2 = &d / &d2;
+        let nn1 = n1 * s1;
+        let nn2 = n2 * s2;
+        Self::try_from_nd(nn1 & nn2, d).expect("aligned denominator is non-zero")
+    }
+
+    /// Bitwise OR on rationals by aligning to a common denominator and applying `|` to the
+    /// aligned numerators (language-defined semantics).
+    pub fn bitor_aligned(self, rhs: Self) -> Self {
+        let (n1, d1) = (self.get().numer().clone(), self.get().denom().clone());
+        let (n2, d2) = (rhs.get().numer().clone(), rhs.get().denom().clone());
+        let d = Self::lcm_pos(&d1, &d2);
+        debug_assert!(!d.is_zero());
+        let s1 = &d / &d1;
+        let s2 = &d / &d2;
+        let nn1 = n1 * s1;
+        let nn2 = n2 * s2;
+        Self::try_from_nd(nn1 | nn2, d).expect("aligned denominator is non-zero")
+    }
+
+    /// Bitwise NOT on rationals: apply `!` to the numerator, keep the denominator.
+    pub fn bitnot(self) -> Self {
+        let n = self.get().numer().clone();
+        let d = self.get().denom().clone();
+        Self::try_from_nd(!n, d).expect("denominator is non-zero")
     }
 }
 
@@ -181,5 +227,21 @@ mod tests {
         x.hash(&mut hx);
         y.hash(&mut hy);
         assert_eq!(hx.finish(), hy.finish());
+    }
+
+    #[test]
+    fn bitwise_aligned_or_and_not_examples() {
+        let a = CanonicalBigRat::try_from_nd(BigInt::from(7), BigInt::from(12)).unwrap();
+        let b = CanonicalBigRat::try_from_nd(BigInt::from(11), BigInt::from(16)).unwrap();
+        let or = a.bitor_aligned(b);
+        assert_eq!(or.get().to_string(), "61/48");
+
+        let a = CanonicalBigRat::try_from_nd(BigInt::from(7), BigInt::from(12)).unwrap();
+        let b = CanonicalBigRat::try_from_nd(BigInt::from(13), BigInt::from(16)).unwrap();
+        let and = a.bitand_aligned(b);
+        assert_eq!(and.get().to_string(), "1/12");
+
+        let z = CanonicalBigRat::try_from_nd(BigInt::from(0), BigInt::from(1)).unwrap();
+        assert_eq!(z.bitnot().get().to_string(), "-1");
     }
 }

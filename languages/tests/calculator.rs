@@ -40,6 +40,13 @@ fn test_bigint_literal_and_add() {
 }
 
 #[test]
+fn test_bigint_bitwise() {
+    calc_normal_form("3n bitand 1n", "1");
+    calc_normal_form("3n bitor 1n", "3");
+    calc_normal_form("bitnot 0n", "-1");
+}
+
+#[test]
 fn test_bigint_parse_eval_large_value() {
     mettail_runtime::clear_var_cache();
     let value = calc::BigInt::parse("123456789012345678901234567890n").expect("parse bigint");
@@ -89,6 +96,25 @@ fn test_bigrat_literal_division_by_zero_is_error() {
 }
 
 #[test]
+fn test_bigrat_bitwise_lcm_and_not() {
+    // Parentheses: `/` binds tighter than infix ops, so use explicit rat operands.
+    calc_normal_form("(3r/4r) bitand (1r/4r)", "1/4");
+    calc_normal_form("(3r/4r) bitor (1r/4r)", "3/4");
+    calc_normal_form("(1r/2r) bitand (1r/3r)", "1/3");
+    calc_normal_form("(1r/2r) bitor (1r/3r)", "1/2");
+    // NOT: bitwise complement of numerator only, denominator unchanged
+    calc_normal_form("bitnot (0r)", "-1");
+    calc_normal_form("bitnot (1r)", "-2");
+}
+
+#[test]
+fn test_int_bitwise_precedence() {
+    // `bitand` tighter than `bitor`: `1 bitor 2 bitand 3` → `1 bitor (2 bitand 3)` → 3
+    calc_normal_form("1 bitor 2 bitand 3", "3");
+    calc_normal_form("(1 bitor 2) bitand 3", "3");
+}
+
+#[test]
 fn test_fraction_requires_bigint_args() {
     mettail_runtime::clear_var_cache();
     assert!(calc::BigRat::parse("fraction(1, 2)").is_err());
@@ -117,8 +143,12 @@ fn test_int_power() {
 }
 
 #[test]
-fn test_int_custom_op() {
-    calc_normal_form("1 ~ 2", "8");
+fn test_int_bitwise() {
+    calc_normal_form("5 bitand 3", "1");
+    calc_normal_form("5 bitor 3", "7");
+    // Rust `!` on `i32`: sign-extended bit pattern
+    calc_normal_form("bitnot 0", "-1");
+    calc_normal_form("bitnot (-1)", "0");
 }
 
 // --- Int: division, modulus (%), div/mod by zero ---
@@ -190,6 +220,13 @@ fn test_uint32_literal_and_add() {
     calc_normal_form("4294967295u32", "4294967295");
     calc_normal_form("1u32 + 2u32", "3");
     calc_normal_form("0xFFu32", "255");
+}
+
+#[test]
+fn test_uint32_bitwise() {
+    calc_normal_form("5u32 bitand 3u32", "1");
+    calc_normal_form("5u32 bitor 3u32", "7");
+    calc_normal_form("bitnot 0u32", "4294967295");
 }
 
 #[test]
@@ -351,9 +388,36 @@ fn test_fixed_comparisons_and_cross_scale_eq() {
 }
 
 #[test]
-fn test_fixed_bitor_bitxor() {
+fn test_fixed_bitor() {
     calc_normal_form("5p0 bitor 3p0", "7p0");
-    calc_normal_form("5p0 bitxor 3p0", "6p0");
+}
+
+#[test]
+fn test_fixed_bitwise_not_and_mixed_scale() {
+    calc_normal_form("bitnot 0p0", "-1p0");
+    calc_normal_form("bitnot 1p0", "-2p0");
+    // Align to max places (1): 15p0 → 150, 14.0p1 → 140 unscaled; 150 bitand 140 = 132 → 13.2p1
+    calc_normal_form("15p0 bitand 14p1", "13.2p1");
+}
+
+#[test]
+fn test_fixed_bitwise_alignment_examples() {
+    // From the spec examples:
+    // 12.2p1 = 12.20p2 = 1220/100; 7.01p2 = 701/100
+    // OR: (1220 bitor 701)/100 = 1789/100 = 17.89p2
+    // AND: (1220 bitand 701)/100 = 132/100 = 1.32p2
+    calc_normal_form("12.2p1 bitor 7.01p2", "17.89p2");
+    calc_normal_form("12.2p1 bitand 7.01p2", "1.32p2");
+}
+
+#[test]
+fn test_bigrat_bitwise_alignment_examples() {
+    // (7/12) bitor (11/16) with lcm 48:
+    // 7/12 = 28/48, 11/16 = 33/48, (28 bitor 33)/48 = 61/48
+    calc_normal_form("(7r/12r) bitor (11r/16r)", "61/48");
+    // (7/12) bitand (13/16):
+    // 7/12 = 28/48, 13/16 = 39/48, (28 bitand 39)/48 = 4/48 = 1/12
+    calc_normal_form("(7r/12r) bitand (13r/16r)", "1/12");
 }
 
 #[test]

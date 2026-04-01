@@ -112,6 +112,9 @@ language! {
         MulBigRat . a:BigRat, b:BigRat |- a "*" b : BigRat ![a * b] fold;
         DivBigRat . a:BigRat, b:BigRat |- a "/" b : BigRat ![a / b] fold;
         NegBigRat . a:BigRat |- "-" a : BigRat ![(-a)] fold;
+        BitAndBigRat . a:BigRat, b:BigRat |- a "bitand" b : BigRat ![a.bitand_aligned(b)] fold;
+        BitOrBigRat . a:BigRat, b:BigRat |- a "bitor" b : BigRat ![a.bitor_aligned(b)] fold;
+        BitNotBigRat . a:BigRat |- "bitnot" a : BigRat ![a.bitnot()] fold;
         // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
         // Comparison operations
@@ -159,7 +162,13 @@ language! {
         AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
         //
         AddUInt32 . a:UInt32, b:UInt32 |- a "+" b : UInt32 ![a + b] fold;
+        BitAndUInt32 . a:UInt32, b:UInt32 |- a "bitand" b : UInt32 ![a & b] fold;
+        BitOrUInt32 . a:UInt32, b:UInt32 |- a "bitor" b : UInt32 ![a | b] fold;
+        BitNotUInt32 . a:UInt32 |- "bitnot" a : UInt32 ![!a] fold;
         AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ![a + b] fold;
+        BitAndBigInt . a:BigInt, b:BigInt |- a "bitand" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() & b.get())] fold;
+        BitOrBigInt . a:BigInt, b:BigInt |- a "bitor" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() | b.get())] fold;
+        BitNotBigInt . a:BigInt |- "bitnot" a : BigInt ![mettail_runtime::CanonicalBigInt::from(!a.get())] fold;
         // Int operations
         AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
         SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
@@ -167,6 +176,9 @@ language! {
         DivInt . a:Int, b:Int |- a "/" b : Int ![a / b] fold;
         ModInt . a:Int, b:Int |- a "%" b : Int ![a % b] fold;
         PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] step right;
+        BitAndInt . a:Int, b:Int |- a "bitand" b : Int ![a & b] fold;
+        BitOrInt . a:Int, b:Int |- a "bitor" b : Int ![a | b] fold;
+        BitNotInt . a:Int |- "bitnot" a : Int ![!a] fold;
         Neg . a:Int |- "-" a : Int ![(-a)] fold;
         Fact . a:Int |- a "!" : Int ![{ (1..=a.max(0)).product::<i32>() }] step;
         // Float operations
@@ -187,7 +199,7 @@ language! {
         NegFixed . a:Fixed |- "-" a : Fixed ![(-a)] fold;
         BitAndFixed . a:Fixed, b:Fixed |- a "bitand" b : Fixed ![a & b] fold;
         BitOrFixed . a:Fixed, b:Fixed |- a "bitor" b : Fixed ![a | b] fold;
-        BitXorFixed . a:Fixed, b:Fixed |- a "bitxor" b : Fixed ![a ^ b] fold;
+        BitNotFixed . a:Fixed |- "bitnot" a : Fixed ![mettail_runtime::CanonicalFixedPoint::new(!a.unscaled().clone(), a.places())] fold;
         // Proc → concrete type projections (runtime type extraction)
         // These are fold rules: fold_proc reduces ElemList → injection variant before rust_code runs
         ProcToInt . a:Proc |- "int" "(" a ")" : Int ![{
@@ -284,8 +296,6 @@ language! {
                 other => panic!("str(): cannot convert Proc variant to Str: {:?}", other),
             }
         }] fold;
-        // Custom operation (PraTTaIL test feature)
-        CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
         // List operations (List = Vec<Proc>). Fold/step pass payloads; rust_code returns payload.
         ConcatList . a:List, b:List |- "concat" "(" a "," b ")" : List ![
             { let mut o = a.clone(); o.extend(b.iter().cloned()); o }
@@ -422,6 +432,11 @@ language! {
         ModIntCongR . | S ~> T |- (ModInt L S) ~> (ModInt L T);
         PowIntCongL . | S ~> T |- (PowInt S R) ~> (PowInt T R);
         FactCong . | S ~> T |- (Fact S) ~> (Fact T);
+        BitAndIntCongL . | S ~> T |- (BitAndInt S R) ~> (BitAndInt T R);
+        BitAndIntCongR . | S ~> T |- (BitAndInt L S) ~> (BitAndInt L T);
+        BitOrIntCongL . | S ~> T |- (BitOrInt S R) ~> (BitOrInt T R);
+        BitOrIntCongR . | S ~> T |- (BitOrInt L S) ~> (BitOrInt L T);
+        BitNotIntCong . | S ~> T |- (BitNotInt S) ~> (BitNotInt T);
         // Float operations
         AddFloatCongL . | S ~> T |- (AddFloat S R) ~> (AddFloat T R);
         AddFloatCongR . | S ~> T |- (AddFloat L S) ~> (AddFloat L T);
@@ -452,8 +467,7 @@ language! {
         BitAndFixedCongR . | S ~> T |- (BitAndFixed L S) ~> (BitAndFixed L T);
         BitOrFixedCongL . | S ~> T |- (BitOrFixed S R) ~> (BitOrFixed T R);
         BitOrFixedCongR . | S ~> T |- (BitOrFixed L S) ~> (BitOrFixed L T);
-        BitXorFixedCongL . | S ~> T |- (BitXorFixed S R) ~> (BitXorFixed T R);
-        BitXorFixedCongR . | S ~> T |- (BitXorFixed L S) ~> (BitXorFixed L T);
+        BitNotFixedCong . | S ~> T |- (BitNotFixed S) ~> (BitNotFixed T);
         // Proc → concrete type projection congruence
         ProcToIntCong . | S ~> T |- (ProcToInt S) ~> (ProcToInt T);
         ProcToFloatCong . | S ~> T |- (ProcToFloat S) ~> (ProcToFloat T);
@@ -482,9 +496,6 @@ language! {
         HasMapCongR . | S ~> T |- (HasMap L S) ~> (HasMap L T);
         KeysMapCong . | S ~> T |- (KeysMap S) ~> (KeysMap T);
         ValuesMapCong . | S ~> T |- (ValuesMap S) ~> (ValuesMap T);
-        // Custom operation
-        CustomOpCongL . | S ~> T |- (CustomOp S R) ~> (CustomOp T R);
-        CustomOpCongR . | S ~> T |- (CustomOp L S) ~> (CustomOp L T);
         // Ternary conditional
         TernCongC . | S ~> T |- (Tern S R1 R2) ~> (Tern T R1 R2);
         TernCongT . | S ~> T |- (Tern L S R) ~> (Tern L T R);
@@ -493,15 +504,30 @@ language! {
         ProcUInt32Cong . | S ~> T |- (ProcUInt32 S) ~> (ProcUInt32 T);
         AddUInt32CongL . | S ~> T |- (AddUInt32 S R) ~> (AddUInt32 T R);
         AddUInt32CongR . | S ~> T |- (AddUInt32 L S) ~> (AddUInt32 L T);
+        BitAndUInt32CongL . | S ~> T |- (BitAndUInt32 S R) ~> (BitAndUInt32 T R);
+        BitAndUInt32CongR . | S ~> T |- (BitAndUInt32 L S) ~> (BitAndUInt32 L T);
+        BitOrUInt32CongL . | S ~> T |- (BitOrUInt32 S R) ~> (BitOrUInt32 T R);
+        BitOrUInt32CongR . | S ~> T |- (BitOrUInt32 L S) ~> (BitOrUInt32 L T);
+        BitNotUInt32Cong . | S ~> T |- (BitNotUInt32 S) ~> (BitNotUInt32 T);
         ProcBigIntCong . | S ~> T |- (ProcBigInt S) ~> (ProcBigInt T);
         AddBigIntCongL . | S ~> T |- (AddBigInt S R) ~> (AddBigInt T R);
         AddBigIntCongR . | S ~> T |- (AddBigInt L S) ~> (AddBigInt L T);
+        BitAndBigIntCongL . | S ~> T |- (BitAndBigInt S R) ~> (BitAndBigInt T R);
+        BitAndBigIntCongR . | S ~> T |- (BitAndBigInt L S) ~> (BitAndBigInt L T);
+        BitOrBigIntCongL . | S ~> T |- (BitOrBigInt S R) ~> (BitOrBigInt T R);
+        BitOrBigIntCongR . | S ~> T |- (BitOrBigInt L S) ~> (BitOrBigInt L T);
+        BitNotBigIntCong . | S ~> T |- (BitNotBigInt S) ~> (BitNotBigInt T);
         ProcBigRatCong . | S ~> T |- (ProcBigRat S) ~> (ProcBigRat T);
         ProcFixedCong . | S ~> T |- (ProcFixed S) ~> (ProcFixed T);
         FractionCongN . | S ~> T |- (Fraction S R) ~> (Fraction T R);
         FractionCongD . | S ~> T |- (Fraction L S) ~> (Fraction L T);
         AddBigRatCongL . | S ~> T |- (AddBigRat S R) ~> (AddBigRat T R);
         AddBigRatCongR . | S ~> T |- (AddBigRat L S) ~> (AddBigRat L T);
+        BitAndBigRatCongL . | S ~> T |- (BitAndBigRat S R) ~> (BitAndBigRat T R);
+        BitAndBigRatCongR . | S ~> T |- (BitAndBigRat L S) ~> (BitAndBigRat L T);
+        BitOrBigRatCongL . | S ~> T |- (BitOrBigRat S R) ~> (BitOrBigRat T R);
+        BitOrBigRatCongR . | S ~> T |- (BitOrBigRat L S) ~> (BitOrBigRat L T);
+        BitNotBigRatCong . | S ~> T |- (BitNotBigRat S) ~> (BitNotBigRat T);
         MulBigRatCongL . | S ~> T |- (MulBigRat S R) ~> (MulBigRat T R);
         MulBigRatCongR . | S ~> T |- (MulBigRat L S) ~> (MulBigRat L T);
         DivBigRatCongL . | S ~> T |- (DivBigRat S R) ~> (DivBigRat T R);
