@@ -9,6 +9,9 @@
     unused_imports, // generated parser code may include unused imports
 )]
 
+mod calc_numeric_cast;
+mod rhocalc_numeric_cast;
+
 pub mod ambient;
 pub mod calculator;
 pub mod lambda;

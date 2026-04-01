@@ -100,6 +100,26 @@ language! {
         CastBag . b:Bag |- b : Proc;
         CastMap . m:Map |- m : Proc;
 
+        // Numeric casts (see `docs/design/made/native-types/numeric-casting.md`).
+        CastIntBinProc . a:Proc, w:Int |- "cast_int" "(" a "," w ")" : Proc ![{
+            crate::rhocalc_numeric_cast::proc_cast_int_bin(&a, w)
+        }] fold;
+        CastUIntBinProc . a:Proc, w:Int |- "cast_uint" "(" a "," w ")" : Proc ![{
+            crate::rhocalc_numeric_cast::proc_cast_uint_bin(&a, w)
+        }] fold;
+        CastFloatBinProc . a:Proc, w:Int |- "cast_float" "(" a "," w ")" : Proc ![{
+            crate::rhocalc_numeric_cast::proc_cast_float_bin(&a, w)
+        }] fold;
+        CastFixedBinProc . a:Proc, w:Int |- "cast_fixed" "(" a "," w ")" : Proc ![{
+            crate::rhocalc_numeric_cast::proc_cast_fixed_bin(&a, w)
+        }] fold;
+        CastBigintUnProc . a:Proc |- "bigint" "(" a ")" : Proc ![{
+            crate::rhocalc_numeric_cast::proc_cast_bigint_unary(&a)
+        }] fold;
+        CastBigratUnProc . a:Proc |- "bigrat" "(" a ")" : Proc ![{
+            crate::rhocalc_numeric_cast::proc_cast_bigrat_unary(&a)
+        }] fold;
+
         // `fold` (not `step`): `step` HOL rules are skipped for non-native categories like Proc.
         FractionProc . a:Proc, b:Proc |- "fraction" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
@@ -971,6 +991,16 @@ language! {
         CastFixedCong . | S ~> T |- (CastFixed S) ~> (CastFixed T);
         FractionProcCongL . | S ~> T |- (FractionProc S X) ~> (FractionProc T X);
         FractionProcCongR . | S ~> T |- (FractionProc X S) ~> (FractionProc X T);
+        CastIntBinProcCongL . | S ~> T |- (CastIntBinProc S R) ~> (CastIntBinProc T R);
+        CastIntBinProcCongR . | S ~> T |- (CastIntBinProc L S) ~> (CastIntBinProc L T);
+        CastUIntBinProcCongL . | S ~> T |- (CastUIntBinProc S R) ~> (CastUIntBinProc T R);
+        CastUIntBinProcCongR . | S ~> T |- (CastUIntBinProc L S) ~> (CastUIntBinProc L T);
+        CastFloatBinProcCongL . | S ~> T |- (CastFloatBinProc S R) ~> (CastFloatBinProc T R);
+        CastFloatBinProcCongR . | S ~> T |- (CastFloatBinProc L S) ~> (CastFloatBinProc L T);
+        CastFixedBinProcCongL . | S ~> T |- (CastFixedBinProc S R) ~> (CastFixedBinProc T R);
+        CastFixedBinProcCongR . | S ~> T |- (CastFixedBinProc L S) ~> (CastFixedBinProc L T);
+        CastBigintUnProcCong . | S ~> T |- (CastBigintUnProc S) ~> (CastBigintUnProc T);
+        CastBigratUnProcCong . | S ~> T |- (CastBigratUnProc S) ~> (CastBigratUnProc T);
         ToIntCong . | S ~> T |- (ToInt S) ~> (ToInt T);
         ToFloatCong . | S ~> T |- (ToFloat S) ~> (ToFloat T);
         ToBoolCong . | S ~> T |- (ToBool S) ~> (ToBool T);

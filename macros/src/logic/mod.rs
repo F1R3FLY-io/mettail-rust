@@ -597,6 +597,26 @@ fn generate_fold_big_step_rules(
                             if let #category::#err_ident = t;
                     });
                 }
+                for cast_err in [
+                    "CastErrInt",
+                    "CastErrUInt32",
+                    "CastErrFloat",
+                    "CastErrFixed",
+                    "CastErrBigInt",
+                ] {
+                    let cast_err_ident = format_ident!("{}", cast_err);
+                    if language.terms.iter().any(|r| {
+                        r.category == *category
+                            && r.label == cast_err_ident
+                            && fold_field_count(r) == 0
+                    }) {
+                        rules.push(quote! {
+                            #fold_rel(t.clone(), t.clone()) <--
+                                #cat_rel(t),
+                                if let #category::#cast_err_ident = t;
+                        });
+                    }
+                }
             }
 
             for rule in &language.terms {
@@ -783,7 +803,60 @@ fn generate_fold_big_step_rules(
                     }
                     let label = &rule.label;
                     let rust_code = &rule.rust_code.as_ref().unwrap().code;
-                    let res_expr = quote! { #category::#num_lit((#rust_code)) };
+                    let label_str = label.to_string();
+                    let res_expr = if matches!(
+                        label_str.as_str(),
+                        "CastIntBin" | "CastUIntBin" | "CastFloatBin" | "CastFixedBin"
+                            | "CastBigintUn" | "CastBigratUn"
+                    ) {
+                        if label_str == "CastBigratUn" {
+                            quote! {
+                                match (#rust_code) {
+                                    Some(__v) => #category::RatLit(__v),
+                                    None => #category::Err,
+                                }
+                            }
+                        } else if label_str == "CastBigintUn" {
+                            quote! {
+                                match (#rust_code) {
+                                    Some(__v) => #category::NumLit(__v),
+                                    None => #category::CastErrBigInt,
+                                }
+                            }
+                        } else if label_str == "CastIntBin" {
+                            quote! {
+                                match (#rust_code) {
+                                    Some(__v) => #category::NumLit(__v),
+                                    None => #category::CastErrInt,
+                                }
+                            }
+                        } else if label_str == "CastUIntBin" {
+                            quote! {
+                                match (#rust_code) {
+                                    Some(__v) => #category::NumLit(__v),
+                                    None => #category::CastErrUInt32,
+                                }
+                            }
+                        } else if label_str == "CastFloatBin" {
+                            quote! {
+                                match (#rust_code) {
+                                    Some(__v) => #category::FloatLit(__v),
+                                    None => #category::CastErrFloat,
+                                }
+                            }
+                        } else if label_str == "CastFixedBin" {
+                            quote! {
+                                match (#rust_code) {
+                                    Some(__v) => #category::FixedLit(__v),
+                                    None => #category::CastErrFixed,
+                                }
+                            }
+                        } else {
+                            quote! { #category::#num_lit((#rust_code)) }
+                        }
+                    } else {
+                        quote! { #category::#num_lit((#rust_code)) }
+                    };
                     if param_count == 1 {
                         let p0 = &param_names[0];
                         let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
@@ -1158,7 +1231,19 @@ fn generate_fold_big_step_rules(
                 let rust_code = &rule.rust_code.as_ref().unwrap().code;
 
                 // Only emit fold when result is not Err (e.g. Add only rewrites when both args are ints).
-                let filter_err = if category_has_err {
+                // Exception: numeric cast folds that *finalize* to `Err` on failure (invalid width, NaN, …)
+                // must still produce `fold_proc(_, Err)` so the trigger rewrites to `error`.
+                let label_str = label.to_string();
+                let fold_fold_through_err = matches!(
+                    label_str.as_str(),
+                    "CastIntBinProc"
+                        | "CastUIntBinProc"
+                        | "CastFloatBinProc"
+                        | "CastFixedBinProc"
+                        | "CastBigintUnProc"
+                        | "CastBigratUnProc"
+                );
+                let filter_err = if category_has_err && !fold_fold_through_err {
                     quote! {
                         ,
                         if (match & res { #category :: #err_label => false , _ => true })

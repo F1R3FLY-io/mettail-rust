@@ -104,6 +104,11 @@ language! {
         // reduce invalid rationals (e.g. fraction with zero denominator) here instead of panicking.
         // The procedural macro keys off the zero-ary `Err` name on BigRat when lowering Fraction.
         Err . |- "error" : BigRat ;
+        CastErrInt . |- "cast_error_int" : Int ;
+        CastErrUInt32 . |- "cast_error_uint" : UInt32 ;
+        CastErrFixed . |- "cast_error_fixed" : Fixed ;
+        CastErrFloat . |- "cast_error_float" : Float ;
+        CastErrBigInt . |- "cast_error_bigint" : BigInt ;
         // try_from_nd is None when the denominator is zero; the step rule maps that to `Err`.
         Fraction . a:BigInt, b:BigInt |- "fraction" "(" a "," b ")" : BigRat ![{
             mettail_runtime::CanonicalBigRat::try_from_nd(a.get().clone(), b.get().clone())
@@ -296,6 +301,26 @@ language! {
                 other => panic!("str(): cannot convert Proc variant to Str: {:?}", other),
             }
         }] fold;
+        // Explicit numeric casts (see `docs/design/made/native-types/numeric-casting.md`).
+        // Use `cast_int` / `cast_float` names so unary `int` / `float` on Proc stay unambiguous.
+        CastIntBin . a:Proc, w:Int |- "cast_int" "(" a "," w ")" : Int ![{
+            crate::calc_numeric_cast::try_cast_int_bin(&a, w)
+        }] fold;
+        CastUIntBin . a:Proc, w:Int |- "cast_uint" "(" a "," w ")" : UInt32 ![{
+            crate::calc_numeric_cast::try_cast_uint_bin(&a, w)
+        }] fold;
+        CastFloatBin . a:Proc, w:Int |- "cast_float" "(" a "," w ")" : Float ![{
+            crate::calc_numeric_cast::try_cast_float_bin(&a, w)
+        }] fold;
+        CastFixedBin . a:Proc, w:Int |- "cast_fixed" "(" a "," w ")" : Fixed ![{
+            crate::calc_numeric_cast::try_cast_fixed_bin(&a, w)
+        }] fold;
+        CastBigintUn . a:Proc |- "bigint" "(" a ")" : BigInt ![{
+            crate::calc_numeric_cast::try_cast_bigint_unary(&a)
+        }] fold;
+        CastBigratUn . a:Proc |- "bigrat" "(" a ")" : BigRat ![{
+            crate::calc_numeric_cast::try_cast_bigrat_unary(&a)
+        }] fold;
         // List operations (List = Vec<Proc>). Fold/step pass payloads; rust_code returns payload.
         ConcatList . a:List, b:List |- "concat" "(" a "," b ")" : List ![
             { let mut o = a.clone(); o.extend(b.iter().cloned()); o }
@@ -473,6 +498,16 @@ language! {
         ProcToFloatCong . | S ~> T |- (ProcToFloat S) ~> (ProcToFloat T);
         ProcToBoolCong . | S ~> T |- (ProcToBool S) ~> (ProcToBool T);
         ProcToStrCong . | S ~> T |- (ProcToStr S) ~> (ProcToStr T);
+        CastIntBinCongL . | S ~> T |- (CastIntBin S R) ~> (CastIntBin T R);
+        CastIntBinCongR . | S ~> T |- (CastIntBin L S) ~> (CastIntBin L T);
+        CastUIntBinCongL . | S ~> T |- (CastUIntBin S R) ~> (CastUIntBin T R);
+        CastUIntBinCongR . | S ~> T |- (CastUIntBin L S) ~> (CastUIntBin L T);
+        CastFloatBinCongL . | S ~> T |- (CastFloatBin S R) ~> (CastFloatBin T R);
+        CastFloatBinCongR . | S ~> T |- (CastFloatBin L S) ~> (CastFloatBin L T);
+        CastFixedBinCongL . | S ~> T |- (CastFixedBin S R) ~> (CastFixedBin T R);
+        CastFixedBinCongR . | S ~> T |- (CastFixedBin L S) ~> (CastFixedBin L T);
+        CastBigintUnCong . | S ~> T |- (CastBigintUn S) ~> (CastBigintUn T);
+        CastBigratUnCong . | S ~> T |- (CastBigratUn S) ~> (CastBigratUn T);
         // Proc (unified variant) congruence
         ProcIntCong . | S ~> T |- (ProcInt S) ~> (ProcInt T);
         ProcFloatCong . | S ~> T |- (ProcFloat S) ~> (ProcFloat T);

@@ -21,6 +21,20 @@ pub use canonical_bigrat::CanonicalBigRat;
 mod canonical_fixed_point;
 pub use canonical_fixed_point::CanonicalFixedPoint;
 
+mod numeric_cast;
+pub use numeric_cast::{
+    cast_bigint_from_bigrat, cast_bigint_from_f64, cast_bigint_from_fixed, cast_bigrat_from_bigint,
+    cast_bigrat_from_f64, cast_bigrat_from_fixed, cast_bigrat_from_i64, cast_bigrat_from_u32,
+    cast_fixed_from_bigrat, cast_fixed_from_bigint, cast_fixed_from_f64, cast_fixed_from_fixed,
+    cast_float_from_bigint, cast_float_from_bigrat, cast_float_from_f64, cast_float_from_f64_allow_nonfinite,
+    cast_float_from_fixed, cast_int_from_bigint, cast_int_from_bigrat, cast_int_from_f64,
+    cast_int_from_fixed, cast_int_from_i64, cast_int_from_u32, cast_uint_from_bigint,
+    cast_uint_from_bigrat, cast_uint_from_f64, cast_uint_from_fixed, cast_uint_from_i64,
+    cast_uint_from_u32, f64_to_exact_rational, signed_modular, unsigned_modular, CastError,
+    FloatCastWidth, MAX_FIXED_PLACES, MAX_INT_UINT_WIDTH, validate_fixed_places, validate_float_width,
+    validate_int_uint_width,
+};
+
 // Collection types
 mod hashbag;
 pub use hashbag::HashBag;

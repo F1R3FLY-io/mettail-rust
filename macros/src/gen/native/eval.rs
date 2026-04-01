@@ -87,6 +87,23 @@ fn hol_bigrat_fraction_try_from_nd_option(
     category_has_err && label.to_string() == "Fraction" && category.to_string() == "BigRat"
 }
 
+/// Calculator numeric casts return `Option<native>`; `None` maps to `cast_error_*` / `Err` via fold.
+fn hol_numeric_cast_option(
+    _language: &LanguageDef,
+    category: &syn::Ident,
+    label: &syn::Ident,
+) -> bool {
+    matches!(
+        (category.to_string().as_str(), label.to_string().as_str()),
+        ("Int", "CastIntBin")
+            | ("UInt32", "CastUIntBin")
+            | ("Float", "CastFloatBin")
+            | ("Fixed", "CastFixedBin")
+            | ("BigInt", "CastBigintUn")
+            | ("BigRat", "CastBigratUn")
+    )
+}
+
 /// `DivBigRat` must not call `num-rational` division when the divisor is zero (panics in `reduce`).
 fn hol_bigrat_div_zero_guard(
     language: &LanguageDef,
@@ -261,6 +278,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 let rust_code = &rust_code_block.code;
                 let fraction_option =
                     hol_bigrat_fraction_try_from_nd_option(language, category, label);
+                let numeric_cast_option = hol_numeric_cast_option(language, category, label);
                 let div_zero_guard = hol_bigrat_div_zero_guard(language, category, label);
                 let match_arm = if fraction_option && param_count > 0 {
                     quote! {
@@ -270,6 +288,18 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                 Some(__r) => __r,
                                 None => panic!(
                                     "zero denominator in fraction; normalize with rewrite rules to error",
+                                ),
+                            }
+                        },
+                    }
+                } else if numeric_cast_option && param_count > 0 {
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#param_bindings)*
+                            match (#rust_code) {
+                                Some(__r) => __r,
+                                None => panic!(
+                                    "numeric cast error; normalize with rewrite rules to cast_error",
                                 ),
                             }
                         },
@@ -313,6 +343,13 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                     Some(__r) => Some(__r),
                                     None => None,
                                 }
+                            },
+                        }
+                    } else if numeric_cast_option && param_count > 0 {
+                        quote! {
+                            #category::#label(#(#param_names),*) => {
+                                #(#try_param_bindings)*
+                                (#rust_code)
                             },
                         }
                     } else if div_zero_guard && param_count == 2 {
@@ -383,6 +420,30 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             try_eval_arms.push(quote! {
                 #category::#err_ident => None,
             });
+        }
+
+        for cast_err_label in [
+            "CastErrInt",
+            "CastErrUInt32",
+            "CastErrFloat",
+            "CastErrFixed",
+            "CastErrBigInt",
+        ] {
+            let cast_err_ident = quote::format_ident!("{}", cast_err_label);
+            if rules.iter().any(|r| {
+                r.category == *category && r.label == cast_err_ident && fold_field_count(r) == 0
+            }) {
+                match_arms.push(quote! {
+                    #category::#cast_err_ident => {
+                        panic!(
+                            "`cast_error` normal form has no native value; inspect the term or use display"
+                        );
+                    }
+                });
+                try_eval_arms.push(quote! {
+                    #category::#cast_err_ident => None,
+                });
+            }
         }
 
         if !match_arms.is_empty() {

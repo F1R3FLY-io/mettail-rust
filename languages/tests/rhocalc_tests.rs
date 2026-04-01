@@ -853,6 +853,122 @@ mod beta {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+// Numeric casts (`cast_int`, … on Proc)
+// ════════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn rhocalc_cast_int_float_floor() {
+    let results = run("{cast_int(-3.5, 8)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|nf| nf == "-4" || nf.contains("-4")),
+        "expected -4, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_int_invalid_width_error() {
+    let results = run("{cast_int(1, 7)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|d| d == "error" || d.contains("error")),
+        "expected error NF, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_int_nonfinite_float_is_error() {
+    let results = run("{cast_int(0.0 / 0.0, 8)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|d| d == "error" || d.contains("error")),
+        "expected error for NaN source, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_uint_float_clamp() {
+    let results = run("{cast_uint(-3.5, 8)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|nf| nf == "0u32" || nf == "0"),
+        "expected 0 / 0u32, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_uint_modular_u32_literal() {
+    let results = run("{cast_uint(257u32, 8)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|nf| nf == "1u32" || nf == "1"),
+        "expected modular 257 -> 1 in 8 bits, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_float_overflow_to_inf() {
+    let results = run("{cast_float(1e50, 32)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|nf| nf.to_ascii_lowercase().contains("inf")),
+        "expected +Inf in a normal form, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_bigint_unary_from_float() {
+    let results = run("{bigint(-3.5)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|nf| nf.contains("-4")),
+        "expected -4n or similar, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_fixed_floor() {
+    let results = run("{cast_fixed(3.49p2, 1)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter()
+            .any(|nf| nf.contains("3.4p1") || nf.contains("3.4")),
+        "expected 3.4p1, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_int_congruence_through_add() {
+    assert_reduces_to("{cast_int({1 + 2}, 8)}", "3");
+}
+
+#[test]
+fn rhocalc_cast_uint_signed_int_twos_complement() {
+    // `bitnot 0` → −1 (`CastInt`). Nesting `bitnot` inside an inner `{…}` PPar can block cast folds;
+    // use it directly as the first operand of `cast_uint`.
+    assert_reduces_to("{cast_uint(bitnot 0, 8)}", "255");
+}
+
+#[test]
+fn rhocalc_cast_under_send_reduces_via_comm() {
+    let results = run("{(c?x).{*(x)} | c!({cast_int(-3.5, 8)})}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|nf| nf == "-4" || nf.contains("-4")),
+        "expected `-4` after comm + cast in send, got {:?}",
+        nfs
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // Type inference
 // ════════════════════════════════════════════════════════════════════════════════
 

@@ -46,7 +46,7 @@ impl CanonicalFixedPoint {
         }
     }
 
-    fn value_ratio(&self) -> Ratio<BigInt> {
+    pub(crate) fn value_ratio(&self) -> Ratio<BigInt> {
         Ratio::new(self.unscaled.get().clone(), pow10(self.places))
     }
 

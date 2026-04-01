@@ -1165,6 +1165,67 @@ fn test_map_values() {
     calc_normal_form("at(values(map(1:10, 2:20)), 1)", "20");
 }
 
+// ── Explicit numeric casts (`cast_int`, …) — see `docs/design/made/native-types/numeric-casting.md`
+
+#[test]
+fn test_cast_int_float_floor() {
+    calc_normal_form("cast_int(-3.5, 8)", "-4");
+}
+
+#[test]
+fn test_cast_uint_float_clamp() {
+    calc_normal_form("cast_uint(-3.5, 8)", "0");
+}
+
+#[test]
+fn test_cast_uint_modular_u32() {
+    calc_normal_form("cast_uint(257u32, 8)", "1");
+}
+
+#[test]
+fn test_cast_uint_signed_int_twos_complement() {
+    // `n` literals do not allow a leading `-`; use `Int` −1 (same modular semantics as §4).
+    calc_normal_form("cast_uint(-1, 8)", "255");
+}
+
+#[test]
+fn test_bigrat_unary_from_int_and_float() {
+    // Whole rationals use the same NF display as `42r` / int (`42`), not a `42r` suffix.
+    calc_normal_form("bigrat(42)", "42");
+    calc_normal_form("bigrat(0.5)", "1/2");
+}
+
+#[test]
+fn test_cast_int_binary_name_keeps_unary_int_disambiguated() {
+    calc_normal_form("int(3.14)", "3");
+    calc_normal_form("cast_int(3.14, 8)", "3");
+}
+
+#[test]
+fn test_cast_int_invalid_width() {
+    calc_normal_form("cast_int(1, 7)", "cast_error_int");
+}
+
+#[test]
+fn test_cast_int_nonfinite_float_is_error() {
+    calc_normal_form("cast_int(0.0 / 0.0, 8)", "cast_error_int");
+}
+
+#[test]
+fn test_cast_float_overflow_to_inf() {
+    calc_normal_form("cast_float(1e50, 32)", "inf");
+}
+
+#[test]
+fn test_bigint_unary_from_float() {
+    calc_normal_form("bigint(-3.5)", "-4");
+}
+
+#[test]
+fn test_cast_fixed_floor() {
+    calc_normal_form("cast_fixed(3.49p2, 1)", "3.4p1");
+}
+
 // ── Regression: existing casts still work ──
 
 #[test]
