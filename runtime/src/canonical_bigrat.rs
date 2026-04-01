@@ -228,4 +228,20 @@ mod tests {
         y.hash(&mut hy);
         assert_eq!(hx.finish(), hy.finish());
     }
+
+    #[test]
+    fn bitwise_aligned_or_and_not_examples() {
+        let a = CanonicalBigRat::try_from_nd(BigInt::from(7), BigInt::from(12)).unwrap();
+        let b = CanonicalBigRat::try_from_nd(BigInt::from(11), BigInt::from(16)).unwrap();
+        let or = a.bitor_aligned(b);
+        assert_eq!(or.get().to_string(), "61/48");
+
+        let a = CanonicalBigRat::try_from_nd(BigInt::from(7), BigInt::from(12)).unwrap();
+        let b = CanonicalBigRat::try_from_nd(BigInt::from(13), BigInt::from(16)).unwrap();
+        let and = a.bitand_aligned(b);
+        assert_eq!(and.get().to_string(), "1/12");
+
+        let z = CanonicalBigRat::try_from_nd(BigInt::from(0), BigInt::from(1)).unwrap();
+        assert_eq!(z.bitnot().get().to_string(), "-1");
+    }
 }
