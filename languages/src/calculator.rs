@@ -200,7 +200,6 @@ language! {
         BitAndFixed . a:Fixed, b:Fixed |- a "bitand" b : Fixed ![a & b] fold;
         BitOrFixed . a:Fixed, b:Fixed |- a "bitor" b : Fixed ![a | b] fold;
         BitNotFixed . a:Fixed |- "bitnot" a : Fixed ![mettail_runtime::CanonicalFixedPoint::new(!a.unscaled().clone(), a.places())] fold;
-        BitXorFixed . a:Fixed, b:Fixed |- a "bitxor" b : Fixed ![a ^ b] fold;
         // Proc → concrete type projections (runtime type extraction)
         // These are fold rules: fold_proc reduces ElemList → injection variant before rust_code runs
         ProcToInt . a:Proc |- "int" "(" a ")" : Int ![{
@@ -469,8 +468,6 @@ language! {
         BitOrFixedCongL . | S ~> T |- (BitOrFixed S R) ~> (BitOrFixed T R);
         BitOrFixedCongR . | S ~> T |- (BitOrFixed L S) ~> (BitOrFixed L T);
         BitNotFixedCong . | S ~> T |- (BitNotFixed S) ~> (BitNotFixed T);
-        BitXorFixedCongL . | S ~> T |- (BitXorFixed S R) ~> (BitXorFixed T R);
-        BitXorFixedCongR . | S ~> T |- (BitXorFixed L S) ~> (BitXorFixed L T);
         // Proc → concrete type projection congruence
         ProcToIntCong . | S ~> T |- (ProcToInt S) ~> (ProcToInt T);
         ProcToFloatCong . | S ~> T |- (ProcToFloat S) ~> (ProcToFloat T);

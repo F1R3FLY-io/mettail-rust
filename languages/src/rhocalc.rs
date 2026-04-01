@@ -540,16 +540,6 @@ language! {
             }}
         ] fold;
 
-        BitXor . a:Proc, b:Proc |- a "bitxor" b : Proc ![
-            { match (&a, &b) {
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x ^ *y))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
         // List operations: take Proc, match CastList/ListLit in semantic (like arithmetic)
         ConcatList . a:Proc, b:Proc |- "concat" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
@@ -920,10 +910,6 @@ language! {
         BitOrCongL . | S ~> T |- (BitOr S X) ~> (BitOr T X);
 
         BitOrCongR . | S ~> T |- (BitOr X S) ~> (BitOr X T);
-
-        BitXorCongL . | S ~> T |- (BitXor S X) ~> (BitXor T X);
-
-        BitXorCongR . | S ~> T |- (BitXor X S) ~> (BitXor X T);
 
         BitNotCong . | S ~> T |- (BitNot S) ~> (BitNot T);
 
