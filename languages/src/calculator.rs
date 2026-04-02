@@ -37,7 +37,7 @@ language! {
             } ]
         }
         BigInt {
-            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n";
+            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n";
             eval: ![ {
                 mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
             } ]
@@ -171,6 +171,8 @@ language! {
         BitOrUInt32 . a:UInt32, b:UInt32 |- a "bitor" b : UInt32 ![a | b] fold;
         BitNotUInt32 . a:UInt32 |- "bitnot" a : UInt32 ![!a] fold;
         AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ![a + b] fold;
+        SubBigInt . a:BigInt, b:BigInt |- a "-" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() - b.get())] fold;
+        NegBigInt . a:BigInt |- "-" a : BigInt ![mettail_runtime::CanonicalBigInt::from(-a.get())] fold;
         BitAndBigInt . a:BigInt, b:BigInt |- a "bitand" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() & b.get())] fold;
         BitOrBigInt . a:BigInt, b:BigInt |- a "bitor" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() | b.get())] fold;
         BitNotBigInt . a:BigInt |- "bitnot" a : BigInt ![mettail_runtime::CanonicalBigInt::from(!a.get())] fold;
@@ -205,58 +207,6 @@ language! {
         BitAndFixed . a:Fixed, b:Fixed |- a "bitand" b : Fixed ![a & b] fold;
         BitOrFixed . a:Fixed, b:Fixed |- a "bitor" b : Fixed ![a | b] fold;
         BitNotFixed . a:Fixed |- "bitnot" a : Fixed ![mettail_runtime::CanonicalFixedPoint::new(!a.unscaled().clone(), a.places())] fold;
-        // Proc → concrete type projections (runtime type extraction)
-        // These are fold rules: fold_proc reduces ElemList → injection variant before rust_code runs
-        ProcToInt . a:Proc |- "int" "(" a ")" : Int ![{
-            match a {
-                Proc::ProcInt(i) => i.as_ref().eval(),
-                Proc::ProcFloat(f) => f.as_ref().eval().get() as i32,
-                Proc::ProcFixed(x) => x.as_ref().eval().unscaled().to_string().parse().unwrap_or(0),
-                Proc::ProcBool(b) => if b.as_ref().eval() { 1 } else { 0 },
-                Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(0),
-                Proc::ElemList(list, index) => {
-                    let idx = match index.as_ref() { Int::NumLit(n) => *n as usize, _ => panic!("ElemList: expected Int literal") };
-                    let elem = match list.as_ref() { List::ListLit(v) => v.get(idx).cloned().expect("ElemList: index out of bounds"), _ => panic!("int(): ElemList list not a literal") };
-                    match elem {
-                        Proc::ProcInt(i) => i.as_ref().eval(),
-                        Proc::ProcFloat(f) => f.as_ref().eval().get() as i32,
-                        Proc::ProcFixed(x) => x.as_ref().eval().unscaled().to_string().parse().unwrap_or(0),
-                        Proc::ProcBool(b) => if b.as_ref().eval() { 1 } else { 0 },
-                        Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(0),
-                        other => panic!("int(): cannot convert list element to Int: {:?}", other),
-                    }
-                }
-                other => panic!("int(): cannot convert Proc variant to Int: {:?}", other),
-            }
-        }] fold;
-        ProcToFloat . a:Proc |- "float" "(" a ")" : Float ![{
-            match a {
-                Proc::ProcFloat(f) => f.as_ref().eval(),
-                Proc::ProcFixed(x) => mettail_runtime::CanonicalFloat64::from(
-                    num_traits::ToPrimitive::to_f64(&x.as_ref().eval().unscaled().clone()).unwrap_or(0.0)
-                        / 10f64.powi(x.as_ref().eval().places() as i32),
-                ),
-                Proc::ProcInt(i) => mettail_runtime::CanonicalFloat64::from(i.as_ref().eval() as f64),
-                Proc::ProcBool(b) => mettail_runtime::CanonicalFloat64::from(if b.as_ref().eval() { 1.0 } else { 0.0 }),
-                Proc::ProcStr(s) => mettail_runtime::CanonicalFloat64::from(s.as_ref().eval().parse::<f64>().unwrap_or(0.0)),
-                Proc::ElemList(list, index) => {
-                    let idx = match index.as_ref() { Int::NumLit(n) => *n as usize, _ => panic!("ElemList: expected Int literal") };
-                    let elem = match list.as_ref() { List::ListLit(v) => v.get(idx).cloned().expect("ElemList: index out of bounds"), _ => panic!("float(): ElemList list not a literal") };
-                    match elem {
-                        Proc::ProcFloat(f) => f.as_ref().eval(),
-                        Proc::ProcFixed(x) => mettail_runtime::CanonicalFloat64::from(
-                            num_traits::ToPrimitive::to_f64(&x.as_ref().eval().unscaled().clone()).unwrap_or(0.0)
-                                / 10f64.powi(x.as_ref().eval().places() as i32),
-                        ),
-                        Proc::ProcInt(i) => mettail_runtime::CanonicalFloat64::from(i.as_ref().eval() as f64),
-                        Proc::ProcBool(b) => mettail_runtime::CanonicalFloat64::from(if b.as_ref().eval() { 1.0 } else { 0.0 }),
-                        Proc::ProcStr(s) => mettail_runtime::CanonicalFloat64::from(s.as_ref().eval().parse::<f64>().unwrap_or(0.0)),
-                        other => panic!("float(): cannot convert list element to Float: {:?}", other),
-                    }
-                }
-                other => panic!("float(): cannot convert Proc variant to Float: {:?}", other),
-            }
-        }] fold;
         ProcToBool . a:Proc |- "bool" "(" a ")" : Bool ![{
             match a {
                 Proc::ProcBool(b) => b.as_ref().eval(),
@@ -301,25 +251,24 @@ language! {
                 other => panic!("str(): cannot convert Proc variant to Str: {:?}", other),
             }
         }] fold;
-        // Explicit numeric casts (see `docs/design/made/native-types/numeric-casting.md`).
-        // Use `cast_int` / `cast_float` names so unary `int` / `float` on Proc stay unambiguous.
-        CastIntBin . a:Proc, w:Int |- "cast_int" "(" a "," w ")" : Int ![{
-            crate::calc_numeric_cast::try_cast_int_bin(&a, w)
+        // Explicit numeric casts (see `docs/design/made/native-types/numeric-casting.md`): binary width required.
+        IntBin . a:Proc, w:Int |- "int" "(" a "," w ")" : Int ![{
+            crate::numeric_dispatch::calc_try_int_bin(&a, w)
         }] fold;
-        CastUIntBin . a:Proc, w:Int |- "cast_uint" "(" a "," w ")" : UInt32 ![{
-            crate::calc_numeric_cast::try_cast_uint_bin(&a, w)
+        UIntBin . a:Proc, w:Int |- "uint" "(" a "," w ")" : UInt32 ![{
+            crate::numeric_dispatch::calc_try_uint_bin(&a, w)
         }] fold;
-        CastFloatBin . a:Proc, w:Int |- "cast_float" "(" a "," w ")" : Float ![{
-            crate::calc_numeric_cast::try_cast_float_bin(&a, w)
+        FloatBin . a:Proc, w:Int |- "float" "(" a "," w ")" : Float ![{
+            crate::numeric_dispatch::calc_try_float_bin(&a, w)
         }] fold;
-        CastFixedBin . a:Proc, w:Int |- "cast_fixed" "(" a "," w ")" : Fixed ![{
-            crate::calc_numeric_cast::try_cast_fixed_bin(&a, w)
+        FixedBin . a:Proc, w:Int |- "fixed" "(" a "," w ")" : Fixed ![{
+            crate::numeric_dispatch::calc_try_fixed_bin(&a, w)
         }] fold;
-        CastBigintUn . a:Proc |- "bigint" "(" a ")" : BigInt ![{
-            crate::calc_numeric_cast::try_cast_bigint_unary(&a)
+        BigintCast . a:Proc |- "bigint" "(" a ")" : BigInt ![{
+            crate::numeric_dispatch::calc_try_bigint_unary(&a)
         }] fold;
-        CastBigratUn . a:Proc |- "bigrat" "(" a ")" : BigRat ![{
-            crate::calc_numeric_cast::try_cast_bigrat_unary(&a)
+        BigratCast . a:Proc |- "bigrat" "(" a ")" : BigRat ![{
+            crate::numeric_dispatch::calc_try_bigrat_unary(&a)
         }] fold;
         // List operations (List = Vec<Proc>). Fold/step pass payloads; rust_code returns payload.
         ConcatList . a:List, b:List |- "concat" "(" a "," b ")" : List ![
@@ -494,20 +443,18 @@ language! {
         BitOrFixedCongR . | S ~> T |- (BitOrFixed L S) ~> (BitOrFixed L T);
         BitNotFixedCong . | S ~> T |- (BitNotFixed S) ~> (BitNotFixed T);
         // Proc → concrete type projection congruence
-        ProcToIntCong . | S ~> T |- (ProcToInt S) ~> (ProcToInt T);
-        ProcToFloatCong . | S ~> T |- (ProcToFloat S) ~> (ProcToFloat T);
         ProcToBoolCong . | S ~> T |- (ProcToBool S) ~> (ProcToBool T);
         ProcToStrCong . | S ~> T |- (ProcToStr S) ~> (ProcToStr T);
-        CastIntBinCongL . | S ~> T |- (CastIntBin S R) ~> (CastIntBin T R);
-        CastIntBinCongR . | S ~> T |- (CastIntBin L S) ~> (CastIntBin L T);
-        CastUIntBinCongL . | S ~> T |- (CastUIntBin S R) ~> (CastUIntBin T R);
-        CastUIntBinCongR . | S ~> T |- (CastUIntBin L S) ~> (CastUIntBin L T);
-        CastFloatBinCongL . | S ~> T |- (CastFloatBin S R) ~> (CastFloatBin T R);
-        CastFloatBinCongR . | S ~> T |- (CastFloatBin L S) ~> (CastFloatBin L T);
-        CastFixedBinCongL . | S ~> T |- (CastFixedBin S R) ~> (CastFixedBin T R);
-        CastFixedBinCongR . | S ~> T |- (CastFixedBin L S) ~> (CastFixedBin L T);
-        CastBigintUnCong . | S ~> T |- (CastBigintUn S) ~> (CastBigintUn T);
-        CastBigratUnCong . | S ~> T |- (CastBigratUn S) ~> (CastBigratUn T);
+        IntBinCongL . | S ~> T |- (IntBin S R) ~> (IntBin T R);
+        IntBinCongR . | S ~> T |- (IntBin L S) ~> (IntBin L T);
+        UIntBinCongL . | S ~> T |- (UIntBin S R) ~> (UIntBin T R);
+        UIntBinCongR . | S ~> T |- (UIntBin L S) ~> (UIntBin L T);
+        FloatBinCongL . | S ~> T |- (FloatBin S R) ~> (FloatBin T R);
+        FloatBinCongR . | S ~> T |- (FloatBin L S) ~> (FloatBin L T);
+        FixedBinCongL . | S ~> T |- (FixedBin S R) ~> (FixedBin T R);
+        FixedBinCongR . | S ~> T |- (FixedBin L S) ~> (FixedBin L T);
+        BigintCastCong . | S ~> T |- (BigintCast S) ~> (BigintCast T);
+        BigratCastCong . | S ~> T |- (BigratCast S) ~> (BigratCast T);
         // Proc (unified variant) congruence
         ProcIntCong . | S ~> T |- (ProcInt S) ~> (ProcInt T);
         ProcFloatCong . | S ~> T |- (ProcFloat S) ~> (ProcFloat T);
@@ -547,6 +494,9 @@ language! {
         ProcBigIntCong . | S ~> T |- (ProcBigInt S) ~> (ProcBigInt T);
         AddBigIntCongL . | S ~> T |- (AddBigInt S R) ~> (AddBigInt T R);
         AddBigIntCongR . | S ~> T |- (AddBigInt L S) ~> (AddBigInt L T);
+        SubBigIntCongL . | S ~> T |- (SubBigInt S R) ~> (SubBigInt T R);
+        SubBigIntCongR . | S ~> T |- (SubBigInt L S) ~> (SubBigInt L T);
+        NegBigIntCong . | S ~> T |- (NegBigInt S) ~> (NegBigInt T);
         BitAndBigIntCongL . | S ~> T |- (BitAndBigInt S R) ~> (BitAndBigInt T R);
         BitAndBigIntCongR . | S ~> T |- (BitAndBigInt L S) ~> (BitAndBigInt L T);
         BitOrBigIntCongL . | S ~> T |- (BitOrBigInt S R) ~> (BitOrBigInt T R);

@@ -88,6 +88,9 @@ fn hol_bigrat_fraction_try_from_nd_option(
 }
 
 /// Calculator numeric casts return `Option<native>`; `None` maps to `cast_error_*` / `Err` via fold.
+///
+/// Naming: `*Bin` = binary cast with explicit width/places (`int`, `uint`, `float`, `fixed`).
+/// `BigintCast` / `BigratCast` = unary `bigint` / `bigrat` from `Proc` (signed arbitrary precision; no `Un` suffix — avoids confusion with “unsigned”).
 fn hol_numeric_cast_option(
     _language: &LanguageDef,
     category: &syn::Ident,
@@ -95,12 +98,12 @@ fn hol_numeric_cast_option(
 ) -> bool {
     matches!(
         (category.to_string().as_str(), label.to_string().as_str()),
-        ("Int", "CastIntBin")
-            | ("UInt32", "CastUIntBin")
-            | ("Float", "CastFloatBin")
-            | ("Fixed", "CastFixedBin")
-            | ("BigInt", "CastBigintUn")
-            | ("BigRat", "CastBigratUn")
+        ("Int", "IntBin")
+            | ("UInt32", "UIntBin")
+            | ("Float", "FloatBin")
+            | ("Fixed", "FixedBin")
+            | ("BigInt", "BigintCast")
+            | ("BigRat", "BigratCast")
     )
 }
 

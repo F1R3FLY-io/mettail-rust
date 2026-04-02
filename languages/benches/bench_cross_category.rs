@@ -43,7 +43,7 @@ fn bench_eq_complex(c: &mut Criterion) {
 }
 
 fn bench_cast_int(c: &mut Criterion) {
-    let mut group = c.benchmark_group("cross_cat/cast_int");
+    let mut group = c.benchmark_group("cross_cat/int_width_cast");
     let input = "42";
     group.bench_function("baseline", |b| {
         b.iter(|| {

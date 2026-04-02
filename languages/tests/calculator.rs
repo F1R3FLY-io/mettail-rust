@@ -422,9 +422,9 @@ fn test_bigrat_bitwise_alignment_examples() {
 
 #[test]
 fn test_fixed_projections_proc() {
-    // `int` uses string parse of unscaled integer (100 for literal 10p1).
-    calc_normal_form("int(10p1)", "100");
-    calc_normal_form("float(10p1)", "10.0");
+    // Binary `int`/`float` use validated numeric_cast semantics (fixed-point value 10.0, not unscaled 100).
+    calc_normal_form("int(10p1, 32)", "10");
+    calc_normal_form("float(10p1, 64)", "10.0");
     calc_normal_form("bool(0p0)", "false");
     calc_normal_form("bool(1p0)", "true");
     calc_normal_form("str(1.5p1)", "1.5p1");
@@ -1026,44 +1026,44 @@ fn test_bare_variable_type_is_primary() {
 
 #[test]
 fn test_float_of_int() {
-    calc_normal_form("float(10)", "10.0");
+    calc_normal_form("float(10, 64)", "10.0");
 }
 
 #[test]
 fn test_nested_float_float_int() {
-    calc_normal_form("float(float(10))", "10.0");
+    calc_normal_form("float(float(10, 64), 64)", "10.0");
 }
 
 #[test]
 fn test_triple_nested_float() {
-    calc_normal_form("float(float(float(10)))", "10.0");
+    calc_normal_form("float(float(float(10, 64), 64), 64)", "10.0");
 }
 
 #[test]
 fn test_nested_int_int() {
-    calc_normal_form("int(int(5))", "5");
+    calc_normal_form("int(int(5, 32), 32)", "5");
 }
 
 #[test]
 fn test_nested_int_float() {
-    calc_normal_form("int(float(42))", "42");
+    calc_normal_form("int(float(42, 64), 32)", "42");
 }
 
 #[test]
 fn test_nested_float_int_arithmetic() {
-    calc_normal_form("sin(3.14) + 3.0 * float(float(10))", "30.001592652916486");
+    calc_normal_form("sin(3.14) + 3.0 * float(float(10, 64), 64)", "30.001592652916486");
 }
 
 // ── ProcTo* projections from list elements ──
 
 #[test]
 fn test_int_from_list_elem() {
-    calc_normal_form("int(at(list(3, 2.0, true), 0))", "3");
+    calc_normal_form("int(at(list(3, 2.0, true), 0), 32)", "3");
 }
 
 #[test]
 fn test_float_from_list_elem() {
-    calc_normal_form("float(at(list(3, 2.0, true), 1))", "2.0");
+    calc_normal_form("float(at(list(3, 2.0, true), 1), 64)", "2.0");
 }
 
 #[test]
@@ -1165,27 +1165,26 @@ fn test_map_values() {
     calc_normal_form("at(values(map(1:10, 2:20)), 1)", "20");
 }
 
-// ── Explicit numeric casts (`cast_int`, …) — see `docs/design/made/native-types/numeric-casting.md`
+// ── Explicit numeric casts — see `docs/design/made/native-types/numeric-casting.md`
 
 #[test]
 fn test_cast_int_float_floor() {
-    calc_normal_form("cast_int(-3.5, 8)", "-4");
+    calc_normal_form("int(-3.5, 8)", "-4");
 }
 
 #[test]
 fn test_cast_uint_float_clamp() {
-    calc_normal_form("cast_uint(-3.5, 8)", "0");
+    calc_normal_form("uint(-3.5, 8)", "0");
 }
 
 #[test]
 fn test_cast_uint_modular_u32() {
-    calc_normal_form("cast_uint(257u32, 8)", "1");
+    calc_normal_form("uint(257u32, 8)", "1");
 }
 
 #[test]
 fn test_cast_uint_signed_int_twos_complement() {
-    // `n` literals do not allow a leading `-`; use `Int` −1 (same modular semantics as §4).
-    calc_normal_form("cast_uint(-1, 8)", "255");
+    calc_normal_form("uint(-1, 8)", "255");
 }
 
 #[test]
@@ -1196,24 +1195,23 @@ fn test_bigrat_unary_from_int_and_float() {
 }
 
 #[test]
-fn test_cast_int_binary_name_keeps_unary_int_disambiguated() {
-    calc_normal_form("int(3.14)", "3");
-    calc_normal_form("cast_int(3.14, 8)", "3");
+fn test_binary_int_requires_width() {
+    calc_normal_form("int(3.14, 8)", "3");
 }
 
 #[test]
 fn test_cast_int_invalid_width() {
-    calc_normal_form("cast_int(1, 7)", "cast_error_int");
+    calc_normal_form("int(1, 7)", "cast_error_int");
 }
 
 #[test]
 fn test_cast_int_nonfinite_float_is_error() {
-    calc_normal_form("cast_int(0.0 / 0.0, 8)", "cast_error_int");
+    calc_normal_form("int(0.0 / 0.0, 8)", "cast_error_int");
 }
 
 #[test]
 fn test_cast_float_overflow_to_inf() {
-    calc_normal_form("cast_float(1e50, 32)", "inf");
+    calc_normal_form("float(1e50, 32)", "inf");
 }
 
 #[test]
@@ -1223,19 +1221,19 @@ fn test_bigint_unary_from_float() {
 
 #[test]
 fn test_cast_fixed_floor() {
-    calc_normal_form("cast_fixed(3.49p2, 1)", "3.4p1");
+    calc_normal_form("fixed(3.49p2, 1)", "3.4p1");
 }
 
-// ── Regression: existing casts still work ──
+// ── Regression: casts through Proc still work ──
 
 #[test]
 fn test_float_from_int_still_works() {
-    calc_normal_form("float(3)", "3.0");
+    calc_normal_form("float(3, 64)", "3.0");
 }
 
 #[test]
 fn test_int_from_float_still_works() {
-    calc_normal_form("int(3.14)", "3");
+    calc_normal_form("int(3.14, 32)", "3");
 }
 
 #[test]

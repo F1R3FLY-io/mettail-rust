@@ -806,45 +806,45 @@ fn generate_fold_big_step_rules(
                     let label_str = label.to_string();
                     let res_expr = if matches!(
                         label_str.as_str(),
-                        "CastIntBin" | "CastUIntBin" | "CastFloatBin" | "CastFixedBin"
-                            | "CastBigintUn" | "CastBigratUn"
+                        "IntBin" | "UIntBin" | "FloatBin" | "FixedBin"
+                            | "BigintCast" | "BigratCast"
                     ) {
-                        if label_str == "CastBigratUn" {
+                        if label_str == "BigratCast" {
                             quote! {
                                 match (#rust_code) {
                                     Some(__v) => #category::RatLit(__v),
                                     None => #category::Err,
                                 }
                             }
-                        } else if label_str == "CastBigintUn" {
+                        } else if label_str == "BigintCast" {
                             quote! {
                                 match (#rust_code) {
                                     Some(__v) => #category::NumLit(__v),
                                     None => #category::CastErrBigInt,
                                 }
                             }
-                        } else if label_str == "CastIntBin" {
+                        } else if label_str == "IntBin" {
                             quote! {
                                 match (#rust_code) {
                                     Some(__v) => #category::NumLit(__v),
                                     None => #category::CastErrInt,
                                 }
                             }
-                        } else if label_str == "CastUIntBin" {
+                        } else if label_str == "UIntBin" {
                             quote! {
                                 match (#rust_code) {
                                     Some(__v) => #category::NumLit(__v),
                                     None => #category::CastErrUInt32,
                                 }
                             }
-                        } else if label_str == "CastFloatBin" {
+                        } else if label_str == "FloatBin" {
                             quote! {
                                 match (#rust_code) {
                                     Some(__v) => #category::FloatLit(__v),
                                     None => #category::CastErrFloat,
                                 }
                             }
-                        } else if label_str == "CastFixedBin" {
+                        } else if label_str == "FixedBin" {
                             quote! {
                                 match (#rust_code) {
                                     Some(__v) => #category::FixedLit(__v),
@@ -1236,12 +1236,12 @@ fn generate_fold_big_step_rules(
                 let label_str = label.to_string();
                 let fold_fold_through_err = matches!(
                     label_str.as_str(),
-                    "CastIntBinProc"
-                        | "CastUIntBinProc"
-                        | "CastFloatBinProc"
-                        | "CastFixedBinProc"
-                        | "CastBigintUnProc"
-                        | "CastBigratUnProc"
+                    "IntBinProc"
+                        | "UIntBinProc"
+                        | "FloatBinProc"
+                        | "FixedBinProc"
+                        | "BigintCastProc"
+                        | "BigratCastProc"
                 );
                 let filter_err = if category_has_err && !fold_fold_through_err {
                     quote! {
