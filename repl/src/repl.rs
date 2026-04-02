@@ -11,6 +11,41 @@ use rustyline::{DefaultEditor, Result as RustyResult};
 use std::any::Any;
 use std::time::Instant;
 
+/// Fallback term used when a displayed normal form cannot be reparsed.
+///
+/// This keeps REPL state navigable for display/history even when display syntax
+/// is not round-trippable through the concrete parser (e.g. large BigInt shown
+/// without an explicit literal suffix).
+#[derive(Debug, Clone)]
+struct DisplayTerm {
+    display: String,
+    id: u64,
+}
+
+impl std::fmt::Display for DisplayTerm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.display)
+    }
+}
+
+impl mettail_runtime::Term for DisplayTerm {
+    fn clone_box(&self) -> Box<dyn mettail_runtime::Term> {
+        Box::new(self.clone())
+    }
+
+    fn term_id(&self) -> u64 {
+        self.id
+    }
+
+    fn term_eq(&self, other: &dyn mettail_runtime::Term) -> bool {
+        self.term_id() == other.term_id()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Replace whole-word occurrences of env-bound identifiers in the input with their display form.
 /// This allows `x && true` to work when `x = true`, even though the grammar requires `bool:x` for
 /// Bool variables (only Int gets bare Ident to avoid reduce-reduce conflicts).
@@ -821,6 +856,11 @@ impl Repl {
         println!("{}", "Term type:".bold());
 
         if let Some(term) = self.state.current_term() {
+            if term.as_any().is::<DisplayTerm>() {
+                println!("  {}", "(type unavailable for non-roundtrippable display term)".dimmed());
+                println!();
+                return Ok(());
+            }
             let term_type = language.infer_term_type(term);
             println!("  {}", format!("{}", term_type).cyan());
         } else {
@@ -848,6 +888,14 @@ impl Repl {
         println!();
 
         if let Some(term) = self.state.current_term() {
+            if term.as_any().is::<DisplayTerm>() {
+                println!(
+                    "{}",
+                    "Type information unavailable for non-roundtrippable display term.".yellow()
+                );
+                println!();
+                return Ok(());
+            }
             if let Some(var_type) = language.infer_var_type(term, var_name) {
                 println!("{} : {}", var_name.cyan(), format!("{}", var_type).green());
             } else {
@@ -875,6 +923,17 @@ impl Repl {
         println!();
 
         if let Some(term) = self.state.current_term() {
+            if term.as_any().is::<DisplayTerm>() {
+                println!("{} {}", "Free variables:".bold(), "(unavailable)".dimmed());
+                println!();
+                println!(
+                    "{} {}",
+                    "Term type:".bold(),
+                    "(unavailable for non-roundtrippable display term)".dimmed()
+                );
+                println!();
+                return Ok(());
+            }
             // Get term type
             let term_type = language.infer_term_type(term);
 
@@ -1047,9 +1106,14 @@ impl Repl {
         } else {
             // Exec: show a normal form reachable from the initial term
             if let Some(nf) = results.normal_form_reachable_from(initial_id) {
-                let result_term = language
-                    .parse_term(&nf.display)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                let result_term: Box<dyn mettail_runtime::Term> =
+                    match language.parse_term(&nf.display) {
+                        Ok(t) => t,
+                        Err(_) => Box::new(DisplayTerm {
+                            display: nf.display.clone(),
+                            id: nf.term_id,
+                        }),
+                    };
                 println!("{}", "Current term (result):".bold());
                 let formatted = format_term_pretty(&nf.display);
                 println!("{}", formatted.cyan());

@@ -1217,6 +1217,9 @@ fn test_cast_float_overflow_to_inf() {
 #[test]
 fn test_bigint_unary_from_float() {
     calc_normal_form("bigint(-3.5)", "-4");
+    calc_normal_form("bigint(1.23E10)", "12300000000");
+    calc_normal_form("bigint(1000000000000.23)", "1000000000000");
+    calc_normal_form("bigint(1E30)", "1000000000000000000000000000000");
 }
 
 #[test]

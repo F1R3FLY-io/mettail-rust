@@ -1310,6 +1310,13 @@ mod tests {
     }
 
     #[test]
+    fn test_calculator_float_pattern_multi_digit_exponent() {
+        let pat = r"-?([0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)(f64)?|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?(f64)?)";
+        assert!(regex_accepts(pat, TokenKind::Float, "1.23E1"));
+        assert!(regex_accepts(pat, TokenKind::Float, "1.23E10"));
+    }
+
+    #[test]
     fn test_default_string_pattern() {
         let pat = &LiteralPatterns::default().string;
         assert!(regex_accepts(pat, TokenKind::StringLit, r#""""#));

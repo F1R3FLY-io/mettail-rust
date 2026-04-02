@@ -245,8 +245,76 @@ pub fn cast_uint_from_fixed(fp: &CanonicalFixedPoint, bits: u32) -> Result<num_b
 
 pub fn cast_bigint_from_f64(x: f64) -> Result<num_bigint::BigInt, CastError> {
     require_finite_f64(x)?;
-    let r = f64_to_exact_rational(x)?;
-    Ok(floor_ratio(&r))
+    // User-facing bigint(float) should align with float display semantics, not raw
+    // binary mantissa artifacts. Parse the canonical float string and floor exactly.
+    let s = CanonicalFloat64::from(x).to_string();
+    floor_decimal_scientific_str_to_bigint(&s)
+}
+
+fn floor_decimal_scientific_str_to_bigint(s: &str) -> Result<num_bigint::BigInt, CastError> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err(CastError::IntegerOverflow);
+    }
+
+    let (neg, rest) = if let Some(r) = s.strip_prefix('-') {
+        (true, r)
+    } else if let Some(r) = s.strip_prefix('+') {
+        (false, r)
+    } else {
+        (false, s)
+    };
+
+    let (mantissa, exp10): (&str, i64) = if let Some(i) = rest.find(['e', 'E']) {
+        let (m, epart) = rest.split_at(i);
+        let e = epart[1..]
+            .parse::<i64>()
+            .map_err(|_| CastError::IntegerOverflow)?;
+        (m, e)
+    } else {
+        (rest, 0)
+    };
+
+    let (int_part, frac_part) = if let Some(dot) = mantissa.find('.') {
+        (&mantissa[..dot], &mantissa[dot + 1..])
+    } else {
+        (mantissa, "")
+    };
+
+    if int_part.is_empty() && frac_part.is_empty() {
+        return Err(CastError::IntegerOverflow);
+    }
+    if !int_part.chars().all(|c| c.is_ascii_digit()) || !frac_part.chars().all(|c| c.is_ascii_digit())
+    {
+        return Err(CastError::IntegerOverflow);
+    }
+
+    let mut digits = String::with_capacity(int_part.len() + frac_part.len());
+    digits.push_str(int_part);
+    digits.push_str(frac_part);
+    if digits.is_empty() {
+        digits.push('0');
+    }
+    let coeff = digits
+        .parse::<num_bigint::BigInt>()
+        .map_err(|_| CastError::IntegerOverflow)?;
+
+    // value = coeff * 10^(exp10 - frac_len)
+    let scale = frac_part.len() as i64 - exp10;
+    if scale <= 0 {
+        let mul = num_bigint::BigInt::from(10u32).pow((-scale) as u32);
+        let n = coeff * mul;
+        return Ok(if neg { -n } else { n });
+    }
+
+    let div = num_bigint::BigInt::from(10u32).pow(scale as u32);
+    if neg {
+        // floor(-a/b) = -ceil(a/b)
+        let q = (&coeff + (&div - 1u32)) / &div;
+        Ok(-q)
+    } else {
+        Ok(coeff / div)
+    }
 }
 
 pub fn cast_bigint_from_bigrat(r: &Ratio<num_bigint::BigInt>) -> num_bigint::BigInt {
@@ -454,6 +522,12 @@ mod tests {
         assert_eq!(
             cast_bigint_from_f64(-3.5).unwrap(),
             BigInt::from(-4)
+        );
+        assert_eq!(
+            cast_bigint_from_f64(1e30).unwrap(),
+            "1000000000000000000000000000000"
+                .parse::<BigInt>()
+                .unwrap()
         );
     }
 
