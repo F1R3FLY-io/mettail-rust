@@ -6,7 +6,7 @@
 
 use num_bigint::BigInt;
 use num_rational::Ratio;
-use num_traits::ToPrimitive;
+use num_traits::{Num, ToPrimitive, Zero};
 
 use crate::{
     canonical_bigrat::CanonicalBigRat, canonical_bigint::CanonicalBigInt,
@@ -158,8 +158,148 @@ pub fn float_bin_pipeline(input: NumericInput<'_>, width_i64: i64) -> Option<Can
 
 #[inline]
 pub fn float_bin_pipeline_parse_f64(s: &str, width_i64: i64) -> Option<CanonicalFloat64> {
-    let x: f64 = s.parse().ok()?;
-    float_bin_pipeline(NumericInput::F64(x), width_i64)
+    if let Ok(x) = s.parse::<f64>() {
+        return float_bin_pipeline(NumericInput::F64(x), width_i64);
+    }
+    if let Some(fp) = parse_fixed_point_str(s) {
+        return float_bin_pipeline(NumericInput::Fixed(&fp), width_i64);
+    }
+    if let Some(bi) = parse_bigint_n_suffix_str(s) {
+        return float_bin_pipeline(NumericInput::BigInt(&bi), width_i64);
+    }
+    if let Some(r) = parse_rational_str(s) {
+        return float_bin_pipeline(NumericInput::BigRat(&r), width_i64);
+    }
+    None
+}
+
+/// `…n` surface form (optional `_` in digit runs), same radix rules as integer literals.
+fn parse_bigint_n_suffix_str(s: &str) -> Option<BigInt> {
+    let cleaned: String = s.chars().filter(|&c| c != '_').collect();
+    let t = cleaned.trim();
+    let body = t.strip_suffix('n')?;
+    if body.is_empty() {
+        return None;
+    }
+    parse_bigint_with_optional_sign_and_radix(body)
+}
+
+/// Fixed literal / display form: `<mantissa>p<scale>` (decimal mantissa, optional dot).
+fn parse_fixed_point_str(s: &str) -> Option<CanonicalFixedPoint> {
+    let cleaned: String = s.chars().filter(|&c| c != '_').collect();
+    let text = cleaned.as_str();
+
+    let p_pos = text.rfind('p')?;
+    if p_pos == 0 {
+        return None;
+    }
+
+    let scale_str = &text[p_pos + 1..];
+    if scale_str.is_empty() || !scale_str.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let scale: u32 = scale_str.parse().ok()?;
+
+    let mantissa = &text[..p_pos];
+    if mantissa.is_empty() || mantissa == "." || mantissa == "-" || mantissa == "-." {
+        return None;
+    }
+
+    let neg = mantissa.starts_with('-');
+    let m = mantissa.strip_prefix('-').unwrap_or(mantissa);
+
+    let (whole, frac) = if let Some(dot) = m.find('.') {
+        let w = &m[..dot];
+        let f = &m[dot + 1..];
+        if f.contains('.') {
+            return None;
+        }
+        (w, f)
+    } else {
+        (m, "")
+    };
+
+    if !frac.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if !whole.is_empty() && !whole.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if whole.is_empty() && frac.is_empty() {
+        return None;
+    }
+
+    let whole_bi = if whole.is_empty() {
+        BigInt::from(0)
+    } else {
+        BigInt::from_str_radix(whole, 10).ok()?
+    };
+    let fd = frac.len() as u32;
+    let frac_bi = if frac.is_empty() {
+        BigInt::from(0)
+    } else {
+        BigInt::from_str_radix(frac, 10).ok()?
+    };
+
+    let ten = BigInt::from(10u32);
+    let unscaled_mantissa = whole_bi * ten.clone().pow(fd) + frac_bi;
+
+    if scale < fd {
+        return None;
+    }
+    let mut unscaled = unscaled_mantissa * ten.pow(scale - fd);
+    if neg {
+        unscaled = -unscaled;
+    }
+
+    Some(CanonicalFixedPoint::new(unscaled, scale))
+}
+
+fn parse_rational_str(s: &str) -> Option<Ratio<BigInt>> {
+    let cleaned: String = s.chars().filter(|&c| c != '_').collect();
+    let t = cleaned.trim();
+    if let Some(idx) = t.find('/') {
+        let left = &t[..idx];
+        let right = &t[idx + 1..];
+        let n = parse_rational_side(left)?;
+        let d = parse_rational_side(right)?;
+        if d.is_zero() {
+            return None;
+        }
+        Some(Ratio::new(n, d))
+    } else {
+        let n = parse_rational_side(t)?;
+        Some(Ratio::new(n, BigInt::from(1)))
+    }
+}
+
+fn parse_rational_side(side: &str) -> Option<BigInt> {
+    let body = side.trim().strip_suffix('r')?;
+    parse_bigint_with_optional_sign_and_radix(body)
+}
+
+fn parse_bigint_with_optional_sign_and_radix(s: &str) -> Option<BigInt> {
+    let (neg, rest) = if let Some(x) = s.strip_prefix('-') {
+        (true, x)
+    } else if let Some(x) = s.strip_prefix('+') {
+        (false, x)
+    } else {
+        (false, s)
+    };
+    let (radix, digits) = if let Some(h) = rest.strip_prefix("0x") {
+        (16, h)
+    } else if let Some(o) = rest.strip_prefix("0o") {
+        (8, o)
+    } else if let Some(b) = rest.strip_prefix("0b") {
+        (2, b)
+    } else {
+        (10, rest)
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let n = BigInt::from_str_radix(digits, radix).ok()?;
+    Some(if neg { -n } else { n })
 }
 
 /// `fixed(·, m)` with validated place count.
@@ -194,5 +334,23 @@ mod tests {
         let x = 3.14e100_f64;
         let out = numeric_try_bigint(NumericInput::F64(x));
         assert!(out.is_some(), "bigint from finite huge float should succeed");
+    }
+
+    #[test]
+    fn float_pipeline_parses_rational_string() {
+        let out = float_bin_pipeline_parse_f64("1r/2r", 32).expect("cast");
+        assert_eq!(out.get(), 0.5);
+    }
+
+    #[test]
+    fn float_pipeline_parses_bigint_n_string() {
+        let out = float_bin_pipeline_parse_f64("1000n", 64).expect("cast");
+        assert_eq!(out.get(), 1000.0);
+    }
+
+    #[test]
+    fn float_pipeline_parses_fixed_p_string() {
+        let out = float_bin_pipeline_parse_f64("1000.1p1", 64).expect("cast");
+        assert_eq!(out.get(), 1000.1);
     }
 }

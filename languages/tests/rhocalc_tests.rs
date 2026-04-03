@@ -923,6 +923,27 @@ fn rhocalc_cast_float_overflow_to_inf() {
 }
 
 #[test]
+fn rhocalc_cast_float_from_rational_string() {
+    let results = run(r#"{float("1r/2r", 32)}"#);
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|nf| nf == "0.5"),
+        "expected 0.5 in a normal form, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_float_from_bigint_n_string() {
+    assert_reduces_to(r#"{float("1000n", 64)}"#, "1000");
+}
+
+#[test]
+fn rhocalc_cast_float_from_fixed_p_string() {
+    assert_reduces_to(r#"{float("1000.1p1", 64)}"#, "1000.1");
+}
+
+#[test]
 fn rhocalc_bigint_unary_from_float() {
     let results = run("{bigint(-3.5)}");
     let nfs = normal_form_displays(&results);
