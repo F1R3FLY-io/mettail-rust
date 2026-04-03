@@ -1240,6 +1240,19 @@ fn test_float_from_bigrat_expression() {
 }
 
 #[test]
+fn test_casts_from_numeric_strings() {
+    calc_normal_form(r#"int("2r/3r", 32)"#, "0");
+    calc_normal_form(r#"int("123n", 32)"#, "123");
+    calc_normal_form(r#"int("123i64", 64)"#, "123");
+    calc_normal_form(r#"int("10i32", 32)"#, "10");
+    calc_normal_form(r#"int("false", 32)"#, "0");
+    calc_normal_form(r#"int("true", 32)"#, "1");
+    calc_normal_form(r#"bigint("123n")"#, "123");
+    calc_normal_form(r#"bigrat("1r/2r")"#, "1/2");
+    calc_normal_form(r#"str(23r)"#, "\"23\"");
+}
+
+#[test]
 fn test_int_from_float_still_works() {
     calc_normal_form("int(3.14, 32)", "3");
 }

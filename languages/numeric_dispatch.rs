@@ -7,7 +7,8 @@
 
 use mettail_runtime::{
     bigint_unary_pipeline, bigint_unary_pipeline_decimal_str, bigrat_unary_pipeline,
-    fixed_bin_pipeline, float_bin_pipeline, float_bin_pipeline_parse_f64, int_bin_pipeline_decimal_str_i32,
+    bigrat_unary_pipeline_numeric_str, fixed_bin_pipeline, fixed_bin_pipeline_numeric_str,
+    float_bin_pipeline, float_bin_pipeline_parse_f64, int_bin_pipeline_decimal_str_i32,
     int_bin_pipeline_decimal_str_i64, int_bin_pipeline_i32, int_bin_pipeline_i64,
     uint_bin_pipeline_decimal_str_u32, uint_bin_pipeline_u32, NumericInput,
 };
@@ -161,6 +162,12 @@ pub(crate) fn calc_try_float_bin<W: CastWidth>(a: &CalcProc, w: W) -> Option<met
 pub(crate) fn calc_try_fixed_bin<W: CastWidth>(a: &CalcProc, w: W) -> Option<mettail_runtime::CanonicalFixedPoint> {
     let width = w.into_width_i64()?;
     let a = calc_peel_list_elem(a);
+    if let CalcProc::ProcStr(s) = a {
+        return match s.as_ref() {
+            CalcStr::StringLit(st) => fixed_bin_pipeline_numeric_str(st, width),
+            _ => None,
+        };
+    }
     let input = calculator_proc_to_numeric_input(a)?;
     fixed_bin_pipeline(input, width)
 }
@@ -179,6 +186,12 @@ pub(crate) fn calc_try_bigint_unary(a: &CalcProc) -> Option<mettail_runtime::Can
 
 pub(crate) fn calc_try_bigrat_unary(a: &CalcProc) -> Option<mettail_runtime::CanonicalBigRat> {
     let a = calc_peel_list_elem(a);
+    if let CalcProc::ProcStr(s) = a {
+        return match s.as_ref() {
+            CalcStr::StringLit(st) => bigrat_unary_pipeline_numeric_str(st),
+            _ => None,
+        };
+    }
     let input = calculator_proc_to_numeric_input(a)?;
     bigrat_unary_pipeline(input)
 }
@@ -287,6 +300,12 @@ pub(crate) fn rho_try_float_bin<W: CastWidth>(a: &RhoProc, w: W) -> Option<metta
 
 pub(crate) fn rho_try_fixed_bin<W: CastWidth>(a: &RhoProc, w: W) -> Option<mettail_runtime::CanonicalFixedPoint> {
     let width = w.into_width_i64()?;
+    if let RhoProc::CastStr(s) = a {
+        return match s.as_ref() {
+            RhoStr::StringLit(st) => fixed_bin_pipeline_numeric_str(st, width),
+            _ => None,
+        };
+    }
     let input = rhocalc_proc_to_numeric_input(a)?;
     fixed_bin_pipeline(input, width)
 }
@@ -303,6 +322,12 @@ pub(crate) fn rho_try_bigint_unary(a: &RhoProc) -> Option<mettail_runtime::Canon
 }
 
 pub(crate) fn rho_try_bigrat_unary(a: &RhoProc) -> Option<mettail_runtime::CanonicalBigRat> {
+    if let RhoProc::CastStr(s) = a {
+        return match s.as_ref() {
+            RhoStr::StringLit(st) => bigrat_unary_pipeline_numeric_str(st),
+            _ => None,
+        };
+    }
     let input = rhocalc_proc_to_numeric_input(a)?;
     bigrat_unary_pipeline(input)
 }

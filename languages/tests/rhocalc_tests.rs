@@ -944,6 +944,23 @@ fn rhocalc_cast_float_from_fixed_p_string() {
 }
 
 #[test]
+fn rhocalc_casts_from_numeric_strings() {
+    assert_reduces_to(r#"{int("2r/3r", 32)}"#, "0");
+    assert_reduces_to(r#"{int("123n", 64)}"#, "123");
+    assert_reduces_to(r#"{int("123i64", 64)}"#, "123");
+    assert_reduces_to(r#"{int("10i32", 32)}"#, "10");
+    assert_reduces_to(r#"{int("false", 32)}"#, "0");
+    assert_reduces_to(r#"{int("true", 32)}"#, "1");
+    assert_reduces_to(r#"{bigint("123n")}"#, "123");
+    assert_reduces_to(r#"{bigrat("1r/2r")}"#, "1/2");
+}
+
+#[test]
+fn rhocalc_str_from_rational_literal() {
+    assert_reduces_to(r#"{str(23r)}"#, r#""23""#);
+}
+
+#[test]
 fn rhocalc_bigint_unary_from_float() {
     let results = run("{bigint(-3.5)}");
     let nfs = normal_form_displays(&results);

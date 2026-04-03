@@ -760,34 +760,13 @@ language! {
         ToStr . p:Proc |- "str" "(" p ")" : Proc ![
             { match &p {
                 Proc::CastStr(x) => Proc::CastStr(x.clone()),
-                Proc::CastInt(x) => match &**x {
-                    Int::NumLit(i) => Proc::CastStr(Box::new(Str::StringLit(i.to_string()))),
-                    _ => Proc::Err,
-                },
-                Proc::CastUInt32(x) => match &**x {
-                    UInt32::NumLit(u) => Proc::CastStr(Box::new(Str::StringLit(u.to_string()))),
-                    _ => Proc::Err,
-                },
-                Proc::CastBigInt(x) => match &**x {
-                    BigInt::NumLit(n) => Proc::CastStr(Box::new(Str::StringLit(n.to_string()))),
-                    _ => Proc::Err,
-                },
-                Proc::CastBigRat(x) => match &**x {
-                    BigRat::RatLit(r) => Proc::CastStr(Box::new(Str::StringLit(r.to_string()))),
-                    _ => Proc::Err,
-                },
-                Proc::CastFloat(x) => match &**x {
-                    Float::FloatLit(f) => Proc::CastStr(Box::new(Str::StringLit(f.to_string()))),
-                    _ => Proc::Err,
-                },
-                Proc::CastFixed(x) => match &**x {
-                    Fixed::FixedLit(fp) => Proc::CastStr(Box::new(Str::StringLit(fp.to_string()))),
-                    _ => Proc::Err,
-                },
-                Proc::CastBool(x) => match &**x {
-                    Bool::BoolLit(b) => Proc::CastStr(Box::new(Str::StringLit(b.to_string()))),
-                    _ => Proc::Err,
-                },
+                Proc::CastInt(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastUInt32(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastBigInt(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastBigRat(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastFloat(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastFixed(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastBool(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
                 _ => Proc::Err,
             }}
         ] fold;

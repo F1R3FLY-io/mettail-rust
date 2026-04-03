@@ -233,6 +233,9 @@ language! {
             match a {
                 Proc::ProcStr(s) => s.as_ref().eval(),
                 Proc::ProcInt(i) => i.as_ref().eval().to_string(),
+                Proc::ProcUInt32(u) => u.as_ref().eval().to_string(),
+                Proc::ProcBigInt(n) => n.as_ref().eval().to_string(),
+                Proc::ProcBigRat(r) => r.as_ref().eval().to_string(),
                 Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
                 Proc::ProcFixed(x) => x.as_ref().eval().to_string(),
                 Proc::ProcBool(b) => b.as_ref().eval().to_string(),
@@ -242,6 +245,9 @@ language! {
                     match elem {
                         Proc::ProcStr(s) => s.as_ref().eval(),
                         Proc::ProcInt(i) => i.as_ref().eval().to_string(),
+                        Proc::ProcUInt32(u) => u.as_ref().eval().to_string(),
+                        Proc::ProcBigInt(n) => n.as_ref().eval().to_string(),
+                        Proc::ProcBigRat(r) => r.as_ref().eval().to_string(),
                         Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
                         Proc::ProcFixed(x) => x.as_ref().eval().to_string(),
                         Proc::ProcBool(b) => b.as_ref().eval().to_string(),
