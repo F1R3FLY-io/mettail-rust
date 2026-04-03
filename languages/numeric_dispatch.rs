@@ -149,6 +149,11 @@ pub(crate) fn calc_try_float_bin<W: CastWidth>(a: &CalcProc, w: W) -> Option<met
             _ => None,
         };
     }
+    if let CalcProc::ProcBigRat(r) = a {
+        // Allow casts from computed BigRat expressions (e.g. 1r/4r), not only RatLit payloads.
+        let rat = r.as_ref().eval();
+        return float_bin_pipeline(NumericInput::BigRat(rat.get()), width);
+    }
     let input = calculator_proc_to_numeric_input(a)?;
     float_bin_pipeline(input, width)
 }
@@ -270,6 +275,11 @@ pub(crate) fn rho_try_float_bin<W: CastWidth>(a: &RhoProc, w: W) -> Option<metta
             RhoStr::StringLit(st) => float_bin_pipeline_parse_f64(st, width),
             _ => None,
         };
+    }
+    if let RhoProc::CastBigRat(r) = a {
+        // Symmetry with Calculator: support casts from computed rational expressions.
+        let rat = r.as_ref().eval();
+        return float_bin_pipeline(NumericInput::BigRat(rat.get()), width);
     }
     let input = rhocalc_proc_to_numeric_input(a)?;
     float_bin_pipeline(input, width)

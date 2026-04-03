@@ -1235,6 +1235,11 @@ fn test_float_from_int_still_works() {
 }
 
 #[test]
+fn test_float_from_bigrat_expression() {
+    calc_normal_form("float(1r/4r, 64)", "0.25");
+}
+
+#[test]
 fn test_int_from_float_still_works() {
     calc_normal_form("int(3.14, 32)", "3");
 }
