@@ -238,4 +238,3 @@ exec float(int(-3, 8), 32)
 exec str(bigint(float(2.5, 64)))
 exec int(str(99), 16)
 
-// RhoCalc parallel suite: repl/src/examples/rhocalc-casting.txt (`exec { … }`, lists `[ … ]`).
