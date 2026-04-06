@@ -89,6 +89,7 @@ mod tests {
         assert_eq!(parse_float_lit("1e10").unwrap().get(), 1e10);
         assert_eq!(parse_float_lit("1E+10").unwrap().get(), 1e10);
         assert_eq!(parse_float_lit("-2.5e-3").unwrap().get(), -0.0025);
+        assert_eq!(parse_float_lit("1.23E10").unwrap().get(), 1.23e10);
     }
 
     #[test]

@@ -21,6 +21,30 @@ pub use canonical_bigrat::CanonicalBigRat;
 mod canonical_fixed_point;
 pub use canonical_fixed_point::CanonicalFixedPoint;
 
+mod numeric_cast;
+mod numeric_cast_dispatch;
+pub use numeric_cast::{
+    cast_bigint_from_bigrat, cast_bigint_from_f64, cast_bigint_from_fixed, cast_bigrat_from_bigint,
+    cast_bigrat_from_f64, cast_bigrat_from_fixed, cast_bigrat_from_i64, cast_bigrat_from_u32,
+    cast_fixed_from_bigint, cast_fixed_from_bigrat, cast_fixed_from_f64, cast_fixed_from_fixed,
+    cast_float_from_bigint, cast_float_from_bigrat, cast_float_from_f64,
+    cast_float_from_f64_allow_nonfinite, cast_float_from_fixed, cast_int_from_bigint,
+    cast_int_from_bigrat, cast_int_from_f64, cast_int_from_fixed, cast_int_from_i64,
+    cast_int_from_u32, cast_uint_from_bigint, cast_uint_from_bigrat, cast_uint_from_f64,
+    cast_uint_from_fixed, cast_uint_from_i64, cast_uint_from_u32, f64_to_exact_rational,
+    signed_modular, unsigned_modular, validate_fixed_places, validate_float_width,
+    validate_int_uint_width, CastError, FloatCastWidth, MAX_FIXED_PLACES, MAX_INT_UINT_WIDTH,
+};
+pub use numeric_cast_dispatch::{
+    bigint_unary_pipeline, bigint_unary_pipeline_decimal_str, bigrat_unary_pipeline,
+    bigrat_unary_pipeline_numeric_str, fixed_bin_pipeline, fixed_bin_pipeline_numeric_str,
+    float_bin_pipeline, float_bin_pipeline_parse_f64, int_bin_pipeline_decimal_str_i32,
+    int_bin_pipeline_decimal_str_i64, int_bin_pipeline_i32, int_bin_pipeline_i64,
+    int_uint_bits_from_width, numeric_try_bigint, numeric_try_bigrat, numeric_try_fixed,
+    numeric_try_float, numeric_try_int, numeric_try_uint, uint_bin_pipeline_decimal_str_u32,
+    uint_bin_pipeline_u32, NumericInput,
+};
+
 // Collection types
 mod hashbag;
 pub use hashbag::HashBag;

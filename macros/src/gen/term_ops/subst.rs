@@ -120,7 +120,7 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
         let variants = collect_category_variants(cat_name, language);
         let has_var = variants.iter().any(|v| matches!(v, VariantKind::Var { .. }));
         // Only use cross-category Var resolution (ProcToX, ProcX) when this language has a
-        // ProcToX rule for this category (e.g. Calculator has ProcToInt; RhoCalc does not).
+        // ProcToX rule for this category (e.g. Calculator has ProcToBool; RhoCalc omits some).
         let proc_to_label = format!("ProcTo{}", cat_name);
         let use_cross_lookups = has_var
             && language.terms.iter().any(|r| r.category == *cat_name && r.label.to_string() == proc_to_label);

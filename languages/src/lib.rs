@@ -14,6 +14,10 @@ pub mod calculator;
 pub mod lambda;
 pub mod rhocalc;
 
+/// Proc → [`mettail_runtime::NumericInput`] adapters; lives beside `src/` on purpose.
+#[path = "../numeric_dispatch.rs"]
+mod numeric_dispatch;
+
 // Re-export eqrel for the generated Ascent code
 // The generated code uses `#[ds(crate::eqrel)]` which expects eqrel at crate root
 pub use ascent_byods_rels::eqrel;

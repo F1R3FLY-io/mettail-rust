@@ -5,7 +5,8 @@
 )]
 
 use mettail_macros::language;
-use num_traits::{ToPrimitive, Zero};
+use num_traits::Zero;
+use std::ops::Neg;
 
 language! {
     name: RhoCalc,
@@ -40,7 +41,7 @@ language! {
             } ]
         }
         BigInt {
-            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n";
+            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n";
             eval: ![ {
                 mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
             } ]
@@ -99,6 +100,30 @@ language! {
         CastList . l:List |- l : Proc;
         CastBag . b:Bag |- b : Proc;
         CastMap . m:Map |- m : Proc;
+
+        // Numeric casts (see `docs/design/made/native-types/numeric-casting.md`): binary width required.
+        IntBinProc . a:Proc, w:Int |- "int" "(" a "," w ")" : Proc ![{
+            crate::numeric_dispatch::rho_proc_int_bin(&a, w)
+        }] fold;
+        UIntBinProc . a:Proc, w:Int |- "uint" "(" a "," w ")" : Proc ![{
+            crate::numeric_dispatch::rho_proc_uint_bin(&a, w)
+        }] fold;
+        FloatBinProc . a:Proc, w:Int |- "float" "(" a "," w ")" : Proc ![{
+            crate::numeric_dispatch::rho_proc_float_bin(&a, w)
+        }] fold;
+        FixedBinProc . a:Proc, w:Int |- "fixed" "(" a "," w ")" : Proc ![{
+            crate::numeric_dispatch::rho_proc_fixed_bin(&a, w)
+        }] fold;
+        BigintCastProc . a:Proc |- "bigint" "(" a ")" : Proc ![{
+            crate::numeric_dispatch::rho_proc_bigint_unary(&a)
+        }] fold;
+        BigratCastProc . a:Proc |- "bigrat" "(" a ")" : Proc ![{
+            crate::numeric_dispatch::rho_proc_bigrat_unary(&a)
+        }] fold;
+
+        // Unary minus on Int (width args like `int(x, -7)`) and on Proc (`-7`, `-3r/2r`, …).
+        // `NegProc` is declared after `/` and `%` so `-` binds tighter than division (e.g. `-3r/2r` is `(-3r)/2r`).
+        NegInt . a:Int |- "-" a : Int ![(-a)] fold;
 
         // `fold` (not `step`): `step` HOL rules are skipped for non-native categories like Proc.
         FractionProc . a:Proc, b:Proc |- "fraction" "(" a "," b ")" : Proc ![
@@ -540,6 +565,36 @@ language! {
             }}
         ] fold;
 
+        NegProc . a:Proc |- "-" a : Proc ![
+            { match &a {
+                Proc::CastInt(x) => match &**x {
+                    Int::NumLit(n) => Proc::CastInt(Box::new(Int::NumLit(-n))),
+                    _ => Proc::Err,
+                },
+                Proc::CastUInt32(x) => match &**x {
+                    UInt32::NumLit(u) => Proc::CastInt(Box::new(Int::NumLit(-(*u as i64)))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigInt(x) => match &**x {
+                    BigInt::NumLit(n) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(-n.get())))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigRat(x) => match &**x {
+                    BigRat::RatLit(r) => Proc::CastBigRat(Box::new(BigRat::RatLit(r.clone().neg()))),
+                    _ => Proc::Err,
+                },
+                Proc::CastFloat(x) => match &**x {
+                    Float::FloatLit(f) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(-f.get())))),
+                    _ => Proc::Err,
+                },
+                Proc::CastFixed(x) => match &**x {
+                    Fixed::FixedLit(fp) => Proc::CastFixed(Box::new(Fixed::FixedLit(fp.clone().neg()))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
         // List operations: take Proc, match CastList/ListLit in semantic (like arithmetic)
         ConcatList . a:Proc, b:Proc |- "concat" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
@@ -702,93 +757,6 @@ language! {
             }}
         ] fold;
 
-        ToInt . p:Proc |- "int" "(" p ")" : Proc ![
-            { match &p {
-                Proc::CastInt(x) => Proc::CastInt(x.clone()),
-                Proc::CastUInt32(x) => match &**x {
-                    UInt32::NumLit(u) => Proc::CastInt(Box::new(Int::NumLit(*u as i64))),
-                    _ => Proc::Err,
-                },
-                Proc::CastBigInt(x) => match &**x {
-                    BigInt::NumLit(n) => match ToPrimitive::to_i64(n.get()) {
-                        Some(v) => Proc::CastInt(Box::new(Int::NumLit(v))),
-                        None => Proc::Err,
-                    },
-                    _ => Proc::Err,
-                },
-                Proc::CastBigRat(x) => match &**x {
-                    BigRat::RatLit(r) => match ToPrimitive::to_f64(r.get()) {
-                        Some(f) => Proc::CastInt(Box::new(Int::NumLit(f as i64))),
-                        None => Proc::Err,
-                    },
-                    _ => Proc::Err,
-                },
-                Proc::CastFloat(x) => match &**x {
-                    Float::FloatLit(f) => Proc::CastInt(Box::new(Int::NumLit(f.get() as i64))),
-                    _ => Proc::Err,
-                },
-                Proc::CastFixed(x) => match &**x {
-                    Fixed::FixedLit(fp) => {
-                        let fv = ToPrimitive::to_f64(fp.unscaled()).unwrap_or(0.0) / 10f64.powi(fp.places() as i32);
-                        Proc::CastInt(Box::new(Int::NumLit(fv as i64)))
-                    }
-                    _ => Proc::Err,
-                },
-                Proc::CastBool(x) => match &**x {
-                    Bool::BoolLit(b) => Proc::CastInt(Box::new(Int::NumLit(if *b { 1 } else { 0 }))),
-                    _ => Proc::Err,
-                },
-                Proc::CastStr(x) => match &**x {
-                    Str::StringLit(s) => Proc::CastInt(Box::new(Int::NumLit(s.parse().unwrap_or(0)))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
-        ToFloat . p:Proc |- "float" "(" p ")" : Proc ![
-            { match &p {
-                Proc::CastFloat(x) => Proc::CastFloat(x.clone()),
-                Proc::CastInt(x) => match &**x {
-                    Int::NumLit(i) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(*i as f64)))),
-                    _ => Proc::Err,
-                },
-                Proc::CastUInt32(x) => match &**x {
-                    UInt32::NumLit(u) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(*u as f64)))),
-                    _ => Proc::Err,
-                },
-                Proc::CastBigInt(x) => match &**x {
-                    BigInt::NumLit(n) => match ToPrimitive::to_f64(n.get()) {
-                        Some(f) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(f)))),
-                        None => Proc::Err,
-                    },
-                    _ => Proc::Err,
-                },
-                Proc::CastBigRat(x) => match &**x {
-                    BigRat::RatLit(r) => match ToPrimitive::to_f64(r.get()) {
-                        Some(f) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(f)))),
-                        None => Proc::Err,
-                    },
-                    _ => Proc::Err,
-                },
-                Proc::CastBool(x) => match &**x {
-                    Bool::BoolLit(b) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(if *b { 1.0 } else { 0.0 })))),
-                    _ => Proc::Err,
-                },
-                Proc::CastStr(x) => match &**x {
-                    Str::StringLit(s) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(s.parse::<f64>().unwrap_or(0.0))))),
-                    _ => Proc::Err,
-                },
-                Proc::CastFixed(x) => match &**x {
-                    Fixed::FixedLit(fp) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(
-                        ToPrimitive::to_f64(fp.unscaled()).unwrap_or(0.0) / 10f64.powi(fp.places() as i32),
-                    )))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
         ToBool . p:Proc |- "bool" "(" p ")" : Proc ![
             { match &p {
                 Proc::CastBool(x) => Proc::CastBool(x.clone()),
@@ -827,34 +795,13 @@ language! {
         ToStr . p:Proc |- "str" "(" p ")" : Proc ![
             { match &p {
                 Proc::CastStr(x) => Proc::CastStr(x.clone()),
-                Proc::CastInt(x) => match &**x {
-                    Int::NumLit(i) => Proc::CastStr(Box::new(Str::StringLit(i.to_string()))),
-                    _ => Proc::Err,
-                },
-                Proc::CastUInt32(x) => match &**x {
-                    UInt32::NumLit(u) => Proc::CastStr(Box::new(Str::StringLit(u.to_string()))),
-                    _ => Proc::Err,
-                },
-                Proc::CastBigInt(x) => match &**x {
-                    BigInt::NumLit(n) => Proc::CastStr(Box::new(Str::StringLit(n.to_string()))),
-                    _ => Proc::Err,
-                },
-                Proc::CastBigRat(x) => match &**x {
-                    BigRat::RatLit(r) => Proc::CastStr(Box::new(Str::StringLit(r.to_string()))),
-                    _ => Proc::Err,
-                },
-                Proc::CastFloat(x) => match &**x {
-                    Float::FloatLit(f) => Proc::CastStr(Box::new(Str::StringLit(f.to_string()))),
-                    _ => Proc::Err,
-                },
-                Proc::CastFixed(x) => match &**x {
-                    Fixed::FixedLit(fp) => Proc::CastStr(Box::new(Str::StringLit(fp.to_string()))),
-                    _ => Proc::Err,
-                },
-                Proc::CastBool(x) => match &**x {
-                    Bool::BoolLit(b) => Proc::CastStr(Box::new(Str::StringLit(b.to_string()))),
-                    _ => Proc::Err,
-                },
+                Proc::CastInt(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastUInt32(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastBigInt(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastBigRat(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastFloat(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastFixed(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastBool(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
                 _ => Proc::Err,
             }}
         ] fold;
@@ -902,6 +849,9 @@ language! {
         ModCongL . | S ~> T |- (Mod S X) ~> (Mod T X);
 
         ModCongR . | S ~> T |- (Mod X S) ~> (Mod X T);
+
+        NegIntCong . | S ~> T |- (NegInt S) ~> (NegInt T);
+        NegProcCong . | S ~> T |- (NegProc S) ~> (NegProc T);
 
         BitAndCongL . | S ~> T |- (BitAnd S X) ~> (BitAnd T X);
 
@@ -971,8 +921,16 @@ language! {
         CastFixedCong . | S ~> T |- (CastFixed S) ~> (CastFixed T);
         FractionProcCongL . | S ~> T |- (FractionProc S X) ~> (FractionProc T X);
         FractionProcCongR . | S ~> T |- (FractionProc X S) ~> (FractionProc X T);
-        ToIntCong . | S ~> T |- (ToInt S) ~> (ToInt T);
-        ToFloatCong . | S ~> T |- (ToFloat S) ~> (ToFloat T);
+        IntBinProcCongL . | S ~> T |- (IntBinProc S R) ~> (IntBinProc T R);
+        IntBinProcCongR . | S ~> T |- (IntBinProc L S) ~> (IntBinProc L T);
+        UIntBinProcCongL . | S ~> T |- (UIntBinProc S R) ~> (UIntBinProc T R);
+        UIntBinProcCongR . | S ~> T |- (UIntBinProc L S) ~> (UIntBinProc L T);
+        FloatBinProcCongL . | S ~> T |- (FloatBinProc S R) ~> (FloatBinProc T R);
+        FloatBinProcCongR . | S ~> T |- (FloatBinProc L S) ~> (FloatBinProc L T);
+        FixedBinProcCongL . | S ~> T |- (FixedBinProc S R) ~> (FixedBinProc T R);
+        FixedBinProcCongR . | S ~> T |- (FixedBinProc L S) ~> (FixedBinProc L T);
+        BigintCastProcCong . | S ~> T |- (BigintCastProc S) ~> (BigintCastProc T);
+        BigratCastProcCong . | S ~> T |- (BigratCastProc S) ~> (BigratCastProc T);
         ToBoolCong . | S ~> T |- (ToBool S) ~> (ToBool T);
         ToStrCong . | S ~> T |- (ToStr S) ~> (ToStr T);
     },
