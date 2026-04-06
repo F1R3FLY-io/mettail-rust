@@ -64,15 +64,35 @@ pub fn parse_fixed_lit(text: &str) -> Result<CanonicalFixedPoint, ()> {
     let ten = BigInt::from(10u32);
     let unscaled_mantissa = whole_bi * ten.clone().pow(fd) + frac_bi;
 
-    if scale < fd {
-        return Err(());
-    }
-    let mut unscaled = unscaled_mantissa * ten.pow(scale - fd);
+    // When the literal requests fewer decimal places than the mantissa has (`3.5p0`),
+    // round the value to `scale` places (half away from zero). Rejecting here used to
+    // make `parse_fixed_lit("3.5p0")` fail so the lexer kept a shorter Float token (`3.5`)
+    // and left `p0` as an Ident.
+    let mut unscaled = if scale >= fd {
+        unscaled_mantissa * ten.pow(scale - fd)
+    } else {
+        let divisor = ten.pow(fd - scale);
+        round_half_away_from_zero_positive(unscaled_mantissa, divisor)
+    };
     if neg {
         unscaled = -unscaled;
     }
 
     Ok(CanonicalFixedPoint::new(unscaled, scale))
+}
+
+/// Round `n / divisor` to the nearest integer, ties (half) away from zero. `n` ≥ 0, `divisor` > 0.
+fn round_half_away_from_zero_positive(n: BigInt, divisor: BigInt) -> BigInt {
+    let q = &n / &divisor;
+    let r = &n % &divisor;
+    let two_r = r * 2u32;
+    if two_r > divisor {
+        q + 1u32
+    } else if two_r < divisor {
+        q
+    } else {
+        q + 1u32
+    }
 }
 
 #[cfg(test)]
@@ -114,6 +134,11 @@ mod tests {
         assert_eq!(parse_fixed_lit("1_0p2").unwrap().unscaled(), &BigInt::from(1000));
         assert_eq!(parse_fixed_lit("0p0").unwrap().unscaled(), &BigInt::from(0));
         assert_eq!(parse_fixed_lit("0p0").unwrap().places(), 0);
+        // Mantissa precision exceeds literal scale: round to `scale` places (half away from zero).
+        let x = parse_fixed_lit("3.5p0").unwrap();
+        assert_eq!(x.unscaled(), &BigInt::from(4));
+        assert_eq!(x.places(), 0);
+        assert_eq!(parse_fixed_lit("-3.5p0").unwrap().unscaled(), &BigInt::from(-4));
         let n = parse_fixed_lit("-1.25p3").unwrap();
         assert_eq!(n.unscaled(), &BigInt::from(-1250));
         assert_eq!(n.places(), 3);

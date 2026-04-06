@@ -211,6 +211,9 @@ language! {
             match a {
                 Proc::ProcBool(b) => b.as_ref().eval(),
                 Proc::ProcInt(i) => i.as_ref().eval() != 0,
+                Proc::ProcUInt32(u) => u.as_ref().eval() != 0,
+                Proc::ProcBigInt(n) => !num_traits::Zero::is_zero(n.as_ref().eval().get()),
+                Proc::ProcBigRat(r) => !num_traits::Zero::is_zero(r.as_ref().eval().get()),
                 Proc::ProcFloat(f) => f.as_ref().eval().get() != 0.0,
                 Proc::ProcFixed(x) => !num_traits::Zero::is_zero(x.as_ref().eval().unscaled()),
                 Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(false),
@@ -220,6 +223,9 @@ language! {
                     match elem {
                         Proc::ProcBool(b) => b.as_ref().eval(),
                         Proc::ProcInt(i) => i.as_ref().eval() != 0,
+                        Proc::ProcUInt32(u) => u.as_ref().eval() != 0,
+                        Proc::ProcBigInt(n) => !num_traits::Zero::is_zero(n.as_ref().eval().get()),
+                        Proc::ProcBigRat(r) => !num_traits::Zero::is_zero(r.as_ref().eval().get()),
                         Proc::ProcFloat(f) => f.as_ref().eval().get() != 0.0,
                         Proc::ProcFixed(x) => !num_traits::Zero::is_zero(x.as_ref().eval().unscaled()),
                         Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(false),

@@ -1,0 +1,245 @@
+// RhoCalc — scalar cast regression exercises (same coverage intent as calculator-casting.txt)
+//
+// Batch verify (parse + Ascent):  cargo test -p mettail-languages --test casting_example_files -- --nocapture
+//
+// Every expression is a block `{ … }` so builtins apply at Proc level. After `lang rhocalc`, paste
+// `exec { … }` lines (or use `term:` + step with the inner `{ … }` only).
+//
+// Spec: docs/design/made/native-types/numeric-casting.md
+//
+// Widths: int/uint require m ∈ {8,16,32,64,…} with m = 2^n, n ≥ 3. float supports 32 and 64 only.
+// Int literals are i64 (optional `i64` suffix). Unary `-` on Proc and on width (`int(x, -7)`) is supported.
+// Lists use `[ … ]`, not `list(…)`.
+// Failures reduce to `error` where the implementation maps invalid casts (not Calculator’s cast_error_* atoms).
+
+// =============================================================================
+// String → numeric
+// =============================================================================
+exec {int("123", 32)}
+exec {int("-123", 32)}
+exec {int("123i32", 32)}
+exec {int("-123i32", 32)}
+exec {int("123i64", 32)}
+exec {int("-5i64", 8)}
+exec {int("123u32", 32)}
+exec {int("99u32", 16)}
+exec {int("123n", 32)}
+exec {int("-1n", 8)}
+exec {int("2r/3r", 32)}
+exec {int("123r/150r", 32)}
+exec {int("12.3p1", 32)}
+exec {int(".5p0", 8)}
+exec {int("12.3E1", 32)}
+exec {int("12.3e-1", 32)}
+exec {int("1_000", 32)}
+exec {int("0", 8)}
+exec {int("false", 32)}
+exec {int("FaLsE", 32)}
+exec {int("true", 32)}
+exec {int("0x10", 32)}
+exec {uint("200", 8)}
+exec {uint("-3.9", 8)}
+exec {uint("true", 8)}
+exec {uint("false", 8)}
+exec {uint("2r/3r", 32)}
+exec {uint("255n", 8)}
+exec {float("123", 32)}
+exec {float("-1.25e2", 64)}
+exec {float("2r/3r", 64)}
+exec {float("1000n", 64)}
+exec {float("1000.1p1", 64)}
+exec {fixed("3.14159", 4)}
+exec {fixed("-1r/2r", 3)}
+exec {fixed("42", 2)}
+exec {bigint("123")}
+exec {bigint("-999n")}
+exec {bigint("1_000_000")}
+exec {bigrat("1r/2r")}
+exec {bigrat("0.75")}
+exec {bigrat("123n")}
+exec {bigrat("0")}
+
+// =============================================================================
+// Bool literals (true/false only in this surface) → numeric + str
+// =============================================================================
+exec {int(false, 32)}
+exec {int(true, 8)}
+exec {uint(false, 8)}
+exec {uint(true, 16)}
+exec {float(false, 64)}
+exec {float(true, 32)}
+exec {fixed(false, 4)}
+exec {fixed(true, 0)}
+exec {bigint(false)}
+exec {bigint(true)}
+exec {bigrat(false)}
+exec {bigrat(true)}
+exec {str(false)}
+exec {str(true)}
+
+// =============================================================================
+// i64 Int (includes radix literals) → all numeric targets + str
+// =============================================================================
+exec {int(-7, 32)}
+exec {int(0xFF, 16)}
+exec {int(0b1010, 8)}
+exec {int(257, 8)}
+exec {int(-129, 8)}
+exec {uint(-1, 8)}
+exec {uint(300, 8)}
+exec {float(2, 32)}
+exec {float(-1, 64)}
+exec {fixed(7, 3)}
+exec {fixed(-7p0, 2)}
+exec {bigint(0)}
+exec {bigint(-42n)}
+exec {bigrat(15)}
+exec {bigrat(-8n)}
+exec {str(-42n)}
+exec {str(0xAB)}
+
+// =============================================================================
+// UInt32
+// =============================================================================
+exec {int(42u32, 32)}
+exec {int(255u32, 8)}
+exec {uint(0xFEu32, 8)}
+exec {uint(1000u32, 16)}
+exec {uint(42u32, 8)}
+exec {float(42u32, 64)}
+exec {fixed(9u32, 1)}
+exec {bigint(42u32)}
+exec {bigrat(1u32)}
+exec {str(42u32)}
+
+// =============================================================================
+// BigInt
+// =============================================================================
+exec {int(1024n, 16)}
+exec {int(-1n, 8)}
+exec {uint(1000n, 32)}
+exec {uint(-1n, 8)}
+exec {float(3n, 64)}
+exec {fixed(5n, 2)}
+exec {bigint(10n)}
+exec {bigint(-10n)}
+exec {bigrat(6n)}
+exec {str(12345n)}
+
+// =============================================================================
+// BigRat
+// =============================================================================
+exec {int(7r/4r, 32)}
+exec {int(-3r/2r, 8)}
+exec {uint(11r/4r, 8)}
+exec {float(uint(3r/4r, 32), 64)}
+exec {fixed(1r/8r, 4)}
+exec {bigint(22r/7r)}
+exec {bigrat(22r/7r)}
+exec {str(3r/4r)}
+
+// =============================================================================
+// Fixed-point
+// =============================================================================
+exec {int(3.5p1, 32)}
+exec {int(-9.99p2, 16)}
+exec {uint(2.5p1, 8)}
+exec {float(1.25p2, 32)}
+exec {fixed(1.25p2, 4)}
+exec {fixed(1.25p2, 1)}
+exec {bigint(10p0)}
+exec {bigrat(3p0)}
+exec {str(12.34p2)}
+
+// =============================================================================
+// Float
+// =============================================================================
+exec {int(-4.9, 8)}
+exec {int(200.0, 8)}
+exec {uint(3.7, 8)}
+exec {float(0.1f64, 64)}
+exec {float(3.14e0, 32)}
+exec {fixed(2.5, 3)}
+exec {bigint(100.0)}
+exec {bigrat(0.25)}
+exec {str(1e3)}
+
+// =============================================================================
+// str(…)
+// =============================================================================
+exec {str("hello")}
+exec {str(0)}
+exec {str(1u32)}
+exec {str(1n)}
+exec {str(1r)}
+exec {str(1.0)}
+
+// =============================================================================
+// bool(…)
+// =============================================================================
+exec {bool(0)}
+exec {bool(1)}
+exec {bool(-3)}
+exec {bool(0u32)}
+exec {bool(42u32)}
+exec {bool(0n)}
+exec {bool(-7n)}
+exec {bool(0r)}
+exec {bool(1r)}
+exec {bool(1r/2r)}
+exec {bool(22r/7r)}
+exec {bool(0.0)}
+exec {bool(3.14)}
+exec {bool(3.5p0)}
+exec {bool(0p0)}
+exec {bool(1p0)}
+exec {bool(false)}
+exec {bool(true)}
+exec {bool("")}
+exec {bool("true")}
+exec {bool("0")}
+
+// =============================================================================
+// Scalar peel via at([ … ], i)
+// =============================================================================
+exec {int(at(["42"], 0), 32)}
+exec {uint(at(["200"], 0), 8)}
+exec {float(at(["1.5"], 0), 64)}
+exec {fixed(at(["3.14"], 0), 2)}
+exec {bigint(at([99n], 0))}
+exec {bigrat(at([1r/2r], 0))}
+exec {str(at([1u32], 0))}
+exec {bool(at([0u32,1n,1r/2r], 2))}
+
+// =============================================================================
+// Invalid width / domain
+// =============================================================================
+exec {int(1, 7)}
+exec {uint(1, 12)}
+exec {float(1, 128)}
+exec {fixed(1.0, -1)}
+exec {bigint(int(100, 32))}
+exec {int(0.0 / 0.0, 8)}
+exec {float(1e50, 32)}
+
+// =============================================================================
+// Nested casts
+// =============================================================================
+exec {int(float(3r/4r, 64), 8)}
+exec {uint(bigint(3.7), 8)}
+exec {fixed(bigrat(1r/3r), 6)}
+exec {float(int(-3, 8), 32)}
+exec {str(bigint(float(2.5, 64)))}
+exec {int(str(99), 16)}
+
+// =============================================================================
+// RhoCalc-specific extras (same builtins; exercise block subterms)
+// =============================================================================
+exec {int({ 1 + 2 }, 8)}
+exec {uint(bitnot 0, 8)}
+
+// =============================================================================
+// Calculator (no block wrapper): same expressions without `{ … }` — use `lang calculator`
+// =============================================================================
+// exec int("123", 32)
+// exec int(at(list("42"), 0), 32)
