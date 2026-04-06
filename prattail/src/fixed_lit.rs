@@ -64,15 +64,16 @@ pub fn parse_fixed_lit(text: &str) -> Result<CanonicalFixedPoint, ()> {
     let ten = BigInt::from(10u32);
     let unscaled_mantissa = whole_bi * ten.clone().pow(fd) + frac_bi;
 
-    // When the literal requests fewer decimal places than the mantissa has (`3.5p0`),
-    // round the value to `scale` places (half away from zero). Rejecting here used to
-    // make `parse_fixed_lit("3.5p0")` fail so the lexer kept a shorter Float token (`3.5`)
-    // and left `p0` as an Ident.
+    // `scale == 0` but mantissa has fractional digits (`3.5p0`): round to an integer (half
+    // away from zero) so the literal lexes as one token. If `scale > 0` and `scale < fd`,
+    // reject (`1.23p1` is invalid — mantissa too precise for the requested scale).
     let mut unscaled = if scale >= fd {
         unscaled_mantissa * ten.pow(scale - fd)
-    } else {
-        let divisor = ten.pow(fd - scale);
+    } else if scale == 0 {
+        let divisor = ten.pow(fd);
         round_half_away_from_zero_positive(unscaled_mantissa, divisor)
+    } else {
+        return Err(());
     };
     if neg {
         unscaled = -unscaled;

@@ -317,12 +317,15 @@ fn parse_fixed_point_str(s: &str) -> Option<CanonicalFixedPoint> {
     let ten = BigInt::from(10u32);
     let unscaled_mantissa = whole_bi * ten.clone().pow(fd) + frac_bi;
 
-    // Match `mettail_prattail::parse_fixed_lit`: round when scale < fd (e.g. `3.5p0`).
+    // Match `mettail_prattail::parse_fixed_lit`: only round when `scale == 0` and mantissa
+    // has fractional digits (`3.5p0`). Otherwise `scale < fd` with `scale > 0` → None.
     let mut unscaled = if scale >= fd {
         unscaled_mantissa * ten.pow(scale - fd)
-    } else {
-        let divisor = ten.pow(fd - scale);
+    } else if scale == 0 {
+        let divisor = ten.pow(fd);
         round_half_away_from_zero_positive(unscaled_mantissa, divisor)
+    } else {
+        return None;
     };
     if neg {
         unscaled = -unscaled;
