@@ -18,8 +18,8 @@ fn examples_dir() -> PathBuf {
 }
 
 fn check_exec_lines(path: &std::path::Path, lang: &dyn Language, label: &str) {
-    let text = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+    let text =
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
     let mut failures = Vec::new();
     for (idx, line) in text.lines().enumerate() {
         let line_no = idx + 1;
@@ -41,7 +41,7 @@ fn check_exec_lines(path: &std::path::Path, lang: &dyn Language, label: &str) {
                     line_no
                 ));
                 continue;
-            }
+            },
         };
         if let Err(e) = lang.run_ascent(term.as_ref()) {
             failures.push(format!(

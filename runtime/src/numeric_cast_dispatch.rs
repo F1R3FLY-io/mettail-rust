@@ -9,7 +9,7 @@ use num_rational::Ratio;
 use num_traits::{Num, ToPrimitive, Zero};
 
 use crate::{
-    canonical_bigrat::CanonicalBigRat, canonical_bigint::CanonicalBigInt,
+    canonical_bigint::CanonicalBigInt, canonical_bigrat::CanonicalBigRat,
     canonical_fixed_point::CanonicalFixedPoint, *,
 };
 
@@ -160,10 +160,7 @@ pub fn float_bin_pipeline(input: NumericInput<'_>, width_i64: i64) -> Option<Can
 pub fn float_bin_pipeline_parse_f64(s: &str, width_i64: i64) -> Option<CanonicalFloat64> {
     let t = s.trim();
     if let Some(b) = parse_bool_word_str(t) {
-        return float_bin_pipeline(
-            NumericInput::F64(if b { 1.0 } else { 0.0 }),
-            width_i64,
-        );
+        return float_bin_pipeline(NumericInput::F64(if b { 1.0 } else { 0.0 }), width_i64);
     }
     // Prefer exact forms before `f64` so large integers are not rounded.
     if let Some(bi) = parse_bigint_n_suffix_str(t) {
@@ -185,10 +182,7 @@ pub fn float_bin_pipeline_parse_f64(s: &str, width_i64: i64) -> Option<Canonical
 fn numeric_try_int_from_numeric_str(s: &str, bits: u32) -> Option<BigInt> {
     let t = s.trim();
     if let Some(b) = parse_bool_word_str(t) {
-        return numeric_try_int(
-            NumericInput::I32(if b { 1 } else { 0 }),
-            bits,
-        );
+        return numeric_try_int(NumericInput::I32(if b { 1 } else { 0 }), bits);
     }
     if let Some(bi) = parse_bigint_n_suffix_str(t) {
         return numeric_try_int(NumericInput::BigInt(&bi), bits);
@@ -209,10 +203,7 @@ fn numeric_try_int_from_numeric_str(s: &str, bits: u32) -> Option<BigInt> {
 fn numeric_try_uint_from_numeric_str(s: &str, bits: u32) -> Option<BigInt> {
     let t = s.trim();
     if let Some(b) = parse_bool_word_str(t) {
-        return numeric_try_uint(
-            NumericInput::I32(if b { 1 } else { 0 }),
-            bits,
-        );
+        return numeric_try_uint(NumericInput::I32(if b { 1 } else { 0 }), bits);
     }
     if let Some(bi) = parse_bigint_n_suffix_str(t) {
         return numeric_try_uint(NumericInput::BigInt(&bi), bits);
@@ -407,10 +398,7 @@ pub fn fixed_bin_pipeline_numeric_str(s: &str, width_i64: i64) -> Option<Canonic
     let pl = validate_fixed_places(width_i64).ok()?;
     let t = s.trim();
     if let Some(b) = parse_bool_word_str(t) {
-        return numeric_try_fixed(
-            NumericInput::I32(if b { 1 } else { 0 }),
-            pl,
-        );
+        return numeric_try_fixed(NumericInput::I32(if b { 1 } else { 0 }), pl);
     }
     if let Some(fp) = parse_fixed_point_str(t) {
         return numeric_try_fixed(NumericInput::Fixed(&fp), pl);
@@ -514,38 +502,14 @@ mod tests {
 
     #[test]
     fn int_pipeline_parses_rational_and_n_suffix_strings() {
-        assert_eq!(
-            int_bin_pipeline_decimal_str_i32("2r/3r", 32).expect("int"),
-            0
-        );
-        assert_eq!(
-            int_bin_pipeline_decimal_str_i32("123n", 32).expect("int"),
-            123
-        );
-        assert_eq!(
-            int_bin_pipeline_decimal_str_i64("123i64", 64).expect("int"),
-            123
-        );
-        assert_eq!(
-            int_bin_pipeline_decimal_str_i32("99u32", 32).expect("int"),
-            99
-        );
-        assert_eq!(
-            int_bin_pipeline_decimal_str_i32("10i32", 32).expect("int"),
-            10
-        );
-        assert_eq!(
-            int_bin_pipeline_decimal_str_i32("false", 32).expect("int"),
-            0
-        );
-        assert_eq!(
-            int_bin_pipeline_decimal_str_i32("FaLsE", 32).expect("int"),
-            0
-        );
-        assert_eq!(
-            int_bin_pipeline_decimal_str_i32("true", 32).expect("int"),
-            1
-        );
+        assert_eq!(int_bin_pipeline_decimal_str_i32("2r/3r", 32).expect("int"), 0);
+        assert_eq!(int_bin_pipeline_decimal_str_i32("123n", 32).expect("int"), 123);
+        assert_eq!(int_bin_pipeline_decimal_str_i64("123i64", 64).expect("int"), 123);
+        assert_eq!(int_bin_pipeline_decimal_str_i32("99u32", 32).expect("int"), 99);
+        assert_eq!(int_bin_pipeline_decimal_str_i32("10i32", 32).expect("int"), 10);
+        assert_eq!(int_bin_pipeline_decimal_str_i32("false", 32).expect("int"), 0);
+        assert_eq!(int_bin_pipeline_decimal_str_i32("FaLsE", 32).expect("int"), 0);
+        assert_eq!(int_bin_pipeline_decimal_str_i32("true", 32).expect("int"), 1);
     }
 
     #[test]

@@ -38,8 +38,9 @@ impl CastWidth for i64 {
 // ---------------------------------------------------------------------------
 
 use crate::calculator::{
-    BigInt as CalcBigInt, BigRat as CalcBigRat, Bool as CalcBool, Fixed as CalcFixed, Float as CalcFloat,
-    Int as CalcInt, List as CalcList, Proc as CalcProc, Str as CalcStr, UInt32 as CalcUInt32,
+    BigInt as CalcBigInt, BigRat as CalcBigRat, Bool as CalcBool, Fixed as CalcFixed,
+    Float as CalcFloat, Int as CalcInt, List as CalcList, Proc as CalcProc, Str as CalcStr,
+    UInt32 as CalcUInt32,
 };
 
 impl CastWidth for CalcInt {
@@ -74,7 +75,7 @@ pub(crate) fn calc_peel_list_elem<'a>(p: &'a CalcProc) -> &'a CalcProc {
                 CalcList::ListLit(v) => v.get(idx).expect("ElemList: index out of bounds"),
                 _ => panic!("ElemList: list not a literal"),
             }
-        }
+        },
         _ => p,
     }
 }
@@ -90,7 +91,7 @@ pub(crate) fn calculator_proc_to_numeric_input(p: &CalcProc) -> Option<NumericIn
             CalcInt::IntBin(inner_a, inner_w) => {
                 let n = calc_try_int_bin(inner_a, inner_w.as_ref())?;
                 NumericInput::I32(n)
-            }
+            },
             _ => return None,
         },
         CalcProc::ProcUInt32(u) => match u.as_ref() {
@@ -98,7 +99,7 @@ pub(crate) fn calculator_proc_to_numeric_input(p: &CalcProc) -> Option<NumericIn
             CalcUInt32::UIntBin(inner_a, inner_w) => {
                 let n = calc_try_uint_bin(inner_a, inner_w.as_ref())?;
                 NumericInput::U32(n)
-            }
+            },
             _ => return None,
         },
         CalcProc::ProcBigInt(b) => match b.as_ref() {
@@ -119,7 +120,7 @@ pub(crate) fn calculator_proc_to_numeric_input(p: &CalcProc) -> Option<NumericIn
             CalcFloat::FloatBin(inner_a, inner_w) => {
                 let cf = calc_try_float_bin(inner_a, inner_w.as_ref())?;
                 NumericInput::F64(cf.get())
-            }
+            },
             CalcFloat::CastErrFloat => return None,
             _ => return None,
         },
@@ -159,7 +160,10 @@ pub(crate) fn calc_try_uint_bin<W: CastWidth>(a: &CalcProc, w: W) -> Option<u32>
     uint_bin_pipeline_u32(input, width)
 }
 
-pub(crate) fn calc_try_float_bin<W: CastWidth>(a: &CalcProc, w: W) -> Option<mettail_runtime::CanonicalFloat64> {
+pub(crate) fn calc_try_float_bin<W: CastWidth>(
+    a: &CalcProc,
+    w: W,
+) -> Option<mettail_runtime::CanonicalFloat64> {
     let width = w.into_width_i64()?;
     let a = calc_peel_list_elem(a);
     if let CalcProc::ProcStr(s) = a {
@@ -177,7 +181,10 @@ pub(crate) fn calc_try_float_bin<W: CastWidth>(a: &CalcProc, w: W) -> Option<met
     float_bin_pipeline(input, width)
 }
 
-pub(crate) fn calc_try_fixed_bin<W: CastWidth>(a: &CalcProc, w: W) -> Option<mettail_runtime::CanonicalFixedPoint> {
+pub(crate) fn calc_try_fixed_bin<W: CastWidth>(
+    a: &CalcProc,
+    w: W,
+) -> Option<mettail_runtime::CanonicalFixedPoint> {
     let width = w.into_width_i64()?;
     let a = calc_peel_list_elem(a);
     if let CalcProc::ProcStr(s) = a {
@@ -231,8 +238,8 @@ pub(crate) fn calc_try_bigrat_unary(a: &CalcProc) -> Option<mettail_runtime::Can
 // ---------------------------------------------------------------------------
 
 use crate::rhocalc::{
-    BigInt as RhoBigInt, BigRat as RhoBigRat, Bool as RhoBool, Fixed as RhoFixed, Float as RhoFloat,
-    Int as RhoInt, Proc as RhoProc, Str as RhoStr, UInt32 as RhoUInt32,
+    BigInt as RhoBigInt, BigRat as RhoBigRat, Bool as RhoBool, Fixed as RhoFixed,
+    Float as RhoFloat, Int as RhoInt, Proc as RhoProc, Str as RhoStr, UInt32 as RhoUInt32,
 };
 
 impl CastWidth for RhoInt {
@@ -286,11 +293,11 @@ pub(crate) fn rhocalc_proc_to_numeric_input(p: &RhoProc) -> Option<NumericInput<
         RhoProc::IntBinProc(inner_a, inner_w) => {
             let n = rho_try_int_bin(inner_a, inner_w.as_ref())?;
             NumericInput::I64(n)
-        }
+        },
         RhoProc::FloatBinProc(inner_a, inner_w) => {
             let cf = rho_try_float_bin(inner_a, inner_w.as_ref())?;
             NumericInput::F64(cf.get())
-        }
+        },
         _ => return None,
     })
 }
@@ -323,7 +330,10 @@ pub(crate) fn rho_try_uint_bin<W: CastWidth>(a: &RhoProc, w: W) -> Option<u32> {
     uint_bin_pipeline_u32(input, width)
 }
 
-pub(crate) fn rho_try_float_bin<W: CastWidth>(a: &RhoProc, w: W) -> Option<mettail_runtime::CanonicalFloat64> {
+pub(crate) fn rho_try_float_bin<W: CastWidth>(
+    a: &RhoProc,
+    w: W,
+) -> Option<mettail_runtime::CanonicalFloat64> {
     let width = w.into_width_i64()?;
     if let RhoProc::CastStr(s) = a {
         return match s.as_ref() {
@@ -344,7 +354,10 @@ pub(crate) fn rho_try_float_bin<W: CastWidth>(a: &RhoProc, w: W) -> Option<metta
     float_bin_pipeline(input, width)
 }
 
-pub(crate) fn rho_try_fixed_bin<W: CastWidth>(a: &RhoProc, w: W) -> Option<mettail_runtime::CanonicalFixedPoint> {
+pub(crate) fn rho_try_fixed_bin<W: CastWidth>(
+    a: &RhoProc,
+    w: W,
+) -> Option<mettail_runtime::CanonicalFixedPoint> {
     let width = w.into_width_i64()?;
     if let RhoProc::CastStr(s) = a {
         return match s.as_ref() {

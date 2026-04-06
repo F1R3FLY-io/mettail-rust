@@ -71,9 +71,7 @@ impl TokenKind {
         match self {
             TokenKind::Eof => 0,
             TokenKind::Ident => 1,
-            TokenKind::Integer
-            | TokenKind::IntegerLit(_)
-            | TokenKind::RationalLit(_) => 2,
+            TokenKind::Integer | TokenKind::IntegerLit(_) | TokenKind::RationalLit(_) => 2,
             // Fixed-point literals share a prefix with floats (e.g. `3.5` vs `3.5p0`); priority must
             // be >= float so ties at the same DFA position prefer fixed (maximal munch still picks
             // the longer match when the DFA can extend with `p…`).

@@ -1495,7 +1495,8 @@ mod tests {
     #[test]
     fn test_rhocalc_float_fixed_maximal_munch() {
         use crate::automata::{
-            minimize::minimize_dfa, partition::compute_equivalence_classes, subset::subset_construction,
+            minimize::minimize_dfa, partition::compute_equivalence_classes,
+            subset::subset_construction,
         };
         let mut patterns = crate::LiteralPatterns::default();
         patterns.float = concat!(
@@ -1507,7 +1508,8 @@ mod tests {
         .to_string();
         patterns.fixed_by_category.insert(
             "Fixed".to_string(),
-            r"-?([0-9](_?[0-9])*(\.[0-9](_?[0-9])*)?|\.[0-9](_?[0-9])*)p[0-9](_?[0-9])*".to_string(),
+            r"-?([0-9](_?[0-9])*(\.[0-9](_?[0-9])*)?|\.[0-9](_?[0-9])*)p[0-9](_?[0-9])*"
+                .to_string(),
         );
         let needs = BuiltinNeeds {
             ident: true,
