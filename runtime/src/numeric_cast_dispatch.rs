@@ -317,15 +317,34 @@ fn parse_fixed_point_str(s: &str) -> Option<CanonicalFixedPoint> {
     let ten = BigInt::from(10u32);
     let unscaled_mantissa = whole_bi * ten.clone().pow(fd) + frac_bi;
 
-    if scale < fd {
+    // Match `mettail_prattail::parse_fixed_lit`: only round when `scale == 0` and mantissa
+    // has fractional digits (`3.5p0`). Otherwise `scale < fd` with `scale > 0` → None.
+    let mut unscaled = if scale >= fd {
+        unscaled_mantissa * ten.pow(scale - fd)
+    } else if scale == 0 {
+        let divisor = ten.pow(fd);
+        round_half_away_from_zero_positive(unscaled_mantissa, divisor)
+    } else {
         return None;
-    }
-    let mut unscaled = unscaled_mantissa * ten.pow(scale - fd);
+    };
     if neg {
         unscaled = -unscaled;
     }
 
     Some(CanonicalFixedPoint::new(unscaled, scale))
+}
+
+fn round_half_away_from_zero_positive(n: BigInt, divisor: BigInt) -> BigInt {
+    let q = &n / &divisor;
+    let r = &n % &divisor;
+    let two_r = r * 2u32;
+    if two_r > divisor {
+        q + 1u32
+    } else if two_r < divisor {
+        q
+    } else {
+        q + 1u32
+    }
 }
 
 fn parse_rational_str(s: &str) -> Option<Ratio<BigInt>> {

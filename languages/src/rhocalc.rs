@@ -6,6 +6,7 @@
 
 use mettail_macros::language;
 use num_traits::Zero;
+use std::ops::Neg;
 
 language! {
     name: RhoCalc,
@@ -119,6 +120,10 @@ language! {
         BigratCastProc . a:Proc |- "bigrat" "(" a ")" : Proc ![{
             crate::numeric_dispatch::rho_proc_bigrat_unary(&a)
         }] fold;
+
+        // Unary minus on Int (width args like `int(x, -7)`) and on Proc (`-7`, `-3r/2r`, …).
+        // `NegProc` is declared after `/` and `%` so `-` binds tighter than division (e.g. `-3r/2r` is `(-3r)/2r`).
+        NegInt . a:Int |- "-" a : Int ![(-a)] fold;
 
         // `fold` (not `step`): `step` HOL rules are skipped for non-native categories like Proc.
         FractionProc . a:Proc, b:Proc |- "fraction" "(" a "," b ")" : Proc ![
@@ -560,6 +565,36 @@ language! {
             }}
         ] fold;
 
+        NegProc . a:Proc |- "-" a : Proc ![
+            { match &a {
+                Proc::CastInt(x) => match &**x {
+                    Int::NumLit(n) => Proc::CastInt(Box::new(Int::NumLit(-n))),
+                    _ => Proc::Err,
+                },
+                Proc::CastUInt32(x) => match &**x {
+                    UInt32::NumLit(u) => Proc::CastInt(Box::new(Int::NumLit(-(*u as i64)))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigInt(x) => match &**x {
+                    BigInt::NumLit(n) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(-n.get())))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBigRat(x) => match &**x {
+                    BigRat::RatLit(r) => Proc::CastBigRat(Box::new(BigRat::RatLit(r.clone().neg()))),
+                    _ => Proc::Err,
+                },
+                Proc::CastFloat(x) => match &**x {
+                    Float::FloatLit(f) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(-f.get())))),
+                    _ => Proc::Err,
+                },
+                Proc::CastFixed(x) => match &**x {
+                    Fixed::FixedLit(fp) => Proc::CastFixed(Box::new(Fixed::FixedLit(fp.clone().neg()))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
         // List operations: take Proc, match CastList/ListLit in semantic (like arithmetic)
         ConcatList . a:Proc, b:Proc |- "concat" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
@@ -814,6 +849,9 @@ language! {
         ModCongL . | S ~> T |- (Mod S X) ~> (Mod T X);
 
         ModCongR . | S ~> T |- (Mod X S) ~> (Mod X T);
+
+        NegIntCong . | S ~> T |- (NegInt S) ~> (NegInt T);
+        NegProcCong . | S ~> T |- (NegProc S) ~> (NegProc T);
 
         BitAndCongL . | S ~> T |- (BitAnd S X) ~> (BitAnd T X);
 
