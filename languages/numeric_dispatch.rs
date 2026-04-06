@@ -64,7 +64,7 @@ impl CastWidth for &CalcInt {
 }
 
 #[inline]
-pub(crate) fn calc_peel_list_elem<'a>(p: &'a CalcProc) -> &'a CalcProc {
+pub(crate) fn calc_peel_list_elem(p: &CalcProc) -> &CalcProc {
     match p {
         CalcProc::ElemList(list, index) => {
             let idx = match index.as_ref() {
@@ -245,7 +245,7 @@ use crate::rhocalc::{
 impl CastWidth for RhoInt {
     fn into_width_i64(self) -> Option<i64> {
         match self {
-            RhoInt::NumLit(b) => i64::try_from(b).ok(),
+            RhoInt::NumLit(b) => Some(b),
             _ => None,
         }
     }
@@ -254,7 +254,7 @@ impl CastWidth for RhoInt {
 impl CastWidth for &RhoInt {
     fn into_width_i64(self) -> Option<i64> {
         match self {
-            RhoInt::NumLit(b) => i64::try_from(*b).ok(),
+            RhoInt::NumLit(b) => Some(*b),
             _ => None,
         }
     }
