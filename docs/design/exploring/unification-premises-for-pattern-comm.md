@@ -38,7 +38,7 @@ Pattern matching touches **two** syntactic worlds:
 
 - **End users** (REPL, tests, embeddings) write **object-language** **source** that parses as **`Proc`** (and friends)—for example the strings in [`repl/src/examples/rhocalc.rs`](../../../repl/src/examples/rhocalc.rs). They **do not** type judgement rules or **`unifies(…)`** at the prompt. They only write processes; COMM with unification is triggered **implicitly** when the engine applies the **`Comm`** rewrite produced from `rewrites { … }`.
 
-**Implication:** unification **premises** are **author-facing**; **pattern syntax** (new **`Proc`** constructors and evolved receive forms) is **user-facing**. You cannot get meaningful pattern COMM in the REPL without extending **`terms { … }`** (and usually **`PInputs`**) so patterns and payloads are **shared `Proc`** ASTs that **`unifies_proc`** can relate. See [Concrete syntax proposal](#concrete-syntax-proposal-for-this-document) below.
+**Implication:** unification **premises** are **author-facing**; **pattern syntax** (new **`Proc`** constructors and evolved receive forms) is **user-facing**. You cannot get meaningful pattern COMM in the REPL without extending **`terms { … }`** (and usually **`PInputs`**) so patterns and payloads are **shared `Proc`** ASTs that **`unifies_proc`** can relate. See [Concrete syntax proposal](#concrete-syntax-proposal) below.
 
 ## Concrete syntax proposal
 
@@ -69,66 +69,7 @@ Patterns are **`Proc`** values built from **constructors**. At minimum:
 
 REPL examples in this repo historically use **`for(a -> x){ … }`** style strings (see [repl examples](../../../repl/src/examples/rhocalc.rs)). **Proposal:** keep that sugar; extend the grammar so **the binding after `->`** can be a **`Proc` pattern** (e.g. **`for(c -> $x){ … }`**, **`for(c -> pair($u, $v)){ … }`**), lowering to the same **`PInputs`**-like constructor as concrete **`( c ? … ).{ … }`** form.
 
----
-
-### Example — `language!` fragments (author)
-
-**New process constructors (illustrative):**
-
-```text
-PPatVar . x:Name |- "$" x : Proc;
-
-PPair . u:Proc, v:Proc |- "pair" "(" u "," v ")" : Proc;
-```
-
-**Receive constructor (target shape — replaces single `Name` per arm with `Proc` pattern):**
-
-```text
-PInputs . ns:Vec(Name), pats:Vec(Proc), ^[xs].p:[Name* -> Proc]
-    |- "(" *zip(ns, pats).*map(|n, pat| n "?" pat).*sep(",") ")" "." "{" p "}" : Proc ;
-```
-
-**COMM rewrite (single-channel sketch; real rhocalc keeps multiset `...rest`):**
-
-```text
-CommPat . | unifies(pat, q)
-    |- (PPar {(PInputs ns pats cont), *zip(ns, qs).*map(|n, q| (POutput n q)), ...rest})
-    ~> (PPar {(apply_pattern_chain cont pats qs), ...rest});
-```
-
-Here **`apply_pattern_chain`** stands for the generated RHS that walks **aligned `pats`** and **`qs`** (and substitutes into **`cont`**)—either one **n-ary** helper or nested **`apply_pattern`** / **`eval`**; naming is illustrative.
-
----
-
-### Example — REPL / user programs
-
-Assuming **`$x`** and **`pair`** exist as above, and integer literals are processes (existing casts):
-
-**1) Pattern variable vs literal payload**
-
-```text
-{ c!(7) | for(c -> $x){ int($x, 64) } }
-```
-
-**Intent:** send **`7`** as **`Proc`**; receive matches **`$x`**; continuation runs **`int($x, 64)`** with **`$x`** replaced by the matched value (requires **`int`**’s first argument to accept that **`Proc`** shape—consistent with rhocalc’s numeric **`Proc`** helpers).
-
-**2) Structured pattern**
-
-```text
-{ c!(pair(1, 2)) | for(c -> pair($u, $v)){ int($u, 64) } }
-```
-
-**Intent:** COMM only if payload is **`pair`** of two values; bind **`u`**, **`v`**; run body with those bindings.
-
-**3) No match (stuck w.r.t. this COMM)**
-
-```text
-{ c!("hi") | for(c -> $x){ int($x, 64) } }
-```
-
-**Intent:** if **`$x`** cannot unify with string payload under **`unifies_proc`**, this **`CommPat`** instance does not fire.
-
-Users still **select Rho calculus** in the REPL and paste one **`{ … }`** process; stepping behavior changes only through the **new** **`Comm`** rule and **pattern** grammar.
+End-to-end walkthroughs (**`rhocalc.rs` → user program → channel data → output**) are in [Worked examples (four-part layout)](#worked-examples-four-part-layout).
 
 ## Key design decision: explicit variables instead of implicit binding
 
@@ -395,7 +336,7 @@ Ship **keyword surface** `unifies(pat, val)` → **`Premise::Unification`**, **b
 | `macros/src/logic/unification.rs` (new) | Auto-generate structural unification rules per constructor (parallel to congruence generation style).          |
 | `macros/src/logic/rules.rs`             | Lower `Premise::Unification` to `Condition::EnvQuery`-like relation clause generation (new condition variant). |
 | `macros/src/gen/term_ops/`              | Add `apply_pattern` helper for binding extraction + multi-substitution.                                        |
-| `languages/src/rhocalc.rs`              | Add **`PPatVar`** / **`$x`**, evolve **`PInputs`** for **`Proc`** patterns, optional **`pair`** (or chosen product), and **`CommPat`** with **`unifies`** + **`apply_pattern`** (see [Concrete syntax proposal](#concrete-syntax-proposal-for-this-document)). |
+| `languages/src/rhocalc.rs`              | Add **`PPatVar`** / **`$x`**, evolve **`PInputs`** for **`Proc`** patterns, optional **`pair`** (or chosen product), and **`CommPat`** with **`unifies`** + **`apply_pattern`** (see [Concrete syntax proposal](#concrete-syntax-proposal)). |
 
 ## AST and Parsing
 
@@ -510,19 +451,20 @@ fn apply_pattern(pattern: &Proc, value: &Proc, body: &Proc) -> Option<Proc>
 
 Using `Option` (or `Result`) avoids panic paths and keeps COMM RHS generation straightforward.
 
-## Worked examples: surface language, parsing, internals, results
+## Worked examples (four-part layout)
 
-Examples below mix **three layers** on purpose:
+Each scenario uses the same structure:
 
-1. **Object language** — what the programmer writes (Rholang-like or rhocalc concrete syntax).
-2. **`language!` judgement** — the rewrite rule the macro parses (names of pattern metasyntax variables such as `pat`, `recv`, `body`).
-3. **Implementation** — AST, generated Ascent, and Rust helpers.
+1. **Changes in [`rhocalc.rs`](../../../languages/src/rhocalc.rs)** — what the language author adds or edits inside `language!` (**proposal** until merged).
+2. **User’s program** — REPL / PraTT-style source the end user writes.
+3. **Data on the channel** — **message** (`Proc` crossing the channel) vs **pattern** on the receive arm; **`unifies_proc`** reasons about this pair (directional: pattern first, message second).
+4. **Output** — **residual process** after COMM (or why nothing reduced), with a short explanation.
 
-Some object-language constructs are **targets** of the [Design decisions](#design-decisions-and-recommendations) (per-channel **`Proc`** patterns, **`ProcVar`**); they are marked **(target)** where they are not yet the literal `rhocalc.rs` grammar.
+Parsing / Ascent plumbing (**`Premise::Unification`**, **`generate_condition_clauses`**, etc.) is unchanged in spirit from [Design decisions §1](#1-surface-syntax-for-the-unification-premise) and [Auto-Generated Structural Unification Rules](#auto-generated-structural-unification-rules).
 
-### Baseline: COMM today (no pattern unification premise)
+### Baseline — today’s COMM (name binders only)
 
-rhocalc already encodes multi-channel communication with **name** binders in **`PInputs`** and no `unifies` guard:
+**1. Changes in `rhocalc.rs`** — already in tree; no **`unifies`** premise. Multi-channel **COMM** uses:
 
 ```821:824:languages/src/rhocalc.rs
         Comm . |- (PPar {(PInputs ns cont), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest})
@@ -536,114 +478,143 @@ Receive syntax binds **`Name`** parameters per channel, not arbitrary **`Proc`**
         |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
 ```
 
-**Parse (rule row).** The macro parses the judgement’s `prop_context` as empty here; LHS/RHS are `Pattern` trees (`PPar`, `#zip`, `*map`, etc.).
-
-**Run.** Outputs `qs` are lined up with names `ns`; **`eval cont …`** desugars to **`MultiSubst`**: substitute quoted names into **`cont`**’s body. Matching of **payload structure** is not expressed as a premise—only arity/channel agreement via the LHS shape.
-
----
-
-### Example 1 — Simple pattern variable vs literal value **(target)**
-
-**Object language (informal).** “Receive on `k` any process bound to pattern variable `x`; send `7` (as a process).”
+**2. User’s program**
 
 ```text
-// Rholang-like
-for (x <- k) { P }  |  k!(@7)
-
-// rhocalc / REPL (proposal — see § Concrete syntax proposal):
-//   { k!(7) | for(k -> $x){ … body using $x … } }
+{ a!(0) | for(a -> x){ *(x) } }
 ```
 
-**Rewrite rule (illustrative judgement).** Preferred premise shape from [§1 in Design decisions](#design-decisions-and-recommendations):
+**3. Data on the channel**  
+On **`a`**, the **message** is the process **`0`**. The receive arm binds **name** **`x`** (**`Name`**) per channel, not a **`Proc`** pattern. There is **no** **`unifies_proc`** check on payload shape—only alignment of **`ns`** with **`qs`** and **`eval cont qs.*map(|q| (NQuote q))`** into **`cont`**.
+
+**4. Output and explanation**  
+The matching send/receive pair is removed from **`PPar`**; **`cont`** is filled via **`MultiSubst`**. This **baseline** is what **`CommPat`** extends with **structural** guards.
+
+---
+
+### Scenario A — pattern variable vs literal **(proposal)**
+
+**1. Changes in `rhocalc.rs`**
 
 ```text
-CommPat . | unifies(pat, recv)
-    |- (PPar {(PInputs ns cont), (POutput n recv), ...rest})   // simplified: single output vs multi today
-    ~> (PPar {(apply_pattern pat recv body), ...rest});
+PPatVar . x:Name |- "$" x : Proc;
+
+PInputs . ns:Vec(Name), pats:Vec(Proc), ^[xs].p:[Name* -> Proc]
+    |- "(" *zip(ns, pats).*map(|n, pat| n "?" pat).*sep(",") ")" "." "{" p "}" : Proc ;
+
+CommPat . | unifies(pat, q)
+    |- (PPar {(PInputs ns pats cont), *zip(ns, qs).*map(|n, q| (POutput n q)), ...rest})
+    ~> (PPar {(apply_pattern_chain cont pats qs), ...rest});
 ```
 
-In a full language, `pat` and `recv` are **metasyntax identifiers** bound by the LHS (e.g. `pat` extracted from the receive constructor, `recv` from the output). The design doc’s sketch used `PFor n pattern body`; rhocalc may keep **`PInputs`** and thread a **single** or **multi** pattern form—same idea.
-
-**Parsing.**
-
-1. **Propositional context:** `unifies(pat, recv)` is tokenized like a builtin call: keyword **`unifies`**, `(`, two identifiers, `)` → **`Premise::Unification { pattern: pat, value: recv }`** (not a user `RelationQuery`).
-2. **Judgement:** `|- … ~> …` parses LHS/RHS `Pattern` AST as today.
-
-**Internal processing.**
-
-| Stage | What happens |
-| ----- | ------------ |
-| Macro / `premise_to_condition` | Maps unification premise to a **condition** that codegen turns into an Ascent clause requiring **`unifies_proc(pat, recv)`** (or the category inferred for metavar `pat`). |
-| Generated Ascent | Rules from [Auto-Generated Structural Unification Rules](#auto-generated-structural-unification-rules) derive **`unifies_proc(pat, recv)`** when `pat` is a pattern-role variable and `recv` is e.g. `CastInt(7)`, or when both sides unify structurally. |
-| COMM clause | The rewrite rule’s generated clause lists **`unifies_proc(pat, recv)`** among conditions; if it cannot be derived, the COMM **does not fire**. |
-| RHS Rust | If the engine selects this rewrite, codegen emits **`apply_pattern(pat, recv, body)`** (or `Option` unwrap in a safe wrapper). |
-
-**Result.**
-
-- **Success:** `apply_pattern` builds `{ x ↦ CastInt(7) }` (names internalized per implementation), substitutes into **`body`**, and the parallel multiset loses the consumed receive/send pair—same high-level story as today’s **`Comm`**, but the guard is **structural** not “any name.”
-- **Failure:** If `recv` is not unifiable with `pat` (e.g. pattern expects a pair, value is an int), **`unifies_proc`** never holds → **no COMM** on that rule instance.
-
----
-
-### Example 2 — Structured pattern **(target)**
-
-**Object idea.** Receive only if the payload matches **`(u, v)`**-shaped data (actual constructor names depend on rhocalc—tuple/list patterns are illustrative).
+**2. User’s program**
 
 ```text
-Pattern pat ≅ ConsPair(PVar(a), PVar(b))     // illustrative
-Value recv ≅ ConsPair(CastInt(1), CastInt(2))
-Body   body uses a, b inside processes
+{ c!(7) | for(c -> $x){ int($x, 64) } }
 ```
 
-**Premise.** `unifies(pat, recv)` recurses: unify heads, unify `PVar(a)` with `1`, `PVar(b)` with `2`.
+**3. Data on the channel**  
+**Message:** **`7`** as **`Proc`**. **Pattern:** **`$x`** (**`PPatVar`**). Check **`unifies_proc(PPatVar(x), 7)`**.
 
-**`apply_pattern`.** Walk builds `σ = { a ↦ 1, b ↦ 2 }`; then multi-subst into `body`. If `body` binds `a` under **`PNew`**, substitution remains capture-avoiding via existing binder-aware **`subst`** machinery.
-
-**Result.** After COMM: continuation with **`a`/`b`** replaced; remainder of **`PPar`** unchanged.
-
----
-
-### Example 3 — Repeated pattern variable (consistency)
-
-**Pattern.** `ConsPair(PVar(x), PVar(x))` (**(target)** syntax).
-
-| Value `recv` | `unifies_proc(pat, recv)` | `apply_pattern` / result |
-| ------------ | ------------------------- | -------------------------- |
-| `ConsPair(CastInt(1), CastInt(1))` | **yes** | `σ = { x ↦ 1 }`; body reduced |
-| `ConsPair(CastInt(1), CastInt(2))` | **no** | rule does not fire; **duplicate binding conflict** |
-
-Internally, the Ascent-side relation encodes agreement; the Rust walk **double-checks** conflicts and returns **`None`** if inconsistent—useful if codegen paths ever diverge.
+**4. Output and explanation**  
+Remaining process includes **`int(7, 64)`** after send/receive on **`c`** are consumed. Ascent must derive **`unifies_proc`** before this COMM instance closes.
 
 ---
 
-### Example 4 — Congestion: match fails, process does not reduce on COMM
+### Scenario B — structured **`pair`** **(proposal)**
 
-**Configuration.** `pat` expects `CastInt`, `recv` is `CastStr("hi")`.
-
-**Ascent.** No fact **`unifies_proc(pat, recv)`** (no rule instance closes).
-
-**Outcome.** The top-level **`PPar`** is unchanged w.r.t. this COMM rule; other rules (congruence, other communications) may still apply.
-
-This is the practical payoff of **declarative** guards: failed match is **silent non-applicability**, not a runtime exception in the reduction engine.
-
----
-
-### Example 5 — Multi-channel (today’s shape + future premise stack) **(target)**
-
-Today’s **`Comm`** uses **`#zip(ns, qs)`** to match many outputs. A future version can **keep that shape** and add **one unification premise per channel pair** (or a single premise over combined patterns, depending on encoding):
+**1. Changes in `rhocalc.rs`**  
+Scenario A, plus:
 
 ```text
-// Illustrative: two outputs, two receives — details of pat₁/pat₂ binding TBD
-Comm2 . | unifies(pat1, recv1), unifies(pat2, recv2)
-    |- (PPar {(PInputs ns cont), *zip(ns, recvs).*map(|n,r| (POutput n r)), ...rest})
-    ~> (PPar {(apply_pattern_multi cont patterns recvs), ...rest});
+PPair . u:Proc, v:Proc |- "pair" "(" u "," v ")" : Proc;
 ```
 
-**Parse.** Comma-separated premises → conjunction in `prop_context` (already the story in [01-26-syntax](01-26-syntax.md) for judgements).
+**2. User’s program**
 
-**Internal.** Ascent requires **both** `unifies_proc` facts; RHS applies substitutions consistent with **`cont`**’s multi-binder (today’s **`^[xs].p`** style, extended so each **`xᵢ`** aligns with a **`Proc`** pattern if needed).
+```text
+{ c!(pair(1, 2)) | for(c -> pair($u, $v)){ int($u, 64) } }
+```
 
-**Result.** Same concurrent intuition as current rhocalc **`Comm`**, with **pattern** discipline on each payload.
+**3. Data on the channel**  
+**Message:** **`pair(1, 2)`**. **Pattern:** **`pair($u, $v)`** → **`u ↦ 1`**, **`v ↦ 2`**.
+
+**4. Output and explanation**  
+Residual **`int(1, 64)`**. Changing the payload to **`pair(1, 9)`** still yields **`u ↦ 1`**, **`v ↦ 9`**.
+
+---
+
+### Scenario C — rigid pattern vs wrong-shaped message **(proposal)**
+
+**1. Changes in `rhocalc.rs`**  
+Same as Scenario B.
+
+**2. User’s program**
+
+```text
+{ c!("hi") | for(c -> pair($u, $v)){ int($u, 64) } }
+```
+
+**3. Data on the channel**  
+**Message:** **`"hi"`** (**`Proc`** string). **Pattern:** **`pair($u, $v)`** — requires **`PPair`** head.
+
+**4. Output and explanation**  
+**`unifies_proc`** fails; **`CommPat`** does not consume this pair; **no exception**. (With **`for(c -> $x)`** instead, **`"hi"`** would match an accept-all **`$x`**.)
+
+---
+
+### Scenario D — repeated metavar **`pair($x, $x)`** **(proposal)**
+
+**1. Changes in `rhocalc.rs`**  
+Same as Scenario B.
+
+**Success — 2. User’s program**
+
+```text
+{ c!(pair(3, 3)) | for(c -> pair($x, $x)){ int($x, 64) } }
+```
+
+**3. Data on the channel**  
+**Message:** **`pair(3, 3)`**. **Pattern:** **`pair($x, $x)`** (both arms must agree on **`x`**).
+
+**4. Output and explanation**  
+**`σ = { x ↦ 3 }`**; residual **`int(3, 64)`**.
+
+**Failure — 2. User’s program**
+
+```text
+{ c!(pair(3, 4)) | for(c -> pair($x, $x)){ int($x, 64) } }
+```
+
+**3. Data on the channel**  
+**Message:** **`pair(3, 4)`** — cannot bind **`$x`** to **`3`** and **`4`** at once.
+
+**4. Output and explanation**  
+**`CommPat`** does not fire; send/receive on **`c`** stay in the **`PPar`**.
+
+---
+
+### Scenario E — multi-channel pattern guards **(future sketch)**
+
+**1. Changes in `rhocalc.rs`**
+
+```text
+Comm2 . | unifies(pat1, q1), unifies(pat2, q2)
+    |- (PPar {(PInputs ns pats cont), *zip(ns, qs).*map(|n, q| (POutput n q)), ...rest})
+    ~> (PPar {(apply_pattern_chain cont pats qs), ...rest});
+```
+
+**2. User’s program**
+
+```text
+{ a!(1) | b!(pair(2, 3)) | for(a -> $m){ for(b -> pair($u, $v)){ int($u, 64) } } }
+```
+
+**3. Data on the channel**  
+**`a`:** message **`1`**, pattern **`$m`**. **`b`:** message **`pair(2, 3)`**, pattern **`pair($u, $v)`**.
+
+**4. Output and explanation**  
+If **both** **`unifies`** conjuncts succeed, both sends and the combined receive reduce; conceptually **`m ↦ 1`**, **`u ↦ 2`**, **`v ↦ 3`**. If either fails, this **`Comm2`** step does not apply.
 
 ---
 
@@ -759,7 +730,7 @@ This section highlights **what changes operationally** once pattern matching and
 ### Phase 2: COMM + runtime bindings
 
 - Add `apply_pattern` runtime helper.
-- Introduce **`PPatVar`** / evolved **`PInputs`** (see [Concrete syntax proposal](#concrete-syntax-proposal-for-this-document)) in rhocalc.
+- Introduce **`PPatVar`** / evolved **`PInputs`** (see [Concrete syntax proposal](#concrete-syntax-proposal)) in rhocalc.
 - Implement COMM rewrite using unification premise and `apply_pattern`.
 - Add end-to-end tests for successful/failed communication matches.
 
