@@ -86,6 +86,18 @@ fn assert_no_rewrites(input: &str) {
     );
 }
 
+/// Assert that a term display is never produced among discovered terms.
+fn assert_never_produces(input: &str, forbidden: &str) {
+    let results = run(input);
+    let found = results.all_terms.iter().any(|t| t.display == forbidden);
+    assert!(
+        !found,
+        "`{}` unexpectedly produced `{}`",
+        input,
+        forbidden
+    );
+}
+
 /// Assert that `input` has a rewrite from the initial term (not stuck).
 fn assert_initial_rewrites(input: &str) {
     fresh();
@@ -176,6 +188,18 @@ mod comm {
     fn comm_with_remaining_parallel() {
         // {(c?x).{*(x)} | c!(p) | q} → {p | q}
         assert_reduces_to("{(c?x).{*(x)} | c!(p) | q}", "{p | q}");
+    }
+
+    #[test]
+    fn pattern_comm_var_matches_payload() {
+        assert_reduces_to("{for(c <- x).{x} | c!(p)}", "p");
+    }
+
+    #[test]
+    fn pattern_comm_ground_pattern_blocks_mismatch() {
+        // Pattern 0 does not match payload p, so COMM must not produce {0}.
+        // (Other non-COMM rewrites may exist due HOL/native rules.)
+        assert_never_produces("{for(c <- 0).{0} | c!(p)}", "{0}");
     }
 }
 

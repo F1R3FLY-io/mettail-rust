@@ -417,6 +417,9 @@ fn premise_to_display_string(p: &Premise) -> String {
         Premise::Congruence { source, target } => {
             format!("{} ~> {}", source, target)
         },
+        Premise::Unification { pattern, value } => {
+            format!("unifies({}, {})", pattern, value)
+        },
         Premise::ForAll { collection, param, body } => {
             format!("{}.*map(|{}| {})", collection, param, premise_to_display_string(body))
         },
@@ -606,6 +609,12 @@ fn pattern_term_to_syntax(pt: &PatternTerm, language: &LanguageDef) -> String {
                 .map(|r| pattern_to_user_syntax(r, language))
                 .collect();
             format!("{}[{}]", scope_str, repls.join(", "))
+        },
+        PatternTerm::ApplyPattern { pattern, value, body } => {
+            let p = pattern_to_user_syntax(pattern, language);
+            let v = pattern_to_user_syntax(value, language);
+            let b = pattern_to_user_syntax(body, language);
+            format!("apply_pattern({}, {}, {})", p, v, b)
         },
     }
 }

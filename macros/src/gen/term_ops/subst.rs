@@ -1412,6 +1412,7 @@ fn generate_subst_impl(
     language: &LanguageDef,
 ) -> TokenStream {
     let category_str = category.to_string();
+    let var_label = generate_var_label(category);
 
     // Generate match arms for the main subst method (same-category)
     let match_arms: Vec<TokenStream> = variants
@@ -1542,6 +1543,22 @@ fn generate_subst_impl(
                 repls: &[Self],
             ) -> Self {
                 self.subst(vars, repls)
+            }
+
+            /// Pattern-application helper used by COMM-style RHS expressions.
+            ///
+            /// Minimal phase-2 semantics:
+            /// - if `pattern` is a free variable, substitute that variable with `value` in `self`
+            /// - if `pattern == value`, return `self` unchanged
+            /// - otherwise no match (`None`)
+            pub fn apply_pattern(&self, pattern: &Self, value: &Self) -> Option<Self> {
+                match pattern {
+                    #category::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
+                        Some(self.substitute(fv, value))
+                    }
+                    _ if pattern == value => Some(self.clone()),
+                    _ => None,
+                }
             }
 
             #(#cross_methods)*

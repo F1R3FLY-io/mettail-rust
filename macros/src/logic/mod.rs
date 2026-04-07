@@ -29,6 +29,7 @@ pub mod common;
 mod equations;
 pub mod helpers;
 mod relations;
+mod unification;
 mod writer;
 
 pub mod congruence;
@@ -38,6 +39,7 @@ pub mod rules;
 pub use categories::generate_category_rules;
 pub use equations::generate_equation_rules;
 pub use relations::{generate_relations, list_all_relations_for_extraction};
+pub use unification::generate_unification_rules;
 
 // Re-export congruence function
 pub use congruence::generate_all_explicit_congruences;
@@ -64,6 +66,7 @@ pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
     let relations = generate_relations(language);
     let category_rules = generate_category_rules(language, None);
     let equation_rules = generate_equation_rules(language, None);
+    let unification_rules = generate_unification_rules(language, None);
     let rewrite_rules = generate_rewrite_rules(language, None);
     let custom_logic = language
         .logic
@@ -78,6 +81,8 @@ pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
 
         #equation_rules
 
+        #unification_rules
+
         #rewrite_rules
 
         #custom_logic
@@ -87,6 +92,7 @@ pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
     let core_raw_content = common::compute_core_categories(language).map(|core_cats| {
         let core_category_rules = generate_category_rules(language, Some(&core_cats));
         let core_equation_rules = generate_equation_rules(language, Some(&core_cats));
+        let core_unification_rules = generate_unification_rules(language, Some(&core_cats));
         let core_rewrite_rules = generate_rewrite_rules(language, Some(&core_cats));
 
         quote! {
@@ -95,6 +101,8 @@ pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
             #core_category_rules
 
             #core_equation_rules
+
+            #core_unification_rules
 
             #core_rewrite_rules
 
@@ -119,6 +127,7 @@ pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
         &relations,
         &category_rules,
         &equation_rules,
+        &unification_rules,
         &rewrite_rules,
         &custom_logic,
     );
@@ -142,6 +151,7 @@ fn format_ascent_source(
     relations: &TokenStream,
     category_rules: &TokenStream,
     equation_rules: &TokenStream,
+    unification_rules: &TokenStream,
     rewrite_rules: &TokenStream,
     custom_logic: &TokenStream,
 ) -> String {
@@ -157,6 +167,7 @@ fn format_ascent_source(
     let relations_str = relations.to_string();
     let category_str = category_rules.to_string();
     let equation_str = equation_rules.to_string();
+    let unification_str = unification_rules.to_string();
     let rewrite_str = rewrite_rules.to_string();
 
     output.push_str("    // Relations\n");
@@ -171,6 +182,11 @@ fn format_ascent_source(
 
     output.push_str("\n    // Equation rules\n");
     for line in split_at_top_level(&equation_str, ';') {
+        output.push_str(&print_rule(line));
+    }
+
+    output.push_str("\n    // Unification rules\n");
+    for line in split_at_top_level(&unification_str, ';') {
         output.push_str(&print_rule(line));
     }
 
