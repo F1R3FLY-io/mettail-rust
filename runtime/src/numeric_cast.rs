@@ -179,7 +179,10 @@ pub fn cast_int_from_f64(x: f64, bits: u32) -> Result<num_bigint::BigInt, CastEr
     Ok(k)
 }
 
-pub fn cast_int_from_bigrat(r: &Ratio<num_bigint::BigInt>, bits: u32) -> Result<num_bigint::BigInt, CastError> {
+pub fn cast_int_from_bigrat(
+    r: &Ratio<num_bigint::BigInt>,
+    bits: u32,
+) -> Result<num_bigint::BigInt, CastError> {
     if r.denom().is_one() {
         return Ok(signed_modular(r.numer(), bits));
     }
@@ -190,7 +193,10 @@ pub fn cast_int_from_bigrat(r: &Ratio<num_bigint::BigInt>, bits: u32) -> Result<
     Ok(k)
 }
 
-pub fn cast_int_from_fixed(fp: &CanonicalFixedPoint, bits: u32) -> Result<num_bigint::BigInt, CastError> {
+pub fn cast_int_from_fixed(
+    fp: &CanonicalFixedPoint,
+    bits: u32,
+) -> Result<num_bigint::BigInt, CastError> {
     let r = fp.value_ratio();
     cast_int_from_bigrat(&r, bits)
 }
@@ -222,7 +228,10 @@ pub fn cast_uint_from_f64(x: f64, bits: u32) -> Result<num_bigint::BigInt, CastE
     Ok(k)
 }
 
-pub fn cast_uint_from_bigrat(r: &Ratio<num_bigint::BigInt>, bits: u32) -> Result<num_bigint::BigInt, CastError> {
+pub fn cast_uint_from_bigrat(
+    r: &Ratio<num_bigint::BigInt>,
+    bits: u32,
+) -> Result<num_bigint::BigInt, CastError> {
     if r.denom().is_one() {
         return Ok(unsigned_modular(r.numer(), bits));
     }
@@ -236,7 +245,10 @@ pub fn cast_uint_from_bigrat(r: &Ratio<num_bigint::BigInt>, bits: u32) -> Result
     Ok(k)
 }
 
-pub fn cast_uint_from_fixed(fp: &CanonicalFixedPoint, bits: u32) -> Result<num_bigint::BigInt, CastError> {
+pub fn cast_uint_from_fixed(
+    fp: &CanonicalFixedPoint,
+    bits: u32,
+) -> Result<num_bigint::BigInt, CastError> {
     let r = fp.value_ratio();
     cast_uint_from_bigrat(&r, bits)
 }
@@ -284,7 +296,8 @@ fn floor_decimal_scientific_str_to_bigint(s: &str) -> Result<num_bigint::BigInt,
     if int_part.is_empty() && frac_part.is_empty() {
         return Err(CastError::IntegerOverflow);
     }
-    if !int_part.chars().all(|c| c.is_ascii_digit()) || !frac_part.chars().all(|c| c.is_ascii_digit())
+    if !int_part.chars().all(|c| c.is_ascii_digit())
+        || !frac_part.chars().all(|c| c.is_ascii_digit())
     {
         return Err(CastError::IntegerOverflow);
     }
@@ -358,7 +371,7 @@ pub fn cast_float_from_f64(x: f64, width: FloatCastWidth) -> Result<CanonicalFlo
         FloatCastWidth::F32 => {
             let xf = x as f32;
             CanonicalFloat64::from(f64::from(xf))
-        }
+        },
     })
 }
 
@@ -372,7 +385,7 @@ pub fn cast_float_from_f64_allow_nonfinite(x: f64, width: FloatCastWidth) -> Can
             } else {
                 CanonicalFloat64::from(f64::from(x as f32))
             }
-        }
+        },
     }
 }
 
@@ -385,7 +398,10 @@ pub fn cast_float_from_bigint(n: &num_bigint::BigInt, width: FloatCastWidth) -> 
     cast_float_from_f64_allow_nonfinite(x, width)
 }
 
-pub fn cast_float_from_bigrat(r: &Ratio<num_bigint::BigInt>, width: FloatCastWidth) -> CanonicalFloat64 {
+pub fn cast_float_from_bigrat(
+    r: &Ratio<num_bigint::BigInt>,
+    width: FloatCastWidth,
+) -> CanonicalFloat64 {
     let x = r.to_f64().unwrap_or(f64::NAN);
     cast_float_from_f64_allow_nonfinite(x, width)
 }
@@ -455,14 +471,8 @@ mod tests {
     fn validate_float_width_cases() {
         assert_eq!(super::validate_float_width(32), Ok(FloatCastWidth::F32));
         assert_eq!(super::validate_float_width(64), Ok(FloatCastWidth::F64));
-        assert_eq!(
-            super::validate_float_width(128),
-            Err(CastError::UnsupportedFloatWidth)
-        );
-        assert_eq!(
-            super::validate_float_width(17),
-            Err(CastError::InvalidWidth)
-        );
+        assert_eq!(super::validate_float_width(128), Err(CastError::UnsupportedFloatWidth));
+        assert_eq!(super::validate_float_width(17), Err(CastError::InvalidWidth));
     }
 
     #[test]
@@ -473,10 +483,7 @@ mod tests {
 
     #[test]
     fn int_from_float_overflow() {
-        assert_eq!(
-            cast_int_from_f64(1e10, 8),
-            Err(CastError::IntegerOverflow)
-        );
+        assert_eq!(cast_int_from_f64(1e10, 8), Err(CastError::IntegerOverflow));
     }
 
     #[test]
@@ -487,27 +494,18 @@ mod tests {
 
     #[test]
     fn uint_modular() {
-        assert_eq!(
-            cast_uint_from_u32(257, 8),
-            BigInt::from(1u32)
-        );
+        assert_eq!(cast_uint_from_u32(257, 8), BigInt::from(1u32));
     }
 
     #[test]
     fn uint_negative_bigint_twos_complement() {
-        assert_eq!(
-            cast_uint_from_bigint(&BigInt::from(-1i32), 8),
-            BigInt::from(255u32)
-        );
+        assert_eq!(cast_uint_from_bigint(&BigInt::from(-1i32), 8), BigInt::from(255u32));
     }
 
     #[test]
     fn non_finite_to_int() {
         assert_eq!(cast_int_from_f64(f64::NAN, 8), Err(CastError::NonFinite));
-        assert_eq!(
-            cast_int_from_f64(f64::INFINITY, 8),
-            Err(CastError::NonFinite)
-        );
+        assert_eq!(cast_int_from_f64(f64::INFINITY, 8), Err(CastError::NonFinite));
     }
 
     #[test]
@@ -519,15 +517,10 @@ mod tests {
 
     #[test]
     fn bigint_from_float() {
-        assert_eq!(
-            cast_bigint_from_f64(-3.5).unwrap(),
-            BigInt::from(-4)
-        );
+        assert_eq!(cast_bigint_from_f64(-3.5).unwrap(), BigInt::from(-4));
         assert_eq!(
             cast_bigint_from_f64(1e30).unwrap(),
-            "1000000000000000000000000000000"
-                .parse::<BigInt>()
-                .unwrap()
+            "1000000000000000000000000000000".parse::<BigInt>().unwrap()
         );
     }
 
@@ -570,9 +563,6 @@ mod tests {
         let r = Ratio::new(BigInt::from(10i32), BigInt::from(3i32));
         assert_eq!(cast_int_from_bigrat(&r, 8).unwrap(), BigInt::from(3i32));
         let r_big = Ratio::new(BigInt::from(1000i32), BigInt::from(3i32));
-        assert_eq!(
-            cast_int_from_bigrat(&r_big, 8),
-            Err(CastError::IntegerOverflow)
-        );
+        assert_eq!(cast_int_from_bigrat(&r_big, 8), Err(CastError::IntegerOverflow));
     }
 }

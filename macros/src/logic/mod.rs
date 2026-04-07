@@ -597,13 +597,9 @@ fn generate_fold_big_step_rules(
                             if let #category::#err_ident = t;
                     });
                 }
-                for cast_err in [
-                    "CastErrInt",
-                    "CastErrUInt32",
-                    "CastErrFloat",
-                    "CastErrFixed",
-                    "CastErrBigInt",
-                ] {
+                for cast_err in
+                    ["CastErrInt", "CastErrUInt32", "CastErrFloat", "CastErrFixed", "CastErrBigInt"]
+                {
                     let cast_err_ident = format_ident!("{}", cast_err);
                     if language.terms.iter().any(|r| {
                         r.category == *category
@@ -806,8 +802,12 @@ fn generate_fold_big_step_rules(
                     let label_str = label.to_string();
                     let res_expr = if matches!(
                         label_str.as_str(),
-                        "IntBin" | "UIntBin" | "FloatBin" | "FixedBin"
-                            | "BigintCast" | "BigratCast"
+                        "IntBin"
+                            | "UIntBin"
+                            | "FloatBin"
+                            | "FixedBin"
+                            | "BigintCast"
+                            | "BigratCast"
                     ) {
                         if label_str == "BigratCast" {
                             quote! {

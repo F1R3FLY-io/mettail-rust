@@ -207,7 +207,7 @@ language! {
         BitAndFixed . a:Fixed, b:Fixed |- a "bitand" b : Fixed ![a & b] fold;
         BitOrFixed . a:Fixed, b:Fixed |- a "bitor" b : Fixed ![a | b] fold;
         BitNotFixed . a:Fixed |- "bitnot" a : Fixed ![mettail_runtime::CanonicalFixedPoint::new(!a.unscaled().clone(), a.places())] fold;
-	ProcToBool . a:Proc |- "bool" "(" a ")" : Bool ![{
+    ProcToBool . a:Proc |- "bool" "(" a ")" : Bool ![{
             match a {
                 Proc::ProcBool(b) => b.as_ref().eval(),
                 Proc::ProcInt(i) => i.as_ref().eval() != 0,

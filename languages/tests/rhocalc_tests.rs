@@ -926,11 +926,7 @@ fn rhocalc_cast_float_overflow_to_inf() {
 fn rhocalc_cast_float_from_rational_string() {
     let results = run(r#"{float("1r/2r", 32)}"#);
     let nfs = normal_form_displays(&results);
-    assert!(
-        nfs.iter().any(|nf| nf == "0.5"),
-        "expected 0.5 in a normal form, got {:?}",
-        nfs
-    );
+    assert!(nfs.iter().any(|nf| nf == "0.5"), "expected 0.5 in a normal form, got {:?}", nfs);
 }
 
 #[test]
@@ -964,11 +960,7 @@ fn rhocalc_str_from_rational_literal() {
 fn rhocalc_bigint_unary_from_float() {
     let results = run("{bigint(-3.5)}");
     let nfs = normal_form_displays(&results);
-    assert!(
-        nfs.iter().any(|nf| nf.contains("-4")),
-        "expected -4n or similar, got {:?}",
-        nfs
-    );
+    assert!(nfs.iter().any(|nf| nf.contains("-4")), "expected -4n or similar, got {:?}", nfs);
 }
 
 #[test]

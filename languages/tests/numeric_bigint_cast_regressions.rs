@@ -45,8 +45,7 @@ fn calc_bigint_from_sci_float() {
     let displays = calc_nf_displays("bigint(3.14e100)");
     assert!(
         displays.iter().any(|d| {
-            !d.contains("cast_error")
-                && d.chars().filter(|c| c.is_ascii_digit()).count() > 80
+            !d.contains("cast_error") && d.chars().filter(|c| c.is_ascii_digit()).count() > 80
         }),
         "expected huge integer NF, got {:?}",
         displays
@@ -57,7 +56,9 @@ fn calc_bigint_from_sci_float() {
 fn calc_bigrat_from_sci_float() {
     let displays = calc_nf_displays("bigrat(3.14e100)");
     assert!(
-        displays.iter().any(|d| !d.contains("cast_error") && !d.is_empty()),
+        displays
+            .iter()
+            .any(|d| !d.contains("cast_error") && !d.is_empty()),
         "expected rational NF, got {:?}",
         displays
     );
@@ -71,9 +72,10 @@ fn calc_repl_parse_preserves_huge_n_suffix() {
         .parse_term_for_env("32478132567813256718n")
         .expect("parse_term_for_env");
     let results = lang.run_ascent(t.as_ref()).expect("run");
-    let ok = results.normal_forms().iter().any(|nf| {
-        nf.display == "32478132567813256718" || nf.display == "32478132567813256718n"
-    });
+    let ok = results
+        .normal_forms()
+        .iter()
+        .any(|nf| nf.display == "32478132567813256718" || nf.display == "32478132567813256718n");
     assert!(ok, "unexpected NFs: {:?}", results.normal_forms());
 }
 

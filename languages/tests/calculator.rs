@@ -431,6 +431,16 @@ fn test_fixed_projections_proc() {
 }
 
 #[test]
+fn test_bool_from_uint_bigint_bigrat() {
+    calc_normal_form("bool(0u32)", "false");
+    calc_normal_form("bool(9u32)", "true");
+    calc_normal_form("bool(0n)", "false");
+    calc_normal_form("bool(-3n)", "true");
+    calc_normal_form("bool(0r)", "false");
+    calc_normal_form("bool(2r/3r)", "true");
+}
+
+#[test]
 fn test_fixed_parse_rejects_malformed() {
     mettail_runtime::clear_var_cache();
     assert!(calc::Fixed::parse("10px").is_err());

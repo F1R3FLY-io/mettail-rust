@@ -5,7 +5,7 @@
 //! 2. Build NFA via Thompson's construction
 //! 3. Compute alphabet equivalence classes
 //! 4. Convert NFA → DFA via subset construction
-//! 5. Minimize DFA via Hopcroft's algorithm
+//! 5. Minimize DFA via Hopcroft's algorithm (skipped when both float and fixed-point literals are active)
 //! 6. Generate Rust lexer code
 
 use proc_macro2::TokenStream;
@@ -65,8 +65,14 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
     let dfa = subset_construction(&nfa, &partition);
     let num_dfa_states = dfa.states.len();
 
-    // Step 4: Minimize DFA
-    let min_dfa = minimize_dfa(&dfa);
+    // Step 4: Minimize DFA. When both float and fixed-point literals are used, Hopcroft
+    // minimization can merge states in ways that break maximal munch on shared prefixes
+    // (e.g. `3.5` vs `3.5p0`). Use the subset DFA for the lexer in that case.
+    let min_dfa = if input.needs.float && input.needs.fixed_point {
+        dfa
+    } else {
+        minimize_dfa(&dfa)
+    };
     let num_minimized_states = min_dfa.states.len();
 
     // Collect all token kinds for enum generation
@@ -155,8 +161,12 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     let dfa = subset_construction(&nfa, &partition);
     let num_dfa_states = dfa.states.len();
 
-    // Step 4: Minimize DFA
-    let min_dfa = minimize_dfa(&dfa);
+    // Step 4: Minimize DFA (see `generate_lexer` — skip minimization when float + fixed overlap).
+    let min_dfa = if input.needs.float && input.needs.fixed_point {
+        dfa
+    } else {
+        minimize_dfa(&dfa)
+    };
     let num_minimized_states = min_dfa.states.len();
 
     // Collect all token kinds for enum generation

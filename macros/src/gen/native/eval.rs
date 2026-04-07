@@ -425,13 +425,9 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             });
         }
 
-        for cast_err_label in [
-            "CastErrInt",
-            "CastErrUInt32",
-            "CastErrFloat",
-            "CastErrFixed",
-            "CastErrBigInt",
-        ] {
+        for cast_err_label in
+            ["CastErrInt", "CastErrUInt32", "CastErrFloat", "CastErrFixed", "CastErrBigInt"]
+        {
             let cast_err_ident = quote::format_ident!("{}", cast_err_label);
             if rules.iter().any(|r| {
                 r.category == *category && r.label == cast_err_ident && fold_field_count(r) == 0
