@@ -1,0 +1,810 @@
+% ============================================================================
+% rholang 1.4 (MeTTaIL) Language Reference
+% ============================================================================
+\documentclass[11pt,a4paper]{article}
+
+% -- Packages ----------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{fancyvrb}
+\usepackage{enumitem}
+\usepackage[colorlinks=true,linkcolor=NavyBlue,urlcolor=RoyalBlue]{hyperref}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+% -- Colors ------------------------------------------------------------------
+\definecolor{kw}{RGB}{0,100,0}        % reserved words
+\definecolor{nt}{RGB}{130,30,130}      % non-terminals
+\definecolor{cmt}{RGB}{120,120,120}    % commentary
+\definecolor{navy}{RGB}{26,26,46}      % F1R3FLY navy
+\definecolor{skyblue}{RGB}{63,169,245} % F1R3FLY sky blue
+\definecolor{rulebox}{RGB}{240,245,250}
+
+% -- Formatting helpers ------------------------------------------------------
+\newcommand{\kw}[1]{\texttt{\textcolor{kw}{#1}}}       % keyword
+\newcommand{\sym}[1]{\texttt{#1}}                       % symbol
+\newcommand{\nt}[1]{\textit{\textcolor{nt}{#1}}}        % non-terminal
+\newcommand{\tok}[1]{\textsf{#1}}                       % token class
+\newcommand{\OR}{\ensuremath{\;\mid\;}}                  % alternation
+\newcommand{\EPS}{\ensuremath{\varepsilon}}              % empty
+\newcommand{\produces}{\ensuremath{\;\longrightarrow\;}} % production arrow
+\newcommand{\bnfdef}{\ensuremath{\;::=\;}}               % BNF definition
+
+% Grammar rule environment: indented, ragged-right
+\newenvironment{grammar}{%
+  \par\smallskip\begin{list}{}{%
+    \setlength{\leftmargin}{1.5em}%
+    \setlength{\itemsep}{2pt}%
+    \setlength{\parsep}{0pt}}%
+}{\end{list}\smallskip}
+
+% Section styling
+\titleformat{\section}{\Large\bfseries\color{navy}}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\large\bfseries\color{navy!80}}{}{0em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{navy!60}}{}{0em}{}
+
+% Header / footer
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textcolor{cmt}{rholang 1.4 (MeTTaIL) Language Reference}}
+\fancyhead[R]{\small\textcolor{cmt}{\thepage}}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ============================================================================
+\begin{document}
+
+% -- Title -------------------------------------------------------------------
+\begin{titlepage}
+\centering
+\vspace*{4cm}
+{\Huge\bfseries\textcolor{navy}{rholang 1.4}\par}
+\vspace{0.4cm}
+{\LARGE\textcolor{skyblue}{MeTTaIL Language Reference}\par}
+\vspace{1.5cm}
+{\large Grammar Specification\par}
+\vspace{0.5cm}
+{\normalsize
+  311 productions $\cdot$ 3 benign shift/reduce conflicts\\[4pt]
+  Generated from \texttt{rholang14.cf} via BNFC 2.9.5\par}
+\vspace{2cm}
+{\small
+  F1R3FLY Industries\\[2pt]
+  \today\par}
+\vfill
+{\footnotesize
+  This document reorganises the auto-generated BNFC grammar specification
+  into thematic sections for maintainability and readability.  Every
+  production is preserved; only the presentation differs.\par}
+\end{titlepage}
+
+\tableofcontents
+\clearpage
+
+% ============================================================================
+\section{Lexical Structure}
+\label{sec:lexical}
+% ============================================================================
+
+\subsection{Literal Tokens}
+
+Each literal class is defined by a regular expression.
+Position tokens carry source-location information.
+
+\begin{longtable}{@{}lp{10cm}@{}}
+\toprule
+\textbf{Token} & \textbf{Regular Expression} \\
+\midrule
+\endhead
+\tok{LongLiteral}\textsuperscript{pos}
+  & \texttt{digit+} \\[4pt]
+\tok{FloatLiteral}\textsuperscript{pos}
+  & \texttt{digit+ `.' digit+ ({[}`Ee'{]} `-'? digit+)?} \\[4pt]
+\tok{StringLiteral}
+  & \texttt{`"' (char$-${[}"$\backslash$"{]}~$|$~`$\backslash$' {[}"$\backslash$$\backslash$nt"{]})* `"'} \\[4pt]
+\tok{UriLiteral}
+  & \texttt{`` ` '' (char$-${[}"$\backslash$`"{]}~$|$~`$\backslash$' {[}"`$\backslash$"{]})* `` ` ''} \\[4pt]
+\tok{Var}
+  & \texttt{(letter$|$`'')(letter$|$digit$|$`\_'$|$`'')*}
+    \OR \texttt{`\_'(letter$|$digit$|$`\_'$|$`'')+} \\[4pt]
+\tok{UpperIdent}
+  & \texttt{upper\,(letter$|$digit$|$`\_'$|$`'')*} \\[4pt]
+\tok{DollarIdent}
+  & \texttt{`\$'\,upper\,(letter$|$digit$|$`\_'$|$`'')*} \\[4pt]
+\tok{RustBlock}
+  & Balanced braces, up to 3 nesting levels deep \\
+\bottomrule
+\end{longtable}
+
+\subsection{Reserved Words}
+
+The following identifiers are reserved and cannot be used as \tok{Var}:
+
+\medskip
+\begin{tabular}{@{}llllllll@{}}
+\kw{Bool}    & \kw{ByteArray} & \kw{Float}   & \kw{Int}       & \kw{Nil}    & \kw{Set}      & \kw{String} & \kw{Uri}      \\
+\kw{Vec}     & \kw{and}       & \kw{as}      & \kw{bundle}    & \kw{bundle0}& \kw{clone}    & \kw{contract}& \kw{else}     \\
+\kw{equations}& \kw{eval}     & \kw{false}   & \kw{fold}      & \kw{for}    & \kw{if}       & \kw{in}     & \kw{language} \\
+\kw{let}     & \kw{logic}     & \kw{map}     & \kw{match}     & \kw{matches}& \kw{new}      & \kw{not}    & \kw{or}       \\
+\kw{relation}& \kw{rewrites}  & \kw{select}  & \kw{sep}       & \kw{terms}  & \kw{true}     & \kw{types}  & \kw{where}    \\
+\kw{zip}     &                &              &                &             &               &             &               \\
+\end{tabular}
+
+\subsection{Symbols}
+
+\medskip
+\begin{tabular}{@{}llllllllllll@{}}
+\sym{;;}  & \sym{\{} & \sym{\}} & \sym{\~{}} & \sym{/\textbackslash} & \sym{\textbackslash/}
+  & \sym{*} & \sym{.} & \sym{(} & \sym{)} & \sym{\^{}} & \sym{[} \\
+\sym{]}   & \sym{-}  & \sym{/}  & \sym{\%}   & \sym{\%\%}  & \sym{+}
+  & \sym{++}& \sym{-{}-}& \sym{<} & \sym{<=} & \sym{>}   & \sym{>=} \\
+\sym{==}  & \sym{!=} & \sym{=}  & \sym{!?}   & \sym{|}     & \sym{,}
+  & \sym{\_}& \sym{@} & \sym{;}  & \sym{<-}  & \sym{\&}  & \sym{?!} \\
+\sym{<<-} & \sym{?}  & \sym{!}  & \sym{!!}   & \sym{bundle+}& \sym{bundle-}
+  & \sym{=>}& \sym{\#\{}& \sym{\}\#} & \sym{:} & \sym{,)}  & \sym{...} \\
+\sym{|-}  & \sym{->} & \sym{\~{}>} & \sym{<-{}-} & & & & & & & & \\
+\end{tabular}
+
+\subsection{Comments}
+
+\begin{grammar}
+\item Single-line: \texttt{//} to end of line
+\item Multi-line: \texttt{/*} \ldots\ \texttt{*/} (non-nesting)
+\end{grammar}
+
+
+% ============================================================================
+\section{Top-Level Program}
+\label{sec:toplevel}
+% ============================================================================
+
+A program is either a single process (rholang~1.2 backward compatibility)
+or a sequence of top-level declarations (MeTTaIL~programs).
+
+\begin{grammar}
+\item \nt{Program} \bnfdef \nt{Proc} \OR \nt{TopDecl}*
+\item \nt{TopDecl} \bnfdef \nt{LangDecl} \OR \nt{Proc}~\sym{;;}
+\end{grammar}
+
+
+% ============================================================================
+\section{Processes}
+\label{sec:proc}
+% ============================================================================
+
+Processes are stratified into 17 precedence levels, from \nt{Proc}
+(level~0, lowest) to \nt{Proc16} (atoms, highest).  Braces serve as
+explicit grouping: \sym{\{}~\nt{Proc}~\sym{\}}.
+
+\subsection{Atoms (Proc16)}
+
+\begin{grammar}
+\item \nt{Proc16} \bnfdef
+    \nt{Ground}
+    \OR \nt{Collection}
+    \OR \nt{ProcVar}
+    \OR \kw{Nil}
+    \OR \nt{SimpleType}
+    \OR \sym{\{}\sym{\}} \quad\textcolor{cmt}{(MeTTaIL zero process)}
+\end{grammar}
+
+\subsection{Spatial Connectives (Proc13--15)}
+
+\begin{grammar}
+\item \nt{Proc15} \bnfdef \sym{\~{}}~\nt{Proc15}
+    \hfill\textcolor{cmt}{negation}
+\item \nt{Proc14} \bnfdef \nt{Proc14}~\sym{/\textbackslash}~\nt{Proc15}
+    \hfill\textcolor{cmt}{conjunction}
+\item \nt{Proc13} \bnfdef \nt{Proc13}~\sym{\textbackslash/}~\nt{Proc14}
+    \OR \nt{VarRefKind}~\tok{Var}
+    \hfill\textcolor{cmt}{disjunction, var-ref}
+\end{grammar}
+
+\subsection{Dereference (Proc12)}
+
+\begin{grammar}
+\item \nt{Proc12} \bnfdef \sym{*}~\nt{Name}
+    \hfill\textcolor{cmt}{eval / dereference}
+\end{grammar}
+
+\subsection{Method Calls, Lambdas, and Applications (Proc11)}
+
+\begin{grammar}
+\item \nt{Proc11} \bnfdef
+    \nt{Proc11}\,\sym{.}\,\tok{Var}\,\sym{(}\,\nt{Proc}*\,\sym{)}
+    \hfill\textcolor{cmt}{method invocation}
+\item \phantom{\nt{Proc11}} \OR
+    \sym{(}\,\nt{Proc4}\,\sym{)}
+    \hfill\textcolor{cmt}{parenthesised expression}
+\item \phantom{\nt{Proc11}} \OR
+    \sym{\^{}}\,\tok{Var}\,\sym{.}\,\nt{Proc16}
+    \OR
+    \sym{\^{}}\,\sym{[}\,\tok{Var}$^+$\,\sym{]}\,\sym{.}\,\nt{Proc16}
+    \hfill\textcolor{cmt}{lambda abstraction}
+\item \phantom{\nt{Proc11}} \OR
+    \tok{DollarIdent}\,\sym{(}\,\nt{Proc}*\,\sym{)}
+    \hfill\textcolor{cmt}{typed application}
+\item \phantom{\nt{Proc11}} \OR
+    \tok{Var}\,\sym{(}\,\nt{Proc}*\,\sym{)}
+    \hfill\textcolor{cmt}{function call}
+\end{grammar}
+
+\subsection{Unary Operators (Proc10)}
+
+\begin{grammar}
+\item \nt{Proc10} \bnfdef
+    \kw{not}~\nt{Proc10}
+    \OR \sym{-}~\nt{Proc10}
+\end{grammar}
+
+\subsection{Arithmetic (Proc8--9)}
+
+\begin{grammar}
+\item \nt{Proc9} \bnfdef
+    \nt{Proc9}~\sym{*}~\nt{Proc10}
+    \OR \nt{Proc9}~\sym{/}~\nt{Proc10}
+    \OR \nt{Proc9}~\sym{\%}~\nt{Proc10}
+    \OR \nt{Proc9}~\sym{\%\%}~\nt{Proc10}
+\item \nt{Proc8} \bnfdef
+    \nt{Proc8}~\sym{+}~\nt{Proc9}
+    \OR \nt{Proc8}~\sym{-}~\nt{Proc9}
+    \OR \nt{Proc8}~\sym{++}~\nt{Proc9}
+    \OR \nt{Proc8}~\sym{-{}-}~\nt{Proc9}
+\end{grammar}
+
+\subsection{Relational and Equality (Proc6--7)}
+
+\begin{grammar}
+\item \nt{Proc7} \bnfdef
+    \nt{Proc7}~\sym{<}~\nt{Proc8}
+    \OR \nt{Proc7}~\sym{<=}~\nt{Proc8}
+    \OR \nt{Proc7}~\sym{>}~\nt{Proc8}
+    \OR \nt{Proc7}~\sym{>=}~\nt{Proc8}
+\item \nt{Proc6} \bnfdef
+    \nt{Proc7}~\kw{matches}~\nt{Proc7}
+    \OR \nt{Proc6}~\sym{==}~\nt{Proc7}
+    \OR \nt{Proc6}~\sym{!=}~\nt{Proc7}
+\end{grammar}
+
+\subsection{Boolean Connectives (Proc4--5)}
+
+\begin{grammar}
+\item \nt{Proc5} \bnfdef \nt{Proc5}~\kw{and}~\nt{Proc6}
+\item \nt{Proc4} \bnfdef \nt{Proc4}~\kw{or}~\nt{Proc5}
+\end{grammar}
+
+\subsection{Send (Proc3)}
+
+\begin{grammar}
+\item \nt{Proc3} \bnfdef \nt{Name}~\nt{Send}~\sym{(}~\nt{Proc}*~\sym{)}
+\item \nt{Send} \bnfdef \sym{!} \OR \sym{!!}
+\end{grammar}
+
+\subsection{Binding Forms (Proc2)}
+
+\begin{grammar}
+\item \nt{Proc2} \bnfdef
+    \kw{contract}~\nt{Name}~\sym{(}~\nt{Name}*~\nt{NameRem}~\sym{)}~\sym{=}~\sym{\{}~\nt{Proc}~\sym{\}}
+    \hfill\textcolor{cmt}{contract}
+\item \phantom{\nt{Proc2}} \OR
+    \kw{for}~\sym{(}~\nt{Receipt}$^+_{\texttt{;}}$~\sym{)}~\sym{\{}~\nt{Proc}~\sym{\}}
+    \hfill\textcolor{cmt}{for-comprehension}
+\item \phantom{\nt{Proc2}} \OR
+    \kw{select}~\sym{\{}~\nt{Branch}$^+$~\sym{\}}
+    \hfill\textcolor{cmt}{select}
+\item \phantom{\nt{Proc2}} \OR
+    \kw{match}~\nt{Proc4}~\sym{\{}~\nt{Case}$^+$~\sym{\}}
+    \hfill\textcolor{cmt}{match}
+\item \phantom{\nt{Proc2}} \OR
+    \nt{Bundle}~\sym{\{}~\nt{Proc}~\sym{\}}
+    \hfill\textcolor{cmt}{bundle}
+\item \phantom{\nt{Proc2}} \OR
+    \kw{let}~\nt{Decl}~\nt{Decls}~\kw{in}~\sym{\{}~\nt{Proc}~\sym{\}}
+    \hfill\textcolor{cmt}{let}
+\item \phantom{\nt{Proc2}} \OR
+    \sym{(}~\nt{ChanBind}$^+_{\texttt{,}}$~\sym{)}~\sym{.}~\sym{\{}~\nt{Proc}~\sym{\}}
+    \hfill\textcolor{cmt}{MeTTaIL-style input}
+\end{grammar}
+
+\subsection{Conditionals, New, and Parallel (Proc0--1)}
+
+\begin{grammar}
+\item \nt{Proc1} \bnfdef
+    \kw{if}~\sym{(}~\nt{Proc}~\sym{)}~\nt{Proc2}
+    \OR
+    \kw{if}~\sym{(}~\nt{Proc}~\sym{)}~\nt{Proc2}~\kw{else}~\nt{Proc1}
+\item \phantom{\nt{Proc1}} \OR
+    \kw{new}~\nt{NameDecl}$^+_{\texttt{,}}$~\kw{in}~\nt{Proc1}
+    \hfill\textcolor{cmt}{rholang 1.2 style}
+\item \phantom{\nt{Proc1}} \OR
+    \kw{new}~\sym{(}~\tok{Var}$^+_{\texttt{,}}$~\sym{)}~\kw{in}~\nt{Proc1}
+    \hfill\textcolor{cmt}{MeTTaIL style}
+\item \phantom{\nt{Proc1}} \OR
+    \nt{Name}~\sym{!?}~\sym{(}~\nt{Proc}*~\sym{)}~\nt{SynchSendCont}
+    \hfill\textcolor{cmt}{synchronous send}
+\item \nt{Proc} \bnfdef
+    \nt{Proc}~\sym{|}~\nt{Proc1}
+    \hfill\textcolor{cmt}{parallel composition}
+\end{grammar}
+
+
+% ============================================================================
+\section{Names and Channels}
+\label{sec:names}
+% ============================================================================
+
+\begin{grammar}
+\item \nt{Name} \bnfdef
+    \sym{\_}
+    \OR \tok{Var}
+    \OR \sym{@}~\nt{Proc12}
+    \hfill\textcolor{cmt}{wildcard, variable, quote}
+\end{grammar}
+
+
+% ============================================================================
+\section{For-Comprehensions and Receipts}
+\label{sec:for}
+% ============================================================================
+
+The general form of a for-comprehension is:
+
+\medskip
+\noindent\hspace{1em}\texttt{%
+\kw{for}(\,ptrn$_{1,1}$ <- chan$_{1,1}$ \& \ldots\ \& ptrn$_{m,1}$
+\kw{where} pred$_1$\,;%
+}\\
+\hspace{3.5em}\texttt{%
+\ldots\,;%
+}\\
+\hspace{3.5em}\texttt{%
+ptrn$_{1,n}$ <- chan$_{1,n}$ \& \ldots\ \& ptrn$_{m,n}$
+\kw{where} pred$_n$\,)\{\,P\,\}%
+}
+\medskip
+
+Each semicolon-separated receipt-clause carries an independent set of
+\sym{\&}-joined binds and an optional \kw{where}-clause.  The bind counts
+need not be equal across clauses.
+
+\subsection{Receipts}
+
+\begin{grammar}
+\item \nt{Receipt} \bnfdef
+    \nt{ReceiptLinearImpl}
+    \OR \nt{ReceiptRepeatedImpl}
+    \OR \nt{ReceiptPeekImpl}
+\end{grammar}
+
+\subsubsection{Linear (consume)}
+
+\begin{grammar}
+\item \nt{ReceiptLinearImpl} \bnfdef
+    \nt{LinearBind}$^+_{\texttt{\&}}$
+    \OR \nt{LinearBind}$^+_{\texttt{\&}}$~\kw{where}~\nt{Pred}
+\item \nt{LinearBind} \bnfdef
+    \nt{Name}*~\nt{NameRem}~\sym{<-}~\nt{NameSource}
+\item \nt{NameSource} \bnfdef
+    \nt{Name}
+    \OR \nt{Name}~\sym{?!}
+    \OR \nt{Name}~\sym{!?}~\sym{(}~\nt{Proc}*~\sym{)}
+\end{grammar}
+
+\subsubsection{Repeated (persistent listener)}
+
+\begin{grammar}
+\item \nt{ReceiptRepeatedImpl} \bnfdef
+    \nt{RepeatedBind}$^+_{\texttt{\&}}$
+    \OR \nt{RepeatedBind}$^+_{\texttt{\&}}$~\kw{where}~\nt{Pred}
+\item \nt{RepeatedBind} \bnfdef
+    \nt{Name}*~\nt{NameRem}~\sym{<=}~\nt{Name}
+\end{grammar}
+
+\subsubsection{Peek (non-consuming read)}
+
+\begin{grammar}
+\item \nt{ReceiptPeekImpl} \bnfdef
+    \nt{PeekBind}$^+_{\texttt{\&}}$
+    \OR \nt{PeekBind}$^+_{\texttt{\&}}$~\kw{where}~\nt{Pred}
+\item \nt{PeekBind} \bnfdef
+    \nt{Name}*~\nt{NameRem}~\sym{<<-}~\nt{Name}
+\end{grammar}
+
+\subsubsection{MeTTaIL-Style Channel Binds}
+
+\begin{grammar}
+\item \nt{ChanBind} \bnfdef \nt{Name}~\sym{?}~\tok{Var}
+    \hfill\textcolor{cmt}{used in \texttt{(c?x, d?y).\{P\}}}
+\end{grammar}
+
+
+% ============================================================================
+\section{Predicates (\kw{where}-Clause Logic)}
+\label{sec:pred}
+% ============================================================================
+
+Predicates form a small logic language derived from the ascent-generated
+spatial and behavioural typing predicates.  They are used in \kw{where}
+clauses of for-comprehensions and in the \kw{logic} section of GSLT
+declarations.
+
+Disjunction uses the keyword \kw{or} (not~\sym{;}) to avoid
+conflict with the receipt separator.
+
+\begin{grammar}
+\item \nt{Pred}  \bnfdef \nt{Pred}~\kw{or}~\nt{Pred1}
+    \hfill\textcolor{cmt}{disjunction}
+\item \nt{Pred1} \bnfdef \nt{Pred1}~\sym{,}~\nt{Pred2}
+    \hfill\textcolor{cmt}{conjunction}
+\item \nt{Pred2} \bnfdef \sym{!}~\nt{Pred3}
+    \hfill\textcolor{cmt}{negation}
+\end{grammar}
+
+\medskip\noindent Atomic predicates:
+
+\begin{grammar}
+\item \nt{Pred4} \bnfdef
+    \tok{Var}~\sym{(}~\nt{PredArg}*~\sym{)}
+    \hfill\textcolor{cmt}{relational atom}
+\item \phantom{\nt{Pred4}} \OR
+    \nt{PredArg}~\nt{CompOp}~\nt{PredArg}
+    \hfill\textcolor{cmt}{comparison}
+\item \phantom{\nt{Pred4}} \OR
+    \kw{if}~\kw{let}~\nt{Pattern}~\sym{=}~\nt{PredArg}
+    \hfill\textcolor{cmt}{structural match}
+\item \phantom{\nt{Pred4}} \OR
+    \kw{true} \OR \kw{false}
+    \OR \sym{(}~\nt{Pred}~\sym{)}
+\end{grammar}
+
+\medskip\noindent Predicate arguments and comparison operators:
+
+\begin{grammar}
+\item \nt{PredArg} \bnfdef
+    \tok{Var} \OR \sym{\_} \OR \tok{StringLiteral} \OR \tok{LongLiteral}
+    \OR \tok{FloatLiteral} \OR \sym{@}~\nt{Proc12}
+\item \nt{CompOp} \bnfdef
+    \sym{==} \OR \sym{!=} \OR \sym{>} \OR \sym{<} \OR \sym{>=} \OR \sym{<=}
+\end{grammar}
+
+
+% ============================================================================
+\section{Collections and Ground Types}
+\label{sec:collections}
+% ============================================================================
+
+\subsection{Ground Values}
+
+\begin{grammar}
+\item \nt{Ground} \bnfdef
+    \nt{BoolLiteral}
+    \OR \tok{LongLiteral}
+    \OR \tok{FloatLiteral}
+    \OR \tok{StringLiteral}
+    \OR \tok{UriLiteral}
+\item \nt{BoolLiteral} \bnfdef \kw{true} \OR \kw{false}
+\end{grammar}
+
+\subsection{Collections}
+
+\begin{grammar}
+\item \nt{Collection} \bnfdef
+    \sym{[}~\nt{Proc}*~\nt{ProcRem}~\sym{]}
+    \hfill\textcolor{cmt}{list}
+\item \phantom{\nt{Collection}} \OR
+    \nt{Tuple}
+    \hfill\textcolor{cmt}{tuple}
+\item \phantom{\nt{Collection}} \OR
+    \kw{Set}~\sym{(}~\nt{Proc}*~\nt{ProcRem}~\sym{)}
+    \hfill\textcolor{cmt}{set}
+\item \phantom{\nt{Collection}} \OR
+    \sym{\{}~\nt{KeyValuePair}*~\nt{ProcRem}~\sym{\}}
+    \hfill\textcolor{cmt}{map}
+\item \phantom{\nt{Collection}} \OR
+    \sym{\#\{}~\nt{BagElem}*$_{\texttt{|}}$~\sym{\}\#}
+    \hfill\textcolor{cmt}{bag / multiset (MeTTaIL)}
+\item \nt{BagElem} \bnfdef \nt{Proc1}
+    \hfill\textcolor{cmt}{\sym{|} is bag separator, not par}
+\item \nt{Tuple} \bnfdef
+    \sym{(}~\nt{Proc}~\sym{,)}
+    \OR \sym{(}~\nt{Proc}~\sym{,}~\nt{Proc}$^+_{\texttt{,}}$~\sym{)}
+\item \nt{KeyValuePair} \bnfdef \nt{Proc}~\sym{:}~\nt{Proc}
+\end{grammar}
+
+\subsection{Remainders and Simple Types}
+
+\begin{grammar}
+\item \nt{ProcRem} \bnfdef \sym{...}~\nt{ProcVar} \OR \EPS
+\item \nt{NameRem} \bnfdef \sym{...}~\sym{@}~\nt{ProcVar} \OR \EPS
+\item \nt{SimpleType} \bnfdef
+    \kw{Bool} \OR \kw{Int} \OR \kw{Float} \OR \kw{String} \OR \kw{Uri} \OR \kw{ByteArray}
+\end{grammar}
+
+
+% ============================================================================
+\section{Patterns}
+\label{sec:patterns}
+% ============================================================================
+
+Patterns are used in \kw{if}~\kw{let} guards (predicates and logic
+clauses) and in structural matching.
+
+\begin{grammar}
+\item \nt{Pattern} \bnfdef
+    \sym{\_}
+    \OR \tok{Var}
+    \OR \nt{Ground}
+    \OR \sym{@}~\nt{Pattern}
+    \OR \tok{UpperIdent}~\sym{(}~\nt{Pattern}*~\sym{)}
+    \OR \sym{[}~\nt{Pattern}*~\sym{]}
+    \OR \sym{(}~\nt{Pattern}~\sym{,}~\nt{Pattern}$^+_{\texttt{,}}$~\sym{)}
+\end{grammar}
+
+
+% ============================================================================
+\section{Auxiliary Productions}
+\label{sec:aux}
+% ============================================================================
+
+\begin{grammar}
+\item \nt{ProcVar} \bnfdef \sym{\_} \OR \tok{Var}
+\item \nt{VarRefKind} \bnfdef \sym{=} \OR \sym{=}~\sym{*}
+\item \nt{Bundle} \bnfdef \sym{bundle+} \OR \sym{bundle-} \OR \sym{bundle0} \OR \kw{bundle}
+\item \nt{Branch} \bnfdef \nt{ReceiptLinearImpl}~\sym{=>}~\nt{Proc3}
+\item \nt{Case} \bnfdef \nt{Proc13}~\sym{=>}~\nt{Proc3}
+\item \nt{SynchSendCont} \bnfdef \sym{.} \OR \sym{;}~\nt{Proc1}
+\item \nt{Decl} \bnfdef \nt{Name}*~\nt{NameRem}~\sym{<-}~\nt{Proc}*
+\item \nt{Decls} \bnfdef
+    \EPS
+    \OR \sym{;}~\nt{LinearDecl}$^+_{\texttt{;}}$
+    \OR \sym{\&}~\nt{ConcDecl}$^+_{\texttt{\&}}$
+\item \nt{NameDecl} \bnfdef \tok{Var} \OR \tok{Var}~\sym{(}~\tok{UriLiteral}~\sym{)}
+\end{grammar}
+
+
+% ============================================================================
+\section{GSLT Language Declarations}
+\label{sec:gslt}
+% ============================================================================
+
+The MeTTaIL extension allows defining a \emph{graph-structured lambda
+theory} (GSLT) as a first-class declaration.  A GSLT comprises five
+optional sections, each specifying a different facet of the theory.
+
+\begin{grammar}
+\item \nt{LangDecl} \bnfdef
+    \kw{language}~\tok{UpperIdent}~\sym{\{}~\nt{LangSection}*~\sym{\}}
+\item \nt{LangSection} \bnfdef
+    \kw{types}~\sym{\{}~\nt{TypeDecl}*~\sym{\}}
+    \OR \kw{terms}~\sym{\{}~\nt{TermDecl}*~\sym{\}}
+    \OR \kw{equations}~\sym{\{}~\nt{EqDecl}*~\sym{\}}
+\item \phantom{\nt{LangSection}} \OR
+    \kw{rewrites}~\sym{\{}~\nt{RwDecl}*~\sym{\}}
+    \OR \kw{logic}~\sym{\{}~\nt{LogicClause}*~\sym{\}}
+\end{grammar}
+
+\subsection{Type Declarations}
+
+\begin{grammar}
+\item \nt{TypeDecl} \bnfdef
+    \tok{UpperIdent}
+    \hfill\textcolor{cmt}{simple category, e.g.\ \texttt{Proc}}
+\item \phantom{\nt{TypeDecl}} \OR
+    \sym{!}~\sym{[}~\nt{TypeExpr}~\sym{]}~\kw{as}~\tok{UpperIdent}
+    \hfill\textcolor{cmt}{native, e.g.\ \texttt{![i64] as Int}}
+\item \phantom{\nt{TypeDecl}} \OR
+    \sym{!}~\sym{[}~\nt{TypeExpr}~\sym{]}~\kw{as}~\tok{UpperIdent}~%
+    \sym{[}~\tok{Str}~\sym{,}~\tok{Str}~\sym{,}~\tok{Str}~\sym{]}
+    \hfill\textcolor{cmt}{collection with delimiters}
+\item \nt{TypeExpr} \bnfdef
+    \tok{Var} \OR \tok{UpperIdent}
+    \OR \tok{UpperIdent}~\sym{<}~\nt{TypeExpr}~\sym{>}
+\end{grammar}
+
+\subsection{Term Declarations}
+
+Each term declaration introduces a constructor with its typed parameters,
+surface syntax pattern, and target category.
+
+\begin{grammar}
+\item \nt{TermDecl} \bnfdef
+    \tok{UpperIdent}~\sym{.}~\nt{TermParams}~\sym{|-}~\nt{TermItem}*~\sym{:}~\tok{UpperIdent}~\sym{;}
+\item \phantom{\nt{TermDecl}} \OR
+    \tok{UpperIdent}~\sym{.}~\nt{TermParams}~\sym{|-}~\nt{TermItem}*~\sym{:}~\tok{UpperIdent}~%
+    \sym{!}~\sym{[}~\tok{RustBlock}~\sym{]}~\kw{fold}~\sym{;}
+\end{grammar}
+
+\medskip\noindent Parameters:
+
+\begin{grammar}
+\item \nt{TermParam} \bnfdef
+    \tok{Var}~\sym{:}~\nt{TermType}
+    \hfill\textcolor{cmt}{e.g.\ \texttt{n:Name}}
+\item \phantom{\nt{TermParam}} \OR
+    \sym{\^{}}~\sym{[}~\nt{VarList}~\sym{]}~\sym{.}~\tok{Var}~%
+    \sym{:}~\sym{[}~\nt{TermBinderType}~\sym{]}
+    \hfill\textcolor{cmt}{e.g.\ \texttt{\^{}[xs].p:[Name* -> Proc]}}
+\item \nt{TermType} \bnfdef
+    \tok{UpperIdent}
+    \OR \tok{UpperIdent}~\sym{(}~\tok{UpperIdent}~\sym{)}
+    \hfill\textcolor{cmt}{e.g.\ \texttt{Vec(Name)}}
+\item \nt{TermBinderType} \bnfdef
+    \tok{UpperIdent}~\sym{->}~\tok{UpperIdent}
+    \OR \tok{UpperIdent}~\sym{*}~\sym{->}~\tok{UpperIdent}
+\end{grammar}
+
+\medskip\noindent Syntax items (surface pattern to the right of \sym{|-}):
+
+\begin{grammar}
+\item \nt{TermItem} \bnfdef
+    \tok{StringLiteral}
+    \OR \tok{Var}
+    \OR \tok{Var}\,\sym{.}\,\sym{*}\,\kw{sep}\,\sym{(}\,\tok{Str}\,\sym{)}
+    \hfill\textcolor{cmt}{e.g.\ \texttt{ps.*sep("|")}}
+\item \phantom{\nt{TermItem}} \OR
+    \sym{*}\,\kw{zip}\,\sym{(}\,\tok{Var}\,\sym{,}\,\tok{Var}\,\sym{)}\,%
+    \sym{.}\,\sym{*}\,\kw{map}\,\sym{(}\,\nt{TermLambda}\,\sym{)}\,%
+    \sym{.}\,\sym{*}\,\kw{sep}\,\sym{(}\,\tok{Str}\,\sym{)}
+\item \nt{TermLambda} \bnfdef
+    \sym{|}~\nt{VarList}~\sym{|}~\nt{TermItem}*
+\end{grammar}
+
+\subsection{Equation Declarations}
+
+Structural equivalences on terms:
+
+\begin{grammar}
+\item \nt{EqDecl} \bnfdef
+    \tok{UpperIdent}~\sym{.}~\nt{EqBinder}~\sym{|-}~\nt{TermPat}~\sym{=}~\nt{TermPat}~\sym{;}
+\item \nt{EqBinder} \bnfdef
+    \EPS
+    \OR \nt{EqBinderItem}~(\sym{,}~\nt{EqBinderItem})*
+\item \nt{EqBinderItem} \bnfdef
+    \tok{Var}
+    \OR \tok{Var}\,\sym{.}\,\sym{*}\,\kw{map}\,\sym{(}\,\nt{TermLambda}\,\sym{)}
+\end{grammar}
+
+\subsection{Rewrite Declarations}
+
+Directed reduction rules, optionally with Gillespie stochastic weights:
+
+\begin{grammar}
+\item \nt{RwDecl} \bnfdef
+    \tok{UpperIdent}~\sym{.}~\sym{|-}~\nt{TermPat}~\sym{\~{}>}~\nt{TermPat}~\sym{;}
+    \hfill\textcolor{cmt}{simple}
+\item \phantom{\nt{RwDecl}} \OR
+    \tok{UpperIdent}~\sym{.}~\sym{|}~\nt{RwCond}~\sym{|-}~%
+    \nt{TermPat}~\sym{\~{}>}~\nt{TermPat}~\sym{;}
+    \hfill\textcolor{cmt}{conditional}
+\item \phantom{\nt{RwDecl}} \OR
+    \tok{UpperIdent}~\sym{.}~\sym{|-}~\nt{TermPat}~\sym{\~{}>}~\nt{TermPat}~%
+    \sym{[}~\nt{Proc}~\sym{]}~\sym{\{}~\nt{Refinement}*~\sym{\}}~\sym{;}
+    \hfill\textcolor{cmt}{weighted}
+\item \phantom{\nt{RwDecl}} \OR
+    \tok{UpperIdent}~\sym{.}~\sym{|}~\nt{RwCond}~\sym{|-}~%
+    \nt{TermPat}~\sym{\~{}>}~\nt{TermPat}~%
+    \sym{[}~\nt{Proc}~\sym{]}~\sym{\{}~\nt{FoldFunc}~\sym{\}}~\sym{;}
+    \hfill\textcolor{cmt}{context fold}
+\item \nt{RwCond} \bnfdef
+    \tok{Var}~\sym{\~{}>}~\tok{Var}
+    \OR \tok{Var}~\sym{\~{}>}~\tok{Var}~\sym{,}~\nt{RwCond}
+\item \nt{Refinement} \bnfdef
+    \tok{Var}~\sym{=>}~\sym{(}~\nt{Proc}~\sym{,}~\tok{Var}~\sym{)}
+\item \nt{FoldFunc} \bnfdef \tok{Var}
+\end{grammar}
+
+\subsection{Term Patterns}
+
+Constructor-form patterns shared by equations and rewrites:
+
+\begin{grammar}
+\item \nt{TermPat} \bnfdef
+    \nt{TermPat1}
+    \OR \sym{(}~\tok{UpperIdent}~\nt{TermPat}*~\sym{)}
+    \hfill\textcolor{cmt}{constructor application}
+\item \phantom{\nt{TermPat}} \OR
+    \sym{\{}~\nt{TermPat}~\sym{,}~\sym{...}~\tok{Var}~\sym{\}}
+    \hfill\textcolor{cmt}{bag with rest}
+\item \phantom{\nt{TermPat}} \OR
+    \sym{(}~\kw{eval}~\tok{Var}~\nt{TermPat}*~\sym{)}
+    \hfill\textcolor{cmt}{eval application}
+\item \phantom{\nt{TermPat}} \OR
+    \nt{TermPat1}\,\sym{.}\,\sym{*}\,\kw{map}\,\sym{(}\,\nt{TermPatLambda}\,\sym{)}
+    \hfill\textcolor{cmt}{map}
+\item \phantom{\nt{TermPat}} \OR
+    \sym{\^{}}~\sym{[}~\nt{VarList}~\sym{]}~\sym{.}~\nt{TermPat}
+    \hfill\textcolor{cmt}{binder}
+\item \nt{TermPat1} \bnfdef
+    \tok{Var} \OR \tok{UpperIdent}
+\item \nt{TermPatLambda} \bnfdef
+    \sym{|}~\nt{VarList}~\sym{|}~\nt{TermPat}
+\end{grammar}
+
+
+% ============================================================================
+\section{Logic Clauses}
+\label{sec:logic}
+% ============================================================================
+
+The \kw{logic} section of a GSLT declaration defines derived relations
+using Datalog-style rules that compile to the \texttt{ascent} library.
+
+\begin{grammar}
+\item \nt{LogicClause} \bnfdef
+    \nt{LogicHead}~\sym{<-{}-}~\nt{LogicBody}$^+_{\texttt{,}}$~\sym{;}
+    \hfill\textcolor{cmt}{rule}
+\item \phantom{\nt{LogicClause}} \OR
+    \kw{relation}~\tok{Var}~\sym{(}~\nt{LogicType}$^+_{\texttt{,}}$~\sym{)}~\sym{;}
+    \hfill\textcolor{cmt}{relation declaration}
+\item \nt{LogicHead} \bnfdef
+    \tok{Var}~\sym{(}~\nt{LogicArg}*~\sym{)}
+\end{grammar}
+
+\medskip\noindent Body atoms (conjunctive):
+
+\begin{grammar}
+\item \nt{LogicBody} \bnfdef
+    \tok{Var}~\sym{(}~\nt{LogicArg}*~\sym{)}
+    \hfill\textcolor{cmt}{positive atom}
+\item \phantom{\nt{LogicBody}} \OR
+    \sym{!}~\sym{(}~\tok{Var}~\sym{(}~\nt{LogicArg}*~\sym{)}~\sym{)}
+    \hfill\textcolor{cmt}{negated atom}
+\item \phantom{\nt{LogicBody}} \OR
+    \kw{if}~\kw{let}~\nt{Pattern}~\sym{=}~\nt{LogicArg}
+    \hfill\textcolor{cmt}{structural guard}
+\item \phantom{\nt{LogicBody}} \OR
+    \kw{if}~\nt{LogicExpr}
+    \OR \kw{let}~\tok{Var}~\sym{=}~\nt{LogicExpr}
+    \OR \kw{for}~\tok{Var}~\kw{in}~\nt{LogicExpr}
+\end{grammar}
+
+\medskip\noindent Expressions and arguments:
+
+\begin{grammar}
+\item \nt{LogicExpr} \bnfdef
+    \tok{Var}
+    \OR \tok{Var}~\sym{(}~\nt{LogicArg}*~\sym{)}
+    \OR \nt{LogicArg}~\nt{CompOp}~\nt{LogicArg}
+    \OR \tok{Var}~\sym{.}~\tok{Var}~\sym{(}~\sym{)}
+\item \nt{LogicArg} \bnfdef
+    \tok{Var}
+    \OR \sym{\_}
+    \OR \nt{Ground}
+    \OR \tok{Var}~\sym{.}~\kw{clone}~\sym{(}~\sym{)}
+\item \nt{LogicType} \bnfdef
+    \tok{UpperIdent}
+    \OR \kw{Vec}~\sym{<}~\nt{LogicType}~\sym{>}
+\end{grammar}
+
+
+% ============================================================================
+\section*{Shift/Reduce Conflict Summary}
+\label{sec:conflicts}
+% ============================================================================
+\addcontentsline{toc}{section}{Shift/Resolve Conflict Summary}
+
+The grammar has 3 benign shift/reduce conflicts, all resolved correctly
+by Happy's default shift preference:
+
+\begin{enumerate}[leftmargin=2em]
+\item \textbf{\sym{\{}\sym{\}} ambiguity.}\;
+  After \sym{\{}, the token \sym{\}} could reduce an empty
+  \nt{KeyValuePair} list (yielding an empty map) or shift to complete
+  \texttt{PZero} (the MeTTaIL zero process).  Shift produces
+  \texttt{PZero}, which is the intended reading.
+
+\item \textbf{\tok{Var}\,\sym{(} ambiguity} (two states).\;
+  After \tok{Var}, the token \sym{(} could start the argument list of
+  \texttt{PFuncCall} or merely follow a reduced \texttt{PVar}.  Shift
+  produces the function-call parse, which is correct: standalone
+  \texttt{count(x,y)} should parse as a call, not a variable followed by
+  a parenthesised expression.
+\end{enumerate}
+
+
+\end{document}
