@@ -1,0 +1,636 @@
+-- ============================================================================
+-- rholang 1.4 (MeTTaIL) BNFC Grammar
+-- ============================================================================
+--
+-- Extends rholang 1.2 (rholang_mercury.cf) with:
+--   1. GSLT declarations: language Name { types, terms, equations,
+--                          rewrites, logic }
+--   2. Extended for-comprehensions with where clauses
+--   3. Ascent-derived logic predicates for where clauses and logic blocks
+--   4. Lambda abstraction / application syntax (^x.{body}, $Cat(lam, arg))
+--   5. Float literals, Bag (multiset) collections #{..}#
+--   6. Stochastic / quantum rewrite extensions (Gillespie weights)
+--
+-- The grammar supports both rholang 1.2 surface syntax and MeTTaIL
+-- term-calculus syntax where they differ, so existing rholang programs
+-- continue to parse.
+--
+-- ============================================================================
+
+
+-- ============================================================================
+-- I. Tokens
+-- ============================================================================
+
+-- Integer literal (shadows built-in Integer per bnfc/issues/153)
+position token LongLiteral digit+ ;
+
+-- Floating-point literal
+position token FloatLiteral (digit+ '.' digit+ (('e' | 'E') ('-')? digit+)?) ;
+
+-- String literal with escape sequences
+token StringLiteral ( '"' ((char - ["\"\\"]) | ('\\' ["\"\\nt"]))* '"' ) ;
+
+-- URI literal
+token UriLiteral ('`' ((char - ["\\`"]) | ('\\' ["`\\"]))* '`') ;
+
+-- Variables: start with letter/tick, or underscore followed by at least one char
+token Var (((letter | '\'') (letter | digit | '_' | '\'')*)
+          |(('_') (letter | digit | '_' | '\'')+)) ;
+
+-- Upper-case identifiers (constructors, type names, language names)
+token UpperIdent (upper (letter | digit | '_' | '\'')* ) ;
+
+-- Dollar-prefixed category identifiers for application syntax: $Proc, $Name
+token DollarIdent ('$' upper (letter | digit | '_' | '\'')* ) ;
+
+
+-- ============================================================================
+-- II. Top-level program
+-- ============================================================================
+
+-- A program is either a single process (backward compatible with rholang 1.2)
+-- or a sequence of top-level declarations (MeTTaIL programs).
+ProgramProc.   Program ::= Proc ;
+ProgramDecls.  Program ::= [TopDecl] ;
+
+TopDeclLang.    TopDecl ::= LangDecl ;
+TopDeclProc.    TopDecl ::= Proc ";;" ;
+separator TopDecl "" ;
+
+
+-- ============================================================================
+-- III. Processes
+-- ============================================================================
+
+-- Precedence levels 0 (lowest, par) through 16 (highest, atoms).
+_. Proc   ::= Proc1 ;
+_. Proc1  ::= Proc2 ;
+_. Proc2  ::= Proc3 ;
+_. Proc3  ::= Proc4 ;
+_. Proc4  ::= Proc5 ;
+_. Proc5  ::= Proc6 ;
+_. Proc6  ::= Proc7 ;
+_. Proc7  ::= Proc8 ;
+_. Proc8  ::= Proc9 ;
+_. Proc9  ::= Proc10 ;
+_. Proc10 ::= Proc11 ;
+_. Proc11 ::= Proc12 ;
+_. Proc12 ::= Proc13 ;
+_. Proc13 ::= Proc14 ;
+_. Proc14 ::= Proc15 ;
+_. Proc15 ::= Proc16 ;
+_. Proc16 ::= "{" Proc "}" ;
+
+-- ---- Atoms (Proc16) ----
+PGround.         Proc16 ::= Ground ;
+PCollect.        Proc16 ::= Collection ;
+PVar.            Proc16 ::= ProcVar ;
+PNil.            Proc16 ::= "Nil" ;
+PSimpleType.     Proc16 ::= SimpleType ;
+
+-- MeTTaIL zero process (alternative to Nil)
+PZero.           Proc16 ::= "{" "}" ;
+
+-- ---- Variable references (Proc13) ----
+PVarRef.         Proc13 ::= VarRefKind Var ;
+
+-- ---- Spatial connectives (Proc13-15) ----
+PNegation.       Proc15 ::= "~" Proc15 ;
+PConjunction.    Proc14 ::= Proc14 "/\\" Proc15 ;
+PDisjunction.    Proc13 ::= Proc13 "\\/" Proc14 ;
+
+-- ---- Dereference / eval (Proc12) ----
+-- rholang 1.2 style: *name (bare)
+PEval.           Proc12 ::= "*" Name ;
+
+-- ---- Method invocation (Proc11) ----
+PMethod.         Proc11 ::= Proc11 "." Var "(" [Proc] ")" ;
+
+-- ---- Parenthesised expression (Proc11) ----
+PExprs.          Proc11 ::= "(" Proc4 ")" ;
+
+-- ---- Lambda abstraction (Proc11) ----
+-- MeTTaIL: ^x.{body}  or  ^[x, y].{body}
+PLam.            Proc11 ::= "^" Var "." Proc16 ;
+PMLam.           Proc11 ::= "^" "[" [Var] "]" "." Proc16 ;
+
+-- ---- Application (Proc11) ----
+-- MeTTaIL: $Proc(lambda, arg1, arg2, ...)
+PApply.          Proc11 ::= DollarIdent "(" [Proc] ")" ;
+
+-- ---- Free-standing function call (Proc11) ----
+-- Covers built-in operations from MeTTaIL term declarations:
+-- count(x,y), len(x), concat(a,b), at(a,i), float(x), int(x), str(x), bool(x), etc.
+PFuncCall.       Proc11 ::= Var "(" [Proc] ")" ;
+
+-- ---- Unary operators (Proc10) ----
+PNot.            Proc10 ::= "not" Proc10 ;
+PNeg.            Proc10 ::= "-" Proc10 ;
+
+-- ---- Multiplicative operators (Proc9) ----
+PMult.           Proc9  ::= Proc9 "*" Proc10 ;
+PDiv.            Proc9  ::= Proc9 "/" Proc10 ;
+PMod.            Proc9  ::= Proc9 "%" Proc10 ;
+PPercentPercent. Proc9  ::= Proc9 "%%" Proc10 ;
+
+-- ---- Additive operators (Proc8) ----
+PAdd.            Proc8  ::= Proc8 "+" Proc9 ;
+PMinus.          Proc8  ::= Proc8 "-" Proc9 ;
+PPlusPlus.       Proc8  ::= Proc8 "++" Proc9 ;
+PMinusMinus.     Proc8  ::= Proc8 "--" Proc9 ;
+
+-- ---- Relational operators (Proc7) ----
+PLt.             Proc7  ::= Proc7 "<" Proc8 ;
+PLte.            Proc7  ::= Proc7 "<=" Proc8 ;
+PGt.             Proc7  ::= Proc7 ">" Proc8 ;
+PGte.            Proc7  ::= Proc7 ">=" Proc8 ;
+
+-- ---- Equality / matching (Proc6) ----
+PMatches.        Proc6  ::= Proc7 "matches" Proc7 ;
+PEq.             Proc6  ::= Proc6 "==" Proc7 ;
+PNeq.            Proc6  ::= Proc6 "!=" Proc7 ;
+
+-- ---- Boolean connectives (Proc4-5) ----
+PAnd.            Proc5  ::= Proc5 "and" Proc6 ;
+POr.             Proc4  ::= Proc4 "or" Proc5 ;
+
+-- ---- Send (Proc3) ----
+PSend.           Proc3  ::= Name Send "(" [Proc] ")" ;
+
+-- ---- Binding / statement forms (Proc2) ----
+PContr.          Proc2  ::= "contract" Name "(" [Name] NameRemainder ")" "=" "{" Proc "}" ;
+PInput.          Proc2  ::= "for" "(" [Receipt] ")" "{" Proc "}" ;
+PChoice.         Proc2  ::= "select" "{" [Branch] "}" ;
+PMatch.          Proc2  ::= "match" Proc4 "{" [Case] "}" ;
+PBundle.         Proc2  ::= Bundle "{" Proc "}" ;
+PLet.            Proc2  ::= "let" Decl Decls "in" "{" Proc "}" ;
+
+-- MeTTaIL-style input: (chan?var, chan?var).{body}
+-- This is the term-calculus surface form from rhocalc.rs
+PInputTc.        Proc2  ::= "(" [ChanBind] ")" "." "{" Proc "}" ;
+
+-- ---- Conditionals (Proc1) ----
+PIf.             Proc1  ::= "if" "(" Proc ")" Proc2 ;
+PIfElse.         Proc1  ::= "if" "(" Proc ")" Proc2 "else" Proc1 ;
+
+-- ---- New (Proc1) ----
+-- rholang 1.2 style: new x, y in P
+PNew.            Proc1  ::= "new" [NameDecl] "in" Proc1 ;
+-- MeTTaIL style: new(x, y) in { P }
+PNewParen.       Proc1  ::= "new" "(" [Var] ")" "in" Proc1 ;
+
+-- ---- Synchronous send (Proc1) ----
+PSendSynch.      Proc1  ::= Name "!?" "(" [Proc] ")" SynchSendCont ;
+
+-- ---- Parallel composition (Proc0) ----
+PPar.            Proc  ::= Proc "|" Proc1 ;
+
+separator Proc "," ;
+separator nonempty Var "," ;
+
+
+-- ============================================================================
+-- IV. Names and channels
+-- ============================================================================
+
+NameWildcard.  Name ::= "_" ;
+NameVar.       Name ::= Var ;
+-- rholang 1.2 style: @Proc12
+NameQuote.     Name ::= "@" Proc12 ;
+separator Name "," ;
+
+
+-- ============================================================================
+-- V. For-comprehensions and receipts (extended with where clauses)
+-- ============================================================================
+--
+-- The general form of a for-comprehension is:
+--   for( ptrn_{1,1} <- chan_{1,1} & ... & ptrn_{m_1,1} where pred_1 ;
+--        ...
+--        ptrn_{1,n} <- chan_{1,n} & ... & ptrn_{m_n,n} where pred_n ){ P }
+--
+-- Each semicolon-separated receipt-clause has an independent set of
+-- &-joined binds and an optional where-clause.  The &-clause counts
+-- (m_1 ... m_n) need not be equal.
+--
+-- The where-clause predicates are drawn from the ascent-derived logic.
+
+ReceiptLinear.    Receipt ::= ReceiptLinearImpl ;
+ReceiptRepeated.  Receipt ::= ReceiptRepeatedImpl ;
+ReceiptPeek.      Receipt ::= ReceiptPeekImpl ;
+separator nonempty Receipt ";" ;
+
+-- Linear receipts: consume from channel
+LinearSimple.      ReceiptLinearImpl ::= [LinearBind] ;
+LinearWhere.       ReceiptLinearImpl ::= [LinearBind] "where" Pred ;
+
+LinearBindImpl.    LinearBind ::= [Name] NameRemainder "<-" NameSource ;
+separator nonempty LinearBind "&" ;
+
+-- Channel sources
+SimpleSource.       NameSource ::= Name ;
+ReceiveSendSource.  NameSource ::= Name "?!" ;
+SendReceiveSource.  NameSource ::= Name "!?" "(" [Proc] ")" ;
+
+-- Repeated receipts: persistent listener
+RepeatedSimple.    ReceiptRepeatedImpl ::= [RepeatedBind] ;
+RepeatedWhere.     ReceiptRepeatedImpl ::= [RepeatedBind] "where" Pred ;
+RepeatedBindImpl.  RepeatedBind ::= [Name] NameRemainder "<=" Name ;
+separator nonempty RepeatedBind "&" ;
+
+-- Peek receipts: non-consuming read
+PeekSimple.        ReceiptPeekImpl ::= [PeekBind] ;
+PeekWhere.         ReceiptPeekImpl ::= [PeekBind] "where" Pred ;
+PeekBindImpl.      PeekBind ::= [Name] NameRemainder "<<-" Name ;
+separator nonempty PeekBind "&" ;
+
+-- MeTTaIL-style channel binds: chan?var (used in PInputTc)
+ChanBindImpl.    ChanBind ::= Name "?" Var ;
+separator nonempty ChanBind "," ;
+
+
+-- ============================================================================
+-- V.a. Predicates (for where clauses and logic blocks)
+-- ============================================================================
+--
+-- Small logic language derived from the ascent-generated predicates.
+-- Uses "or" (not ";") for disjunction to avoid conflict with
+-- the receipt separator in for-comprehensions.
+
+_. Pred  ::= Pred1 ;
+_. Pred1 ::= Pred2 ;
+_. Pred2 ::= Pred3 ;
+_. Pred3 ::= Pred4 ;
+
+PredOr.     Pred  ::= Pred  "or"  Pred1 ;
+PredAnd.    Pred1 ::= Pred1 "," Pred2 ;
+PredNot.    Pred2 ::= "!" Pred3 ;
+
+-- Atomic predicates
+PredAtom.    Pred4 ::= Var "(" [PredArg] ")" ;       -- relation(args)
+PredComp.    Pred4 ::= PredArg CompOp PredArg ;       -- x == y, x < y, etc.
+PredIfLet.   Pred4 ::= "if" "let" Pattern "=" PredArg ; -- structural match
+PredTrue.    Pred4 ::= "true" ;
+PredFalse.   Pred4 ::= "false" ;
+PredParen.   Pred4 ::= "(" Pred ")" ;
+
+-- Predicate arguments
+PredArgVar.   PredArg ::= Var ;
+PredArgWild.  PredArg ::= "_" ;
+PredArgStr.   PredArg ::= StringLiteral ;
+PredArgInt.   PredArg ::= LongLiteral ;
+PredArgFloat. PredArg ::= FloatLiteral ;
+PredArgQuote. PredArg ::= "@" Proc12 ;   -- quoted process as predicate argument
+separator PredArg "," ;
+
+-- Comparison operators
+CompEq.   CompOp ::= "==" ;
+CompNeq.  CompOp ::= "!=" ;
+CompGt.   CompOp ::= ">" ;
+CompLt.   CompOp ::= "<" ;
+CompGte.  CompOp ::= ">=" ;
+CompLte.  CompOp ::= "<=" ;
+
+
+-- ============================================================================
+-- VI. Sends, contracts, match, select, let, new helpers
+-- ============================================================================
+
+SendSingle.   Send ::= "!" ;
+SendMultiple. Send ::= "!!" ;
+
+EmptyCont.      SynchSendCont ::= "." ;
+NonEmptyCont.   SynchSendCont ::= ";" Proc1 ;
+
+ProcVarWildcard. ProcVar ::= "_" ;
+ProcVarVar.      ProcVar ::= Var ;
+
+BundleWrite.     Bundle ::= "bundle+" ;
+BundleRead.      Bundle ::= "bundle-" ;
+BundleEquiv.     Bundle ::= "bundle0" ;
+BundleReadWrite. Bundle ::= "bundle" ;
+
+BranchImpl. Branch ::= ReceiptLinearImpl "=>" Proc3 ;
+separator nonempty Branch "" ;
+
+CaseImpl. Case ::= Proc13 "=>" Proc3 ;
+separator nonempty Case "" ;
+
+-- Let declarations
+DeclImpl.         Decl ::= [Name] NameRemainder "<-" [Proc] ;
+
+LinearDeclImpl.   LinearDecl ::= Decl ;
+separator nonempty LinearDecl ";" ;
+
+ConcDeclImpl.     ConcDecl ::= Decl ;
+separator nonempty ConcDecl "&" ;
+
+EmptyDeclImpl.    Decls ::= ;
+LinearDeclsImpl.  Decls ::= ";" [LinearDecl] ;
+ConcDeclsImpl.    Decls ::= "&" [ConcDecl] ;
+
+-- Name declarations for new
+NameDeclSimpl.  NameDecl ::= Var ;
+NameDeclUrn.    NameDecl ::= Var "(" UriLiteral ")" ;
+separator nonempty NameDecl "," ;
+
+-- Variable reference kinds
+VarRefKindProc. VarRefKind ::= "=" ;
+VarRefKindName. VarRefKind ::= "=" "*" ;
+
+
+-- ============================================================================
+-- VII. Collections and ground types
+-- ============================================================================
+
+BoolTrue.   BoolLiteral ::= "true" ;
+BoolFalse.  BoolLiteral ::= "false" ;
+
+-- Ground types (values)
+GroundBool.    Ground ::= BoolLiteral ;
+GroundInt.     Ground ::= LongLiteral ;
+GroundFloat.   Ground ::= FloatLiteral ;
+GroundString.  Ground ::= StringLiteral ;
+GroundUri.     Ground ::= UriLiteral ;
+
+-- Collections
+CollectList.   Collection ::= "[" [Proc] ProcRemainder "]" ;
+CollectTuple.  Collection ::= Tuple ;
+CollectSet.    Collection ::= "Set" "(" [Proc] ProcRemainder ")" ;
+CollectMap.    Collection ::= "{" [KeyValuePair] ProcRemainder "}" ;
+-- MeTTaIL Bag (multiset) with #{ ... }# delimiters and | separator
+CollectBag.    Collection ::= "#{" [BagElem] "}#" ;
+
+KeyValuePairImpl. KeyValuePair ::= Proc ":" Proc ;
+separator KeyValuePair "," ;
+
+-- Use Proc1 (above PPar) so | inside bags is always the bag separator.
+-- For parallel composition inside a bag element, use braces: #{ {P|Q} | R }#
+BagElemImpl.   BagElem ::= Proc1 ;
+separator BagElem "|" ;
+
+TupleSingle.   Tuple ::= "(" Proc ",)" ;
+TupleMultiple. Tuple ::= "(" Proc "," [Proc] ")" ;
+
+-- Remainders
+ProcRemainderVar.   ProcRemainder ::= "..." ProcVar ;
+ProcRemainderEmpty. ProcRemainder ::= ;
+NameRemainderVar.   NameRemainder ::= "..." "@" ProcVar ;
+NameRemainderEmpty. NameRemainder ::= ;
+
+-- Simple type keywords (used as process-level type tags)
+SimpleTypeBool.      SimpleType ::= "Bool" ;
+SimpleTypeInt.       SimpleType ::= "Int" ;
+SimpleTypeFloat.     SimpleType ::= "Float" ;
+SimpleTypeString.    SimpleType ::= "String" ;
+SimpleTypeUri.       SimpleType ::= "Uri" ;
+SimpleTypeByteArray. SimpleType ::= "ByteArray" ;
+
+
+-- ============================================================================
+-- VIII. Patterns (for if-let in predicates and structural matching)
+-- ============================================================================
+
+PatternWild.    Pattern ::= "_" ;
+PatternVar.     Pattern ::= Var ;
+PatternGround.  Pattern ::= Ground ;
+PatternQuote.   Pattern ::= "@" Pattern ;
+PatternConstr.  Pattern ::= UpperIdent "(" [Pattern] ")" ;
+PatternList.    Pattern ::= "[" [Pattern] "]" ;
+PatternTuple.   Pattern ::= "(" Pattern "," [Pattern] ")" ;
+separator Pattern "," ;
+
+
+-- ============================================================================
+-- IX. GSLT language declarations (MeTTaIL extension)
+-- ============================================================================
+--
+-- A language declaration defines a graph-structured lambda theory:
+--
+--   language RhoCalc {
+--     types   { Proc  Name  ![i64] as Int  ... }
+--     terms   { PZero . |- "{}" : Proc ; ... }
+--     equations { QuoteDrop . |- (NQuote (PDrop N)) = N ; ... }
+--     rewrites  { Comm . |- (PPar ...) ~> ... ; ... }
+--     logic     { path(p0,p1) <-- rw_proc(p0,p1) ; ... }
+--   }
+--
+-- Each section is optional.
+
+LangDeclImpl. LangDecl ::= "language" UpperIdent "{" [LangSection] "}" ;
+
+LangSectTypes.   LangSection ::= "types" "{" [TypeDecl] "}" ;
+LangSectTerms.   LangSection ::= "terms" "{" [TermDecl] "}" ;
+LangSectEqs.     LangSection ::= "equations" "{" [EqDecl] "}" ;
+LangSectRws.     LangSection ::= "rewrites" "{" [RwDecl] "}" ;
+LangSectLogic.   LangSection ::= "logic" "{" [LogicClause] "}" ;
+separator LangSection "" ;
+
+
+-- -----------------------------------------------------------------------
+-- IX.a. Type declarations
+-- -----------------------------------------------------------------------
+--
+-- Simple category:              Proc
+-- Native (Rust-backed):         ![i64] as Int
+-- Collection with delimiters:   ![HashBag<Proc>] as Bag [ "#{", "}#", "|" ]
+
+TypeDeclSimple.     TypeDecl ::= UpperIdent ;
+TypeDeclNative.     TypeDecl ::= "!" "[" TypeExpr "]" "as" UpperIdent ;
+TypeDeclColl.       TypeDecl ::= "!" "[" TypeExpr "]" "as" UpperIdent
+                                 "[" StringLiteral "," StringLiteral "," StringLiteral "]" ;
+separator TypeDecl "" ;
+
+TypeExprIdent.  TypeExpr ::= Var ;
+TypeExprUpper.  TypeExpr ::= UpperIdent ;
+TypeExprApp.    TypeExpr ::= UpperIdent "<" TypeExpr ">" ;
+
+
+-- -----------------------------------------------------------------------
+-- IX.b. Term declarations
+-- -----------------------------------------------------------------------
+--
+-- Introduces a constructor for a syntactic category.
+--
+--   PZero . |- "{}" : Proc ;
+--   PDrop . n:Name |- "*" "(" n ")" : Proc ;
+--   Add . a:Proc, b:Proc |- a "+" b : Proc ![ { ... } ] fold ;
+--   PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
+--             |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
+
+TermDeclPlain.  TermDecl ::= UpperIdent "." TermParams "|-" [TermItem] ":" UpperIdent ";" ;
+TermDeclFold.   TermDecl ::= UpperIdent "." TermParams "|-" [TermItem] ":" UpperIdent
+                              "!" "[" RustBlock "]" "fold" ";" ;
+separator TermDecl "" ;
+
+-- Parameters (left of |-)
+TermParamsEmpty.  TermParams ::= ;
+TermParamsList.   TermParams ::= TermParam TermParamsRest ;
+
+TermParamsRestNil.   TermParamsRest ::= ;
+TermParamsRestCons.  TermParamsRest ::= "," TermParam TermParamsRest ;
+
+-- Individual parameter forms
+TermParamSimple.    TermParam ::= Var ":" TermType ;
+-- Binder: ^[xs].p:[Name* -> Proc]
+TermParamBinder.    TermParam ::= "^" "[" VarList "]" "." Var ":" "[" TermBinderType "]" ;
+
+VarListOne.   VarList ::= Var ;
+VarListCons.  VarList ::= Var "," VarList ;
+
+-- Types for term parameters
+TermTypeIdent.   TermType ::= UpperIdent ;
+TermTypeColl.    TermType ::= UpperIdent "(" UpperIdent ")" ;   -- Vec(Name), HashBag(Proc)
+
+-- Binder types
+TermBinderSimple.  TermBinderType ::= UpperIdent "->" UpperIdent ;        -- Name -> Proc
+TermBinderMulti.   TermBinderType ::= UpperIdent "*" "->" UpperIdent ;    -- Name* -> Proc
+
+-- Syntax items (right of |-)
+TermItemLit.    TermItem ::= StringLiteral ;
+TermItemVar.    TermItem ::= Var ;
+-- Collection separator:  ps.*sep("|")
+TermItemSep.    TermItem ::= Var "." "*" "sep" "(" StringLiteral ")" ;
+-- Zip + map + sep pattern:  *zip(ns,xs).*map(|n,x| n "?" x).*sep(",")
+TermItemZip.    TermItem ::= "*" "zip" "(" Var "," Var ")" "." "*" "map"
+                             "(" TermLambda ")" "." "*" "sep" "(" StringLiteral ")" ;
+separator TermItem "" ;
+
+-- Lambda inside term syntax
+TermLambdaImpl. TermLambda ::= "|" VarList "|" [TermItem] ;
+
+
+-- -----------------------------------------------------------------------
+-- IX.c. Equation declarations
+-- -----------------------------------------------------------------------
+--
+-- Structural equivalences on terms:
+--   QuoteDrop . |- (NQuote (PDrop N)) = N ;
+--   Extrude . xs.*map(|x| x # ...rest)
+--             |- (PPar {(PNew ^[xs].p), ...rest}) = (PNew ^[xs].(PPar {p, ...rest})) ;
+
+EqDeclImpl.    EqDecl ::= UpperIdent "." EqBinder "|-" TermPat "=" TermPat ";" ;
+separator EqDecl "" ;
+
+EqBinderEmpty.   EqBinder ::= ;
+EqBinderVars.    EqBinder ::= EqBinderItem EqBinderRest ;
+
+EqBinderRestNil.   EqBinderRest ::= ;
+EqBinderRestCons.  EqBinderRest ::= "," EqBinderItem EqBinderRest ;
+
+EqBinderMap.   EqBinderItem ::= Var "." "*" "map" "(" TermLambda ")" ;
+EqBinderVar.   EqBinderItem ::= Var ;
+
+
+-- -----------------------------------------------------------------------
+-- IX.d. Rewrite declarations
+-- -----------------------------------------------------------------------
+--
+-- Directed reduction rules:
+--   Comm . |- (PPar {(PInputs ns cont), ...}) ~> ... ;
+--   ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest}) ;
+
+RwDeclSimple.   RwDecl ::= UpperIdent "." "|-" TermPat "~>" TermPat ";" ;
+RwDeclCond.     RwDecl ::= UpperIdent "." "|" RwCond "|-" TermPat "~>" TermPat ";" ;
+-- Stochastic (Gillespie) weighted rewrite:
+--   RuleName . |- LHS ~> RHS [ weight ] { refinements } ;
+RwDeclWeight.   RwDecl ::= UpperIdent "." "|-" TermPat "~>" TermPat
+                           "[" Proc "]" "{" [Refinement] "}" ";" ;
+RwDeclCondWeight. RwDecl ::= UpperIdent "." "|" RwCond "|-" TermPat "~>" TermPat
+                             "[" Proc "]" "{" FoldFunc "}" ";" ;
+separator RwDecl "" ;
+
+-- Rewrite conditions (premises)
+RwCondStep.    RwCond ::= Var "~>" Var ;
+RwCondMulti.   RwCond ::= Var "~>" Var "," RwCond ;
+
+-- Gillespie refinement entries: spatial_behavior => (weight, update_fn)
+RefinementImpl. Refinement ::= Var "=>" "(" Proc "," Var ")" ;
+separator Refinement "" ;
+
+-- Context fold function
+FoldFuncImpl. FoldFunc ::= Var ;
+
+
+-- -----------------------------------------------------------------------
+-- IX.e. Term patterns (constructor form, shared by equations & rewrites)
+-- -----------------------------------------------------------------------
+
+TermPatVar.      TermPat  ::= TermPat1 ;
+TermPatConstr.   TermPat  ::= "(" UpperIdent [TermPat] ")" ;
+TermPatBag.      TermPat  ::= "{" TermPat "," "..." Var "}" ;
+TermPatEval.     TermPat  ::= "(" "eval" Var [TermPat] ")" ;
+TermPatMap.      TermPat  ::= TermPat1 "." "*" "map" "(" TermPatLambda ")" ;
+-- Binder in patterns: ^[xs].body
+TermPatBinder.   TermPat  ::= "^" "[" VarList "]" "." TermPat ;
+
+TermPatAtomVar.    TermPat1 ::= Var ;
+TermPatAtomUpper.  TermPat1 ::= UpperIdent ;
+separator TermPat "" ;
+
+TermPatLambdaImpl. TermPatLambda ::= "|" VarList "|" TermPat ;
+
+
+-- -----------------------------------------------------------------------
+-- IX.f. Logic clauses (Datalog-style, ascent-derived)
+-- -----------------------------------------------------------------------
+--
+-- Logic clauses define derived relations using Datalog rules:
+--   path(p0, p1) <-- rw_proc(p0, p1) ;
+--   path(p0, p2) <-- path(p0, p1), path(p1, p2) ;
+--   relation path(Proc, Proc) ;
+
+LogicClauseRule.  LogicClause ::= LogicHead "<--" [LogicBody] ";" ;
+LogicClauseRel.   LogicClause ::= "relation" Var "(" [LogicType] ")" ";" ;
+separator LogicClause "" ;
+
+-- Logic head: a single relational atom
+LogicHeadImpl.  LogicHead ::= Var "(" [LogicArg] ")" ;
+
+-- Logic body atoms (comma-separated conjunction)
+LogicBodyAtom.   LogicBody ::= Var "(" [LogicArg] ")" ;
+LogicBodyNeg.    LogicBody ::= "!" "(" Var "(" [LogicArg] ")" ")" ;
+LogicBodyIfLet.  LogicBody ::= "if" "let" Pattern "=" LogicArg ;
+LogicBodyIf.     LogicBody ::= "if" LogicExpr ;
+LogicBodyLet.    LogicBody ::= "let" Var "=" LogicExpr ;
+LogicBodyFor.    LogicBody ::= "for" Var "in" LogicExpr ;
+separator nonempty LogicBody "," ;
+
+-- Logic expressions (for if-guards and let-bindings)
+LogicExprVar.    LogicExpr ::= Var ;
+LogicExprApp.    LogicExpr ::= Var "(" [LogicArg] ")" ;
+LogicExprComp.   LogicExpr ::= LogicArg CompOp LogicArg ;
+LogicExprDot.    LogicExpr ::= Var "." Var "(" ")" ;
+
+-- Logic arguments
+LogicArgVar.    LogicArg ::= Var ;
+LogicArgWild.   LogicArg ::= "_" ;
+LogicArgConst.  LogicArg ::= Ground ;
+LogicArgClone.  LogicArg ::= Var "." "clone" "(" ")" ;
+separator LogicArg "," ;
+
+-- Logic types (in relation declarations)
+LogicTypeIdent. LogicType ::= UpperIdent ;
+LogicTypeVec.   LogicType ::= "Vec" "<" LogicType ">" ;
+separator nonempty LogicType "," ;
+
+
+-- ============================================================================
+-- X. Rust blocks (opaque embedded code in term declarations)
+-- ============================================================================
+--
+-- The ![{ ... }] fold syntax embeds Rust code that BNFC cannot parse.
+-- We treat it as a balanced-brace token, up to 3 nesting levels deep.
+
+token RustBlock ('{' ((char - ["{}"])
+                     | ('{' ((char - ["{}"])
+                            | ('{' (char - ["{}"])* '}'))* '}'))* '}') ;
+
+
+-- ============================================================================
+-- XI. Comments
+-- ============================================================================
+
+comment "//" ;
+comment "/*" "*/" ;
