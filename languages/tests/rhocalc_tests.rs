@@ -192,14 +192,14 @@ mod comm {
 
     #[test]
     fn pattern_comm_var_matches_payload() {
-        assert_reduces_to("{for(c <- x).{x} | c!(p)}", "p");
+        assert_reduces_to("{for(x <- c){x} | c!(p)}", "p");
     }
 
     #[test]
     fn pattern_comm_ground_pattern_blocks_mismatch() {
         // Pattern 0 does not match payload p, so COMM must not produce {0}.
         // (Other non-COMM rewrites may exist due HOL/native rules.)
-        assert_never_produces("{for(c <- 0).{0} | c!(p)}", "{0}");
+        assert_never_produces("{for(0 <- c){0} | c!(p)}", "{0}");
     }
 }
 

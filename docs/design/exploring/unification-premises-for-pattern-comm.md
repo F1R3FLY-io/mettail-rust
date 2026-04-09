@@ -67,7 +67,7 @@ Patterns are **`Proc`** values built from **constructors**. At minimum:
 
 ### PraTT / REPL sugar
 
-REPL examples in this repo historically use **`for(a -> x){ … }`** style strings (see [repl examples](../../../repl/src/examples/rhocalc.rs)). **Proposal:** keep that sugar; extend the grammar so **the binding after `->`** can be a **`Proc` pattern** (e.g. **`for(c -> $x){ … }`**, **`for(c -> pair($u, $v)){ … }`**), lowering to the same **`PInputs`**-like constructor as concrete **`( c ? … ).{ … }`** form.
+REPL examples in this repo historically used **`for(channel -> value){ … }`** style strings (see [repl examples](../../../repl/src/examples/rhocalc.rs)). The target syntax here is **`for(pattern <- channel){ … }`**; extend the grammar so the left side can be a **`Proc` pattern** (e.g. **`for($x <- c){ … }`**, **`for(pair($u, $v) <- c){ … }`**), lowering to the same **`PInputs`**-like constructor as concrete **`( c ? … ).{ … }`** form.
 
 End-to-end walkthroughs (**`rhocalc.rs` → user program → channel data → output**) are in [Worked examples (four-part layout)](#worked-examples-four-part-layout).
 
@@ -481,7 +481,7 @@ Receive syntax binds **`Name`** parameters per channel, not arbitrary **`Proc`**
 **2. User’s program**
 
 ```text
-{ a!(0) | for(a -> x){ *(x) } }
+{ a!(0) | for(x <- a){ *(x) } }
 ```
 
 **3. Data on the channel**  
@@ -510,7 +510,7 @@ CommPat . | unifies(pat, q)
 **2. User’s program**
 
 ```text
-{ c!(7) | for(c -> $x){ int($x, 64) } }
+{ c!(7) | for($x <- c){ int($x, 64) } }
 ```
 
 **3. Data on the channel**  
@@ -533,7 +533,7 @@ PPair . u:Proc, v:Proc |- "pair" "(" u "," v ")" : Proc;
 **2. User’s program**
 
 ```text
-{ c!(pair(1, 2)) | for(c -> pair($u, $v)){ int($u, 64) } }
+{ c!(pair(1, 2)) | for(pair($u, $v) <- c){ int($u, 64) } }
 ```
 
 **3. Data on the channel**  
@@ -552,14 +552,14 @@ Same as Scenario B.
 **2. User’s program**
 
 ```text
-{ c!("hi") | for(c -> pair($u, $v)){ int($u, 64) } }
+{ c!("hi") | for(pair($u, $v) <- c){ int($u, 64) } }
 ```
 
 **3. Data on the channel**  
 **Message:** **`"hi"`** (**`Proc`** string). **Pattern:** **`pair($u, $v)`** — requires **`PPair`** head.
 
 **4. Output and explanation**  
-**`unifies_proc`** fails; **`CommPat`** does not consume this pair; **no exception**. (With **`for(c -> $x)`** instead, **`"hi"`** would match an accept-all **`$x`**.)
+**`unifies_proc`** fails; **`CommPat`** does not consume this pair; **no exception**. (With **`for($x <- c)`** instead, **`"hi"`** would match an accept-all **`$x`**.)
 
 ---
 
@@ -571,7 +571,7 @@ Same as Scenario B.
 **Success — 2. User’s program**
 
 ```text
-{ c!(pair(3, 3)) | for(c -> pair($x, $x)){ int($x, 64) } }
+{ c!(pair(3, 3)) | for(pair($x, $x) <- c){ int($x, 64) } }
 ```
 
 **3. Data on the channel**  
@@ -583,7 +583,7 @@ Same as Scenario B.
 **Failure — 2. User’s program**
 
 ```text
-{ c!(pair(3, 4)) | for(c -> pair($x, $x)){ int($x, 64) } }
+{ c!(pair(3, 4)) | for(pair($x, $x) <- c){ int($x, 64) } }
 ```
 
 **3. Data on the channel**  
@@ -607,7 +607,7 @@ Comm2 . | unifies(pat1, q1), unifies(pat2, q2)
 **2. User’s program**
 
 ```text
-{ a!(1) | b!(pair(2, 3)) | for(a -> $m){ for(b -> pair($u, $v)){ int($u, 64) } } }
+{ a!(1) | b!(pair(2, 3)) | for($m <- a){ for(pair($u, $v) <- b){ int($u, 64) } } }
 ```
 
 **3. Data on the channel**  
