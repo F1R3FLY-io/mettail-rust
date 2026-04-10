@@ -196,11 +196,66 @@ mod comm {
     }
 
     #[test]
+    fn pattern_comm_ground_pattern_matches_equal_payload() {
+        assert_reduces_to("{for(0 <- c){1} | c!(0)}", "1");
+    }
+
+    #[test]
+    fn pattern_comm_exact_constructor_pattern_matches() {
+        assert_reduces_to("{for(*(@(0)) <- c){1} | c!(*(@(0)))}", "1");
+    }
+
+    #[test]
     fn pattern_comm_ground_pattern_blocks_mismatch() {
         // Pattern 0 does not match payload p, so COMM must not produce {0}.
         // (Other non-COMM rewrites may exist due HOL/native rules.)
         assert_never_produces("{for(0 <- c){0} | c!(p)}", "{0}");
     }
+
+    #[test]
+    fn pattern_comm_list_literal_pattern_matches() {
+        assert_reduces_to("{for([0, 1] <- c){42} | c!([0, 1])}", "42");
+    }
+
+    #[test]
+    fn pattern_comm_list_literal_pattern_blocks_mismatch() {
+        assert_never_produces("{for([0, 1] <- c){42} | c!([0, 1, 2])}", "{42}");
+    }
+
+    #[test]
+    fn pattern_comm_bag_literal_pattern_matches() {
+        assert_reduces_to("{for(#{1|2}# <- c){7} | c!(#{2|1}#)}", "7");
+    }
+
+    #[test]
+    fn pattern_comm_bag_literal_pattern_blocks_mismatch() {
+        assert_never_produces("{for(#{1|2}# <- c){7} | c!(#{1|1}#)}", "{7}");
+    }
+
+    #[test]
+    fn pattern_comm_map_literal_pattern_matches() {
+        assert_reduces_to("{for(map(1:2, 3:4) <- c){9} | c!(map(3:4, 1:2))}", "9");
+    }
+
+    #[test]
+    fn pattern_comm_map_literal_pattern_blocks_mismatch() {
+        assert_never_produces("{for(map(1:2, 3:4) <- c){9} | c!(map(1:2, 3:5))}", "{9}");
+    }
+
+    #[test]
+    fn proc_pattern_matches_list_is_strict() {
+        let pat = parse("[0, 1]");
+        let val = parse("[0, 1, 2]");
+        assert!(!pat.pattern_matches(&val));
+    }
+
+    #[test]
+    fn proc_pattern_matches_map_is_strict() {
+        let pat = parse("map(1:2, 3:4)");
+        let val = parse("map(1:2, 3:5)");
+        assert!(!pat.pattern_matches(&val));
+    }
+
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

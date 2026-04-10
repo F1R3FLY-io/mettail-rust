@@ -1413,6 +1413,52 @@ fn generate_subst_impl(
 ) -> TokenStream {
     let category_str = category.to_string();
     let var_label = generate_var_label(category);
+    let is_proc = category_str == "Proc";
+    let has_list = language.types.iter().any(|t| t.name.to_string() == "List");
+    let has_bag = language.types.iter().any(|t| t.name.to_string() == "Bag");
+    let has_map = language.types.iter().any(|t| t.name.to_string() == "Map");
+    let proc_list_ctor: Option<Ident> = if is_proc {
+        variants.iter().find_map(|v| match v {
+            VariantKind::Regular { label, fields }
+                if fields.len() == 1
+                    && !fields[0].is_collection
+                    && fields[0].category.to_string() == "List" =>
+            {
+                Some(label.clone())
+            }
+            _ => None,
+        })
+    } else {
+        None
+    };
+    let proc_bag_ctor: Option<Ident> = if is_proc {
+        variants.iter().find_map(|v| match v {
+            VariantKind::Regular { label, fields }
+                if fields.len() == 1
+                    && !fields[0].is_collection
+                    && fields[0].category.to_string() == "Bag" =>
+            {
+                Some(label.clone())
+            }
+            _ => None,
+        })
+    } else {
+        None
+    };
+    let proc_map_ctor: Option<Ident> = if is_proc {
+        variants.iter().find_map(|v| match v {
+            VariantKind::Regular { label, fields }
+                if fields.len() == 1
+                    && !fields[0].is_collection
+                    && fields[0].category.to_string() == "Map" =>
+            {
+                Some(label.clone())
+            }
+            _ => None,
+        })
+    } else {
+        None
+    };
 
     // Generate match arms for the main subst method (same-category)
     let match_arms: Vec<TokenStream> = variants
@@ -1480,6 +1526,204 @@ fn generate_subst_impl(
     let substitute_self_alias = format_ident!("substitute_{}", category_str.to_lowercase());
     let multi_substitute_self_alias =
         format_ident!("multi_substitute_{}", category_str.to_lowercase());
+    let pattern_helpers = if is_proc {
+        let list_arm = if let Some(list_ctor) = proc_list_ctor.as_ref() {
+            quote! { (Proc::#list_ctor(p), Proc::#list_ctor(v)) => Self::match_list_pattern(p.as_ref(), v.as_ref(), env), }
+        } else {
+            quote! {}
+        };
+        let bag_arm = if let Some(bag_ctor) = proc_bag_ctor.as_ref() {
+            quote! { (Proc::#bag_ctor(p), Proc::#bag_ctor(v)) => Self::match_bag_pattern(p.as_ref(), v.as_ref(), env), }
+        } else {
+            quote! {}
+        };
+        let map_arm = if let Some(map_ctor) = proc_map_ctor.as_ref() {
+            quote! { (Proc::#map_ctor(p), Proc::#map_ctor(v)) => Self::match_map_pattern(p.as_ref(), v.as_ref(), env), }
+        } else {
+            quote! {}
+        };
+        let list_helper = if has_list {
+            quote! {
+                fn match_list_pattern(
+                    pat: &List,
+                    val: &List,
+                    env: &mut std::collections::HashMap<mettail_runtime::FreeVar<String>, Self>,
+                ) -> bool {
+                    match (pat, val) {
+                        (List::ListLit(ps), List::ListLit(vs)) => {
+                            ps.len() == vs.len()
+                                && ps
+                                    .iter()
+                                    .zip(vs.iter())
+                                    .all(|(p, v)| Self::collect_pattern_bindings(p, v, env))
+                        }
+                        _ => pat == val,
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
+        let bag_helper = if has_bag {
+            quote! {
+                fn match_bag_pattern(
+                    pat: &Bag,
+                    val: &Bag,
+                    env: &mut std::collections::HashMap<mettail_runtime::FreeVar<String>, Self>,
+                ) -> bool {
+                    match (pat, val) {
+                        (Bag::BagLit(pb), Bag::BagLit(vb)) => {
+                            let mut pats = Vec::new();
+                            for (e, count) in pb.iter() {
+                                for _ in 0..count {
+                                    pats.push(e.clone());
+                                }
+                            }
+                            let mut vals = Vec::new();
+                            for (e, count) in vb.iter() {
+                                for _ in 0..count {
+                                    vals.push(e.clone());
+                                }
+                            }
+                            Self::match_proc_bag_permutation(&pats, &vals, env)
+                        }
+                        _ => pat == val,
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
+        let map_helper = if has_map {
+            quote! {
+                fn match_map_pattern(
+                    pat: &Map,
+                    val: &Map,
+                    env: &mut std::collections::HashMap<mettail_runtime::FreeVar<String>, Self>,
+                ) -> bool {
+                    match (pat, val) {
+                        (Map::MapLit(pm), Map::MapLit(vm)) => {
+                            pm.len() == vm.len()
+                                && pm.iter().all(|(k, pvv)| {
+                                    vm.get(k)
+                                        .map(|vv| Self::collect_pattern_bindings(pvv, vv, env))
+                                        .unwrap_or(false)
+                                })
+                        }
+                        _ => pat == val,
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
+        quote! {
+            fn collect_pattern_bindings(
+                pattern: &Self,
+                value: &Self,
+                env: &mut std::collections::HashMap<mettail_runtime::FreeVar<String>, Self>,
+            ) -> bool {
+                match (pattern, value) {
+                    (Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))), v) => {
+                        if let Some(bound) = env.get(fv) {
+                            bound == v
+                        } else {
+                            env.insert(fv.clone(), v.clone());
+                            true
+                        }
+                    }
+                    #list_arm
+                    #bag_arm
+                    #map_arm
+                    _ => pattern == value,
+                }
+            }
+
+            fn match_proc_bag_permutation(
+                pats: &[Self],
+                vals: &[Self],
+                env: &mut std::collections::HashMap<mettail_runtime::FreeVar<String>, Self>,
+            ) -> bool {
+                if pats.len() != vals.len() {
+                    return false;
+                }
+                fn bt(
+                    idx: usize,
+                    pats: &[Proc],
+                    vals: &[Proc],
+                    used: &mut [bool],
+                    env: &mut std::collections::HashMap<mettail_runtime::FreeVar<String>, Proc>,
+                ) -> bool {
+                    if idx == pats.len() {
+                        return true;
+                    }
+                    for j in 0..vals.len() {
+                        if used[j] {
+                            continue;
+                        }
+                        let mut env_try = env.clone();
+                        if Proc::collect_pattern_bindings(&pats[idx], &vals[j], &mut env_try) {
+                            used[j] = true;
+                            if bt(idx + 1, pats, vals, used, &mut env_try) {
+                                *env = env_try;
+                                return true;
+                            }
+                            used[j] = false;
+                        }
+                    }
+                    false
+                }
+                let mut used = vec![false; vals.len()];
+                bt(0, pats, vals, &mut used, env)
+            }
+
+            #list_helper
+            #bag_helper
+            #map_helper
+        }
+    } else {
+        quote! {}
+    };
+    let pattern_matches_body = if is_proc {
+        quote! {
+            let mut env: std::collections::HashMap<mettail_runtime::FreeVar<String>, Self> =
+                std::collections::HashMap::new();
+            Self::collect_pattern_bindings(self, value, &mut env)
+        }
+    } else {
+        quote! {
+            match self {
+                #category::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(_))) => true,
+                _ => self == value,
+            }
+        }
+    };
+    let apply_pattern_body = if is_proc {
+        quote! {
+            let mut env: std::collections::HashMap<mettail_runtime::FreeVar<String>, Self> =
+                std::collections::HashMap::new();
+            if !Self::collect_pattern_bindings(pattern, value, &mut env) {
+                return None;
+            }
+            let vars_owned: Vec<mettail_runtime::FreeVar<String>> = env.keys().cloned().collect();
+            let vars_refs: Vec<&mettail_runtime::FreeVar<String>> = vars_owned.iter().collect();
+            let repls: Vec<Self> = vars_owned
+                .iter()
+                .map(|v| env.get(v).cloned().expect("binding exists"))
+                .collect();
+            Some(self.subst(&vars_refs, &repls))
+        }
+    } else {
+        quote! {
+            match pattern {
+                #category::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
+                    Some(self.substitute(fv, value))
+                }
+                _ if pattern == value => Some(self.clone()),
+                _ => None,
+            }
+        }
+    };
 
     quote! {
         impl #category {
@@ -1545,22 +1789,17 @@ fn generate_subst_impl(
                 self.subst(vars, repls)
             }
 
-            /// Pattern-application helper used by COMM-style RHS expressions.
-            ///
-            /// Minimal phase-2 semantics:
-            /// - if `pattern` is a free variable, substitute that variable with `value` in `self`
-            /// - if `pattern == value`, return `self` unchanged
-            /// - otherwise no match (`None`)
-            pub fn apply_pattern(&self, pattern: &Self, value: &Self) -> Option<Self> {
-                match pattern {
-                    #category::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
-                        Some(self.substitute(fv, value))
-                    }
-                    _ if pattern == value => Some(self.clone()),
-                    _ => None,
-                }
+            /// Directional structural match used by unification premises.
+            pub fn pattern_matches(&self, value: &Self) -> bool {
+                #pattern_matches_body
             }
 
+            /// Pattern-application helper used by COMM-style RHS expressions.
+            pub fn apply_pattern(&self, pattern: &Self, value: &Self) -> Option<Self> {
+                #apply_pattern_body
+            }
+
+            #pattern_helpers
             #(#cross_methods)*
         }
     }

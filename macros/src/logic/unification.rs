@@ -41,6 +41,12 @@ pub fn generate_unification_rules(language: &LanguageDef, cat_filter: CategoryFi
                 #cat_lower(val_u),
                 if let #cat::#var_label(_) = pat_u.clone();
         });
+        rules.push(quote! {
+            #unifies_rel(pat_u.clone(), val_u.clone()) <--
+                #cat_lower(pat_u),
+                #cat_lower(val_u),
+                if pat_u.pattern_matches(&val_u);
+        });
     }
 
     quote! { #(#rules)* }
