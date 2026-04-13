@@ -78,7 +78,7 @@ language! {
         |- "for" "(" pat "<-" n ")" "{" body "}" : Proc;
 
         PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
-        |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
+        |- "(" *zip(xs,ns).*map(|x,n| x "<-" n).*sep(",") ")" "{" p "}" : Proc ;
 
         NQuote . p:Proc
         |- "@" "(" p ")" : Name ;

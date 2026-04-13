@@ -67,7 +67,7 @@ Patterns are **`Proc`** values built from **constructors**. At minimum:
 
 ### PraTT / REPL sugar
 
-REPL examples in this repo historically used **`for(channel -> value){ … }`** style strings (see [repl examples](../../../repl/src/examples/rhocalc.rs)). The target syntax here is **`for(pattern <- channel){ … }`**; extend the grammar so the left side can be a **`Proc` pattern** (e.g. **`for($x <- c){ … }`**, **`for(pair($u, $v) <- c){ … }`**), lowering to the same **`PInputs`**-like constructor as concrete **`( c ? … ).{ … }`** form.
+REPL examples in this repo historically used **`for(channel -> value){ … }`** style strings (see [repl examples](../../../repl/src/examples/rhocalc.rs)). The target syntax here is **`for(pattern <- channel){ … }`**; extend the grammar so the left side can be a **`Proc` pattern** (e.g. **`for($x <- c){ … }`**, **`for(pair($u, $v) <- c){ … }`**), lowering to the same **`PInputs`**-like constructor as concrete **`( value <- channel, … ){ … }`** form.
 
 End-to-end walkthroughs (**`rhocalc.rs` → user program → channel data → output**) are in [Worked examples (four-part layout)](#worked-examples-four-part-layout).
 
@@ -293,7 +293,7 @@ Optional: if category must be visible for disambiguation, reserve `unifies_proc`
 
 ```76:77:languages/src/rhocalc.rs
         PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
-        |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
+        |- "(" *zip(xs,ns).*map(|x,n| x "<-" n).*sep(",") ")" "{" p "}" : Proc ;
 ```
 
 **Multiset** complexity is already on composition for **outputs**; the gap for “pattern COMM” is **payload / receive patterns** and unification, not “first contact with bags.”
@@ -475,7 +475,7 @@ Receive syntax binds **`Name`** parameters per channel, not arbitrary **`Proc`**
 
 ```76:77:languages/src/rhocalc.rs
         PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
-        |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
+        |- "(" *zip(xs,ns).*map(|x,n| x "<-" n).*sep(",") ")" "{" p "}" : Proc ;
 ```
 
 **2. User’s program**
@@ -500,7 +500,7 @@ The matching send/receive pair is removed from **`PPar`**; **`cont`** is filled 
 PPatVar . x:Name |- "$" x : Proc;
 
 PInputs . ns:Vec(Name), pats:Vec(Proc), ^[xs].p:[Name* -> Proc]
-    |- "(" *zip(ns, pats).*map(|n, pat| n "?" pat).*sep(",") ")" "." "{" p "}" : Proc ;
+    |- "(" *zip(pats,ns).*map(|pat,n| pat "<-" n).*sep(",") ")" "{" p "}" : Proc ;
 
 CommPat . | unifies(pat, q)
     |- (PPar {(PInputs ns pats cont), *zip(ns, qs).*map(|n, q| (POutput n q)), ...rest})
