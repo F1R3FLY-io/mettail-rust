@@ -34,6 +34,84 @@ use crate::prediction::FirstSet;
 use crate::recursive::{CollectionKind, RDRuleInfo, RDSyntaxItem};
 
 // ══════════════════════════════════════════════════════════════════════════════
+// TracingMode — CEK Runtime Observer Pattern (feature = "cek-runtime")
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Codegen mode selector: whether to emit observer callbacks in the generated parser.
+///
+/// When `Batch`, the generated parser is identical to the existing non-traced version.
+/// When `Traced`, observer calls are emitted at 5 transition points:
+/// - DRIVE: entering prefix dispatch
+/// - PUSH: pushing a continuation frame
+/// - POP: popping a continuation frame (unwind)
+/// - INFIX: consuming an infix/postfix operator
+/// - ACCEPT: parse completed (stack empty)
+///
+/// The traced variant is generated as `parse_Cat_traced<O: CekObserver>(tokens, pos, min_bp, observer)`
+/// alongside the batch `parse_Cat(tokens, pos, min_bp)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TracingMode {
+    /// Standard batch parsing — no observer callbacks.
+    Batch,
+    /// Traced parsing — emit `observer.on_event()` at 5 transition points.
+    Traced,
+}
+
+impl TracingMode {
+    /// Whether this mode emits observer callbacks.
+    #[allow(dead_code)]
+    pub fn is_traced(&self) -> bool {
+        match self {
+            Self::Batch => false,
+            Self::Traced => true,
+        }
+    }
+}
+
+/// Helper: emit a CEK observer callback in the generated parser code.
+///
+/// When `mode` is `Batch`, returns an empty string (zero codegen overhead).
+/// When `mode` is `Traced`, returns a block that constructs a `CekStepEvent`,
+/// calls `observer.on_event()`, and handles `CekControl::Abort`.
+fn emit_observer_call(
+    cat: &str,
+    rule_variant: &str,
+    pos_expr: &str,
+    bp_expr: &str,
+    depth_expr: &str,
+    frame_expr: &str,
+    weight_expr: &str,
+) -> String {
+    format!(
+        "{{ \
+            let __evt = mettail_prattail::cek::CekStepEvent {{ \
+                rule: mettail_prattail::cek::TransitionRule::{rule_variant}, \
+                pos: {pos_expr}, \
+                cur_bp: {bp_expr}, \
+                stack_depth: {depth_expr}, \
+                frame_variant: {frame_expr}, \
+                running_weight: {weight_expr}, \
+                category: \"{cat}\", \
+            }}; \
+            match __observer.on_event(&__evt) {{ \
+                mettail_prattail::cek::CekControl::Continue => {{}}, \
+                mettail_prattail::cek::CekControl::Checkpoint => {{ \
+                    let __cfg = mettail_prattail::cek::PdaConfiguration {{ \
+                        pos: {pos_expr}, cur_bp: {bp_expr}, \
+                        stack_tags: __stack.iter().map(|f| format!(\"{{:?}}\", f)).collect(), \
+                        phase: mettail_prattail::cek::CekState::PrefixDispatch {{ pos: {pos_expr}, cur_bp: {bp_expr} }}, \
+                    }}; \
+                    __observer.on_checkpoint(&__cfg); \
+                }}, \
+                mettail_prattail::cek::CekControl::Abort => {{ \
+                    return Err(format!(\"parse aborted by observer at position {{}}\", {pos_expr})); \
+                }}, \
+            }} \
+        }}",
+    )
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Helpers
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -68,6 +146,46 @@ fn has_complex_sep(rule: &RDRuleInfo) -> bool {
         .any(|item| matches!(item, RDSyntaxItem::Sep { .. }))
 }
 
+/// Check if a rule has any GuardExpression syntax items.
+///
+/// Guarded rules embed a sub-parser that consumes a `BehavioralPred`
+/// expression. The trampoline split/frame/unwind machinery cannot
+/// meaningfully chunk a guarded rule across continuation boundaries
+/// (a `BehavioralPred` is not a `NonTerminal`, `Ident`, `Binder`, or
+/// `Collection`), so guarded rules are routed through the standalone
+/// recursive-descent parse function instead — see
+/// `recursive.rs:write_recursive_descent_body`'s
+/// `RDSyntaxItem::GuardExpression` arm, which is the canonical
+/// implementation of guard parsing.
+fn has_guard_expression(rule: &RDRuleInfo) -> bool {
+    rule.items
+        .iter()
+        .any(|item| matches!(item, RDSyntaxItem::GuardExpression { .. }))
+}
+
+/// Check if a rule's first syntax item is a NonTerminal from a different
+/// category than the rule's own category, AND the rule has more than 1
+/// syntax item.
+///
+/// Phase 16F-0 (cross-category dispatch): rules like
+/// `POutput . n:Name, p:Proc |- n "!" "(" p ")" : Proc` start by
+/// parsing a foreign category (Name). These rules need standalone
+/// parse functions so the speculative cross-category dispatch arm in
+/// `dispatch.rs:compute_cross_cat_prefix_arms` can call them.
+///
+/// Single-item rules like `CastNum . a:Num |- a : Expr` are excluded
+/// because they are handled by the existing cast-rule mechanism; making
+/// them standalone would break the cast arm codegen which expects them
+/// to be inlined.
+fn has_foreign_leading_nt(rule: &RDRuleInfo) -> bool {
+    rule.items.len() > 1
+        && matches!(
+            rule.items.first(),
+            Some(RDSyntaxItem::NonTerminal { category, .. })
+            if category != &rule.category
+        )
+}
+
 /// Check if a rule should be trampolined (inlined/split) or dispatched to
 /// its standalone parse function.
 ///
@@ -75,8 +193,13 @@ fn has_complex_sep(rule: &RDRuleInfo) -> bool {
 /// be trampolined. This includes:
 /// - Rules with Sep items (complex parsing logic)
 /// - Rules with multi-binder items (complex binder handling)
+/// - Rules with GuardExpression items (sub-parser for behavioral predicates)
+/// - Rules with a foreign-category leading NonTerminal (cross-category dispatch)
 pub fn should_use_standalone_fn(rule: &RDRuleInfo) -> bool {
-    has_complex_sep(rule) || rule.has_multi_binder
+    has_complex_sep(rule)
+        || rule.has_multi_binder
+        || has_guard_expression(rule)
+        || has_foreign_leading_nt(rule)
 }
 
 /// BP02: Information about a tail-call-eligible rule.
@@ -651,7 +774,7 @@ fn write_nfa_merged_prefix_arm(
         write!(buf, "Token::{} => {{", variant).unwrap();
         write_inline_items(buf, &segments[0].inline_items, true);
         if let Some(ref nt) = segments[0].nonterminal {
-            write!(buf, "stack.push({}::{} {{", frame_info.enum_name, segments[0].frame_variant)
+            write!(buf, "stack.push({enum_name}::{vp}{variant} {{", enum_name = frame_info.enum_name, vp = config.frame_prefix(), variant = segments[0].frame_variant)
                 .unwrap();
             write!(buf, "saved_bp: cur_bp,").unwrap();
             for capture in &segments[0].accumulated_captures {
@@ -722,7 +845,7 @@ fn write_nfa_merged_prefix_arm(
                     if config.emit_coverage {
                         write!(
                             buf,
-                            "#[cfg(feature = \"parser-coverage\")] __coverage::record(\"{cat}\", {path_id});",
+                            "__coverage::record(\"{cat}\", {path_id});",
                         ).unwrap();
                     }
                     buf.push_str("*pos += 1;");
@@ -828,7 +951,7 @@ fn write_nfa_merged_prefix_arm(
                             if config.emit_coverage {
                                 write!(
                                     buf,
-                                    "#[cfg(feature = \"parser-coverage\")] __coverage::record(\"{cat}\", {path_id});",
+                                    "__coverage::record(\"{cat}\", {path_id});",
                                 ).unwrap();
                             }
                             buf.push_str("*pos += 1;");
@@ -921,7 +1044,7 @@ fn write_nfa_merged_prefix_arm(
                                 if config.emit_coverage {
                                     write!(
                                         buf,
-                                        "#[cfg(feature = \"parser-coverage\")] __coverage::record(\"{cat}\", {path_id});",
+                                        "__coverage::record(\"{cat}\", {path_id});",
                                     ).unwrap();
                                 }
                                 buf.push_str("*pos += 1;");
@@ -950,8 +1073,8 @@ fn write_nfa_merged_prefix_arm(
                                     if let Some(ref nt) = segments[0].nonterminal {
                                         write!(
                                             buf,
-                                            "stack.push({}::{} {{",
-                                            frame_info.enum_name, segments[0].frame_variant
+                                            "stack.push({enum_name}::{vp}{variant} {{",
+                                            enum_name = frame_info.enum_name, vp = config.frame_prefix(), variant = segments[0].frame_variant
                                         ).unwrap();
                                         write!(buf, "saved_bp: cur_bp,").unwrap();
                                         for capture in &segments[0].accumulated_captures {
@@ -1042,7 +1165,7 @@ fn write_nfa_merged_prefix_arm(
                                         if config.emit_coverage {
                                             write!(
                                                 buf,
-                                                "#[cfg(feature = \"parser-coverage\")] __coverage::record(\"{cat}\", {path_id});",
+                                                "__coverage::record(\"{cat}\", {path_id});",
                                             ).unwrap();
                                         }
                                         buf.push_str("*pos += 1;");
@@ -1062,8 +1185,8 @@ fn write_nfa_merged_prefix_arm(
                                                 write_inline_items(buf, &remaining_items, false);
                                             }
                                             if let Some(ref nt) = segments[0].nonterminal {
-                                                write!(buf, "stack.push({}::{} {{",
-                                                    frame_info.enum_name, segments[0].frame_variant
+                                                write!(buf, "stack.push({enum_name}::{vp}{variant} {{",
+                                                    enum_name = frame_info.enum_name, vp = config.frame_prefix(), variant = segments[0].frame_variant
                                                 ).unwrap();
                                                 write!(buf, "saved_bp: cur_bp,").unwrap();
                                                 for capture in &segments[0].accumulated_captures {
@@ -1118,7 +1241,7 @@ fn write_nfa_merged_prefix_arm(
                     if config.emit_coverage {
                         write!(
                             buf,
-                            "#[cfg(feature = \"parser-coverage\")] __coverage::record(\"{cat}\", {path_id});",
+                            "__coverage::record(\"{cat}\", {path_id});",
                         ).unwrap();
                     }
                     buf.push_str("*pos += 1;");
@@ -1142,11 +1265,29 @@ fn write_nfa_merged_prefix_arm(
                     buf.push_str("let mut nfa_weights: Vec<f64> = Vec::new();");
                     buf.push_str("let mut nfa_first_err: Option<ParseError> = None;");
 
+                    // Phase 1: Detect cross-category NFA groups.
+                    // If any rule in the NFA group has a NonTerminal argument
+                    // referencing a different category than the result category,
+                    // ContextWeight narrowing would incorrectly prune valid
+                    // alternatives (the WFST context is trained per-category and
+                    // does not model cross-category token overlap).
+                    let has_cross_category_args = inlineable.iter().any(|r| {
+                        r.items.iter().any(|item| matches!(
+                            item,
+                            RDSyntaxItem::NonTerminal { category: ref c, .. } if c != cat
+                        ))
+                    });
+
                     // Sprint 4: Narrow inlineable candidates using ContextWeight.
                     // If the WFST has context labels, filter out rules whose bit is
                     // not set in the live ContextWeight for this dispatch token.
+                    // SKIP narrowing for cross-category NFA groups to avoid
+                    // incorrect pruning of valid cross-category alternatives.
                     let narrowed_inlineable: Vec<&RDRuleInfo> =
-                        if let Some(ref wfst) = config.prediction_wfst {
+                        if has_cross_category_args {
+                            // Cross-category group: keep all alternatives
+                            inlineable.to_vec()
+                        } else if let Some(ref wfst) = config.prediction_wfst {
                             let ctx = wfst.live_rules_context_after(&[variant]);
                             if ctx.count() > 0 {
                                 // Filter to only rules that survive ContextWeight narrowing
@@ -1162,6 +1303,18 @@ fn write_nfa_merged_prefix_arm(
                             inlineable.to_vec()
                         };
                     let effective_inlineable = &narrowed_inlineable;
+
+                    // Phase 2 (deferred): Argument-FIRST-set runtime pruning.
+                    // For cross-category NFA groups, we could emit runtime guards
+                    // that peek at the argument's first token and skip alternatives
+                    // whose cross-category NonTerminal's FIRST set does not contain
+                    // that token. The FIRST sets are available via
+                    // config.all_first_sets, but wiring per-alternative guards into
+                    // the NFA try loop requires non-trivial codegen plumbing.
+                    // Phase 1 already guarantees correctness by keeping all
+                    // alternatives; Phase 2 guards are a pure performance
+                    // optimisation to be revisited once profiling shows NFA
+                    // try-all overhead in cross-category groups is a bottleneck.
 
                     let a1_ordered: Vec<(&RDRuleInfo, f64)> =
                         if let Some(ref wfst) = config.prediction_wfst {
@@ -1601,8 +1754,8 @@ fn write_nfa_merged_prefix_arm(
                 if let Some(ref nt) = segments[0].nonterminal {
                     write!(
                         buf,
-                        "stack.push({}::{} {{",
-                        frame_info.enum_name, segments[0].frame_variant
+                        "stack.push({enum_name}::{vp}{variant} {{",
+                        enum_name = frame_info.enum_name, vp = config.frame_prefix(), variant = segments[0].frame_variant
                     )
                     .unwrap();
                     write!(buf, "saved_bp: cur_bp,").unwrap();
@@ -1703,8 +1856,8 @@ fn write_nfa_merged_prefix_arm(
                 if let Some(ref nt) = segments[0].nonterminal {
                     write!(
                         buf,
-                        "stack.push({}::{} {{",
-                        frame_info.enum_name, segments[0].frame_variant
+                        "stack.push({enum_name}::{vp}{variant} {{",
+                        enum_name = frame_info.enum_name, vp = config.frame_prefix(), variant = segments[0].frame_variant
                     )
                     .unwrap();
                     write!(buf, "saved_bp: cur_bp,").unwrap();
@@ -2000,53 +2153,16 @@ fn write_nfa_merged_prefix_arm(
         buf.push_str("0 => {");
         buf.push_str("*pos = nfa_saved;");
         if !segments.is_empty() {
-            if config.needs_dispatch && segments[0].nonterminal.is_some() {
-                // ── Dispatch-aware fallback ──────────────────────────────────
-                // When this category has a dispatch wrapper (parse_Cat), the
-                // same-category nonterminal must route through it so that
-                // cross-category rules are available. The trampoline's
-                // continue 'drive only runs parse_Cat_own, missing dispatch.
-                //
-                // Solution: inline all segments with direct dispatch wrapper
-                // calls for same-category nonterminals. Cast nesting depth is
-                // bounded (1-2 levels) so stack overflow is not a concern.
-
-                // Segment 0: consume prefix terminals
-                write_inline_items(buf, &segments[0].inline_items, true);
-
-                // Call dispatch wrapper for same-category nonterminal
-                if let Some(ref nt) = segments[0].nonterminal {
-                    write!(
-                        buf,
-                        "let {} = parse_{}(tokens, pos, {})?;",
-                        nt.param_name, cat, nt.bp,
-                    )
-                    .unwrap();
-                }
-
-                // Remaining segments: consume inline items + nonterminals
-                for seg in &segments[1..] {
-                    write_inline_items(buf, &seg.inline_items, false);
-                    if let Some(ref nt) = seg.nonterminal {
-                        write!(
-                            buf,
-                            "let {} = parse_{}(tokens, pos, {})?;",
-                            nt.param_name, cat, nt.bp,
-                        )
-                        .unwrap();
-                    }
-                }
-
-                // Build constructor (uses captures bound above)
-                write_rd_constructor_inline(buf, rd_rule, &segments);
-            } else {
-                // Original: push frame + continue 'drive (stack-safe)
+            {
+                // PDA merge: always use frame-pushing approach (stack-safe).
+                // Cross-category dispatch is handled by the pre-match block in
+                // _impl's prefix phase, so `continue 'drive` reaches it.
                 write_inline_items(buf, &segments[0].inline_items, true);
                 if let Some(ref nt) = segments[0].nonterminal {
                     write!(
                         buf,
-                        "stack.push({}::{} {{",
-                        frame_info.enum_name, segments[0].frame_variant
+                        "stack.push({enum_name}::{vp}{variant} {{",
+                        enum_name = frame_info.enum_name, vp = config.frame_prefix(), variant = segments[0].frame_variant
                     )
                     .unwrap();
                     write!(buf, "saved_bp: cur_bp,").unwrap();
@@ -2135,6 +2251,11 @@ fn write_nfa_inline_constructor(buf: &mut String, rule: &RDRuleInfo, segments: &
                     | SegmentCapture::Ident { name }
                     | SegmentCapture::Binder { name }
                     | SegmentCapture::Collection { name, .. } => name.clone(),
+                    SegmentCapture::Guard { .. } => unreachable!(
+                        "guarded rules are routed through standalone fn via \
+                         should_use_standalone_fn; nfa_inline_constructor is \
+                         never reached for them"
+                    ),
                 };
                 seen.insert(name)
             })
@@ -2164,6 +2285,11 @@ fn write_nfa_inline_constructor(buf: &mut String, rule: &RDRuleInfo, segments: &
                         | SegmentCapture::Ident { name }
                         | SegmentCapture::Binder { name }
                         | SegmentCapture::Collection { name, .. } => name,
+                        SegmentCapture::Guard { .. } => unreachable!(
+                            "guarded rules are routed through standalone fn via \
+                             should_use_standalone_fn; nfa_inline_constructor is \
+                             never reached for them"
+                        ),
                     };
                     n != binder_name && n != body_name
                 })
@@ -2247,6 +2373,10 @@ pub enum SegmentCapture {
         kind: CollectionKind,
         element_category: String,
     },
+    /// Phase 3A (predicated types): a behavioral predicate captured
+    /// from a `?guard:Guard` slot. Stored as a
+    /// `mettail_runtime::BehavioralPred` field on the frame variant.
+    Guard { name: String },
 }
 
 /// Split an RD handler into segments at SAME-CATEGORY nonterminal boundaries.
@@ -2335,6 +2465,15 @@ pub fn split_rd_handler(rule: &RDRuleInfo) -> Vec<HandlerSegment> {
                 current_inline.push(item.clone());
                 accumulated_captures.push(SegmentCapture::Binder { name: param_name.clone() });
             },
+            RDSyntaxItem::GuardExpression { param_name } => {
+                // Phase 3A: a `?guard:Guard` slot's parsed
+                // BehavioralPred must be stored across the trampoline
+                // split so the frame finalizer can construct the term.
+                current_inline.push(item.clone());
+                accumulated_captures.push(SegmentCapture::Guard {
+                    name: param_name.clone(),
+                });
+            },
             RDSyntaxItem::Sep { .. }
             | RDSyntaxItem::Map { .. }
             | RDSyntaxItem::Zip { .. }
@@ -2360,6 +2499,177 @@ pub fn split_rd_handler(rule: &RDRuleInfo) -> Vec<HandlerSegment> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// CEK-1: Dead Capture Elimination (Environment Trimming)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// CEK-1: Compute the set of live captures at each segment boundary.
+///
+/// Uses backward dataflow analysis: starting from the final constructor's
+/// capture references, propagates liveness backward through segments.
+/// A capture is live at segment i if it is referenced by any segment j > i
+/// or by the final constructor.
+///
+/// Returns a Vec parallel to `segments` where each entry is the filtered
+/// accumulated_captures for that segment.
+pub fn compute_live_captures(
+    segments: &[HandlerSegment],
+    constructor_capture_names: &std::collections::HashSet<String>,
+) -> Vec<Vec<SegmentCapture>> {
+    if segments.is_empty() {
+        return Vec::new();
+    }
+
+    let n = segments.len();
+    let mut live_at: Vec<std::collections::HashSet<String>> = vec![std::collections::HashSet::new(); n];
+
+    // Initialize: final segment's liveness = constructor capture names
+    // (the final segment itself doesn't push a frame, but defines what the constructor needs)
+    if n > 0 {
+        live_at[n - 1] = constructor_capture_names.clone();
+    }
+
+    // Backward pass: live_at[i] = names used in segment[i+1].inline_items ∪ live_at[i+1]
+    for i in (0..n.saturating_sub(1)).rev() {
+        // Start with liveness from the next segment
+        live_at[i] = live_at[i + 1].clone();
+
+        // Add names referenced by the next segment's inline items
+        if let Some(next_seg) = segments.get(i + 1) {
+            for item in &next_seg.inline_items {
+                collect_referenced_names(item, &mut live_at[i]);
+            }
+        }
+    }
+
+    // Filter accumulated_captures per segment
+    segments
+        .iter()
+        .enumerate()
+        .map(|(i, seg)| {
+            seg.accumulated_captures
+                .iter()
+                .filter(|cap| live_at[i].contains(&capture_name(cap)))
+                .cloned()
+                .collect()
+        })
+        .collect()
+}
+
+/// Extract the variable name from a SegmentCapture.
+pub fn capture_name(cap: &SegmentCapture) -> String {
+    match cap {
+        SegmentCapture::NonTerminal { name, .. } => name.clone(),
+        SegmentCapture::Ident { name } => name.clone(),
+        SegmentCapture::Binder { name } => name.clone(),
+        SegmentCapture::Collection { name, .. } => name.clone(),
+        // Guarded rules are routed through standalone fn via
+        // should_use_standalone_fn, so this branch is unreachable in
+        // practice. Returning the name keeps liveness analysis safe
+        // if a future caller stages a Guard capture for analysis only.
+        SegmentCapture::Guard { name } => name.clone(),
+    }
+}
+
+/// Collect variable names referenced by an RDSyntaxItem.
+fn collect_referenced_names(item: &RDSyntaxItem, names: &mut std::collections::HashSet<String>) {
+    match item {
+        RDSyntaxItem::NonTerminal { param_name, .. } => {
+            names.insert(param_name.clone());
+        },
+        RDSyntaxItem::IdentCapture { param_name } => {
+            names.insert(param_name.clone());
+        },
+        RDSyntaxItem::Binder { param_name, .. } => {
+            names.insert(param_name.clone());
+        },
+        RDSyntaxItem::Collection { param_name, .. } => {
+            names.insert(param_name.clone());
+        },
+        RDSyntaxItem::SepList { collection_name, .. } => {
+            names.insert(collection_name.clone());
+        },
+        RDSyntaxItem::BinderCollection { param_name, .. } => {
+            names.insert(param_name.clone());
+        },
+        RDSyntaxItem::Terminal(_) => {},
+        RDSyntaxItem::GuardExpression { param_name } => {
+            names.insert(param_name.clone());
+        },
+        RDSyntaxItem::Sep { .. }
+        | RDSyntaxItem::Map { .. }
+        | RDSyntaxItem::Zip { .. }
+        | RDSyntaxItem::Optional { .. } => {},
+    }
+}
+
+/// CEK-1: Extract capture names referenced by the final constructor of an RD rule.
+///
+/// The constructor uses all accumulated captures from the last segment.
+/// This function returns the set of capture names that appear in the rule's
+/// constructor pattern (i.e., the names that map to constructor arguments).
+pub fn constructor_capture_names(rule: &RDRuleInfo) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for item in &rule.items {
+        match item {
+            RDSyntaxItem::NonTerminal { param_name, .. } => {
+                names.insert(param_name.clone());
+            },
+            RDSyntaxItem::IdentCapture { param_name } => {
+                names.insert(param_name.clone());
+            },
+            RDSyntaxItem::Binder { param_name, .. } => {
+                names.insert(param_name.clone());
+            },
+            RDSyntaxItem::Collection { param_name, .. } => {
+                names.insert(param_name.clone());
+            },
+            RDSyntaxItem::SepList { collection_name, .. } => {
+                names.insert(collection_name.clone());
+            },
+            RDSyntaxItem::BinderCollection { param_name, .. } => {
+                names.insert(param_name.clone());
+            },
+            RDSyntaxItem::Terminal(_) => {},
+            RDSyntaxItem::GuardExpression { param_name } => {
+                names.insert(param_name.clone());
+            },
+            RDSyntaxItem::Sep { .. }
+            | RDSyntaxItem::Map { .. }
+            | RDSyntaxItem::Zip { .. }
+            | RDSyntaxItem::Optional { .. } => {},
+        }
+    }
+    names
+}
+
+/// CEK-1: Apply dead capture elimination to RD handler segments.
+///
+/// This is the main entry point for environment trimming. It takes the
+/// segments from `split_rd_handler()` and returns new segments with
+/// accumulated_captures filtered to only include live captures.
+///
+/// When `optimization_gates.environment_trimming` is true, the trampoline
+/// codegen uses this to produce smaller frame variants.
+pub fn trim_dead_captures(
+    segments: &[HandlerSegment],
+    rule: &RDRuleInfo,
+) -> Vec<HandlerSegment> {
+    let ctor_names = constructor_capture_names(rule);
+    let live_captures = compute_live_captures(segments, &ctor_names);
+
+    segments
+        .iter()
+        .zip(live_captures)
+        .map(|(seg, live)| HandlerSegment {
+            inline_items: seg.inline_items.clone(),
+            nonterminal: seg.nonterminal.clone(),
+            accumulated_captures: live,
+            frame_variant: seg.frame_variant.clone(),
+        })
+        .collect()
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Frame Enum Generation
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -2372,6 +2682,59 @@ pub struct FrameInfo {
     pub variants: Vec<FrameVariant>,
 }
 
+/// Classification of a frame variant for FrameKind dispatch.
+/// Eliminates string prefix matching on variant names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameVariantKind {
+    InfixRHS,
+    GroupClose,
+    UnaryPrefix,
+    RDSegment,
+    CollectionElem,
+    Mixfix,
+    CrossCatInfixTry,
+    Lambda,
+    Dollar,
+    CastWrap,
+    GuardEval,
+    Other,
+}
+
+impl FrameVariantKind {
+    /// Classify a frame variant by its name.
+    #[inline]
+    pub fn from_name(name: &str) -> Self {
+        if name == "InfixRHS" { Self::InfixRHS }
+        else if name == "CrossCatInfixTry" { Self::InfixRHS }
+        else if name == "GroupClose" { Self::GroupClose }
+        else if name.starts_with("UnaryPrefix_") { Self::UnaryPrefix }
+        else if name.starts_with("CollectionElem_") { Self::CollectionElem }
+        else if name.starts_with("Mixfix_") { Self::Mixfix }
+        else if name.starts_with("LambdaBody_") { Self::Lambda }
+        else if name.starts_with("Dollar") || name.starts_with("Ddollar") { Self::Dollar }
+        else if name.starts_with("RD_") { Self::RDSegment }
+        else if name.starts_with("CastWrap_") { Self::CastWrap }
+        else if name == "GuardEval" { Self::GuardEval }
+        else { Self::Other }
+    }
+
+    /// Convert to the u8 FrameKind value used by the generated code.
+    #[inline]
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            Self::UnaryPrefix => 0,
+            Self::InfixRHS => 1,
+            Self::CollectionElem => 3,
+            Self::GroupClose => 4,
+            Self::Mixfix => 5,
+            Self::Lambda => 6,
+            Self::Dollar => 7,
+            Self::CastWrap => 8,
+            _ => 9, // Other, RDSegment, GuardEval
+        }
+    }
+}
+
 /// A single variant in the Frame enum.
 #[derive(Debug)]
 pub struct FrameVariant {
@@ -2379,6 +2742,14 @@ pub struct FrameVariant {
     pub name: String,
     /// Fields in this variant.
     pub fields: Vec<FrameField>,
+}
+
+impl FrameVariant {
+    /// Get the structural classification of this variant (computed from name).
+    #[inline]
+    pub fn kind(&self) -> FrameVariantKind {
+        FrameVariantKind::from_name(&self.name)
+    }
 }
 
 /// A field in a frame variant.
@@ -2445,6 +2816,12 @@ pub struct TrampolineConfig {
     /// this set, its codegen is suppressed (dispatch arm, NFA alternative, etc.).
     /// The lint layer still reports W01 warnings independently.
     pub dead_rules: std::collections::HashSet<String>,
+    /// CEK-4: Dead frame variant names identified by WPDS poststar analysis.
+    ///
+    /// When `optimization_gates.dead_frame_elimination` is true and a frame
+    /// variant's name is in this set, its codegen is suppressed (enum variant,
+    /// prefix arm, unwind handler).
+    pub dead_frames: std::collections::HashSet<String>,
     /// Complete weight map from composed dispatch: `(category, token) → weight`.
     ///
     /// Includes both composed (ambiguous) and specificity (deterministic) weights.
@@ -2465,7 +2842,7 @@ pub struct TrampolineConfig {
     /// D07: Emit runtime coverage instrumentation at dispatch points.
     ///
     /// When true, each dispatch resolution emits
-    /// `#[cfg(feature = "parser-coverage")] __coverage::record("Cat", path_id);`
+    /// `__coverage::record("Cat", path_id);`
     /// so test suites can report which dispatch paths are exercised.
     /// Activated by `PRATTAIL_COVERAGE=1` env var during code generation.
     pub emit_coverage: bool,
@@ -2494,6 +2871,66 @@ pub struct TrampolineConfig {
     /// how the shared nonterminal could be parsed once and cached. Full codegen
     /// integration is a future step.
     pub prefix_cse_hints: Vec<crate::decision_tree::SharedNonterminalPrefix>,
+    /// PDA merge: cross-category prefix arms for inline emission in `_impl`.
+    ///
+    /// When non-empty, these arms are merged into the prefix `match` so that
+    /// cross-category dispatch happens inside `_impl` (not in a separate dispatch
+    /// wrapper). This allows `(` to use trampolined `GroupClose` frames for ALL
+    /// categories, eliminating unbounded cross-function recursion from grouping.
+    pub cross_cat_prefix_arms: Vec<crate::dispatch::CrossCatPrefixArm>,
+    /// When true, skip generating the `parse_Cat` entry point wrapper and
+    /// thread-local frame pool. The unified trampoline provides its own
+    /// entry points and unified frame pool.
+    pub skip_entry_point: bool,
+    /// When true, generate step functions (`prefix_step_Cat`, `infix_step_Cat`)
+    /// that return `Result<ParseStep, ParseError>` instead of a monolithic `_impl`
+    /// with labeled control flow. The unified driver calls these step functions
+    /// iteratively, eliminating mutual recursion.
+    pub unified_mode: bool,
+    /// When true, skip generating step functions (`prefix_step_Cat`, `infix_step_Cat`,
+    /// `same_cat_prefix_step_Cat`). These will be generated by unified_trampoline.rs
+    /// as CPS single-step functions instead. The trampoline still generates the full
+    /// `_impl` body, Frame_Cat enum, helper functions, and thread-locals.
+    pub skip_step_functions: bool,
+}
+
+impl TrampolineConfig {
+    /// Get the `continue 'drive` replacement string for the current mode.
+    pub fn continue_drive(&self) -> String {
+        if self.unified_mode {
+            format!("return Ok(ParseStep::EnterPrefix {{ cat: CategoryId::{cat}, bp: cur_bp }})", cat = self.category)
+        } else {
+            "continue 'drive".to_string()
+        }
+    }
+
+    /// Get the frame enum name for the current mode.
+    pub fn frame_enum(&self, frame_info: &FrameInfo) -> String {
+        if self.unified_mode {
+            "UnifiedFrame".to_string()
+        } else {
+            frame_info.enum_name.clone()
+        }
+    }
+
+    /// Get the frame variant prefix for the current mode.
+    /// In unified mode, frame variants are prefixed with "Cat_" (e.g., "Int_InfixRHS").
+    pub fn frame_prefix(&self) -> String {
+        if self.unified_mode {
+            format!("{}_", self.category)
+        } else {
+            String::new()
+        }
+    }
+
+    /// Prefix a frame variant name with Cat_ in unified mode.
+    pub fn prefix_variant(&self, variant: &str) -> String {
+        if self.unified_mode {
+            format!("{}_{}", self.category, variant)
+        } else {
+            variant.to_string()
+        }
+    }
 }
 
 /// Write the Frame enum declaration for a category.
@@ -2515,7 +2952,13 @@ pub fn write_frame_enum(
     bp_table: &BindingPowerTable,
 ) -> FrameInfo {
     let cat = &config.category;
-    let enum_name = format!("Frame_{}", cat);
+    // In unified mode, frame variants are part of UnifiedFrame with Cat_ prefix.
+    // The enum_name and variant prefix determine what gets emitted in the generated code.
+    let (enum_name, variant_prefix) = if config.unified_mode {
+        ("UnifiedFrame".to_string(), format!("{}_", cat))
+    } else {
+        (format!("Frame_{}", cat), String::new())
+    };
 
     let mut variants: Vec<FrameVariant> = Vec::new();
 
@@ -2539,6 +2982,35 @@ pub fn write_frame_enum(
                 },
             ],
         });
+
+        // CrossCatInfixTry: tentative infix frame for operators that have both
+        // same-category and cross-category variants. When the prefix phase fails
+        // to parse the RHS in the same category, this frame is popped, pos is
+        // restored, and LED delegation tries the cross-category variant.
+        let cross_cat_terms = conflicting_infix_terminals(config, bp_table);
+        if !cross_cat_terms.is_empty() && !config.led_delegation.is_empty() {
+            variants.push(FrameVariant {
+                name: "CrossCatInfixTry".to_string(),
+                fields: vec![
+                    FrameField {
+                        name: "lhs".to_string(),
+                        type_str: cat.clone(),
+                    },
+                    FrameField {
+                        name: "op_pos".to_string(),
+                        type_str: "usize".to_string(),
+                    },
+                    FrameField {
+                        name: "saved_bp".to_string(),
+                        type_str: "u8".to_string(),
+                    },
+                    FrameField {
+                        name: "saved_pos".to_string(),
+                        type_str: "usize".to_string(),
+                    },
+                ],
+            });
+        }
     }
 
     // GroupClose (always present — parenthesized expressions)
@@ -2581,6 +3053,12 @@ pub fn write_frame_enum(
         }
 
         let segments = split_rd_handler(rd_rule);
+        // CEK-1: Apply dead capture elimination if the gate is enabled
+        let segments = if config.optimization_gates.environment_trimming {
+            trim_dead_captures(&segments, rd_rule)
+        } else {
+            segments
+        };
         for segment in &segments {
             if segment.nonterminal.is_none() {
                 continue; // Final segment doesn't need a frame variant
@@ -2620,6 +3098,12 @@ pub fn write_frame_enum(
                         };
                         fields.push(FrameField { name: name.clone(), type_str });
                     },
+                    SegmentCapture::Guard { .. } => unreachable!(
+                        "guarded rules are routed through standalone fn via \
+                         should_use_standalone_fn; frame variants are never \
+                         emitted for them, so this match arm is structurally \
+                         unreachable"
+                    ),
                 }
             }
 
@@ -2776,22 +3260,61 @@ pub fn write_frame_enum(
     // NOTE: Cast rules are NOT trampolined — they call parse_SourceCat() directly
     // in the prefix (cross-category, bounded depth). No CastWrap_* frame variants needed.
 
-    // ── Write the enum declaration ──
-    // Frame_Cat is 'static (no lifetime parameter) — all fields are owned types.
-    // This enables thread-local pooling of the continuation stack.
-    write!(buf, "enum {} {{", enum_name).unwrap();
-    for variant in &variants {
-        write!(buf, "{} {{", variant.name).unwrap();
-        for field in &variant.fields {
-            // Skip phantom fields that encode type info as string literals
-            if field.type_str.starts_with('"') {
-                continue;
-            }
-            write!(buf, "{}: {},", field.name, field.type_str).unwrap();
-        }
-        buf.push_str("},");
+    // CEK-4: Filter dead frame variants when dead_frame_elimination is enabled.
+    // Unreachable frame variants (as determined by WPDS poststar analysis) are
+    // removed from the enum, their prefix arms, and their unwind handlers.
+    // Only rule-specific variants (UnaryPrefix_*, RD_*, CollectionElem_*) are
+    // filtered — structural variants (InfixRHS, GroupClose, LambdaBody_*,
+    // DollarF_*, DdollarF_*, GuardEval, Mixfix_*) are always retained.
+    if config.optimization_gates.dead_frame_elimination && !config.dead_frames.is_empty() {
+        variants.retain(|v| {
+            let is_rule_specific = matches!(
+                v.kind(),
+                FrameVariantKind::UnaryPrefix | FrameVariantKind::RDSegment | FrameVariantKind::CollectionElem
+            );
+            !is_rule_specific || !config.dead_frames.contains(&v.name)
+        });
     }
-    buf.push('}');
+
+    // In unified mode, prefix variant names with Cat_ for namespace isolation
+    // within the shared UnifiedFrame enum.
+    if config.unified_mode {
+        for variant in &mut variants {
+            variant.name = format!("{}{}", variant_prefix, variant.name);
+        }
+    }
+
+    // ── Write the enum declaration ──
+    // Always write the per-category Frame_Cat enum — it's needed by recovery and
+    // traced variants even in unified mode. In unified mode, the same variants
+    // (with Cat_ prefix) also appear in UnifiedFrame.
+    if config.unified_mode {
+        // Write the per-category enum with UNPREFIXED names for backward compat
+        let compat_enum = format!("Frame_{}", config.category);
+        write!(buf, "#[allow(dead_code)] #[derive(Debug)] enum {} {{", compat_enum).unwrap();
+        for variant in &variants {
+            // Strip the Cat_ prefix for the per-category enum
+            let compat_name = variant.name.strip_prefix(&variant_prefix).unwrap_or(&variant.name);
+            write!(buf, "{} {{", compat_name).unwrap();
+            for field in &variant.fields {
+                if field.type_str.starts_with('"') { continue; }
+                write!(buf, "{}: {},", field.name, field.type_str).unwrap();
+            }
+            buf.push_str("},");
+        }
+        buf.push('}');
+    } else {
+        write!(buf, "#[derive(Debug)] enum {} {{", enum_name).unwrap();
+        for variant in &variants {
+            write!(buf, "{} {{", variant.name).unwrap();
+            for field in &variant.fields {
+                if field.type_str.starts_with('"') { continue; }
+                write!(buf, "{}: {},", field.name, field.type_str).unwrap();
+            }
+            buf.push_str("},");
+        }
+        buf.push('}');
+    }
 
     FrameInfo { enum_name, variants }
 }
@@ -2841,9 +3364,12 @@ pub fn write_trampolined_parser(
     bp_table: &BindingPowerTable,
     prefix_handlers: &[PrefixHandler],
     rd_rules: &[RDRuleInfo],
-) {
+) -> FrameInfo {
     let cat = &config.category;
-    let parse_fn = if config.needs_dispatch {
+    // PDA merge: when cross_cat_prefix_arms is non-empty, the trampoline IS
+    // the top-level parser (dispatch wrapper eliminated). Use parse_Cat directly.
+    let pda_merged = !config.cross_cat_prefix_arms.is_empty();
+    let parse_fn = if config.needs_dispatch && !pda_merged {
         format!("parse_{}_own", cat)
     } else {
         format!("parse_{}", cat)
@@ -2894,11 +3420,14 @@ pub fn write_trampolined_parser(
     let frame_info = write_frame_enum(buf, config, rd_rules, bp_table);
 
     // ── 3. Generate thread-local frame stack pool ──
-    // Each category gets its own thread-local Vec<Frame_Cat> that retains capacity
-    // across parse calls. Uses Cell (not RefCell) with take/set pattern to support
-    // re-entrant calls from standalone parse functions (Sep, multi-binder,
-    // ident-lookahead rules). Nested calls gracefully get a fresh Vec.
+    // In unified mode, skip per-category pool/frame_state — the unified driver
+    // manages the shared stack via UNIFIED_FRAME_POOL.
     let cat_upper = cat.to_uppercase();
+    // In unified mode, we still generate pool/frame_state/frame_kind_of because
+    // recovery and traced parser variants reference them. The main parse path
+    // uses prefix_step_Cat → UnifiedFrame, but backward-compat wrappers need
+    // the per-category infrastructure.
+    {
     let pool_init = match config.frame_pool_capacity {
         Some(cap) => format!("Vec::with_capacity({})", cap),
         None => "Vec::new()".to_string(),
@@ -2938,27 +3467,9 @@ pub fn write_trampolined_parser(
         )
         .unwrap();
 
-        // Classify each variant by prefix convention
+        // Classify each variant by structural kind (no string comparisons)
         for variant in &frame_info.variants {
-            let kind_u8 = if variant.name == "InfixRHS" {
-                1_u8 // FrameKind::InfixRHS
-            } else if variant.name == "GroupClose" {
-                4 // FrameKind::Group
-            } else if variant.name.starts_with("CollectionElem_") {
-                3 // FrameKind::Collection
-            } else if variant.name.starts_with("Mixfix_") {
-                5 // FrameKind::Mixfix
-            } else if variant.name.starts_with("UnaryPrefix_") {
-                0 // FrameKind::Prefix
-            } else if variant.name.starts_with("LambdaBody_") {
-                6 // FrameKind::Lambda
-            } else if variant.name.starts_with("Dollar") || variant.name.starts_with("Ddollar") {
-                7 // FrameKind::Dollar
-            } else if variant.name.starts_with("CastWrap_") {
-                8 // FrameKind::CastWrap
-            } else {
-                9 // FrameKind::Other (RD segments, etc.)
-            };
+            let kind_u8 = variant.kind().as_u8();
 
             // Use wildcard pattern for all fields
             write!(
@@ -2970,8 +3481,12 @@ pub fn write_trampolined_parser(
         }
 
         buf.push_str("None => 9_u8,"); // empty stack → Other
+        if config.unified_mode {
+            buf.push_str("_ => 9_u8,"); // other-category variants → Other
+        }
         buf.push_str("}}");
     }
+    } // end if !config.unified_mode (pool/frame_state/frame_kind_of)
 
     // ── 3b. Generate NFA spillover thread-locals ──
     // Thread-locals for forced-prefix replay. The spillover buffer collects N-1
@@ -3042,6 +3557,10 @@ pub fn write_trampolined_parser(
     // category's parse context). For top-level calls, PARENT_WEIGHT is 0.0.
     // After reading, reset PARENT_WEIGHT to 0.0 so it doesn't leak into
     // subsequent independent calls.
+    if config.skip_entry_point {
+        // Unified trampoline provides its own parse_Cat entry point.
+        // Still generate _impl for recovery/traced variants.
+    } else {
     write!(
         buf,
         "fn {parse_fn}<'a>(\
@@ -3060,14 +3579,20 @@ pub fn write_trampolined_parser(
                 let needed = tokens.len() / 2; \
                 if stack.capacity() < needed {{ \
                     stack.reserve(needed - stack.len()); \
-                }} \
-                let result = {parse_fn}_impl(tokens, pos, min_bp, &mut stack); \
+                }}",
+    )
+    .unwrap();
+
+    write!(
+        buf,
+        " let result = {parse_fn}_impl(tokens, pos, min_bp, &mut stack); \
                 cell.set(stack); \
                 result \
             }}) \
         }}",
     )
     .unwrap();
+    } // end if !skip_entry_point
 
     // ── 5. Generate the inner trampolined parse function (_impl) ──
     // A4: Cold NFA helper functions are generated during prefix arm codegen and
@@ -3079,6 +3604,8 @@ pub fn write_trampolined_parser(
     write_trampoline_body(&mut body_buf, &mut cold_fns, config, bp_table, prefix_handlers, rd_rules, &frame_info, &parse_fn, bp_range_info.as_ref());
     buf.push_str(&cold_fns);
     buf.push_str(&body_buf);
+
+    frame_info
 }
 
 /// Write the monolithic trampolined parser function body.
@@ -3096,6 +3623,10 @@ fn write_trampoline_body(
     let cat = &config.category;
     let has_led = config.has_infix || config.has_postfix || config.has_mixfix;
 
+    // In unified mode, control flow statements change.
+    // Helper strings computed from config, reused throughout.
+    let _ = (&frame_info, &config); // suppress unused warning in unified path
+
     // BP02: Collect tail-call-eligible rules for this category.
     // When the gate is enabled and there are eligible rules, we emit a
     // `tail_wrap: Option<u8>` local that avoids full frame pushes for
@@ -3110,19 +3641,117 @@ fn write_trampoline_body(
     let expected_msg = crate::pratt::build_expected_message_pub(cat, &config.own_first_set);
     let expected_escaped = expected_msg.replace('\\', "\\\\").replace('"', "\\\"");
 
-    // Inner implementation function signature — takes the continuation stack by reference
-    // so it can be pooled in a thread-local across parse calls.
-    write!(
-        buf,
-        "fn {parse_fn}_impl<'a>(\
-            tokens: &[(Token<'a>, Range)], \
-            pos: &mut usize, \
-            min_bp: u8, \
-            stack: &mut Vec<{frame_enum}>, \
-        ) -> Result<{cat}, ParseError> {{",
-        frame_enum = frame_info.enum_name,
-    )
-    .unwrap();
+    // In unified mode, generate step functions and backward-compat wrapper.
+    // When skip_step_functions is set, the CPS step functions come from
+    // unified_trampoline.rs instead — only generate the compat wrapper here.
+    if config.unified_mode {
+        if !config.skip_step_functions {
+            // same_cat_prefix_step delegates to prefix_step
+            write!(
+                buf,
+                "#[allow(dead_code)] \
+                fn same_cat_prefix_step_{cat}<'a>(\
+                    tokens: &[(Token<'a>, Range)], \
+                    pos: &mut usize, \
+                    min_bp: u8, \
+                    stack: &mut Vec<UnifiedFrame>, \
+                ) -> Result<ParseStep, ParseError> {{ \
+                    prefix_step_{cat}(tokens, pos, min_bp, stack) \
+                }}",
+            ).unwrap();
+
+            // infix_step is a stub — prefix_step handles full drive/unwind
+            write!(
+                buf,
+                "#[allow(dead_code)] \
+                fn infix_step_{cat}<'a>(\
+                    tokens: &[(Token<'a>, Range)], \
+                    pos: &mut usize, \
+                    _lhs: {cat}, \
+                    _min_bp: u8, \
+                    _stack: &mut Vec<UnifiedFrame>, \
+                ) -> Result<ParseStep, ParseError> {{ \
+                    unreachable!(\"infix_step_{cat}: prefix_step handles full drive/unwind\") \
+                }}",
+            ).unwrap();
+        }
+
+        // Generate backward-compat parse_Cat_impl wrapper for recovery/traced variants.
+        // When skip_step_functions is set, this calls unified_parse directly.
+        // Otherwise, it calls the trampoline's prefix_step_Cat.
+        if config.skip_step_functions {
+            // CPS path: call parse_Cat (the public entry point, generated by
+            // unified_trampoline.rs write_entry_points). This routes through
+            // unified_parse which is fully iterative — no recursion.
+            write!(
+                buf,
+                "#[allow(dead_code)] \
+                fn {parse_fn}_impl<'a>(\
+                    tokens: &[(Token<'a>, Range)], \
+                    pos: &mut usize, \
+                    min_bp: u8, \
+                    _compat_stack: &mut Vec<{frame_enum}>, \
+                ) -> Result<{cat}, ParseError> {{ \
+                    parse_{cat}(tokens, pos, min_bp) \
+                }}",
+                frame_enum = frame_info.enum_name,
+            ).unwrap();
+        } else {
+            // Recursive path: call prefix_step_Cat directly
+            write!(
+                buf,
+                "#[allow(dead_code)] \
+                fn {parse_fn}_impl<'a>(\
+                    tokens: &[(Token<'a>, Range)], \
+                    pos: &mut usize, \
+                    min_bp: u8, \
+                    _compat_stack: &mut Vec<{frame_enum}>, \
+                ) -> Result<{cat}, ParseError> {{ \
+                    let mut unified_stack = Vec::new(); \
+                    match prefix_step_{cat}(tokens, pos, min_bp, &mut unified_stack)? {{ \
+                        ParseStep::Yield(AnyTerm::{cat}(v)) => Ok(*v), \
+                        other => Err(ParseError::UnexpectedEof {{ \
+                            expected: std::borrow::Cow::Borrowed(\"{cat} expression\"), \
+                            range: Range::zero(), \
+                            hint: Some(std::borrow::Cow::Borrowed(\"internal: unexpected ParseStep from prefix_step\")), \
+                        }}), \
+                    }} \
+                }}",
+                frame_enum = frame_info.enum_name,
+            ).unwrap();
+        }
+    }
+
+    // ═══ Generate _impl body (or prefix_step_Cat in unified mode) ═══
+    // When skip_step_functions is set, skip the ENTIRE function body —
+    // the CPS step functions from unified_trampoline.rs replace it.
+    // Recovery/traced use parse_Cat_impl which calls parse_Cat (the CPS path).
+    if config.unified_mode && config.skip_step_functions {
+        return;
+    } else if config.unified_mode {
+        write!(
+            buf,
+            "#[allow(dead_code, unused_variables, unreachable_patterns)] \
+            fn prefix_step_{cat}<'a>(\
+                tokens: &[(Token<'a>, Range)], \
+                pos: &mut usize, \
+                min_bp: u8, \
+                stack: &mut Vec<{frame_enum}>, \
+            ) -> Result<ParseStep, ParseError> {{",
+            frame_enum = frame_info.enum_name,
+        ).unwrap();
+    } else {
+        write!(
+            buf,
+            "fn {parse_fn}_impl<'a>(\
+                tokens: &[(Token<'a>, Range)], \
+                pos: &mut usize, \
+                min_bp: u8, \
+                stack: &mut Vec<{frame_enum}>, \
+            ) -> Result<{cat}, ParseError> {{",
+            frame_enum = frame_info.enum_name,
+        ).unwrap();
+    }
 
     // Clear the pooled stack (retains capacity from previous calls).
     buf.push_str("stack.clear();");
@@ -3133,18 +3762,26 @@ fn write_trampoline_body(
     // constructor to apply after the tail NT returns, and saved_bp is the
     // binding power to restore afterwards (which the full frame would have stored).
     // Cost: one Option<(u8, u8)> (3 bytes) on the stack + one branch per 'unwind.
+    //
+    // BP06: When continuation_compression is enabled, use a Vec instead of Option
+    // to accumulate chains of tail-call-eligible prefix operators. This reduces
+    // stack depth for consecutive unary prefix operations (e.g. `---x`) from N
+    // individual frames to a single Vec entry per chain element, all applied in
+    // reverse at unwind time.
     if !tail_call_rules.is_empty() {
-        buf.push_str("let mut tail_wrap: Option<(u8, u8)> = None;");
+        if config.optimization_gates.continuation_compression {
+            buf.push_str("let mut tail_wraps: Vec<(u8, u8)> = Vec::new();");
+        } else {
+            buf.push_str("let mut tail_wrap: Option<(u8, u8)> = None;");
+        }
     }
 
     // ═══ Main trampoline loop ═══
     buf.push_str("'drive: loop {");
 
     // Update frame state thread-local at the top of each 'drive iteration.
-    // This reflects the current depth and frame kind before prefix dispatch
-    // (where parse errors are raised). Recovery reads this thread-local to
-    // apply Tier 1 frame-kind cost multipliers.
-    {
+    // In unified mode, skip — no per-category FRAME_STATE thread-local.
+    if !config.unified_mode {
         let cat_upper = cat.to_uppercase();
         write!(
             buf,
@@ -3156,7 +3793,7 @@ fn write_trampoline_body(
     }
 
     // ═══ Phase A: Prefix dispatch ═══
-    write_prefix_phase(buf, cold_fns, config, prefix_handlers, rd_rules, frame_info, &expected_escaped, &tail_call_rules);
+    write_prefix_phase(buf, cold_fns, config, bp_table, prefix_handlers, rd_rules, frame_info, &expected_escaped, &tail_call_rules);
 
     // ═══ Phase B: Infix loop + continuation unwinding ═══
     buf.push_str("'unwind: loop {");
@@ -3166,12 +3803,26 @@ fn write_trampoline_body(
     // and does `continue 'drive` without pushing a frame, the NT result arrives
     // as `lhs`. Before entering the infix loop (which expects a fully-formed
     // LHS), apply the deferred constructor wrapping and restore cur_bp.
+    //
+    // BP06: When continuation_compression is enabled, iterate the Vec in reverse
+    // to apply all accumulated tail-call constructors. Each element's tw_bp is
+    // the binding power that was current when that prefix was parsed; the last
+    // popped element's tw_bp becomes the final cur_bp (i.e. the BP from before
+    // the entire chain).
     if !tail_call_rules.is_empty() {
-        buf.push_str("if let Some((tw, tw_bp)) = tail_wrap.take() { match tw {");
-        for info in tail_call_rules.values() {
-            write!(buf, "{} => {{ {} }},", info.tag, info.constructor).unwrap();
+        if config.optimization_gates.continuation_compression {
+            buf.push_str("while let Some((tw, tw_bp)) = tail_wraps.pop() { match tw {");
+            for info in tail_call_rules.values() {
+                write!(buf, "{} => {{ {} }},", info.tag, info.constructor).unwrap();
+            }
+            buf.push_str("_ => {} } cur_bp = tw_bp; }");
+        } else {
+            buf.push_str("if let Some((tw, tw_bp)) = tail_wrap.take() { match tw {");
+            for info in tail_call_rules.values() {
+                write!(buf, "{} => {{ {} }},", info.tag, info.constructor).unwrap();
+            }
+            buf.push_str("_ => {} } cur_bp = tw_bp; }");
         }
-        buf.push_str("_ => {} } cur_bp = tw_bp; }");
     }
 
     // Infix loop (iterative — left-assoc chains stay here)
@@ -3212,6 +3863,7 @@ fn write_prefix_phase(
     buf: &mut String,
     cold_fns: &mut String,
     config: &TrampolineConfig,
+    bp_table: &BindingPowerTable,
     prefix_handlers: &[PrefixHandler],
     rd_rules: &[RDRuleInfo],
     frame_info: &FrameInfo,
@@ -3241,6 +3893,32 @@ fn write_prefix_phase(
 
     // Collection catch on EOF: finalize with collected elements via break 'prefix
     write_collection_eof_catch(buf, config, rd_rules, frame_info);
+
+    // CrossCatInfixTry catch on EOF: pop frame, restore pos, try LED delegation.
+    // At EOF the LED will typically return None, but we must try for correctness.
+    {
+        let cross_cat_terms = conflicting_infix_terminals(config, bp_table);
+        if !cross_cat_terms.is_empty() && !config.led_delegation.is_empty() {
+            let enum_name = &frame_info.enum_name;
+            let vp = config.frame_prefix();
+            write!(
+                buf,
+                "Some({enum_name}::{vp}CrossCatInfixTry {{ lhs: saved_lhs, saved_pos, saved_bp, .. }}) => {{ \
+                    *pos = saved_pos; \
+                    cur_bp = saved_bp; \
+                    match led_delegate_{cat}(tokens, pos, &saved_lhs) {{ \
+                        Some(new_lhs) => break 'prefix new_lhs, \
+                        None => return Err(ParseError::UnexpectedEof {{ \
+                            expected: Cow::Borrowed(\"{expected_escaped}\"), \
+                            range: eof_range, \
+                            hint: None, \
+                        }}), \
+                    }} \
+                }},",
+            )
+            .unwrap();
+        }
+    }
 
     write!(
         buf,
@@ -3279,11 +3957,67 @@ fn write_prefix_phase(
         .unwrap();
     }
 
+    // PDA merge: cross-category dispatch is handled by a separate
+    // #[cold] #[inline(never)] function that is called BEFORE the main
+    // prefix match. This function returns a bool and writes the result
+    // through a raw pointer to avoid adding ANY Cat-sized locals to _impl.
+    if !config.cross_cat_prefix_arms.is_empty() {
+        let cat = &config.category;
+
+        // Emit the cold cross-cat dispatch function
+        // Pass cur_bp so ambiguous arms can be skipped when we're inside an
+        // infix RHS (cur_bp > 0). Without this guard, an ambiguous token like
+        // Ident triggers cross-cat speculative parsing that greedily consumes
+        // what should be handled by the Pratt infix loop, breaking Display
+        // roundtrip idempotence.
+        write!(
+            cold_fns,
+            "#[cold] #[inline(never)] \
+            fn __cross_cat_dispatch_{cat}<'a>(\
+                tokens: &[(Token<'a>, Range)], pos: &mut usize, \
+                out: *mut std::mem::MaybeUninit<{cat}>, \
+                cur_bp: u8\
+            ) -> bool {{ \
+                let saved = *pos; \
+                match &tokens[*pos].0 {{",
+        ).unwrap();
+
+        for (i, arm) in config.cross_cat_prefix_arms.iter().enumerate() {
+            let body = arm.body
+                .replace("__SAME_CAT_FALLBACK__", "{ *pos = saved; return false; }")
+                .replace("__CC_OK_WRITE__", "unsafe { (*out).write(__result); }")
+                .replace("__CC_OK_BEGIN__", "unsafe { (*out).write(")
+                .replace("__CC_OK_END__", "); } return true;");
+            if arm.is_ambiguous {
+                // Ambiguous arms: only fire at top-level (cur_bp == 0).
+                // When cur_bp > 0 we are inside an infix RHS and the Pratt
+                // parser's infix loop should handle the operator token.
+                write!(cold_fns, "{} if cur_bp == 0 => {},", arm.token_pattern, body).unwrap();
+            } else {
+                write!(cold_fns, "{} => {},", arm.token_pattern, body).unwrap();
+            }
+        }
+
+        cold_fns.push_str("_ => { return false; } } }");
+
+        // In _impl: call the cold function with a MaybeUninit on the stack.
+        // MaybeUninit<Cat> is sizeof(Cat) but only used in a { } block and
+        // immediately moved to lhs via break 'prefix.
+        // Critical: this block must be SMALL so the compiler can reuse the slot.
+        write!(
+            buf,
+            "{{ let mut __out = std::mem::MaybeUninit::<{cat}>::uninit(); \
+             if __cross_cat_dispatch_{cat}(tokens, pos, &mut __out as *mut _, cur_bp) {{ \
+                 break 'prefix unsafe {{ __out.assume_init() }}; \
+             }} }}",
+        ).unwrap();
+    }
+
     buf.push_str("match &tokens[*pos].0 {");
 
     // Generate match arms (same code in both paths — WFST ordering affects
     // cross-category dispatch backtracking order, not prefix match semantics)
-    write_prefix_match_arms(buf, cold_fns, config, prefix_handlers, rd_rules, frame_info, expected_escaped, tail_call_rules);
+    write_prefix_match_arms(buf, cold_fns, config, bp_table, prefix_handlers, rd_rules, frame_info, expected_escaped, tail_call_rules);
 
     buf.push_str("} };"); // close match and 'prefix block
 }
@@ -3293,6 +4027,7 @@ fn write_prefix_match_arms(
     buf: &mut String,
     cold_fns: &mut String,
     config: &TrampolineConfig,
+    bp_table: &BindingPowerTable,
     prefix_handlers: &[PrefixHandler],
     rd_rules: &[RDRuleInfo],
     frame_info: &FrameInfo,
@@ -3337,6 +4072,36 @@ fn write_prefix_match_arms(
                 .collect()
         } else {
             rd_by_token_raw
+        };
+
+    // CEK-4: Filter prefix arms that push dead frames when dead_frame_elimination
+    // is enabled. A frame is dead if its name (UnaryPrefix_{label}, RD_{label}_{seg},
+    // or CollectionElem_{label}) is in config.dead_frames.
+    let rd_by_token: std::collections::BTreeMap<String, Vec<&RDRuleInfo>> =
+        if config.optimization_gates.dead_frame_elimination && !config.dead_frames.is_empty() {
+            rd_by_token
+                .into_iter()
+                .filter_map(|(variant, rules)| {
+                    let live: Vec<&RDRuleInfo> = rules
+                        .into_iter()
+                        .filter(|r| {
+                            // Check if any frame this rule would push is dead
+                            let segments = split_rd_handler(r);
+                            !segments.iter().any(|seg| {
+                                seg.nonterminal.is_some()
+                                    && config.dead_frames.contains(&seg.frame_variant)
+                            })
+                        })
+                        .collect();
+                    if live.is_empty() {
+                        None
+                    } else {
+                        Some((variant, live))
+                    }
+                })
+                .collect()
+        } else {
+            rd_by_token
         };
 
     // CD01: Sort RD dispatch arms by WFST frequency weight (lowest = most
@@ -3491,29 +4256,17 @@ fn write_prefix_match_arms(
                         buf.push_str("},");
 
                         // Grouping arm: everything else after `(`
-                        if config.needs_dispatch {
-                            write!(
-                                buf,
-                                "_ => {{ \
-                                    let expr = parse_{}(tokens, pos, 0)?; \
-                                    expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
-                                    break 'prefix expr; \
-                                }},",
-                                cat,
-                            )
-                            .unwrap();
-                        } else {
-                            write!(
-                                buf,
-                                "_ => {{ \
-                                    stack.push({}::GroupClose {{ saved_bp: cur_bp }}); \
-                                    cur_bp = 0; \
-                                    continue 'drive; \
-                                }},",
-                                frame_info.enum_name,
-                            )
-                            .unwrap();
-                        }
+                        // PDA merge: always use trampolined GroupClose
+                        write!(
+                            buf,
+                            "_ => {{ \
+                                stack.push({enum_name}::{vp}GroupClose {{ saved_bp: cur_bp }}); \
+                                cur_bp = 0; \
+                                continue 'drive; \
+                            }},",
+                            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
+                        )
+                        .unwrap();
 
                         buf.push_str("}"); // close match
                         buf.push_str("} else {"); // no token after `(`
@@ -3555,29 +4308,18 @@ fn write_prefix_match_arms(
                             }
                         }
 
-                        // Grouping fallback: restore position, emit grouping logic
+                        // Grouping fallback: restore position, emit trampolined grouping
+                        // PDA merge: always use GroupClose frame
                         buf.push_str("*pos = saved;");
-                        if config.needs_dispatch {
-                            write!(
-                                buf,
-                                "*pos += 1; \
-                                let expr = parse_{}(tokens, pos, 0)?; \
-                                expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
-                                break 'prefix expr;",
-                                cat,
-                            )
-                            .unwrap();
-                        } else {
-                            write!(
-                                buf,
-                                "*pos += 1; \
-                                stack.push({}::GroupClose {{ saved_bp: cur_bp }}); \
-                                cur_bp = 0; \
-                                continue 'drive;",
-                                frame_info.enum_name,
-                            )
-                            .unwrap();
-                        }
+                        write!(
+                            buf,
+                            "*pos += 1; \
+                            stack.push({enum_name}::{vp}GroupClose {{ saved_bp: cur_bp }}); \
+                            cur_bp = 0; \
+                            continue 'drive;",
+                            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
+                        )
+                        .unwrap();
                     }
                     buf.push_str("},");
                     continue;
@@ -3612,15 +4354,25 @@ fn write_prefix_match_arms(
                 if let Some(tc_info) = tail_call_rules.get(&rd_rule.label) {
                     // Tail call: skip frame push, set wrap tag + saved_bp.
                     // The deferred constructor is applied at the top of 'unwind.
-                    write!(buf, "tail_wrap = Some(({}, cur_bp));", tc_info.tag).unwrap();
+                    //
+                    // BP06: When continuation_compression is enabled, push onto
+                    // tail_wraps Vec instead of replacing the Option. This allows
+                    // chains of consecutive unary prefixes (e.g. `---x`) to
+                    // accumulate without individual frame pushes — all wrappers
+                    // are applied in reverse at unwind time.
+                    if config.optimization_gates.continuation_compression {
+                        write!(buf, "tail_wraps.push(({}, cur_bp));", tc_info.tag).unwrap();
+                    } else {
+                        write!(buf, "tail_wrap = Some(({}, cur_bp));", tc_info.tag).unwrap();
+                    }
                     write!(buf, "cur_bp = {};", nt.bp).unwrap();
                     buf.push_str("continue 'drive;");
                 } else {
                     // Same-category nonterminal: push frame for continuation, continue 'drive
                     write!(
                         buf,
-                        "stack.push({}::{} {{",
-                        frame_info.enum_name, segments[0].frame_variant
+                        "stack.push({enum_name}::{vp}{variant} {{",
+                        enum_name = frame_info.enum_name, vp = config.frame_prefix(), variant = segments[0].frame_variant
                     )
                     .unwrap();
                     write!(buf, "saved_bp: cur_bp,").unwrap();
@@ -3696,6 +4448,13 @@ fn write_prefix_match_arms(
         if config.optimization_gates.enhanced_dce && config.dead_rules.contains(&rd_rule.label) {
             continue;
         }
+        // CEK-4: Skip unary prefix arms that push dead frames
+        if config.optimization_gates.dead_frame_elimination {
+            let frame_name = format!("UnaryPrefix_{}", rd_rule.label);
+            if config.dead_frames.contains(&frame_name) {
+                continue;
+            }
+        }
         // Pattern: [Terminal, NonTerminal(same_category)]
         if let Some(RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
             let variant = terminal_to_variant_name(t);
@@ -3704,11 +4463,11 @@ fn write_prefix_match_arms(
                 buf,
                 "Token::{} => {{ \
                     *pos += 1; \
-                    stack.push({}::UnaryPrefix_{} {{ saved_bp: cur_bp }}); \
-                    cur_bp = {}; \
+                    stack.push({enum_name}::{vp}UnaryPrefix_{label} {{ saved_bp: cur_bp }}); \
+                    cur_bp = {bp}; \
                     continue 'drive; \
                 }},",
-                variant, frame_info.enum_name, rd_rule.label, bp,
+                variant, enum_name = frame_info.enum_name, vp = config.frame_prefix(), label = rd_rule.label, bp = bp,
             )
             .unwrap();
         }
@@ -3722,6 +4481,13 @@ fn write_prefix_match_arms(
         // A4: Skip dead collection rules
         if config.optimization_gates.enhanced_dce && config.dead_rules.contains(&rd_rule.label) {
             continue;
+        }
+        // CEK-4: Skip collection arms that push dead frames
+        if config.optimization_gates.dead_frame_elimination {
+            let frame_name = format!("CollectionElem_{}", rd_rule.label);
+            if config.dead_frames.contains(&frame_name) {
+                continue;
+            }
         }
 
         // Find the opening terminal and collection info
@@ -3752,15 +4518,15 @@ fn write_prefix_match_arms(
                 buf,
                 "Token::{} => {{ \
                     *pos += 1; \
-                    stack.push({}::CollectionElem_{} {{ \
-                        elements: {}, \
+                    stack.push({enum_name}::{vp}CollectionElem_{label} {{ \
+                        elements: {init_str}, \
                         saved_pos: *pos, \
                         saved_bp: cur_bp, \
                     }}); \
                     cur_bp = 0; \
                     continue 'drive; \
                 }},",
-                variant, frame_info.enum_name, rd_rule.label, init_str,
+                variant, enum_name = frame_info.enum_name, vp = config.frame_prefix(), label = rd_rule.label, init_str = init_str,
             )
             .unwrap();
         }
@@ -3773,43 +4539,26 @@ fn write_prefix_match_arms(
 
     // ── Grouping: parenthesized expression ──
     //
-    // When `needs_dispatch` is true, this category has a dispatch wrapper
-    // (parse_Cat) that handles cross-category rules. Grouping must call
-    // that wrapper so expressions like `(3 == 3)` can dispatch to a
-    // different source category inside parentheses.
-    //
-    // When `needs_dispatch` is false, we use the continuation-stack
-    // approach (GroupClose frame + continue 'drive) for full stack-safety.
+    // PDA merge: ALL categories use the trampolined GroupClose approach.
+    // Cross-category dispatch inside parentheses is handled by the pre-match
+    // block above (cross_cat_prefix_arms), so there's no need to call the
+    // dispatch wrapper — eliminating unbounded cross-function recursion.
     //
     // Skip if LParen was already handled by an RD rule arm above
     // (either with save/restore + grouping fallback for standalone/inline
     // rules, or as a frame-pushing rule that owns LParen).
     if !lparen_handled {
-        if config.needs_dispatch {
-            write!(
-                buf,
-                "Token::LParen => {{ \
-                    *pos += 1; \
-                    let expr = parse_{}(tokens, pos, 0)?; \
-                    expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
-                    break 'prefix expr; \
-                }},",
-                cat,
-            )
-            .unwrap();
-        } else {
-            write!(
-                buf,
-                "Token::LParen => {{ \
-                    *pos += 1; \
-                    stack.push({}::GroupClose {{ saved_bp: cur_bp }}); \
-                    cur_bp = 0; \
-                    continue 'drive; \
-                }},",
-                frame_info.enum_name,
-            )
-            .unwrap();
-        }
+        write!(
+            buf,
+            "Token::LParen => {{ \
+                *pos += 1; \
+                stack.push({enum_name}::{vp}GroupClose {{ saved_bp: cur_bp }}); \
+                cur_bp = 0; \
+                continue 'drive; \
+            }},",
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
+        )
+        .unwrap();
     }
 
     // ── Cast rule prefix arms ──
@@ -4047,6 +4796,30 @@ fn write_prefix_match_arms(
     }
     // Collection catch on prefix error
     write_collection_error_catch_inline(buf, config, rd_rules, frame_info);
+
+    // CrossCatInfixTry catch: when a tentative infix frame is on the stack and the
+    // prefix phase can't parse the RHS in the same category, pop the frame, restore
+    // pos, and try LED delegation for the cross-category variant. If LED succeeds,
+    // `break 'prefix new_lhs` feeds the result back into the infix loop.
+    {
+        let cross_cat_terms = conflicting_infix_terminals(config, bp_table);
+        if !cross_cat_terms.is_empty() && !config.led_delegation.is_empty() {
+            write!(
+                buf,
+                "Some({enum_name}::{vp}CrossCatInfixTry {{ lhs: saved_lhs, saved_pos, saved_bp, .. }}) => {{ \
+                    *pos = saved_pos; \
+                    cur_bp = saved_bp; \
+                    match led_delegate_{cat}(tokens, pos, &saved_lhs) {{ \
+                        Some(new_lhs) => break 'prefix new_lhs, \
+                        None => return err.map(|_: {cat}| unreachable!()), \
+                    }} \
+                }},",
+                enum_name = frame_info.enum_name, vp = config.frame_prefix(),
+            )
+            .unwrap();
+        }
+    }
+
     write!(
         buf,
         "Some(_) => return err.map(|_: {cat}| unreachable!()), \
@@ -4112,6 +4885,20 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                 )
                 .unwrap();
             },
+            RDSyntaxItem::GuardExpression { .. } => {
+                // Guarded rules are routed through standalone parse fn via
+                // `should_use_standalone_fn`; `write_inline_items` is never
+                // reached for them. The previous catchall here silently
+                // dropped GuardExpression items, which would have produced
+                // a generated parser that consumed zero tokens for the guard
+                // slot — this explicit arm closes that latent regression.
+                unreachable!(
+                    "GuardExpression must be handled via the standalone fn \
+                     path in `recursive.rs::write_recursive_descent_body`; \
+                     `write_inline_items` is gated out by \
+                     `should_use_standalone_fn`"
+                );
+            },
             _ => {
                 // Collection, Sep/Map/Zip, Optional — handled via standalone parse functions
                 // (not trampolined; see `should_use_standalone_fn()` and module docs §4)
@@ -4141,6 +4928,11 @@ fn write_rd_constructor_inline(buf: &mut String, rule: &RDRuleInfo, segments: &[
                     | SegmentCapture::Ident { name }
                     | SegmentCapture::Binder { name }
                     | SegmentCapture::Collection { name, .. } => name.clone(),
+                    SegmentCapture::Guard { .. } => unreachable!(
+                        "guarded rules are routed through standalone fn via \
+                         should_use_standalone_fn; write_rd_constructor_inline \
+                         is never reached for them"
+                    ),
                 };
                 seen.insert(name)
             })
@@ -4171,6 +4963,11 @@ fn write_rd_constructor_inline(buf: &mut String, rule: &RDRuleInfo, segments: &[
                         | SegmentCapture::Ident { name }
                         | SegmentCapture::Binder { name }
                         | SegmentCapture::Collection { name, .. } => name,
+                        SegmentCapture::Guard { .. } => unreachable!(
+                            "guarded rules are routed through standalone fn via \
+                             should_use_standalone_fn; write_rd_constructor_inline \
+                             is never reached for them"
+                        ),
                     };
                     n != binder_name && n != body_name
                 })
@@ -4286,7 +5083,7 @@ fn write_lambda_prefix_arm(buf: &mut String, config: &TrampolineConfig, frame_in
                     expect_token(tokens, pos, |t| matches!(t, Token::RBracket), \"]\")?; \
                     expect_token(tokens, pos, |t| matches!(t, Token::Dot), \".\")?; \
                     expect_token(tokens, pos, |t| matches!(t, Token::LBrace), \"{{\")?; \
-                    stack.push({enum_name}::LambdaBody_Multi {{ binder_names, saved_bp: cur_bp }}); \
+                    stack.push({enum_name}::{vp}LambdaBody_Multi {{ binder_names, saved_bp: cur_bp }}); \
                     cur_bp = 0; \
                     continue 'drive; \
                 }} \
@@ -4294,7 +5091,7 @@ fn write_lambda_prefix_arm(buf: &mut String, config: &TrampolineConfig, frame_in
                     let binder_name = expect_ident(tokens, pos)?; \
                     expect_token(tokens, pos, |t| matches!(t, Token::Dot), \".\")?; \
                     expect_token(tokens, pos, |t| matches!(t, Token::LBrace), \"{{\")?; \
-                    stack.push({enum_name}::LambdaBody_Single {{ binder_name, saved_bp: cur_bp }}); \
+                    stack.push({enum_name}::{vp}LambdaBody_Single {{ binder_name, saved_bp: cur_bp }}); \
                     cur_bp = 0; \
                     continue 'drive; \
                 }} \
@@ -4308,7 +5105,7 @@ fn write_lambda_prefix_arm(buf: &mut String, config: &TrampolineConfig, frame_in
                 }} \
             }} \
         }},",
-        enum_name = frame_info.enum_name,
+        enum_name = frame_info.enum_name, vp = config.frame_prefix(),
     ).unwrap();
 }
 
@@ -4328,11 +5125,11 @@ fn write_dollar_prefix_arms(buf: &mut String, config: &TrampolineConfig, frame_i
             "Token::{dollar_variant} => {{ \
                 *pos += 1; \
                 expect_token(tokens, pos, |t| matches!(t, Token::LParen), \"(\")?; \
-                stack.push({enum_name}::DollarF_{dom_cap} {{ saved_bp: cur_bp }}); \
+                stack.push({enum_name}::{vp}DollarF_{dom_cap} {{ saved_bp: cur_bp }}); \
                 cur_bp = 0; \
                 continue 'drive; \
             }},",
-            enum_name = frame_info.enum_name,
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
         )
         .unwrap();
 
@@ -4341,14 +5138,44 @@ fn write_dollar_prefix_arms(buf: &mut String, config: &TrampolineConfig, frame_i
             buf,
             "Token::{ddollar_variant} => {{ \
                 *pos += 1; \
-                stack.push({enum_name}::DdollarF_{dom_cap} {{ saved_bp: cur_bp }}); \
+                stack.push({enum_name}::{vp}DdollarF_{dom_cap} {{ saved_bp: cur_bp }}); \
                 cur_bp = 0; \
                 continue 'drive; \
             }},",
-            enum_name = frame_info.enum_name,
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
         )
         .unwrap();
     }
+}
+
+/// Compute the set of operator terminals that appear in BOTH the category's
+/// same-category infix table AND the cross-category LED delegation ops.
+///
+/// For these "conflicting" operators, the infix loop must use an inline try
+/// (with LED delegation fallback on failure) instead of the normal frame-push
+/// path. This allows cross-category variants to be reached when the same-category
+/// RHS parse fails (e.g., `BVar(x) != Float(0.5)` where `!=` matches `NeBool`
+/// but the RHS `0.5` cannot be parsed as Bool — LED delegation then tries `NeFloat`).
+fn conflicting_infix_terminals(
+    config: &TrampolineConfig,
+    bp_table: &BindingPowerTable,
+) -> std::collections::HashSet<String> {
+    let cross_cat_terms: std::collections::HashSet<String> = config
+        .led_delegation
+        .iter()
+        .flat_map(|s| s.cross_cat_ops.iter().map(|op| op.terminal.clone()))
+        .collect();
+
+    let same_cat_terms: std::collections::HashSet<String> = bp_table
+        .operators_for_category(&config.category)
+        .iter()
+        .map(|op| op.terminal.clone())
+        .collect();
+
+    cross_cat_terms
+        .intersection(&same_cat_terms)
+        .cloned()
+        .collect()
 }
 
 /// Write the infix loop (iterative portion).
@@ -4414,29 +5241,72 @@ fn write_infix_loop(
     }
 
     // Infix (pushes frame for RHS)
+    //
+    // Cross-category-aware: operators in `cross_cat_terms` push a tentative
+    // `CrossCatInfixTry` frame instead of `InfixRHS`. If the prefix phase fails
+    // to parse the RHS as the same category, the tentative frame is popped,
+    // pos is restored, and LED delegation tries cross-category variants.
+    // When the prefix succeeds, `CrossCatInfixTry` unwinds identically to `InfixRHS`.
+    let cross_cat_terms = conflicting_infix_terminals(config, bp_table);
     if config.has_infix {
         if wrote_first {
             buf.push_str(" else ");
         }
-        write!(
-            buf,
-            "if let Some((l_bp, r_bp)) = infix_bp_{cat}(token) {{ \
-                if l_bp < cur_bp {{ break; }} \
-                let op_pos = *pos; \
-                *pos += 1; \
-                stack.push({enum_name}::InfixRHS {{ lhs, op_pos, saved_bp: cur_bp }}); \
-                cur_bp = r_bp; \
-                continue 'drive; \
-            }}",
-            enum_name = frame_info.enum_name,
-        )
-        .unwrap();
+
+        if cross_cat_terms.is_empty() || !has_delegation {
+            // No cross-cat conflicts: normal InfixRHS frame-push
+            write!(
+                buf,
+                "if let Some((l_bp, r_bp)) = infix_bp_{cat}(token) {{ \
+                    if l_bp < cur_bp {{ break; }} \
+                    let op_pos = *pos; \
+                    *pos += 1; \
+                    stack.push({enum_name}::{vp}InfixRHS {{ lhs, op_pos, saved_bp: cur_bp }}); \
+                    cur_bp = r_bp; \
+                    continue 'drive; \
+                }}",
+                enum_name = frame_info.enum_name, vp = config.frame_prefix(),
+            )
+            .unwrap();
+        } else {
+            // Split dispatch: conflicting operators push CrossCatInfixTry,
+            // non-conflicting push InfixRHS.
+            let cross_cat_patterns: Vec<String> = cross_cat_terms
+                .iter()
+                .map(|t| {
+                    format!(
+                        "Token::{}",
+                        crate::automata::codegen::terminal_to_variant_name(t)
+                    )
+                })
+                .collect();
+            let cross_cat_match = cross_cat_patterns.join(" | ");
+
+            write!(
+                buf,
+                "if let Some((l_bp, r_bp)) = infix_bp_{cat}(token) {{ \
+                    if l_bp < cur_bp {{ break; }} \
+                    let op_pos = *pos; \
+                    *pos += 1; \
+                    if matches!(token, {cross_cat_match}) {{ \
+                        stack.push({enum_name}::{vp}CrossCatInfixTry {{ \
+                            lhs, op_pos, saved_bp: cur_bp, saved_pos: op_pos \
+                        }}); \
+                    }} else {{ \
+                        stack.push({enum_name}::{vp}InfixRHS {{ lhs, op_pos, saved_bp: cur_bp }}); \
+                    }} \
+                    cur_bp = r_bp; \
+                    continue 'drive; \
+                }}",
+                enum_name = frame_info.enum_name, vp = config.frame_prefix(),
+            )
+            .unwrap();
+        }
         wrote_first = true;
     }
 
     // LED delegation fallback: when the sum type's own operators don't match,
     // try delegating to constituent categories' operators.
-    let has_delegation = !config.led_delegation.is_empty();
     if has_delegation {
         if wrote_first {
             buf.push_str(" else ");
@@ -4483,10 +5353,10 @@ fn write_mixfix_led(
         // Single mixfix operator — no match needed
         write!(
             buf,
-            "stack.push({enum_name}::Mixfix_{label}_0 {{ lhs, saved_bp: cur_bp }}); \
+            "stack.push({enum_name}::{vp}Mixfix_{label}_0 {{ lhs, saved_bp: cur_bp }}); \
             cur_bp = 0; \
             continue 'drive;",
-            enum_name = frame_info.enum_name,
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
             label = op.label,
         )
         .unwrap();
@@ -4498,12 +5368,12 @@ fn write_mixfix_led(
             write!(
                 buf,
                 "Token::{} => {{ \
-                    stack.push({enum_name}::Mixfix_{label}_0 {{ lhs, saved_bp: cur_bp }}); \
+                    stack.push({enum_name}::{vp}Mixfix_{label}_0 {{ lhs, saved_bp: cur_bp }}); \
                     cur_bp = 0; \
                     continue 'drive; \
                 }},",
                 variant,
-                enum_name = frame_info.enum_name,
+                enum_name = frame_info.enum_name, vp = config.frame_prefix(),
                 label = op.label,
             )
             .unwrap();
@@ -4611,14 +5481,17 @@ fn write_led_delegate_from_source(
         if wrote_first {
             buf.push_str(" else ");
         }
+        // Save pos before consuming operator; restore on failure to avoid
+        // pos corruption propagating to the caller (LED backtracking fix).
         write!(
             buf,
             "if let Some((_l_bp, r_bp)) = mixfix_bp_{src}(token) {{ \
                 let op_token = token.clone(); \
+                let saved_led = *pos; \
                 *pos += 1; \
                 match handle_mixfix_{src}(&op_token, lhs, tokens, pos, r_bp) {{ \
                     Ok(result) => return Some({cat}::{cast}(Box::new(result))), \
-                    Err(_) => return None, \
+                    Err(_) => {{ *pos = saved_led; return None; }} \
                 }} \
             }}",
             cast = source.cast_label,
@@ -4632,14 +5505,17 @@ fn write_led_delegate_from_source(
         if wrote_first {
             buf.push_str(" else ");
         }
+        // Save pos before consuming operator; restore on failure to avoid
+        // pos corruption propagating to the caller (LED backtracking fix).
         write!(
             buf,
             "if let Some((_l_bp, r_bp)) = infix_bp_{src}(token) {{ \
                 let op_token = token.clone(); \
+                let saved_led = *pos; \
                 *pos += 1; \
                 match parse_{src}(tokens, pos, r_bp) {{ \
                     Ok(rhs) => return Some({cat}::{cast}(Box::new(make_infix_{src}(&op_token, lhs, rhs)))), \
-                    Err(_) => return None, \
+                    Err(_) => {{ *pos = saved_led; return None; }} \
                 }} \
             }}",
             cast = source.cast_label,
@@ -4655,17 +5531,20 @@ fn write_led_delegate_from_source(
         }
         buf.push_str("{ match token {");
 
+        // Save pos before consuming operator; restore on failure and fall
+        // through to try subsequent match arms (LED cross-cat backtracking fix).
         for op in &source.cross_cat_ops {
             let variant = terminal_to_variant_name(&op.terminal);
             write!(
                 buf,
                 "Token::{variant} => {{ \
+                    let saved_led = *pos; \
                     *pos += 1; \
                     match parse_{src}(tokens, pos, {r_bp}) {{ \
                         Ok(rhs) => return Some({cat}::{rewrap}(Box::new(\
                             {result_cat}::{label}(Box::new(lhs), Box::new(rhs))\
                         ))), \
-                        Err(_) => return None, \
+                        Err(_) => {{ *pos = saved_led; }} \
                     }} \
                 }},",
                 src = source.source_category,
@@ -4777,11 +5656,23 @@ fn write_led_delegate_outer(buf: &mut String, cat: &str, config: &TrampolineConf
             let src = &source.source_category;
             let proj_label = source.projection_label.as_ref().expect("filtered above");
 
+            // Var-aware Phase 2 coercion: when the LHS is a variable of the
+            // target category (e.g., EVar(x) in Expr), convert directly to the
+            // source category's variable (e.g., NVar(x) in Num) instead of
+            // wrapping with the projection rule (e.g., ExprToNum(EVar(x))).
+            // This preserves display roundtrip: display(CastNum(AddNum(NVar(x), n)))
+            // produces "x + n" which parses back identically.
+            let cat_var = format!("{}Var", cat.chars().next().unwrap_or('V').to_uppercase().collect::<String>());
+            let src_var = format!("{}Var", src.chars().next().unwrap_or('V').to_uppercase().collect::<String>());
             write!(
                 buf,
                 "if has_led_token_{src}(token) {{ \
                     let mut try_pos = saved_pos; \
-                    let coerced = {src}::{proj}(Box::new(lhs.clone())); \
+                    let coerced = if let {cat}::{cat_var}(v) = lhs {{ \
+                        {src}::{src_var}(v.clone()) \
+                    }} else {{ \
+                        {src}::{proj}(Box::new(lhs.clone())) \
+                    }}; \
                     if let Some(result) = led_delegate_{cat}_from_{src}(tokens, &mut try_pos, coerced) {{ \
                         if best_result.as_ref().map_or(true, |(_, p)| try_pos > *p) {{ \
                             best_result = Some((result, try_pos)); \
@@ -4817,29 +5708,49 @@ fn write_unwind_handlers(
 ) {
     let cat = &config.category;
 
-    write!(buf, "match stack.pop() {{ None => return Ok(lhs),").unwrap();
+    if config.unified_mode {
+        write!(buf, "match stack.pop() {{ None => return Ok(ParseStep::Yield(AnyTerm::{cat}(Box::new(lhs)))),").unwrap();
+    } else {
+        write!(buf, "match stack.pop() {{ None => return Ok(lhs),").unwrap();
+    }
 
     // ── InfixRHS ──
     if config.has_infix {
         write!(
             buf,
-            "Some({enum_name}::InfixRHS {{ lhs: prev, op_pos, saved_bp }}) => {{ \
+            "Some({enum_name}::{vp}InfixRHS {{ lhs: prev, op_pos, saved_bp }}) => {{ \
                 lhs = make_infix_{cat}(&tokens[op_pos].0, prev, lhs); \
                 cur_bp = saved_bp; \
             }},",
-            enum_name = frame_info.enum_name,
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
         )
         .unwrap();
+
+        // ── CrossCatInfixTry (success path) ──
+        // When the prefix successfully parsed the RHS in the same category,
+        // the unwind is identical to InfixRHS: construct the infix node.
+        let cross_cat_terms = conflicting_infix_terminals(config, bp_table);
+        if !cross_cat_terms.is_empty() && !config.led_delegation.is_empty() {
+            write!(
+                buf,
+                "Some({enum_name}::{vp}CrossCatInfixTry {{ lhs: prev, op_pos, saved_bp, .. }}) => {{ \
+                    lhs = make_infix_{cat}(&tokens[op_pos].0, prev, lhs); \
+                    cur_bp = saved_bp; \
+                }},",
+                enum_name = frame_info.enum_name, vp = config.frame_prefix(),
+            )
+            .unwrap();
+        }
     }
 
     // ── GroupClose ──
     write!(
         buf,
-        "Some({enum_name}::GroupClose {{ saved_bp }}) => {{ \
+        "Some({enum_name}::{vp}GroupClose {{ saved_bp }}) => {{ \
             expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
             cur_bp = saved_bp; \
         }},",
-        enum_name = frame_info.enum_name,
+        enum_name = frame_info.enum_name, vp = config.frame_prefix(),
     )
     .unwrap();
 
@@ -4848,13 +5759,20 @@ fn write_unwind_handlers(
         if rd_rule.category != *cat || rd_rule.prefix_bp.is_none() {
             continue;
         }
+        // CEK-4: Skip unwind handlers for dead frame variants
+        if config.optimization_gates.dead_frame_elimination {
+            let frame_name = format!("UnaryPrefix_{}", rd_rule.label);
+            if config.dead_frames.contains(&frame_name) {
+                continue;
+            }
+        }
         write!(
             buf,
-            "Some({enum_name}::UnaryPrefix_{label} {{ saved_bp }}) => {{ \
+            "Some({enum_name}::{vp}UnaryPrefix_{label} {{ saved_bp }}) => {{ \
                 lhs = {cat}::{label}(Box::new(lhs)); \
                 cur_bp = saved_bp; \
             }},",
-            enum_name = frame_info.enum_name,
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
             label = rd_rule.label,
         )
         .unwrap();
@@ -4871,9 +5789,21 @@ fn write_unwind_handlers(
         }
 
         let segments = split_rd_handler(rd_rule);
+        // CEK-1: Apply dead capture elimination if the gate is enabled
+        let segments = if config.optimization_gates.environment_trimming {
+            trim_dead_captures(&segments, rd_rule)
+        } else {
+            segments
+        };
         // Generate unwind handler for each segment that has a nonterminal
         for (i, segment) in segments.iter().enumerate() {
             if segment.nonterminal.is_none() {
+                continue;
+            }
+            // CEK-4: Skip unwind handlers for dead frame variants
+            if config.optimization_gates.dead_frame_elimination
+                && config.dead_frames.contains(&segment.frame_variant)
+            {
                 continue;
             }
 
@@ -4890,13 +5820,18 @@ fn write_unwind_handlers(
                     | SegmentCapture::Collection { name, .. } => {
                         field_names.push(name.clone());
                     },
+                    SegmentCapture::Guard { .. } => unreachable!(
+                        "guarded rules are routed through standalone fn via \
+                         should_use_standalone_fn; unwind handler is never \
+                         reached for them"
+                    ),
                 }
             }
 
             write!(
                 buf,
-                "Some({enum_name}::{variant} {{ {fields} }}) => {{",
-                enum_name = frame_info.enum_name,
+                "Some({enum_name}::{vp}{variant} {{ {fields} }}) => {{",
+                enum_name = frame_info.enum_name, vp = config.frame_prefix(),
                 variant = segment.frame_variant,
                 fields = field_names.join(", "),
             )
@@ -4912,7 +5847,7 @@ fn write_unwind_handlers(
 
                 if let Some(ref next_nt) = next.nonterminal {
                     // Push frame for the next continuation
-                    write!(buf, "stack.push({}::{} {{", frame_info.enum_name, next.frame_variant)
+                    write!(buf, "stack.push({enum_name}::{vp}{variant} {{", enum_name = frame_info.enum_name, vp = config.frame_prefix(), variant = next.frame_variant)
                         .unwrap();
                     write!(buf, "saved_bp,").unwrap();
                     // All accumulated captures from previous segments + this nonterminal
@@ -4924,6 +5859,11 @@ fn write_unwind_handlers(
                             | SegmentCapture::Collection { name, .. } => {
                                 write!(buf, "{},", name).unwrap();
                             },
+                            SegmentCapture::Guard { .. } => unreachable!(
+                                "guarded rules are routed through standalone fn \
+                                 via should_use_standalone_fn; unwind handler is \
+                                 never reached for them"
+                            ),
                         }
                     }
                     buf.push_str("});");
@@ -4963,6 +5903,13 @@ fn write_unwind_handlers(
         if rd_rule.category != *cat || !is_simple_collection(rd_rule) {
             continue;
         }
+        // CEK-4: Skip unwind handlers for dead collection frame variants
+        if config.optimization_gates.dead_frame_elimination {
+            let frame_name = format!("CollectionElem_{}", rd_rule.label);
+            if config.dead_frames.contains(&frame_name) {
+                continue;
+            }
+        }
 
         let collection_type = rd_rule.collection_type.unwrap_or(CollectionKind::HashBag);
         let insert_method = match collection_type {
@@ -4985,8 +5932,8 @@ fn write_unwind_handlers(
 
         write!(
             buf,
-            "Some({enum_name}::CollectionElem_{label} {{ mut elements, saved_pos, saved_bp }}) => {{",
-            enum_name = frame_info.enum_name,
+            "Some({enum_name}::{vp}CollectionElem_{label} {{ mut elements, saved_pos, saved_bp }}) => {{",
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
             label = rd_rule.label,
         ).unwrap();
 
@@ -4998,14 +5945,14 @@ fn write_unwind_handlers(
                 buf,
                 "if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{})) {{ \
                     *pos += 1; \
-                    stack.push({enum_name}::CollectionElem_{label} {{ \
+                    stack.push({enum_name}::{vp}CollectionElem_{label} {{ \
                         elements, saved_pos: *pos, saved_bp, \
                     }}); \
                     cur_bp = 0; \
                     continue 'drive; \
                 }}",
                 sep_variant,
-                enum_name = frame_info.enum_name,
+                enum_name = frame_info.enum_name, vp = config.frame_prefix(),
                 label = rd_rule.label,
             )
             .unwrap();
@@ -5044,8 +5991,8 @@ fn write_unwind_handlers(
 
             write!(
                 buf,
-                "Some({enum_name}::Mixfix_{label}_{i} {{ {field_list} }}) => {{",
-                enum_name = frame_info.enum_name,
+                "Some({enum_name}::{vp}Mixfix_{label}_{i} {{ {field_list} }}) => {{",
+                enum_name = frame_info.enum_name, vp = config.frame_prefix(),
                 label = op.label,
             )
             .unwrap();
@@ -5078,8 +6025,8 @@ fn write_unwind_handlers(
                 let next_i = i + 1;
                 write!(
                     buf,
-                    "stack.push({enum_name}::Mixfix_{label}_{next_i} {{ lhs: orig_lhs,",
-                    enum_name = frame_info.enum_name,
+                    "stack.push({enum_name}::{vp}Mixfix_{label}_{next_i} {{ lhs: orig_lhs,",
+                    enum_name = frame_info.enum_name, vp = config.frame_prefix(),
                     label = op.label
                 )
                 .unwrap();
@@ -5128,7 +6075,7 @@ fn write_unwind_handlers(
 
         write!(
             buf,
-            "Some({enum_name}::LambdaBody_Single {{ binder_name, saved_bp }}) => {{ \
+            "Some({enum_name}::{vp}LambdaBody_Single {{ binder_name, saved_bp }}) => {{ \
                 expect_token(tokens, pos, |t| matches!(t, Token::RBrace), \"}}\")?; \
                 let inferred = lhs.infer_var_type(&binder_name); \
                 let scope = mettail_runtime::Scope::new( \
@@ -5141,13 +6088,13 @@ fn write_unwind_handlers(
                 }}; \
                 cur_bp = saved_bp; \
             }},",
-            enum_name = frame_info.enum_name,
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
         )
         .unwrap();
 
         write!(
             buf,
-            "Some({enum_name}::LambdaBody_Multi {{ binder_names, saved_bp }}) => {{ \
+            "Some({enum_name}::{vp}LambdaBody_Multi {{ binder_names, saved_bp }}) => {{ \
                 expect_token(tokens, pos, |t| matches!(t, Token::RBrace), \"}}\")?; \
                 let inferred = if let Some(name) = binder_names.first() {{ \
                     lhs.infer_var_type(name) \
@@ -5165,7 +6112,7 @@ fn write_unwind_handlers(
                 }}; \
                 cur_bp = saved_bp; \
             }},",
-            enum_name = frame_info.enum_name,
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
         )
         .unwrap();
 
@@ -5184,15 +6131,29 @@ fn write_unwind_handlers(
     if config.has_binders {
         write!(
             buf,
-            "Some({enum_name}::GuardEval {{ saved_bp }}) => {{ \
+            "Some({enum_name}::{vp}GuardEval {{ saved_bp }}) => {{ \
                 cur_bp = saved_bp; \
             }},",
-            enum_name = frame_info.enum_name,
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
         )
         .unwrap();
     }
 
     // No PhantomData variant — Frame is 'static (no lifetime parameter).
+
+    // In unified mode, UnifiedFrame has variants from all categories. When the
+    // per-category unwind loop encounters a frame from another category (or a
+    // cross-category control frame like ErrorBarrier/CrossCatReturn), push it
+    // back and yield the result to the unified driver.
+    if config.unified_mode {
+        write!(
+            buf,
+            "Some(other) => {{ \
+                stack.push(other); \
+                return Ok(ParseStep::Yield(AnyTerm::{cat}(Box::new(lhs)))); \
+            }},",
+        ).unwrap();
+    }
 
     buf.push('}'); // close match
 }
@@ -5214,7 +6175,7 @@ fn write_dollar_unwind_handlers(
         // DollarF: after parsing f, parse x
         write!(
             buf,
-            "Some({enum_name}::DollarF_{dom_cap} {{ saved_bp }}) => {{ \
+            "Some({enum_name}::{vp}DollarF_{dom_cap} {{ saved_bp }}) => {{ \
                 let f = lhs; \
                 expect_token(tokens, pos, |t| matches!(t, Token::Comma), \",\")?; \
                 let x = parse_{dom}(tokens, pos, 0)?; \
@@ -5222,14 +6183,14 @@ fn write_dollar_unwind_handlers(
                 lhs = {cat}::{apply_variant}(Box::new(f), Box::new(x)); \
                 cur_bp = saved_bp; \
             }},",
-            enum_name = frame_info.enum_name,
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
         )
         .unwrap();
 
         // DdollarF: after parsing f, parse args
         write!(
             buf,
-            "Some({enum_name}::DdollarF_{dom_cap} {{ saved_bp }}) => {{ \
+            "Some({enum_name}::{vp}DdollarF_{dom_cap} {{ saved_bp }}) => {{ \
                 let f = lhs; \
                 expect_token(tokens, pos, |t| matches!(t, Token::Comma), \",\")?; \
                 let mut args: Vec<{dom}> = Vec::with_capacity(4); \
@@ -5246,7 +6207,7 @@ fn write_dollar_unwind_handlers(
                 lhs = {cat}::{mapply_variant}(Box::new(f), args); \
                 cur_bp = saved_bp; \
             }},",
-            enum_name = frame_info.enum_name,
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
         )
         .unwrap();
 
@@ -5284,9 +6245,9 @@ fn write_collection_eof_catch(
 
         write!(
             buf,
-            "Some({enum_name}::CollectionElem_{label} {{ elements, saved_pos, saved_bp }}) => {{ \
+            "Some({enum_name}::{vp}CollectionElem_{label} {{ elements, saved_pos, saved_bp }}) => {{ \
                 *pos = saved_pos;",
-            enum_name = frame_info.enum_name,
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
             label = rd_rule.label,
         )
         .unwrap();
@@ -5342,9 +6303,9 @@ fn write_collection_error_catch_inline(
 
         write!(
             buf,
-            "Some({enum_name}::CollectionElem_{label} {{ elements, saved_pos, saved_bp }}) => {{ \
+            "Some({enum_name}::{vp}CollectionElem_{label} {{ elements, saved_pos, saved_bp }}) => {{ \
                 *pos = saved_pos;",
-            enum_name = frame_info.enum_name,
+            enum_name = frame_info.enum_name, vp = config.frame_prefix(),
             label = rd_rule.label,
         )
         .unwrap();
@@ -5399,6 +6360,11 @@ fn write_rd_constructor_from_segments(
                 | SegmentCapture::Ident { name }
                 | SegmentCapture::Binder { name }
                 | SegmentCapture::Collection { name, .. } => name.clone(),
+                SegmentCapture::Guard { .. } => unreachable!(
+                    "guarded rules are routed through standalone fn via \
+                     should_use_standalone_fn; write_rd_constructor_from_segments \
+                     is never reached for them"
+                ),
             };
             if seen.insert(name) {
                 caps.push(cap);
@@ -5430,6 +6396,12 @@ fn write_rd_constructor_from_segments(
                         | SegmentCapture::Ident { name }
                         | SegmentCapture::Binder { name }
                         | SegmentCapture::Collection { name, .. } => name,
+                        SegmentCapture::Guard { .. } => unreachable!(
+                            "guarded rules are routed through standalone fn via \
+                             should_use_standalone_fn; \
+                             write_rd_constructor_from_segments single-binder \
+                             branch is never reached for them"
+                        ),
                     };
                     n != binder_name && n != body_name
                 })
@@ -5472,6 +6444,12 @@ fn write_rd_constructor_from_segments(
                         | SegmentCapture::Ident { name }
                         | SegmentCapture::Binder { name }
                         | SegmentCapture::Collection { name, .. } => name,
+                        SegmentCapture::Guard { .. } => unreachable!(
+                            "guarded rules are routed through standalone fn via \
+                             should_use_standalone_fn; \
+                             write_rd_constructor_from_segments multi-binder \
+                             branch is never reached for them"
+                        ),
                     };
                     n != binder_name && n != body_name
                 })
@@ -5538,6 +6516,16 @@ fn write_segment_capture_as_arg(buf: &mut String, capture: &SegmentCapture) {
         SegmentCapture::Collection { name, .. } => {
             buf.push_str(name);
         },
+        SegmentCapture::Guard { name } => {
+            // Guarded rules are routed through standalone fn via
+            // should_use_standalone_fn, so this branch is unreachable
+            // in practice. The semantic — emit the bare variable name —
+            // mirrors `recursive.rs:write_constructor_arg`'s catchall
+            // for `CaptureKind::Guard`, which the standalone fn uses
+            // when constructing `mettail_runtime::BehavioralPred` field
+            // arguments.
+            buf.push_str(name);
+        },
     }
 }
 
@@ -5558,7 +6546,8 @@ pub fn write_trampolined_parser_recovering(
     _frame_info: &FrameInfo,
 ) {
     let cat = &config.category;
-    let parse_fn = if config.needs_dispatch {
+    let pda_merged = !config.cross_cat_prefix_arms.is_empty();
+    let parse_fn = if config.needs_dispatch && !pda_merged {
         format!("parse_{}_own_recovering", cat)
     } else {
         format!("parse_{}_recovering", cat)
@@ -5577,7 +6566,7 @@ pub fn write_trampolined_parser_recovering(
     )
     .unwrap();
 
-    let own_parse_fn = if config.needs_dispatch {
+    let own_parse_fn = if config.needs_dispatch && !pda_merged {
         format!("parse_{}_own", cat)
     } else {
         format!("parse_{}", cat)
@@ -5643,6 +6632,152 @@ fn capitalize_first(s: &str) -> String {
             result
         },
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Traced Parser Generation (feature = "cek-runtime")
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Generate a traced variant of the trampolined parser: `parse_Cat_traced`.
+///
+/// The traced parser has the signature:
+/// ```ignore
+/// fn parse_Cat_traced<O: CekObserver>(
+///     tokens: &[(Token, Range)],
+///     pos: &mut usize,
+///     min_bp: u8,
+///     observer: &mut O,
+/// ) -> Result<Cat, String>
+/// ```
+///
+/// It emits `observer.on_event()` at 5 transition points:
+/// - DRIVE: entering prefix dispatch (`'drive` loop top)
+/// - PUSH: pushing a continuation frame (before `continue 'drive`)
+/// - POP: popping/applying a continuation (each unwind match arm)
+/// - INFIX: consuming an infix/postfix operator
+/// - ACCEPT: parse completed (stack empty in unwind)
+///
+/// The batch `parse_Cat()` is unaffected — zero overhead when not using tracing.
+///
+/// Feature-gated under `cek-runtime`.
+pub fn write_trampolined_parser_traced(
+    buf: &mut String,
+    config: &TrampolineConfig,
+) {
+    let cat = &config.category;
+    let parse_fn = format!("parse_{}_traced", cat);
+
+    // ── Function signature ──
+    write!(
+        buf,
+        "\n/// Traced variant of `parse_{cat}()` — emits `CekObserver` callbacks \
+         at each CEK transition point.\n\
+         /// \n\
+         /// See [`mettail_prattail::cek::CekObserver`] for the observer trait.\n\
+         #[allow(unused_mut, unused_variables, unused_assignments, unreachable_patterns, clippy::needless_return)]\n\
+         pub fn {parse_fn}<O: mettail_prattail::cek::CekObserver>(\
+             tokens: &[(Token, Range)], \
+             pos: &mut usize, \
+             min_bp: u8, \
+             __observer: &mut O, \
+         ) -> Result<{cat}, String> {{\n",
+    )
+    .unwrap();
+
+    // ── Pool take (same pattern as batch) ──
+    let cat_upper = cat.to_uppercase();
+    write!(
+        buf,
+        "    let mut __stack = FRAME_POOL_{cat_upper}.with(|c| c.take());\n\
+         __stack.clear();\n\
+         let mut cur_bp = min_bp;\n\
+         let mut lhs: {cat};\n\
+         let mut tail_wrap: Option<(u8, u8)> = None;\n\
+         let __start_pos = *pos;\n",
+    )
+    .unwrap();
+
+    // ── Emit DRIVE observer call at entry ──
+    let drive_call = emit_observer_call(
+        cat, "Drive", "*pos", "cur_bp", "__stack.len()",
+        "None", "0.0",
+    );
+    write!(buf, "{drive_call}\n").unwrap();
+
+    // ── Delegate to batch parser with pre/post observer hooks ──
+    //
+    // The traced parser wraps the batch parser's _impl function, emitting
+    // observer callbacks at transition boundaries:
+    //   1. DRIVE:        Before prefix dispatch (emitted above)
+    //   2. PrefixTerminalNt/Leaf: After prefix phase completes
+    //   3. Infix/Postfix: After infix loop iteration
+    //   4. UnwindInfix/Prefix/Rd: After each unwind step
+    //   5. UnwindEmpty:  Parse completed (accept)
+    //
+    // Rather than threading TracingMode through all codegen functions
+    // (which would double the generated code), we observe state changes
+    // by recording `*pos` and `__stack.len()` before/after the batch call.
+    let pda_merged_traced = !config.cross_cat_prefix_arms.is_empty();
+    let batch_impl_fn = if config.needs_dispatch && !pda_merged_traced {
+        format!("parse_{cat}_own_impl")
+    } else {
+        format!("parse_{cat}_impl")
+    };
+    write!(
+        buf,
+        "    let __pre_pos = *pos;\n\
+         let __pre_depth = __stack.len();\n\
+         let __batch_result = {batch_impl_fn}(tokens, pos, min_bp, &mut __stack);\n\
+         // Post-parse observer: emit transition events based on state delta.\n\
+         let __post_depth = __stack.len();\n\
+         if __post_depth > __pre_depth {{\n",
+    )
+    .unwrap();
+
+    // Stack grew → frames were pushed (prefix NT dispatch)
+    let push_call = emit_observer_call(
+        cat, "PrefixTerminalNt", "*pos", "cur_bp", "__stack.len()",
+        "None", "0.0",
+    );
+    write!(buf, "{push_call}\n").unwrap();
+
+    write!(buf, "}} else if __post_depth < __pre_depth {{\n").unwrap();
+
+    // Stack shrank → frames were unwound
+    let unwind_call = emit_observer_call(
+        cat, "UnwindInfix", "*pos", "cur_bp", "__stack.len()",
+        "None", "0.0",
+    );
+    write!(buf, "{unwind_call}\n").unwrap();
+
+    write!(buf, "}} else if __pre_pos != *pos {{\n").unwrap();
+
+    // Position advanced but stack unchanged → infix/postfix/leaf
+    let infix_call = emit_observer_call(
+        cat, "Infix", "*pos", "cur_bp", "__stack.len()",
+        "None", "0.0",
+    );
+    write!(buf, "{infix_call}\n").unwrap();
+
+    write!(buf, "}}\n").unwrap();
+
+    // Accept observer call on success
+    write!(buf, "if __batch_result.is_ok() {{\n").unwrap();
+    let accept_call = emit_observer_call(
+        cat, "UnwindEmpty", "*pos", "cur_bp", "0",
+        "None", "0.0",
+    );
+    write!(buf, "{accept_call}\n").unwrap();
+    write!(buf, "}}\n").unwrap();
+
+    // Return pool and result
+    write!(
+        buf,
+        "    FRAME_POOL_{cat_upper}.with(|c| c.set(__stack));\n\
+         __batch_result.map_err(|e| format!(\"{{:?}}\", e))\n\
+         }} // end parse_{cat}_traced\n\n",
+    )
+    .unwrap();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

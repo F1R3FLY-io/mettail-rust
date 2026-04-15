@@ -898,6 +898,7 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
             all_first_sets: first_sets.clone(),
             follow_set: mettail_prattail::prediction::FirstSet::new(),
             led_delegation: Vec::new(),
+            pda_merged: false,
         };
 
         let cat_handlers: Vec<PrefixHandler> = prefix_handlers

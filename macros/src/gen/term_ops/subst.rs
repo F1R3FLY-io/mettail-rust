@@ -22,9 +22,9 @@
 
 #![allow(clippy::cmp_owned)]
 
-use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
-use crate::ast::language::LanguageDef;
-use crate::ast::types::{CollectionType, TypeExpr};
+use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam};
+use mettail_ast::language::LanguageDef;
+use mettail_ast::types::{CollectionType, TypeExpr};
 use crate::gen::native::native_type_to_string;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
@@ -84,6 +84,12 @@ pub(crate) struct FieldInfo {
     pub(crate) is_collection: bool,
     /// Collection type if is_collection is true
     pub(crate) coll_type: Option<CollectionType>,
+    /// Whether this field is a runtime `BehavioralPred` (from a
+    /// `?guard:Guard` slot). Predicate fields are passed through
+    /// unchanged during substitution — variable names inside
+    /// predicates are not FreeVars of the host category and do not
+    /// participate in alpha-conversion. (Phase 3A, predicated types.)
+    pub(crate) is_predicate: bool,
 }
 
 // =============================================================================
@@ -240,8 +246,8 @@ fn generate_unify_freevars_arm(
                 .find(|t| &t.name == category)
                 .and_then(|t| t.native_type.as_ref())
                 .map(|ty| {
-                    let type_str = native_type_to_string(ty);
-                    if type_str == "str" || type_str == "String" {
+                    let nt = crate::gen::native::NativeType::from_syn_type(ty);
+                    if nt.is_string() {
                         quote! { #category::#label(v) => #category::#label(v.clone()) }
                     } else {
                         quote! { #category::#label(v) => #category::#label(*v) }
@@ -334,6 +340,10 @@ fn generate_unify_freevars_arm(
                 .iter()
                 .zip(field_names.iter())
                 .map(|(field, name)| {
+                    // Phase 3A: predicate slots pass through unchanged.
+                    if field.is_predicate {
+                        return quote! { #name.clone() };
+                    }
                     if field.is_collection {
                         quote! { #name.iter().map(|e| e.unify_freevars_impl()).collect::<Vec<_>>() }
                     } else {
@@ -374,6 +384,10 @@ fn generate_unify_freevars_arm(
                 .iter()
                 .zip(field_names.iter())
                 .map(|(field, name)| {
+                    // Phase 3A: predicate slots pass through unchanged.
+                    if field.is_predicate {
+                        return quote! { #name.clone() };
+                    }
                     if field.is_collection {
                         quote! { #name.iter().map(|e| e.unify_freevars_impl()).collect::<Vec<_>>() }
                     } else {
@@ -535,6 +549,12 @@ fn generate_subst_by_name_arm(
                 .iter()
                 .zip(field_names.iter())
                 .map(|(field, name)| {
+                    // Phase 3A: predicate slots pass through unchanged
+                    // (variable names inside a BehavioralPred are NOT
+                    // FreeVars of the host category).
+                    if field.is_predicate {
+                        return quote! { #name.clone() };
+                    }
                     let method = format_ident!("subst_by_name_{}", repl_cat.to_string().to_lowercase());
                     if field.is_collection {
                         quote! { #name.iter().map(|elem| elem.#method(env_map)).collect::<Vec<_>>() }
@@ -610,6 +630,10 @@ fn generate_subst_by_name_arm(
                 .iter()
                 .zip(field_names.iter())
                 .map(|(field, name)| {
+                    // Phase 3A: predicate slots pass through unchanged.
+                    if field.is_predicate {
+                        return quote! { #name.clone() };
+                    }
                     let method = format_ident!("subst_by_name_{}", repl_cat.to_string().to_lowercase());
                     if field.is_collection {
                         quote! { #name.iter().map(|elem| elem.#method(env_map)).collect::<Vec<_>>() }
@@ -753,11 +777,13 @@ pub(crate) fn collect_category_variants(
                     category: category.clone(),
                     is_collection: false,
                     coll_type: None,
+                    is_predicate: false,
                 },
                 FieldInfo {
                     category: domain_name.clone(),
                     is_collection: false,
                     coll_type: None,
+                    is_predicate: false,
                 },
             ],
         });
@@ -772,11 +798,13 @@ pub(crate) fn collect_category_variants(
                     category: category.clone(),
                     is_collection: false,
                     coll_type: None,
+                    is_predicate: false,
                 },
                 FieldInfo {
                     category: domain_name.clone(),
                     is_collection: true,
                     coll_type: Some(CollectionType::Vec),
+                    is_predicate: false,
                 },
             ],
         });
@@ -824,15 +852,16 @@ pub(crate) fn variant_kind_from_term_context(label: &Ident, ctx: &[TermParam]) -
         let binder_cat = extract_multi_binder_category(domain);
         let body_cat = extract_base_category(codomain);
 
-        // Collect pre-scope fields (Simple params that are collections)
+        // Collect pre-scope fields (Simple params + GuardBody slots,
+        // in declaration order). Phase 3A: GuardBody slots become
+        // opaque `is_predicate: true` entries that flow through the
+        // substitute/match/display machinery as pass-through clones.
         let pre_scope_fields: Vec<FieldInfo> = ctx
             .iter()
-            .filter_map(|p| {
-                if let TermParam::Simple { ty, .. } = p {
-                    Some(field_info_from_type_expr(ty))
-                } else {
-                    None
-                }
+            .filter_map(|p| match p {
+                TermParam::Simple { ty, .. } => Some(field_info_from_type_expr(ty)),
+                TermParam::GuardBody { .. } => Some(field_info_for_guard_slot()),
+                _ => None,
             })
             .collect();
 
@@ -858,15 +887,15 @@ pub(crate) fn variant_kind_from_term_context(label: &Ident, ctx: &[TermParam]) -
         let binder_cat = extract_base_category(domain);
         let body_cat = extract_base_category(codomain);
 
-        // Collect pre-scope fields
+        // Collect pre-scope fields (Simple params + GuardBody slots,
+        // in declaration order — see the MultiAbstraction branch
+        // above for the Phase 3A rationale).
         let pre_scope_fields: Vec<FieldInfo> = ctx
             .iter()
-            .filter_map(|p| {
-                if let TermParam::Simple { ty, .. } = p {
-                    Some(field_info_from_type_expr(ty))
-                } else {
-                    None
-                }
+            .filter_map(|p| match p {
+                TermParam::Simple { ty, .. } => Some(field_info_from_type_expr(ty)),
+                TermParam::GuardBody { .. } => Some(field_info_for_guard_slot()),
+                _ => None,
             })
             .collect();
 
@@ -955,7 +984,7 @@ pub(crate) fn variant_kind_from_items(
 
         // Get body category
         let body_cat = match &items[body_idx] {
-            GrammarItem::NonTerminal(cat) => cat.clone(),
+            GrammarItem::NonTerminal { ident: cat, .. } => cat.clone(),
             _ => panic!("Body index doesn't point to a NonTerminal"),
         };
 
@@ -964,15 +993,17 @@ pub(crate) fn variant_kind_from_items(
             .iter()
             .take(*binder_idx)
             .filter_map(|item| match item {
-                GrammarItem::NonTerminal(cat) if cat.to_string() != "Var" => Some(FieldInfo {
+                GrammarItem::NonTerminal { ident: cat, kind } if *kind != NonTerminalKind::Var => Some(FieldInfo {
                     category: cat.clone(),
                     is_collection: false,
                     coll_type: None,
+                    is_predicate: false,
                 }),
                 GrammarItem::Collection { element_type, coll_type, .. } => Some(FieldInfo {
                     category: element_type.clone(),
                     is_collection: true,
                     coll_type: Some(coll_type.clone()),
+                    is_predicate: false,
                 }),
                 _ => None,
             })
@@ -990,15 +1021,17 @@ pub(crate) fn variant_kind_from_items(
     let fields: Vec<FieldInfo> = items
         .iter()
         .filter_map(|item| match item {
-            GrammarItem::NonTerminal(cat) if cat.to_string() != "Var" => Some(FieldInfo {
+            GrammarItem::NonTerminal { ident: cat, kind } if *kind != NonTerminalKind::Var => Some(FieldInfo {
                 category: cat.clone(),
                 is_collection: false,
                 coll_type: None,
+                is_predicate: false,
             }),
             GrammarItem::Collection { element_type, coll_type, .. } => Some(FieldInfo {
                 category: element_type.clone(),
                 is_collection: true,
                 coll_type: Some(coll_type.clone()),
+                is_predicate: false,
             }),
             _ => None,
         })
@@ -1041,17 +1074,34 @@ fn field_info_from_type_expr(ty: &TypeExpr) -> FieldInfo {
             category: ident.clone(),
             is_collection: false,
             coll_type: None,
+            is_predicate: false,
         },
         TypeExpr::Collection { coll_type, element } => FieldInfo {
             category: extract_base_category(element),
             is_collection: true,
             coll_type: Some(coll_type.clone()),
+            is_predicate: false,
         },
         _ => FieldInfo {
             category: format_ident!("Unknown"),
             is_collection: false,
             coll_type: None,
+            is_predicate: false,
         },
+    }
+}
+
+/// Create a synthetic FieldInfo for a `?guard:Guard` slot.
+///
+/// The resulting FieldInfo's `category` is a dummy marker (`Guard`);
+/// callers that rely on it for substitute/match dispatch check the
+/// `is_predicate` flag first and skip those paths.
+pub(crate) fn field_info_for_guard_slot() -> FieldInfo {
+    FieldInfo {
+        category: format_ident!("Guard"),
+        is_collection: false,
+        coll_type: None,
+        is_predicate: true,
     }
 }
 
@@ -1294,6 +1344,10 @@ fn generate_regular_subst_arm(
         .iter()
         .zip(field_names.iter())
         .map(|(field, name)| {
+            // Phase 3A-D1: predicate fields pass through via clone.
+            if field.is_predicate {
+                return quote! { #name.clone() };
+            }
             let method = subst_method_for_category(&field.category, repl_cat);
             if field.is_collection {
                 // Collection field - map over elements
@@ -1392,11 +1446,21 @@ fn generate_binder_subst_arm(
         .map(|i| format_ident!("f{}", i))
         .collect();
 
-    // Generate substitutions for pre-scope fields
+    // Generate substitutions for pre-scope fields.
+    //
+    // Phase 3A-D1: predicate fields pass through unchanged via
+    // `clone()`. Variables inside a `BehavioralPred` are bound by
+    // the parent's `MatchBindings`, not by host-category FreeVars,
+    // so substitution should NOT recurse into them. They're also
+    // not boxed, so we cannot use the `(**#name)` pattern that the
+    // other arms use.
     let field_substs: Vec<TokenStream> = pre_scope_fields
         .iter()
         .zip(field_names.iter())
         .map(|(field, name)| {
+            if field.is_predicate {
+                return quote! { #name.clone() };
+            }
             let method = subst_method_for_category(&field.category, repl_cat);
             if field.is_collection {
                 match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
@@ -1477,11 +1541,15 @@ fn generate_multi_binder_subst_arm(
         .map(|i| format_ident!("f{}", i))
         .collect();
 
-    // Generate substitutions for pre-scope fields
+    // Generate substitutions for pre-scope fields. Phase 3A-D1: skip
+    // predicate fields via clone (see binder_subst_arm above).
     let field_substs: Vec<TokenStream> = pre_scope_fields
         .iter()
         .zip(field_names.iter())
         .map(|(field, name)| {
+            if field.is_predicate {
+                return quote! { #name.clone() };
+            }
             let method = subst_method_for_category(&field.category, repl_cat);
             if field.is_collection {
                 quote! { #name.iter().map(|elem| elem.#method(vars, repls)).collect() }

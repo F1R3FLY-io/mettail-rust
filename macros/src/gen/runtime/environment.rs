@@ -34,7 +34,7 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use crate::ast::language::LanguageDef;
+use mettail_ast::language::LanguageDef;
 
 /// Generate environment types for all exported categories
 pub fn generate_environments(language: &LanguageDef) -> TokenStream {

@@ -4869,10 +4869,16 @@ nested quantification `forall(x, exists(y, P(x,y)))`).
 **Implementation (Strategy 3 — LogicT evaluation):**
 
 Strategy 3 was selected because all LogicT primitives existed and it required
-the least new code. AWA requires the unimplemented `to_weighted_automaton()`
-(~2000 lines). Ascent aggregation requires codegen changes with limited
-composability. The cost-benefit framework can gate to AWA later once
-`to_weighted_automaton()` is implemented.
+the least new code. AWA originally required the unimplemented
+`to_weighted_automaton()` — **as of Phase 5 (predicated-types
+implementation plan, 2026-04-08), `to_weighted_automaton()` is
+implemented in `prattail/src/weighted_mso/compile.rs` for the entire
+restricted MSO fragment** (atomic predicates, Boolean closures, FO
+existentials, FO universals, FO uniqueness constraints, with rejection
+of full MSO via `MsoCompileError::FullMsoUnsupported`). Ascent
+aggregation still requires codegen changes with limited composability.
+The cost-benefit framework can now gate between Strategy 3 and AWA
+based on each guard's tier classification.
 
 Guard syntax (inside `language!` macro):
 ```text
@@ -7027,6 +7033,11 @@ predicates, while lacking direct support for the automaton-theoretic operations
 SMT solver would require marshaling automata into SMT-LIB2 format and parsing
 models back — a lossy round-trip that adds complexity without benefit.
 
+> **Extended analysis:** [why-automata-instead-of-solvers.md](../../prattail/docs/design/constraint-theories/why-automata-instead-of-solvers.md)
+> expands this comparison to include LP/ILP solvers, provides worked examples
+> tracing a guard predicate through all three approaches, and details the
+> composability argument (`ProductAlgebra` vs. Nelson-Oppen).
+
 ### Architecture
 
 The constraint theory architecture has two layers connected by the
@@ -7756,8 +7767,12 @@ future implementation.
 
 AWA evaluation would compile quantified predicates to `WeightedAlternatingAutomaton`
 states: `Q_tensor` (universal/conjunction) for `forall` and `Q_oplus` (existential/disjunction)
-for `exists`. This requires the currently unimplemented `to_weighted_automaton()`
-function (~2000 lines estimated).
+for `exists`. **Phase 5 (predicated-types implementation plan,
+2026-04-08) implemented `to_weighted_automaton()` for the restricted
+MSO fragment** in `prattail/src/weighted_mso/compile.rs`. The AWA
+state-shape encoding is now unblocked; only the per-tier codegen that
+selects AWA over LogicT for specific formula shapes remains as a
+follow-up.
 
 **AWA advantages:**
 - Formal correspondence to weighted MSO semantics (Droste & Gastin 2007)
@@ -7771,8 +7786,10 @@ function (~2000 lines estimated).
 - Supports bounded evaluation (T3) naturally via `collect_bounded()`
 
 The cost-benefit framework (`CostBenefitGate`) can gate between LogicT and AWA
-evaluation once `to_weighted_automaton()` is implemented, selecting the strategy
-with lower estimated cost per guard.
+evaluation. **Phase 5 (predicated-types implementation plan,
+2026-04-09) implemented `to_weighted_automaton()`**, so this gate is
+now unblocked; selecting the strategy with lower estimated cost per
+guard is a Phase 7 follow-up in the per-tier T2/T3/T4 codegen rewrite.
 
 ---
 
@@ -7939,7 +7956,14 @@ of the 15-bit `PredicateSignature`). All guard predicates compile to SFAs.
 > Reference: D'Antoni & Veanes, POPL 2014 [§23, ref #9].
 > See §15 for detailed BooleanAlgebra theory. See [symbolic-automata.md](../../prattail/docs/design/symbolic-automata.md).
 
-#### M2: Weighted Büchi Automata — Infinite Behavior *(design-only)*
+#### M2: Weighted Büchi Automata — Infinite Behavior
+
+> **Phase 17 implementation status (predicated-types implementation
+> plan, 2026-04-08):** the original design-doc draft labeled this
+> module "design-only". As of Phase 17, M2 is fully implemented in
+> `prattail/src/buchi.rs` (~2,251 LOC, 46 tests). The label is
+> retained below for historical context but no longer reflects the
+> code state.
 
 **Motivation.** Finite automata accept/reject finite words. But some guard
 predicates concern infinite behaviors: "channel ch always eventually delivers
@@ -7969,7 +7993,14 @@ on infinite streams or recursive channel types.
 
 > Reference: Büchi 1960 [§23, ref #5]; Droste & Gastin 2007 [§23, ref #13].
 
-#### M3: Polynomial Alternating Weighted Automata — Quantifier Evaluation *(design-only)*
+#### M3: Polynomial Alternating Weighted Automata — Quantifier Evaluation
+
+> **Phase 17 implementation status (predicated-types implementation
+> plan, 2026-04-08):** the original design-doc draft labeled this
+> module "design-only". As of Phase 17, M3 is fully implemented in
+> `prattail/src/alternating.rs` (~2,050 LOC, 46 tests). The label
+> is retained below for historical context but no longer reflects
+> the code state.
 
 **Motivation.** Guards with universal and existential quantifiers —
 `forall x in nodes. safe(x)` or `exists y in types. compatible(x, y)` —
@@ -8002,7 +8033,14 @@ by quantified behavioral predicates with mixed ∀/∃ nesting.
 > Reference: Chandra, Kozen & Stockmeyer 1981 [§23, ref #7];
 > Kostolanyi & Misun 2018 [§23, ref #24].
 
-#### M4: Weighted Visibly Pushdown Automata — Scope Nesting *(design-only)*
+#### M4: Weighted Visibly Pushdown Automata — Scope Nesting
+
+> **Phase 17 implementation status (predicated-types implementation
+> plan, 2026-04-08):** the original design-doc draft labeled this
+> module "design-only". As of Phase 17, M4 is fully implemented in
+> `prattail/src/vpa.rs` (~3,590 LOC, 35 tests). The label is
+> retained below for historical context but no longer reflects the
+> code state.
 
 **Motivation.** Quantifier scoping — e.g., `forall x. exists y. P(x, y)` vs.
 `exists y. forall x. P(x, y)` — has a natural call/return structure. Visibly
@@ -9618,6 +9656,27 @@ configuration:
    `tokens {}` (e.g., `Gt` instead of `">"`) to inherit priority, modal
    lexing, and stream routing properties; `TOK01` lint warns on unmatched
    string literals
+
+---
+
+## 22. (Reserved)
+
+The §22 slot is reserved for future material. The original draft of
+this design document numbered the section that immediately followed
+"Implementation Architecture" as §23, leaving a one-section gap for
+later use. Phase 17 (predicated-types implementation plan) records
+the gap explicitly here so that downstream cross-references using
+§23 continue to resolve unambiguously, and so that any future
+addition can claim §22 without renumbering the entire references
+section.
+
+Topics earmarked for §22:
+- Phase 18 final-status report (mapping every section to its
+  implementation phase + verification gate).
+- Lint coverage matrix (which DiagnosticIds have fire/clean tests
+  vs which are still ambient code-paths).
+- Performance profile of compile-time guard analysis on the
+  workspace's existing languages.
 
 ---
 

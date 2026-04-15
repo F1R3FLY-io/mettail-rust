@@ -77,6 +77,7 @@ fn calculator_spec() -> LanguageSpec {
         sync: None,
         tree_invariants: Vec::new(),
         refinement_types: Vec::new(),
+        guard_config: None,
     }
 }
 
@@ -197,6 +198,7 @@ fn test_generate_parser_two_categories() {
         sync: None,
         tree_invariants: Vec::new(),
         refinement_types: Vec::new(),
+        guard_config: None,
     };
 
     let code = generate_parser(&spec);
@@ -1159,7 +1161,8 @@ mod wfst_lexer_weight_tests {
             modes: Vec::new(),
             sync: None,
             tree_invariants: Vec::new(),
-        refinement_types: Vec::new(),
+            refinement_types: Vec::new(),
+            guard_config: None,
         };
 
         let (_code, analysis) = crate::generate_parser_with_analysis(&spec);

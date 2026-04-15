@@ -3,9 +3,18 @@
 //! These types are shared between the macro-generated code and the REPL.
 
 use std::any::Any;
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::LanguageMetadata;
+
+/// Seed facts for pre-populating Ascent relations before fixpoint.
+///
+/// Keys are relation names (e.g., `"certified"`), values are tuples
+/// represented as string vectors (e.g., `vec![vec!["item_A"]]`).
+/// The codegen parses each string into the relation's parameter type
+/// at runtime.
+pub type SeedFacts = HashMap<String, Vec<Vec<String>>>;
 
 // =============================================================================
 // Type Inference Types
@@ -125,6 +134,28 @@ pub trait Language: Send + Sync {
     /// Run Ascent on a term and return results
     fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String>;
 
+    /// Run Ascent on a term with pre-seeded relation facts.
+    ///
+    /// The `facts` map keys are relation names (e.g., `"certified"`)
+    /// and values are tuples as string vectors (e.g.,
+    /// `vec![vec!["item_A"]]`). Before fixpoint evaluation, the
+    /// codegen:
+    /// 1. Parses each tuple's strings into the relation's parameter
+    ///    types and pushes them into the Ascent program struct
+    /// 2. Populates the thread-local fact snapshot so the Comm rule's
+    ///    `if { evaluate_pred_with_bindings(...) }` guard can check
+    ///    per-instance predicates
+    ///
+    /// Default: delegates to `run_ascent` (ignores facts).
+    fn run_ascent_with_facts(
+        &self,
+        term: &dyn Term,
+        facts: &SeedFacts,
+    ) -> Result<AscentResults, String> {
+        let _ = facts;
+        self.run_ascent(term)
+    }
+
     /// If the term is fully evaluable (no free variables), evaluate it and return the result term.
     /// Otherwise return `None` (e.g. term contains vars, or language has no native eval).
     /// Default: `None` so languages without native types need not implement.
@@ -201,6 +232,29 @@ pub trait Language: Send + Sync {
     ///
     /// Returns `None` if the variable is not found or its type cannot be inferred.
     fn infer_var_type(&self, term: &dyn Term, var_name: &str) -> Option<TermType>;
+
+    /// Decompose a parsed term into CEK evaluation frames.
+    ///
+    /// Pattern-matches on the language's AST variants and pushes appropriate
+    /// `EvalFrame`s onto the evaluator's continuation stack. After this call,
+    /// the evaluator is ready to be driven via `step()` or `run_to_completion()`.
+    ///
+    /// Returns `true` if the term was decomposed (frames were pushed),
+    /// `false` if the language has no CEK decomposition (default).
+    ///
+    /// The same evaluator + observer pattern supports all consumers:
+    /// - REPL `exec`: `NullEvalObserver` + `run_to_completion()`
+    /// - nREPL: same, with `reset_with_term()` for env persistence
+    /// - CLI debugger: custom observer + `step()` loop
+    /// - DAP server: protocol observer + `step()` loop
+    fn decompose_into_cek(
+        &self,
+        term: &dyn Term,
+        evaluator: &mut mettail_prattail::cek_eval::CekEvaluator,
+    ) -> bool {
+        let _ = (term, evaluator);
+        false
+    }
 }
 
 /// Results from running Ascent

@@ -2202,10 +2202,8 @@ pub fn analyze_from_bundle(
 /// Compiler adapter for the Visibly Pushdown Automata module (M4).
 ///
 /// Activated by nested `letprop` scopes with balanced open/close (VPL variety).
-#[cfg(feature = "predicate-dispatch")]
 pub struct VpaCompiler;
 
-#[cfg(feature = "predicate-dispatch")]
 impl crate::predicate_dispatch::PredicateCompiler for VpaCompiler {
     type Output = Option<VpaAnalysis>;
 

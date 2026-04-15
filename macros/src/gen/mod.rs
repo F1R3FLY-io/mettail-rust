@@ -26,10 +26,11 @@ pub mod runtime;
 pub mod syntax;
 pub mod term_gen;
 pub mod term_ops;
+pub mod test_gen;
 pub mod types;
 
-use crate::ast::grammar::{GrammarItem, GrammarRule};
-use crate::ast::language::LanguageDef;
+use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind};
+use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
@@ -56,11 +57,16 @@ pub use syntax::parser::prattail_bridge::generate_prattail_parser_with_analysis;
 pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::PipelineAnalysis) {
     use native::eval::generate_eval_method;
     use runtime::environment::generate_environments;
+    use syntax::debug::generate_debug;
     use syntax::display::generate_display;
     use syntax::var_inference::generate_var_category_inference;
     use term_gen::{generate_random_generation, generate_term_generation};
     use term_ops::depth::generate_term_depth_methods;
     use term_ops::ground::generate_is_ground_methods;
+    use term_ops::iterative_clone::generate_iterative_clone;
+    use term_ops::iterative_cmp::generate_iterative_cmp;
+    use term_ops::iterative_drop::generate_iterative_drop;
+    use term_ops::iterative_hash::generate_iterative_hash;
     use term_ops::match_pattern::generate_match_pattern;
     use term_ops::normalize::{generate_flatten_helpers, generate_normalize_functions};
     use term_ops::subst::{generate_env_substitution, generate_substitution};
@@ -68,9 +74,10 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
 
     // Detect cancellation pairs for normalize arm generation
     let (cancellation_pairs, _cancellation_equations) =
-        crate::ast::pattern::detect_cancellation_pairs(language);
+        mettail_ast::pattern::detect_cancellation_pairs(language);
 
     let ast_enums = generate_ast_enums(language);
+    let debug_impl = generate_debug(language);
     let flatten_helpers = generate_flatten_helpers(language);
     let normalize_impl = generate_normalize_functions(language, &cancellation_pairs);
     let subst_impl = generate_substitution(language);
@@ -83,6 +90,10 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     let is_ground_impl = generate_is_ground_methods(language);
     let term_depth_impl = generate_term_depth_methods(language);
     let match_pattern_impl = generate_match_pattern(language);
+    let iterative_clone_impl = generate_iterative_clone(language);
+    let iterative_cmp_impl = generate_iterative_cmp(language);
+    let iterative_drop_impl = generate_iterative_drop(language);
+    let iterative_hash_impl = generate_iterative_hash(language);
     let guard_codegen_impl = runtime::guard_codegen::generate_guard_codegen(language);
     let var_inference_impl = generate_var_category_inference(language);
 
@@ -101,6 +112,8 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
 
     let code = quote! {
         #ast_enums
+
+        #debug_impl
 
         #flatten_helpers
 
@@ -125,6 +138,14 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
         #term_depth_impl
 
         #match_pattern_impl
+
+        #iterative_clone_impl
+
+        #iterative_cmp_impl
+
+        #iterative_drop_impl
+
+        #iterative_hash_impl
 
         #guard_codegen_impl
 
@@ -299,41 +320,29 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
 // Helper functions used across generation modules
 // =============================================================================
 
-/// Checks if a rule is a Var rule (single item, NonTerminal "Var")
-#[allow(clippy::cmp_owned)]
+/// Checks if a rule is a Var rule (single item, NonTerminal with kind `Var`).
 pub fn is_var_rule(rule: &GrammarRule) -> bool {
-    rule.items.len() == 1
-        && matches!(&rule.items[0], GrammarItem::NonTerminal(ident) if ident.to_string() == "Var")
+    rule.items.len() == 1 && rule.items[0].is_var()
 }
-
-/// Names of nonterminals that represent native literal tokens in the generated grammar.
-const LITERAL_NONTERMINALS: &[&str] = &["Integer", "Boolean", "StringLiteral", "FloatLiteral"];
 
 /// Returns true if the given nonterminal name is a known literal type (Integer, Boolean, StringLiteral, FloatLiteral).
+/// Kept for backward compatibility at string-based call sites.
 pub fn is_literal_nonterminal(name: &str) -> bool {
-    LITERAL_NONTERMINALS.contains(&name)
+    NonTerminalKind::classify(name).is_literal()
 }
 
-/// Checks if a rule is a literal rule (single item, NonTerminal one of Integer/Boolean/StringLiteral/FloatLiteral).
+/// Checks if a rule is a literal rule (single item, literal NonTerminal).
 /// Used for native type handling in theory definitions; all native literal types are treated uniformly.
-#[allow(clippy::cmp_owned)]
 pub fn is_literal_rule(rule: &GrammarRule) -> bool {
-    rule.items.len() == 1
-        && matches!(&rule.items[0], GrammarItem::NonTerminal(ident) if is_literal_nonterminal(&ident.to_string()))
+    rule.items.len() == 1 && rule.items[0].is_literal()
 }
 
-/// Returns the nonterminal name when the rule is a literal rule (Integer, Boolean, StringLiteral, FloatLiteral).
+/// Returns the nonterminal kind when the rule is a literal rule (Integer, Boolean, StringLiteral, FloatLiteral).
 /// Used for payload-type selection (clone vs copy) and for signed-numeric logic (unary minus).
-#[allow(clippy::cmp_owned)]
-pub fn literal_rule_nonterminal(rule: &GrammarRule) -> Option<String> {
+pub fn literal_rule_nonterminal(rule: &GrammarRule) -> Option<NonTerminalKind> {
     match rule.items.first()? {
-        GrammarItem::NonTerminal(ident) => {
-            let name = ident.to_string();
-            if is_literal_nonterminal(&name) {
-                Some(name)
-            } else {
-                None
-            }
+        GrammarItem::NonTerminal { kind, .. } if kind.is_literal() => {
+            Some(*kind)
         },
         _ => None,
     }
@@ -359,13 +368,14 @@ pub fn generate_var_label(category: &Ident) -> Ident {
 /// Convention: "NumLit" for integers, "FloatLit" for floats, "BoolLit" for bools
 /// Used for auto-generated literal constructors
 pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
-    use native::native_type_to_string;
-    let type_str = native_type_to_string(native_type);
-    match type_str.as_str() {
-        "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => quote::format_ident!("NumLit"),
-        "f32" | "f64" => quote::format_ident!("FloatLit"),
-        "bool" => quote::format_ident!("BoolLit"),
-        "str" | "String" => quote::format_ident!("StringLit"),
-        _ => quote::format_ident!("Lit"), // Generic fallback
+    use native::NativeType;
+    let nt = NativeType::from_syn_type(native_type);
+    match nt {
+        NativeType::Int32 | NativeType::Int64 | NativeType::UInt32 | NativeType::UInt64
+        | NativeType::Isize | NativeType::Usize => quote::format_ident!("NumLit"),
+        NativeType::Float32 | NativeType::Float64 => quote::format_ident!("FloatLit"),
+        NativeType::Bool => quote::format_ident!("BoolLit"),
+        NativeType::Str => quote::format_ident!("StringLit"),
+        NativeType::Other(_) => quote::format_ident!("Lit"), // Generic fallback
     }
 }

@@ -632,7 +632,7 @@ pub fn construct_nominal(
     transitions: &[(usize, String, HashSet<String>, usize)],
     initial: usize,
     accepting: &[usize],
-) -> NominalAutomaton {
+) -> Result<NominalAutomaton, String> {
     let num_orbits = orbit_descs.len();
 
     // Build orbits and one representative state per orbit.
@@ -660,12 +660,12 @@ pub fn construct_nominal(
     }
 
     // Validate initial orbit index.
-    assert!(
-        initial < num_orbits,
-        "Initial orbit index {} is out of range (num_orbits = {})",
-        initial,
-        num_orbits,
-    );
+    if initial >= num_orbits {
+        return Err(format!(
+            "Initial orbit index {} is out of range (num_orbits = {})",
+            initial, num_orbits,
+        ));
+    }
     automaton.initial_state = Some(initial);
 
     // Validate and add equivariant transitions.
@@ -673,18 +673,18 @@ pub fn construct_nominal(
     let _ = accepting_set;
 
     for (source, pattern, fresh_names, target) in transitions {
-        assert!(
-            *source < num_orbits,
-            "Transition source orbit {} is out of range (num_orbits = {})",
-            source,
-            num_orbits,
-        );
-        assert!(
-            *target < num_orbits,
-            "Transition target orbit {} is out of range (num_orbits = {})",
-            target,
-            num_orbits,
-        );
+        if *source >= num_orbits {
+            return Err(format!(
+                "Transition source orbit {} is out of range (num_orbits = {})",
+                source, num_orbits,
+            ));
+        }
+        if *target >= num_orbits {
+            return Err(format!(
+                "Transition target orbit {} is out of range (num_orbits = {})",
+                target, num_orbits,
+            ));
+        }
 
         // Equivariance check: fresh names in the transition must not overlap
         // with the source state's support. This ensures the transition respects
@@ -692,13 +692,12 @@ pub fn construct_nominal(
         // to the source state.
         let source_support = &automaton.states[*source].support;
         for fresh in fresh_names {
-            assert!(
-                !source_support.contains(fresh),
-                "Fresh name '{}' in transition from orbit {} must not be in the source support {:?}",
-                fresh,
-                source,
-                source_support,
-            );
+            if source_support.contains(fresh) {
+                return Err(format!(
+                    "Fresh name '{}' in transition from orbit {} must not be in the source support {:?}",
+                    fresh, source, source_support,
+                ));
+            }
         }
 
         automaton.transitions.push(NominalTransition {
@@ -709,7 +708,7 @@ pub fn construct_nominal(
         });
     }
 
-    automaton
+    Ok(automaton)
 }
 
 /// Check a freshness property on a nominal automaton.
@@ -956,7 +955,8 @@ mod tests {
             (0, "bind".to_string(), ["fresh_a".to_string()].into_iter().collect(), 1),
             (1, "bind".to_string(), ["fresh_b".to_string()].into_iter().collect(), 2),
         ];
-        let na = construct_nominal(&orbit_descs, &transitions, 0, &[2]);
+        let na = construct_nominal(&orbit_descs, &transitions, 0, &[2])
+            .expect("valid nominal automaton");
 
         assert_eq!(na.num_orbits(), 3);
         assert_eq!(na.num_states(), 3);
@@ -977,7 +977,8 @@ mod tests {
         let transitions = vec![
             (0, "bind_x".to_string(), ["x".to_string()].into_iter().collect(), 1),
         ];
-        let na = construct_nominal(&orbit_descs, &transitions, 0, &[1]);
+        let na = construct_nominal(&orbit_descs, &transitions, 0, &[1])
+            .expect("valid nominal automaton");
 
         // The initial state (orbit 0) has empty support, so "x" IS fresh there.
         assert!(check_freshness(&na, 0, "x"));
@@ -988,7 +989,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Fresh name 'a0' in transition from orbit 1")]
     fn construct_nominal_rejects_non_fresh_name_in_transition() {
         // Orbit 1 has support_size = 1, so its representative state has
         // support = {"a0"}. A transition from orbit 1 with fresh_names = {"a0"}
@@ -1000,7 +1000,8 @@ mod tests {
         let transitions = vec![
             (1, "bad".to_string(), ["a0".to_string()].into_iter().collect(), 0),
         ];
-        construct_nominal(&orbit_descs, &transitions, 0, &[]);
+        let err = construct_nominal(&orbit_descs, &transitions, 0, &[]).unwrap_err();
+        assert!(err.contains("Fresh name 'a0' in transition from orbit 1"), "{err}");
     }
 
     // ══════════════════════════════════════════════════════════════════════

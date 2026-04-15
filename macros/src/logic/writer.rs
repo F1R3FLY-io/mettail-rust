@@ -4,6 +4,23 @@
 use std::fs;
 use std::path::Path;
 
+/// Write content to a file only if it differs from what is already on disk.
+///
+/// Skipping the write when content is unchanged prevents cargo from seeing a
+/// newer mtime on generated files and triggering spurious recompilation of the
+/// entire `mettail-languages` crate on every build.
+///
+/// Returns `true` if the file was written, `false` if it was unchanged.
+fn write_if_changed(path: &Path, content: &str) -> std::io::Result<bool> {
+    if let Ok(existing) = fs::read_to_string(path) {
+        if existing == content {
+            return Ok(false);
+        }
+    }
+    fs::write(path, content)?;
+    Ok(true)
+}
+
 /// Write an Ascent Datalog source file for a theory
 ///
 /// This writes the generated Datalog to src/generated/ directory for inspection.
@@ -31,8 +48,8 @@ pub fn write_ascent_file(grammar_name: &str, theory_name: &str, ascent_content: 
     let theory_name_lower = theory_name.to_lowercase();
     let file_path = output_dir.join(format!("{}-datalog.rs", theory_name_lower));
 
-    fs::write(&file_path, ascent_content)?;
-
-    eprintln!("  ({}) Generated Ascent Datalog: {}", grammar_name, file_path.display());
+    if write_if_changed(&file_path, ascent_content)? {
+        eprintln!("  ({}) Generated Ascent Datalog: {}", grammar_name, file_path.display());
+    }
     Ok(())
 }

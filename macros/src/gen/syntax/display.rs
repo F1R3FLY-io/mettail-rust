@@ -1,153 +1,495 @@
 // Pretty-printing generation for MeTTaIL languages
 //
-// This module generates Display trait implementations for AST types,
-// allowing them to be pretty-printed back to source syntax.
+// This module generates trampolined (iterative, work-stack-based) Display trait
+// implementations for AST types.  Instead of recursively calling
+// `write!(f, "{}", child)` — which causes stack overflow for deeply nested
+// terms — the generated code pushes `DisplayTask` variants onto an explicit
+// work stack and processes them iteratively.
+//
+// Architecture mirrors `match_pattern.rs`: a heterogeneous `DisplayTask` enum
+// with one variant per category, a thread-local `Cell<Vec<DisplayTask>>` pool,
+// and a single `display_iterative` driver loop.
 
 #![allow(clippy::cmp_owned)]
 
-use crate::ast::{
-    grammar::{GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam},
+use mettail_ast::{
+    grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
     language::LanguageDef,
-    types::TypeExpr,
+    types::{CollectionType, TypeExpr},
 };
-use crate::gen::native::{has_native_type, native_type_to_string};
+use crate::gen::native::has_native_type;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
+use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
+use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
+use mettail_prattail::binding_power::{analyze_binding_powers, InfixRuleInfo, MixfixPart as BpMixfixPart};
+use mettail_prattail::SyntaxItemSpec;
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use std::collections::HashMap;
 
-/// Generate Display implementations for all exported categories
-pub fn generate_display(language: &LanguageDef) -> TokenStream {
-    // Group rules by category
-    let mut rules_by_cat: HashMap<String, Vec<&GrammarRule>> = HashMap::new();
+// =============================================================================
+// Main Entry Point
+// =============================================================================
 
+/// Binding power information for a single constructor in the Display context.
+#[derive(Debug, Clone)]
+struct DisplayBpInfo {
+    /// Left binding power of this operator.
+    left_bp: u8,
+    /// Right binding power of this operator.
+    right_bp: u8,
+    /// Whether this is a postfix operator.
+    is_postfix: bool,
+    /// Whether this is a mixfix operator.
+    is_mixfix: bool,
+    /// Whether this is a cross-category operator (operands differ from result).
+    is_cross_category: bool,
+}
+
+/// Binding power information for a unary prefix operator.
+#[derive(Debug, Clone)]
+struct DisplayPrefixBpInfo {
+    /// Prefix binding power (child gets this as min_bp).
+    prefix_bp: u8,
+}
+
+/// Lookup table for binding power information, keyed by constructor label.
+#[derive(Debug, Clone)]
+struct BpLookup {
+    /// Infix/postfix/mixfix operators: label -> BP info.
+    infix: HashMap<String, DisplayBpInfo>,
+    /// Unary prefix operators: label -> prefix BP.
+    prefix: HashMap<String, DisplayPrefixBpInfo>,
+}
+
+impl BpLookup {
+    fn empty() -> Self {
+        BpLookup {
+            infix: HashMap::new(),
+            prefix: HashMap::new(),
+        }
+    }
+}
+
+/// Build a `BpLookup` from a `LanguageDef`.
+///
+/// Converts the language definition to a spec, classifies rules, computes
+/// binding powers, and builds a label-indexed lookup table for display codegen.
+fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
+    let spec = language_def_to_spec(language);
+
+    // Extract infix rules exactly as the pipeline does
+    let infix_rules: Vec<InfixRuleInfo> = spec
+        .rules
+        .iter()
+        .filter(|r| r.is_infix)
+        .map(|r| {
+            let (is_mixfix, mixfix_parts) = extract_mixfix_parts_for_display(&r.syntax);
+            InfixRuleInfo {
+                label: r.label.clone(),
+                terminal: r
+                    .syntax
+                    .iter()
+                    .find_map(|item| {
+                        if let SyntaxItemSpec::Terminal(t) = item {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default(),
+                category: r.category.clone(),
+                result_category: r.category.clone(),
+                associativity: r.associativity,
+                is_cross_category: r.is_cross_category,
+                is_postfix: r.is_postfix,
+                is_mixfix,
+                mixfix_parts,
+            }
+        })
+        .collect();
+
+    let bp_table = analyze_binding_powers(&infix_rules);
+
+    // Compute max infix bp per category (exclude postfix) for prefix_bp
+    let mut max_infix_bp: HashMap<String, u8> = HashMap::new();
+    for op in &bp_table.operators {
+        if op.is_postfix {
+            continue;
+        }
+        let max_val = max_infix_bp.entry(op.category.clone()).or_insert(0u8);
+        *max_val = (*max_val).max(op.left_bp).max(op.right_bp);
+    }
+
+    let mut lookup = BpLookup::empty();
+
+    // Build a terminal→same-category BP map so cross-category operators can
+    // use the same parenthesization threshold as their same-category counterpart.
+    // Without this, cross-category operators (e.g., LtInt: Int×Int→Bool) get
+    // different BPs from same-category operators (e.g., LtBool: Bool×Bool→Bool)
+    // despite sharing the same token. This causes Display to produce parenthesization
+    // that doesn't roundtrip through the parser (which uses a single token-based BP).
+    let mut same_cat_bp: HashMap<(String, String), (u8, u8)> = HashMap::new();
+    for op in &bp_table.operators {
+        if !op.is_cross_category {
+            same_cat_bp.insert(
+                (op.terminal.clone(), op.result_category.clone()),
+                (op.left_bp, op.right_bp),
+            );
+        }
+    }
+
+    // Add infix/postfix/mixfix operators
+    for op in &bp_table.operators {
+        // For cross-category operators, use the same-category operator's BP
+        // for parenthesization (own_left_bp check) since the parser uses
+        // token-based BP lookup which maps to the same-category variant.
+        let (display_left_bp, display_right_bp) = if op.is_cross_category {
+            same_cat_bp
+                .get(&(op.terminal.clone(), op.result_category.clone()))
+                .copied()
+                .unwrap_or((op.left_bp, op.right_bp))
+        } else {
+            (op.left_bp, op.right_bp)
+        };
+        lookup.infix.insert(
+            op.label.clone(),
+            DisplayBpInfo {
+                left_bp: display_left_bp,
+                right_bp: display_right_bp,
+                is_postfix: op.is_postfix,
+                is_mixfix: op.is_mixfix,
+                is_cross_category: op.is_cross_category,
+            },
+        );
+    }
+
+    // Add unary prefix operators
+    for rule in &spec.rules {
+        if rule.is_unary_prefix {
+            let prefix_bp = if let Some(explicit_bp) = rule.prefix_precedence {
+                explicit_bp
+            } else {
+                let cat_max = max_infix_bp.get(&rule.category).copied().unwrap_or(0);
+                cat_max + 2
+            };
+            lookup.prefix.insert(
+                rule.label.clone(),
+                DisplayPrefixBpInfo { prefix_bp },
+            );
+        }
+    }
+
+    lookup
+}
+
+/// Extract mixfix parts from syntax items (same logic as pipeline.rs).
+fn extract_mixfix_parts_for_display(syntax: &[SyntaxItemSpec]) -> (bool, Vec<BpMixfixPart>) {
+    let operand_count = syntax
+        .iter()
+        .filter(|item| matches!(item, SyntaxItemSpec::NonTerminal { .. }))
+        .count();
+    let terminal_count = syntax
+        .iter()
+        .filter(|item| matches!(item, SyntaxItemSpec::Terminal(_)))
+        .count();
+
+    if operand_count < 3 || terminal_count < 2 {
+        return (false, Vec::new());
+    }
+
+    let mut parts = Vec::with_capacity(operand_count - 1);
+    let mut after_trigger = false;
+    let mut skip_count = 0;
+
+    for item in syntax {
+        match item {
+            SyntaxItemSpec::NonTerminal { .. } if skip_count == 0 => {
+                skip_count += 1;
+            },
+            SyntaxItemSpec::Terminal(_) if !after_trigger => {
+                after_trigger = true;
+            },
+            SyntaxItemSpec::NonTerminal { category, param_name } if after_trigger => {
+                parts.push(BpMixfixPart {
+                    operand_category: category.clone(),
+                    param_name: param_name.clone(),
+                    following_terminal: None,
+                });
+            },
+            SyntaxItemSpec::Terminal(t) if after_trigger => {
+                if let Some(last_part) = parts.last_mut() {
+                    last_part.following_terminal = Some(t.clone());
+                }
+            },
+            _ => {},
+        }
+    }
+
+    (true, parts)
+}
+
+/// Generate trampolined Display implementations for all exported categories.
+///
+/// Produces:
+/// 1. `DisplayTask` enum with one variant per category + literal/string helpers
+/// 2. `DISPLAY_TASK_POOL` thread-local for zero-allocation steady-state
+/// 3. `display_iterative()` driver loop
+/// 4. `impl Display for Cat` delegating to the iterative engine
+pub fn generate_display(language: &LanguageDef) -> TokenStream {
+    // Compute binding power lookup for precedence-aware parenthesization
+    let bp_lookup = build_bp_lookup(language);
+
+    let task_enum = generate_display_task_enum(language);
+    let iterative_engine = generate_iterative_engine(language, &bp_lookup);
+    let display_impls = generate_display_impls(language);
+
+    quote! {
+        #task_enum
+        #iterative_engine
+        #display_impls
+    }
+}
+
+// =============================================================================
+// DisplayTask Enum + TLS Pool
+// =============================================================================
+
+/// Generate the `DisplayTask` enum and thread-local pool.
+fn generate_display_task_enum(language: &LanguageDef) -> TokenStream {
+    let variants: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant_name = format_ident!("Display{}", cat);
+            quote! {
+                #variant_name(*const #cat, u8)
+            }
+        })
+        .collect();
+
+    quote! {
+        /// Work item for the iterative Display engine.
+        ///
+        /// Each category variant wraps a raw pointer to a term to be displayed,
+        /// plus a `min_bp` (minimum binding power) for precedence-aware
+        /// parenthesization.  When an infix operator's own `left_bp` is less
+        /// than the inherited `min_bp`, the operator wraps its output in `(…)`.
+        /// `WriteLiteral` and `WriteString` variants handle static and dynamic
+        /// text fragments (separators, delimiters, variable names, etc.) that do
+        /// not require recursive descent into child terms.
+        #[allow(dead_code)]
+        enum DisplayTask {
+            #(#variants,)*
+            /// Write a compile-time-known string (separator, delimiter, keyword).
+            WriteLiteral(&'static str),
+            /// Write a dynamically computed string (variable name, formatted value).
+            WriteString(String),
+        }
+
+        thread_local! {
+            /// Pool for reusing `DisplayTask` work stacks across Display calls.
+            ///
+            /// The `Cell<Vec<DisplayTask>>` pattern allows zero-allocation
+            /// steady-state operation: the first call allocates, subsequent
+            /// calls reuse the same buffer. Re-entrant calls (e.g. from
+            /// collection element formatting) get fresh vectors; the outermost
+            /// call retains capacity.
+            static DISPLAY_TASK_POOL: std::cell::Cell<Vec<DisplayTask>> =
+                std::cell::Cell::new(Vec::new());
+        }
+    }
+}
+
+// =============================================================================
+// Iterative Engine
+// =============================================================================
+
+/// Generate the `display_iterative` function that processes the work stack.
+fn generate_iterative_engine(language: &LanguageDef, bp_lookup: &BpLookup) -> TokenStream {
+    let category_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|lang_type| generate_engine_category_arm(&lang_type.name, language, bp_lookup))
+        .collect();
+
+    quote! {
+        /// Iterative Display engine.
+        ///
+        /// Pops tasks from the work stack and either writes text directly to
+        /// the formatter or pushes sub-tasks for child terms.  Stack-safe for
+        /// arbitrarily deep terms.
+        #[allow(dead_code)]
+        fn display_iterative(
+            stack: &mut Vec<DisplayTask>,
+            f: &mut std::fmt::Formatter,
+        ) -> std::fmt::Result {
+            while let Some(task) = stack.pop() {
+                match task {
+                    DisplayTask::WriteLiteral(s) => {
+                        f.write_str(s)?;
+                    }
+                    DisplayTask::WriteString(s) => {
+                        f.write_str(&s)?;
+                    }
+                    #(#category_arms)*
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Generate the match arm for one category inside the iterative engine.
+///
+/// For each variant of the category, we generate code that either:
+/// - Writes text directly (literals, vars, nullary constructors)
+/// - Pushes sub-tasks in REVERSE order for child terms (stack is LIFO)
+fn generate_engine_category_arm(
+    category: &syn::Ident,
+    language: &LanguageDef,
+    bp_lookup: &BpLookup,
+) -> TokenStream {
+    let task_variant = format_ident!("Display{}", category);
+
+    // Group rules by category for lookup
+    let mut rules_by_cat: HashMap<String, Vec<&GrammarRule>> = HashMap::new();
     for rule in &language.terms {
         let cat_name = rule.category.to_string();
         rules_by_cat.entry(cat_name).or_default().push(rule);
     }
 
-    // Generate Display impl for each exported category
-    let impls: Vec<TokenStream> = language
-        .types
+    let rules = rules_by_cat
+        .get(&category.to_string())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+
+    // Generate match arms for grammar-defined rules
+    let mut variant_arms: Vec<TokenStream> = rules
         .iter()
-        .map(|lang_type| {
-            let cat_name = &lang_type.name;
-
-            let rules = rules_by_cat
-                .get(&cat_name.to_string())
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
-
-            generate_display_impl(cat_name, rules, language)
-        })
+        .map(|rule| generate_engine_rule_arm(rule, language, bp_lookup))
         .collect();
 
-    quote! {
-        #(#impls)*
-    }
-}
-
-/// Generate Display impl for a single category
-fn generate_display_impl(
-    category: &syn::Ident,
-    rules: &[&GrammarRule],
-    language: &LanguageDef,
-) -> TokenStream {
-    let mut match_arms: Vec<TokenStream> = rules
-        .iter()
-        .map(|rule| generate_display_arm(rule, language))
-        .collect();
-
-    // Check if Var variant was auto-generated
-    // All categories get auto-generated Var variants (IVar, etc.)
+    // Auto-generated Var variant
     let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
     if !has_var_rule {
-        let var_arm = generate_auto_var_display_arm(category);
-        match_arms.push(var_arm);
+        variant_arms.push(generate_engine_auto_var_arm(category));
     }
 
-    // Check if NumLit variant was auto-generated (for native types)
+    // Auto-generated Literal variant
     let has_literal_rule = rules.iter().any(|rule| is_literal_rule(rule));
     if let Some(native_type) = has_native_type(category, language) {
         if !has_literal_rule {
-            let literal_arm = generate_auto_literal_display_arm(category, native_type);
-            match_arms.push(literal_arm);
+            variant_arms.push(generate_engine_auto_literal_arm(category, native_type));
         }
     }
 
-    // Generate display arms for auto-generated lambda variants (including native, e.g. Int/Bool/Str)
+    // Auto-generated lambda/apply variants for every domain category
     for domain_lang_type in &language.types {
         let domain_name = &domain_lang_type.name;
 
-        // Single-binder lambda: Lam{Domain}
-        let lam_variant =
-            syn::Ident::new(&format!("Lam{}", domain_name), proc_macro2::Span::call_site());
-        match_arms.push(quote! {
+        // LamDomain
+        let lam_variant = format_ident!("Lam{}", domain_name);
+        let body_task_variant = format_ident!("Display{}", category);
+        variant_arms.push(quote! {
             #category::#lam_variant(scope) => {
-                let (binder, body) = scope.clone().unbind();
-                let var_name = binder.0.pretty_name.as_deref().unwrap_or("?");
-                write!(f, "^{}.{{{}}}", var_name, body)
+                let inner = scope.inner();
+                let var_name = inner.unsafe_pattern.0.pretty_name.as_deref().unwrap_or("?").to_string();
+                // Push in reverse: "^" name ".{" body "}"
+                stack.push(DisplayTask::WriteLiteral("}"));
+                stack.push(DisplayTask::#body_task_variant(&*inner.unsafe_body as *const _, 0));
+                stack.push(DisplayTask::WriteLiteral(".{"));
+                stack.push(DisplayTask::WriteString(var_name));
+                stack.push(DisplayTask::WriteLiteral("^"));
             }
         });
 
-        // Multi-binder lambda: MLam{Domain}
-        let mlam_variant =
-            syn::Ident::new(&format!("MLam{}", domain_name), proc_macro2::Span::call_site());
-        match_arms.push(quote! {
+        // MLamDomain
+        let mlam_variant = format_ident!("MLam{}", domain_name);
+        variant_arms.push(quote! {
             #category::#mlam_variant(scope) => {
-                let (binders, body) = scope.clone().unbind();
-                let names: Vec<_> = binders.iter()
+                let inner = scope.inner();
+                let names: Vec<_> = inner.unsafe_pattern.iter()
                     .map(|b| b.0.pretty_name.as_deref().unwrap_or("?").to_string())
                     .collect();
-                write!(f, "^[{}].{{{}}}", names.join(","), body)
+                // Push in reverse: "^[" names "].{" body "}"
+                stack.push(DisplayTask::WriteLiteral("}"));
+                stack.push(DisplayTask::#body_task_variant(&*inner.unsafe_body as *const _, 0));
+                stack.push(DisplayTask::WriteLiteral("].{"));
+                stack.push(DisplayTask::WriteString(names.join(",")));
+                stack.push(DisplayTask::WriteLiteral("^["));
             }
         });
 
-        // Application: Apply{Domain} - display as $domain(lam, arg)
-        let apply_variant =
-            syn::Ident::new(&format!("Apply{}", domain_name), proc_macro2::Span::call_site());
+        // ApplyDomain
+        let apply_variant = format_ident!("Apply{}", domain_name);
         let domain_lower = domain_name.to_string().to_lowercase();
-        match_arms.push(quote! {
+        let arg_task_variant = format_ident!("Display{}", domain_name);
+        let apply_prefix: String = format!("${}(", domain_lower);
+        variant_arms.push(quote! {
             #category::#apply_variant(lam, arg) => {
-                write!(f, "${}({}, {})", #domain_lower, lam, arg)
+                // Push in reverse: "$domain(" lam ", " arg ")"
+                stack.push(DisplayTask::WriteLiteral(")"));
+                stack.push(DisplayTask::#arg_task_variant(&**arg as *const _, 0));
+                stack.push(DisplayTask::WriteLiteral(", "));
+                stack.push(DisplayTask::#body_task_variant(&**lam as *const _, 0));
+                stack.push(DisplayTask::WriteString(#apply_prefix.to_string()));
             }
         });
 
-        // Multi-application: MApply{Domain} - display as $$domain(lam, args...)
-        let mapply_variant =
-            syn::Ident::new(&format!("MApply{}", domain_name), proc_macro2::Span::call_site());
-        match_arms.push(quote! {
+        // MApplyDomain
+        let mapply_variant = format_ident!("MApply{}", domain_name);
+        let mapply_prefix: String = format!("$${}", domain_lower);
+        variant_arms.push(quote! {
             #category::#mapply_variant(lam, args) => {
+                // For MApply, we need to format args with ", " separator.
+                // Since args are a Vec of a potentially different category,
+                // we handle them inline: convert each arg to string, join them.
                 let arg_strs: Vec<_> = args.iter().map(|a| a.to_string()).collect();
-                write!(f, "$${}({}, {})", #domain_lower, lam, arg_strs.join(", "))
+                let joined = arg_strs.join(", ");
+                // Push in reverse (stack is LIFO): "$$domain" "(" lam ", " joined ")"
+                stack.push(DisplayTask::WriteLiteral(")"));
+                stack.push(DisplayTask::WriteString(joined));
+                stack.push(DisplayTask::WriteLiteral(", "));
+                stack.push(DisplayTask::#body_task_variant(&**lam as *const _, 0));
+                stack.push(DisplayTask::WriteLiteral("("));
+                stack.push(DisplayTask::WriteString(#mapply_prefix.to_string()));
             }
         });
     }
 
     quote! {
-        impl std::fmt::Display for #category {
-            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                match self {
-                    #(#match_arms),*
-                }
+        DisplayTask::#task_variant(ptr, min_bp) => {
+            // SAFETY: ptr was derived from a &Cat reference within the same
+            // fmt() call; the referent is alive for the entire duration.
+            let term = unsafe { &*ptr };
+            // Suppress unused warning for non-operator variants.
+            let _ = min_bp;
+            match term {
+                #(#variant_arms,)*
             }
         }
     }
 }
 
-/// Generate a match arm for displaying a single constructor
-fn generate_display_arm(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
+// =============================================================================
+// Per-Rule Arm Generation (for the iterative engine)
+// =============================================================================
+
+/// Generate the match arm for a single grammar rule inside the iterative engine.
+fn generate_engine_rule_arm(rule: &GrammarRule, language: &LanguageDef, bp_lookup: &BpLookup) -> TokenStream {
     let category = &rule.category;
     let label = &rule.label;
 
-    // Check if this uses new syntax_pattern - generate display from pattern
+    // New syntax_pattern rules
     if let (Some(syntax_pattern), Some(term_context)) = (&rule.syntax_pattern, &rule.term_context) {
-        return generate_syntax_pattern_display_arm(rule, syntax_pattern, term_context);
+        return generate_engine_syntax_pattern_arm(rule, syntax_pattern, term_context, language, bp_lookup);
     }
 
-    // Check if this has binders (old syntax)
+    // Old-style binder rules
     if !rule.bindings.is_empty() {
-        return generate_binder_display_arm(rule, language);
+        return generate_engine_binder_arm(rule, language);
     }
 
     // Collect field names and their types
@@ -156,433 +498,264 @@ fn generate_display_arm(rule: &GrammarRule, language: &LanguageDef) -> TokenStre
         .iter()
         .enumerate()
         .filter_map(|(i, item)| match item {
-            GrammarItem::NonTerminal(ident) => Some((format!("f{}", i), Some(ident))),
-            GrammarItem::Collection { .. } => Some((format!("f{}", i), None)), // Collection field
+            GrammarItem::NonTerminal { ident, .. } => Some((format!("f{}", i), Some(ident))),
+            GrammarItem::Collection { .. } => Some((format!("f{}", i), None)),
             _ => None,
         })
         .collect();
 
     if fields.is_empty() {
-        // Unit variant - just print terminals
+        // Nullary: write terminals directly
         let output = format_terminals(rule);
         quote! {
-            #category::#label => write!(f, #output)
+            #category::#label => {
+                f.write_str(#output)?;
+            }
         }
     } else {
-        // Tuple variant - pattern match fields
         let field_names: Vec<syn::Ident> = fields
             .iter()
             .map(|(name, _)| syn::Ident::new(name, proc_macro2::Span::call_site()))
             .collect();
 
-        // Check if any fields are Var - they need special handling
+        // Check if any field is Var
         let has_var = fields.iter().any(|(_, nt_opt)| {
-            if let Some(nt) = nt_opt {
-                nt.to_string() == "Var"
-            } else {
-                false
-            }
+            nt_opt.as_ref().is_some_and(|nt| NonTerminalKind::classify(&nt.to_string()) == NonTerminalKind::Var)
         });
 
         if has_var {
-            // Generate code that extracts names from Vars
-            let mut format_parts = Vec::new();
-            let mut format_args_tokens = Vec::new();
-            let mut part_str = String::new();
-            let mut field_iter = fields.iter().zip(field_names.iter());
-
-            for item in &rule.items {
-                match item {
-                    GrammarItem::Terminal(term) => {
-                        let escaped = term.replace("{", "{{").replace("}", "}}");
-                        part_str.push_str(&escaped);
-                    },
-                    GrammarItem::NonTerminal(nt) if nt.to_string() == "Var" => {
-                        if !part_str.is_empty() {
-                            format_parts.push(part_str.clone());
-                            part_str.clear();
-                        }
-                        if let Some((_, field_name)) = field_iter.next() {
-                            format_parts.push("{}".to_string());
-                            // Var fields are always OrdVar, need to extract the variable name
-                            format_args_tokens.push(quote! {
-                                match &(#field_name).0 {
-                                    mettail_runtime::Var::Free(fv) => fv.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_"),
-                                    mettail_runtime::Var::Bound(bv) => bv.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_"),
-                                }
-                            });
-                        }
-                    },
-                    GrammarItem::NonTerminal(_) => {
-                        if !part_str.is_empty() {
-                            format_parts.push(part_str.clone());
-                            part_str.clear();
-                        }
-                        if let Some((_, field_name)) = field_iter.next() {
-                            format_parts.push("{}".to_string());
-                            format_args_tokens.push(quote! { #field_name });
-                        }
-                    },
-                    _ => {},
-                }
-            }
-
-            if !part_str.is_empty() {
-                format_parts.push(part_str);
-            }
-
-            let format_str = format_parts.join("");
-
-            quote! {
-                #category::#label(#(#field_names),*) => write!(f, #format_str, #(#format_args_tokens),*)
-            }
+            generate_engine_var_fields_arm(rule, &fields, &field_names, bp_lookup)
         } else {
-            // No Var fields - use simple approach
-            let (format_str, format_args) = build_format_string(rule, &fields);
-
-            quote! {
-                #category::#label(#(#field_names),*) => write!(f, #format_str, #(#format_args),*)
-            }
+            generate_engine_regular_arm(rule, &fields, &field_names, language, bp_lookup)
         }
     }
 }
 
-/// Generate display for a constructor using new syntax_pattern
-fn generate_syntax_pattern_display_arm(
+/// Generate arm for rules with Var fields (old syntax).
+/// Var fields write their name directly, non-Var fields push DisplayTask.
+fn generate_engine_var_fields_arm(
     rule: &GrammarRule,
-    syntax_pattern: &[SyntaxExpr],
-    term_context: &[TermParam],
+    fields: &[(String, Option<&syn::Ident>)],
+    field_names: &[syn::Ident],
+    _bp_lookup: &BpLookup,
 ) -> TokenStream {
     let category = &rule.category;
     let label = &rule.label;
 
-    // Build maps from parameter names to their info
-    let mut param_names: Vec<String> = Vec::new();
-    let mut collection_params: Vec<(String, String)> = Vec::new(); // (name, separator)
-    let mut has_abstraction = false;
-    let mut is_multi_binder = false;
-    let mut abstraction_binder: Option<String> = None;
-    let mut abstraction_body: Option<String> = None;
+    // Build list of push operations in reverse order.
+    // We construct a forward list first, then reverse.
+    let mut forward_ops: Vec<TokenStream> = Vec::new();
+    let mut field_iter = fields.iter().zip(field_names.iter());
 
-    for param in term_context {
-        match param {
-            TermParam::Simple { name, ty } => {
-                if matches!(ty, TypeExpr::Collection { .. }) {
-                    // Collection params need special handling - separator will be found in syntax pattern
-                    param_names.push(name.to_string());
-                } else {
-                    param_names.push(name.to_string());
+    for item in &rule.items {
+        match item {
+            GrammarItem::Terminal(term) => {
+                let escaped = term.clone();
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::WriteString(#escaped.to_string()));
+                });
+            },
+            GrammarItem::NonTerminal { kind: NonTerminalKind::Var, .. } => {
+                if let Some((_, field_name)) = field_iter.next() {
+                    forward_ops.push(quote! {
+                        stack.push(DisplayTask::WriteString(
+                            match &(#field_name).0 {
+                                mettail_runtime::Var::Free(fv) => fv.pretty_name.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "_".to_string()),
+                                mettail_runtime::Var::Bound(bv) => bv.pretty_name.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "_".to_string()),
+                            }
+                        ));
+                    });
                 }
             },
-            TermParam::Abstraction { binder, body, .. } => {
-                has_abstraction = true;
-                abstraction_binder = Some(binder.to_string());
-                abstraction_body = Some(body.to_string());
+            GrammarItem::NonTerminal { ident: nt, .. } => {
+                if let Some((_, field_name)) = field_iter.next() {
+                    let nt_str = nt.to_string();
+                    // Find which category this nonterminal belongs to
+                    let task_variant = format_ident!("Display{}", nt_str);
+                    forward_ops.push(quote! {
+                        stack.push(DisplayTask::#task_variant(&**#field_name as *const _, 0));
+                    });
+                }
             },
-            TermParam::MultiAbstraction { binder, body, .. } => {
-                has_abstraction = true;
-                is_multi_binder = true;
-                abstraction_binder = Some(binder.to_string());
-                abstraction_body = Some(body.to_string());
+            _ => {},
+        }
+    }
+
+    // Reverse the ops so stack processes them left-to-right
+    forward_ops.reverse();
+
+    quote! {
+        #category::#label(#(#field_names),*) => {
+            #(#forward_ops)*
+        }
+    }
+}
+
+/// Generate arm for regular rules (no Var fields, no binders, no syntax_pattern).
+///
+/// Precedence-aware: for infix/postfix/prefix operators, wraps the output in
+/// parentheses when the inherited `min_bp` exceeds the operator's own binding power.
+/// Non-operator rules push children with `min_bp = 0` (no parenthesization).
+fn generate_engine_regular_arm(
+    rule: &GrammarRule,
+    fields: &[(String, Option<&syn::Ident>)],
+    field_names: &[syn::Ident],
+    _language: &LanguageDef,
+    bp_lookup: &BpLookup,
+) -> TokenStream {
+    let category = &rule.category;
+    let label = &rule.label;
+    let label_str = label.to_string();
+
+    // Check if this rule is an infix/postfix/mixfix operator
+    let infix_info = bp_lookup.infix.get(&label_str);
+    // Check if this rule is a unary prefix operator
+    let prefix_info = bp_lookup.prefix.get(&label_str);
+
+    // Determine child min_bp values for each NonTerminal field
+    // For infix: first NT gets left_bp, last NT gets right_bp
+    // For prefix: single NT gets prefix_bp
+    // For postfix: single NT gets left_bp
+    // For mixfix: first NT gets left_bp, middle NTs get 0, last NT gets right_bp
+    // For non-operator: all NTs get 0
+    let nt_count = rule.items.iter().filter(|i| matches!(i, GrammarItem::NonTerminal { .. })).count();
+
+    let mut forward_ops: Vec<TokenStream> = Vec::new();
+    let mut field_iter = fields.iter().zip(field_names.iter());
+    let mut nt_idx: usize = 0;
+
+    for item in &rule.items {
+        match item {
+            GrammarItem::Terminal(term) => {
+                let escaped = term.clone();
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::WriteString(#escaped.to_string()));
+                });
             },
-            TermParam::GuardBody { .. } => {
-                // Guard bodies are not display fields; they are evaluated
-                // separately by the behavioral guard evaluator.
+            GrammarItem::NonTerminal { ident: nt, .. } => {
+                if let Some(((_, _), field_name)) = field_iter.next() {
+                    let nt_str = nt.to_string();
+                    let task_variant = format_ident!("Display{}", nt_str);
+
+                    let child_min_bp: u8 = if let Some(info) = infix_info {
+                        if info.is_postfix {
+                            // Postfix: single operand gets left_bp
+                            info.left_bp
+                        } else if info.is_mixfix {
+                            // Mixfix: first operand = left_bp, middle = 0, last = right_bp
+                            if nt_idx == 0 {
+                                info.left_bp
+                            } else if nt_idx == nt_count - 1 {
+                                info.right_bp
+                            } else {
+                                0
+                            }
+                        } else if info.is_cross_category {
+                            // Cross-category: children are in different category, reset BP
+                            0
+                        } else {
+                            // Regular infix: left child = left_bp, right child = right_bp
+                            if nt_idx == 0 {
+                                info.left_bp
+                            } else {
+                                info.right_bp
+                            }
+                        }
+                    } else if let Some(pinfo) = prefix_info {
+                        // Unary prefix: child gets prefix_bp
+                        pinfo.prefix_bp
+                    } else {
+                        0
+                    };
+
+                    forward_ops.push(quote! {
+                        stack.push(DisplayTask::#task_variant(&**#field_name as *const _, #child_min_bp));
+                    });
+                    nt_idx += 1;
+                }
+            },
+            GrammarItem::Collection { separator, delimiters, .. } => {
+                if let Some(((_, _), field_name)) = field_iter.next() {
+                    // Collection fields write inline (elements may not be deeply nested)
+                    let sep = separator.clone();
+                    if let Some((open, close)) = delimiters {
+                        forward_ops.push(quote! {
+                            {
+                                let mut s = String::from(#open);
+                                let mut items: Vec<String> = #field_name.iter().map(|(elem, count)| {
+                                    (0..count).map(|_| elem.to_string()).collect::<Vec<_>>().join(&format!(" {} ", #sep))
+                                }).collect();
+                                items.sort();
+                                if !items.is_empty() {
+                                    s.push_str(&items.join(&format!(" {} ", #sep)));
+                                }
+                                s.push_str(#close);
+                                stack.push(DisplayTask::WriteString(s));
+                            }
+                        });
+                    } else {
+                        forward_ops.push(quote! {
+                            {
+                                let mut items: Vec<String> = #field_name.iter().map(|(elem, count)| {
+                                    (0..count).map(|_| elem.to_string()).collect::<Vec<_>>().join(&format!(" {} ", #sep))
+                                }).collect();
+                                items.sort();
+                                stack.push(DisplayTask::WriteString(items.join(&format!(" {} ", #sep))));
+                            }
+                        });
+                    }
+                    nt_idx += 1;
+                }
+            },
+            GrammarItem::Binder { .. } => {
+                // Handled in binder path
             },
         }
     }
 
-    // Scan syntax pattern for #sep operations to find separators
-    for expr in syntax_pattern {
-        if let SyntaxExpr::Op(PatternOp::Sep { collection, separator, .. }) = expr {
-            collection_params.push((collection.to_string(), separator.clone()));
-        }
-    }
+    // Reverse so stack processes left-to-right
+    forward_ops.reverse();
 
-    // Check if we have collection parameters with separators
-    let has_collection = !collection_params.is_empty();
-
-    // Build format string and args from syntax pattern
-    let mut format_parts: Vec<TokenStream> = Vec::new();
-
-    for (i, expr) in syntax_pattern.iter().enumerate() {
-        match expr {
-            SyntaxExpr::Literal(s) => {
-                let next_param = syntax_pattern
-                    .get(i + 1)
-                    .map(|e| matches!(e, SyntaxExpr::Param(_)));
-                let prev_param =
-                    i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
-                let is_word = s.chars().all(|c| c.is_alphabetic());
-                let (prefix, suffix) = if prev_param && next_param.unwrap_or(false) {
-                    (" ", " ") // infix op: spaces around (e.g. " && ")
-                } else if next_param == Some(true) && is_word {
-                    ("", " ") // word then param: trailing space (e.g. "not ")
-                } else {
-                    ("", "")
-                };
-                let raw = format!("{}{}{}", prefix, s, suffix);
-                let escaped = raw.replace('{', "{{").replace('}', "}}");
-                format_parts.push(quote! { write!(f, #escaped)?; });
-            },
-            SyntaxExpr::Param(id) => {
-                let name = id.to_string();
-
-                // Check if this is the binder from an abstraction
-                if Some(&name) == abstraction_binder.as_ref() {
-                    format_parts.push(quote! { write!(f, "{}", binder_name)?; });
-                }
-                // Check if this is the body from an abstraction
-                else if Some(&name) == abstraction_body.as_ref() {
-                    format_parts.push(quote! { write!(f, "{}", body)?; });
-                }
-                // Simple parameter - reference directly
-                else {
-                    let field_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
-                    format_parts.push(quote! { write!(f, "{}", #field_ident)?; });
-                }
-            },
-            SyntaxExpr::Op(op) => {
-                let op_code =
-                    generate_pattern_op_display(op, &abstraction_binder, &abstraction_body);
-                format_parts.push(op_code);
-            },
-        }
-    }
-
-    // Generate field pattern for match arm
-    // Simple params come first, then scope (if there's an abstraction)
-    let mut field_idents: Vec<syn::Ident> = param_names
-        .iter()
-        .map(|name| syn::Ident::new(name, proc_macro2::Span::call_site()))
-        .collect();
-
-    if has_abstraction {
-        field_idents.push(syn::Ident::new("scope", proc_macro2::Span::call_site()));
-
-        if is_multi_binder {
-            // Multi-binder: scope.unbind() returns (Vec<Binder>, body)
-            // For display with #zip().#map().#sep(), handled by generate_chained_sep_display
-            quote! {
-                #category::#label(#(#field_idents),*) => {
-                    let (binders, body) = scope.clone().unbind();
-                    let binder_names: Vec<String> = binders.iter()
-                        .map(|b| b.0.pretty_name.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "_".to_string()))
-                        .collect();
-                    #(#format_parts)*
-                    Ok(())
-                }
-            }
-        } else if has_collection {
-            // Both single abstraction and collection
-            quote! {
-                #category::#label(#(#field_idents),*) => {
-                    let (binder, body) = scope.clone().unbind();
-                    let binder_name = binder.0.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_");
-                    #(#format_parts)*
-                    Ok(())
-                }
-            }
-        } else {
-            // Single abstraction without collection
-            quote! {
-                #category::#label(#(#field_idents),*) => {
-                    let (binder, body) = scope.clone().unbind();
-                    let binder_name = binder.0.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_");
-                    #(#format_parts)*
-                    Ok(())
-                }
-            }
-        }
-    } else if field_idents.is_empty() {
-        // Nullary constructor - unit variant pattern
+    // Wrap in parenthesization logic for infix/prefix/postfix operators
+    if let Some(info) = infix_info {
+        let own_left_bp = info.left_bp;
         quote! {
-            #category::#label => {
-                #(#format_parts)*
-                Ok(())
+            #category::#label(#(#field_names),*) => {
+                let needs_parens = #own_left_bp < min_bp;
+                if needs_parens {
+                    stack.push(DisplayTask::WriteLiteral(")"));
+                }
+                #(#forward_ops)*
+                if needs_parens {
+                    stack.push(DisplayTask::WriteLiteral("("));
+                }
             }
         }
-    } else if has_collection {
-        // Collection without abstraction
+    } else if let Some(pinfo) = prefix_info {
+        let own_bp = pinfo.prefix_bp;
         quote! {
-            #category::#label(#(#field_idents),*) => {
-                #(#format_parts)*
-                Ok(())
+            #category::#label(#(#field_names),*) => {
+                let needs_parens = #own_bp < min_bp;
+                if needs_parens {
+                    stack.push(DisplayTask::WriteLiteral(")"));
+                }
+                #(#forward_ops)*
+                if needs_parens {
+                    stack.push(DisplayTask::WriteLiteral("("));
+                }
             }
         }
     } else {
-        // Simple tuple variant pattern
         quote! {
-            #category::#label(#(#field_idents),*) => {
-                #(#format_parts)*
-                Ok(())
+            #category::#label(#(#field_names),*) => {
+                #(#forward_ops)*
             }
         }
     }
 }
 
-/// Generate display code for a pattern operation
-fn generate_pattern_op_display(
-    op: &PatternOp,
-    _abstraction_binder: &Option<String>,
-    _abstraction_body: &Option<String>,
-) -> TokenStream {
-    match op {
-        PatternOp::Sep { collection, separator, source } => {
-            // Handle chained #zip().#map().#sep() for multi-binder display
-            if let Some(chain_source) = source {
-                return generate_chained_sep_display_code(chain_source, separator);
-            }
-            let coll_name = collection.to_string();
-            let sep_with_spaces = format!(" {} ", separator);
-
-            // If this collection is the abstraction binder, iterate binder_names
-            if _abstraction_binder.as_ref().map(|s| s.as_str()) == Some(&coll_name) {
-                quote! {
-                    {
-                        let mut first = true;
-                        for name in &binder_names {
-                            if !first { write!(f, #sep_with_spaces)?; }
-                            first = false;
-                            write!(f, "{}", name)?;
-                        }
-                    }
-                }
-            } else {
-                let coll_ident = syn::Ident::new(&coll_name, proc_macro2::Span::call_site());
-                quote! {
-                    {
-                        let mut first = true;
-                        for (item, count) in #coll_ident.iter() {
-                            for _ in 0..count {
-                                if !first { write!(f, #sep_with_spaces)?; }
-                                first = false;
-                                write!(f, "{}", item)?;
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        PatternOp::Var(id) => {
-            let ident = syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
-            quote! { write!(f, "{}", #ident)?; }
-        },
-        PatternOp::Opt { inner } => {
-            // For optional, we'd need to know if the value is present
-            // This requires more context - for now, just display the inner if non-empty
-            let inner_parts: Vec<TokenStream> = inner
-                .iter()
-                .map(|expr| match expr {
-                    SyntaxExpr::Literal(s) => {
-                        let escaped = s.replace('{', "{{").replace('}', "}}");
-                        quote! { write!(f, #escaped)?; }
-                    },
-                    SyntaxExpr::Param(id) => {
-                        let ident =
-                            syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
-                        quote! { write!(f, "{}", #ident)?; }
-                    },
-                    SyntaxExpr::Op(op) => generate_pattern_op_display(op, &None, &None),
-                })
-                .collect();
-            quote! { #(#inner_parts)* }
-        },
-        PatternOp::Zip { .. } | PatternOp::Map { .. } => {
-            // Zip and Map are typically chained with Sep, not standalone
-            quote! { /* zip/map should be chained with #sep */ }
-        },
-    }
-}
-
-/// Generate display code for chained #zip().#map().#sep() pattern
-fn generate_chained_sep_display_code(source: &PatternOp, separator: &str) -> TokenStream {
-    // Extract Map and Zip info from the chain
-    if let PatternOp::Map { source: map_source, params, body } = source {
-        if let PatternOp::Zip { left, .. } = map_source.as_ref() {
-            // We have #zip(left, right).#map(|params...| body).#sep(separator)
-            // For multi-binder display, left is collection (ns), right is binders (xs)
-            // params are [n, x] and body describes how to format each pair
-
-            let left_name = left.to_string();
-            let left_ident = syn::Ident::new(&left_name, proc_macro2::Span::call_site());
-
-            // Generate format code for each pair based on the body
-            let format_code = generate_map_body_format(params, body);
-
-            // Check if right is binder_names (xs from multi-binder)
-            // The binder_names Vec is available from the scope.unbind() in the enclosing block
-            let sep_str = format!("{} ", separator);
-
-            return quote! {
-                {
-                    let mut first = true;
-                    for (i, item) in #left_ident.iter().enumerate() {
-                        if !first { write!(f, #sep_str)?; }
-                        first = false;
-                        let binder_name = binder_names.get(i).map(|s| s.as_str()).unwrap_or("_");
-                        #format_code
-                    }
-                }
-            };
-        }
-    }
-
-    // Fallback
-    quote! { /* unhandled chained pattern */ }
-}
-
-/// Generate format code from map body
-fn generate_map_body_format(params: &[syn::Ident], body: &[SyntaxExpr]) -> TokenStream {
-    // params typically are [n, x] for #map(|n, x| ...)
-    // body contains the format like [Param(x), Literal("<-"), Param(n)]
-    // We map:
-    //   - first param (n) -> item (from the collection)
-    //   - second param (x) -> binder_name (from binder_names)
-
-    let mut format_parts: Vec<TokenStream> = Vec::new();
-
-    for expr in body {
-        match expr {
-            SyntaxExpr::Literal(s) => {
-                format_parts.push(quote! { write!(f, #s)?; });
-            },
-            SyntaxExpr::Param(id) => {
-                let id_str = id.to_string();
-                // Check which param this corresponds to
-                if params.len() >= 2 {
-                    let first_param = params[0].to_string();
-                    let second_param = params[1].to_string();
-
-                    if id_str == first_param {
-                        // First param maps to the collection item
-                        format_parts.push(quote! { write!(f, "{}", item)?; });
-                    } else if id_str == second_param {
-                        // Second param maps to the binder name
-                        format_parts.push(quote! { write!(f, "{}", binder_name)?; });
-                    } else {
-                        // Unknown param
-                        let ident = syn::Ident::new(&id_str, proc_macro2::Span::call_site());
-                        format_parts.push(quote! { write!(f, "{}", #ident)?; });
-                    }
-                } else if params.len() == 1 && id.to_string() == params[0].to_string() {
-                    format_parts.push(quote! { write!(f, "{}", item)?; });
-                } else {
-                    let ident = syn::Ident::new(&id_str, proc_macro2::Span::call_site());
-                    format_parts.push(quote! { write!(f, "{}", #ident)?; });
-                }
-            },
-            SyntaxExpr::Op(_) => {
-                // Nested ops not expected in map body
-            },
-        }
-    }
-
-    quote! { #(#format_parts)* }
-}
-
-/// Generate display for a constructor with binders (old syntax)
-fn generate_binder_display_arm(rule: &GrammarRule, _language: &LanguageDef) -> TokenStream {
+/// Generate arm for old-style binder rules.
+fn generate_engine_binder_arm(rule: &GrammarRule, _language: &LanguageDef) -> TokenStream {
     let category = &rule.category;
     let label = &rule.label;
 
@@ -596,10 +769,10 @@ fn generate_binder_display_arm(rule: &GrammarRule, _language: &LanguageDef) -> T
 
     for (i, item) in rule.items.iter().enumerate() {
         match item {
-            GrammarItem::NonTerminal(_) if i == body_idx => {
+            GrammarItem::NonTerminal { .. } if i == body_idx => {
                 has_scope = true;
             },
-            GrammarItem::NonTerminal(_) => {
+            GrammarItem::NonTerminal { .. } => {
                 regular_fields.push(format!("f{}", field_idx));
                 field_idx += 1;
             },
@@ -610,7 +783,6 @@ fn generate_binder_display_arm(rule: &GrammarRule, _language: &LanguageDef) -> T
         }
     }
 
-    // Build pattern: regular fields + scope
     let mut all_fields = regular_fields.clone();
     if has_scope {
         all_fields.push("scope".to_string());
@@ -621,150 +793,611 @@ fn generate_binder_display_arm(rule: &GrammarRule, _language: &LanguageDef) -> T
         .map(|name| syn::Ident::new(name, proc_macro2::Span::call_site()))
         .collect();
 
-    // Build format string with placeholders for all parts
-    let format_str = build_binder_format_string_simple(rule);
+    // Build forward push operations from items.
+    // The binder name and body come from scope.inner().
+    let mut forward_ops: Vec<TokenStream> = Vec::new();
+    let mut regular_field_iter = regular_fields.iter();
 
-    // Build format args: regular fields, then binder name, then body
-    let regular_field_idents: Vec<syn::Ident> = regular_fields
-        .iter()
-        .map(|name| syn::Ident::new(name, proc_macro2::Span::call_site()))
-        .collect();
-
-    quote! {
-        #category::#label(#(#field_idents),*) => {
-            // Use unbind() to get fresh variables with proper names for display
-            let (binder, body) = scope.clone().unbind();
-            let binder_name = binder.0.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_");
-            write!(f, #format_str, #(#regular_field_idents,)* binder_name, body)
-        }
-    }
-}
-
-/// Build format string and args for a rule (no Var fields)
-fn build_format_string(
-    rule: &GrammarRule,
-    fields: &[(String, Option<&syn::Ident>)],
-) -> (String, Vec<TokenStream>) {
-    let mut format_str = String::new();
-    let mut format_args = Vec::new();
-    let mut field_iter = fields.iter();
-
-    for item in &rule.items {
-        match item {
-            GrammarItem::Terminal(term) => {
-                // Escape braces in format strings
-                let escaped = term.replace("{", "{{").replace("}", "}}");
-                format_str.push_str(&escaped);
-            },
-            GrammarItem::NonTerminal(_) => {
-                // Regular fields
-                if let Some((name, _)) = field_iter.next() {
-                    format_str.push_str("{}");
-                    let field_ident = syn::Ident::new(name, proc_macro2::Span::call_site());
-                    format_args.push(quote! { #field_ident });
-                }
-            },
-            GrammarItem::Collection { separator, delimiters, .. } => {
-                // Collection field - format with custom separator
-                if let Some((name, _)) = field_iter.next() {
-                    format_str.push_str("{}");
-                    let field_ident = syn::Ident::new(name, proc_macro2::Span::call_site());
-
-                    // Generate custom formatting for collection with separator
-                    let sep = separator.clone();
-                    if let Some((open, close)) = delimiters {
-                        // With delimiters: {elem1 | elem2 | elem3}
-                        format_args.push(quote! {
-                            {
-                                let mut s = String::from(#open);
-                                let items: Vec<String> = #field_ident.iter().map(|(elem, count)| {
-                                    // For multisets, repeat element by count
-                                    (0..count).map(|_| elem.to_string()).collect::<Vec<_>>().join(&format!(" {} ", #sep))
-                                }).collect();
-                                if !items.is_empty() {
-                                    s.push_str(&items.join(&format!(" {} ", #sep)));
-                                }
-                                s.push_str(#close);
-                                s
-                            }
-                        });
-                    } else {
-                        // Without delimiters
-                        format_args.push(quote! {
-                            {
-                                let items: Vec<String> = #field_ident.iter().map(|(elem, count)| {
-                                    (0..count).map(|_| elem.to_string()).collect::<Vec<_>>().join(&format!(" {} ", #sep))
-                                }).collect();
-                                items.join(&format!(" {} ", #sep))
-                            }
-                        });
-                    }
-                }
-            },
-            GrammarItem::Binder { .. } => {
-                // Binders are handled separately in binder rules
-            },
-        }
-    }
-
-    (format_str, format_args)
-}
-
-/// Build format string for a rule with binders (simplified)
-fn build_binder_format_string_simple(rule: &GrammarRule) -> String {
-    let mut format_str = String::new();
-
-    let (binder_idx, body_indices) = &rule.bindings[0];
-    let body_idx = body_indices[0];
-
-    let mut prev_was_nonterminal = false;
+    // Get the body category from the rule
+    let body_cat = match &rule.items[body_idx] {
+        GrammarItem::NonTerminal { ident: cat, .. } => cat.clone(),
+        _ => panic!("Body index doesn't point to a NonTerminal"),
+    };
+    let body_task_variant = format_ident!("Display{}", body_cat);
 
     for (i, item) in rule.items.iter().enumerate() {
         match item {
             GrammarItem::Terminal(term) => {
-                // Escape braces in format strings
-                let escaped = term.replace("{", "{{").replace("}", "}}");
-                format_str.push_str(&escaped);
-                prev_was_nonterminal = false;
+                let escaped = term.clone();
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::WriteString(#escaped.to_string()));
+                });
             },
-            GrammarItem::NonTerminal(_) if i == body_idx => {
-                // Body - will be provided from scope.unbind()
-                if prev_was_nonterminal {
-                    format_str.push(' ');
-                }
-                format_str.push_str("{}");
-                prev_was_nonterminal = true;
+            GrammarItem::NonTerminal { .. } if i == body_idx => {
+                // Body from scope — binder body resets precedence context
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::#body_task_variant(&*inner.unsafe_body as *const _, 0));
+                });
             },
-            GrammarItem::NonTerminal(_) => {
-                // Regular field
-                if prev_was_nonterminal {
-                    format_str.push(' ');
+            GrammarItem::NonTerminal { ident: nt, .. } => {
+                // Regular field — non-binder context resets precedence
+                if let Some(field_name_str) = regular_field_iter.next() {
+                    let field_name = syn::Ident::new(field_name_str, proc_macro2::Span::call_site());
+                    let nt_str = nt.to_string();
+                    let task_variant = format_ident!("Display{}", nt_str);
+                    forward_ops.push(quote! {
+                        stack.push(DisplayTask::#task_variant(&**#field_name as *const _, 0));
+                    });
                 }
-                format_str.push_str("{}");
-                prev_was_nonterminal = true;
-            },
-            GrammarItem::Collection { .. } => {
-                // Collection field
-                if prev_was_nonterminal {
-                    format_str.push(' ');
-                }
-                format_str.push_str("{}");
-                prev_was_nonterminal = true;
             },
             GrammarItem::Binder { .. } if i == *binder_idx => {
-                // Binder - will be provided from scope.unbind()
-                if prev_was_nonterminal {
-                    format_str.push(' ');
-                }
-                format_str.push_str("{}");
-                prev_was_nonterminal = true;
+                // Binder name from scope
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::WriteString(binder_name.to_string()));
+                });
             },
             GrammarItem::Binder { .. } => {},
+            GrammarItem::Collection { .. } => {
+                // Unlikely in binder rules, but handle gracefully
+            },
         }
     }
 
-    format_str
+    forward_ops.reverse();
+
+    quote! {
+        #category::#label(#(#field_idents),*) => {
+            let inner = scope.inner();
+            let binder_name = inner.unsafe_pattern.0.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_");
+            #(#forward_ops)*
+        }
+    }
 }
+
+/// Generate arm for new-style syntax_pattern rules.
+///
+/// Precedence-aware: for infix/postfix/prefix operators, wraps the output in
+/// parentheses when the inherited `min_bp` exceeds the operator's own binding power.
+fn generate_engine_syntax_pattern_arm(
+    rule: &GrammarRule,
+    syntax_pattern: &[SyntaxExpr],
+    term_context: &[TermParam],
+    _language: &LanguageDef,
+    bp_lookup: &BpLookup,
+) -> TokenStream {
+    let category = &rule.category;
+    let label = &rule.label;
+    let label_str = label.to_string();
+
+    // Check if this rule is an infix/postfix/mixfix operator
+    let infix_info = bp_lookup.infix.get(&label_str);
+    // Check if this rule is a unary prefix operator
+    let prefix_info = bp_lookup.prefix.get(&label_str);
+
+    // Analyze term_context to understand the structure
+    let mut param_names: Vec<String> = Vec::new();
+    let mut has_abstraction = false;
+    let mut is_multi_binder = false;
+    let mut abstraction_binder: Option<String> = None;
+    let mut abstraction_body: Option<String> = None;
+    // Map from param name -> TypeExpr for looking up category
+    let mut param_types: HashMap<String, &TypeExpr> = HashMap::new();
+
+    for param in term_context {
+        match param {
+            TermParam::Simple { name, ty } => {
+                param_names.push(name.to_string());
+                param_types.insert(name.to_string(), ty);
+            },
+            TermParam::Abstraction { binder, body, ty, .. } => {
+                has_abstraction = true;
+                abstraction_binder = Some(binder.to_string());
+                abstraction_body = Some(body.to_string());
+            },
+            TermParam::MultiAbstraction { binder, body, ty, .. } => {
+                has_abstraction = true;
+                is_multi_binder = true;
+                abstraction_binder = Some(binder.to_string());
+                abstraction_body = Some(body.to_string());
+            },
+            TermParam::GuardBody { name } => {
+                // Phase 2E: register the guard slot's name so the
+                // syntax pattern's reference (e.g., `... where guard
+                // ...`) resolves and the per-instance BehavioralPred
+                // field is rendered via its Display impl.
+                param_names.push(name.to_string());
+            },
+        }
+    }
+
+    // Count non-terminal parameters for infix position tracking
+    // For new-style syntax, params appearing in the syntax_pattern as base-category
+    // types are the "operand" nonterminals.
+    let base_cat_params: Vec<String> = param_names
+        .iter()
+        .filter(|name| {
+            if let Some(ty) = param_types.get(name.as_str()) {
+                matches!(ty, TypeExpr::Base(_))
+            } else {
+                false
+            }
+        })
+        .cloned()
+        .collect();
+    let nt_count = base_cat_params.len();
+
+    // Determine body category from the abstraction type for pushing tasks
+    let body_cat_ident = if has_abstraction {
+        // Find the abstraction's type and get the codomain
+        let abs_type = term_context.iter().find_map(|p| match p {
+            TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => Some(ty),
+            _ => None,
+        });
+        if let Some(TypeExpr::Arrow { codomain, .. }) = abs_type {
+            Some(extract_base_category_ident(codomain))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Compute a map from param name -> child min_bp for infix/prefix rules
+    let child_bp_map: HashMap<String, u8> = if let Some(info) = infix_info {
+        let mut map = HashMap::new();
+        if info.is_cross_category {
+            // Cross-category: children are in different category, reset BP
+            for name in &base_cat_params {
+                map.insert(name.clone(), 0u8);
+            }
+        } else if info.is_postfix {
+            // Postfix: single operand gets left_bp
+            if let Some(name) = base_cat_params.first() {
+                map.insert(name.clone(), info.left_bp);
+            }
+        } else if info.is_mixfix {
+            // Mixfix: first operand = left_bp, middle = 0, last = right_bp
+            for (idx, name) in base_cat_params.iter().enumerate() {
+                if idx == 0 {
+                    map.insert(name.clone(), info.left_bp);
+                } else if idx == nt_count - 1 {
+                    map.insert(name.clone(), info.right_bp);
+                } else {
+                    map.insert(name.clone(), 0u8);
+                }
+            }
+        } else {
+            // Regular infix: first param = left_bp, second param = right_bp
+            if let Some(name) = base_cat_params.first() {
+                map.insert(name.clone(), info.left_bp);
+            }
+            if base_cat_params.len() >= 2 {
+                map.insert(base_cat_params[1].clone(), info.right_bp);
+            }
+        }
+        map
+    } else if let Some(pinfo) = prefix_info {
+        // Unary prefix: single operand gets prefix_bp
+        let mut map = HashMap::new();
+        if let Some(name) = base_cat_params.first() {
+            map.insert(name.clone(), pinfo.prefix_bp);
+        }
+        map
+    } else {
+        HashMap::new()
+    };
+
+    // Build forward push operations from syntax_pattern
+    let mut forward_ops: Vec<TokenStream> = Vec::new();
+
+    for (i, expr) in syntax_pattern.iter().enumerate() {
+        match expr {
+            SyntaxExpr::Literal(s) => {
+                let next_param = syntax_pattern
+                    .get(i + 1)
+                    .map(|e| matches!(e, SyntaxExpr::Param(_)));
+                let prev_param =
+                    i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
+                let is_word = s.chars().all(|c| c.is_alphabetic());
+                let (prefix, suffix) = if prev_param && next_param.unwrap_or(false) {
+                    (" ", " ")
+                } else if next_param == Some(true) && is_word {
+                    ("", " ")
+                } else {
+                    ("", "")
+                };
+                let raw = format!("{}{}{}", prefix, s, suffix);
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::WriteString(#raw.to_string()));
+                });
+            },
+            SyntaxExpr::Param(id) => {
+                let name = id.to_string();
+
+                if Some(&name) == abstraction_binder.as_ref() {
+                    // Binder name from scope.unbind()
+                    forward_ops.push(quote! {
+                        stack.push(DisplayTask::WriteString(binder_name.to_string()));
+                    });
+                } else if Some(&name) == abstraction_body.as_ref() {
+                    // Body from scope.inner() — binder body resets precedence
+                    if let Some(ref body_cat) = body_cat_ident {
+                        let task_variant = format_ident!("Display{}", body_cat);
+                        forward_ops.push(quote! {
+                            stack.push(DisplayTask::#task_variant(&*inner.unsafe_body as *const _, 0));
+                        });
+                    } else {
+                        // Fallback: format to string
+                        forward_ops.push(quote! {
+                            stack.push(DisplayTask::WriteString(format!("{}", body)));
+                        });
+                    }
+                } else {
+                    // Simple parameter - determine its category and push task
+                    let field_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
+                    let child_bp = child_bp_map.get(&name).copied().unwrap_or(0u8);
+                    if let Some(ty) = param_types.get(&name) {
+                        match ty {
+                            TypeExpr::Base(cat_ident) => {
+                                let task_variant = format_ident!("Display{}", cat_ident);
+                                forward_ops.push(quote! {
+                                    stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, #child_bp));
+                                });
+                            },
+                            TypeExpr::Collection { .. } => {
+                                // Collection param without #sep - format inline
+                                forward_ops.push(quote! {
+                                    stack.push(DisplayTask::WriteString(format!("{}", #field_ident)));
+                                });
+                            },
+                            _ => {
+                                forward_ops.push(quote! {
+                                    stack.push(DisplayTask::WriteString(format!("{}", #field_ident)));
+                                });
+                            },
+                        }
+                    } else {
+                        forward_ops.push(quote! {
+                            stack.push(DisplayTask::WriteString(format!("{}", #field_ident)));
+                        });
+                    }
+                }
+            },
+            SyntaxExpr::Op(op) => {
+                let op_code = generate_engine_pattern_op(
+                    op,
+                    &abstraction_binder,
+                    &abstraction_body,
+                    &body_cat_ident,
+                    &param_types,
+                );
+                forward_ops.push(op_code);
+            },
+        }
+    }
+
+    // Reverse so stack processes left-to-right
+    forward_ops.reverse();
+
+    // Build field pattern
+    let mut field_idents: Vec<syn::Ident> = param_names
+        .iter()
+        .map(|name| syn::Ident::new(name, proc_macro2::Span::call_site()))
+        .collect();
+
+    // Determine if we need parenthesization wrapping
+    let needs_bp_check = infix_info.is_some() || prefix_info.is_some();
+    let own_bp: u8 = if let Some(info) = infix_info {
+        info.left_bp
+    } else if let Some(pinfo) = prefix_info {
+        pinfo.prefix_bp
+    } else {
+        0
+    };
+
+    {
+        use std::io::Write;
+    }
+
+    if has_abstraction {
+        field_idents.push(syn::Ident::new("scope", proc_macro2::Span::call_site()));
+
+        if is_multi_binder {
+            // Abstraction rules are never infix, no parenthesization needed
+            quote! {
+                #category::#label(#(#field_idents),*) => {
+                    let inner = scope.inner();
+                    let binder_names: Vec<String> = inner.unsafe_pattern.iter()
+                        .map(|b| b.0.pretty_name.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "_".to_string()))
+                        .collect();
+                    // For multi-binder, binder_name is the joined list (used by some ops)
+                    let binder_name = binder_names.join(",");
+                    #(#forward_ops)*
+                }
+            }
+        } else {
+            // Abstraction rules are never infix, no parenthesization needed
+            quote! {
+                #category::#label(#(#field_idents),*) => {
+                    let inner = scope.inner();
+                    let binder_name = inner.unsafe_pattern.0.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_");
+                    #(#forward_ops)*
+                }
+            }
+        }
+    } else if field_idents.is_empty() {
+        quote! {
+            #category::#label => {
+                #(#forward_ops)*
+            }
+        }
+    } else if needs_bp_check {
+        quote! {
+            #category::#label(#(#field_idents),*) => {
+                let needs_parens = #own_bp < min_bp;
+                if needs_parens {
+                    stack.push(DisplayTask::WriteLiteral(")"));
+                }
+                #(#forward_ops)*
+                if needs_parens {
+                    stack.push(DisplayTask::WriteLiteral("("));
+                }
+            }
+        }
+    } else {
+        quote! {
+            #category::#label(#(#field_idents),*) => {
+                #(#forward_ops)*
+            }
+        }
+    }
+}
+
+/// Generate push operations for a pattern operation (Sep, Var, Opt, etc.)
+/// These produce inline write-to-formatter code (since they involve loops/conditionals
+/// that don't recurse deeply) and push the result as a WriteString.
+fn generate_engine_pattern_op(
+    op: &PatternOp,
+    abstraction_binder: &Option<String>,
+    _abstraction_body: &Option<String>,
+    _body_cat_ident: &Option<syn::Ident>,
+    _param_types: &HashMap<String, &TypeExpr>,
+) -> TokenStream {
+    match op {
+        PatternOp::Sep { collection, separator, source } => {
+            if let Some(chain_source) = source {
+                return generate_engine_chained_sep(chain_source, separator);
+            }
+            let coll_name = collection.to_string();
+            let sep_with_spaces = format!(" {} ", separator);
+
+            if abstraction_binder.as_ref().map(|s| s.as_str()) == Some(&coll_name) {
+                // Iterate binder_names
+                quote! {
+                    {
+                        let mut parts = Vec::new();
+                        for name in &binder_names {
+                            parts.push(name.clone());
+                        }
+                        stack.push(DisplayTask::WriteString(parts.join(#sep_with_spaces)));
+                    }
+                }
+            } else {
+                let coll_ident = syn::Ident::new(&coll_name, proc_macro2::Span::call_site());
+                quote! {
+                    {
+                        let mut parts = Vec::new();
+                        for (item, count) in #coll_ident.iter() {
+                            for _ in 0..count {
+                                parts.push(item.to_string());
+                            }
+                        }
+                        parts.sort();
+                        stack.push(DisplayTask::WriteString(parts.join(#sep_with_spaces)));
+                    }
+                }
+            }
+        },
+        PatternOp::Var(id) => {
+            let ident = syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
+            quote! {
+                stack.push(DisplayTask::WriteString(format!("{}", #ident)));
+            }
+        },
+        PatternOp::Opt { inner } => {
+            let inner_parts: Vec<TokenStream> = inner
+                .iter()
+                .map(|expr| match expr {
+                    SyntaxExpr::Literal(s) => {
+                        quote! { result.push_str(#s); }
+                    },
+                    SyntaxExpr::Param(id) => {
+                        let ident = syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
+                        quote! { result.push_str(&format!("{}", #ident)); }
+                    },
+                    SyntaxExpr::Op(op) => {
+                        // Nested ops in optional - format inline
+                        quote! { /* nested op in optional */ }
+                    },
+                })
+                .collect();
+            quote! {
+                {
+                    let mut result = String::new();
+                    #(#inner_parts)*
+                    stack.push(DisplayTask::WriteString(result));
+                }
+            }
+        },
+        PatternOp::Zip { .. } | PatternOp::Map { .. } => {
+            quote! { /* zip/map should be chained with #sep */ }
+        },
+    }
+}
+
+/// Generate engine code for chained #zip().#map().#sep() pattern
+fn generate_engine_chained_sep(source: &PatternOp, separator: &str) -> TokenStream {
+    if let PatternOp::Map { source: map_source, params, body } = source {
+        if let PatternOp::Zip { left, .. } = map_source.as_ref() {
+            let left_name = left.to_string();
+            let left_ident = syn::Ident::new(&left_name, proc_macro2::Span::call_site());
+
+            let format_code = generate_engine_map_body_format(params, body);
+            let sep_str = format!("{} ", separator);
+
+            return quote! {
+                {
+                    let mut parts = Vec::new();
+                    for (i, item) in #left_ident.iter().enumerate() {
+                        let binder_name = binder_names.get(i).map(|s| s.as_str()).unwrap_or("_");
+                        let mut part = String::new();
+                        #format_code
+                        parts.push(part);
+                    }
+                    parts.sort();
+                    stack.push(DisplayTask::WriteString(parts.join(#sep_str)));
+                }
+            };
+        }
+    }
+    quote! { /* unhandled chained pattern */ }
+}
+
+/// Generate format code from map body for the engine (builds into `part` String)
+fn generate_engine_map_body_format(params: &[syn::Ident], body: &[SyntaxExpr]) -> TokenStream {
+    let mut format_parts: Vec<TokenStream> = Vec::new();
+
+    for expr in body {
+        match expr {
+            SyntaxExpr::Literal(s) => {
+                format_parts.push(quote! { part.push_str(#s); });
+            },
+            SyntaxExpr::Param(id) => {
+                let id_str = id.to_string();
+                if params.len() >= 2 {
+                    let first_param = params[0].to_string();
+                    let second_param = params[1].to_string();
+
+                    if id_str == first_param {
+                        format_parts.push(quote! { part.push_str(&format!("{}", item)); });
+                    } else if id_str == second_param {
+                        format_parts.push(quote! { part.push_str(binder_name); });
+                    } else {
+                        let ident = syn::Ident::new(&id_str, proc_macro2::Span::call_site());
+                        format_parts.push(quote! { part.push_str(&format!("{}", #ident)); });
+                    }
+                } else if params.len() == 1 && id.to_string() == params[0].to_string() {
+                    format_parts.push(quote! { part.push_str(&format!("{}", item)); });
+                } else {
+                    let ident = syn::Ident::new(&id_str, proc_macro2::Span::call_site());
+                    format_parts.push(quote! { part.push_str(&format!("{}", #ident)); });
+                }
+            },
+            SyntaxExpr::Op(_) => {},
+        }
+    }
+
+    quote! { #(#format_parts)* }
+}
+
+// =============================================================================
+// Auto-generated Variant Arms
+// =============================================================================
+
+/// Generate engine arm for auto-generated Var variant.
+fn generate_engine_auto_var_arm(category: &syn::Ident) -> TokenStream {
+    let var_label = generate_var_label(category);
+
+    quote! {
+        #category::#var_label(var) => {
+            let name = match &var.0 {
+                mettail_runtime::Var::Free(fv) => {
+                    fv.pretty_name.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "_".to_string())
+                }
+                mettail_runtime::Var::Bound(bv) => {
+                    bv.pretty_name.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "_".to_string())
+                }
+            };
+            stack.push(DisplayTask::WriteString(name));
+        }
+    }
+}
+
+/// Generate engine arm for auto-generated literal variant (NumLit, FloatLit, etc.)
+fn generate_engine_auto_literal_arm(
+    category: &syn::Ident,
+    native_type: &syn::Type,
+) -> TokenStream {
+    let literal_label = generate_literal_label(native_type);
+    let nt = crate::gen::native::NativeType::from_syn_type(native_type);
+
+    if nt.is_string() {
+        quote! {
+            #category::#literal_label(v) => {
+                stack.push(DisplayTask::WriteString(
+                    format!("\"{}\"", v.replace('\"', "\\\""))
+                ));
+            }
+        }
+    } else {
+        quote! {
+            #category::#literal_label(v) => {
+                stack.push(DisplayTask::WriteString(format!("{}", v)));
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Display Impl Generation (delegates to iterative engine)
+// =============================================================================
+
+/// Generate `impl Display for Cat` blocks that delegate to the iterative engine.
+fn generate_display_impls(language: &LanguageDef) -> TokenStream {
+    let impls: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|lang_type| {
+            let cat = &lang_type.name;
+            let task_variant = format_ident!("Display{}", cat);
+
+            quote! {
+                impl std::fmt::Display for #cat {
+                    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        // Use try_with to avoid double-panic when Display is called
+                        // during panic unwinding (e.g., proptest error formatting).
+                        // Falls back to a fresh local stack if TLS is unavailable.
+                        let result = DISPLAY_TASK_POOL.try_with(|cell| {
+                            let mut stack = cell.take();
+                            stack.clear();
+                            stack.push(DisplayTask::#task_variant(self as *const #cat, 0));
+                            let result = display_iterative(&mut stack, f);
+                            cell.set(stack);
+                            result
+                        });
+                        match result {
+                            Ok(fmt_result) => fmt_result,
+                            Err(_) => {
+                                // TLS unavailable (thread shutdown or panic unwinding).
+                                let mut stack = Vec::new();
+                                stack.push(DisplayTask::#task_variant(self as *const #cat, 0));
+                                display_iterative(&mut stack, f)
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        #(#impls)*
+    }
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
 
 /// Format just the terminals for a unit variant
 fn format_terminals(rule: &GrammarRule) -> String {
@@ -778,44 +1411,13 @@ fn format_terminals(rule: &GrammarRule) -> String {
         .join("")
 }
 
-/// Generate display match arm for an auto-generated Var variant
-fn generate_auto_var_display_arm(category: &syn::Ident) -> TokenStream {
-    // Generate Var label: first letter + "Var"
-    let var_label = generate_var_label(category);
-
-    quote! {
-        #category::#var_label(var) => {
-            match &var.0 {
-                mettail_runtime::Var::Free(fv) => {
-                    let name = fv.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_");
-                    write!(f, "{}", name)
-                }
-                mettail_runtime::Var::Bound(bv) => {
-                    let name = bv.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_");
-                    write!(f, "{}", name)
-                }
-            }
-        }
-    }
-}
-
-/// Generate display match arm for an auto-generated literal variant (NumLit, etc.)
-/// For str/String we output quoted form so pre-substitution produces a re-parseable string literal (e.g. |y| with y="abc" -> |"abc"|).
-fn generate_auto_literal_display_arm(
-    category: &syn::Ident,
-    native_type: &syn::Type,
-) -> TokenStream {
-    let literal_label = generate_literal_label(native_type);
-    let type_str = native_type_to_string(native_type);
-
-    if type_str == "str" || type_str == "String" {
-        quote! {
-            #category::#literal_label(v) => write!(f, "\"{}\"", v.replace('\"', "\\\""))
-        }
-    } else {
-        // f32/f64 payload is canonical wrapper; it implements Display, so write!(f, "{}", v) is correct
-        quote! {
-            #category::#literal_label(v) => write!(f, "{}", v)
-        }
+/// Extract base category identifier from a TypeExpr
+fn extract_base_category_ident(ty: &TypeExpr) -> syn::Ident {
+    match ty {
+        TypeExpr::Base(ident) => ident.clone(),
+        TypeExpr::Collection { element, .. } => extract_base_category_ident(element),
+        TypeExpr::Arrow { codomain, .. } => extract_base_category_ident(codomain),
+        TypeExpr::MultiBinder(inner) => extract_base_category_ident(inner),
+        TypeExpr::Refined { base, .. } => extract_base_category_ident(base),
     }
 }

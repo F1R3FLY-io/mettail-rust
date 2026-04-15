@@ -98,6 +98,74 @@ pub trait StarSemiring: Semiring {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// SemiringRef — semiring trait without the Copy requirement
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Semiring trait without the `Copy` requirement.
+///
+/// For semirings whose carrier type requires heap allocation (e.g., `FreeWeight`
+/// with an AST of symbolic expressions, or large `ParikhWeight<D>` vectors).
+/// All operations take `&self` references and return owned values.
+///
+/// Properties required (same as [`Semiring`]):
+/// - `(K, ⊕, 0)` is a commutative monoid
+/// - `(K, ⊗, 1)` is a monoid
+/// - `⊗` distributes over `⊕`
+/// - `0 ⊗ a = a ⊗ 0 = 0` (zero annihilates)
+pub trait SemiringRef: Clone + fmt::Debug + PartialEq + Send + Sync + 'static {
+    /// Additive identity.
+    fn zero_ref() -> Self;
+    /// Multiplicative identity.
+    fn one_ref() -> Self;
+    /// Semiring addition: combines parallel paths.
+    fn plus_ref(&self, other: &Self) -> Self;
+    /// Semiring multiplication: sequences path segments.
+    fn times_ref(&self, other: &Self) -> Self;
+    /// Whether this is the additive identity.
+    fn is_zero_ref(&self) -> bool;
+    /// Whether this is the multiplicative identity.
+    fn is_one_ref(&self) -> bool;
+}
+
+/// Blanket implementation: every `Semiring` (which requires `Copy`) automatically
+/// satisfies `SemiringRef`.
+///
+/// This allows algorithms parameterized by `SemiringRef` to accept both
+/// `Copy` semirings (e.g., `TropicalWeight`) and heap-allocated semirings
+/// (e.g., `FreeWeight`).
+impl<T: Semiring> SemiringRef for T {
+    #[inline]
+    fn zero_ref() -> Self {
+        T::zero()
+    }
+
+    #[inline]
+    fn one_ref() -> Self {
+        T::one()
+    }
+
+    #[inline]
+    fn plus_ref(&self, other: &Self) -> Self {
+        self.plus(other)
+    }
+
+    #[inline]
+    fn times_ref(&self, other: &Self) -> Self {
+        self.times(other)
+    }
+
+    #[inline]
+    fn is_zero_ref(&self) -> bool {
+        self.is_zero()
+    }
+
+    #[inline]
+    fn is_one_ref(&self) -> bool {
+        self.is_one()
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // TropicalWeight
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -1069,11 +1137,9 @@ impl StarSemiring for ComplexityWeight {
 /// The `log_sum_exp` helper uses the standard trick: factor out the smaller
 /// value to avoid overflow/underflow. For very large differences (`|a-b| > 20`),
 /// the smaller term contributes < `exp(-20) ≈ 2e-9` and is safely dropped.
-#[cfg(feature = "wfst-log")]
 #[derive(Clone, Copy)]
 pub struct LogWeight(pub f64);
 
-#[cfg(feature = "wfst-log")]
 impl LogWeight {
     /// Create a new log weight from a raw negative-log value.
     #[inline]
@@ -1136,7 +1202,6 @@ impl LogWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl Semiring for LogWeight {
     #[inline]
     fn zero() -> Self {
@@ -1179,7 +1244,6 @@ impl Semiring for LogWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl fmt::Debug for LogWeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_zero() {
@@ -1190,7 +1254,6 @@ impl fmt::Debug for LogWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl fmt::Display for LogWeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_zero() {
@@ -1201,38 +1264,32 @@ impl fmt::Display for LogWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl PartialEq for LogWeight {
     fn eq(&self, other: &Self) -> bool {
         self.0.total_cmp(&other.0) == Ordering::Equal
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl Eq for LogWeight {}
 
-#[cfg(feature = "wfst-log")]
 impl PartialOrd for LogWeight {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl Ord for LogWeight {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.total_cmp(&other.0)
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl std::hash::Hash for LogWeight {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.to_bits().hash(state);
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl Default for LogWeight {
     fn default() -> Self {
         Self::one()
@@ -1273,7 +1330,6 @@ impl Default for LogWeight {
 /// - Training convergence criterion (stop when total entropy stabilizes)
 ///
 /// Feature-gated behind `wfst-log`.
-#[cfg(feature = "wfst-log")]
 #[derive(Clone, Copy)]
 pub struct EntropyWeight {
     /// Total weight in negative log-probability space.
@@ -1282,7 +1338,6 @@ pub struct EntropyWeight {
     pub expectation: f64,
 }
 
-#[cfg(feature = "wfst-log")]
 impl EntropyWeight {
     /// Create an EntropyWeight from weight and expectation components.
     #[inline]
@@ -1340,7 +1395,6 @@ impl EntropyWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl Semiring for EntropyWeight {
     /// Zero = (∞, 0.0): no paths, zero expectation.
     #[inline]
@@ -1455,7 +1509,6 @@ impl Semiring for EntropyWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl fmt::Debug for EntropyWeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_zero() {
@@ -1470,7 +1523,6 @@ impl fmt::Debug for EntropyWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl fmt::Display for EntropyWeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_zero() {
@@ -1481,7 +1533,6 @@ impl fmt::Display for EntropyWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl PartialEq for EntropyWeight {
     fn eq(&self, other: &Self) -> bool {
         self.weight.total_cmp(&other.weight) == Ordering::Equal
@@ -1489,10 +1540,8 @@ impl PartialEq for EntropyWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl Eq for EntropyWeight {}
 
-#[cfg(feature = "wfst-log")]
 impl PartialOrd for EntropyWeight {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -1500,7 +1549,6 @@ impl PartialOrd for EntropyWeight {
 }
 
 /// Ordered by weight first (lower = more probable), then expectation.
-#[cfg(feature = "wfst-log")]
 impl Ord for EntropyWeight {
     fn cmp(&self, other: &Self) -> Ordering {
         self.weight
@@ -1509,7 +1557,6 @@ impl Ord for EntropyWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl std::hash::Hash for EntropyWeight {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.weight.to_bits().hash(state);
@@ -1517,20 +1564,16 @@ impl std::hash::Hash for EntropyWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl Default for EntropyWeight {
     fn default() -> Self {
         Self::one()
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl DetectableZero for LogWeight {}
 // LogWeight is NOT idempotent: plus(a, a) = a - ln(2) ≠ a
-#[cfg(feature = "wfst-log")]
 impl CompleteSemiring for LogWeight {}
 
-#[cfg(feature = "wfst-log")]
 impl StarSemiring for LogWeight {
     /// `star(a) = -ln(1 / (1 - exp(-a)))` for `a > 0`.
     ///
@@ -1553,13 +1596,10 @@ impl StarSemiring for LogWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl DetectableZero for EntropyWeight {}
 // EntropyWeight is NOT idempotent (inherits from LogWeight)
-#[cfg(feature = "wfst-log")]
 impl CompleteSemiring for EntropyWeight {}
 
-#[cfg(feature = "wfst-log")]
 impl StarSemiring for EntropyWeight {
     /// Star for the expectation semiring. The weight component uses the
     /// LogWeight star formula. The expectation component is derived from
@@ -2533,11 +2573,9 @@ impl<const K: u32> CompleteSemiring for TruncationWeight<K> {}
 /// lattices because amplitude interference can cause cancellation. Use full
 /// forward propagation followed by Born-rule measurement, or pair with a
 /// classical priority channel via `ProductWeight<AmplitudeWeight, TropicalWeight>`.
-#[cfg(feature = "quantum")]
 #[derive(Clone, Copy)]
 pub struct AmplitudeWeight(pub num_complex::Complex64);
 
-#[cfg(feature = "quantum")]
 impl AmplitudeWeight {
     /// Create an amplitude weight from real and imaginary parts.
     #[inline]
@@ -2574,7 +2612,6 @@ impl AmplitudeWeight {
 ///
 /// `AmplitudeWeight(√exp(-w) + 0i)` = `AmplitudeWeight(exp(-w/2) + 0i)`.
 /// The resulting amplitude's Born rule gives `exp(-w)`, the original probability.
-#[cfg(all(feature = "quantum", feature = "wfst-log"))]
 impl AmplitudeWeight {
     #[inline]
     pub fn from_log_weight(w: LogWeight) -> Self {
@@ -2586,7 +2623,6 @@ impl AmplitudeWeight {
     }
 }
 
-#[cfg(feature = "quantum")]
 impl Semiring for AmplitudeWeight {
     #[inline]
     fn zero() -> Self {
@@ -2624,21 +2660,18 @@ impl Semiring for AmplitudeWeight {
     }
 }
 
-#[cfg(feature = "quantum")]
 impl fmt::Debug for AmplitudeWeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "AmplitudeWeight({:+.4}{:+.4}i)", self.0.re, self.0.im)
     }
 }
 
-#[cfg(feature = "quantum")]
 impl fmt::Display for AmplitudeWeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:+.4}{:+.4}i", self.0.re, self.0.im)
     }
 }
 
-#[cfg(feature = "quantum")]
 impl PartialEq for AmplitudeWeight {
     fn eq(&self, other: &Self) -> bool {
         self.0.re.total_cmp(&other.0.re) == Ordering::Equal
@@ -2646,10 +2679,8 @@ impl PartialEq for AmplitudeWeight {
     }
 }
 
-#[cfg(feature = "quantum")]
 impl Eq for AmplitudeWeight {}
 
-#[cfg(feature = "quantum")]
 impl PartialOrd for AmplitudeWeight {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -2659,7 +2690,6 @@ impl PartialOrd for AmplitudeWeight {
 /// Higher Born-rule probability = "better" (lower in ordering).
 /// Reversed so generic min-based algorithms select highest probability.
 /// Ties broken by real part then imaginary part for determinism.
-#[cfg(feature = "quantum")]
 impl Ord for AmplitudeWeight {
     fn cmp(&self, other: &Self) -> Ordering {
         let self_norm = self.0.norm_sqr();
@@ -2678,7 +2708,6 @@ impl Ord for AmplitudeWeight {
     }
 }
 
-#[cfg(feature = "quantum")]
 impl std::hash::Hash for AmplitudeWeight {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.re.to_bits().hash(state);
@@ -2686,14 +2715,12 @@ impl std::hash::Hash for AmplitudeWeight {
     }
 }
 
-#[cfg(feature = "quantum")]
 impl Default for AmplitudeWeight {
     fn default() -> Self {
         Self::one()
     }
 }
 
-#[cfg(feature = "quantum")]
 impl DetectableZero for AmplitudeWeight {}
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -3412,7 +3439,6 @@ mod tests {
     // LogWeight tests (feature = "wfst-log")
     // ═══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "wfst-log")]
     mod log_weight_tests {
         use super::super::*;
 
@@ -4461,7 +4487,6 @@ mod tests {
     // StarSemiring tests for LogWeight/EntropyWeight (feature = "wfst-log")
     // ═══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "wfst-log")]
     mod star_log_tests {
         use super::super::*;
 
@@ -4524,7 +4549,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "quantum")]
     mod amplitude_weight_tests {
         use super::super::*;
 
@@ -4686,7 +4710,6 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "quantum", feature = "wfst-log"))]
     mod amplitude_log_weight_tests {
         use super::super::*;
 
@@ -5288,7 +5311,6 @@ mod tests {
 
     // ── Feature-gated proptest suites ────────────────────────────────────
 
-    #[cfg(feature = "wfst-log")]
     mod log_weight_proptest_laws {
         use super::super::*;
         use proptest::prelude::*;
@@ -5439,7 +5461,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "wfst-log")]
     mod entropy_weight_proptest_laws {
         use super::super::*;
         use proptest::prelude::*;
@@ -5538,7 +5559,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "quantum")]
     mod amplitude_weight_proptest_laws {
         use super::super::*;
         use proptest::prelude::*;
@@ -5655,6 +5675,193 @@ mod tests {
                 prop_assert!(lhs.approx_eq(&rhs, 1e-8),
                     "amplitude right_dist: {:?} vs {:?}", lhs, rhs);
             }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SemiringRef blanket impl tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Verify that the blanket `SemiringRef` impl delegates correctly for
+    /// `BooleanWeight` (a `Semiring: Copy` type).
+    mod semiring_ref_boolean {
+        use super::super::{BooleanWeight, Semiring, SemiringRef};
+
+        #[test]
+        fn test_blanket_zero_ref_matches_zero() {
+            assert_eq!(
+                <BooleanWeight as SemiringRef>::zero_ref(),
+                BooleanWeight::zero(),
+            );
+        }
+
+        #[test]
+        fn test_blanket_one_ref_matches_one() {
+            assert_eq!(
+                <BooleanWeight as SemiringRef>::one_ref(),
+                BooleanWeight::one(),
+            );
+        }
+
+        #[test]
+        fn test_blanket_plus_ref_matches_plus() {
+            let t = BooleanWeight::new(true);
+            let f = BooleanWeight::new(false);
+            assert_eq!(t.plus_ref(&f), t.plus(&f));
+            assert_eq!(f.plus_ref(&t), f.plus(&t));
+            assert_eq!(t.plus_ref(&t), t.plus(&t));
+            assert_eq!(f.plus_ref(&f), f.plus(&f));
+        }
+
+        #[test]
+        fn test_blanket_times_ref_matches_times() {
+            let t = BooleanWeight::new(true);
+            let f = BooleanWeight::new(false);
+            assert_eq!(t.times_ref(&f), t.times(&f));
+            assert_eq!(f.times_ref(&t), f.times(&t));
+            assert_eq!(t.times_ref(&t), t.times(&t));
+            assert_eq!(f.times_ref(&f), f.times(&f));
+        }
+
+        #[test]
+        fn test_blanket_is_zero_ref_matches_is_zero() {
+            let t = BooleanWeight::new(true);
+            let f = BooleanWeight::new(false);
+            assert_eq!(t.is_zero_ref(), t.is_zero());
+            assert_eq!(f.is_zero_ref(), f.is_zero());
+        }
+
+        #[test]
+        fn test_blanket_is_one_ref_matches_is_one() {
+            let t = BooleanWeight::new(true);
+            let f = BooleanWeight::new(false);
+            assert_eq!(t.is_one_ref(), t.is_one());
+            assert_eq!(f.is_one_ref(), f.is_one());
+        }
+
+        #[test]
+        fn test_semiring_ref_laws_boolean() {
+            let t = BooleanWeight::new(true);
+            let f = BooleanWeight::new(false);
+            let z = BooleanWeight::zero_ref();
+            let one = BooleanWeight::one_ref();
+
+            // Zero is additive identity
+            assert_eq!(z.plus_ref(&t), t);
+            assert_eq!(t.plus_ref(&z), t);
+            assert_eq!(z.plus_ref(&f), f);
+
+            // One is multiplicative identity
+            assert_eq!(one.times_ref(&t), t);
+            assert_eq!(t.times_ref(&one), t);
+            assert_eq!(one.times_ref(&f), f);
+
+            // Zero annihilates
+            assert!(z.times_ref(&t).is_zero_ref());
+            assert!(t.times_ref(&z).is_zero_ref());
+
+            // Commutativity
+            assert_eq!(t.plus_ref(&f), f.plus_ref(&t));
+            assert_eq!(t.times_ref(&f), f.times_ref(&t));
+        }
+    }
+
+    /// Verify that the blanket `SemiringRef` impl delegates correctly for
+    /// `TropicalWeight` (a `Semiring: Copy` type).
+    mod semiring_ref_tropical {
+        use super::super::{Semiring, SemiringRef, TropicalWeight};
+
+        #[test]
+        fn test_blanket_zero_ref_matches_zero() {
+            assert_eq!(
+                <TropicalWeight as SemiringRef>::zero_ref(),
+                TropicalWeight::zero(),
+            );
+        }
+
+        #[test]
+        fn test_blanket_one_ref_matches_one() {
+            assert_eq!(
+                <TropicalWeight as SemiringRef>::one_ref(),
+                TropicalWeight::one(),
+            );
+        }
+
+        #[test]
+        fn test_blanket_plus_ref_matches_plus() {
+            let a = TropicalWeight::new(3.0);
+            let b = TropicalWeight::new(7.0);
+            assert_eq!(a.plus_ref(&b), a.plus(&b));
+            assert_eq!(b.plus_ref(&a), b.plus(&a));
+        }
+
+        #[test]
+        fn test_blanket_times_ref_matches_times() {
+            let a = TropicalWeight::new(3.0);
+            let b = TropicalWeight::new(7.0);
+            assert_eq!(a.times_ref(&b), a.times(&b));
+            assert_eq!(b.times_ref(&a), b.times(&a));
+        }
+
+        #[test]
+        fn test_blanket_is_zero_ref_matches_is_zero() {
+            let a = TropicalWeight::new(3.0);
+            let z = TropicalWeight::zero();
+            assert_eq!(a.is_zero_ref(), a.is_zero());
+            assert_eq!(z.is_zero_ref(), z.is_zero());
+        }
+
+        #[test]
+        fn test_blanket_is_one_ref_matches_is_one() {
+            let a = TropicalWeight::new(3.0);
+            let one = TropicalWeight::one();
+            assert_eq!(a.is_one_ref(), a.is_one());
+            assert_eq!(one.is_one_ref(), one.is_one());
+        }
+
+        #[test]
+        fn test_semiring_ref_laws_tropical() {
+            let a = TropicalWeight::new(2.0);
+            let b = TropicalWeight::new(5.0);
+            let c = TropicalWeight::new(8.0);
+            let z = TropicalWeight::zero_ref();
+            let one = TropicalWeight::one_ref();
+
+            // Zero is additive identity
+            assert_eq!(z.plus_ref(&a), a);
+            assert_eq!(a.plus_ref(&z), a);
+
+            // One is multiplicative identity
+            assert_eq!(one.times_ref(&a), a);
+            assert_eq!(a.times_ref(&one), a);
+
+            // Zero annihilates
+            assert!(z.times_ref(&a).is_zero_ref());
+            assert!(a.times_ref(&z).is_zero_ref());
+
+            // Commutativity of plus
+            assert_eq!(a.plus_ref(&b), b.plus_ref(&a));
+
+            // Associativity of plus
+            assert_eq!(
+                a.plus_ref(&b).plus_ref(&c),
+                a.plus_ref(&b.plus_ref(&c)),
+            );
+
+            // Associativity of times
+            assert_eq!(
+                a.times_ref(&b).times_ref(&c),
+                a.times_ref(&b.times_ref(&c)),
+            );
+
+            // Left distributivity: a * (b + c) = (a * b) + (a * c)
+            assert_eq!(
+                a.times_ref(&b.plus_ref(&c)),
+                a.times_ref(&b).plus_ref(&a.times_ref(&c)),
+            );
+
+            // Idempotent plus
+            assert_eq!(a.plus_ref(&a), a);
         }
     }
 }

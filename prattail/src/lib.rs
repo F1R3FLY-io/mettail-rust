@@ -1,5 +1,5 @@
 // AL03: SIMD-accelerated whitespace skipping requires portable_simd (nightly).
-#![cfg_attr(feature = "simd-whitespace", feature(portable_simd))]
+#![feature(portable_simd)]
 
 //! # PraTTaIL — Pratt + Recursive Descent Parser Generator for MeTTaIL
 //!
@@ -50,6 +50,7 @@ pub mod prediction;
 pub mod recursive;
 pub mod token_id;
 pub mod trampoline;
+pub mod unified_trampoline;
 pub mod wfst;
 
 pub mod compose;
@@ -66,6 +67,69 @@ pub mod tensor;
 pub mod transducer;
 pub mod wpds;
 
+/// CEK machine architecture: reactive state machine, trace entries,
+/// incremental session, environment infrastructure.
+pub mod cek;
+
+/// CEK evaluator: demand-driven term rewriting via CEK machine.
+/// Control = current term, Environment = variable bindings,
+/// Kontinuation = evaluation context stack.
+pub mod cek_eval;
+
+/// CESK store: address-based indirection for mutable state.
+/// Extends the CEK machine with an explicit Store component:
+/// env[var] → addr, store[addr] → value. Enables mutation (set!),
+/// aliasing, closures with shared state, and tuplespace semantics.
+pub mod cesk_store;
+
+/// Garbage collection infrastructure for the CESK store.
+/// Configurable strategies: None (monotonic), RefCount (async dealloc),
+/// MarkSweep (snapshot-based async mark-and-sweep). Adapted from
+/// MeTTaTron's GC infrastructure.
+pub mod gc;
+
+/// Abstract CESK machine: abstract GC, evaluation WPDS, Dyck state graphs.
+/// Implements abstract interpretation via the AAM recipe (Van Horn & Might 2010)
+/// and introspective pushdown analysis (Earl et al. 2013).
+pub mod abstract_cesk;
+
+/// Channel infrastructure: lock-free MPMC queues, channel maps,
+/// join patterns, channel specifications from `channels {}` block.
+pub mod channel;
+
+/// Green thread core: suspendable CEK machines with persistent
+/// continuation stacks (`im::Vector`) and environments (`im::HashMap`).
+pub mod green_thread;
+
+/// Scheduler: MeTTaTron-adapted CronStateMachine with multi-tape
+/// automaton dispatch for K-channel scheduling.
+pub mod scheduler;
+
+/// Global pool: process-wide adaptive thread pool shared across
+/// all MeTTaIL language instances. OnceLock singleton.
+pub mod global_pool;
+
+/// Reactive FSM types for the M:N green thread scheduler:
+/// Worker, Coordinator, and Pool state machines.
+pub mod pool_fsm;
+
+/// Worker pool: crossbeam-deque work-stealing execution layer.
+/// N native OS threads executing M green threads cooperatively.
+pub mod worker_pool;
+
+/// Coordinator: scheduling layer that owns the Scheduler FSM,
+/// processes worker reports, and dispatches work to workers.
+pub mod coordinator;
+
+/// Railroad diagram generation from grammar specifications.
+pub mod railroad;
+
+/// Graph-Structured Stack for GLL parsing.
+pub mod gss;
+
+/// Earley recognition with Leo optimization.
+pub mod earley;
+
 // ── Algebraic program analysis (always-on — generic over any StarSemiring) ──
 // Tarjan path expression algorithm + interprocedural extension
 // (Kincaid, Cyphert, Breck & Reps, 2019).
@@ -81,166 +145,140 @@ pub mod newton;
 pub mod forward_backward;
 
 // ── Log semiring modules (feature = "wfst-log") ────────────────────────────
-#[cfg(feature = "wfst-log")]
 pub mod log_push;
-#[cfg(feature = "wfst-log")]
 pub mod training;
 
-#[cfg(feature = "grammar-gen")]
 pub mod grammar_gen;
 
 // ── Mathematical Analysis & Theorem Proving modules ─────────────────────────
 
 /// Provenance semiring N[X]: polynomial semiring tracking HOW facts are derived.
-#[cfg(feature = "provenance")]
 pub mod provenance;
 
 /// Relational weight domain: binary relations on finite sets for WPDS analysis.
-#[cfg(feature = "wpds-relational")]
 pub mod relational;
 
 /// EWPDS: Extended WPDS with merging functions for local variable handling.
-#[cfg(feature = "wpds-extended")]
 pub mod ewpds;
 
 /// ARA: Affine-Relation Analysis weight domain (vector spaces of matrices).
 /// Discovers all interprocedural affine relationships via WPDS analysis.
-#[cfg(feature = "wpds-ara")]
 pub mod ara;
 
 /// Kleene Algebra with Tests: decidable Hoare logic and program equivalence.
-#[cfg(feature = "kat")]
 pub mod kat;
 
 /// Visibly Pushdown Automata: decidable equivalence/inclusion for structured grammars.
-#[cfg(feature = "vpa")]
 pub mod vpa;
 
 /// TRS analysis: confluence checking (critical pairs) and termination (dependency pairs).
-#[cfg(feature = "trs-analysis")]
 pub mod confluence;
-#[cfg(feature = "trs-analysis")]
 pub mod termination;
 
 /// E-graph equality saturation: enhanced joinability, term simplification,
 /// equivalence discovery via the egg algorithm (Willsey et al., POPL 2021).
-#[cfg(feature = "egraph")]
 pub mod egraph;
 
 /// Buchi/Parity automata: infinite-word acceptance for liveness properties.
-#[cfg(feature = "omega")]
 pub mod buchi;
 
 /// LTL model checking: WPDS x Buchi product for temporal property verification.
-#[cfg(feature = "ltl")]
 pub mod ltl;
 
 /// Weighted Tree Automata: term recognition, ranking, and transduction.
-#[cfg(feature = "tree-automata")]
 pub mod tree_automaton;
 
 /// Alternating automata: universal branching for game semantics and CTL.
-#[cfg(feature = "alternating")]
 pub mod alternating;
 
 /// Nominal automata: orbit-finite sets for name-passing calculi.
-#[cfg(feature = "nominal")]
 pub mod nominal;
 
 /// Petri nets / VASS: concurrent process analysis.
-#[cfg(feature = "petri")]
 pub mod petri;
 
 /// Cost Register Automata: streaming quantitative computation.
-#[cfg(feature = "cra")]
 pub mod cra;
 
 /// Theory morphisms: cross-theory translation and proof transfer.
-#[cfg(feature = "morphisms")]
 pub mod morphism;
 
 /// Layered proof output: verdicts, human-readable explanations, Rocq certificates.
-#[cfg(feature = "proofs")]
 pub mod proof_output;
 
 // ── Advanced Automata Infrastructure ─────────────────────────────────────────
 
 /// Symbolic automata: predicate-labeled transitions over infinite domains.
 /// BooleanAlgebra trait, decidability classification (T1-T4), guard analysis.
-#[cfg(feature = "symbolic-automata")]
 pub mod symbolic;
 
 /// Weighted MSO logic: grammar property specification, lint-as-formula,
 /// Büchi-Elgot-Trakhtenbrot theorem bridge (Droste & Gastin 2007).
-#[cfg(feature = "weighted-mso")]
 pub mod weighted_mso;
 
 /// Parity alternating tree automata: mu-calculus model checking on ASTs,
 /// structural verification, test generation (Emerson & Jutla 1991).
-#[cfg(feature = "parity-tree-automata")]
 pub mod parity_tree;
+
+/// `letprop` recursive predicate definitions (Phase 10 of the
+/// predicated-types implementation plan). Lowers source-level
+/// `letprop name(args) = body;` to mu-calculus + PATA.
+pub mod letprop;
+
+/// Hindley-Milner type system scaffold (Phase 12 of the
+/// predicated-types implementation plan). Implements `TypeSystem`
+/// over `HmType` with Algorithm W unification and `infer_simple_let`.
+pub mod hindley_milner;
 
 /// Register automata: data-aware finite-state computation with register storage.
 /// Context-sensitive parsing, binding verification (Kaminski & Francez 1994).
-#[cfg(feature = "register-automata")]
 pub mod register_automata;
 
 /// Probabilistic automata: statistical disambiguation, expected-case optimization,
 /// corpus-driven weight training via Baum-Welch EM.
-#[cfg(feature = "probabilistic")]
 pub mod probabilistic;
 
 /// Multi-tape automata: synchronized multi-stream computation with k tapes.
 /// Multi-channel receives, parallel tokenization (Kempe 2004).
-#[cfg(feature = "multi-tape")]
 pub mod multi_tape;
 
 /// Multiset automata: multiset-weighted computation for process multiplicity
 /// and resource analysis (Müller, Weiß & Lochau 2024).
-#[cfg(feature = "multiset-automata")]
 pub mod multiset_automata;
 
 /// Weighted two-way transducers: bidirectional weighted transductions for
 /// cross-channel constraint propagation (Feng & Maletti 2022).
-#[cfg(feature = "two-way-transducer")]
 pub mod two_way_transducer;
 
 /// Symbolic Finite Transducers: output-producing transductions over infinite
 /// domains. Composition, pre/post-image, functionality (D'Antoni & Veanes 2012).
-#[cfg(feature = "sft")]
 pub mod sft;
 
 /// Predicate Dispatch Automaton: algebraic variety classification for directed
 /// module dispatch. Decomposes predicate formulas into morphemes and activates
 /// only the relevant Phase 7 modules (Eilenberg variety theorem).
-#[cfg(feature = "predicate-dispatch")]
 pub mod predicate_dispatch;
 
 /// LogicT fair backtracking search framework and ConstraintTheory trait.
 /// Implements msplit-based LogicT (Kiselyov et al., ICFP 2005) for fair
 /// disjunction and conjunction. Provides the ConstraintTheory trait for
 /// pluggable constraint domains and TheoryAlgebra bridge to BooleanAlgebra.
-#[cfg(feature = "logict")]
 pub mod logict;
 
 /// Presburger arithmetic: automata-based decision procedure for
 /// multi-variable linear integer arithmetic (Büchi 1960). Zero external deps.
-#[cfg(feature = "presburger")]
 pub mod presburger;
 
 /// Structural unification with occurs check (Martelli & Montanari 1982).
 /// ConstraintTheory implementation for pattern matching and type variable solving.
-#[cfg(feature = "unification")]
 pub mod unification;
 
 /// Subtype lattice with join/meet (LUB/GLB) operations.
 /// ConstraintTheory implementation for type hierarchy analysis.
-#[cfg(feature = "lattice-theory")]
 pub mod lattice_theory;
 
 /// Pluggable type system framework: TypeSystem trait, LatticeTypeSystem,
 /// RefinementTypeSystem, TypeSystemAlgebra bridge to BooleanAlgebra.
-#[cfg(feature = "type-system")]
 pub mod type_system;
 
 /// Safety/liveness verification API: WPDS-based property checking.
@@ -514,6 +552,87 @@ pub struct LanguageSpec {
     /// Each entry describes a type like `PosInt = { x: Int | x > 0 }`.
     /// Default: empty.
     pub refinement_types: Vec<RefinementTypeSpec>,
+    /// Lowered guard configuration from the `guards { ... }` block
+    /// (design doc §2A). `None` when the block is absent — backward
+    /// compatible with existing language definitions.
+    ///
+    /// Pipeline functions consult this for theory-driven module activation,
+    /// channel-driven M8/M11 dispatch, and per-predicate selectivity/cost
+    /// overrides. When `None`, the pipeline falls back to heuristic
+    /// keyword/structural inference.
+    pub guard_config: Option<GuardConfigSpec>,
+}
+
+/// Lowered guard configuration for pipeline consumption.
+///
+/// Produced by `language_def_to_spec()` from the macro-side `GuardConfig`
+/// AST. All `syn` types are resolved to plain strings so the pipeline crate
+/// has zero dependency on `syn`.
+#[derive(Debug, Clone, Default)]
+pub struct GuardConfigSpec {
+    /// Theory registrations: each entry maps a theory name to its type
+    /// and the set of grammar categories it handles. Used by
+    /// `classify_grammar()` to replace heuristic `is_*_relation()` dispatch
+    /// with data-driven module activation.
+    pub theories: Vec<TheoryRegistrationSpec>,
+
+    /// Explicit channel categories. When `Some`, only the listed
+    /// categories are treated as channels for M8/M11 dispatch.
+    /// When `None`, the pipeline falls back to heuristic channel
+    /// inference from cross-category references.
+    pub channel_categories: Option<Vec<String>>,
+
+    /// Explicit join pattern declarations: `(label, channel_categories)`.
+    /// Used to determine M8/M11 activation count and per-pattern arity.
+    /// Empty when `channels {}` is omitted.
+    pub join_patterns: Vec<JoinPatternSpec>,
+
+    /// Per-predicate selectivity overrides, keyed by predicate name.
+    /// Values are in [0.0, 1.0]. When a predicate name appears in this
+    /// map, `estimate_predicate_selectivity()` returns the override
+    /// value instead of computing a heuristic estimate.
+    pub selectivity_overrides: HashMap<String, f64>,
+
+    /// Per-predicate cost overrides, keyed by predicate name.
+    /// Values are in ℕ. When a predicate name appears in this map,
+    /// `estimate_predicate_cost()` and `condition_cost()` return the
+    /// override value instead of computing a heuristic estimate.
+    pub cost_overrides: HashMap<String, u32>,
+
+    /// Whether the grammar author provided an explicit `connectives {}`
+    /// sub-block. When `true`, the parser uses declared connective
+    /// keywords; when `false`, default Rust-token connectives apply.
+    pub has_explicit_connectives: bool,
+
+    /// Whether the grammar author provided explicit predicate
+    /// declarations (direct items in `guards {}`). When `true`,
+    /// closed-world validation is active.
+    pub has_explicit_predicates: bool,
+}
+
+/// A single theory registration, lowered from `TheoryRegistration`.
+///
+/// Corresponds to one `name = TheoryType for [Cat1, Cat2];` declaration
+/// in the `theories {}` sub-block.
+#[derive(Debug, Clone)]
+pub struct TheoryRegistrationSpec {
+    /// Theory name (e.g., `"arithmetic"`, `"patterns"`).
+    pub name: String,
+    /// Fully-qualified Rust type path as a string (e.g., `"PresburgerAlgebra"`).
+    pub theory_type: String,
+    /// Grammar categories this theory handles (e.g., `["Int"]`).
+    /// When `None`, the theory handles all categories.
+    pub handled_types: Option<Vec<String>>,
+}
+
+/// A lowered join pattern declaration: `(label, channel_param_categories)`.
+#[derive(Debug, Clone)]
+pub struct JoinPatternSpec {
+    /// Join pattern label — must match a constructor in `terms {}`.
+    pub label: String,
+    /// Categories of the channel-binding parameters in declaration order.
+    /// `len() >= 2` activates M8 (Multi-Tape).
+    pub channel_categories: Vec<String>,
 }
 
 /// A category (type) in the language.
@@ -640,6 +759,19 @@ pub enum SyntaxItemSpec {
     /// Wraps inner items in a save/restore block: if parsing fails,
     /// the position is reverted and parsing continues.
     Optional { inner: Vec<SyntaxItemSpec> },
+    /// Guard expression slot (Phase 2F, predicated types).
+    ///
+    /// Marks where a `?guard:Guard` parameter reference appears in the
+    /// syntax pattern. The macro-generated parser should switch into
+    /// the language-generic predicate sublanguage parser
+    /// (`mettail_runtime::parser::predicate::PredicateParser`) and
+    /// produce a `mettail_runtime::BehavioralPred` runtime value to
+    /// store in the corresponding term field.
+    ///
+    /// The surrounding language syntax pattern determines any trigger
+    /// keyword (`where`, `if`, `|`, etc.) — the parser is invoked
+    /// AFTER the trigger literal has been consumed.
+    GuardExpression { param_name: String },
 }
 
 /// Minimal input for constructing a `RuleSpec`.
@@ -745,6 +877,7 @@ impl LanguageSpec {
             sync: None,
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
         }
     }
 }
@@ -889,45 +1022,37 @@ pub struct PipelineAnalysis {
     /// Binder categories where register analysis proves the bound name
     /// is stored but never tested (dead register). Codegen can skip
     /// alpha-equivalence checking for these categories (RA01-SKIP).
-    #[cfg(feature = "register-automata")]
     pub dead_binder_categories: HashSet<String>,
 
     /// Whether the grammar's bracket structure is deterministic (VPA analysis).
     /// True when `is_determinizable == true` AND `alphabet_mismatches` is empty.
     /// Currently informational; may enable future optimizations (V05-INFO).
-    #[cfg(feature = "vpa")]
     pub bracket_deterministic: bool,
 
     /// Upper bound on valid nesting depth from VPA analysis.
     /// Recovery at depths exceeding this bound strongly favors skip.
-    #[cfg(feature = "vpa")]
     pub vpa_max_nesting_bound: Option<usize>,
 
     /// Tokens that VPA analysis found used as both call and return symbols.
     /// Recovery should penalize InsertToken for these tokens (Sprint A2).
-    #[cfg(feature = "vpa")]
     pub bracket_mismatch_tokens: HashSet<String>,
 
     /// Categories whose multi-tape analysis shows they are independent
     /// (no cross-tape constraints). Currently informational (MT01-INFO).
-    #[cfg(feature = "multi-tape")]
     pub independent_categories: HashSet<String>,
 
     /// Tokens where symbolic guard analysis proves one category's guard subsumes another's.
     /// These tokens can be dispatched without backtracking (subsuming category tried first).
-    #[cfg(feature = "symbolic-automata")]
     pub guard_disambiguated_tokens: HashSet<String>,
 
     /// Per-category Shannon entropy from probabilistic analysis.
     /// Higher entropy indicates more ambiguous alternatives, suggesting a wider
     /// beam is needed during spillover beam pruning. Categories with entropy
     /// near zero have a single dominant rule and need no beam at all.
-    #[cfg(feature = "probabilistic")]
     pub per_category_entropy: HashMap<String, f64>,
 
     /// Categories that participate in accepting SCCs (recursive grammar loops).
     /// Recovery prefers InsertToken in these categories to maintain the loop.
-    #[cfg(feature = "omega")]
     pub recursive_scc_categories: HashSet<String>,
 }
 

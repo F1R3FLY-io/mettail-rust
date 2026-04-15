@@ -1185,14 +1185,12 @@ fn div_floor(a: i64, b: i64) -> i64 {
 /// The NFA-based approach and the `TheoryAlgebra` validation path must produce
 /// identical results for all predicates. This is verified by cross-validation
 /// tests.
-#[cfg(feature = "symbolic-automata")]
 #[derive(Clone, Debug)]
 pub struct PresburgerAlgebra {
     /// Bit width for bounded integer representation.
     pub bit_width: usize,
 }
 
-#[cfg(feature = "symbolic-automata")]
 impl PresburgerAlgebra {
     /// Create a new `PresburgerAlgebra` with the given bit width.
     pub fn new(bit_width: usize) -> Self {
@@ -1207,7 +1205,6 @@ impl PresburgerAlgebra {
     }
 }
 
-#[cfg(feature = "symbolic-automata")]
 impl crate::symbolic::BooleanAlgebra for PresburgerAlgebra {
     type Predicate = PresburgerPred;
     type Domain = IntAssignment;
@@ -2249,7 +2246,6 @@ mod tests {
 
     // ── PresburgerAlgebra (BooleanAlgebra) tests ────────────────────────
 
-    #[cfg(feature = "symbolic-automata")]
     mod algebra_tests {
         use super::*;
         use crate::symbolic::BooleanAlgebra;
@@ -2397,7 +2393,6 @@ mod tests {
 
     // ── TheoryAlgebra<PresburgerTheory> tests (validation path) ─────────
 
-    #[cfg(feature = "symbolic-automata")]
     mod theory_algebra_tests {
         use super::*;
         use crate::logict::TheoryAlgebra;
@@ -2479,7 +2474,6 @@ mod tests {
 
     // ── Cross-validation: PresburgerAlgebra vs TheoryAlgebra ─────────────
 
-    #[cfg(feature = "symbolic-automata")]
     mod cross_validation {
         use super::*;
         use crate::logict::{TheoryAlgebra, TheoryPred};

@@ -1120,7 +1120,6 @@ impl PredictionWfst {
     /// Unmatched actions keep their original (heuristic) weights.
     ///
     /// Also updates the corresponding transitions in the start state.
-    #[cfg(feature = "wfst-log")]
     pub fn with_trained_weights(&mut self, model: &crate::training::TrainedModel) {
         for (idx, action) in self.actions.iter_mut().enumerate() {
             let label = match &action.action {
@@ -1154,7 +1153,6 @@ impl PredictionWfst {
     /// clamped to `[-max_adjustment, +max_adjustment]`.
     ///
     /// This provides the WFST-level interface for the `SpilloverTrainer`.
-    #[cfg(feature = "wfst-log")]
     pub fn apply_corrections(
         &mut self,
         corrections: &[WeightCorrection],
@@ -1209,7 +1207,6 @@ impl PredictionWfst {
     ///
     /// # Requires
     /// Feature `wfst-log` (EntropyWeight is gated).
-    #[cfg(feature = "wfst-log")]
     pub fn compute_entropy(&self) -> (f64, f64) {
         use crate::automata::semiring::{EntropyWeight, Semiring};
         use crate::forward_backward::forward_scores;
@@ -2416,7 +2413,6 @@ mod tests {
 
     // ── with_trained_weights() tests ────────────────────────────────────
 
-    #[cfg(feature = "wfst-log")]
     #[test]
     fn test_with_trained_weights_overrides_matching() {
         let token_map = TokenIdMap::from_names(vec!["Plus", "Ident"].into_iter().map(String::from));
@@ -2468,7 +2464,6 @@ mod tests {
         // (Variable action doesn't match any rule_label in the model)
     }
 
-    #[cfg(feature = "wfst-log")]
     #[test]
     fn test_with_trained_weights_updates_transitions() {
         let token_map = TokenIdMap::from_names(vec!["Plus"].into_iter().map(String::from));
@@ -3192,7 +3187,6 @@ mod tests {
         assert!((beam.expect("should have beam") - 2.25).abs() < 1e-10);
     }
 
-    #[cfg(feature = "wfst-log")]
     #[test]
     fn test_a7_compute_entropy_single_action() {
         // A7: Single deterministic action → entropy = 0 (no uncertainty)
@@ -3216,7 +3210,6 @@ mod tests {
             "single action should have near-zero bits, got {}", entropy_bits);
     }
 
-    #[cfg(feature = "wfst-log")]
     #[test]
     fn test_a7_compute_entropy_uniform_two_actions() {
         // A7: Two actions with equal weight → entropy = ln(2) nats ≈ 1 bit
@@ -3246,7 +3239,6 @@ mod tests {
             "two equal actions should have ~1 bit entropy, got {}", entropy_bits);
     }
 
-    #[cfg(feature = "wfst-log")]
     #[test]
     fn test_a7_compute_entropy_skewed_actions() {
         // A7: One dominant action (weight 0.0) vs one unlikely (weight 5.0)
@@ -3277,7 +3269,6 @@ mod tests {
             "skewed distribution should have low entropy, got {}", entropy_bits);
     }
 
-    #[cfg(feature = "wfst-log")]
     #[test]
     fn test_a7_compute_entropy_empty_wfst() {
         // A7: Empty WFST → entropy = 0

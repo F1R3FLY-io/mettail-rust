@@ -9,6 +9,7 @@ use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 
 use crate::automata::codegen::terminal_to_variant_name;
+use crate::lint::DiagnosticId;
 
 /// A FIRST set: the set of token kinds that can begin a particular alternative.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -595,6 +596,14 @@ fn first_of_suffix(
                 result.union(&inner_first);
                 // Optional is nullable by definition — continue
             },
+            crate::SyntaxItemSpec::GuardExpression { .. } => {
+                // Phase 2F: guard expression is non-nullable; FIRST is
+                // an identifier (first token of a predicate expression
+                // is always an identifier or an opening paren).
+                result.insert("Ident");
+                nullable = false;
+                break;
+            },
         }
     }
 
@@ -692,6 +701,11 @@ pub fn first_of_rd_suffix(
                 let (inner_first, _) = first_of_rd_suffix(inner, first_sets);
                 result.union(&inner_first);
                 // Optional is nullable by definition — continue
+            },
+            RDSyntaxItem::GuardExpression { .. } => {
+                result.insert("Ident");
+                nullable = false;
+                break;
             },
         }
     }
@@ -2169,7 +2183,7 @@ pub fn compute_composed_dispatch(
                         })
                         .collect();
                     w05_diagnostics.push(crate::lint::LintDiagnostic {
-                        id: "W05",
+                        id: DiagnosticId::W05,
                         name: "composed-dispatch-ambiguity",
                         severity: crate::lint::LintSeverity::Warning,
                         category: Some(category.clone()),
@@ -3302,5 +3316,114 @@ mod first_set_tests {
             prop_assert_eq!(ab.nullable, ba.nullable,
                 "a ∪ b should have same nullable as b ∪ a");
         }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CEK-5: Context-Sensitive FIRST Sets via WPDS
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// CEK-5: Compute context-sensitive FIRST sets using WPDS poststar analysis.
+///
+/// Refines standard FIRST sets by restricting them to tokens that are reachable
+/// in specific stack contexts. This eliminates false ambiguities in grammars
+/// where different callers expose different subsets of a category's rules.
+///
+/// The algorithm works by:
+/// 1. For each category, enumerate calling contexts from WPDS analysis
+/// 2. For each calling context, determine which rules are reachable
+/// 3. Compute FIRST sets restricted to those reachable rules
+///
+/// Returns a map from `(callee_category, caller_category)` to refined FIRST sets.
+///
+/// Falls back to standard FIRST sets when no refinement is possible.
+pub fn compute_context_sensitive_first_sets(
+    standard_first: &HashMap<String, FirstSet>,
+    rules: &[RuleInfo],
+    wpds_analysis: &crate::wpds::WpdsAnalysis,
+) -> HashMap<(String, String), FirstSet> {
+    let mut cs_first: HashMap<(String, String), FirstSet> = HashMap::new();
+
+    // wpds_analysis.calling_contexts maps callee_cat → Vec<CallingContext>
+    // Each CallingContext has caller_category, caller_rule, etc.
+    let unreachable_labels: HashSet<&str> = wpds_analysis
+        .unreachable_rules
+        .iter()
+        .map(|r| r.rule_label.as_str())
+        .collect();
+
+    for (callee_cat, contexts) in &wpds_analysis.calling_contexts {
+        let base_first = match standard_first.get(callee_cat) {
+            Some(f) => f.clone(),
+            None => continue,
+        };
+
+        // Group contexts by caller category
+        let mut callers: HashSet<String> = HashSet::new();
+        for ctx in contexts {
+            callers.insert(ctx.caller_category.clone());
+        }
+
+        for caller_cat in &callers {
+            // Check which rules of the callee are reachable from this caller
+            let mut refined = FirstSet::new();
+            refined.nullable = base_first.nullable;
+
+            for rule in rules {
+                if rule.category != *callee_cat || rule.is_infix {
+                    continue;
+                }
+
+                // Skip rules proven unreachable by WPDS
+                if unreachable_labels.contains(rule.label.as_str()) {
+                    continue;
+                }
+
+                // Add this rule's FIRST tokens to the refined set
+                for item in &rule.first_items {
+                    match item {
+                        FirstItem::Terminal(t) => {
+                            refined.insert(&crate::automata::codegen::terminal_to_variant_name(t));
+                        },
+                        FirstItem::NonTerminal(cat) => {
+                            if let Some(cat_first) = standard_first.get(cat) {
+                                for token in &cat_first.tokens {
+                                    refined.insert(token);
+                                }
+                            }
+                        },
+                        FirstItem::Ident => {
+                            refined.insert("Ident");
+                        },
+                    }
+                }
+            }
+
+            // Only store if the refined set is actually smaller (more precise)
+            if refined.tokens.len() < base_first.tokens.len() {
+                cs_first.insert(
+                    (callee_cat.clone(), caller_cat.clone()),
+                    refined,
+                );
+            }
+        }
+    }
+
+    cs_first
+}
+
+#[cfg(test)]
+mod cek5_tests {
+    use super::*;
+
+    #[test]
+    fn test_context_sensitive_first_empty_contexts() {
+        let standard: HashMap<String, FirstSet> = HashMap::new();
+        let rules: Vec<RuleInfo> = Vec::new();
+
+        // Build a minimal WpdsAnalysis with empty data
+        let analysis = crate::wpds::WpdsAnalysis::empty_for_test();
+        let result = compute_context_sensitive_first_sets(&standard, &rules, &analysis);
+        assert!(result.is_empty());
     }
 }

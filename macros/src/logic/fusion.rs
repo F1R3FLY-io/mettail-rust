@@ -42,9 +42,9 @@
 //! Ascent rules) are deferred to a future sprint due to the complexity of modifying
 //! the deconstruction and rewrite codegen paths simultaneously.
 
-use crate::ast::grammar::GrammarItem;
-use crate::ast::language::LanguageDef;
-use crate::ast::pattern::{Pattern, PatternTerm};
+use mettail_ast::grammar::GrammarItem;
+use mettail_ast::language::LanguageDef;
+use mettail_ast::pattern::{Pattern, PatternTerm};
 use std::collections::{HashMap, HashSet};
 
 // =============================================================================
@@ -235,31 +235,31 @@ fn build_subterm_map(
         if let Some(ref term_ctx) = rule.term_context {
             for param in term_ctx {
                 match param {
-                    crate::ast::grammar::TermParam::Simple { ty, .. } => {
-                        if let crate::ast::types::TypeExpr::Base(ident) = ty {
+                    mettail_ast::grammar::TermParam::Simple { ty, .. } => {
+                        if let mettail_ast::types::TypeExpr::Base(ident) = ty {
                             let cat = ident.to_string();
                             if all_categories.contains(&cat) {
                                 target_cats.insert(cat);
                             }
                         }
                     }
-                    crate::ast::grammar::TermParam::Abstraction { ty, .. }
-                    | crate::ast::grammar::TermParam::MultiAbstraction { ty, .. } => {
-                        if let crate::ast::types::TypeExpr::Base(ident) = ty {
+                    mettail_ast::grammar::TermParam::Abstraction { ty, .. }
+                    | mettail_ast::grammar::TermParam::MultiAbstraction { ty, .. } => {
+                        if let mettail_ast::types::TypeExpr::Base(ident) = ty {
                             let cat = ident.to_string();
                             if all_categories.contains(&cat) {
                                 target_cats.insert(cat);
                             }
                         }
                     }
-                    crate::ast::grammar::TermParam::GuardBody { .. } => {}
+                    mettail_ast::grammar::TermParam::GuardBody { .. } => {}
                 }
             }
         } else {
             // Old syntax: inspect items
             for item in &rule.items {
                 match item {
-                    GrammarItem::NonTerminal(cat) => {
+                    GrammarItem::NonTerminal { ident: cat, .. } => {
                         let cat_str = cat.to_string();
                         if all_categories.contains(&cat_str) {
                             target_cats.insert(cat_str);
@@ -418,7 +418,7 @@ pub fn emit_fusion_diagnostics(language: &LanguageDef, grammar_name: &str) {
         // No fusion opportunities — verbose-only (not actionable)
         if std::env::var("PRATTAIL_LINT_VERBOSE").is_ok() {
             mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
-                id: "G42",
+                id: mettail_prattail::lint::DiagnosticId::G42,
                 name: "rule-fusion-analysis",
                 severity: mettail_prattail::lint::LintSeverity::Note,
                 category: None,
@@ -444,7 +444,7 @@ pub fn emit_fusion_diagnostics(language: &LanguageDef, grammar_name: &str) {
     }
 
     mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
-        id: "G42",
+        id: mettail_prattail::lint::DiagnosticId::G42,
         name: "rule-fusion-analysis",
         severity: mettail_prattail::lint::LintSeverity::Note,
         category: None,
@@ -496,7 +496,7 @@ pub fn emit_fusion_diagnostics(language: &LanguageDef, grammar_name: &str) {
             };
 
             mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
-                id: "G42",
+                id: mettail_prattail::lint::DiagnosticId::G42,
                 name: "rule-fusion-candidate",
                 severity: mettail_prattail::lint::LintSeverity::Note,
                 category: Some(candidate.parent_category.clone()),
@@ -573,22 +573,22 @@ fn generate_fused_rule(
             .enumerate()
             .filter_map(|(i, param)| {
                 let ty_str = match param {
-                    crate::ast::grammar::TermParam::Simple { ty, .. } => {
-                        if let crate::ast::types::TypeExpr::Base(ident) = ty {
+                    mettail_ast::grammar::TermParam::Simple { ty, .. } => {
+                        if let mettail_ast::types::TypeExpr::Base(ident) = ty {
                             Some(ident.to_string())
                         } else {
                             None
                         }
                     }
-                    crate::ast::grammar::TermParam::Abstraction { ty, .. }
-                    | crate::ast::grammar::TermParam::MultiAbstraction { ty, .. } => {
-                        if let crate::ast::types::TypeExpr::Base(ident) = ty {
+                    mettail_ast::grammar::TermParam::Abstraction { ty, .. }
+                    | mettail_ast::grammar::TermParam::MultiAbstraction { ty, .. } => {
+                        if let mettail_ast::types::TypeExpr::Base(ident) = ty {
                             Some(ident.to_string())
                         } else {
                             None
                         }
                     }
-                    crate::ast::grammar::TermParam::GuardBody { .. } => None,
+                    mettail_ast::grammar::TermParam::GuardBody { .. } => None,
                 };
                 ty_str.map(|t| (i, t))
             })
@@ -599,7 +599,7 @@ fn generate_fused_rule(
             .iter()
             .enumerate()
             .filter_map(|(i, item)| match item {
-                GrammarItem::NonTerminal(cat) => Some((i, cat.to_string())),
+                GrammarItem::NonTerminal { ident: cat, .. } => Some((i, cat.to_string())),
                 _ => None,
             })
             .collect()
@@ -640,6 +640,10 @@ fn generate_fused_rule(
     // Use the existing Pattern infrastructure for the rewrite LHS/RHS.
     let s_orig = format_ident!("s_orig");
     let parent_var = format_ident!("__fused_parent");
+
+    // F1: Eqrel dereference fix — temporary variables for eqrel join
+    let s_orig_eq = format_ident!("__eqrel_{}", s_orig);
+    let parent_var_eq = format_ident!("__eqrel_{}", parent_var);
 
     // Generate one fused rule per matching field index
     let mut rules = Vec::new();
@@ -712,7 +716,9 @@ fn generate_fused_rule(
 
         let rule = quote! {
             #rw_rewrite_rel(#s_orig.clone(), #rhs_var) <--
-                #eq_parent_rel(#s_orig, #parent_var),
+                #eq_parent_rel(#s_orig_eq, #parent_var_eq),
+                let #s_orig = #s_orig_eq.clone(),
+                let #parent_var = #parent_var_eq.clone(),
                 if let #parent_cat::#parent_label(#(#parent_pat_fields),*) = #parent_var,
                 #let_sub,
                 #(#lhs_clauses_ts,)*
@@ -736,7 +742,7 @@ fn generate_fused_rule(
 /// Returns (fused_rules, count) where fused_rules is a Vec of TokenStream fragments
 /// and count is the number of candidates that were successfully fused.
 pub fn generate_all_fused_rules(
-    language: &crate::ast::language::LanguageDef,
+    language: &mettail_ast::language::LanguageDef,
 ) -> (Vec<proc_macro2::TokenStream>, usize) {
     let candidates = detect_fusion_candidates(language);
     let safe_candidates: Vec<_> = candidates.into_iter().filter(|c| c.is_safe).collect();
@@ -761,7 +767,7 @@ pub fn generate_all_fused_rules(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::language::LanguageDef;
+    use mettail_ast::language::LanguageDef;
     use quote::quote;
     use syn::parse2;
 

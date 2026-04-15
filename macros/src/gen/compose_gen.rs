@@ -12,7 +12,7 @@
 //! No parser or Ascent program is generated -- every method delegates to the
 //! appropriate sub-language.
 
-use crate::ast::compose::ComposeDef;
+use mettail_ast::compose::ComposeDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::LitStr;

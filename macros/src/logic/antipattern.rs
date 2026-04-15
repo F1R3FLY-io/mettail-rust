@@ -12,9 +12,9 @@
 //! - **C-AP04**: Unbounded term growth via rewrite feedback — positive depth delta
 //! - **C-AP05**: Clone storm on large ASTs — collection fields in constructors
 
-use crate::ast::grammar::{GrammarItem, TermParam};
-use crate::ast::language::LanguageDef;
-use crate::ast::types::{CollectionType, TypeExpr};
+use mettail_ast::grammar::{GrammarItem, TermParam};
+use mettail_ast::language::LanguageDef;
+use mettail_ast::types::{CollectionType, TypeExpr};
 use std::collections::{HashMap, HashSet};
 
 /// A compile-time antipattern warning.
@@ -293,7 +293,7 @@ fn detect_deep_congruence_chains(lang: &LanguageDef) -> Vec<AntipatternWarning> 
         // Collect referenced categories from old-style items
         for item in &rule.items {
             match item {
-                GrammarItem::NonTerminal(ident) => {
+                GrammarItem::NonTerminal { ident, .. } => {
                     let target = ident.to_string();
                     if category_set.contains(&target) {
                         field_graph.entry(src_cat.clone()).or_default().insert(target);
@@ -685,9 +685,9 @@ fn extract_collection_from_type_expr(ty: &TypeExpr) -> Option<(String, String)> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::grammar::GrammarRule;
-    use crate::ast::language::{LangType, LogicBlock, RelationDecl};
-    use crate::ast::types::CollectionType;
+    use mettail_ast::grammar::GrammarRule;
+    use mettail_ast::language::{LangType, LogicBlock, RelationDecl};
+    use mettail_ast::types::CollectionType;
     use proc_macro2::Span;
     use syn::Ident;
 
@@ -713,6 +713,7 @@ mod tests {
             equations: Vec::new(),
             rewrites: Vec::new(),
             logic: None,
+            guard_config: None,
         }
     }
 
@@ -876,9 +877,9 @@ mod tests {
             label: make_ident("Add"),
             category: make_ident("Expr"),
             items: vec![
-                GrammarItem::NonTerminal(make_ident("Expr")),
+                GrammarItem::non_terminal(make_ident("Expr")),
                 GrammarItem::Terminal("+".to_string()),
-                GrammarItem::NonTerminal(make_ident("Expr")),
+                GrammarItem::non_terminal(make_ident("Expr")),
             ],
             bindings: Vec::new(),
             term_context: None,
@@ -887,6 +888,7 @@ mod tests {
             eval_mode: None,
             is_right_assoc: false,
             prefix_bp: None,
+            tier_directive: None,
         }];
 
         let warnings = detect_deep_congruence_chains(&lang);
@@ -916,9 +918,9 @@ mod tests {
             label: make_ident("Assign"),
             category: make_ident("Stmt"),
             items: vec![
-                GrammarItem::NonTerminal(make_ident("Expr")),
+                GrammarItem::non_terminal(make_ident("Expr")),
                 GrammarItem::Terminal("=".to_string()),
-                GrammarItem::NonTerminal(make_ident("Expr")),
+                GrammarItem::non_terminal(make_ident("Expr")),
             ],
             bindings: Vec::new(),
             term_context: None,
@@ -927,6 +929,7 @@ mod tests {
             eval_mode: None,
             is_right_assoc: false,
             prefix_bp: None,
+            tier_directive: None,
         }];
 
         let warnings = detect_deep_congruence_chains(&lang);
@@ -941,7 +944,7 @@ mod tests {
 
     #[test]
     fn cap04_detects_positive_delta_without_complement() {
-        use crate::ast::pattern::{Pattern, PatternTerm};
+        use mettail_ast::pattern::{Pattern, PatternTerm};
 
         let mut lang = minimal_lang();
         lang.types = vec![LangType {
@@ -960,13 +963,14 @@ mod tests {
                 eval_mode: None,
                 is_right_assoc: false,
                 prefix_bp: None,
+                tier_directive: None,
             },
             GrammarRule {
                 label: make_ident("PWrap"),
                 category: make_ident("Proc"),
                 items: vec![
                     GrammarItem::Terminal("wrap".to_string()),
-                    GrammarItem::NonTerminal(make_ident("Proc")),
+                    GrammarItem::non_terminal(make_ident("Proc")),
                 ],
                 bindings: Vec::new(),
                 term_context: None,
@@ -975,11 +979,12 @@ mod tests {
                 eval_mode: None,
                 is_right_assoc: false,
                 prefix_bp: None,
+                tier_directive: None,
             },
         ];
 
         // Rewrite: P ~> (PWrap P) — depth delta +1, no complementary reduction
-        lang.rewrites = vec![crate::ast::language::RewriteRule {
+        lang.rewrites = vec![mettail_ast::language::RewriteRule {
             name: make_ident("WrapAll"),
             type_context: Vec::new(),
             premises: Vec::new(),
@@ -1001,7 +1006,7 @@ mod tests {
 
     #[test]
     fn cap04_no_warning_when_complementary_reduction_exists() {
-        use crate::ast::pattern::{Pattern, PatternTerm};
+        use mettail_ast::pattern::{Pattern, PatternTerm};
 
         let mut lang = minimal_lang();
         lang.types = vec![LangType {
@@ -1020,13 +1025,14 @@ mod tests {
                 eval_mode: None,
                 is_right_assoc: false,
                 prefix_bp: None,
+                tier_directive: None,
             },
             GrammarRule {
                 label: make_ident("PWrap"),
                 category: make_ident("Proc"),
                 items: vec![
                     GrammarItem::Terminal("wrap".to_string()),
-                    GrammarItem::NonTerminal(make_ident("Proc")),
+                    GrammarItem::non_terminal(make_ident("Proc")),
                 ],
                 bindings: Vec::new(),
                 term_context: None,
@@ -1035,13 +1041,14 @@ mod tests {
                 eval_mode: None,
                 is_right_assoc: false,
                 prefix_bp: None,
+                tier_directive: None,
             },
         ];
 
         // Rewrite 1: P ~> (PWrap P) — depth delta +1
         // Rewrite 2: (PWrap P) ~> P — depth delta -1 (complement)
         lang.rewrites = vec![
-            crate::ast::language::RewriteRule {
+            mettail_ast::language::RewriteRule {
                 name: make_ident("WrapAll"),
                 type_context: Vec::new(),
                 premises: Vec::new(),
@@ -1051,7 +1058,7 @@ mod tests {
                     args: vec![Pattern::Term(PatternTerm::Var(make_ident("P")))],
                 }),
             },
-            crate::ast::language::RewriteRule {
+            mettail_ast::language::RewriteRule {
                 name: make_ident("UnwrapAll"),
                 type_context: Vec::new(),
                 premises: Vec::new(),
@@ -1096,6 +1103,7 @@ mod tests {
             eval_mode: None,
             is_right_assoc: false,
             prefix_bp: None,
+            tier_directive: None,
         }];
 
         let warnings = detect_clone_storm(&lang);
@@ -1125,9 +1133,9 @@ mod tests {
             label: make_ident("POutput"),
             category: make_ident("Proc"),
             items: vec![
-                GrammarItem::NonTerminal(make_ident("Name")),
+                GrammarItem::non_terminal(make_ident("Name")),
                 GrammarItem::Terminal("!".to_string()),
-                GrammarItem::NonTerminal(make_ident("Proc")),
+                GrammarItem::non_terminal(make_ident("Proc")),
             ],
             bindings: Vec::new(),
             term_context: None,
@@ -1136,6 +1144,7 @@ mod tests {
             eval_mode: None,
             is_right_assoc: false,
             prefix_bp: None,
+            tier_directive: None,
         }];
 
         let warnings = detect_clone_storm(&lang);
@@ -1186,6 +1195,7 @@ mod tests {
             eval_mode: None,
             is_right_assoc: false,
             prefix_bp: None,
+            tier_directive: None,
         }];
 
         let warnings = detect_antipatterns(&lang);

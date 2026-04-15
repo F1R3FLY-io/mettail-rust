@@ -13,6 +13,8 @@
 
 use std::fmt;
 
+use crate::lint::DiagnosticId;
+
 /// A repair suggestion produced by an analysis.
 ///
 /// Each suggestion describes a concrete fix for a detected issue,
@@ -643,7 +645,6 @@ impl RepairDiagnostic {
 ///
 /// Scans diagnostics for T01 (non-joinable critical pair) codes and appends
 /// repair hint text from the confluence analysis.
-#[cfg(feature = "trs-analysis")]
 pub fn enrich_diagnostics_with_repairs(
     diagnostics: &mut Vec<crate::lint::LintDiagnostic>,
     confluence_result: Option<&crate::confluence::ConfluenceAnalysis>,
@@ -661,7 +662,7 @@ pub fn enrich_diagnostics_with_repairs(
 
     // Append repair hints to T01 diagnostics
     for diag in diagnostics.iter_mut() {
-        if diag.id == "T01" {
+        if diag.id == DiagnosticId::T01 {
             let repair_text: Vec<String> = repairs
                 .suggestions
                 .iter()
@@ -681,7 +682,6 @@ pub fn enrich_diagnostics_with_repairs(
 ///
 /// Scans diagnostics for M01 (morphism gap) codes and appends
 /// repair descriptions based on the gap kind.
-#[cfg(feature = "morphisms")]
 pub fn enrich_diagnostics_with_morphism_repairs(
     diagnostics: &mut Vec<crate::lint::LintDiagnostic>,
     morphism_result: Option<&crate::morphism::MorphismCheck>,
@@ -697,7 +697,7 @@ pub fn enrich_diagnostics_with_morphism_repairs(
 
     // Append repair hints to M01 diagnostics based on gap kind
     for diag in diagnostics.iter_mut() {
-        if diag.id == "M01" {
+        if diag.id == DiagnosticId::M01 {
             let repair_text = format!(
                 "{} gap(s) detected — add cross-category rules or constructor mappings to complete the morphism",
                 check.gaps.len(),
@@ -1016,13 +1016,12 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "trs-analysis")]
     #[test]
     fn test_enrich_trs_repairs_appends_hint() {
         use crate::lint::{LintDiagnostic, LintSeverity};
         use crate::confluence::{ConfluenceAnalysis, CriticalPair, JoinabilityResult, Term};
         let mut diagnostics = vec![LintDiagnostic {
-            id: "T01",
+            id: DiagnosticId::T01,
             name: "non-joinable-critical-pair",
             severity: LintSeverity::Warning,
             category: None,
@@ -1058,12 +1057,11 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "trs-analysis")]
     #[test]
     fn test_enrich_trs_repairs_noop_when_confluent() {
         use crate::lint::{LintDiagnostic, LintSeverity};
         let mut diagnostics = vec![LintDiagnostic {
-            id: "T01",
+            id: DiagnosticId::T01,
             name: "non-joinable-critical-pair",
             severity: LintSeverity::Warning,
             category: None,
@@ -1089,12 +1087,11 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "morphisms")]
     #[test]
     fn test_enrich_morphism_repairs_appends_hint() {
         use crate::lint::{LintDiagnostic, LintSeverity};
         let mut diagnostics = vec![LintDiagnostic {
-            id: "M01",
+            id: DiagnosticId::M01,
             name: "morphism-gap",
             severity: LintSeverity::Warning,
             category: None,
@@ -1122,12 +1119,11 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "morphisms")]
     #[test]
     fn test_enrich_morphism_repairs_noop_when_complete() {
         use crate::lint::{LintDiagnostic, LintSeverity};
         let mut diagnostics = vec![LintDiagnostic {
-            id: "M01",
+            id: DiagnosticId::M01,
             name: "morphism-gap",
             severity: LintSeverity::Warning,
             category: None,

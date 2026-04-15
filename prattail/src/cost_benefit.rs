@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::automata::semiring::{ProductWeight, TropicalWeight};
+use crate::lint::DiagnosticId;
 use crate::prediction::FirstSet;
 use crate::wfst::PredictionWfst;
 
@@ -73,62 +74,62 @@ pub enum Optimization {
     // ── Advanced Automata Infrastructure ─────────────────────────────────────
 
     /// SYM01: Symbolic automata guard analysis (satisfiability, overlap, subsumption).
-    #[cfg(feature = "symbolic-automata")]
     SymbolicGuardAnalysis,
     /// O01: Weighted Büchi automaton analysis (liveness, accepting cycle weight).
-    #[cfg(feature = "omega")]
     WeightedBuchiAnalysis,
     /// N06: Weighted alternating automaton analysis (polynomial transitions, game value).
-    #[cfg(feature = "alternating")]
     WeightedAlternatingAnalysis,
     /// V05: Weighted VPA analysis (weighted determinization, inclusion).
-    #[cfg(feature = "vpa")]
     WeightedVpaAnalysis,
     /// PT01: Parity tree automaton analysis (emptiness, mu-calculus).
-    #[cfg(feature = "parity-tree-automata")]
     ParityTreeAnalysis,
     /// RA01: Register automaton analysis (dead registers, unbound references).
-    #[cfg(feature = "register-automata")]
     RegisterAnalysis,
     /// PR01: Probabilistic automaton analysis (selectivity, entropy, training).
-    #[cfg(feature = "probabilistic")]
     ProbabilisticAnalysis,
     /// MT01: Multi-tape automaton analysis (disconnected/overlapping tapes).
-    #[cfg(feature = "multi-tape")]
     MultiTapeAnalysis,
     /// MS01: Multiset automaton analysis (cardinality constraints, feature interactions).
-    #[cfg(feature = "multiset-automata")]
     MultisetAnalysis,
     /// MSO01: Weighted MSO logic analysis (formula classification, decidability).
-    #[cfg(feature = "weighted-mso")]
     WeightedMsoAnalysis,
     /// TW01: Two-way transducer analysis (deadlock cycles, one-way equivalence).
-    #[cfg(feature = "two-way-transducer")]
     TwoWayTransducerAnalysis,
     /// SFT01: Symbolic finite transducer analysis (composition, functionality).
-    #[cfg(feature = "sft")]
     SftAnalysis,
     /// EG01: E-graph equality saturation (enhanced joinability, term simplification).
-    #[cfg(feature = "egraph")]
     EGraphSaturation,
     /// LA01: Linear arithmetic guard analysis (Presburger satisfiability, subsumption).
-    #[cfg(feature = "presburger")]
     PresburgerAnalysis,
     /// UN01: Unification guard analysis (structural pattern satisfiability, occurs check).
-    #[cfg(feature = "unification")]
     UnificationAnalysis,
     /// LT01: Subtype lattice guard analysis (join/meet, exhaustiveness checking).
-    #[cfg(feature = "lattice-theory")]
     LatticeAnalysis,
 
     /// PD01: Predicate dispatch — algebraic variety classification for directed
     /// module spawning. Skips irrelevant Phase 7 modules based on predicate morphemes.
-    #[cfg(feature = "predicate-dispatch")]
     PredicateDispatch,
 
     /// RT01: Refinement type analysis — satisfiability, subtyping, decidability classification.
-    #[cfg(feature = "type-system")]
     RefinementTypeCheck,
+
+    // ── CEK Machine Optimizations ────────────────────────────────────────────
+
+    /// CEK01: Dead capture elimination in Frame_Cat variants.
+    /// Backward liveness analysis removes captures unused by subsequent segments.
+    EnvironmentTrimming,
+
+    /// CEK02: Runtime parse/eval tracing via CekObserver callback pattern.
+    /// Generates `parse_Cat_traced<O: CekObserver>()` alongside `parse_Cat()`.
+    CekTracedParser,
+
+    /// CEK03: Dead frame elimination via WPDS poststar reachability.
+    /// Suppresses unreachable Frame_Cat variants, prefix arms, and unwind handlers.
+    DeadFrameElimination,
+
+    /// GT01: Green thread fork/join cost analysis via alternating automaton.
+    /// Determines whether parallel or serial execution is optimal for channel operations.
+    GreenThreadForkJoin,
 
     // ── Codegen Optimization Catalog ─────────────────────────────────────────
 
@@ -181,6 +182,9 @@ pub enum Optimization {
     TrivialInline,
     /// BP05: Specialized Pratt loop for fixed BP ranges.
     BpRangeLoop,
+    /// BP06: Continuation compression via unary chain merging.
+    /// Chains of tail-call-eligible prefix operators share a single stack entry.
+    ContinuationCompression,
 
     /// CD01: Hot-path arm reordering via WFST frequency weights.
     FrequencyOrdering,
@@ -224,42 +228,28 @@ impl fmt::Display for Optimization {
             Self::SafetyVerification => write!(f, "S01:SafetyVerification"),
             Self::CegarRefinement => write!(f, "S03:CegarRefinement"),
             Self::PetriDeadlockCheck => write!(f, "N01:PetriDeadlockCheck"),
-            #[cfg(feature = "symbolic-automata")]
             Self::SymbolicGuardAnalysis => write!(f, "SYM01:SymbolicGuardAnalysis"),
-            #[cfg(feature = "omega")]
             Self::WeightedBuchiAnalysis => write!(f, "O01:WeightedBuchiAnalysis"),
-            #[cfg(feature = "alternating")]
             Self::WeightedAlternatingAnalysis => write!(f, "N06:WeightedAlternatingAnalysis"),
-            #[cfg(feature = "vpa")]
             Self::WeightedVpaAnalysis => write!(f, "V05:WeightedVpaAnalysis"),
-            #[cfg(feature = "parity-tree-automata")]
             Self::ParityTreeAnalysis => write!(f, "PT01:ParityTreeAnalysis"),
-            #[cfg(feature = "register-automata")]
             Self::RegisterAnalysis => write!(f, "RA01:RegisterAnalysis"),
-            #[cfg(feature = "probabilistic")]
             Self::ProbabilisticAnalysis => write!(f, "PR01:ProbabilisticAnalysis"),
-            #[cfg(feature = "multi-tape")]
             Self::MultiTapeAnalysis => write!(f, "MT01:MultiTapeAnalysis"),
-            #[cfg(feature = "multiset-automata")]
             Self::MultisetAnalysis => write!(f, "MS01:MultisetAnalysis"),
-            #[cfg(feature = "weighted-mso")]
             Self::WeightedMsoAnalysis => write!(f, "MSO01:WeightedMsoAnalysis"),
-            #[cfg(feature = "two-way-transducer")]
             Self::TwoWayTransducerAnalysis => write!(f, "TW01:TwoWayTransducerAnalysis"),
-            #[cfg(feature = "sft")]
             Self::SftAnalysis => write!(f, "SFT01:SftAnalysis"),
-            #[cfg(feature = "egraph")]
             Self::EGraphSaturation => write!(f, "EG01:EGraphSaturation"),
-            #[cfg(feature = "presburger")]
             Self::PresburgerAnalysis => write!(f, "LA01:PresburgerAnalysis"),
-            #[cfg(feature = "unification")]
             Self::UnificationAnalysis => write!(f, "UN01:UnificationAnalysis"),
-            #[cfg(feature = "lattice-theory")]
             Self::LatticeAnalysis => write!(f, "LT01:LatticeAnalysis"),
-            #[cfg(feature = "predicate-dispatch")]
             Self::PredicateDispatch => write!(f, "PD01:PredicateDispatch"),
-            #[cfg(feature = "type-system")]
             Self::RefinementTypeCheck => write!(f, "RT01:RefinementTypeCheck"),
+            Self::EnvironmentTrimming => write!(f, "CEK01:EnvironmentTrimming"),
+            Self::CekTracedParser => write!(f, "CEK02:CekTracedParser"),
+            Self::DeadFrameElimination => write!(f, "CEK03:DeadFrameElimination"),
+            Self::GreenThreadForkJoin => write!(f, "GT01:GreenThreadForkJoin"),
             Self::HashConsing => write!(f, "ART01:HashConsing"),
             Self::IncrementalDelta => write!(f, "ART02:IncrementalDelta"),
             Self::RelationIndexing => write!(f, "ART03:RelationIndexing"),
@@ -283,6 +273,7 @@ impl fmt::Display for Optimization {
             Self::BpTableLookup => write!(f, "BP03:BpTableLookup"),
             Self::TrivialInline => write!(f, "BP04:TrivialInline"),
             Self::BpRangeLoop => write!(f, "BP05:BpRangeLoop"),
+            Self::ContinuationCompression => write!(f, "BP06:ContinuationCompression"),
             Self::FrequencyOrdering => write!(f, "CD01:FrequencyOrdering"),
             Self::SegmentMerging => write!(f, "CD02:SegmentMerging"),
             Self::ComputedGoto => write!(f, "CD03:ComputedGoto"),
@@ -343,78 +334,46 @@ impl std::str::FromStr for Optimization {
             s if s.eq_ignore_ascii_case("CegarRefinement") => Ok(Self::CegarRefinement),
             "N01" => Ok(Self::PetriDeadlockCheck),
             s if s.eq_ignore_ascii_case("PetriDeadlockCheck") => Ok(Self::PetriDeadlockCheck),
-            #[cfg(feature = "symbolic-automata")]
             "SYM01" => Ok(Self::SymbolicGuardAnalysis),
-            #[cfg(feature = "symbolic-automata")]
             s if s.eq_ignore_ascii_case("SymbolicGuardAnalysis") => Ok(Self::SymbolicGuardAnalysis),
-            #[cfg(feature = "omega")]
             "O01" => Ok(Self::WeightedBuchiAnalysis),
-            #[cfg(feature = "omega")]
             s if s.eq_ignore_ascii_case("WeightedBuchiAnalysis") => Ok(Self::WeightedBuchiAnalysis),
-            #[cfg(feature = "alternating")]
             "N06" => Ok(Self::WeightedAlternatingAnalysis),
-            #[cfg(feature = "alternating")]
             s if s.eq_ignore_ascii_case("WeightedAlternatingAnalysis") => Ok(Self::WeightedAlternatingAnalysis),
-            #[cfg(feature = "vpa")]
             "V05" => Ok(Self::WeightedVpaAnalysis),
-            #[cfg(feature = "vpa")]
             s if s.eq_ignore_ascii_case("WeightedVpaAnalysis") => Ok(Self::WeightedVpaAnalysis),
-            #[cfg(feature = "parity-tree-automata")]
             "PT01" => Ok(Self::ParityTreeAnalysis),
-            #[cfg(feature = "parity-tree-automata")]
             s if s.eq_ignore_ascii_case("ParityTreeAnalysis") => Ok(Self::ParityTreeAnalysis),
-            #[cfg(feature = "register-automata")]
             "RA01" => Ok(Self::RegisterAnalysis),
-            #[cfg(feature = "register-automata")]
             s if s.eq_ignore_ascii_case("RegisterAnalysis") => Ok(Self::RegisterAnalysis),
-            #[cfg(feature = "probabilistic")]
             "PR01" => Ok(Self::ProbabilisticAnalysis),
-            #[cfg(feature = "probabilistic")]
             s if s.eq_ignore_ascii_case("ProbabilisticAnalysis") => Ok(Self::ProbabilisticAnalysis),
-            #[cfg(feature = "multi-tape")]
             "MT01" => Ok(Self::MultiTapeAnalysis),
-            #[cfg(feature = "multi-tape")]
             s if s.eq_ignore_ascii_case("MultiTapeAnalysis") => Ok(Self::MultiTapeAnalysis),
-            #[cfg(feature = "multiset-automata")]
             "MS01" => Ok(Self::MultisetAnalysis),
-            #[cfg(feature = "multiset-automata")]
             s if s.eq_ignore_ascii_case("MultisetAnalysis") => Ok(Self::MultisetAnalysis),
-            #[cfg(feature = "weighted-mso")]
             "MSO01" => Ok(Self::WeightedMsoAnalysis),
-            #[cfg(feature = "weighted-mso")]
             s if s.eq_ignore_ascii_case("WeightedMsoAnalysis") => Ok(Self::WeightedMsoAnalysis),
-            #[cfg(feature = "two-way-transducer")]
             "TW01" => Ok(Self::TwoWayTransducerAnalysis),
-            #[cfg(feature = "two-way-transducer")]
             s if s.eq_ignore_ascii_case("TwoWayTransducerAnalysis") => Ok(Self::TwoWayTransducerAnalysis),
-            #[cfg(feature = "sft")]
             "SFT01" => Ok(Self::SftAnalysis),
-            #[cfg(feature = "sft")]
             s if s.eq_ignore_ascii_case("SftAnalysis") => Ok(Self::SftAnalysis),
-            #[cfg(feature = "egraph")]
             "EG01" => Ok(Self::EGraphSaturation),
-            #[cfg(feature = "egraph")]
             s if s.eq_ignore_ascii_case("EGraphSaturation") => Ok(Self::EGraphSaturation),
-            #[cfg(feature = "presburger")]
             "LA01" => Ok(Self::PresburgerAnalysis),
-            #[cfg(feature = "presburger")]
             s if s.eq_ignore_ascii_case("PresburgerAnalysis") => Ok(Self::PresburgerAnalysis),
-            #[cfg(feature = "unification")]
             "UN01" => Ok(Self::UnificationAnalysis),
-            #[cfg(feature = "unification")]
             s if s.eq_ignore_ascii_case("UnificationAnalysis") => Ok(Self::UnificationAnalysis),
-            #[cfg(feature = "lattice-theory")]
             "LT01" => Ok(Self::LatticeAnalysis),
-            #[cfg(feature = "lattice-theory")]
             s if s.eq_ignore_ascii_case("LatticeAnalysis") => Ok(Self::LatticeAnalysis),
-            #[cfg(feature = "predicate-dispatch")]
             "PD01" => Ok(Self::PredicateDispatch),
-            #[cfg(feature = "predicate-dispatch")]
             s if s.eq_ignore_ascii_case("PredicateDispatch") => Ok(Self::PredicateDispatch),
-            #[cfg(feature = "type-system")]
             "RT01" => Ok(Self::RefinementTypeCheck),
-            #[cfg(feature = "type-system")]
             s if s.eq_ignore_ascii_case("RefinementTypeCheck") => Ok(Self::RefinementTypeCheck),
+            "CEK01" => Ok(Self::EnvironmentTrimming),
+            s if s.eq_ignore_ascii_case("EnvironmentTrimming") => Ok(Self::EnvironmentTrimming),
+            "CEK03" => Ok(Self::DeadFrameElimination),
+            s if s.eq_ignore_ascii_case("DeadFrameElimination") => Ok(Self::DeadFrameElimination),
             "ART01" => Ok(Self::HashConsing),
             "ART02" => Ok(Self::IncrementalDelta),
             "ART03" => Ok(Self::RelationIndexing),
@@ -438,6 +397,7 @@ impl std::str::FromStr for Optimization {
             "BP03" => Ok(Self::BpTableLookup),
             "BP04" => Ok(Self::TrivialInline),
             "BP05" => Ok(Self::BpRangeLoop),
+            "BP06" => Ok(Self::ContinuationCompression),
             "CD01" => Ok(Self::FrequencyOrdering),
             "CD02" => Ok(Self::SegmentMerging),
             "CD03" => Ok(Self::ComputedGoto),
@@ -470,6 +430,7 @@ impl std::str::FromStr for Optimization {
             s if s.eq_ignore_ascii_case("BpTableLookup") => Ok(Self::BpTableLookup),
             s if s.eq_ignore_ascii_case("TrivialInline") => Ok(Self::TrivialInline),
             s if s.eq_ignore_ascii_case("BpRangeLoop") => Ok(Self::BpRangeLoop),
+            s if s.eq_ignore_ascii_case("ContinuationCompression") => Ok(Self::ContinuationCompression),
             s if s.eq_ignore_ascii_case("FrequencyOrdering") => Ok(Self::FrequencyOrdering),
             s if s.eq_ignore_ascii_case("SegmentMerging") => Ok(Self::SegmentMerging),
             s if s.eq_ignore_ascii_case("ComputedGoto") => Ok(Self::ComputedGoto),
@@ -479,6 +440,10 @@ impl std::str::FromStr for Optimization {
             s if s.eq_ignore_ascii_case("LazyAnalysis") => Ok(Self::LazyAnalysis),
             s if s.eq_ignore_ascii_case("ParallelAnalysis") => Ok(Self::ParallelAnalysis),
             s if s.eq_ignore_ascii_case("CachedLints") => Ok(Self::CachedLints),
+            "CEK02" => Ok(Self::CekTracedParser),
+            s if s.eq_ignore_ascii_case("CekTracedParser") => Ok(Self::CekTracedParser),
+            "GT01" => Ok(Self::GreenThreadForkJoin),
+            s if s.eq_ignore_ascii_case("GreenThreadForkJoin") => Ok(Self::GreenThreadForkJoin),
             // Display format: "A1:LeftFactoring"
             s if s.contains(':') => s
                 .split_once(':')
@@ -487,8 +452,8 @@ impl std::str::FromStr for Optimization {
                 .parse(),
             other => Err(format!(
                 "unknown optimization: '{}'. Valid values: A1, A2, A4, A5, B1, B2, B3, F1, F2, F3, G1, H1, G25, T01, V01, S01, S03, N01, \
-                 SYM01, O01, N06, V05, PT01, RA01, PR01, MT01, MS01, MSO01, TW01, LA01, UN01, LT01, PD01, RT01, \
-                 ART01-ART06, BCG01-BCG06, AL01-AL06, BP01-BP05, CD01-CD05, DB01-DB04",
+                 SYM01, O01, N06, V05, PT01, RA01, PR01, MT01, MS01, MSO01, TW01, LA01, UN01, LT01, PD01, RT01, CEK01, \
+                 ART01-ART06, BCG01-BCG06, AL01-AL06, BP01-BP06, CD01-CD05, DB01-DB04",
                 other
             )),
         }
@@ -569,27 +534,21 @@ pub struct GrammarProfile {
     // ── Advanced automata codegen promotion metrics ───────────────────────
 
     /// Number of unsatisfiable guards detected by symbolic analysis.
-    #[cfg(feature = "symbolic-automata")]
     pub unsatisfiable_guard_count: usize,
 
     /// Mean entropy from probabilistic analysis (higher = more ambiguous).
-    #[cfg(feature = "probabilistic")]
     pub probabilistic_mean_entropy: f64,
 
     /// Number of low-selectivity rules from probabilistic analysis.
-    #[cfg(feature = "probabilistic")]
     pub low_selectivity_count: usize,
 
     /// Number of bisimulation-equivalent category pairs beyond De Bruijn groups.
-    #[cfg(feature = "alternating")]
     pub bisimulation_extra_groups: usize,
 
     /// Number of dead binder registers.
-    #[cfg(feature = "register-automata")]
     pub dead_register_count: usize,
 
     /// Number of refinement type definitions.
-    #[cfg(feature = "type-system")]
     pub refinement_type_count: usize,
 }
 
@@ -697,17 +656,11 @@ pub fn build_grammar_profile(
         deterministic_ratio,
         // Advanced automata metrics — populated from PipelineAnalysis at the call site.
         // Defaults to zero here; the caller enriches after construction.
-        #[cfg(feature = "symbolic-automata")]
         unsatisfiable_guard_count: 0,
-        #[cfg(feature = "probabilistic")]
         probabilistic_mean_entropy: 0.0,
-        #[cfg(feature = "probabilistic")]
         low_selectivity_count: 0,
-        #[cfg(feature = "alternating")]
         bisimulation_extra_groups: 0,
-        #[cfg(feature = "register-automata")]
         dead_register_count: 0,
-        #[cfg(feature = "type-system")]
         refinement_type_count: 0,
     }
 }
@@ -866,6 +819,36 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         "always applicable (static FIRST set analysis)".to_string(),
     ));
 
+    // BP06: Continuation compression — beneficial when grammar has unary prefix operators
+    candidates.push(OptimizationCandidate::new(
+        Optimization::ContinuationCompression,
+        0.1, // modest speedup (reduced stack depth for prefix chains)
+        0.05, // very low cost (extends existing tail_wrap mechanism)
+        true,
+        "always applicable (extends BP02 tail-call mechanism)".to_string(),
+    ));
+
+    // CEK01: Environment trimming — always beneficial (removes dead captures from frames)
+    candidates.push(OptimizationCandidate::new(
+        Optimization::EnvironmentTrimming,
+        0.15, // modest speedup (smaller frames = less memory traffic)
+        0.05, // very low cost (backward dataflow, compile-time only)
+        true,
+        "always applicable (static liveness analysis)".to_string(),
+    ));
+
+    // CEK03: Dead frame elimination — beneficial for multi-category grammars
+    candidates.push(OptimizationCandidate::new(
+        Optimization::DeadFrameElimination,
+        0.2, // good speedup (eliminates unreachable frame variants and codegen)
+        0.15, // medium cost (WPDS poststar + P-automaton query)
+        profile.category_count >= 2,
+        format!(
+            "category_count={} (threshold: >=2)",
+            profile.category_count
+        ),
+    ));
+
     // H1: ContextWeight-based disambiguation
     candidates.push(OptimizationCandidate::new(
         Optimization::ContextDisambiguation,
@@ -949,7 +932,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // SYM01: Symbolic guard analysis — Auto: unsatisfiable guards → dead rule elimination
-    #[cfg(feature = "symbolic-automata")]
     candidates.push(OptimizationCandidate::new(
         Optimization::SymbolicGuardAnalysis,
         if profile.unsatisfiable_guard_count > 0 { 0.3 } else { 0.5 },
@@ -962,7 +944,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // O01: Weighted Büchi analysis — beneficial for liveness checking
-    #[cfg(feature = "omega")]
     candidates.push(OptimizationCandidate::new(
         Optimization::WeightedBuchiAnalysis,
         0.6, // diagnostic benefit (liveness verification)
@@ -972,7 +953,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // N06: Weighted alternating analysis — Auto: bisimulation → extended isomorphic groups
-    #[cfg(feature = "alternating")]
     candidates.push(OptimizationCandidate::new(
         Optimization::WeightedAlternatingAnalysis,
         if profile.bisimulation_extra_groups > 0 { 0.3 } else { 0.5 },
@@ -985,7 +965,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // V05: Weighted VPA analysis — beneficial for nested structure analysis
-    #[cfg(feature = "vpa")]
     candidates.push(OptimizationCandidate::new(
         Optimization::WeightedVpaAnalysis,
         0.5, // diagnostic benefit (weighted determinization)
@@ -995,7 +974,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // PT01: Parity tree analysis — beneficial for AST verification
-    #[cfg(feature = "parity-tree-automata")]
     candidates.push(OptimizationCandidate::new(
         Optimization::ParityTreeAnalysis,
         0.7, // diagnostic benefit (mu-calculus verification)
@@ -1005,7 +983,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // RA01: Register analysis — Auto: dead registers → skip binder alpha-equiv
-    #[cfg(feature = "register-automata")]
     candidates.push(OptimizationCandidate::new(
         Optimization::RegisterAnalysis,
         if profile.dead_register_count > 0 { 0.3 } else { 0.6 },
@@ -1018,7 +995,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // PR01: Probabilistic analysis — Auto: DCE + weight blending
-    #[cfg(feature = "probabilistic")]
     candidates.push(OptimizationCandidate::new(
         Optimization::ProbabilisticAnalysis,
         if profile.low_selectivity_count > 0 { 0.25 } else { 0.4 },
@@ -1032,7 +1008,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // MT01: Multi-tape analysis — beneficial for multi-stream parsing
-    #[cfg(feature = "multi-tape")]
     candidates.push(OptimizationCandidate::new(
         Optimization::MultiTapeAnalysis,
         0.5, // diagnostic benefit (tape interaction analysis)
@@ -1042,7 +1017,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // MS01: Multiset analysis — beneficial for resource counting
-    #[cfg(feature = "multiset-automata")]
     candidates.push(OptimizationCandidate::new(
         Optimization::MultisetAnalysis,
         0.5, // diagnostic benefit (cardinality constraints)
@@ -1052,7 +1026,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // MSO01: Weighted MSO analysis — beneficial for formula classification
-    #[cfg(feature = "weighted-mso")]
     candidates.push(OptimizationCandidate::new(
         Optimization::WeightedMsoAnalysis,
         0.4, // diagnostic benefit (decidability classification)
@@ -1062,7 +1035,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // TW01: Two-way transducer analysis — beneficial for deadlock detection
-    #[cfg(feature = "two-way-transducer")]
     candidates.push(OptimizationCandidate::new(
         Optimization::TwoWayTransducerAnalysis,
         0.6, // diagnostic benefit (deadlock cycle detection)
@@ -1072,7 +1044,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // SFT01: Symbolic finite transducer analysis — composition & functionality checking
-    #[cfg(feature = "sft")]
     candidates.push(OptimizationCandidate::new(
         Optimization::SftAnalysis,
         0.5, // diagnostic benefit
@@ -1082,7 +1053,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // EG01: E-graph equality saturation — enhanced joinability & simplification
-    #[cfg(feature = "egraph")]
     candidates.push(OptimizationCandidate::new(
         Optimization::EGraphSaturation,
         0.45, // moderate diagnostic benefit
@@ -1092,7 +1062,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // LA01: Presburger arithmetic analysis — beneficial for numeric guards
-    #[cfg(feature = "presburger")]
     candidates.push(OptimizationCandidate::new(
         Optimization::PresburgerAnalysis,
         0.7, // high benefit (dead guard detection, subsumption)
@@ -1102,7 +1071,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // UN01: Unification analysis — beneficial for structural pattern guards
-    #[cfg(feature = "unification")]
     candidates.push(OptimizationCandidate::new(
         Optimization::UnificationAnalysis,
         0.7, // high benefit (occurs check, constructor clash detection)
@@ -1112,7 +1080,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // LT01: Lattice analysis — beneficial for type hierarchy guards
-    #[cfg(feature = "lattice-theory")]
     candidates.push(OptimizationCandidate::new(
         Optimization::LatticeAnalysis,
         0.6, // good benefit (exhaustiveness, redundant subtype detection)
@@ -1449,7 +1416,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     ));
 
     // RT01: Refinement type analysis
-    #[cfg(feature = "type-system")]
     candidates.push(OptimizationCandidate::new(
         Optimization::RefinementTypeCheck,
         0.4,
@@ -1458,6 +1424,27 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         format!(
             "refinement_type_count={} (threshold: >0)",
             profile.refinement_type_count
+        ),
+    ));
+
+    // CEK02: CEK-runtime tracing — gate for traced CEK machine execution
+    candidates.push(OptimizationCandidate::new(
+        Optimization::CekTracedParser,
+        0.5, // diagnostic benefit (tracing)
+        0.15, // low cost (instrumentation overhead)
+        profile.category_count >= 1,
+        format!("category_count={} (threshold: >=1)", profile.category_count),
+    ));
+
+    // GT01: Green thread fork/join cost analysis
+    candidates.push(OptimizationCandidate::new(
+        Optimization::GreenThreadForkJoin,
+        0.35, // good benefit (parallelism exploitation)
+        0.25, // moderate cost (6-phase verification pipeline)
+        profile.category_count >= 2,
+        format!(
+            "category_count={} (threshold: >=2)",
+            profile.category_count,
         ),
     ));
 
@@ -1527,91 +1514,73 @@ pub struct OptimizationGates {
     /// When true, poststar analysis refines dead-rule detection.
     pub wpds_reachability: bool,
     /// T01: TRS confluence check.
-    #[cfg(feature = "trs-analysis")]
     pub trs_confluence: bool,
     /// V01: VPA inclusion check.
-    #[cfg(feature = "vpa")]
     pub vpa_inclusion: bool,
     /// S01: Safety verification via WPDS prestar.
     pub safety_verification: bool,
     /// S03: CEGAR refinement loop.
     pub cegar_refinement: bool,
     /// N01: Petri net deadlock check.
-    #[cfg(feature = "petri")]
     pub petri_deadlock: bool,
 
     // ── Advanced Automata Infrastructure ─────────────────────────────────────
     /// SYM01: Symbolic automata guard analysis.
-    #[cfg(feature = "symbolic-automata")]
     pub symbolic_guard: bool,
     /// O01: Weighted Büchi automaton analysis.
-    #[cfg(feature = "omega")]
     pub weighted_buchi: bool,
     /// N06: Weighted alternating automaton analysis.
-    #[cfg(feature = "alternating")]
     pub weighted_alternating: bool,
     /// V05: Weighted VPA analysis.
-    #[cfg(feature = "vpa")]
     pub weighted_vpa: bool,
     /// PT01: Parity tree automaton analysis.
-    #[cfg(feature = "parity-tree-automata")]
     pub parity_tree: bool,
     /// RA01: Register automaton analysis.
-    #[cfg(feature = "register-automata")]
     pub register_analysis: bool,
     /// PR01: Probabilistic automaton analysis.
-    #[cfg(feature = "probabilistic")]
     pub probabilistic: bool,
     /// MT01: Multi-tape automaton analysis.
-    #[cfg(feature = "multi-tape")]
     pub multi_tape: bool,
     /// MS01: Multiset automaton analysis.
-    #[cfg(feature = "multiset-automata")]
     pub multiset: bool,
     /// MSO01: Weighted MSO logic analysis.
-    #[cfg(feature = "weighted-mso")]
     pub weighted_mso: bool,
     /// TW01: Two-way transducer analysis.
-    #[cfg(feature = "two-way-transducer")]
     pub two_way_transducer: bool,
     /// SFT01: Symbolic finite transducer analysis.
-    #[cfg(feature = "sft")]
     pub sft: bool,
     /// EG01: E-graph equality saturation.
-    #[cfg(feature = "egraph")]
     pub egraph: bool,
     /// LA01: Presburger arithmetic guard analysis.
-    #[cfg(feature = "presburger")]
     pub presburger: bool,
     /// UN01: Unification guard analysis.
-    #[cfg(feature = "unification")]
     pub unification: bool,
     /// LT01: Subtype lattice guard analysis.
-    #[cfg(feature = "lattice-theory")]
     pub lattice: bool,
     /// RT01: Refinement type analysis.
-    #[cfg(feature = "type-system")]
     pub refinement_type_check: bool,
+
+    // ── CEK Machine Optimizations ────────────────────────────────────────────
+
+    /// CEK01: Dead capture elimination in Frame_Cat variants.
+    pub environment_trimming: bool,
+    /// CEK03: Dead frame elimination via WPDS poststar P-automaton.
+    pub dead_frame_elimination: bool,
 
     // ── Advanced Automata Codegen Promotions ─────────────────────────────────
 
     /// SYM01-DCE: Symbolic unsatisfiable guard → dead rule elimination.
-    #[cfg(feature = "symbolic-automata")]
     pub symbolic_guard_dce: bool,
     /// PR01-DCE: Probabilistic low-selectivity → dead rule elimination.
-    #[cfg(feature = "probabilistic")]
     pub probabilistic_dce: bool,
     /// PR01-WEIGHT: Probabilistic weights refine constructor ordering.
-    #[cfg(feature = "probabilistic")]
     pub probabilistic_weight_blend: bool,
     /// N06-ISO: Bisimulation equivalence → extended isomorphic groups.
     /// Also enables Sprint A3 (bisimilar weight discount): the lexicographically
     /// second category in each bisimilar pair receives a +0.5 tropical weight
     /// penalty on its constructor weights, reducing redundant NFA try-all work.
-    #[cfg(feature = "alternating")]
     pub bisimulation_iso_groups: bool,
     /// RA01-SKIP: Dead registers → skip binder alpha-equiv.
-    #[cfg(feature = "register-automata")]
     pub skip_dead_binders: bool,
 
     // ── Codegen Optimization Catalog ─────────────────────────────────────────
@@ -1664,6 +1633,8 @@ pub struct OptimizationGates {
     pub trivial_inline: bool,
     /// BP05: Specialized Pratt loop for fixed BP ranges.
     pub bp_range_loop: bool,
+    /// BP06: Continuation compression via unary chain merging.
+    pub continuation_compression: bool,
 
     /// CD01: Hot-path arm reordering via WFST frequency weights.
     pub frequency_ordering: bool,
@@ -1703,57 +1674,34 @@ impl OptimizationGates {
             backtracking_elimination: true,
             context_disambiguation: true,
             wpds_reachability: true,
-            #[cfg(feature = "trs-analysis")]
             trs_confluence: true,
-            #[cfg(feature = "vpa")]
             vpa_inclusion: true,
             safety_verification: true,
             cegar_refinement: true,
-            #[cfg(feature = "petri")]
             petri_deadlock: true,
-            #[cfg(feature = "symbolic-automata")]
             symbolic_guard: true,
-            #[cfg(feature = "omega")]
             weighted_buchi: true,
-            #[cfg(feature = "alternating")]
             weighted_alternating: true,
-            #[cfg(feature = "vpa")]
             weighted_vpa: true,
-            #[cfg(feature = "parity-tree-automata")]
             parity_tree: true,
-            #[cfg(feature = "register-automata")]
             register_analysis: true,
-            #[cfg(feature = "probabilistic")]
             probabilistic: true,
-            #[cfg(feature = "multi-tape")]
             multi_tape: true,
-            #[cfg(feature = "multiset-automata")]
             multiset: true,
-            #[cfg(feature = "weighted-mso")]
             weighted_mso: true,
-            #[cfg(feature = "two-way-transducer")]
             two_way_transducer: true,
-            #[cfg(feature = "sft")]
             sft: true,
-            #[cfg(feature = "egraph")]
             egraph: true,
-            #[cfg(feature = "presburger")]
             presburger: true,
-            #[cfg(feature = "unification")]
             unification: true,
-            #[cfg(feature = "lattice-theory")]
             lattice: true,
-            #[cfg(feature = "type-system")]
             refinement_type_check: true,
-            #[cfg(feature = "symbolic-automata")]
+            environment_trimming: true,
+            dead_frame_elimination: true,
             symbolic_guard_dce: true,
-            #[cfg(feature = "probabilistic")]
             probabilistic_dce: true,
-            #[cfg(feature = "probabilistic")]
             probabilistic_weight_blend: true,
-            #[cfg(feature = "alternating")]
             bisimulation_iso_groups: true,
-            #[cfg(feature = "register-automata")]
             skip_dead_binders: true,
             hash_consing: true,
             incremental_delta: true,
@@ -1778,6 +1726,7 @@ impl OptimizationGates {
             bp_table_lookup: true,
             trivial_inline: true,
             bp_range_loop: true,
+            continuation_compression: true,
             frequency_ordering: true,
             segment_merging: true,
             computed_goto: true,
@@ -1814,57 +1763,34 @@ impl OptimizationGates {
             backtracking_elimination: enabled.contains(&Optimization::BacktrackingElimination),
             context_disambiguation: enabled.contains(&Optimization::ContextDisambiguation),
             wpds_reachability: enabled.contains(&Optimization::WpdsReachabilityCheck),
-            #[cfg(feature = "trs-analysis")]
             trs_confluence: enabled.contains(&Optimization::TrsConfluenceCheck),
-            #[cfg(feature = "vpa")]
             vpa_inclusion: enabled.contains(&Optimization::VpaInclusionCheck),
             safety_verification: enabled.contains(&Optimization::SafetyVerification),
             cegar_refinement: enabled.contains(&Optimization::CegarRefinement),
-            #[cfg(feature = "petri")]
             petri_deadlock: enabled.contains(&Optimization::PetriDeadlockCheck),
-            #[cfg(feature = "symbolic-automata")]
             symbolic_guard: enabled.contains(&Optimization::SymbolicGuardAnalysis),
-            #[cfg(feature = "omega")]
             weighted_buchi: enabled.contains(&Optimization::WeightedBuchiAnalysis),
-            #[cfg(feature = "alternating")]
             weighted_alternating: enabled.contains(&Optimization::WeightedAlternatingAnalysis),
-            #[cfg(feature = "vpa")]
             weighted_vpa: enabled.contains(&Optimization::WeightedVpaAnalysis),
-            #[cfg(feature = "parity-tree-automata")]
             parity_tree: enabled.contains(&Optimization::ParityTreeAnalysis),
-            #[cfg(feature = "register-automata")]
             register_analysis: enabled.contains(&Optimization::RegisterAnalysis),
-            #[cfg(feature = "probabilistic")]
             probabilistic: enabled.contains(&Optimization::ProbabilisticAnalysis),
-            #[cfg(feature = "multi-tape")]
             multi_tape: enabled.contains(&Optimization::MultiTapeAnalysis),
-            #[cfg(feature = "multiset-automata")]
             multiset: enabled.contains(&Optimization::MultisetAnalysis),
-            #[cfg(feature = "weighted-mso")]
             weighted_mso: enabled.contains(&Optimization::WeightedMsoAnalysis),
-            #[cfg(feature = "two-way-transducer")]
             two_way_transducer: enabled.contains(&Optimization::TwoWayTransducerAnalysis),
-            #[cfg(feature = "sft")]
             sft: enabled.contains(&Optimization::SftAnalysis),
-            #[cfg(feature = "egraph")]
             egraph: enabled.contains(&Optimization::EGraphSaturation),
-            #[cfg(feature = "presburger")]
             presburger: enabled.contains(&Optimization::PresburgerAnalysis),
-            #[cfg(feature = "unification")]
             unification: enabled.contains(&Optimization::UnificationAnalysis),
-            #[cfg(feature = "lattice-theory")]
             lattice: enabled.contains(&Optimization::LatticeAnalysis),
-            #[cfg(feature = "type-system")]
             refinement_type_check: enabled.contains(&Optimization::RefinementTypeCheck),
-            #[cfg(feature = "symbolic-automata")]
+            environment_trimming: enabled.contains(&Optimization::EnvironmentTrimming),
+            dead_frame_elimination: enabled.contains(&Optimization::DeadFrameElimination),
             symbolic_guard_dce: enabled.contains(&Optimization::SymbolicGuardAnalysis),
-            #[cfg(feature = "probabilistic")]
             probabilistic_dce: enabled.contains(&Optimization::ProbabilisticAnalysis),
-            #[cfg(feature = "probabilistic")]
             probabilistic_weight_blend: enabled.contains(&Optimization::ProbabilisticAnalysis),
-            #[cfg(feature = "alternating")]
             bisimulation_iso_groups: enabled.contains(&Optimization::WeightedAlternatingAnalysis),
-            #[cfg(feature = "register-automata")]
             skip_dead_binders: enabled.contains(&Optimization::RegisterAnalysis),
             hash_consing: enabled.contains(&Optimization::HashConsing),
             incremental_delta: enabled.contains(&Optimization::IncrementalDelta),
@@ -1889,6 +1815,7 @@ impl OptimizationGates {
             bp_table_lookup: enabled.contains(&Optimization::BpTableLookup),
             trivial_inline: enabled.contains(&Optimization::TrivialInline),
             bp_range_loop: enabled.contains(&Optimization::BpRangeLoop),
+            continuation_compression: enabled.contains(&Optimization::ContinuationCompression),
             frequency_ordering: enabled.contains(&Optimization::FrequencyOrdering),
             segment_merging: enabled.contains(&Optimization::SegmentMerging),
             computed_goto: enabled.contains(&Optimization::ComputedGoto),
@@ -1917,57 +1844,34 @@ impl OptimizationGates {
             backtracking_elimination: false,
             context_disambiguation: false,
             wpds_reachability: false,
-            #[cfg(feature = "trs-analysis")]
             trs_confluence: false,
-            #[cfg(feature = "vpa")]
             vpa_inclusion: false,
             safety_verification: false,
             cegar_refinement: false,
-            #[cfg(feature = "petri")]
             petri_deadlock: false,
-            #[cfg(feature = "symbolic-automata")]
             symbolic_guard: false,
-            #[cfg(feature = "omega")]
             weighted_buchi: false,
-            #[cfg(feature = "alternating")]
             weighted_alternating: false,
-            #[cfg(feature = "vpa")]
             weighted_vpa: false,
-            #[cfg(feature = "parity-tree-automata")]
             parity_tree: false,
-            #[cfg(feature = "register-automata")]
             register_analysis: false,
-            #[cfg(feature = "probabilistic")]
             probabilistic: false,
-            #[cfg(feature = "multi-tape")]
             multi_tape: false,
-            #[cfg(feature = "multiset-automata")]
             multiset: false,
-            #[cfg(feature = "weighted-mso")]
             weighted_mso: false,
-            #[cfg(feature = "two-way-transducer")]
             two_way_transducer: false,
-            #[cfg(feature = "sft")]
             sft: false,
-            #[cfg(feature = "egraph")]
             egraph: false,
-            #[cfg(feature = "presburger")]
             presburger: false,
-            #[cfg(feature = "unification")]
             unification: false,
-            #[cfg(feature = "lattice-theory")]
             lattice: false,
-            #[cfg(feature = "type-system")]
             refinement_type_check: false,
-            #[cfg(feature = "symbolic-automata")]
+            environment_trimming: false,
+            dead_frame_elimination: false,
             symbolic_guard_dce: false,
-            #[cfg(feature = "probabilistic")]
             probabilistic_dce: false,
-            #[cfg(feature = "probabilistic")]
             probabilistic_weight_blend: false,
-            #[cfg(feature = "alternating")]
             bisimulation_iso_groups: false,
-            #[cfg(feature = "register-automata")]
             skip_dead_binders: false,
             hash_consing: false,
             incremental_delta: false,
@@ -1992,6 +1896,7 @@ impl OptimizationGates {
             bp_table_lookup: false,
             trivial_inline: false,
             bp_range_loop: false,
+            continuation_compression: false,
             frequency_ordering: false,
             segment_merging: false,
             computed_goto: false,
@@ -2058,57 +1963,34 @@ impl OptimizationGates {
             backtracking_elimination: enabled.contains(&Optimization::BacktrackingElimination),
             context_disambiguation: enabled.contains(&Optimization::ContextDisambiguation),
             wpds_reachability: enabled.contains(&Optimization::WpdsReachabilityCheck),
-            #[cfg(feature = "trs-analysis")]
             trs_confluence: enabled.contains(&Optimization::TrsConfluenceCheck),
-            #[cfg(feature = "vpa")]
             vpa_inclusion: enabled.contains(&Optimization::VpaInclusionCheck),
             safety_verification: enabled.contains(&Optimization::SafetyVerification),
             cegar_refinement: enabled.contains(&Optimization::CegarRefinement),
-            #[cfg(feature = "petri")]
             petri_deadlock: enabled.contains(&Optimization::PetriDeadlockCheck),
-            #[cfg(feature = "symbolic-automata")]
             symbolic_guard: enabled.contains(&Optimization::SymbolicGuardAnalysis),
-            #[cfg(feature = "omega")]
             weighted_buchi: enabled.contains(&Optimization::WeightedBuchiAnalysis),
-            #[cfg(feature = "alternating")]
             weighted_alternating: enabled.contains(&Optimization::WeightedAlternatingAnalysis),
-            #[cfg(feature = "vpa")]
             weighted_vpa: enabled.contains(&Optimization::WeightedVpaAnalysis),
-            #[cfg(feature = "parity-tree-automata")]
             parity_tree: enabled.contains(&Optimization::ParityTreeAnalysis),
-            #[cfg(feature = "register-automata")]
             register_analysis: enabled.contains(&Optimization::RegisterAnalysis),
-            #[cfg(feature = "probabilistic")]
             probabilistic: enabled.contains(&Optimization::ProbabilisticAnalysis),
-            #[cfg(feature = "multi-tape")]
             multi_tape: enabled.contains(&Optimization::MultiTapeAnalysis),
-            #[cfg(feature = "multiset-automata")]
             multiset: enabled.contains(&Optimization::MultisetAnalysis),
-            #[cfg(feature = "weighted-mso")]
             weighted_mso: enabled.contains(&Optimization::WeightedMsoAnalysis),
-            #[cfg(feature = "two-way-transducer")]
             two_way_transducer: enabled.contains(&Optimization::TwoWayTransducerAnalysis),
-            #[cfg(feature = "sft")]
             sft: enabled.contains(&Optimization::SftAnalysis),
-            #[cfg(feature = "egraph")]
             egraph: enabled.contains(&Optimization::EGraphSaturation),
-            #[cfg(feature = "presburger")]
             presburger: enabled.contains(&Optimization::PresburgerAnalysis),
-            #[cfg(feature = "unification")]
             unification: enabled.contains(&Optimization::UnificationAnalysis),
-            #[cfg(feature = "lattice-theory")]
             lattice: enabled.contains(&Optimization::LatticeAnalysis),
-            #[cfg(feature = "type-system")]
             refinement_type_check: enabled.contains(&Optimization::RefinementTypeCheck),
-            #[cfg(feature = "symbolic-automata")]
+            environment_trimming: enabled.contains(&Optimization::EnvironmentTrimming),
+            dead_frame_elimination: enabled.contains(&Optimization::DeadFrameElimination),
             symbolic_guard_dce: enabled.contains(&Optimization::SymbolicGuardAnalysis),
-            #[cfg(feature = "probabilistic")]
             probabilistic_dce: enabled.contains(&Optimization::ProbabilisticAnalysis),
-            #[cfg(feature = "probabilistic")]
             probabilistic_weight_blend: enabled.contains(&Optimization::ProbabilisticAnalysis),
-            #[cfg(feature = "alternating")]
             bisimulation_iso_groups: enabled.contains(&Optimization::WeightedAlternatingAnalysis),
-            #[cfg(feature = "register-automata")]
             skip_dead_binders: enabled.contains(&Optimization::RegisterAnalysis),
             hash_consing: enabled.contains(&Optimization::HashConsing),
             incremental_delta: enabled.contains(&Optimization::IncrementalDelta),
@@ -2133,6 +2015,7 @@ impl OptimizationGates {
             bp_table_lookup: enabled.contains(&Optimization::BpTableLookup),
             trivial_inline: enabled.contains(&Optimization::TrivialInline),
             bp_range_loop: enabled.contains(&Optimization::BpRangeLoop),
+            continuation_compression: enabled.contains(&Optimization::ContinuationCompression),
             frequency_ordering: enabled.contains(&Optimization::FrequencyOrdering),
             segment_merging: enabled.contains(&Optimization::SegmentMerging),
             computed_goto: enabled.contains(&Optimization::ComputedGoto),
@@ -2152,7 +2035,7 @@ impl OptimizationGates {
         match Self::from_env() {
             Ok(Some(gates)) => {
                 crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
-                    id: "I08",
+                    id: DiagnosticId::I08,
                     name: "env-override-active",
                     severity: crate::lint::LintSeverity::Warning,
                     category: None,
@@ -2167,7 +2050,7 @@ impl OptimizationGates {
             Ok(None) => Self::from_recommendations(recommended),
             Err(e) => {
                 crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
-                    id: "I09",
+                    id: DiagnosticId::I09,
                     name: "env-override-parse-error",
                     severity: crate::lint::LintSeverity::Error,
                     category: None,
@@ -2342,6 +2225,7 @@ impl Optimization {
             | Self::EnhancedDeadCodeElimination // A4: dead-rule codegen suppression
             | Self::AdaptiveRecovery   // B2: adaptive recovery weight expr
             | Self::BacktrackingElimination // G1: FIRST-set backtracking elimination
+            | Self::DeadFrameElimination   // CEK03: WPDS-dead frame elimination
             => OptimizationStatus::Auto,
 
             // Auto-applied (Sprint 6): ContextWeight narrowing in NFA try-all
@@ -2380,6 +2264,7 @@ impl Optimization {
             | Self::BpTableLookup         // BP03
             | Self::TrivialInline         // BP04
             | Self::BpRangeLoop           // BP05
+            | Self::ContinuationCompression // BP06
             | Self::FrequencyOrdering     // CD01
             | Self::SegmentMerging        // CD02
             | Self::ComputedGoto          // CD03
@@ -2392,42 +2277,29 @@ impl Optimization {
             => OptimizationStatus::Diagnostic,
 
             // Advanced automata infrastructure: promoted to Auto where analysis drives codegen
-            #[cfg(feature = "symbolic-automata")]
             Self::SymbolicGuardAnalysis => OptimizationStatus::Auto, // SYM01-DCE
-            #[cfg(feature = "omega")]
             Self::WeightedBuchiAnalysis => OptimizationStatus::Diagnostic,
-            #[cfg(feature = "alternating")]
             Self::WeightedAlternatingAnalysis => OptimizationStatus::Auto, // N06-ISO
-            #[cfg(feature = "vpa")]
             Self::WeightedVpaAnalysis => OptimizationStatus::Diagnostic, // V05-INFO (informational)
-            #[cfg(feature = "parity-tree-automata")]
             Self::ParityTreeAnalysis => OptimizationStatus::Diagnostic,
-            #[cfg(feature = "register-automata")]
             Self::RegisterAnalysis => OptimizationStatus::Auto, // RA01-SKIP
-            #[cfg(feature = "probabilistic")]
             Self::ProbabilisticAnalysis => OptimizationStatus::Auto, // PR01-DCE + PR01-WEIGHT
-            #[cfg(feature = "multi-tape")]
             Self::MultiTapeAnalysis => OptimizationStatus::Diagnostic, // MT01-INFO
-            #[cfg(feature = "multiset-automata")]
             Self::MultisetAnalysis => OptimizationStatus::Diagnostic,
-            #[cfg(feature = "weighted-mso")]
             Self::WeightedMsoAnalysis => OptimizationStatus::Diagnostic,
-            #[cfg(feature = "two-way-transducer")]
             Self::TwoWayTransducerAnalysis => OptimizationStatus::Diagnostic,
-            #[cfg(feature = "sft")]
             Self::SftAnalysis => OptimizationStatus::Diagnostic,
-            #[cfg(feature = "egraph")]
             Self::EGraphSaturation => OptimizationStatus::Diagnostic,
-            #[cfg(feature = "presburger")]
             Self::PresburgerAnalysis => OptimizationStatus::Diagnostic,
-            #[cfg(feature = "unification")]
             Self::UnificationAnalysis => OptimizationStatus::Diagnostic,
-            #[cfg(feature = "lattice-theory")]
             Self::LatticeAnalysis => OptimizationStatus::Diagnostic,
-            #[cfg(feature = "predicate-dispatch")]
             Self::PredicateDispatch => OptimizationStatus::Diagnostic,
-            #[cfg(feature = "type-system")]
             Self::RefinementTypeCheck => OptimizationStatus::Diagnostic,
+
+            // CEK machine / green thread infrastructure
+            Self::EnvironmentTrimming => OptimizationStatus::Auto, // CEK01: dead capture elimination
+            Self::CekTracedParser => OptimizationStatus::Diagnostic, // CEK02: tracing
+            Self::GreenThreadForkJoin => OptimizationStatus::Diagnostic, // GT01: fork/join cost analysis
         }
     }
 }
@@ -2581,7 +2453,7 @@ impl GrammarComplexityReport {
     /// D2: Convert to a lint diagnostic for consistent emission.
     pub fn to_diagnostic(&self) -> crate::lint::LintDiagnostic {
         crate::lint::LintDiagnostic {
-            id: "D02",
+            id: DiagnosticId::D02,
             name: "grammar-profile",
             severity: crate::lint::LintSeverity::Note,
             category: None,
@@ -2627,17 +2499,11 @@ mod tests {
             avg_trie_depth: 0.0,
             ambiguity_score: 0.0,
             deterministic_ratio: 1.0,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
-            #[cfg(feature = "type-system")]
             refinement_type_count: 0,
         }
     }
@@ -2663,15 +2529,10 @@ mod tests {
         let profile = GrammarProfile {
             ambiguous_fraction: 0.25,
             ambiguous_count: 3,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -2693,15 +2554,10 @@ mod tests {
     fn test_cold_heavy_grammar() {
         let profile = GrammarProfile {
             cold_fraction: 0.6,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -2719,15 +2575,10 @@ mod tests {
         let profile = GrammarProfile {
             nfa_spillover_categories: 2,
             has_beam_width: true,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -2773,10 +2624,7 @@ mod tests {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
         // 50 base + 15 cfg-gated advanced automata + constraint theory variants + type-system + egraph (when all features enabled)
-        #[cfg(feature = "full-analysis")]
-        assert_eq!(all.len(), 67, "should evaluate all 67 optimization candidates");
-        #[cfg(not(feature = "full-analysis"))]
-        assert!(all.len() >= 50, "should evaluate at least 50 optimization candidates");
+        assert_eq!(all.len(), 72, "should evaluate all 72 optimization candidates");
     }
 
     #[test]
@@ -2864,15 +2712,10 @@ mod tests {
         let profile = GrammarProfile {
             nfa_spillover_categories: 1,
             ambiguous_count: 2,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -2938,15 +2781,10 @@ mod tests {
             ambiguous_count: 3,
             nfa_spillover_categories: 2,
             has_beam_width: true,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -2967,15 +2805,10 @@ mod tests {
     fn test_gates_from_cold_heavy_grammar() {
         let profile = GrammarProfile {
             cold_fraction: 0.6,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -2991,15 +2824,10 @@ mod tests {
     fn test_gates_from_large_wfst_grammar() {
         let profile = GrammarProfile {
             total_wfst_states: 50,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -3074,15 +2902,10 @@ mod tests {
         let profile = GrammarProfile {
             category_count: 1,
             rule_count: 3,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -3134,15 +2957,10 @@ mod tests {
 
         let profile = GrammarProfile {
             category_count: 2,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -3158,15 +2976,10 @@ mod tests {
             ambiguous_fraction: 0.15,
             cold_fraction: 0.3,
             nfa_spillover_categories: 1,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -3240,7 +3053,7 @@ mod tests {
             resolved_ambiguities: 0,
         };
         let diag = report.to_diagnostic();
-        assert_eq!(diag.id, "D02");
+        assert_eq!(diag.id, crate::lint::DiagnosticId::D02);
         assert_eq!(diag.name, "grammar-profile");
         assert_eq!(diag.grammar_name.as_deref(), Some("TestLang"));
         assert!(matches!(diag.severity, crate::lint::LintSeverity::Note));
@@ -3436,15 +3249,10 @@ mod tests {
         std::env::remove_var("PRATTAIL_AUTO_OPTIMIZE");
         let profile = GrammarProfile {
             rule_count: 20,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -3531,15 +3339,10 @@ mod tests {
         // DB02 (LazyAnalysis) is applicable when category_count < 3
         let profile = GrammarProfile {
             category_count: 2,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -3554,15 +3357,10 @@ mod tests {
         // Not applicable for large grammars
         let profile_large = GrammarProfile {
             category_count: 5,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -3594,6 +3392,7 @@ mod tests {
         assert!(opt_set.contains(&Optimization::BpCompaction), "BP01 missing");
         assert!(opt_set.contains(&Optimization::TrivialInline), "BP04 missing");
         assert!(opt_set.contains(&Optimization::BpRangeLoop), "BP05 missing");
+        assert!(opt_set.contains(&Optimization::ContinuationCompression), "BP06 missing");
         assert!(opt_set.contains(&Optimization::FrequencyOrdering), "CD01 missing");
         assert!(opt_set.contains(&Optimization::ComputedGoto), "CD03 missing");
         assert!(opt_set.contains(&Optimization::PrefixCse), "CD05 missing");
@@ -3630,6 +3429,7 @@ mod tests {
             ("BP03", Optimization::BpTableLookup),
             ("BP04", Optimization::TrivialInline),
             ("BP05", Optimization::BpRangeLoop),
+            ("BP06", Optimization::ContinuationCompression),
             ("CD01", Optimization::FrequencyOrdering),
             ("CD02", Optimization::SegmentMerging),
             ("CD03", Optimization::ComputedGoto),
@@ -3667,7 +3467,7 @@ mod tests {
 
     // ── Display / FromStr roundtrip tests ────────────────────────────────
 
-    /// Returns all 52 `Optimization` variants in declaration order.
+    /// Returns all 53 non-feature-gated `Optimization` variants in declaration order.
     fn all_optimizations() -> Vec<Optimization> {
         vec![
             Optimization::LeftFactoring,
@@ -3688,6 +3488,8 @@ mod tests {
             Optimization::SafetyVerification,
             Optimization::CegarRefinement,
             Optimization::PetriDeadlockCheck,
+            Optimization::EnvironmentTrimming,
+            Optimization::DeadFrameElimination,
             Optimization::HashConsing,
             Optimization::IncrementalDelta,
             Optimization::RelationIndexing,
@@ -3711,6 +3513,7 @@ mod tests {
             Optimization::BpTableLookup,
             Optimization::TrivialInline,
             Optimization::BpRangeLoop,
+            Optimization::ContinuationCompression,
             Optimization::FrequencyOrdering,
             Optimization::SegmentMerging,
             Optimization::ComputedGoto,
@@ -3727,7 +3530,7 @@ mod tests {
     fn test_optimization_display_fromstr_roundtrip_all() {
         use std::str::FromStr;
         let variants = all_optimizations();
-        assert_eq!(variants.len(), 50, "expected exactly 50 variants");
+        assert_eq!(variants.len(), 53, "expected exactly 53 variants");
 
         for variant in &variants {
             let display = variant.to_string();
@@ -3827,6 +3630,7 @@ mod tests {
             ("BP03", Optimization::BpTableLookup),
             ("BP04", Optimization::TrivialInline),
             ("BP05", Optimization::BpRangeLoop),
+            ("BP06", Optimization::ContinuationCompression),
             ("CD01", Optimization::FrequencyOrdering),
             ("CD02", Optimization::SegmentMerging),
             ("CD03", Optimization::ComputedGoto),
@@ -3837,7 +3641,7 @@ mod tests {
             ("DB03", Optimization::ParallelAnalysis),
             ("DB04", Optimization::CachedLints),
         ];
-        assert_eq!(all_codes.len(), 50, "expected 50 short codes for all 50 variants");
+        assert_eq!(all_codes.len(), 51, "expected 51 short codes for all 51 variants");
 
         for (code, expected) in &all_codes {
             let parsed = Optimization::from_str(code).unwrap_or_else(|e| {
@@ -3920,8 +3724,8 @@ mod tests {
         let variants: HashSet<Optimization> = all_optimizations().into_iter().collect();
         assert_eq!(
             variants.len(),
-            50,
-            "all_optimizations() should return exactly 50 unique variants"
+            53,
+            "all_optimizations() should return exactly 53 unique variants"
         );
 
         // Also verify each variant has a unique Display representation
@@ -3929,21 +3733,25 @@ mod tests {
             all_optimizations().iter().map(|o| o.to_string()).collect();
         assert_eq!(
             display_strings.len(),
-            50,
+            variants.len(),
             "each variant should have a unique Display string"
         );
 
         // Verify all short codes parse to unique variants
-        let all_short_codes = [
+        let mut all_short_codes: Vec<&str> = vec![
             "A1", "A2", "A4", "A5", "B1", "B2", "B3", "F1", "F2", "F3",
             "G1", "H1", "G25", "T01", "V01", "S01", "S03", "N01",
+            "CEK01", "CEK03",
             "ART01", "ART02", "ART03", "ART04", "ART05", "ART06",
             "BCG01", "BCG02", "BCG03", "BCG04", "BCG05", "BCG06",
             "AL01", "AL02", "AL03", "AL04", "AL05", "AL06",
-            "BP01", "BP02", "BP03", "BP04", "BP05",
+            "BP01", "BP02", "BP03", "BP04", "BP05", "BP06",
             "CD01", "CD02", "CD03", "CD04", "CD05",
             "DB01", "DB02", "DB03", "DB04",
         ];
+        // Feature-gated short codes
+        all_short_codes.push("CEK02");
+        all_short_codes.push("GT01");
         let parsed_variants: HashSet<Optimization> = all_short_codes
             .iter()
             .map(|code| {
@@ -3970,7 +3778,6 @@ mod tests {
 
     // ── Advanced Automata Codegen Promotion Tests ──────────────────────────
 
-    #[cfg(feature = "symbolic-automata")]
     #[test]
     fn test_optimization_status_auto_symbolic() {
         assert_eq!(
@@ -3980,7 +3787,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "probabilistic")]
     #[test]
     fn test_optimization_status_auto_probabilistic() {
         assert_eq!(
@@ -3990,7 +3796,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "alternating")]
     #[test]
     fn test_optimization_status_auto_alternating() {
         assert_eq!(
@@ -4000,7 +3805,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "register-automata")]
     #[test]
     fn test_optimization_status_auto_register() {
         assert_eq!(
@@ -4010,7 +3814,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn test_optimization_status_diagnostic_vpa() {
         assert_eq!(
@@ -4020,7 +3823,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "multi-tape")]
     #[test]
     fn test_optimization_status_diagnostic_multi_tape() {
         assert_eq!(
@@ -4030,19 +3832,14 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "symbolic-automata")]
     #[test]
     fn test_gates_symbolic_dce_set_when_applicable() {
         let profile = GrammarProfile {
             unsatisfiable_guard_count: 3,
             rule_count: 10,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -4054,7 +3851,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "symbolic-automata")]
     #[test]
     fn test_gates_symbolic_dce_profile_default_zero() {
         let profile = simple_profile();
@@ -4064,18 +3860,14 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "probabilistic")]
     #[test]
     fn test_gates_probabilistic_set_when_applicable() {
         let profile = GrammarProfile {
             low_selectivity_count: 2,
             rule_count: 10,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
-            #[cfg(feature = "register-automata")]
             dead_register_count: 0,
             ..simple_profile()
         };
@@ -4091,19 +3883,14 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "register-automata")]
     #[test]
     fn test_gates_register_set_when_applicable() {
         let profile = GrammarProfile {
             dead_register_count: 1,
             category_count: 3,
-            #[cfg(feature = "symbolic-automata")]
             unsatisfiable_guard_count: 0,
-            #[cfg(feature = "probabilistic")]
             probabilistic_mean_entropy: 0.0,
-            #[cfg(feature = "probabilistic")]
             low_selectivity_count: 0,
-            #[cfg(feature = "alternating")]
             bisimulation_extra_groups: 0,
             ..simple_profile()
         };
@@ -4121,13 +3908,11 @@ mod tests {
         let profile = simple_profile();
 
         // Verify all advanced automata fields default to zero/0.0
-        #[cfg(feature = "symbolic-automata")]
         assert_eq!(
             profile.unsatisfiable_guard_count, 0,
             "unsatisfiable_guard_count should default to 0"
         );
 
-        #[cfg(feature = "probabilistic")]
         {
             assert!(
                 profile.probabilistic_mean_entropy == 0.0,
@@ -4139,20 +3924,17 @@ mod tests {
             );
         }
 
-        #[cfg(feature = "alternating")]
         assert_eq!(
             profile.bisimulation_extra_groups, 0,
             "bisimulation_extra_groups should default to 0"
         );
 
-        #[cfg(feature = "register-automata")]
         assert_eq!(
             profile.dead_register_count, 0,
             "dead_register_count should default to 0"
         );
     }
 
-    #[cfg(feature = "symbolic-automata")]
     #[test]
     fn test_all_enabled_includes_new_gates() {
         let gates = OptimizationGates::all_enabled();
@@ -4162,7 +3944,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "probabilistic")]
     #[test]
     fn test_none_enabled_excludes_new_gates() {
         let gates = OptimizationGates::none_enabled();

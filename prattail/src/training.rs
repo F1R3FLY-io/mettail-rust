@@ -525,7 +525,6 @@ impl SpilloverTrainer {
 ///
 /// # Requires
 /// Feature `wfst-log` (uses `LogWeight` for forward-backward).
-#[cfg(feature = "wfst-log")]
 pub fn compute_expected_counts_fb(
     wfst: &crate::wfst::PredictionWfst,
 ) -> HashMap<String, f64> {
@@ -612,7 +611,6 @@ pub fn compute_expected_counts_fb(
 ///
 /// # Requires
 /// Feature `wfst-log`.
-#[cfg(feature = "wfst-log")]
 pub fn train_from_corrections(
     rule_weights: &mut RuleWeights,
     wfsts: &HashMap<String, crate::wfst::PredictionWfst>,
@@ -1237,7 +1235,6 @@ mod tests {
 
     // ── Sprint 5: Forward-backward expected counts ──
 
-    #[cfg(feature = "wfst-log")]
     mod fb_tests {
         use super::*;
         use crate::automata::semiring::TropicalWeight;

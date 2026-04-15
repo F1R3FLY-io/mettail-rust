@@ -951,10 +951,8 @@ fn collect_category_refs(
 /// Compiler adapter for the Multi-Tape Automata module (M8).
 ///
 /// Activated by ≥2 channels in a join receive (k-tape regular relation variety).
-#[cfg(feature = "predicate-dispatch")]
 pub struct MultiTapeCompiler;
 
-#[cfg(feature = "predicate-dispatch")]
 impl crate::predicate_dispatch::PredicateCompiler for MultiTapeCompiler {
     type Output = MultiTapeAnalysis;
 

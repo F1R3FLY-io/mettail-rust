@@ -870,6 +870,23 @@ const definitions = [
 		colour: "51b0e0",
 	},
 
+	// Neg Float: ...
+	{
+		type: "float_neg_float",
+		tooltip: "Neg Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
 	// Add Float: ... ...
 	{
 		type: "float_add_float",

@@ -1224,10 +1224,8 @@ fn tarjan_scc(adj: &[HashSet<usize>]) -> Vec<Vec<usize>> {
 /// Compiler adapter for the Büchi Automata module (M2).
 ///
 /// Activated by `ForallInfinite`/`ExistsInfinite` morphemes (ω-regular variety).
-#[cfg(feature = "predicate-dispatch")]
 pub struct BuchiCompiler;
 
-#[cfg(feature = "predicate-dispatch")]
 impl crate::predicate_dispatch::PredicateCompiler for BuchiCompiler {
     type Output = BuchiAnalysis;
 
@@ -1598,6 +1596,8 @@ mod tests {
             context_rule_tables: HashMap::new(),
             cross_category_bp: HashMap::new(),
             context_unambiguous: HashMap::new(),
+            cek_bijection: crate::wpds::CekWpdsBijection::default(),
+            pautomaton: crate::wpds::PAutomaton::new(0),
         }
     }
 

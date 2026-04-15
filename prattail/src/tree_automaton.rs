@@ -667,7 +667,6 @@ impl WeightHeat for crate::automata::semiring::FuzzyWeight {
     }
 }
 
-#[cfg(feature = "wfst-log")]
 impl WeightHeat for crate::automata::semiring::LogWeight {
     #[inline]
     fn to_heat(&self) -> f64 {
@@ -1097,7 +1096,6 @@ fn collect_nonterminal_children(
 /// // Given TokenTree::Group { open: ("LParen", _), children: [...], close: _ },
 /// //   produces Term { symbol: "LParen", children: [... recursively converted ...] }
 /// ```
-#[cfg(all(feature = "tree-automata", feature = "vpa"))]
 pub fn token_tree_to_term<T: std::fmt::Debug>(
     tt: &crate::vpa::TokenTree<T>,
     token_to_symbol: &dyn Fn(&T) -> String,
@@ -1123,21 +1121,18 @@ pub fn token_tree_to_term<T: std::fmt::Debug>(
 ///
 /// Produced by [`validate_token_tree`] when the bottom-up evaluation of the
 /// converted term fails to reach any final state with a non-zero weight.
-#[cfg(all(feature = "tree-automata", feature = "vpa"))]
 #[derive(Debug, Clone)]
 pub struct TreeValidationError {
     /// Human-readable description of the validation failure.
     pub message: String,
 }
 
-#[cfg(all(feature = "tree-automata", feature = "vpa"))]
 impl fmt::Display for TreeValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.message)
     }
 }
 
-#[cfg(all(feature = "tree-automata", feature = "vpa"))]
 impl std::error::Error for TreeValidationError {}
 
 /// Validate a token tree against a grammar WTA.
@@ -1177,7 +1172,6 @@ impl std::error::Error for TreeValidationError {}
 ///     Err(err) => eprintln!("validation failed: {}", err),
 /// }
 /// ```
-#[cfg(all(feature = "tree-automata", feature = "vpa"))]
 pub fn validate_token_tree<W: Semiring, T: std::fmt::Debug>(
     automaton: &TreeAutomaton<W>,
     tree: &crate::vpa::TokenTree<T>,
@@ -1691,7 +1685,6 @@ mod tests {
     // token_tree_to_term / validate_token_tree tests
     // ──────────────────────────────────────────────────────────────────────
 
-    #[cfg(all(feature = "tree-automata", feature = "vpa"))]
     mod token_tree_tests {
         use super::*;
         use crate::vpa::TokenTree;

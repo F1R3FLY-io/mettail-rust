@@ -1,4 +1,3 @@
-#![cfg(feature = "test-languages")]
 //! Tests for LED (Left-Denotation) delegation in sum-type categories.
 //!
 //! The LedTest language has operators on constituent categories (Num, Pred) but
@@ -351,9 +350,13 @@ fn test_p2_1_variable_auto_project() {
     let result = Expr::parse("x + 1").expect("should parse x + 1 via auto-projection");
     if let Expr::CastNum(inner) = &result {
         if let Num::AddNum(left, _right) = inner.as_ref() {
+            // After var-aware Phase 2 coercion, EVar(x) is converted directly
+            // to NVar(x) instead of wrapping as ExprToNum(EVar(x)).
+            // This preserves display roundtrip: display produces "x + 1"
+            // which parses back identically.
             assert!(
-                matches!(left.as_ref(), Num::ExprToNum(_)),
-                "expected ExprToNum (auto-projection) as left of AddNum, got: {:?}",
+                matches!(left.as_ref(), Num::NVar(_)),
+                "expected NVar (var-aware projection) as left of AddNum, got: {:?}",
                 inner
             );
         } else {
@@ -371,9 +374,10 @@ fn test_p2_2_variable_cross_cat_auto_project() {
     let result = Expr::parse("x == 1").expect("should parse x == 1 via auto-projection");
     if let Expr::CastPred(inner) = &result {
         if let lt::Pred::EqNum(left, _right) = inner.as_ref() {
+            // After var-aware Phase 2 coercion, EVar(x) → NVar(x) directly.
             assert!(
-                matches!(left.as_ref(), Num::ExprToNum(_)),
-                "expected ExprToNum as left of EqNum, got: {:?}",
+                matches!(left.as_ref(), Num::NVar(_)),
+                "expected NVar (var-aware projection) as left of EqNum, got: {:?}",
                 inner
             );
         } else {
@@ -396,16 +400,17 @@ fn test_p2_4_auto_projection_plus_own_op() {
     );
 }
 
-/// P2.5: Variable + postfix — "x!" → CastNum(FactNum(ExprToNum(ExprVar(x))))
+/// P2.5: Variable + postfix — "x!" → CastNum(FactNum(NVar(x)))
 #[test]
 fn test_p2_5_auto_project_postfix() {
     mettail_runtime::clear_var_cache();
     let result = Expr::parse("x!").expect("should parse x! via auto-projection");
     if let Expr::CastNum(inner) = &result {
         if let Num::FactNum(arg) = inner.as_ref() {
+            // After var-aware Phase 2 coercion, EVar(x) → NVar(x) directly.
             assert!(
-                matches!(arg.as_ref(), Num::ExprToNum(_)),
-                "expected ExprToNum inside FactNum, got: {:?}",
+                matches!(arg.as_ref(), Num::NVar(_)),
+                "expected NVar (var-aware projection) inside FactNum, got: {:?}",
                 inner
             );
         } else {

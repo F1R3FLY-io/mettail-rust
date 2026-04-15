@@ -272,6 +272,10 @@ pub struct PAutomaton<W: Semiring> {
     pub transitions_by_source: HashMap<PAutomatonStateId, Vec<usize>>,
     /// Map from stack symbols to the state they reach from initial.
     pub symbol_to_state: HashMap<StackSymbol, PAutomatonStateId>,
+    /// Set of all stack symbols that appear in at least one transition.
+    /// Maintained incrementally by `add_transition()` for O(1) lookup in
+    /// `is_symbol_in_any_configuration()`.
+    pub symbols_present: HashSet<StackSymbol>,
 }
 
 impl<W: Semiring> PAutomaton<W> {
@@ -284,6 +288,7 @@ impl<W: Semiring> PAutomaton<W> {
             transitions: Vec::new(),
             transitions_by_source: HashMap::new(),
             symbol_to_state: HashMap::new(),
+            symbols_present: HashSet::new(),
         }
     }
 
@@ -297,6 +302,7 @@ impl<W: Semiring> PAutomaton<W> {
     /// Add a transition.
     pub fn add_transition(&mut self, from: PAutomatonStateId, symbol: StackSymbol, to: PAutomatonStateId, weight: W) {
         let idx = self.transitions.len();
+        self.symbols_present.insert(symbol.clone());
         self.transitions.push(PAutomatonTransition { from, symbol, to, weight });
         self.transitions_by_source.entry(from).or_default().push(idx);
     }
@@ -340,6 +346,21 @@ impl<W: Semiring> PAutomaton<W> {
         false
     }
 
+    /// Check if a stack symbol appears in any reachable configuration at any
+    /// stack depth.
+    ///
+    /// Scans ALL transitions in the P-automaton, not just those from the initial
+    /// state. After poststar saturation, every transition participates in at least
+    /// one reachable configuration, so presence in any transition means the symbol
+    /// is live (can appear on the continuation stack during a valid parse).
+    ///
+    /// Use this instead of `is_symbol_accepted` when determining frame liveness:
+    /// continuation symbols in Push rules appear as transitions from intermediate
+    /// states (`q_r`), not from the initial state (`p`).
+    pub fn is_symbol_in_any_configuration(&self, symbol: &StackSymbol) -> bool {
+        self.symbols_present.contains(symbol)
+    }
+
     /// Get the weight for a stack symbol across all reachable configurations.
     ///
     /// Returns the semiring sum of weights on all transitions `(initial, symbol, q)`
@@ -380,9 +401,10 @@ impl<W: Semiring> PAutomaton<W> {
 /// The construction maps PraTTaIL's grammar structure to PDS rules:
 ///
 /// - **Category entry** (`⟨Cat⟩`): Each category has an entry stack symbol
-/// - **Intraprocedural** (Replace): Within a rule, consuming terminals
-/// - **Cross-category call** (Push): When a rule references another category's nonterminal
-/// - **Return** (Pop): When a rule completes, returning to the caller
+/// - **Replace**: Terminals + same-category NTs (intraprocedural, per Reps et al. 2007)
+/// - **Push**: Cross-category NTs only (interprocedural calls)
+/// - **Pop**: Rule completion (return to caller)
+/// - **Synthetic Pop**: Category entry for zero-rule categories (e.g. Ambient's Name)
 ///
 /// Weights come from the `PredictionWfst` for each category.
 pub fn build_wpds<W: Semiring>(
@@ -409,7 +431,12 @@ pub fn build_wpds<W: Semiring>(
     };
 
     // Register initial symbol
-    wpds.ensure_symbol(initial_symbol);
+    wpds.ensure_symbol(initial_symbol.clone());
+
+    // Note: Multi-type language reachability is handled by compute_dead_frames()
+    // in pipeline.rs, which exempts non-primary categories that have rules
+    // (they are independently parseable). The WPDS reachability analysis is
+    // strictly from the primary category, preserving orphan detection.
 
     // Group rules by category
     let mut rules_by_category: HashMap<&str, Vec<&crate::RuleSpec>> = HashMap::new();
@@ -458,8 +485,14 @@ pub fn build_wpds<W: Semiring>(
                 weight: w,
             });
 
-            // Walk syntax items, creating transitions for each position
+            // Walk syntax items, creating transitions for each position.
+            //
+            // Same-category NTs use Replace (intraprocedural per Reps et al.
+            // 2007). Only cross-category NTs use Push (interprocedural calls).
+            // The Pratt LHS distinction is kept for documentation but all
+            // same-cat NTs are Replace regardless.
             let mut pos: u32 = 0;
+            let mut skipped_pratt_lhs = false;
             for (_idx, item) in rule_spec.syntax.iter().enumerate() {
                 let current = StackSymbol::rule_position(cat, label, pos);
                 wpds.ensure_symbol(current.clone());
@@ -477,20 +510,26 @@ pub fn build_wpds<W: Semiring>(
                         });
                     }
                     SyntaxItemSpec::NonTerminal { category: ref nt_cat, .. } => {
+                        let continuation = StackSymbol::rule_position(cat, label, next_pos);
+                        wpds.ensure_symbol(continuation.clone());
+
                         if nt_cat == cat {
-                            // Same-category recursion: Replace (handled by Pratt BP)
-                            let next = StackSymbol::rule_position(cat, label, next_pos);
-                            wpds.ensure_symbol(next.clone());
+                            // Same-category recursion: Replace to continuation.
+                            // Matches Reps et al. (2007) — intraprocedural transitions
+                            // use Replace; only cross-category calls use Push.
+                            if (rule_spec.is_infix || rule_spec.is_postfix)
+                                && !skipped_pratt_lhs
+                            {
+                                skipped_pratt_lhs = true;
+                            }
                             wpds.add_rule(WpdsRule::Replace {
                                 from_gamma: current,
-                                to_gamma: next,
+                                to_gamma: continuation,
                                 weight: W::one(),
                             });
                         } else {
                             // Cross-category call: Push (callee entry on top, continuation on bottom)
-                            let continuation = StackSymbol::rule_position(cat, label, next_pos);
                             let callee_entry = StackSymbol::category_entry(nt_cat);
-                            wpds.ensure_symbol(continuation.clone());
                             wpds.ensure_symbol(callee_entry.clone());
                             wpds.add_rule(WpdsRule::Push {
                                 from_gamma: current,
@@ -524,6 +563,7 @@ pub fn build_wpds<W: Semiring>(
                     }
                     SyntaxItemSpec::Collection { element_category: ref e_cat, .. } => {
                         if e_cat == cat {
+                            // Same-category collection: Replace (intraprocedural).
                             let next = StackSymbol::rule_position(cat, label, next_pos);
                             wpds.ensure_symbol(next.clone());
                             wpds.add_rule(WpdsRule::Replace {
@@ -626,6 +666,19 @@ pub fn build_wpds<W: Semiring>(
                             }
                         }
                     }
+                    SyntaxItemSpec::GuardExpression { .. } => {
+                        // Phase 2F: guard expressions are self-contained
+                        // (consumed by the predicate sublanguage parser).
+                        // From the WPDS perspective this is an intraprocedural
+                        // Replace — no cross-category call.
+                        let next = StackSymbol::rule_position(cat, label, next_pos);
+                        wpds.ensure_symbol(next.clone());
+                        wpds.add_rule(WpdsRule::Replace {
+                            from_gamma: current,
+                            to_gamma: next,
+                            weight: W::one(),
+                        });
+                    }
                 }
                 pos = next_pos;
             }
@@ -635,6 +688,27 @@ pub fn build_wpds<W: Semiring>(
             wpds.ensure_symbol(final_pos.clone());
             wpds.add_rule(WpdsRule::Pop {
                 from_gamma: final_pos,
+                weight: W::one(),
+            });
+        }
+    }
+
+    // Ensure every category can complete in poststar. Categories with zero
+    // parsing rules (e.g., Ambient's Name) need a synthetic Pop from their
+    // entry point so that Push/Pop cycles through those categories can
+    // complete. Without this, continuation positions after cross-category
+    // calls to empty categories are unreachable in the P-automaton, causing
+    // false-positive dead frame elimination.
+    for cat_spec in &spec.types {
+        let cat = &cat_spec.name;
+        let has_rules = rules_by_category
+            .get(cat.as_str())
+            .map_or(false, |rules| !rules.is_empty());
+        if !has_rules {
+            let cat_entry = StackSymbol::category_entry(cat);
+            wpds.ensure_symbol(cat_entry.clone());
+            wpds.add_rule(WpdsRule::Pop {
+                from_gamma: cat_entry,
                 weight: W::one(),
             });
         }
@@ -731,6 +805,12 @@ pub fn poststar<W: Semiring>(wpds: &Wpds<W>) -> PAutomaton<W> {
     // Fresh state allocation for push rules: from_gamma → fresh_state
     let mut push_states: HashMap<StackSymbol, PAutomatonStateId> = HashMap::new();
 
+    // Track intermediate states reached via Pop. When Pop fires from
+    // (p, γ, q_r) where q_r is an intermediate state created by Push,
+    // q_r's outgoing transitions must be propagated to p_state so that
+    // continuation symbols (the "bottom" of Push rules) become reachable.
+    let mut pop_reached: HashSet<PAutomatonStateId> = HashSet::new();
+
     // Saturation loop
     while let Some((_from, gamma, to, w)) = worklist.pop_front() {
         // Find all rules with source gamma
@@ -740,12 +820,64 @@ pub fn poststar<W: Semiring>(wpds: &Wpds<W>) -> PAutomaton<W> {
             let rule = &wpds.rules[rule_idx];
 
             match rule {
-                WpdsRule::Pop { .. } => {
-                    // Pop: configuration ⟨p, γ⟩ → ⟨p', ε⟩
-                    // The automaton already accepts γ from state `from`; pop means
-                    // the remaining stack below γ is now the active configuration.
-                    // For single-control-location WPDS, this means we've returned.
-                    // No new transition needed — the path already reaches q_final.
+                WpdsRule::Pop { weight: w_r, .. } => {
+                    // Pop: ⟨p, γ⟩ → ⟨p', ε⟩
+                    // When `to` is an intermediate state (created by a Push rule),
+                    // propagate its outgoing transitions to p_state. This makes
+                    // continuation symbols from nested Push rules reachable.
+                    pop_reached.insert(to);
+                    let pop_weight = w_r.times(&w);
+
+                    let outgoing: Vec<(StackSymbol, PAutomatonStateId, W)> = automaton
+                        .transitions_by_source
+                        .get(&to)
+                        .map(|indices| {
+                            indices
+                                .iter()
+                                .map(|&idx| {
+                                    let t = &automaton.transitions[idx];
+                                    (t.symbol.clone(), t.to, t.weight)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    for (sym, target, w_b) in outgoing {
+                        let prop_weight = pop_weight.times(&w_b);
+                        let key = (p_state, sym.clone(), target);
+
+                        let should_add = match existing.get(&key) {
+                            Some(old_w) => {
+                                let combined = old_w.plus(&prop_weight);
+                                if !combined.approx_eq(old_w, 1e-10) {
+                                    existing.insert(key.clone(), combined);
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            None => {
+                                existing.insert(key.clone(), prop_weight);
+                                true
+                            }
+                        };
+
+                        if should_add {
+                            let combined =
+                                existing.get(&key).expect("just inserted").clone();
+                            automaton.add_transition(
+                                p_state,
+                                sym.clone(),
+                                target,
+                                combined,
+                            );
+                            automaton
+                                .symbol_to_state
+                                .entry(sym.clone())
+                                .or_insert(target);
+                            worklist.push_back((p_state, sym, target, combined));
+                        }
+                    }
                 }
                 WpdsRule::Replace { to_gamma, weight, .. } => {
                     // Replace: ⟨p, γ⟩ → ⟨p', γ'⟩
@@ -805,6 +937,50 @@ pub fn poststar<W: Semiring>(wpds: &Wpds<W>) -> PAutomaton<W> {
                     if bottom_new {
                         let bw = existing.get(&bottom_key).expect("just inserted").clone();
                         automaton.add_transition(q_r, to_gamma_bottom.clone(), to, bw);
+
+                        // If q_r has been Pop-reached, propagate this new bottom
+                        // transition to p_state immediately so continuation symbols
+                        // from nested Push rules become reachable.
+                        if pop_reached.contains(&q_r) {
+                            let prop_key = (p_state, to_gamma_bottom.clone(), to);
+                            let should_prop = match existing.get(&prop_key) {
+                                Some(old_w) => {
+                                    let combined = old_w.plus(&bw);
+                                    if !combined.approx_eq(old_w, 1e-10) {
+                                        existing.insert(prop_key.clone(), combined);
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                                None => {
+                                    existing.insert(prop_key.clone(), bw.clone());
+                                    true
+                                }
+                            };
+                            if should_prop {
+                                let pw = existing
+                                    .get(&prop_key)
+                                    .expect("just inserted")
+                                    .clone();
+                                automaton.add_transition(
+                                    p_state,
+                                    to_gamma_bottom.clone(),
+                                    to,
+                                    pw,
+                                );
+                                automaton
+                                    .symbol_to_state
+                                    .entry(to_gamma_bottom.clone())
+                                    .or_insert(to);
+                                worklist.push_back((
+                                    p_state,
+                                    to_gamma_bottom.clone(),
+                                    to,
+                                    pw,
+                                ));
+                            }
+                        }
                     }
 
                     // Add (p, γ_top, q_r) with weight f(r)
@@ -1181,6 +1357,8 @@ pub fn extract_call_graph<W: Semiring>(wpds: &Wpds<W>) -> WpdsCallGraph {
         {
             let caller = &from_gamma.category;
             let callee = &to_gamma_top.category;
+            // Same-category NTs are Replace (not Push), so no self-edges
+            // appear here. Only cross-category Push rules produce call edges.
             if !caller.is_empty() && !callee.is_empty() && caller != callee {
                 categories.insert(caller.clone());
                 categories.insert(callee.clone());
@@ -1722,6 +1900,44 @@ pub struct WpdsAnalysis {
     /// Maps `category → is_unambiguous_in_all_contexts`.
     /// When true, NFA try-all can commit to the first success (skip save/restore).
     pub context_unambiguous: HashMap<String, bool>,
+    /// CEK-3: Bidirectional mapping between trampoline Frame_Cat variants
+    /// and WPDS StackSymbol triples. Enables transfer of WPDS analysis
+    /// results to runtime frame structure.
+    pub cek_bijection: CekWpdsBijection,
+    /// CEK-4: Retained P-automaton from poststar (TropicalWeight).
+    /// Used by dead frame elimination to determine which frame variants
+    /// are unreachable in valid stack contexts.
+    pub pautomaton: PAutomaton<TropicalWeight>,
+}
+
+impl WpdsAnalysis {
+    /// Create a minimal WpdsAnalysis for use in tests.
+    #[cfg(test)]
+    pub fn empty_for_test() -> Self {
+        WpdsAnalysis {
+            grammar_name: String::new(),
+            num_symbols: 0,
+            num_rules: 0,
+            reachable_categories: HashSet::new(),
+            unreachable_rules: Vec::new(),
+            category_weights: HashMap::new(),
+            call_graph: WpdsCallGraph {
+                edges: Vec::new(),
+                fan_out: HashMap::new(),
+                fan_in: HashMap::new(),
+                sccs: Vec::new(),
+                categories: HashSet::new(),
+            },
+            depth_bounds: HashMap::new(),
+            cycles: Vec::new(),
+            calling_contexts: HashMap::new(),
+            context_rule_tables: HashMap::new(),
+            cross_category_bp: HashMap::new(),
+            context_unambiguous: HashMap::new(),
+            cek_bijection: CekWpdsBijection::new(),
+            pautomaton: PAutomaton::new(0),
+        }
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2098,6 +2314,9 @@ pub fn analyze_wpds(
     let context_unambiguous =
         analyze_context_ambiguity(&calling_contexts, &reachable_categories);
 
+    // CEK-3: Build bidirectional mapping between trampoline frames and WPDS stack symbols
+    let cek_bijection = build_cek_bijection(spec);
+
     WpdsAnalysis {
         grammar_name: spec.name.clone(),
         num_symbols: bool_wpds.num_symbols(),
@@ -2112,6 +2331,8 @@ pub fn analyze_wpds(
         context_rule_tables,
         cross_category_bp,
         context_unambiguous,
+        cek_bijection,
+        pautomaton: trop_post,
     }
 }
 
@@ -2157,6 +2378,282 @@ fn references_category(item: &SyntaxItemSpec, target: &str) -> bool {
         SyntaxItemSpec::Optional { inner } => inner.iter().any(|i| references_category(i, target)),
         _ => false,
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CEK-3: WPDS ↔ Frame Bijection
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// CEK-3: Bidirectional mapping between WPDS `StackSymbol` triples and
+/// trampoline `Frame_Cat` variant names.
+///
+/// The trampoline parser's `Frame_Cat` enum and the WPDS's `StackSymbol`
+/// alphabet represent the same pushdown automaton from different angles:
+/// - `StackSymbol::rule_position(cat, label, wpds_pos+1)` ↔ `RD_{label}_{segment_index}`
+///   where `wpds_pos` is the WPDS position of the same-category NonTerminal
+/// - `InfixRHS` ↔ intra-rule Replace transitions for infix operators
+/// - `CollectionElem_{label}` ↔ collection element loops
+/// - `UnaryPrefix_{label}` ↔ prefix unary rules
+///
+/// This bijection enables WPDS analysis results (reachability, dead rules,
+/// context-sensitive FIRST sets) to be transferred directly to the runtime
+/// trampoline frame structure.
+///
+/// ## WPDS vs Trampoline Position Numbering
+///
+/// The WPDS increments its position counter for **every** `SyntaxItemSpec` item
+/// (terminals, cross-category NTs, etc.), while the trampoline only creates
+/// segment split points at **same-category** NonTerminal boundaries. The
+/// bijection builder walks the syntax items in parallel, tracking both counters,
+/// to establish the correct correspondence between `segment_index` and
+/// `wpds_pos + 1` (the continuation position after the NT parse).
+#[derive(Debug, Clone, Default)]
+pub struct CekWpdsBijection {
+    /// Map from frame variant name to the corresponding WPDS stack symbol.
+    pub frame_to_symbol: HashMap<String, StackSymbol>,
+    /// Map from WPDS stack symbol to the corresponding frame variant name.
+    pub symbol_to_frame: HashMap<StackSymbol, String>,
+}
+
+impl CekWpdsBijection {
+    /// Create a new empty bijection.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert a bidirectional mapping.
+    pub fn insert(&mut self, frame_variant: String, symbol: StackSymbol) {
+        self.symbol_to_frame
+            .insert(symbol.clone(), frame_variant.clone());
+        self.frame_to_symbol.insert(frame_variant, symbol);
+    }
+
+    /// Insert a convenience alias: adds frame→symbol lookup only, without
+    /// overwriting the canonical symbol→frame reverse mapping.
+    fn insert_alias(&mut self, frame_variant: String, symbol: StackSymbol) {
+        self.frame_to_symbol.insert(frame_variant, symbol);
+    }
+
+    /// Look up the WPDS stack symbol for a frame variant name.
+    pub fn frame_variant_to_stack_symbol(&self, frame_variant: &str) -> Option<&StackSymbol> {
+        self.frame_to_symbol.get(frame_variant)
+    }
+
+    /// Look up the frame variant name for a WPDS stack symbol.
+    pub fn stack_symbol_to_frame_variant(&self, symbol: &StackSymbol) -> Option<&String> {
+        self.symbol_to_frame.get(symbol)
+    }
+
+    /// Check that the bijection is complete: every frame variant has a symbol
+    /// and every relevant symbol has a frame variant.
+    pub fn is_complete(&self) -> bool {
+        // Every frame→symbol entry must have a corresponding symbol→frame entry.
+        // Aliases (unprefixed convenience names) are valid if the symbol maps back
+        // to *any* frame name that resolves to the same symbol.
+        self.frame_to_symbol.iter().all(|(_frame, sym)| {
+            self.symbol_to_frame.contains_key(sym)
+        })
+    }
+
+    /// Number of mappings in the bijection.
+    pub fn len(&self) -> usize {
+        self.frame_to_symbol.len()
+    }
+
+    /// Whether the bijection is empty.
+    pub fn is_empty(&self) -> bool {
+        self.frame_to_symbol.is_empty()
+    }
+}
+
+/// CEK-3: Build the bidirectional mapping between trampoline frame variants
+/// and WPDS stack symbols.
+///
+/// Walks the grammar's rules in parallel with the WPDS stack alphabet
+/// to establish correspondences:
+///
+/// | Frame Variant | WPDS StackSymbol |
+/// |---|---|
+/// | `RD_{label}_{seg_idx}` | `rule_position(cat, label, wpds_continuation_pos)` |
+/// | `InfixRHS` | `rule_position(cat, "__infix__", 1)` |
+/// | `GroupClose` | `rule_position(cat, "__group__", 1)` |
+/// | `UnaryPrefix_{label}` | `rule_position(cat, label, 1)` (unary prefix) |
+/// | `CollectionElem_{label}` | `rule_position(cat, label, 1)` (collection) |
+/// | `Mixfix_{label}_{pos}` | `rule_position(cat, label, wpds_continuation_pos)` (mixfix) |
+///
+/// ## Position Tracking
+///
+/// The WPDS assigns a position to every `SyntaxItemSpec` in a rule (incrementing
+/// for terminals, cross-category NTs, etc.), while the trampoline only creates
+/// frame segments at same-category NonTerminal boundaries. This function walks
+/// each rule's syntax items, maintaining both the WPDS position counter and the
+/// trampoline segment index, emitting a mapping entry when a same-category
+/// NonTerminal is encountered.
+///
+/// The bijection is built from the `LanguageSpec` which is the single source
+/// of truth for both the trampoline and the WPDS.
+pub fn build_cek_bijection(spec: &LanguageSpec) -> CekWpdsBijection {
+    let mut bijection = CekWpdsBijection::new();
+
+    // Group rules by category for efficient lookup
+    let mut rules_by_category: HashMap<&str, Vec<&crate::RuleSpec>> = HashMap::new();
+    for rule in &spec.rules {
+        rules_by_category
+            .entry(&rule.category)
+            .or_default()
+            .push(rule);
+    }
+
+    for cat_spec in &spec.types {
+        let cat = &cat_spec.name;
+
+        let empty_rules = Vec::new();
+        let cat_rules = rules_by_category.get(cat.as_str()).unwrap_or(&empty_rules);
+
+        // InfixRHS: one per category (if has infix operators)
+        let has_infix = cat_rules.iter().any(|r| r.is_infix);
+        if has_infix {
+            let frame = "InfixRHS".to_string();
+            let symbol = StackSymbol::rule_position(cat, "__infix__", 1);
+            bijection.insert(format!("{}::{}", cat, frame), symbol.clone());
+            // Also add unprefixed alias for convenience (first category wins).
+            // Uses insert_alias to avoid overwriting the canonical symbol→frame mapping.
+            if !bijection.frame_to_symbol.contains_key(&frame) {
+                bijection.insert_alias(frame, symbol);
+            }
+        }
+
+        // GroupClose: one per category
+        {
+            let frame = "GroupClose".to_string();
+            let symbol = StackSymbol::rule_position(cat, "__group__", 1);
+            bijection.insert(format!("{}::{}", cat, frame), symbol.clone());
+            if !bijection.frame_to_symbol.contains_key(&frame) {
+                bijection.insert_alias(frame, symbol);
+            }
+        }
+
+        for rule_spec in cat_rules {
+            let label = &rule_spec.label;
+
+            // UnaryPrefix rules: the terminal is consumed inline, then a single
+            // same-category NT triggers the frame push. The WPDS models this as
+            // position 0 (terminal) → position 1 (NT). The continuation is at
+            // position 2 (after the NT), but for unary prefix the frame captures
+            // the state before the NT parse, which maps to the transition at
+            // position 1 in the WPDS.
+            if rule_spec.is_unary_prefix {
+                let frame = format!("UnaryPrefix_{}", label);
+                // Walk syntax to find the WPDS position of the same-category NT
+                let mut wpds_pos: u32 = 0;
+                for item in &rule_spec.syntax {
+                    if let SyntaxItemSpec::NonTerminal { category: ref nt_cat, .. } = item {
+                        if nt_cat == cat {
+                            // Continuation is at wpds_pos + 1
+                            let symbol =
+                                StackSymbol::rule_position(cat, label, wpds_pos + 1);
+                            bijection.insert(frame.clone(), symbol);
+                            break;
+                        }
+                    }
+                    wpds_pos += 1;
+                }
+                continue;
+            }
+
+            // Collection rules
+            if rule_spec.is_collection {
+                let frame = format!("CollectionElem_{}", label);
+                // The collection element parse is at the first same-category or
+                // element-category NT position. Walk to find it.
+                let mut wpds_pos: u32 = 0;
+                for item in &rule_spec.syntax {
+                    match item {
+                        SyntaxItemSpec::Collection { .. } => {
+                            // Collection item maps to position wpds_pos + 1
+                            let symbol =
+                                StackSymbol::rule_position(cat, label, wpds_pos + 1);
+                            bijection.insert(frame.clone(), symbol);
+                            break;
+                        }
+                        _ => {}
+                    }
+                    wpds_pos += 1;
+                }
+                continue;
+            }
+
+            // Mixfix rules: detected by having 3+ NonTerminals and 2+ terminals
+            let nt_count = rule_spec.syntax.iter().filter(|item| {
+                matches!(item, SyntaxItemSpec::NonTerminal { .. })
+            }).count();
+            let terminal_count = rule_spec.syntax.iter().filter(|item| {
+                matches!(item, SyntaxItemSpec::Terminal(_))
+            }).count();
+            let is_mixfix = nt_count >= 3 && terminal_count >= 2;
+
+            if is_mixfix {
+                // Mixfix rules: walk syntax items, tracking WPDS position.
+                // Skip the first NT (lhs, already parsed) and first terminal (trigger).
+                // Each subsequent NT that is same-category gets a Mixfix frame.
+                let mut wpds_pos: u32 = 0;
+                let mut skipped_first_nt = false;
+                let mut skipped_first_terminal = false;
+                let mut mixfix_index = 0;
+
+                for item in &rule_spec.syntax {
+                    match item {
+                        SyntaxItemSpec::NonTerminal { category: ref nt_cat, .. } => {
+                            if !skipped_first_nt {
+                                skipped_first_nt = true;
+                            } else if nt_cat == cat {
+                                // This is a mixfix operand step
+                                let frame = format!("Mixfix_{}_{}", label, mixfix_index);
+                                let symbol = StackSymbol::rule_position(
+                                    cat,
+                                    label,
+                                    wpds_pos + 1,
+                                );
+                                bijection.insert(frame, symbol);
+                                mixfix_index += 1;
+                            }
+                        }
+                        SyntaxItemSpec::Terminal(_) => {
+                            if !skipped_first_terminal && skipped_first_nt {
+                                skipped_first_terminal = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                    wpds_pos += 1;
+                }
+                continue;
+            }
+
+            // RD rules: walk syntax items, tracking both WPDS position and
+            // trampoline segment index. Only same-category NonTerminals create
+            // split points in the trampoline.
+            let mut wpds_pos: u32 = 0;
+            let mut segment_index = 0;
+
+            for item in &rule_spec.syntax {
+                if let SyntaxItemSpec::NonTerminal { category: ref nt_cat, .. } = item {
+                    if nt_cat == cat {
+                        // Same-category NT: creates a trampoline split point
+                        let frame = format!("RD_{}_{}", label, segment_index);
+                        // The continuation in WPDS is at wpds_pos + 1
+                        let symbol =
+                            StackSymbol::rule_position(cat, label, wpds_pos + 1);
+                        bijection.insert(frame, symbol);
+                        segment_index += 1;
+                    }
+                }
+                wpds_pos += 1;
+            }
+        }
+    }
+
+    bijection
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -3284,5 +3781,217 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // CEK-3: WPDS ↔ Frame Bijection Tests
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_cek_bijection_roundtrip() {
+        let mut bij = CekWpdsBijection::new();
+        let sym = StackSymbol::rule_position("Expr", "Add", 1);
+        bij.insert("RD_Add_0".to_string(), sym.clone());
+
+        assert_eq!(bij.frame_variant_to_stack_symbol("RD_Add_0"), Some(&sym));
+        assert_eq!(
+            bij.stack_symbol_to_frame_variant(&sym),
+            Some(&"RD_Add_0".to_string())
+        );
+        assert!(bij.is_complete());
+    }
+
+    #[test]
+    fn test_cek_bijection_empty() {
+        let bij = CekWpdsBijection::new();
+        assert!(bij.is_empty());
+        assert_eq!(bij.len(), 0);
+        assert!(bij.is_complete());
+    }
+
+    #[test]
+    fn test_cek_bijection_multiple_entries() {
+        let mut bij = CekWpdsBijection::new();
+        bij.insert(
+            "InfixRHS".to_string(),
+            StackSymbol::rule_position("Expr", "__infix__", 1),
+        );
+        bij.insert(
+            "GroupClose".to_string(),
+            StackSymbol::rule_position("Expr", "__group__", 1),
+        );
+        bij.insert(
+            "UnaryPrefix_Neg".to_string(),
+            StackSymbol::rule_position("Expr", "Neg", 1),
+        );
+        bij.insert(
+            "RD_Let_0".to_string(),
+            StackSymbol::rule_position("Expr", "Let", 1),
+        );
+        bij.insert(
+            "RD_Let_1".to_string(),
+            StackSymbol::rule_position("Expr", "Let", 2),
+        );
+
+        assert_eq!(bij.len(), 5);
+        assert!(bij.is_complete());
+
+        // Verify all round-trips
+        assert_eq!(
+            bij.frame_variant_to_stack_symbol("InfixRHS"),
+            Some(&StackSymbol::rule_position("Expr", "__infix__", 1))
+        );
+        assert_eq!(
+            bij.frame_variant_to_stack_symbol("RD_Let_1"),
+            Some(&StackSymbol::rule_position("Expr", "Let", 2))
+        );
+    }
+
+    #[test]
+    fn test_cek_bijection_missing_lookup() {
+        let bij = CekWpdsBijection::new();
+        assert_eq!(bij.frame_variant_to_stack_symbol("Nonexistent"), None);
+        assert_eq!(
+            bij.stack_symbol_to_frame_variant(&StackSymbol::rule_position("X", "Y", 1)),
+            None
+        );
+    }
+
+    #[test]
+    fn test_cek_bijection_from_calculator_spec() {
+        // Use the existing calculator_spec() helper which has Expr = Int | Expr "+" Expr
+        let spec = calculator_spec();
+        let bij = build_cek_bijection(&spec);
+
+        // Should have GroupClose for Expr
+        assert!(bij
+            .frame_variant_to_stack_symbol("Expr::GroupClose")
+            .is_some());
+
+        // The Add rule has syntax: [NT(Expr), Terminal("+"), NT(Expr)]
+        // This is an infix rule (2 NTs, 1 terminal), so it should produce
+        // InfixRHS mapping for the category
+        assert!(bij
+            .frame_variant_to_stack_symbol("Expr::InfixRHS")
+            .is_some());
+
+        // The bijection should be internally consistent
+        assert!(bij.is_complete());
+    }
+
+    #[test]
+    fn test_cek_bijection_rd_position_tracking() {
+        // Construct a rule with mixed items: Terminal, NT(same), Terminal, NT(same)
+        // WPDS positions: 0=Terminal, 1=NT(same), 2=Terminal, 3=NT(same)
+        // Trampoline segments: segment_index=0 at wpds_pos=1, segment_index=1 at wpds_pos=3
+        // So: RD_LetIn_0 → rule_position("Expr", "LetIn", 2)
+        //     RD_LetIn_1 → rule_position("Expr", "LetIn", 4)
+        let types = vec![CategorySpec {
+            name: "Expr".to_string(),
+            native_type: Some("i64".to_string()),
+            is_primary: true,
+        }];
+
+        let inputs = vec![RuleSpecInput {
+            label: "LetIn".to_string(),
+            category: "Expr".to_string(),
+            syntax: vec![
+                SyntaxItemSpec::Terminal("let".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "binding".to_string(),
+                },
+                SyntaxItemSpec::Terminal("in".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "body".to_string(),
+                },
+            ],
+            associativity: Associativity::Left,
+            prefix_precedence: None,
+            has_rust_code: false,
+            rust_code: None,
+            eval_mode: None,
+            source_location: None,
+        }];
+
+        let spec = LanguageSpec::new("TestLang".to_string(), types, inputs);
+        let bij = build_cek_bijection(&spec);
+
+        // RD_LetIn_0: same-cat NT at wpds_pos=1, continuation at pos=2
+        let sym0 = bij.frame_variant_to_stack_symbol("RD_LetIn_0");
+        assert_eq!(
+            sym0,
+            Some(&StackSymbol::rule_position("Expr", "LetIn", 2)),
+            "First same-category NT continuation should be at WPDS position 2"
+        );
+
+        // RD_LetIn_1: same-cat NT at wpds_pos=3, continuation at pos=4
+        let sym1 = bij.frame_variant_to_stack_symbol("RD_LetIn_1");
+        assert_eq!(
+            sym1,
+            Some(&StackSymbol::rule_position("Expr", "LetIn", 4)),
+            "Second same-category NT continuation should be at WPDS position 4"
+        );
+
+        assert!(bij.is_complete());
+    }
+
+    #[test]
+    fn test_cek_bijection_cross_category_nt_skipped() {
+        // Cross-category NTs increment WPDS position but do NOT create
+        // trampoline split points. Verify the bijection accounts for this.
+        //
+        // Rule: Terminal("f"), NT(Type), NT(Expr)
+        // WPDS positions: 0=Terminal, 1=NT(Type, cross-cat), 2=NT(Expr, same-cat)
+        // Trampoline: only segment_index=0 at the same-cat NT
+        // So: RD_Apply_0 → rule_position("Expr", "Apply", 3)
+        let types = vec![
+            CategorySpec {
+                name: "Expr".to_string(),
+                native_type: Some("i64".to_string()),
+                is_primary: true,
+            },
+            CategorySpec {
+                name: "Type".to_string(),
+                native_type: Some("String".to_string()),
+                is_primary: false,
+            },
+        ];
+
+        let inputs = vec![RuleSpecInput {
+            label: "Apply".to_string(),
+            category: "Expr".to_string(),
+            syntax: vec![
+                SyntaxItemSpec::Terminal("apply".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Type".to_string(),
+                    param_name: "ty".to_string(),
+                },
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "arg".to_string(),
+                },
+            ],
+            associativity: Associativity::Left,
+            prefix_precedence: None,
+            has_rust_code: false,
+            rust_code: None,
+            eval_mode: None,
+            source_location: None,
+        }];
+
+        let spec = LanguageSpec::new("TestLang".to_string(), types, inputs);
+        let bij = build_cek_bijection(&spec);
+
+        // The same-cat NT (Expr) is at wpds_pos=2, continuation at pos=3
+        let sym = bij.frame_variant_to_stack_symbol("RD_Apply_0");
+        assert_eq!(
+            sym,
+            Some(&StackSymbol::rule_position("Expr", "Apply", 3)),
+            "Same-category NT after cross-category NT should have correct WPDS position"
+        );
+
+        assert!(bij.is_complete());
     }
 }

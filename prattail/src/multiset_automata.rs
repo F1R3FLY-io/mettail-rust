@@ -845,10 +845,8 @@ impl<W: HeapSemiring + fmt::Display> fmt::Display for MultisetAutomaton<W> {
 /// Compiler adapter for the Multiset Automata module (M9).
 ///
 /// Activated by `count()`, `>=`, `<=` cardinality atoms (commutative variety).
-#[cfg(feature = "predicate-dispatch")]
 pub struct MultisetCompiler;
 
-#[cfg(feature = "predicate-dispatch")]
 impl crate::predicate_dispatch::PredicateCompiler for MultisetCompiler {
     type Output = MultisetAnalysisResult;
 

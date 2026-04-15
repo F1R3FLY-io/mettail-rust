@@ -2,7 +2,6 @@
 
 use crate::lexer::{extract_terminals, generate_lexer, GrammarRuleInfo, TypeInfo};
 use crate::runtime_types::skip_whitespace_scalar;
-#[cfg(feature = "simd-whitespace")]
 use crate::runtime_types::skip_whitespace_simd;
 
 #[test]
@@ -214,7 +213,6 @@ fn scalar_skip(input: &[u8], pos: usize, line: usize, col: usize) -> (usize, usi
 }
 
 /// Helper: run SIMD skip and return (pos, line, col) — only available with feature.
-#[cfg(feature = "simd-whitespace")]
 fn simd_skip(input: &[u8], pos: usize, line: usize, col: usize) -> (usize, usize, usize) {
     let r = skip_whitespace_simd(input, pos, line, col);
     (r.pos, r.line, r.col)
@@ -276,21 +274,18 @@ fn test_skip_whitespace_scalar_start_offset() {
     assert_eq!(col, 6);
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_empty() {
     let (pos, line, col) = simd_skip(b"", 0, 0, 0);
     assert_eq!((pos, line, col), (0, 0, 0));
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_no_whitespace() {
     let (pos, line, col) = simd_skip(b"hello", 0, 0, 0);
     assert_eq!((pos, line, col), (0, 0, 0));
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_spaces_only() {
     let (pos, line, col) = simd_skip(b"   hello", 0, 0, 0);
@@ -299,7 +294,6 @@ fn test_skip_whitespace_simd_spaces_only() {
     assert_eq!(col, 3);
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_short() {
     // Test inputs shorter than 16 bytes (scalar tail path only)
@@ -319,7 +313,6 @@ fn test_skip_whitespace_simd_matches_scalar_short() {
     }
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_exact_16() {
     // Exactly 16 bytes of whitespace
@@ -329,7 +322,6 @@ fn test_skip_whitespace_simd_matches_scalar_exact_16() {
     assert_eq!(scalar, simd, "mismatch for 16-space input");
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_over_16() {
     // More than 16 bytes of whitespace (exercises full SIMD + tail)
@@ -339,7 +331,6 @@ fn test_skip_whitespace_simd_matches_scalar_over_16() {
     assert_eq!(scalar, simd, "mismatch for 22-space input");
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_with_newlines() {
     // Whitespace run > 16 bytes containing newlines
@@ -349,7 +340,6 @@ fn test_skip_whitespace_simd_matches_scalar_with_newlines() {
     assert_eq!(scalar, simd, "mismatch for newline-heavy input");
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_mixed_ws() {
     // Mix of space, tab, CR, LF
@@ -359,7 +349,6 @@ fn test_skip_whitespace_simd_matches_scalar_mixed_ws() {
     assert_eq!(scalar, simd, "mismatch for mixed whitespace");
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_all_whitespace() {
     // Input is entirely whitespace (no non-ws terminator)
@@ -369,7 +358,6 @@ fn test_skip_whitespace_simd_matches_scalar_all_whitespace() {
     assert_eq!(scalar, simd, "mismatch for all-whitespace input");
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_partial_chunk() {
     // Non-ws byte in the middle of the first 16-byte chunk
@@ -379,7 +367,6 @@ fn test_skip_whitespace_simd_matches_scalar_partial_chunk() {
     assert_eq!(scalar, simd, "mismatch for partial-chunk input");
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_with_offset() {
     // Starting from a non-zero offset
@@ -389,7 +376,6 @@ fn test_skip_whitespace_simd_matches_scalar_with_offset() {
     assert_eq!(scalar, simd, "mismatch for offset input");
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_large() {
     // Large whitespace run: 200 spaces with interspersed newlines
@@ -410,7 +396,6 @@ fn test_skip_whitespace_simd_matches_scalar_large() {
     assert_eq!(scalar, simd, "mismatch for large whitespace run");
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_cr_lf_sequences() {
     // Windows-style \r\n line endings, > 16 bytes
@@ -420,7 +405,6 @@ fn test_skip_whitespace_simd_matches_scalar_cr_lf_sequences() {
     assert_eq!(scalar, simd, "mismatch for CR+LF sequences");
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_15_bytes() {
     // Exactly 15 bytes of whitespace (just under SIMD lane width)
@@ -430,7 +414,6 @@ fn test_skip_whitespace_simd_matches_scalar_15_bytes() {
     assert_eq!(scalar, simd, "mismatch for 15-byte input");
 }
 
-#[cfg(feature = "simd-whitespace")]
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_17_bytes() {
     // 17 bytes of whitespace (SIMD chunk + 1 tail byte)

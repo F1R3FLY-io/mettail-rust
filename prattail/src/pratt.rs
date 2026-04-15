@@ -228,6 +228,10 @@ pub struct PrattConfig {
     /// When non-empty, the LED chain falls back to delegating to constituent categories'
     /// operators when the sum type's own BP tables don't match the current token.
     pub led_delegation: Vec<LedDelegationSource>,
+    /// Whether PDA merge is active for this category. When true, the dispatch wrapper
+    /// is eliminated and the trampoline is the top-level parser (`parse_Cat` instead of
+    /// `parse_Cat_own`). Overrides `needs_dispatch` for function naming.
+    pub pda_merged: bool,
 }
 
 /// Write the complete Pratt parser for a single category to a string buffer.
@@ -244,7 +248,7 @@ pub fn write_pratt_parser(
     prefix_handlers: &[PrefixHandler],
 ) {
     let cat = &config.category;
-    let parse_fn = if config.needs_dispatch {
+    let parse_fn = if config.needs_dispatch && !config.pda_merged {
         format!("parse_{}_own", cat)
     } else {
         format!("parse_{}", cat)
@@ -312,7 +316,7 @@ pub fn write_pratt_parser(
 /// postfix (binds tightest) → mixfix (n-ary) → infix (binary) → break.
 fn write_led_chain(buf: &mut String, config: &PrattConfig) {
     let cat = &config.category;
-    let parse_fn = if config.needs_dispatch {
+    let parse_fn = if config.needs_dispatch && !config.pda_merged {
         format!("parse_{}_own", cat)
     } else {
         format!("parse_{}", cat)
@@ -731,7 +735,7 @@ fn write_mixfix_bp_function_array(
 /// operand (with right_bp), then constructs the AST node.
 fn write_handle_mixfix(buf: &mut String, config: &PrattConfig, bp_table: &BindingPowerTable) {
     let cat = &config.category;
-    let parse_fn = if config.needs_dispatch {
+    let parse_fn = if config.needs_dispatch && !config.pda_merged {
         format!("parse_{}_own", cat)
     } else {
         format!("parse_{}", cat)
@@ -1306,7 +1310,7 @@ pub fn write_pratt_parser_recovering(
     bp_table: &BindingPowerTable,
 ) {
     let cat = &config.category;
-    let parse_fn = if config.needs_dispatch {
+    let parse_fn = if config.needs_dispatch && !config.pda_merged {
         format!("parse_{}_own_recovering", cat)
     } else {
         format!("parse_{}_recovering", cat)
@@ -1367,7 +1371,7 @@ fn write_led_chain_recovering(
     _bp_table: &BindingPowerTable,
 ) {
     let cat = &config.category;
-    let parse_fn = if config.needs_dispatch {
+    let parse_fn = if config.needs_dispatch && !config.pda_merged {
         format!("parse_{}_own", cat)
     } else {
         format!("parse_{}", cat)

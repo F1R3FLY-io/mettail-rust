@@ -524,8 +524,12 @@ eq_expr(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_EXPR_EQ_CONG_0.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_expr(s_f0, t_f0),
-    eq_expr(s_f1, t_f1);
+    eq_expr(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone(),
+    eq_expr(__eqcong_s_f1, __eqcong_t_f1),
+    if s_f1 == __eqcong_s_f1.clone(),
+    if t_f1 == __eqcong_t_f1.clone();
 
 eq_expr(s.clone(), t.clone()) <--
     expr(s),
@@ -538,7 +542,9 @@ eq_expr(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_EXPR_EQ_CONG_1.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_num(s_f0, t_f0);
+    eq_num(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone();
 
 eq_expr(s.clone(), t.clone()) <--
     expr(s),
@@ -551,7 +557,9 @@ eq_expr(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_EXPR_EQ_CONG_2.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_pred(s_f0, t_f0);
+    eq_pred(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone();
 
 eq_num(s.clone(), t.clone()) <--
     num(s),
@@ -564,7 +572,9 @@ eq_num(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_NUM_EQ_CONG_3.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_expr(s_f0, t_f0);
+    eq_expr(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone();
 
 eq_num(s.clone(), t.clone()) <--
     num(s),
@@ -580,7 +590,9 @@ eq_num(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_NUM_EQ_CONG_4.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_num(s_f0, t_f0);
+    eq_num(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone();
 
 eq_num(s.clone(), t.clone()) <--
     num(s),
@@ -596,8 +608,12 @@ eq_num(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_NUM_EQ_CONG_5.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_num(s_f0, t_f0),
-    eq_num(s_f1, t_f1);
+    eq_num(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone(),
+    eq_num(__eqcong_s_f1, __eqcong_t_f1),
+    if s_f1 == __eqcong_s_f1.clone(),
+    if t_f1 == __eqcong_t_f1.clone();
 
 eq_pred(s.clone(), t.clone()) <--
     pred(s),
@@ -613,8 +629,12 @@ eq_pred(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PRED_EQ_CONG_6.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_num(s_f0, t_f0),
-    eq_num(s_f1, t_f1);
+    eq_num(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone(),
+    eq_num(__eqcong_s_f1, __eqcong_t_f1),
+    if s_f1 == __eqcong_s_f1.clone(),
+    if t_f1 == __eqcong_t_f1.clone();
 
 eq_pred(s.clone(), t.clone()) <--
     pred(s),
@@ -627,8 +647,12 @@ eq_pred(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PRED_EQ_CONG_7.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_pred(s_f0, t_f0),
-    eq_pred(s_f1, t_f1);
+    eq_pred(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone(),
+    eq_pred(__eqcong_s_f1, __eqcong_t_f1),
+    if s_f1 == __eqcong_s_f1.clone(),
+    if t_f1 == __eqcong_t_f1.clone();
 
 
     // Rewrite rules
@@ -639,7 +663,8 @@ rw_pred(s.clone(), t) <--
     if let Num::NumLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let t = Pred::BoolLit((a == b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(a == b) }) (),
+    let t = Pred::BoolLit(__eval_val);
 
 rw_num(s.clone(), t) <--
     num(s),
@@ -648,7 +673,8 @@ rw_num(s.clone(), t) <--
     if let Num::NumLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let t = Num::NumLit((a + b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_add(a, b) ?) }) (),
+    let t = Num::NumLit(__eval_val);
 
 rw_num(s.clone(), t) <--
     num(s),
@@ -657,7 +683,8 @@ rw_num(s.clone(), t) <--
     if let Num::NumLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let t = Num::NumLit((a * b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_mul(a, b) ?) }) (),
+    let t = Num::NumLit(__eval_val);
 
 rw_pred(s.clone(), t) <--
     pred(s),
@@ -666,7 +693,8 @@ rw_pred(s.clone(), t) <--
     if let Num::NumLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let t = Pred::BoolLit((a != b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(a != b) }) (),
+    let t = Pred::BoolLit(__eval_val);
 
 rw_pred(s.clone(), t) <--
     pred(s),
@@ -675,21 +703,24 @@ rw_pred(s.clone(), t) <--
     if let Pred::BoolLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let t = Pred::BoolLit((a && b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(a && b) }) (),
+    let t = Pred::BoolLit(__eval_val);
 
 rw_num(orig.clone(), t) <--
     num(orig),
     if let Num::NegNum(inner) = orig,
     if let Num::NumLit(s_ref) = inner.as_ref(),
     let a = s_ref.clone(),
-    let t = Num::NumLit(((- a)));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some((< _ as::mettail_runtime::SafeArith >::safe_neg(a) ?)) }) (),
+    let t = Num::NumLit(__eval_val);
 
 rw_num(orig.clone(), t) <--
     num(orig),
     if let Num::FactNum(inner) = orig,
     if let Num::NumLit(s_ref) = inner.as_ref(),
     let a = s_ref.clone(),
-    let t = Num::NumLit(({ (1 ..= a.max(0)).product::< i32 > () }));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some({ < i32 as::mettail_runtime::SafeArith >::safe_product((1 ..= a.max(0))) ? }) }) (),
+    let t = Num::NumLit(__eval_val);
 
 rw_expr(lhs.clone(), match (lhs, vi) {
     (Expr::EPar(_, x1), 0usize) => Expr::EPar(Box::new(t.clone()), x1.clone()),
@@ -817,16 +848,22 @@ rw_pred(lhs.clone(), match (lhs, vi) {
     } let iter_buf = std::mem::take(& mut buf); POOL_PRED_SCONG_PRED.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_pred(field_val, t);
 
-rw_num(a.clone(), c.clone()) <--
-    eq_num(a, b),
-    rw_num(b.clone(), c);
+rw_num(__eqrel_closure_a.clone(), c.clone()) <--
+    eq_num(__eqrel_a, __eqrel_b),
+    let __eqrel_closure_a = __eqrel_a.clone(),
+    let __eqrel_closure_b = __eqrel_b.clone(),
+    rw_num(__eqrel_closure_b, c);
 
-rw_pred(a.clone(), c.clone()) <--
-    eq_pred(a, b),
-    rw_pred(b.clone(), c);
+rw_pred(__eqrel_closure_a.clone(), c.clone()) <--
+    eq_pred(__eqrel_a, __eqrel_b),
+    let __eqrel_closure_a = __eqrel_a.clone(),
+    let __eqrel_closure_b = __eqrel_b.clone(),
+    rw_pred(__eqrel_closure_b, c);
 
-rw_expr(a.clone(), c.clone()) <--
-    eq_expr(a, b),
-    rw_expr(b.clone(), c);
+rw_expr(__eqrel_closure_a.clone(), c.clone()) <--
+    eq_expr(__eqrel_a, __eqrel_b),
+    let __eqrel_closure_a = __eqrel_a.clone(),
+    let __eqrel_closure_b = __eqrel_b.clone(),
+    rw_expr(__eqrel_closure_b, c);
 
 }

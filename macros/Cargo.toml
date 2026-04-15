@@ -12,10 +12,6 @@ readme = "../README.md"
 [lib]
 proc-macro = true
 
-[features]
-## Propagate features to mettail-prattail.
-wfst-log = ["mettail-prattail/wfst-log"]
-
 [dependencies]
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
@@ -25,6 +21,7 @@ ascent = { workspace = true }
 ascent-byods-rels = { workspace = true }
 moniker = { workspace = true }
 indexmap = { workspace = true }
+mettail-ast = { path = "../ast" }
 mettail-prattail = { path = "../prattail" }
 ascent_syntax_export = { workspace = true }
 pathmap = { git = "https://github.com/dylon/PathMap.git", branch = "feature/mettatron-fixes" }

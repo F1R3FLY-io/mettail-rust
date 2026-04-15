@@ -521,7 +521,6 @@ impl<S: TypeSystem> TypeSystemAlgebra<S> {
 // BooleanAlgebra implementation for TypeSystemAlgebra
 // ==============================================================================
 
-#[cfg(feature = "symbolic-automata")]
 impl<S: TypeSystem> crate::symbolic::BooleanAlgebra for TypeSystemAlgebra<S> {
     type Predicate = TypePred<S>;
     type Domain = S::Type;
@@ -709,22 +708,31 @@ where
 
     /// Check predicate entailment: does P(x) imply Q(x)?
     ///
-    /// Uses ConstraintTheory: propagate P into a store, then check if Q
-    /// is consistent with that store.
+    /// Phase 6E (predicated types): the spec-correct formulation is
+    /// `P ⟹ Q is valid iff (P ∧ ¬Q) is unsatisfiable`. Earlier
+    /// implementations checked "is Q consistent in a store where P
+    /// holds" — that is *joint* satisfiability, not entailment, and
+    /// returns true whenever P and Q have any common model
+    /// (semantically distinct from ⟹). The corrected version lifts
+    /// the constraints into the `TheoryAlgebra<T>` `BooleanAlgebra`
+    /// wrapper (which exposes negation) and checks
+    /// `!is_satisfiable(P ∧ ¬Q)`.
     pub fn predicate_entails(
         &self,
         premise: &T::Constraint,
         conclusion: &T::Constraint,
     ) -> bool {
-        let store = self.constraint_theory.empty_store();
-        let Some(store_with_p) = self.constraint_theory.propagate(&store, premise) else {
-            // If P is unsatisfiable, P ⟹ Q is vacuously true
-            return true;
-        };
-        // Check if Q is consistent in the context where P holds
-        self.constraint_theory
-            .propagate(&store_with_p, conclusion)
-            .is_some()
+        use crate::logict::{TheoryAlgebra, TheoryPred};
+        use crate::symbolic::BooleanAlgebra;
+
+        // 1024 is the same default search bound used by the runtime
+        // guard evaluator (`generate_inline_guard_eval` in macros).
+        let algebra = TheoryAlgebra::new(self.constraint_theory.clone(), 1024);
+        let p = TheoryPred::Atom(premise.clone());
+        let q = TheoryPred::Atom(conclusion.clone());
+        let not_q = algebra.not(&q);
+        let p_and_not_q = algebra.and(&p, &not_q);
+        !algebra.is_satisfiable(&p_and_not_q)
     }
 
     /// Apply a variable substitution to a refinement type.
@@ -1205,7 +1213,6 @@ pub struct SetTypeEnv {
 /// All operations are **compile-time only** — they execute during `language!`
 /// macro expansion to verify type relationships and emit lints. No tree
 /// automata appear in the generated binary.
-#[cfg(feature = "tree-automata")]
 #[derive(Clone, Debug)]
 pub struct SetTheoreticTypeSystem {
     /// Constructors with their arities (defines the term algebra).
@@ -1214,7 +1221,6 @@ pub struct SetTheoreticTypeSystem {
     pub type_defs: HashMap<String, crate::tree_automaton::TreeAutomaton<crate::automata::semiring::BooleanWeight>>,
 }
 
-#[cfg(feature = "tree-automata")]
 impl SetTheoreticTypeSystem {
     /// Create a new set-theoretic type system with the given constructors.
     pub fn new(constructors: HashMap<String, usize>) -> Self {
@@ -1637,7 +1643,6 @@ impl SetTheoreticTypeSystem {
     }
 }
 
-#[cfg(feature = "tree-automata")]
 impl TypeSystem for SetTheoreticTypeSystem {
     type Type = SetType;
     type TypeEnv = SetTypeEnv;
@@ -1926,7 +1931,7 @@ mod tests {
         let sys = test_system();
         let env = sys.empty_env();
         let term = LatticeTerm::Var("y".to_string());
-        assert_eq!(sys.infer(&env, &term), vec![]);
+        assert_eq!(sys.infer(&env, &term), Vec::<usize>::new());
     }
 
     // ── Constructor application ──
@@ -2346,7 +2351,6 @@ mod tests {
 
     // ── BooleanAlgebra integration ──
 
-    #[cfg(feature = "symbolic-automata")]
     mod boolean_algebra_tests {
         use super::*;
         use crate::symbolic::BooleanAlgebra;
@@ -2384,7 +2388,6 @@ mod tests {
     // SetTheoreticTypeSystem tests (Sprint RT3)
     // ══════════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "tree-automata")]
     mod set_theoretic_tests {
         use super::*;
         use crate::automata::semiring::BooleanWeight;

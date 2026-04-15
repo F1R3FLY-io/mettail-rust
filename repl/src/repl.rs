@@ -1008,8 +1008,46 @@ impl Repl {
                     .set_term_with_id(result_term, results, result_id)?;
                 return Ok(());
             }
+
+            // CEK evaluation: decompose AST into frames, drive to normal form
+            {
+                let mut evaluator =
+                    mettail_runtime::CekEvaluator::new(format!("{}", term));
+                if language.decompose_into_cek(term.as_ref(), &mut evaluator) {
+                    let start = Instant::now();
+                    let mut obs = mettail_runtime::NullEvalObserver;
+                    match evaluator.run_to_completion(&mut obs) {
+                        Ok(result_str) => {
+                            let elapsed = start.elapsed();
+                            print!("CEK eval... ");
+                            println!("Time taken: {:?}", elapsed);
+                            if let Ok(result_term) = language.parse_term(&result_str) {
+                                let result_id = result_term.term_id();
+                                let results =
+                                    AscentResults::from_single_term(result_term.as_ref());
+                                println!("{}", "Done!".green());
+                                println!();
+                                println!("{}", "Current term (result):".bold());
+                                println!(
+                                    "{}",
+                                    format_term_pretty(&result_str).cyan()
+                                );
+                                println!();
+                                self.state.set_term_with_id(
+                                    result_term,
+                                    results,
+                                    result_id,
+                                )?;
+                                return Ok(());
+                            }
+                        },
+                        Err(_) => {}, // Fall through to Ascent
+                    }
+                }
+            }
         }
 
+        // Full Ascent rewrite graph (always for step, fallback for exec)
         print!("Running Ascent... ");
         let start_time = Instant::now();
         let results = language

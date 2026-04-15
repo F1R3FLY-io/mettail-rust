@@ -41,6 +41,7 @@ export const categoryInfo = {
 	},
 	Float: {
 		constructors: [
+			"NegFloat",
 			"AddFloat",
 			"SubFloat",
 			"MulFloat",

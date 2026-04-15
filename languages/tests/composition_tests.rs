@@ -1,4 +1,3 @@
-#![cfg(feature = "test-languages")]
 //! Integration tests for all four DSL composition mechanisms:
 //!
 //! 1. `extends:` — ExtMath inherits BaseMath types+terms+rewrites

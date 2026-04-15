@@ -3,13 +3,15 @@
 //! This module generates static metadata about a language's types, terms,
 //! equations, and rewrites. The REPL uses this to display the `info` command.
 
-use crate::ast::{
+use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam},
-    language::{Equation, FreshnessTarget, LanguageDef, Premise, RewriteRule},
+    language::{
+        BehavioralPred, Equation, FreshnessTarget, LanguageDef, PredArg, Premise, Quantifier,
+        RewriteRule,
+    },
     pattern::{Pattern, PatternTerm},
     types::{CollectionType, TypeExpr},
 };
-use crate::gen::is_literal_nonterminal;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::LitStr;
@@ -36,6 +38,16 @@ pub fn generate_metadata(language: &LanguageDef) -> TokenStream {
     // Generate logic relation and rule definitions
     let logic_relation_defs = generate_logic_relation_defs(language);
     let logic_rule_defs = generate_logic_rule_defs(language);
+
+    // Sim-B: Generate guard configuration metadata arrays from the
+    // language's `guards { }` block. When the block is absent, all
+    // five generators emit `&[]`, producing the same output as the
+    // default-empty trait methods on `LanguageMetadata`.
+    let builtin_predicate_defs = generate_builtin_predicate_defs(language);
+    let theory_defs = generate_theory_defs(language);
+    let channel_defs = generate_channel_defs(language);
+    let join_pattern_defs = generate_join_pattern_defs(language);
+    let connective_defs = generate_connective_defs(language);
 
     quote! {
         /// Static metadata for the #name language
@@ -66,6 +78,26 @@ pub fn generate_metadata(language: &LanguageDef) -> TokenStream {
 
             fn logic_rules(&self) -> &'static [mettail_runtime::LogicRuleDef] {
                 #logic_rule_defs
+            }
+
+            fn builtin_predicates(&self) -> &'static [mettail_runtime::BuiltinPredicateDef] {
+                #builtin_predicate_defs
+            }
+
+            fn theories(&self) -> &'static [mettail_runtime::TheoryDef] {
+                #theory_defs
+            }
+
+            fn channels(&self) -> &'static [mettail_runtime::ChannelDef] {
+                #channel_defs
+            }
+
+            fn join_patterns(&self) -> &'static [mettail_runtime::JoinPatternDef] {
+                #join_pattern_defs
+            }
+
+            fn connectives(&self) -> &'static [mettail_runtime::ConnectiveDef] {
+                #connective_defs
             }
         }
     }
@@ -163,7 +195,7 @@ fn term_to_user_syntax(rule: &GrammarRule, _language: &LanguageDef) -> String {
             GrammarItem::Terminal(t) => {
                 parts.push(t.clone());
             },
-            GrammarItem::NonTerminal(nt) => {
+            GrammarItem::NonTerminal { ident: nt, .. } => {
                 let name = nt.to_string().to_lowercase();
                 parts.push(name);
             },
@@ -315,8 +347,8 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
         .enumerate()
         .filter_map(|(i, item)| {
             match item {
-                GrammarItem::NonTerminal(nt)
-                    if nt.to_string() != "Var" && !is_literal_nonterminal(&nt.to_string()) =>
+                GrammarItem::NonTerminal { ident: nt, kind }
+                    if !kind.is_builtin() =>
                 {
                     let name_str = format!("f{}", i);
                     let ty_str = nt.to_string();
@@ -428,8 +460,119 @@ fn premise_to_display_string(p: &Premise) -> String {
             format!("{}.*map(|{}| {})", collection, param, premise_to_display_string(body))
         },
         Premise::BehavioralGuard(pred) => {
-            format!("guard({:?})", pred)
+            // Lint-D cleanup: proper unicode-formatted display instead of
+            // `{:?}` Debug output. Uses the same display function as the
+            // simulator metadata bridge.
+            format!("guard({})", behavioral_pred_to_display(pred))
         },
+    }
+}
+
+/// Render a `BehavioralPred` as a unicode-formatted user-facing string
+/// suitable for inclusion in `EquationDef::conditions` and
+/// `RewriteDef::conditions` slices visible via `LanguageMetadata`.
+///
+/// The rendering uses the same unicode connectives as the design doc
+/// §2A surface syntax:
+///
+/// | Variant | Rendering |
+/// |---------|-----------|
+/// | `RelationQuery { name, args, negated: false }` | `name(a, b)` |
+/// | `RelationQuery { negated: true }` | `¬name(a, b)` |
+/// | `And(a, b)` | `a ∧ b` |
+/// | `Or(a, b)`  | `a ∨ b` |
+/// | `Not(inner)` | `¬inner` |
+/// | `Implies(a, b)` | `a ⟹ b` |
+/// | `Quantified { ForAll, var, body }` | `∀var. body` (with optional domain/bound) |
+/// | `Quantified { Exists, var, body }` | `∃var. body` |
+/// | `AcMatch { bag, elements, rest }` | `ac_match(bag, {e1, e2, ...rest})` |
+///
+/// Parentheses are added conservatively around sub-expressions to avoid
+/// ambiguity: any `And`/`Or`/`Implies` operand that is itself a binary
+/// combinator of lower-or-equal precedence gets wrapped.
+fn behavioral_pred_to_display(pred: &BehavioralPred) -> String {
+    match pred {
+        BehavioralPred::RelationQuery { relation_name, args, negated } => {
+            let args_str: Vec<String> = args
+                .iter()
+                .map(|a| match a {
+                    PredArg::Var(v) => v.to_string(),
+                    PredArg::Constant(c) => c.to_string(),
+                })
+                .collect();
+            let call = format!("{}({})", relation_name, args_str.join(", "));
+            if *negated {
+                format!("¬{}", call)
+            } else {
+                call
+            }
+        }
+        BehavioralPred::And(a, b) => {
+            format!(
+                "{} ∧ {}",
+                wrap_if_binary(a),
+                wrap_if_binary(b),
+            )
+        }
+        BehavioralPred::Or(a, b) => {
+            format!(
+                "{} ∨ {}",
+                wrap_if_binary(a),
+                wrap_if_binary(b),
+            )
+        }
+        BehavioralPred::Not(inner) => {
+            format!("¬{}", wrap_if_binary(inner))
+        }
+        BehavioralPred::Implies(a, b) => {
+            format!(
+                "{} ⟹ {}",
+                wrap_if_binary(a),
+                wrap_if_binary(b),
+            )
+        }
+        BehavioralPred::Quantified { quantifier, var, domain, bound, body } => {
+            let q = match quantifier {
+                Quantifier::ForAll => "∀",
+                Quantifier::Exists => "∃",
+            };
+            let domain_str = match (domain, bound) {
+                (Some(d), Some(k)) => format!(" ∈ {}_{{k={}}}", d, k),
+                (Some(d), None) => format!(" ∈ {}", d),
+                (None, Some(k)) => format!(" _{{k={}}}", k),
+                (None, None) => String::new(),
+            };
+            format!(
+                "{}{}{}. {}",
+                q,
+                var,
+                domain_str,
+                behavioral_pred_to_display(body),
+            )
+        }
+        BehavioralPred::AcMatch { bag, elements, rest } => {
+            let mut elems: Vec<String> = elements.iter().map(|e| e.to_string()).collect();
+            if let Some(r) = rest {
+                elems.push(format!("...{}", r));
+            }
+            format!("ac_match({}, {{{}}})", bag, elems.join(", "))
+        }
+        BehavioralPred::Top => "⊤".to_string(),
+    }
+}
+
+/// Wrap a sub-expression in parentheses when it is a binary combinator
+/// (And, Or, Implies). Leaf predicates and Not/Quantified/AcMatch pass
+/// through unparenthesized because they are unambiguous at any nesting
+/// depth in the rendered output.
+fn wrap_if_binary(pred: &BehavioralPred) -> String {
+    match pred {
+        BehavioralPred::And(_, _)
+        | BehavioralPred::Or(_, _)
+        | BehavioralPred::Implies(_, _) => {
+            format!("({})", behavioral_pred_to_display(pred))
+        }
+        _ => behavioral_pred_to_display(pred),
     }
 }
 
@@ -452,11 +595,18 @@ fn generate_equation_def(eq: &Equation, language: &LanguageDef) -> TokenStream {
     let lhs_lit = LitStr::new(&lhs, Span::call_site());
     let rhs_lit = LitStr::new(&rhs, Span::call_site());
 
+    // Sim-B: detect BehavioralGuard premises on equations too.
+    let is_guarded = eq
+        .premises
+        .iter()
+        .any(|p| matches!(p, Premise::BehavioralGuard(_)));
+
     quote! {
         mettail_runtime::EquationDef {
             conditions: &[#(#conditions_tokens),*],
             lhs: #lhs_lit,
             rhs: #rhs_lit,
+            is_guarded: #is_guarded,
         }
     }
 }
@@ -477,8 +627,12 @@ fn generate_rewrite_defs(language: &LanguageDef) -> TokenStream {
 
 /// Generate a single RewriteDef
 fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef) -> TokenStream {
-    // For now, no names
-    let name = quote! { None };
+    // Extract the rewrite rule name from the AST
+    let name = {
+        let name_str = rw.name.to_string();
+        let name_lit = LitStr::new(&name_str, rw.name.span());
+        quote! { Some(#name_lit) }
+    };
 
     // Convert conditions to strings
     let conditions: Vec<String> = rw.premises.iter().map(premise_to_display_string).collect();
@@ -514,6 +668,14 @@ fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef)
     let lhs_lit = LitStr::new(&lhs, Span::call_site());
     let rhs_lit = LitStr::new(&rhs, Span::call_site());
 
+    // Sim-B: detect whether any premise is a BehavioralGuard. The macro
+    // codegen sets `is_guarded: true` on the generated RewriteDef so the
+    // simulator can identify guarded rewrites at runtime.
+    let is_guarded = rw
+        .premises
+        .iter()
+        .any(|p| matches!(p, Premise::BehavioralGuard(_)));
+
     quote! {
         mettail_runtime::RewriteDef {
             name: #name,
@@ -521,6 +683,7 @@ fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef)
             premise: #premise,
             lhs: #lhs_lit,
             rhs: #rhs_lit,
+            is_guarded: #is_guarded,
         }
     }
 }
@@ -728,7 +891,7 @@ fn build_syntax_from_grammar(
             GrammarItem::Terminal(t) => {
                 result.push_str(t);
             },
-            GrammarItem::NonTerminal(_) => {
+            GrammarItem::NonTerminal { .. } => {
                 if let Some(arg) = arg_iter.next() {
                     result.push_str(&pattern_to_user_syntax(arg, language));
                 }
@@ -838,4 +1001,223 @@ fn normalize_rule_whitespace(s: &str) -> String {
         .replace("< - -", "<--")
         .replace("< --", "<--")
         .replace("< -", "<-")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Sim-B: Guard configuration metadata generators
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Each generator reads from `language.guard_config` and emits an `&[…]`
+// literal suitable for the corresponding `LanguageMetadata` trait method.
+// When the `guards { }` block is absent (or the relevant sub-block is
+// omitted), the generator emits `&[]`.
+
+/// Generate the `BuiltinPredicateDef` array from direct predicate items
+/// in `guards { }`.
+fn generate_builtin_predicate_defs(language: &LanguageDef) -> TokenStream {
+    let Some(gc) = language.guard_config.as_ref() else {
+        return quote! { &[] };
+    };
+    let Some(preds) = gc.builtin_predicates.as_ref() else {
+        return quote! { &[] };
+    };
+
+    let defs: Vec<TokenStream> = preds
+        .iter()
+        .map(|p| {
+            let name_str = p.name.to_string();
+            let name_lit = LitStr::new(&name_str, p.name.span());
+
+            // Render the first syntax form (if any) using the existing
+            // syntax-expression printer. When a predicate declares
+            // alternative forms via `|`, we pick the first — this is a
+            // best-effort summary, not a round-trippable rendering.
+            let syntax_str = p
+                .syntax_forms
+                .first()
+                .map(|form| {
+                    form.iter()
+                        .map(|expr| syntax_expr_to_display(expr))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+            let syntax_lit = LitStr::new(&syntax_str, Span::call_site());
+
+            let selectivity = match p.annotations.selectivity {
+                Some(s) => quote! { Some(#s) },
+                None => quote! { None },
+            };
+            let cost = match p.annotations.cost {
+                Some(c) => quote! { Some(#c) },
+                None => quote! { None },
+            };
+
+            quote! {
+                mettail_runtime::BuiltinPredicateDef {
+                    name: #name_lit,
+                    syntax: #syntax_lit,
+                    selectivity: #selectivity,
+                    cost: #cost,
+                }
+            }
+        })
+        .collect();
+
+    quote! { &[#(#defs),*] }
+}
+
+/// Render a syntax expression as a plain string for the
+/// `BuiltinPredicateDef.syntax` field.
+fn syntax_expr_to_display(expr: &SyntaxExpr) -> String {
+    match expr {
+        SyntaxExpr::Literal(s) => format!("\"{}\"", s),
+        SyntaxExpr::Param(id) => id.to_string(),
+        SyntaxExpr::Op(_) => "#op".to_string(),
+    }
+}
+
+/// Generate the `TheoryDef` array from `guards { theories { } }`.
+fn generate_theory_defs(language: &LanguageDef) -> TokenStream {
+    let Some(gc) = language.guard_config.as_ref() else {
+        return quote! { &[] };
+    };
+    if gc.theories.is_empty() {
+        return quote! { &[] };
+    }
+
+    let defs: Vec<TokenStream> = gc
+        .theories
+        .iter()
+        .map(|t| {
+            let name_str = t.name.to_string();
+            let name_lit = LitStr::new(&name_str, t.name.span());
+
+            let theory_type_str = {
+                let ty = &t.theory_type;
+                quote!(#ty).to_string()
+            };
+            let theory_type_lit = LitStr::new(&theory_type_str, Span::call_site());
+
+            let handled_tokens: Vec<TokenStream> = match &t.handled_types {
+                Some(cats) => cats
+                    .iter()
+                    .map(|c| {
+                        let c_str = c.to_string();
+                        let c_lit = LitStr::new(&c_str, c.span());
+                        quote! { #c_lit }
+                    })
+                    .collect(),
+                None => Vec::new(),
+            };
+
+            quote! {
+                mettail_runtime::TheoryDef {
+                    name: #name_lit,
+                    theory_type: #theory_type_lit,
+                    handled_types: &[#(#handled_tokens),*],
+                }
+            }
+        })
+        .collect();
+
+    quote! { &[#(#defs),*] }
+}
+
+/// Generate the `ChannelDef` array from `guards { channels { channel … } }`.
+fn generate_channel_defs(language: &LanguageDef) -> TokenStream {
+    let Some(gc) = language.guard_config.as_ref() else {
+        return quote! { &[] };
+    };
+    let Some(channels) = gc.channels.as_ref() else {
+        return quote! { &[] };
+    };
+
+    let defs: Vec<TokenStream> = channels
+        .channel_categories
+        .iter()
+        .map(|c| {
+            let cat_str = c.category.to_string();
+            let cat_lit = LitStr::new(&cat_str, c.category.span());
+            quote! {
+                mettail_runtime::ChannelDef { category: #cat_lit }
+            }
+        })
+        .collect();
+
+    quote! { &[#(#defs),*] }
+}
+
+/// Generate the `JoinPatternDef` array from `guards { channels { join … } }`.
+fn generate_join_pattern_defs(language: &LanguageDef) -> TokenStream {
+    let Some(gc) = language.guard_config.as_ref() else {
+        return quote! { &[] };
+    };
+    let Some(channels) = gc.channels.as_ref() else {
+        return quote! { &[] };
+    };
+
+    let defs: Vec<TokenStream> = channels
+        .join_patterns
+        .iter()
+        .map(|jp| {
+            let label_str = jp.label.to_string();
+            let label_lit = LitStr::new(&label_str, jp.label.span());
+
+            let cat_tokens: Vec<TokenStream> = jp
+                .channel_params
+                .iter()
+                .map(|cp| {
+                    let cat_str = cp.category.to_string();
+                    let cat_lit = LitStr::new(&cat_str, cp.category.span());
+                    quote! { #cat_lit }
+                })
+                .collect();
+
+            quote! {
+                mettail_runtime::JoinPatternDef {
+                    label: #label_lit,
+                    channel_categories: &[#(#cat_tokens),*],
+                }
+            }
+        })
+        .collect();
+
+    quote! { &[#(#defs),*] }
+}
+
+/// Generate the `ConnectiveDef` array from `guards { connectives { } }`.
+fn generate_connective_defs(language: &LanguageDef) -> TokenStream {
+    let Some(gc) = language.guard_config.as_ref() else {
+        return quote! { &[] };
+    };
+    let Some(decls) = gc.connectives.as_ref() else {
+        return quote! { &[] };
+    };
+
+    let defs: Vec<TokenStream> = decls
+        .iter()
+        .map(|decl| {
+            let role_str = decl.role.as_str();
+            let role_lit = LitStr::new(role_str, Span::call_site());
+
+            let kw_tokens: Vec<TokenStream> = decl
+                .keywords
+                .iter()
+                .map(|kw| {
+                    let kw_lit = LitStr::new(kw, Span::call_site());
+                    quote! { #kw_lit }
+                })
+                .collect();
+
+            quote! {
+                mettail_runtime::ConnectiveDef {
+                    role: #role_lit,
+                    keywords: &[#(#kw_tokens),*],
+                }
+            }
+        })
+        .collect();
+
+    quote! { &[#(#defs),*] }
 }

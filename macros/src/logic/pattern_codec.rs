@@ -34,8 +34,8 @@
 //! introduction order in left-to-right pre-order traversal. First occurrence
 //! emits `NewVar` (0xC0), subsequent occurrences emit `VarRef(slot)`.
 
-use crate::ast::pattern::{Pattern, PatternTerm};
-use crate::ast::types::CollectionType;
+use mettail_ast::pattern::{Pattern, PatternTerm};
+use mettail_ast::types::CollectionType;
 use std::collections::HashMap;
 
 // ── Tag Constants ──────────────────────────────────────────────────────────

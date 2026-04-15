@@ -16,7 +16,7 @@
 //!   → detect_subsumption()               (prefix + matching queries)
 //! ```
 
-use crate::ast::language::LanguageDef;
+use mettail_ast::language::LanguageDef;
 use crate::logic::bloom_filter::BloomFilter;
 use crate::logic::pattern_codec::pattern_to_debruijn_bytes;
 use pathmap::ring::{AlgebraicResult, Lattice, COUNTER_IDENT, SELF_IDENT};
@@ -645,7 +645,7 @@ pub fn group_categories(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::pattern::{Pattern, PatternTerm};
+    use mettail_ast::pattern::{Pattern, PatternTerm};
     use crate::logic::pattern_codec::pattern_to_debruijn_bytes;
     use proc_macro2::{Ident, Span};
 

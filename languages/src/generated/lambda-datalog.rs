@@ -94,13 +94,19 @@ eq_term(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_TERM_EQ_CONG_0.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_term(s_f0, t_f0),
-    eq_term(s_f1, t_f1);
+    eq_term(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone(),
+    eq_term(__eqcong_s_f1, __eqcong_t_f1),
+    if s_f1 == __eqcong_s_f1.clone(),
+    if t_f1 == __eqcong_t_f1.clone();
 
 
     // Rewrite rules
 rw_term(s_orig.clone(), t) <--
-    eq_term(s_orig, s),
+    eq_term(__eqrel_s_orig, __eqrel_s),
+    let s_orig = __eqrel_s_orig.clone(),
+    let s = __eqrel_s.clone(),
     if let Term::App(ref s_f0, ref s_f1) = s,
     let s_f0_deref = &** s_f0,
     if let Term::Lam(ref s_f0_deref_f0) = s_f0_deref,
@@ -135,8 +141,10 @@ rw_term(lhs.clone(), match (lhs, vi) {
     } let iter_buf = std::mem::take(& mut buf); POOL_TERM_SCONG_TERM.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_term(field_val, t);
 
-rw_term(a.clone(), c.clone()) <--
-    eq_term(a, b),
-    rw_term(b.clone(), c);
+rw_term(__eqrel_closure_a.clone(), c.clone()) <--
+    eq_term(__eqrel_a, __eqrel_b),
+    let __eqrel_closure_a = __eqrel_a.clone(),
+    let __eqrel_closure_b = __eqrel_b.clone(),
+    rw_term(__eqrel_closure_b, c);
 
 }

@@ -3,9 +3,9 @@
 //! This module provides common utilities used across multiple logic
 //! generation modules, reducing duplication and ensuring consistency.
 
-use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
-use crate::ast::language::LanguageDef;
-use crate::ast::types::{EvalMode, TypeExpr};
+use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam};
+use mettail_ast::language::LanguageDef;
+use mettail_ast::types::{EvalMode, TypeExpr};
 use crate::gen::{generate_literal_label, is_literal_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -82,7 +82,7 @@ pub fn count_nonterminals(rule: &GrammarRule) -> usize {
                 count += 1; // Body becomes Scope field
             } else {
                 match item {
-                    GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. } => {
+                    GrammarItem::NonTerminal { .. } | GrammarItem::Collection { .. } => {
                         count += 1;
                     },
                     _ => {},
@@ -95,7 +95,7 @@ pub fn count_nonterminals(rule: &GrammarRule) -> usize {
     // Regular rule - count non-terminals and collections
     rule.items
         .iter()
-        .filter(|item| matches!(item, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }))
+        .filter(|item| matches!(item, GrammarItem::NonTerminal { .. } | GrammarItem::Collection { .. }))
         .count()
 }
 
@@ -131,7 +131,7 @@ pub fn collect_nonterminal_fields(rule: &GrammarRule) -> Vec<(usize, &Ident)> {
         .iter()
         .enumerate()
         .filter_map(|(i, item)| {
-            if let GrammarItem::NonTerminal(ident) = item {
+            if let GrammarItem::NonTerminal { ident, .. } = item {
                 Some((i, ident))
             } else {
                 None
@@ -174,7 +174,7 @@ pub fn fold_params_all_same_category(rule: &GrammarRule, category: &Ident) -> bo
     } else {
         // Old-style: check NonTerminal items
         rule.items.iter().all(|item| match item {
-            GrammarItem::NonTerminal(nt) => *nt == cat_str,
+            GrammarItem::NonTerminal { ident: nt, .. } => *nt == cat_str,
             _ => true, // Terminals are OK
         })
     }
@@ -187,7 +187,7 @@ pub fn fold_field_count(rule: &GrammarRule) -> usize {
     }
     rule.items
         .iter()
-        .filter(|i| matches!(i, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }))
+        .filter(|i| matches!(i, GrammarItem::NonTerminal { .. } | GrammarItem::Collection { .. }))
         .count()
 }
 
@@ -241,10 +241,12 @@ pub fn compute_category_reachability(language: &LanguageDef) -> BTreeSet<(String
             // Old-syntax: inspect items
             for item in &rule.items {
                 match item {
-                    GrammarItem::NonTerminal(cat) => {
-                        let tgt = cat.to_string();
-                        if categories.contains(&tgt) && tgt != "Var" && tgt != "Integer" {
-                            edges.entry(src.clone()).or_default().insert(tgt);
+                    GrammarItem::NonTerminal { ident: cat, kind } => {
+                        if !kind.is_builtin() {
+                            let tgt = cat.to_string();
+                            if categories.contains(&tgt) {
+                                edges.entry(src.clone()).or_default().insert(tgt);
+                            }
                         }
                     },
                     GrammarItem::Collection { element_type, .. } => {
@@ -308,7 +310,7 @@ fn collect_type_refs(
     match ty {
         TypeExpr::Base(ident) => {
             let tgt = ident.to_string();
-            if categories.contains(&tgt) && tgt != "Var" && tgt != "Integer" {
+            if categories.contains(&tgt) && !NonTerminalKind::classify(&tgt).is_builtin() {
                 edges.entry(src.to_string()).or_default().insert(tgt);
             }
         },
@@ -460,12 +462,12 @@ pub fn filter_reachable_by_demand(
 /// For each `Apply { constructor, args }`, adds the constructor's category and all
 /// field types of that constructor. Then recurses into args.
 fn collect_pattern_categories(
-    pattern: &crate::ast::pattern::Pattern,
+    pattern: &mettail_ast::pattern::Pattern,
     language: &LanguageDef,
     all_categories: &BTreeSet<String>,
     demanded: &mut BTreeSet<String>,
 ) {
-    use crate::ast::pattern::Pattern;
+    use mettail_ast::pattern::Pattern;
 
     match pattern {
         Pattern::Term(pt) => {
@@ -489,12 +491,12 @@ fn collect_pattern_categories(
 
 /// Recursively collect categories from a PatternTerm.
 fn collect_pattern_term_categories(
-    pt: &crate::ast::pattern::PatternTerm,
+    pt: &mettail_ast::pattern::PatternTerm,
     language: &LanguageDef,
     all_categories: &BTreeSet<String>,
     demanded: &mut BTreeSet<String>,
 ) {
-    use crate::ast::pattern::PatternTerm;
+    use mettail_ast::pattern::PatternTerm;
 
     match pt {
         PatternTerm::Var(_) => {},
@@ -534,7 +536,7 @@ fn collect_pattern_term_categories(
 /// For a constructor like `POutput(Name, Name, Proc)`, this adds "Name" and "Proc"
 /// to the demanded set.
 fn collect_constructor_field_categories(
-    rule: &crate::ast::grammar::GrammarRule,
+    rule: &mettail_ast::grammar::GrammarRule,
     all_categories: &BTreeSet<String>,
     demanded: &mut BTreeSet<String>,
 ) {
@@ -554,7 +556,7 @@ fn collect_constructor_field_categories(
         // Old-syntax: inspect items directly
         for item in &rule.items {
             match item {
-                GrammarItem::NonTerminal(cat) => {
+                GrammarItem::NonTerminal { ident: cat, .. } => {
                     let cat_str = cat.to_string();
                     if all_categories.contains(&cat_str) {
                         demanded.insert(cat_str);
@@ -845,7 +847,7 @@ pub fn classify_rewrite_strata(
         let non_terminal_count = rule
             .items
             .iter()
-            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+            .filter(|item| matches!(item, GrammarItem::NonTerminal { .. }))
             .count();
         if non_terminal_count == 0 {
             continue;
@@ -872,7 +874,7 @@ pub fn classify_rewrite_strata(
         } else {
             // Old syntax: check that all NonTerminal items point to literal-bearing cats
             rule.items.iter().all(|item| match item {
-                GrammarItem::NonTerminal(cat) => literal_label_for(language, cat).is_some(),
+                GrammarItem::NonTerminal { ident: cat, .. } => literal_label_for(language, cat).is_some(),
                 _ => true, // Terminals don't affect groundness
             })
         };
@@ -894,9 +896,9 @@ pub fn classify_rewrite_strata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::grammar::{GrammarItem, GrammarRule};
-    use crate::ast::language::{Equation, LangType, LanguageDef, RewriteRule};
-    use crate::ast::pattern::{Pattern, PatternTerm};
+    use mettail_ast::grammar::{GrammarItem, GrammarRule};
+    use mettail_ast::language::{Equation, LangType, LanguageDef, RewriteRule};
+    use mettail_ast::pattern::{Pattern, PatternTerm};
     use proc_macro2::Span;
     use syn::Ident;
 
@@ -920,7 +922,7 @@ mod tests {
             .map(|(label, category, field_cats)| {
                 let items: Vec<GrammarItem> = field_cats
                     .iter()
-                    .map(|fc| GrammarItem::NonTerminal(Ident::new(fc, Span::call_site())))
+                    .map(|fc| GrammarItem::non_terminal(Ident::new(fc, Span::call_site())))
                     .collect();
                 GrammarRule {
                     label: Ident::new(label, Span::call_site()),
@@ -933,6 +935,7 @@ mod tests {
                     eval_mode: None,
                     is_right_assoc: false,
                     prefix_bp: None,
+                    tier_directive: None,
                 }
             })
             .collect();
@@ -991,6 +994,7 @@ mod tests {
             equations: eqs,
             rewrites: rws,
             logic: None,
+            guard_config: None,
         }
     }
 

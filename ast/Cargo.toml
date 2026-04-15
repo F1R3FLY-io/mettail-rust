@@ -1,0 +1,18 @@
+[package]
+name = "mettail-ast"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Surface-syntax AST and parser for the MeTTaIL `language!` macro"
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
+ascent_syntax_export = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

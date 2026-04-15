@@ -600,7 +600,6 @@ pub fn linear_to_lattice_generic<T, S, W: Semiring>(tokens: Vec<(T, S)>) -> Toke
 ///
 /// Up to `n` paths sorted by total weight (ascending).
 /// Returns empty vec if the final node is unreachable.
-#[cfg(feature = "wfst-log")]
 pub fn n_best_paths<T: Clone, S: Clone>(
     lattice: &TokenLattice<T, S>,
     final_node: usize,
@@ -1078,7 +1077,6 @@ mod tests {
     // N-best path extraction (feature = "wfst-log")
     // ═══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "wfst-log")]
     mod n_best_tests {
         use super::super::*;
 

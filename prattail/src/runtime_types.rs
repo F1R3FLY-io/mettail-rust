@@ -257,24 +257,11 @@ pub fn lex_core<'a, T>(
 
     while pos < bytes.len() {
         // Skip whitespace (ASCII fast path + Unicode fallback)
-        #[cfg(feature = "simd-whitespace")]
         {
             let result = skip_whitespace_simd(bytes, pos, line, col);
             pos = result.pos;
             line = result.line;
             col = result.col;
-        }
-        #[cfg(not(feature = "simd-whitespace"))]
-        {
-            while pos < bytes.len() && is_whitespace(bytes[pos]) {
-                if bytes[pos] == b'\n' {
-                    line += 1;
-                    col = 0;
-                } else {
-                    col += 1;
-                }
-                pos += 1;
-            }
         }
         // Unicode whitespace fallback (zero-cost for ASCII input: branch not taken)
         while pos < bytes.len() && bytes[pos] >= 0x80 {
@@ -385,24 +372,11 @@ pub fn lex_weighted_core<'a, T>(
     let mut tokens: Vec<(T, Range, f64)> = Vec::with_capacity(input.len() / 2);
 
     while pos < bytes.len() {
-        #[cfg(feature = "simd-whitespace")]
         {
             let result = skip_whitespace_simd(bytes, pos, line, col);
             pos = result.pos;
             line = result.line;
             col = result.col;
-        }
-        #[cfg(not(feature = "simd-whitespace"))]
-        {
-            while pos < bytes.len() && is_whitespace(bytes[pos]) {
-                if bytes[pos] == b'\n' {
-                    line += 1;
-                    col = 0;
-                } else {
-                    col += 1;
-                }
-                pos += 1;
-            }
         }
         // Unicode whitespace fallback
         while pos < bytes.len() && bytes[pos] >= 0x80 {
@@ -534,24 +508,11 @@ pub fn lex_lattice_core<'a, T: Clone>(
     let mut token_alts: Vec<TokenAlts<T>> = Vec::new();
 
     while pos < bytes.len() {
-        #[cfg(feature = "simd-whitespace")]
         {
             let result = skip_whitespace_simd(bytes, pos, line, col);
             pos = result.pos;
             line = result.line;
             col = result.col;
-        }
-        #[cfg(not(feature = "simd-whitespace"))]
-        {
-            while pos < bytes.len() && is_whitespace(bytes[pos]) {
-                if bytes[pos] == b'\n' {
-                    line += 1;
-                    col = 0;
-                } else {
-                    col += 1;
-                }
-                pos += 1;
-            }
         }
         // Unicode whitespace fallback
         while pos < bytes.len() && bytes[pos] >= 0x80 {
@@ -687,7 +648,6 @@ pub fn is_whitespace(b: u8) -> bool {
 
 /// Result of SIMD whitespace skipping: the new cursor position and updated
 /// line/column tracking.
-#[cfg(feature = "simd-whitespace")]
 #[derive(Debug, Clone, Copy)]
 pub struct SkipResult {
     pub pos: usize,
@@ -705,7 +665,6 @@ pub struct SkipResult {
 /// # Safety
 ///
 /// Uses only safe `std::simd` APIs. No unsafe code.
-#[cfg(feature = "simd-whitespace")]
 #[inline]
 pub fn skip_whitespace_simd(bytes: &[u8], mut pos: usize, mut line: usize, mut col: usize) -> SkipResult {
     use std::simd::{Simd, cmp::SimdPartialEq};

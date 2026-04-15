@@ -174,14 +174,14 @@ PROCEDURE SFA-INTERSECT(M₁ = (Q₁, I₁, F₁, δ₁), M₂ = (Q₂, I₂, F�
 
 **Classification**: SFA operations over effective Boolean algebras fall in **Tier 1** (compile-time decidable):
 
-| Operation | Decidability | Tier |
-|-----------|-------------|------|
-| Emptiness | Decidable (BFS + SAT) | T1 |
-| Membership | Decidable (simulate + evaluate) | T1 |
-| Equivalence | Decidable (complement + intersect + empty) | T1 |
-| Universality | Decidable (complement + empty) | T1 |
-| Inclusion | Decidable (complement other + intersect + empty) | T1 |
-| Minimization | Decidable (symbolic Hopcroft) | T1 |
+| Operation    | Decidability                                     | Tier |
+|--------------|--------------------------------------------------|------|
+| Emptiness    | Decidable (BFS + SAT)                            | T1   |
+| Membership   | Decidable (simulate + evaluate)                  | T1   |
+| Equivalence  | Decidable (complement + intersect + empty)       | T1   |
+| Universality | Decidable (complement + empty)                   | T1   |
+| Inclusion    | Decidable (complement other + intersect + empty) | T1   |
+| Minimization | Decidable (symbolic Hopcroft)                    | T1   |
 
 **Proof of T1 classification**: All operations reduce to a finite number of SAT queries on the Boolean algebra. The algebra's SAT procedure is decidable by definition. The number of states is finite. Therefore, all operations terminate.
 
@@ -223,8 +223,8 @@ Predicates: φ₁ = [0, 50), φ₂ = [30, 80)
 
   0        30       50       80      100
   ├─────────┼────────┼────────┼────────┤
-  │  m₁     │  m₂    │  m₃    │  m₄   │
-  │ φ₁∧¬φ₂  │ φ₁∧φ₂  │ ¬φ₁∧φ₂ │¬φ₁∧¬φ₂│
+  │  m₁     │  m₂    │  m₃    │  m₄    │
+  │ φ₁∧¬φ₂  │ φ₁∧φ₂  │ ¬φ₁∧φ₂ │¬φ₁∧¬φ₂ │
   ├─────────┼────────┼────────┼────────┤
 
   4 minterms (out of 2² = 4 possible)
@@ -235,8 +235,8 @@ Predicates: φ₁ = [0, 50), φ₂ = [30, 80)
 
 ```
                     ┌─────────────────────┐
-                    │   BooleanAlgebra     │
-                    │   (trait)            │
+                    │   BooleanAlgebra    │
+                    │   (trait)           │
                     │                     │
                     │  true_pred()        │
                     │  false_pred()       │
@@ -249,15 +249,15 @@ Predicates: φ₁ = [0, 50), φ₂ = [30, 80)
               ┌──────────────┼──────────────┐
               │              │              │
               ▼              ▼              ▼
-    ┌─────────────────┐ ┌──────────┐ ┌───────────────┐
-    │IntervalAlgebra  │ │CharClass │ │KatBoolean     │
-    │                 │ │Algebra   │ │Algebra        │
-    │D = i64          │ │D = char  │ │D = HashMap    │
-    │Ψ = IntervalPred │ │Ψ = Char  │ │    <String,   │
-    │  [lo, hi)       │ │  ClassPred│ │     bool>     │
-    │SAT: O(k)        │ │SAT: O(k) │ │Ψ = BooleanTest│
-    │  (k = #ranges)  │ │  (k=#rng)│ │SAT: O(2^n)   │
-    └─────────────────┘ └──────────┘ └───────────────┘
+    ┌────────────────┐ ┌───────────┐ ┌───────────────┐
+    │IntervalAlgebra │ │CharClass  │ │KatBoolean     │
+    │                │ │Algebra    │ │Algebra        │
+    │D = i64         │ │D = char   │ │D = HashMap    │
+    │Ψ = IntervalPred│ │Ψ = Char   │ │    <String,   │
+    │  [lo, hi)      │ │  ClassPred│ │     bool>     │
+    │SAT: O(k)       │ │SAT: O(k)  │ │Ψ = BooleanTest│
+    │  (k = #ranges) │ │  (k=#rng) │ │SAT: O(2^n)    │
+    └────────────────┘ └───────────┘ └───────────────┘
 ```
 
 ## Connections

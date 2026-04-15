@@ -85,6 +85,14 @@ pub enum RDSyntaxItem {
     BinderCollection { param_name: String, separator: String },
     /// An optional group.
     Optional { inner: Vec<RDSyntaxItem> },
+    /// Guard expression slot (Phase 2F, predicated types).
+    ///
+    /// See `SyntaxItemSpec::GuardExpression` for full semantics. The
+    /// recursive-descent codegen emits a call to
+    /// `mettail_runtime::parser::parse_predicate_from_str` that
+    /// consumes input up to the next structural delimiter and
+    /// produces a `mettail_runtime::BehavioralPred` value.
+    GuardExpression { param_name: String },
 }
 
 /// Kind of collection.
@@ -229,6 +237,11 @@ enum CaptureKind {
     Collection, // Vec/HashBag/HashSet
     Binder,     // Binder for scope
     Ident,      // Captured identifier string
+    /// Phase 2F: behavioral predicate captured by a `?guard:Guard` slot.
+    /// The generated code constructs a `mettail_runtime::BehavioralPred`
+    /// value (as a nullary RelationQuery in the stub; full parser handoff
+    /// is Phase 2G).
+    Guard,
 }
 
 fn collection_init_str(kind: &CollectionKind) -> &'static str {
@@ -520,6 +533,61 @@ fn write_parse_items(
             RDSyntaxItem::Optional { inner } => {
                 let suffix_after = &items[item_idx + 1..];
                 write_optional_body(buf, inner, captures, first_sets, suffix_after);
+            },
+            RDSyntaxItem::GuardExpression { param_name } => {
+                // Phase 2G: parse a single predicate atom from the
+                // input stream and construct a runtime `BehavioralPred`.
+                //
+                // Supported surface forms:
+                //   relation_name(arg1, arg2, ...)   → RelationQuery
+                //   relation_name                    → nullary RelationQuery
+                //
+                // The full §2 EBNF predicate sublanguage (connectives,
+                // quantifiers, comparisons, set membership) is parsed
+                // by `mettail_runtime::parser::predicate::PredicateParser`
+                // when invoked from a `&str` source. The token-stream
+                // path emitted here is intentionally narrower: it
+                // covers exactly the shape needed by the source-level
+                // demo language (Phase 14), where each guard is a
+                // single relation call. Broader sublanguage support is
+                // a Phase 7 follow-up.
+                write!(
+                    buf,
+                    "let {param_name}_relation = expect_ident(tokens, pos)?; \
+                     let mut {param_name}_args: Vec<mettail_runtime::PredArg> = Vec::new(); \
+                     if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::LParen)) {{ \
+                         *pos += 1; \
+                         while peek_token(tokens, *pos) \
+                             .map_or(false, |t| !matches!(t, Token::RParen | Token::Eof)) \
+                         {{ \
+                             let arg_ident = expect_ident(tokens, pos)?; \
+                             {param_name}_args.push(\
+                                 mettail_runtime::PredArg::Var(arg_ident)\
+                             ); \
+                             if peek_token(tokens, *pos) \
+                                 .map_or(false, |t| matches!(t, Token::Comma)) \
+                             {{ \
+                                 *pos += 1; \
+                             }} else {{ \
+                                 break; \
+                             }} \
+                         }} \
+                         expect_token(\
+                             tokens, pos, |t| matches!(t, Token::RParen), \"`)`\"\
+                         )?; \
+                     }} \
+                     let {param_name} = mettail_runtime::BehavioralPred::RelationQuery {{ \
+                         relation_name: {param_name}_relation, \
+                         args: {param_name}_args, \
+                         negated: false, \
+                     }};",
+                    param_name = param_name,
+                )
+                .unwrap();
+                captures.push(Capture {
+                    name: param_name.clone(),
+                    kind: CaptureKind::Guard,
+                });
             },
         }
     }

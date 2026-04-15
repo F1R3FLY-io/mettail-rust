@@ -308,6 +308,16 @@ impl<P, T> Scope<P, T> {
         &self.inner.unsafe_body
     }
 
+    /// Consume the Scope and return (pattern, body) without freshening.
+    ///
+    /// Unlike `unbind()`, this does not freshen bound variables. It simply
+    /// destructs the Scope and returns ownership of its parts. Used by the
+    /// iterative Drop implementation to take ownership of the body for
+    /// stack-safe deallocation.
+    pub fn into_parts_unsafe(self) -> (P, T) {
+        (self.inner.unsafe_pattern, self.inner.unsafe_body)
+    }
+
     /// Construct a Scope from pattern and body directly (unsafe - no closing)
     ///
     /// This assumes the body already has the correct bound variable structure.

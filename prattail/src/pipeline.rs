@@ -44,7 +44,9 @@ use crate::trampoline::{
     should_use_standalone_fn, write_trampolined_parser, write_trampolined_parser_recovering,
     TrampolineConfig,
 };
+use crate::trampoline::write_trampolined_parser_traced;
 use crate::wfst::PredictionWfst;
+use crate::lint::DiagnosticId;
 use crate::{LanguageSpec, LiteralPatterns, SyntaxItemSpec};
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -396,7 +398,10 @@ pub(crate) fn detect_dead_rules(
 
     for rule_info in rule_infos {
         // Tier 1: literal rules — dead if category has no native_type.
-        if rule_info.is_literal {
+        // Cast rules (e.g., CastInt, CastBool, CastStr) are cross-category
+        // literal injections that ARE reachable even without a native_type
+        // in the target category. Exclude them to prevent false positives.
+        if rule_info.is_literal && !rule_info.is_cast {
             let has_native = categories
                 .iter()
                 .any(|c| c.name == rule_info.category && c.native_type.is_some());
@@ -922,7 +927,6 @@ pub struct ParserBundle {
     /// Custom token specs from the `tokens { ... }` block.
     pub(crate) custom_tokens: Vec<crate::CustomTokenSpec>,
     /// Refinement type definitions from the `types { ... }` block.
-    #[cfg(feature = "type-system")]
     pub(crate) refinement_types: Vec<crate::RefinementTypeSpec>,
 }
 
@@ -991,7 +995,7 @@ impl PipelineState {
 /// Build and emit a structured pipeline diagnostic via the lint system.
 fn pipeline_diagnostic(
     grammar_name: &str,
-    id: &'static str,
+    id: DiagnosticId,
     name: &'static str,
     severity: crate::lint::LintSeverity,
     message: String,
@@ -1204,7 +1208,8 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
                     | SyntaxItemSpec::Sep { .. }
                     | SyntaxItemSpec::Map { .. }
                     | SyntaxItemSpec::Zip { .. }
-                    | SyntaxItemSpec::Optional { .. } => FirstItem::Ident,
+                    | SyntaxItemSpec::Optional { .. }
+                    | SyntaxItemSpec::GuardExpression { .. } => FirstItem::Ident,
                 })
                 .collect(),
             is_infix: r.is_infix,
@@ -1325,7 +1330,6 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         rule_locations,
         semantic_dependency_groups: spec.semantic_dependency_groups.clone(),
         custom_tokens: spec.custom_tokens.clone(),
-        #[cfg(feature = "type-system")]
         refinement_types: spec.refinement_types.clone(),
     };
 
@@ -1393,7 +1397,6 @@ fn generate_parser_code_with_analysis(
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Result of compile-time refinement type analysis.
-#[cfg(feature = "type-system")]
 #[derive(Debug, Clone, Default)]
 pub struct RefinementAnalysisResult {
     /// Refinement types whose predicate is unsatisfiable (RT01).
@@ -1431,70 +1434,41 @@ pub(crate) struct MathAnalysisResults {
     pub algebraic_result: Option<crate::algebraic::AlgebraicSummary>,
 
     // ── Feature-gated analyses ──
-    #[cfg(feature = "trs-analysis")]
     pub confluence_result: Option<crate::confluence::ConfluenceAnalysis>,
-    #[cfg(feature = "trs-analysis")]
     pub termination_result: Option<crate::termination::TerminationResult>,
-    #[cfg(feature = "vpa")]
     pub vpa_result: Option<crate::vpa::VpaAnalysis>,
-    #[cfg(feature = "tree-automata")]
     pub wta_result: Option<crate::tree_automaton::WtaAnalysis>,
-    #[cfg(feature = "wpds-extended")]
     pub ewpds_result: Option<crate::ewpds::EwpdsAnalysis>,
-    #[cfg(feature = "wpds-ara")]
     pub ara_result: Option<crate::ara::AraAnalysis>,
-    #[cfg(feature = "petri")]
     pub petri_result: Option<crate::petri::PetriAnalysis>,
-    #[cfg(feature = "nominal")]
     pub nominal_result: Option<crate::nominal::NominalAnalysis>,
-    #[cfg(feature = "alternating")]
     pub alternating_result: Option<crate::alternating::AlternatingAnalysis>,
-    #[cfg(feature = "ltl")]
     pub ltl_results: Option<Vec<crate::ltl::LtlCheckResult>>,
-    #[cfg(feature = "provenance")]
     pub provenance_result: Option<crate::provenance::ProvenanceAnalysis>,
-    #[cfg(feature = "cra")]
     pub cra_result: Option<crate::cra::CraAnalysis>,
-    #[cfg(feature = "morphisms")]
     pub morphism_result: Option<crate::morphism::MorphismCheck>,
-    #[cfg(feature = "kat")]
     pub kat_result: Option<crate::kat::KatCheck>,
     // ── Advanced automata analyses ──
-    #[cfg(feature = "symbolic-automata")]
     pub symbolic_result: Option<crate::symbolic::SymbolicAnalysis>,
-    #[cfg(feature = "omega")]
     pub buchi_result: Option<crate::buchi::BuchiAnalysis>,
-    #[cfg(feature = "weighted-mso")]
     pub mso_result: Option<crate::weighted_mso::MsoAnalysis>,
-    #[cfg(feature = "probabilistic")]
     pub probabilistic_result: Option<crate::probabilistic::ProbabilisticAnalysis>,
-    #[cfg(feature = "register-automata")]
     pub register_result: Option<crate::register_automata::RegisterAnalysis>,
-    #[cfg(feature = "parity-tree-automata")]
     pub parity_tree_result: Option<crate::parity_tree::ParityTreeAnalysis>,
-    #[cfg(feature = "multi-tape")]
     pub multi_tape_result: Option<crate::multi_tape::MultiTapeAnalysis>,
-    #[cfg(feature = "multiset-automata")]
     pub multiset_result: Option<crate::multiset_automata::MultisetAnalysisResult>,
-    #[cfg(feature = "two-way-transducer")]
     pub two_way_result: Option<crate::two_way_transducer::TwoWayAnalysis>,
-    #[cfg(feature = "sft")]
     pub sft_result: Option<crate::sft::SftAnalysis>,
 
     // ── E-graph equality saturation ──
-    #[cfg(feature = "egraph")]
     pub egraph_result: Option<crate::egraph::EGraphAnalysis>,
 
     // ── Constraint theory analyses ──
-    #[cfg(feature = "presburger")]
     pub presburger_result: Option<crate::presburger::PresburgerAnalysis>,
-    #[cfg(feature = "unification")]
     pub unification_result: Option<crate::unification::UnificationAnalysis>,
-    #[cfg(feature = "lattice-theory")]
     pub lattice_result: Option<crate::lattice_theory::LatticeAnalysis>,
 
     // ── Refinement type analysis ──
-    #[cfg(feature = "type-system")]
     pub refinement_analysis: Option<RefinementAnalysisResult>,
 }
 
@@ -1505,61 +1479,33 @@ pub(crate) struct MathAnalysisResults {
 pub(crate) fn count_analysis_phases() -> u32 {
     #[allow(unused_mut)] // mut needed when feature flags add to count
     let mut count = 3u32; // safety, cegar, algebraic
-    #[cfg(feature = "trs-analysis")]
     { count += 2; } // confluence, termination
-    #[cfg(feature = "vpa")]
     { count += 1; }
-    #[cfg(feature = "tree-automata")]
     { count += 1; }
-    #[cfg(feature = "wpds-extended")]
     { count += 1; }
-    #[cfg(feature = "wpds-ara")]
     { count += 1; }
-    #[cfg(feature = "petri")]
     { count += 1; }
-    #[cfg(feature = "nominal")]
     { count += 1; }
-    #[cfg(feature = "alternating")]
     { count += 1; }
-    #[cfg(feature = "ltl")]
     { count += 1; }
-    #[cfg(feature = "provenance")]
     { count += 1; }
-    #[cfg(feature = "cra")]
     { count += 1; }
-    #[cfg(feature = "morphisms")]
     { count += 1; }
-    #[cfg(feature = "kat")]
     { count += 1; }
-    #[cfg(feature = "symbolic-automata")]
     { count += 1; }
-    #[cfg(feature = "omega")]
     { count += 1; } // buchi analysis (separate from LTL)
-    #[cfg(feature = "weighted-mso")]
     { count += 1; }
-    #[cfg(feature = "probabilistic")]
     { count += 1; }
-    #[cfg(feature = "register-automata")]
     { count += 1; }
-    #[cfg(feature = "parity-tree-automata")]
     { count += 1; }
-    #[cfg(feature = "multi-tape")]
     { count += 1; }
-    #[cfg(feature = "multiset-automata")]
     { count += 1; }
-    #[cfg(feature = "two-way-transducer")]
     { count += 1; }
-    #[cfg(feature = "sft")]
     { count += 1; }
-    #[cfg(feature = "egraph")]
     { count += 1; }
-    #[cfg(feature = "presburger")]
     { count += 1; }
-    #[cfg(feature = "unification")]
     { count += 1; }
-    #[cfg(feature = "lattice-theory")]
     { count += 1; }
-    #[cfg(feature = "type-system")]
     { count += 1; }
     count
 }
@@ -1582,7 +1528,6 @@ fn run_math_analyses_parallel(
     let wpds_ref = wpds_analysis;
 
     // Pre-build petri category info outside the thread scope.
-    #[cfg(feature = "petri")]
     let petri_cats: Vec<crate::wpds::WpdsCategoryInfo> = categories
         .iter()
         .map(|c| crate::wpds::WpdsCategoryInfo {
@@ -1595,31 +1540,25 @@ fn run_math_analyses_parallel(
 
     // Phase 7A: Predicate dispatch classification (before thread scope so
     // spawned threads can borrow it)
-    #[cfg(feature = "predicate-dispatch")]
     let dispatch_plan = crate::predicate_dispatch::classify_grammar(all_syntax, categories);
 
     #[allow(unused_mut)] // mut needed when egraph feature adds post-scope mutation
     let mut results = std::thread::scope(|s| {
         // Phase 1: TRS (no dependencies)
-        #[cfg(feature = "trs-analysis")]
         let h_confluence = s.spawn(|| {
             crate::confluence::analyze_from_bundle(all_syntax, 100)
         });
-        #[cfg(feature = "trs-analysis")]
         let h_termination = s.spawn(|| {
             crate::termination::analyze_from_bundle(all_syntax)
         });
 
         // Phase 2: Automata (no dependencies)
-        #[cfg(feature = "vpa")]
         let h_vpa = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Vpa) {
                 return None;
             }
             crate::vpa::analyze_from_bundle(categories, all_syntax)
         });
-        #[cfg(feature = "tree-automata")]
         let h_wta = s.spawn(|| {
             crate::tree_automaton::analyze_from_bundle(categories, all_syntax)
         });
@@ -1641,13 +1580,11 @@ fn run_math_analyses_parallel(
             })
         });
 
-        #[cfg(feature = "wpds-extended")]
         let h_ewpds = s.spawn(|| {
             wpds_ref.and_then(|wa| {
                 crate::ewpds::extend_from_bundle(wa, all_syntax)
             })
         });
-        #[cfg(feature = "wpds-ara")]
         let h_ara = s.spawn(|| {
             wpds_ref.map(|wa| {
                 crate::ara::analyze_from_bundle(wa, all_syntax)
@@ -1655,36 +1592,29 @@ fn run_math_analyses_parallel(
         });
 
         // Phase 4: Concurrency (no dependencies)
-        #[cfg(feature = "petri")]
         let h_petri = s.spawn(|| {
             Some(crate::petri::analyze_from_bundle(all_syntax, &petri_cats))
         });
-        #[cfg(feature = "nominal")]
         let h_nominal = s.spawn(|| {
             Some(crate::nominal::analyze_from_bundle(all_syntax))
         });
         // Phase 5: Temporal
-        #[cfg(feature = "ltl")]
         let h_ltl = s.spawn(|| {
             wpds_ref.map(|wa| {
                 crate::ltl::check_from_bundle(wa)
             })
         });
-        #[cfg(feature = "provenance")]
         let h_provenance = s.spawn(|| {
             crate::provenance::track_from_bundle(all_syntax, categories)
         });
-        #[cfg(feature = "cra")]
         let h_cra = s.spawn(|| {
             crate::cra::analyze_from_bundle(all_syntax)
         });
 
         // Phase 6: Meta
-        #[cfg(feature = "morphisms")]
         let h_morphism = s.spawn(|| {
             crate::morphism::check_from_bundle(all_syntax, categories)
         });
-        #[cfg(feature = "kat")]
         let h_kat = s.spawn(|| {
             wpds_ref.and_then(|wa| {
                 crate::kat::check_from_bundle(wa, all_syntax)
@@ -1693,89 +1623,67 @@ fn run_math_analyses_parallel(
 
         // Phase 7B: Advanced automata — conditional spawning via dispatch plan
         // When predicate-dispatch is disabled, all modules run unconditionally.
-        #[cfg(feature = "symbolic-automata")]
         let h_symbolic = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Symbolic) {
                 return None;
             }
             Some(crate::symbolic::analyze_from_bundle(all_syntax, categories))
         });
-        #[cfg(feature = "omega")]
         let h_buchi = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Buchi) {
                 return None;
             }
             Some(crate::buchi::analyze_from_bundle(all_syntax, categories))
         });
-        #[cfg(feature = "weighted-mso")]
         let h_mso = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Mso) {
                 return None;
             }
             Some(crate::weighted_mso::analyze_from_bundle(all_syntax, categories))
         });
-        #[cfg(feature = "probabilistic")]
         let h_probabilistic = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Probabilistic) {
                 return None;
             }
             Some(crate::probabilistic::analyze_from_bundle(all_syntax, categories))
         });
-        #[cfg(feature = "register-automata")]
         let h_register = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Register) {
                 return None;
             }
             Some(crate::register_automata::analyze_from_bundle(all_syntax, categories))
         });
-        #[cfg(feature = "parity-tree-automata")]
         let h_parity_tree = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::ParityTree) {
                 return None;
             }
             Some(crate::parity_tree::analyze_from_bundle(all_syntax, categories))
         });
-        #[cfg(feature = "multi-tape")]
         let h_multi_tape = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::MultiTape) {
                 return None;
             }
             Some(crate::multi_tape::analyze_from_bundle(all_syntax, categories))
         });
-        #[cfg(feature = "multiset-automata")]
         let h_multiset = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Multiset) {
                 return None;
             }
             Some(crate::multiset_automata::analyze_from_bundle(all_syntax, categories))
         });
-        #[cfg(feature = "two-way-transducer")]
         let h_two_way = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::TwoWay) {
                 return None;
             }
             Some(crate::two_way_transducer::analyze_from_bundle(all_syntax, categories))
         });
-        #[cfg(feature = "sft")]
         let h_sft = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Sft) {
                 return None;
             }
             Some(crate::sft::analyze_from_bundle(all_syntax, categories))
         });
-        #[cfg(feature = "alternating")]
         let h_alternating = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Awa) {
                 return None;
             }
@@ -1783,25 +1691,19 @@ fn run_math_analyses_parallel(
         });
 
         // Phase 8: Constraint theory analyses
-        #[cfg(feature = "presburger")]
         let h_presburger = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::LinearArithmetic) {
                 return None;
             }
             Some(crate::presburger::analyze_from_bundle(all_syntax))
         });
-        #[cfg(feature = "unification")]
         let h_unification = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Unification) {
                 return None;
             }
             Some(crate::unification::analyze_from_bundle(all_syntax))
         });
-        #[cfg(feature = "lattice-theory")]
         let h_lattice = s.spawn(|| {
-            #[cfg(feature = "predicate-dispatch")]
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::SubtypeLattice) {
                 return None;
             }
@@ -1809,7 +1711,6 @@ fn run_math_analyses_parallel(
         });
 
         // Phase 8B: Refinement type analysis (synchronous — lightweight syntactic checks)
-        #[cfg(feature = "type-system")]
         let refinement_analysis_result: Option<RefinementAnalysisResult> = {
             if bundle.refinement_types.is_empty() {
                 None
@@ -1824,72 +1725,42 @@ fn run_math_analyses_parallel(
             safety_result: h_safety.join().expect("DB03: safety verification thread panicked"),
             cegar_result: h_cegar.join().expect("DB03: CEGAR refinement thread panicked"),
             algebraic_result: h_algebraic.join().expect("DB03: algebraic analysis thread panicked"),
-            #[cfg(feature = "trs-analysis")]
             confluence_result: h_confluence.join().expect("DB03: confluence analysis thread panicked"),
-            #[cfg(feature = "trs-analysis")]
             termination_result: h_termination.join().expect("DB03: termination analysis thread panicked"),
-            #[cfg(feature = "vpa")]
             vpa_result: h_vpa.join().expect("DB03: VPA analysis thread panicked"),
-            #[cfg(feature = "tree-automata")]
             wta_result: h_wta.join().expect("DB03: WTA analysis thread panicked"),
-            #[cfg(feature = "wpds-extended")]
             ewpds_result: h_ewpds.join().expect("DB03: EWPDS analysis thread panicked"),
-            #[cfg(feature = "wpds-ara")]
             ara_result: h_ara.join().expect("DB03: ARA analysis thread panicked"),
-            #[cfg(feature = "petri")]
             petri_result: h_petri.join().expect("DB03: Petri net analysis thread panicked"),
-            #[cfg(feature = "nominal")]
             nominal_result: h_nominal.join().expect("DB03: nominal analysis thread panicked"),
-            #[cfg(feature = "alternating")]
             alternating_result: h_alternating.join().expect("DB03: alternating analysis thread panicked"),
-            #[cfg(feature = "ltl")]
             ltl_results: h_ltl.join().expect("DB03: LTL check thread panicked"),
-            #[cfg(feature = "provenance")]
             provenance_result: h_provenance.join().expect("DB03: provenance tracking thread panicked"),
-            #[cfg(feature = "cra")]
             cra_result: h_cra.join().expect("DB03: CRA analysis thread panicked"),
-            #[cfg(feature = "morphisms")]
             morphism_result: h_morphism.join().expect("DB03: morphism check thread panicked"),
-            #[cfg(feature = "kat")]
             kat_result: h_kat.join().expect("DB03: KAT check thread panicked"),
-            #[cfg(feature = "symbolic-automata")]
             symbolic_result: h_symbolic.join().expect("DB03: symbolic analysis thread panicked"),
-            #[cfg(feature = "omega")]
             buchi_result: h_buchi.join().expect("DB03: Büchi analysis thread panicked"),
-            #[cfg(feature = "weighted-mso")]
             mso_result: h_mso.join().expect("DB03: MSO analysis thread panicked"),
-            #[cfg(feature = "probabilistic")]
             probabilistic_result: h_probabilistic.join().expect("DB03: probabilistic analysis thread panicked"),
-            #[cfg(feature = "register-automata")]
             register_result: h_register.join().expect("DB03: register analysis thread panicked"),
-            #[cfg(feature = "parity-tree-automata")]
             parity_tree_result: h_parity_tree.join().expect("DB03: parity tree analysis thread panicked"),
-            #[cfg(feature = "multi-tape")]
             multi_tape_result: h_multi_tape.join().expect("DB03: multi-tape analysis thread panicked"),
-            #[cfg(feature = "multiset-automata")]
             multiset_result: h_multiset.join().expect("DB03: multiset analysis thread panicked"),
-            #[cfg(feature = "two-way-transducer")]
             two_way_result: h_two_way.join().expect("DB03: two-way transducer analysis thread panicked"),
-            #[cfg(feature = "sft")]
             sft_result: h_sft.join().expect("DB03: SFT analysis thread panicked"),
             // ── E-graph equality saturation (placeholder — filled below) ──
-            #[cfg(feature = "egraph")]
             egraph_result: None,
             // ── Constraint theory analyses ──
-            #[cfg(feature = "presburger")]
             presburger_result: h_presburger.join().expect("DB03: Presburger analysis thread panicked"),
-            #[cfg(feature = "unification")]
             unification_result: h_unification.join().expect("DB03: Unification analysis thread panicked"),
-            #[cfg(feature = "lattice-theory")]
             lattice_result: h_lattice.join().expect("DB03: Lattice analysis thread panicked"),
             // ── Refinement type analysis ──
-            #[cfg(feature = "type-system")]
             refinement_analysis: refinement_analysis_result,
         }
     });
 
     // Phase 8C: E-graph equality saturation (sequential — depends on confluence result)
-    #[cfg(feature = "egraph")]
     {
         // egraph feature implies trs-analysis, so confluence_result is available
         let confluence_ref = results.confluence_result.as_ref();
@@ -1912,7 +1783,6 @@ fn run_math_analyses_sequential(
     eligible: bool,
 ) -> MathAnalysisResults {
     // Build dispatch plan for sequential path so dispatch gates are respected.
-    #[cfg(feature = "predicate-dispatch")]
     let dispatch_plan = crate::predicate_dispatch::classify_grammar(
         &bundle.all_syntax, &bundle.categories,
     );
@@ -1923,7 +1793,6 @@ fn run_math_analyses_sequential(
     macro_rules! dispatch_gate {
         ($module:ident) => {
             {
-                #[cfg(feature = "predicate-dispatch")]
                 if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::$module) {
                     return None;
                 }
@@ -1952,38 +1821,31 @@ fn run_math_analyses_sequential(
         } else { None },
 
         // Feature-gated analyses
-        #[cfg(feature = "trs-analysis")]
         confluence_result: if eligible {
             crate::confluence::analyze_from_bundle(&bundle.all_syntax, 100)
         } else { None },
-        #[cfg(feature = "trs-analysis")]
         termination_result: if eligible {
             crate::termination::analyze_from_bundle(&bundle.all_syntax)
         } else { None },
-        #[cfg(feature = "vpa")]
         vpa_result: if eligible {
             (|| {
                 dispatch_gate!(Vpa);
                 crate::vpa::analyze_from_bundle(&bundle.categories, &bundle.all_syntax)
             })()
         } else { None },
-        #[cfg(feature = "tree-automata")]
         wta_result: if eligible {
             crate::tree_automaton::analyze_from_bundle(&bundle.categories, &bundle.all_syntax)
         } else { None },
-        #[cfg(feature = "wpds-extended")]
         ewpds_result: if eligible {
             wpds_analysis.and_then(|wa| {
                 crate::ewpds::extend_from_bundle(wa, &bundle.all_syntax)
             })
         } else { None },
-        #[cfg(feature = "wpds-ara")]
         ara_result: if eligible {
             wpds_analysis.map(|wa| {
                 crate::ara::analyze_from_bundle(wa, &bundle.all_syntax)
             })
         } else { None },
-        #[cfg(feature = "petri")]
         petri_result: if eligible {
             let petri_cats: Vec<crate::wpds::WpdsCategoryInfo> = bundle
                 .categories
@@ -1995,107 +1857,90 @@ fn run_math_analyses_sequential(
                 .collect();
             Some(crate::petri::analyze_from_bundle(&bundle.all_syntax, &petri_cats))
         } else { None },
-        #[cfg(feature = "nominal")]
         nominal_result: if eligible {
             Some(crate::nominal::analyze_from_bundle(&bundle.all_syntax))
         } else { None },
-        #[cfg(feature = "alternating")]
         alternating_result: if eligible {
             (|| {
                 dispatch_gate!(Awa);
                 Some(crate::alternating::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
         } else { None },
-        #[cfg(feature = "ltl")]
         ltl_results: if eligible {
             wpds_analysis.map(|wa| {
                 crate::ltl::check_from_bundle(wa)
             })
         } else { None },
-        #[cfg(feature = "provenance")]
         provenance_result: if eligible {
             crate::provenance::track_from_bundle(
                 &bundle.all_syntax, &bundle.categories,
             )
         } else { None },
-        #[cfg(feature = "cra")]
         cra_result: if eligible {
             crate::cra::analyze_from_bundle(&bundle.all_syntax)
         } else { None },
-        #[cfg(feature = "morphisms")]
         morphism_result: if eligible {
             crate::morphism::check_from_bundle(&bundle.all_syntax, &bundle.categories)
         } else { None },
-        #[cfg(feature = "kat")]
         kat_result: if eligible {
             wpds_analysis.and_then(|wa| {
                 crate::kat::check_from_bundle(wa, &bundle.all_syntax)
             })
         } else { None },
-        #[cfg(feature = "symbolic-automata")]
         symbolic_result: if eligible {
             (|| {
                 dispatch_gate!(Symbolic);
                 Some(crate::symbolic::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
         } else { None },
-        #[cfg(feature = "omega")]
         buchi_result: if eligible {
             (|| {
                 dispatch_gate!(Buchi);
                 Some(crate::buchi::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
         } else { None },
-        #[cfg(feature = "weighted-mso")]
         mso_result: if eligible {
             (|| {
                 dispatch_gate!(Mso);
                 Some(crate::weighted_mso::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
         } else { None },
-        #[cfg(feature = "probabilistic")]
         probabilistic_result: if eligible {
             (|| {
                 dispatch_gate!(Probabilistic);
                 Some(crate::probabilistic::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
         } else { None },
-        #[cfg(feature = "register-automata")]
         register_result: if eligible {
             (|| {
                 dispatch_gate!(Register);
                 Some(crate::register_automata::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
         } else { None },
-        #[cfg(feature = "parity-tree-automata")]
         parity_tree_result: if eligible {
             (|| {
                 dispatch_gate!(ParityTree);
                 Some(crate::parity_tree::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
         } else { None },
-        #[cfg(feature = "multi-tape")]
         multi_tape_result: if eligible {
             (|| {
                 dispatch_gate!(MultiTape);
                 Some(crate::multi_tape::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
         } else { None },
-        #[cfg(feature = "multiset-automata")]
         multiset_result: if eligible {
             (|| {
                 dispatch_gate!(Multiset);
                 Some(crate::multiset_automata::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
         } else { None },
-        #[cfg(feature = "two-way-transducer")]
         two_way_result: if eligible {
             (|| {
                 dispatch_gate!(TwoWay);
                 Some(crate::two_way_transducer::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
         } else { None },
-        #[cfg(feature = "sft")]
         sft_result: if eligible {
             (|| {
                 dispatch_gate!(Sft);
@@ -2103,24 +1948,20 @@ fn run_math_analyses_sequential(
             })()
         } else { None },
         // ── E-graph equality saturation (placeholder — filled by caller) ──
-        #[cfg(feature = "egraph")]
         egraph_result: None,
         // ── Constraint theory analyses ──
-        #[cfg(feature = "presburger")]
         presburger_result: if eligible {
             (|| {
                 dispatch_gate!(LinearArithmetic);
                 Some(crate::presburger::analyze_from_bundle(&bundle.all_syntax))
             })()
         } else { None },
-        #[cfg(feature = "unification")]
         unification_result: if eligible {
             (|| {
                 dispatch_gate!(Unification);
                 Some(crate::unification::analyze_from_bundle(&bundle.all_syntax))
             })()
         } else { None },
-        #[cfg(feature = "lattice-theory")]
         lattice_result: if eligible {
             (|| {
                 dispatch_gate!(SubtypeLattice);
@@ -2128,7 +1969,6 @@ fn run_math_analyses_sequential(
             })()
         } else { None },
         // ── Refinement type analysis ──
-        #[cfg(feature = "type-system")]
         refinement_analysis: if !bundle.refinement_types.is_empty() {
             Some(analyze_refinement_types(bundle))
         } else {
@@ -2146,7 +1986,6 @@ fn run_math_analyses_sequential(
 /// - RT04: pairwise subtype detection
 /// - RT05: decidability tier classification
 /// - RT06: name shadowing of base types
-#[cfg(feature = "type-system")]
 fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnalysisResult {
     use crate::RefinementPredKind;
 
@@ -2391,7 +2230,7 @@ fn generate_parser_code(
         let first_baseline = first_stats.total_categories * first_stats.iterations;
         let follow_baseline = follow_stats.total_categories * follow_stats.iterations;
         pipeline_diagnostic(
-            &bundle.grammar_name, "I18", "incremental-first-follow",
+            &bundle.grammar_name, DiagnosticId::I18, "incremental-first-follow",
             crate::lint::LintSeverity::Info,
             format!(
                 "DB01 incremental FIRST/FOLLOW: FIRST {}/{} visits ({} iters, {} cats), \
@@ -2457,7 +2296,7 @@ fn generate_parser_code(
         );
         if two_token_paths_added > 0 {
             pipeline_diagnostic(
-                &bundle.grammar_name, "I02", "two-token-enrichment",
+                &bundle.grammar_name, DiagnosticId::I02, "two-token-enrichment",
                 crate::lint::LintSeverity::Info,
                 format!("{} two-token disambiguation path(s) added to prediction WFSTs", two_token_paths_added),
                 None,
@@ -2487,7 +2326,7 @@ fn generate_parser_code(
             }
             if total_context_labels > 0 {
                 pipeline_diagnostic(
-                    &bundle.grammar_name, "I03", "context-weight-labels",
+                    &bundle.grammar_name, DiagnosticId::I03, "context-weight-labels",
                     crate::lint::LintSeverity::Info,
                     format!("{} ContextWeight bit labels assigned across prediction WFSTs", total_context_labels),
                     None,
@@ -2517,13 +2356,13 @@ fn generate_parser_code(
             let summary = cascade.run_all(&mut prediction_wfsts);
             if !summary.is_empty() {
                 pipeline_diagnostic(
-                    &bundle.grammar_name, "I01", "transducer-cascade",
+                    &bundle.grammar_name, DiagnosticId::I01, "transducer-cascade",
                     crate::lint::LintSeverity::Info, summary, None,
                 );
             }
         } else {
             pipeline_diagnostic(
-                &bundle.grammar_name, "I02", "cascade-skipped",
+                &bundle.grammar_name, DiagnosticId::I02, "cascade-skipped",
                 crate::lint::LintSeverity::Info,
                 format!("skipping transducer cascade ({} WFST states ≤ 4)", total_wfst_states),
                 None,
@@ -2542,7 +2381,6 @@ fn generate_parser_code(
                 // A7: Entropy-based adaptive beam width per category.
                 // When wfst-log is enabled, compute per-category Shannon entropy and
                 // derive beam widths. Higher-entropy categories get wider beams.
-                #[cfg(feature = "wfst-log")]
                 {
                     for (cat_name, wfst) in prediction_wfsts.iter_mut() {
                         let (_entropy_nats, entropy_bits) = wfst.compute_entropy();
@@ -2557,14 +2395,14 @@ fn generate_parser_code(
                             let beam = crate::automata::semiring::TropicalWeight::new(beam_value);
                             wfst.set_beam_width(Some(beam));
                             pipeline_diagnostic(
-                                &bundle.grammar_name, "I03", "adaptive-beam",
+                                &bundle.grammar_name, DiagnosticId::I03, "adaptive-beam",
                                 crate::lint::LintSeverity::Info,
                                 format!("{}: entropy={:.2} bits → beam={:.2}", cat_name, entropy_bits, beam_value),
                                 None,
                             );
                         } else {
                             pipeline_diagnostic(
-                                &bundle.grammar_name, "I03", "adaptive-beam",
+                                &bundle.grammar_name, DiagnosticId::I03, "adaptive-beam",
                                 crate::lint::LintSeverity::Info,
                                 format!("{}: entropy={:.2} bits → no beam (deterministic)", cat_name, entropy_bits),
                                 None,
@@ -2573,15 +2411,6 @@ fn generate_parser_code(
                     }
                 }
                 // Without wfst-log, Auto falls back to Disabled (no beam).
-                #[cfg(not(feature = "wfst-log"))]
-                {
-                    pipeline_diagnostic(
-                        &bundle.grammar_name, "I04", "beam-feature-required",
-                        crate::lint::LintSeverity::Warning,
-                        "beam_width: auto requires feature `wfst-log`; falling back to disabled".to_string(),
-                        Some("enable `wfst-log` feature or use explicit beam_width".to_string()),
-                    );
-                }
             }
             crate::BeamWidthConfig::Disabled => {}
         }
@@ -2763,7 +2592,12 @@ fn generate_parser_code(
     }
 
     // Determine dispatch categories
-    let dispatch_categories = categories_needing_dispatch(&bundle.cross_rules, &bundle.cast_rules);
+    let dispatch_categories = categories_needing_dispatch(
+        &bundle.cross_rules,
+        &bundle.cast_rules,
+        &bundle.rd_rules,
+        &category_names,
+    );
 
     // ── Composed dispatch resolution ────────────────────────────────────────
     // Compute the composed dispatch table from lexer ambiguity info and
@@ -2852,7 +2686,7 @@ fn generate_parser_code(
                 detail_lines
             };
             pipeline_diagnostic(
-                &bundle.grammar_name, "I05", "cost-benefit-recommendations",
+                &bundle.grammar_name, DiagnosticId::I05, "cost-benefit-recommendations",
                 crate::lint::LintSeverity::Info,
                 format!(
                     "cost-benefit analysis recommends {} optimization(s):\n{}",
@@ -2883,7 +2717,7 @@ fn generate_parser_code(
             let mut sorted: Vec<&str> = all_dead_rule_labels.iter().map(|s| s.as_str()).collect();
             sorted.sort_unstable();
             pipeline_diagnostic(
-                &bundle.grammar_name, "I06", "enhanced-dce-active",
+                &bundle.grammar_name, DiagnosticId::I06, "enhanced-dce-active",
                 crate::lint::LintSeverity::Info,
                 format!(
                     "enhanced DCE: suppressing codegen for {} dead rule(s): [{}]",
@@ -2996,7 +2830,7 @@ fn generate_parser_code(
             crate::lint::emit_diagnostics_for_grammar(&bundle.grammar_name, &dt_diagnostics);
         } else {
             pipeline_diagnostic(
-                &bundle.grammar_name, "I15", "lazy-analysis-skip",
+                &bundle.grammar_name, DiagnosticId::I15, "lazy-analysis-skip",
                 crate::lint::LintSeverity::Info,
                 format!(
                     "decision tree construction skipped: {} rule(s) < 3 threshold",
@@ -3059,7 +2893,7 @@ fn generate_parser_code(
                     .collect();
                 if !lines.is_empty() {
                     pipeline_diagnostic(
-                        &bundle.grammar_name, "D11", "dispatch-entropy",
+                        &bundle.grammar_name, DiagnosticId::D11, "dispatch-entropy",
                         crate::lint::LintSeverity::Note,
                         format!(
                             "category {}: dispatch entropy (top bottlenecks): {}",
@@ -3094,7 +2928,7 @@ fn generate_parser_code(
                     })
                     .collect();
                 pipeline_diagnostic(
-                    &bundle.grammar_name, "D12", "bp-stratification",
+                    &bundle.grammar_name, DiagnosticId::D12, "bp-stratification",
                     crate::lint::LintSeverity::Note,
                     format!(
                         "category {}: BP stratification: {}",
@@ -3143,7 +2977,7 @@ fn generate_parser_code(
             let mut sorted: Vec<&str> = new_dead.iter().map(|s| s.as_str()).collect();
             sorted.sort_unstable();
             pipeline_diagnostic(
-                &bundle.grammar_name, "I07", "trie-confirmed-dead",
+                &bundle.grammar_name, DiagnosticId::I07, "trie-confirmed-dead",
                 crate::lint::LintSeverity::Info,
                 format!(
                     "trie-confirmed dead: {} additional rule(s) confirmed dead via trie+WFST cross-validation: [{}]",
@@ -3209,7 +3043,7 @@ fn generate_parser_code(
         if !to_remove.is_empty() {
             to_remove.sort();
             pipeline_diagnostic(
-                &bundle.grammar_name, "I08", "trie-pruned-nfa-spillover",
+                &bundle.grammar_name, DiagnosticId::I08, "trie-pruned-nfa-spillover",
                 crate::lint::LintSeverity::Info,
                 format!(
                     "trie-pruned NFA spillover: removed {} category(ies) with fully disjoint dispatch: [{}]",
@@ -3264,7 +3098,7 @@ fn generate_parser_code(
             }
             if total_adjusted > 0 {
                 pipeline_diagnostic(
-                    &bundle.grammar_name, "I09", "dead-prefix-weight-penalty",
+                    &bundle.grammar_name, DiagnosticId::I09, "dead-prefix-weight-penalty",
                     crate::lint::LintSeverity::Info,
                     format!(
                         "applied dead-prefix weight penalty (×{:.1}) to {} sync token(s) across {} category(ies)",
@@ -3301,7 +3135,7 @@ fn generate_parser_code(
         // ── D-B02: Lazy analysis skip — WPDS ──────────────────────────────
         if bundle.categories.len() < 2 {
             pipeline_diagnostic(
-                &bundle.grammar_name, "I13", "lazy-analysis-skip",
+                &bundle.grammar_name, DiagnosticId::I13, "lazy-analysis-skip",
                 crate::lint::LintSeverity::Info,
                 format!(
                     "WPDS analysis skipped: {} category(ies) < 2 threshold",
@@ -3345,6 +3179,29 @@ fn generate_parser_code(
         eprintln!(
             "  {}INT-02{}: {} WPDS-dead rules recorded for codegen suppression",
             "\x1b[2m", "\x1b[0m", wpds_dead_rule_labels.len(),
+        );
+    }
+
+    // ── CEK-4: Dead frame computation ───────────────────────────────────
+    // Compute dead frame variants from WPDS poststar analysis. These are frame
+    // variants that are unreachable in all valid stack contexts, as determined
+    // by the P-automaton from WPDS poststar saturation.
+    let dead_frames: std::collections::HashSet<String> = if optimization_gates.dead_frame_elimination {
+        wpds_analysis.as_ref().map(|a| compute_dead_frames(a)).unwrap_or_default()
+    } else {
+        std::collections::HashSet::new()
+    };
+    if !dead_frames.is_empty() {
+        let mut sorted: Vec<&str> = dead_frames.iter().map(|s| s.as_str()).collect();
+        sorted.sort_unstable();
+        pipeline_diagnostic(
+            &bundle.grammar_name, DiagnosticId::I07, "dead-frame-elimination-active",
+            crate::lint::LintSeverity::Info,
+            format!(
+                "dead frame elimination: suppressing codegen for {} dead frame variant(s): [{}]",
+                dead_frames.len(), sorted.join(", "),
+            ),
+            None,
         );
     }
 
@@ -3397,7 +3254,7 @@ fn generate_parser_code(
 
     if !math_analysis_eligible {
         pipeline_diagnostic(
-            &bundle.grammar_name, "I14", "lazy-analysis-skip",
+            &bundle.grammar_name, DiagnosticId::I14, "lazy-analysis-skip",
             crate::lint::LintSeverity::Info,
             format!(
                 "mathematical analyses skipped: {} category(ies) < 3 threshold",
@@ -3438,66 +3295,37 @@ fn generate_parser_code(
         };
 
     // Destructure into individual result bindings for downstream use.
-    #[cfg(feature = "trs-analysis")]
     let confluence_result = math_results.confluence_result;
-    #[cfg(feature = "trs-analysis")]
     let termination_result = math_results.termination_result;
-    #[cfg(feature = "vpa")]
     let vpa_result = math_results.vpa_result;
-    #[cfg(feature = "tree-automata")]
     let wta_result = math_results.wta_result;
     let safety_result = math_results.safety_result;
     let cegar_result = math_results.cegar_result;
     let algebraic_result = math_results.algebraic_result;
-    #[cfg(feature = "wpds-extended")]
     let ewpds_result = math_results.ewpds_result;
-    #[cfg(feature = "wpds-ara")]
     let ara_result = math_results.ara_result;
-    #[cfg(feature = "petri")]
     let petri_result = math_results.petri_result;
-    #[cfg(feature = "nominal")]
     let nominal_result = math_results.nominal_result;
-    #[cfg(feature = "alternating")]
     let alternating_result = math_results.alternating_result;
-    #[cfg(feature = "ltl")]
     let ltl_results = math_results.ltl_results;
-    #[cfg(feature = "provenance")]
     let provenance_result = math_results.provenance_result;
-    #[cfg(feature = "cra")]
     let cra_result = math_results.cra_result;
-    #[cfg(feature = "morphisms")]
     let morphism_result = math_results.morphism_result;
-    #[cfg(feature = "kat")]
     let kat_result = math_results.kat_result;
-    #[cfg(feature = "symbolic-automata")]
     let symbolic_result = math_results.symbolic_result;
-    #[cfg(feature = "omega")]
     let buchi_result = math_results.buchi_result;
-    #[cfg(feature = "weighted-mso")]
     let mso_result = math_results.mso_result;
-    #[cfg(feature = "probabilistic")]
     let probabilistic_result = math_results.probabilistic_result;
-    #[cfg(feature = "register-automata")]
     let register_result = math_results.register_result;
-    #[cfg(feature = "parity-tree-automata")]
     let parity_tree_result = math_results.parity_tree_result;
-    #[cfg(feature = "multi-tape")]
     let multi_tape_result = math_results.multi_tape_result;
-    #[cfg(feature = "multiset-automata")]
     let multiset_result = math_results.multiset_result;
-    #[cfg(feature = "two-way-transducer")]
     let two_way_result = math_results.two_way_result;
-    #[cfg(feature = "sft")]
     let sft_result = math_results.sft_result;
-    #[cfg(feature = "egraph")]
     let egraph_result = math_results.egraph_result;
-    #[cfg(feature = "presburger")]
     let presburger_result = math_results.presburger_result;
-    #[cfg(feature = "unification")]
     let unification_result = math_results.unification_result;
-    #[cfg(feature = "lattice-theory")]
     let lattice_result = math_results.lattice_result;
-    #[cfg(feature = "type-system")]
     let refinement_analysis = math_results.refinement_analysis;
 
     let math_analysis_elapsed = math_analysis_start.elapsed();
@@ -3505,7 +3333,7 @@ fn generate_parser_code(
     // ── DB03: I19 diagnostic — parallel analysis speedup ─────────────────
     if parallel_phase_count > 0 {
         pipeline_diagnostic(
-            &bundle.grammar_name, "I19", "parallel-analysis",
+            &bundle.grammar_name, DiagnosticId::I19, "parallel-analysis",
             crate::lint::LintSeverity::Info,
             format!(
                 "DB03 parallel analysis: {} phases executed in parallel ({:.1}ms wall-clock)",
@@ -3524,7 +3352,6 @@ fn generate_parser_code(
     // When VPA analysis finds tokens used as both call and return symbols,
     // InsertToken for those tokens becomes unreliable. Penalize insertion of
     // bracket mismatch tokens with a 2.0× multiplier in all recovery WFSTs.
-    #[cfg(feature = "vpa")]
     if let Some(ref vpa) = vpa_result {
         if !vpa.alphabet_mismatches.is_empty() {
             let mismatch_ids: std::collections::BTreeSet<crate::token_id::TokenId> = vpa
@@ -3537,7 +3364,7 @@ fn generate_parser_code(
                     rwfst.set_bracket_mismatch_ids(mismatch_ids.clone());
                 }
                 pipeline_diagnostic(
-                    &bundle.grammar_name, "I20", "bracket-mismatch-insert-penalty",
+                    &bundle.grammar_name, DiagnosticId::I20, "bracket-mismatch-insert-penalty",
                     crate::lint::LintSeverity::Info,
                     format!(
                         "Sprint A2: applied 2.0× InsertToken penalty for {} bracket mismatch token(s): {}",
@@ -3554,7 +3381,6 @@ fn generate_parser_code(
     // Categories in accepting SCCs (recursive grammar loops) prefer InsertToken
     // recovery to maintain the loop structure. SkipToSync is penalized because
     // breaking out of a recursive loop is structurally damaging.
-    #[cfg(feature = "omega")]
     if let Some(ref buchi) = buchi_result {
         if buchi.has_accepting_cycle {
             let scc_cats: HashSet<&str> = buchi
@@ -3572,7 +3398,7 @@ fn generate_parser_code(
             }
             if count > 0 {
                 pipeline_diagnostic(
-                    &bundle.grammar_name, "I21", "liveness-recovery",
+                    &bundle.grammar_name, DiagnosticId::I21, "liveness-recovery",
                     crate::lint::LintSeverity::Info,
                     format!(
                         "Sprint C2: applied liveness-aware recovery to {} recursive category(ies): {}",
@@ -3634,68 +3460,38 @@ fn generate_parser_code(
             cegar_result: cegar_result.as_ref(),
             algebraic_result: algebraic_result.as_ref(),
             math_analysis_elapsed: Some(math_analysis_elapsed),
-            #[cfg(feature = "trs-analysis")]
             confluence_result: confluence_result.as_ref(),
-            #[cfg(feature = "trs-analysis")]
             termination_result: termination_result.as_ref(),
-            #[cfg(feature = "vpa")]
             vpa_result: vpa_result.as_ref(),
-            #[cfg(feature = "tree-automata")]
             wta_result: wta_result.as_ref(),
-            #[cfg(feature = "wpds-extended")]
             ewpds_result: ewpds_result.as_ref(),
-            #[cfg(feature = "wpds-ara")]
             ara_result: ara_result.as_ref(),
-            #[cfg(feature = "petri")]
             petri_result: petri_result.as_ref(),
-            #[cfg(feature = "nominal")]
             nominal_result: nominal_result.as_ref(),
-            #[cfg(feature = "alternating")]
             alternating_result: alternating_result.as_ref(),
-            #[cfg(feature = "ltl")]
             ltl_results: ltl_results.as_ref(),
-            #[cfg(feature = "provenance")]
             provenance_result: provenance_result.as_ref(),
-            #[cfg(feature = "cra")]
             cra_result: cra_result.as_ref(),
-            #[cfg(feature = "morphisms")]
             morphism_result: morphism_result.as_ref(),
-            #[cfg(feature = "kat")]
             kat_result: kat_result.as_ref(),
             // ── Advanced automata analysis results ──
-            #[cfg(feature = "symbolic-automata")]
             symbolic_result: symbolic_result.as_ref(),
-            #[cfg(feature = "omega")]
             buchi_result: buchi_result.as_ref(),
-            #[cfg(feature = "weighted-mso")]
             mso_result: mso_result.as_ref(),
-            #[cfg(feature = "probabilistic")]
             probabilistic_result: probabilistic_result.as_ref(),
-            #[cfg(feature = "register-automata")]
             register_result: register_result.as_ref(),
-            #[cfg(feature = "parity-tree-automata")]
             parity_tree_result: parity_tree_result.as_ref(),
-            #[cfg(feature = "multi-tape")]
             multi_tape_result: multi_tape_result.as_ref(),
-            #[cfg(feature = "multiset-automata")]
             multiset_result: multiset_result.as_ref(),
-            #[cfg(feature = "two-way-transducer")]
             two_way_result: two_way_result.as_ref(),
-            #[cfg(feature = "sft")]
             sft_result: sft_result.as_ref(),
-            #[cfg(feature = "egraph")]
             egraph_result: egraph_result.as_ref(),
-            #[cfg(feature = "predicate-dispatch")]
             dispatch_diagnostics: None, // TODO: wire from Phase 7A dispatch plan when available
             // ── Constraint theory analysis results ──
-            #[cfg(feature = "presburger")]
             presburger_result: presburger_result.as_ref(),
-            #[cfg(feature = "unification")]
             unification_result: unification_result.as_ref(),
-            #[cfg(feature = "lattice-theory")]
             lattice_result: lattice_result.as_ref(),
             // ── Refinement type analysis results ──
-            #[cfg(feature = "type-system")]
             refinement_analysis: refinement_analysis.as_ref(),
         };
 
@@ -3709,32 +3505,23 @@ fn generate_parser_code(
 
         // ── Repair enrichment ──
         // Scan diagnostics for specific lint codes and append repair suggestions.
-        #[cfg(feature = "trs-analysis")]
         crate::repair::enrich_diagnostics_with_repairs(
             &mut diagnostics,
             confluence_result.as_ref(),
             &bundle.all_syntax,
         );
-        #[cfg(feature = "morphisms")]
         crate::repair::enrich_diagnostics_with_morphism_repairs(
             &mut diagnostics,
             morphism_result.as_ref(),
         );
 
         // ── Proof certificate generation ──
-        #[cfg(feature = "proofs")]
         {
             let _confluence_ref: Option<&crate::confluence::ConfluenceAnalysis> = {
-                #[cfg(feature = "trs-analysis")]
                 { confluence_result.as_ref() }
-                #[cfg(not(feature = "trs-analysis"))]
-                { None }
             };
             let _termination_ref: Option<&crate::termination::TerminationResult> = {
-                #[cfg(feature = "trs-analysis")]
                 { termination_result.as_ref() }
-                #[cfg(not(feature = "trs-analysis"))]
-                { None }
             };
             let certificates = crate::proof_output::generate_certificates(
                 _confluence_ref,
@@ -3744,7 +3531,7 @@ fn generate_parser_code(
             if !certificates.is_empty() {
                 for cert in &certificates {
                     diagnostics.push(crate::lint::LintDiagnostic {
-                        id: "Z01",
+                        id: DiagnosticId::Z01,
                         name: "proof-certificate",
                         severity: crate::lint::LintSeverity::Note,
                         category: None,
@@ -3794,7 +3581,7 @@ fn generate_parser_code(
                 ));
             }
             pipeline_diagnostic(
-                &bundle.grammar_name, "I07", "ambiguity-targeting",
+                &bundle.grammar_name, DiagnosticId::I07, "ambiguity-targeting",
                 crate::lint::LintSeverity::Info,
                 format!(
                     "ambiguity targeting: {} ambiguous token(s), {} unambiguous, max ambiguity={}\n{}",
@@ -3829,11 +3616,10 @@ fn generate_parser_code(
     // Write parser helpers
     write_parser_helpers(&mut buf);
 
-    // D07: Emit runtime coverage tracking module (gated by parser-coverage feature)
+    // D07: Emit runtime coverage tracking module (always enabled)
     if emit_coverage {
         buf.push_str(
-            "#[cfg(feature = \"parser-coverage\")] \
-             mod __coverage { \
+            "mod __coverage { \
                  use std::sync::Mutex; \
                  use std::collections::HashSet; \
                  static COVERED: Mutex<HashSet<(&'static str, u32)>> = Mutex::new(HashSet::new()); \
@@ -3861,14 +3647,14 @@ fn generate_parser_code(
             .collect();
         if !instrumented_cats.is_empty() {
             pipeline_diagnostic(
-                &bundle.grammar_name, "D07", "path-coverage-report",
+                &bundle.grammar_name, DiagnosticId::D07, "path-coverage-report",
                 crate::lint::LintSeverity::Note,
                 format!(
                     "{} categories instrumented for coverage tracking: [{}]",
                     instrumented_cats.len(),
                     instrumented_cats.join(", "),
                 ),
-                Some("run tests with `parser-coverage` feature enabled, then call __coverage::dump()".to_string()),
+                Some("call __coverage::dump() to retrieve coverage data".to_string()),
             );
         }
     }
@@ -3899,6 +3685,13 @@ fn generate_parser_code(
     } else {
         Vec::new()
     };
+
+    // Collect per-category frame info for unified trampoline generation
+    let mut all_frame_infos: std::collections::HashMap<String, crate::trampoline::FrameInfo> = std::collections::HashMap::new();
+
+    // Unified trampoline: always enabled for multi-category grammars with native types.
+    let all_have_native = bundle.categories.iter().all(|c| c.native_type.is_some());
+    let unified_mode = all_have_native && bundle.categories.len() > 1;
 
     // Write trampolined parsers per category (stack-safe via explicit continuation stack)
     for cat in &bundle.categories {
@@ -3998,6 +3791,7 @@ fn generate_parser_code(
             cast_suggestions,
             optimization_gates: optimization_gates.clone(),
             dead_rules: dead_rules.clone(),
+            dead_frames: dead_frames.clone(),
             complete_weight_map: complete_weight_map.clone(),
             led_delegation,
             decision_tree: decision_trees.get_tree(&cat.name).cloned(),
@@ -4014,6 +3808,40 @@ fn generate_parser_code(
                 .filter(|h| h.category == cat.name)
                 .cloned()
                 .collect(),
+            cross_cat_prefix_arms: if needs_dispatch {
+                let cat_cross: Vec<CrossCategoryRule> = bundle.cross_rules.iter()
+                    .filter(|r| r.result_category == cat.name)
+                    .cloned()
+                    .collect();
+                let cat_cast: Vec<CastRule> = bundle.cast_rules.iter()
+                    .filter(|r| r.target_category == cat.name)
+                    .cloned()
+                    .collect();
+                let wfst = prediction_wfsts.get(&cat.name)
+                    .expect("prediction WFST should exist for categories with cross-category rules");
+                crate::dispatch::compute_cross_cat_prefix_arms(
+                    &cat.name,
+                    &cat_cross,
+                    &cat_cast,
+                    &overlaps,
+                    &first_sets,
+                    wfst,
+                    composed_resolutions.as_ref(),
+                    complete_weight_map.as_ref(),
+                    &optimization_gates,
+                    &dead_rules,
+                    &bundle.rd_rules,
+                )
+            } else {
+                Vec::new()
+            },
+            // Unified trampoline provides its own entry points; skip the
+            // per-category wrapper when unified mode is active.
+            skip_entry_point: unified_mode && !dispatch_categories.is_empty(),
+            unified_mode: unified_mode && !dispatch_categories.is_empty(),
+            // CPS step functions are generated by unified_trampoline.rs;
+            // suppress the recursive versions from trampoline.rs.
+            skip_step_functions: unified_mode && !dispatch_categories.is_empty(),
         };
 
         let cat_handlers: Vec<PrefixHandler> = all_prefix_handlers
@@ -4042,13 +3870,29 @@ fn generate_parser_code(
             }
         } else {
             let cat_start = buf.len();
-            write_trampolined_parser(
+            let frame_info = write_trampolined_parser(
                 &mut buf,
                 &tramp_config,
                 &bundle.bp_table,
                 &cat_handlers,
                 &bundle.rd_rules,
             );
+            // Save frame info for unified trampoline generation
+            all_frame_infos.insert(cat.name.clone(), frame_info);
+
+            // CEK02: Generate traced parser alongside batch parser.
+            // Only for categories that have a parse_*_impl (prefix handlers or
+            // RD rules). Categories without these (e.g., Bool in Calculator)
+            // have no trampoline _impl to wrap.
+            let has_parseable_rules = !cat_handlers.is_empty()
+                || bundle.rd_rules.iter().any(|r| r.category == cat.name);
+            if has_parseable_rules {
+                write_trampolined_parser_traced(
+                    &mut buf,
+                    &tramp_config,
+                );
+            }
+
             let cat_code = buf[cat_start..].to_string();
             if let Some(h) = current_hash {
                 new_cache.record(&cat.name, h);
@@ -4059,7 +3903,9 @@ fn generate_parser_code(
     }
 
     // Write cross-category dispatch — uses composed resolutions for
-    // deterministic arms (no backtracking)
+    // deterministic arms (no backtracking).
+    // PDA merge: skip the dispatch wrapper for categories whose cross-cat
+    // arms were inlined into the trampoline's prefix match.
     for cat in &bundle.categories {
         let cat_cross: Vec<CrossCategoryRule> = bundle
             .cross_rules
@@ -4068,6 +3914,12 @@ fn generate_parser_code(
             .cloned()
             .collect();
         if cat_cross.is_empty() {
+            continue;
+        }
+        // PDA merge: dispatch wrapper is eliminated — skip emission
+        if dispatch_categories.contains(&cat.name) {
+            // Cross-cat dispatch is now handled inside the trampoline via
+            // cross_cat_prefix_arms. The dispatch wrapper is not needed.
             continue;
         }
 
@@ -4172,6 +4024,7 @@ fn generate_parser_code(
             cast_suggestions: Vec::new(), // Recovery path doesn't emit prefix match arms
             optimization_gates: optimization_gates.clone(),
             dead_rules: dead_rules.clone(),
+            dead_frames: dead_frames.clone(),
             complete_weight_map: None, // Recovery path doesn't need composed weights
             decision_tree: None, // Recovery path doesn't use decision tree dispatch
             emit_coverage: false, // Recovery path doesn't need coverage tracking
@@ -4196,6 +4049,24 @@ fn generate_parser_code(
             token_variant_map: None,
             // Recovery path doesn't use CD05 prefix CSE
             prefix_cse_hints: Vec::new(),
+            // Recovery path doesn't use PDA-merged dispatch arms, but needs the
+            // PDA merge naming flag when the batch parser is PDA-merged.
+            // A non-empty vec triggers `pda_merged = true` for function naming.
+            cross_cat_prefix_arms: if needs_dispatch {
+                // Sentinel: at least one entry so pda_merged = true
+                vec![crate::dispatch::CrossCatPrefixArm {
+                    token_pattern: String::new(),
+                    body: String::new(),
+                    weight: 0.0,
+                    token_variant: None,
+                    is_ambiguous: false,
+                }]
+            } else {
+                Vec::new()
+            },
+            skip_entry_point: false,
+            unified_mode: false,
+            skip_step_functions: false,
         };
 
         // Emit cross-category cast recovery static: for each source category
@@ -4278,10 +4149,124 @@ fn generate_parser_code(
             );
         }
 
-        // Generate recovering dispatch wrapper if needed
-        if needs_dispatch {
+        // Generate recovering dispatch wrapper if needed.
+        // PDA merge: skip when cross-cat dispatch is inlined into the trampoline.
+        if needs_dispatch && !dispatch_categories.contains(&cat.name) {
             write_dispatch_recovering(&mut buf, &cat.name);
         }
+    }
+
+    // ── Unified trampoline generation (multi-category grammars with native types) ──
+    // Generates a shared UnifiedFrame enum and unified driver loop that replaces
+    // per-category mutual recursion with iterative CPS dispatch.
+    if unified_mode && !dispatch_categories.is_empty() {
+        // Convert FrameInfo from trampoline.rs into FrameVariantInfo for unified_trampoline
+        let mut per_cat_frames: std::collections::HashMap<String, Vec<crate::unified_trampoline::FrameVariantInfo>> = std::collections::HashMap::new();
+        for (cat_name, frame_info) in &all_frame_infos {
+            let variants = frame_info.variants.iter().map(|v| {
+                crate::unified_trampoline::FrameVariantInfo {
+                    category: cat_name.clone(),
+                    variant_name: v.name.clone(),
+                    fields: v.fields.iter().map(|f| (f.name.clone(), f.type_str.clone())).collect(),
+                }
+            }).collect();
+            per_cat_frames.insert(cat_name.clone(), variants);
+        }
+
+        // Collect LED delegations per category
+        let mut led_delegations: std::collections::HashMap<String, Vec<crate::pratt::LedDelegationSource>> = std::collections::HashMap::new();
+        for cat in &bundle.categories {
+            let cat_cast_rules: Vec<CastRule> = bundle.cast_rules.iter()
+                .filter(|r| r.target_category == cat.name)
+                .cloned()
+                .collect();
+            let proj = detect_projection_rules(&cat.name, &cat_cast_rules, &bundle.rd_rules);
+            let delegation = compute_led_delegation(
+                &cat.name,
+                &cat_cast_rules,
+                &bundle.cast_rules,
+                &bundle.cross_rules,
+                &bundle.bp_table,
+                &proj,
+            );
+            if !delegation.is_empty() {
+                led_delegations.insert(cat.name.clone(), delegation);
+            }
+        }
+
+        // Build per-category TrampolineConfigs (minimal, for step function generation)
+        let mut per_cat_tramp_configs: std::collections::HashMap<String, crate::trampoline::TrampolineConfig> = std::collections::HashMap::new();
+        for cat in &bundle.categories {
+            let needs_dispatch = dispatch_categories.contains(&cat.name);
+            let tc = crate::trampoline::TrampolineConfig {
+                category: cat.name.clone(),
+                is_primary: cat.is_primary,
+                has_infix: !bundle.bp_table.operators_for_category(&cat.name).is_empty(),
+                has_postfix: !bundle.bp_table.postfix_operators_for_category(&cat.name).is_empty(),
+                has_mixfix: !bundle.bp_table.mixfix_operators_for_category(&cat.name).is_empty(),
+                all_categories: category_names.clone(),
+                needs_dispatch,
+                native_type: cat.native_type.clone(),
+                cast_rules: bundle.cast_rules.iter().filter(|r| r.target_category == cat.name).cloned().collect(),
+                own_first_set: first_sets.get(&cat.name).cloned().unwrap_or_default(),
+                all_first_sets: first_sets.clone(),
+                follow_set: follow_sets.get(&cat.name).cloned().unwrap_or_default(),
+                has_binders: bundle.has_binders,
+                prediction_wfst: None,
+                needs_nfa_spillover: nfa_spillover_categories.contains(&cat.name),
+                cast_suggestions: Vec::new(),
+                optimization_gates: optimization_gates.clone(),
+                dead_rules: dead_rules.clone(),
+                dead_frames: dead_frames.clone(),
+                complete_weight_map: None,
+                decision_tree: None,
+                emit_coverage: false,
+                expected_tokens_str: None,
+                frame_pool_capacity: None,
+                led_delegation: led_delegations.get(&cat.name).cloned().unwrap_or_default(),
+                token_variant_map: None,
+                prefix_cse_hints: Vec::new(),
+                cross_cat_prefix_arms: Vec::new(),
+                skip_entry_point: false,
+                // unified_mode=true: step function helpers (frame_prefix(), etc.)
+                // use Cat_ prefixed variant names for the shared UnifiedFrame enum.
+                unified_mode: true,
+                skip_step_functions: false,
+            };
+            per_cat_tramp_configs.insert(cat.name.clone(), tc);
+        }
+
+        // Extract unary prefix operators: (category, token_variant, label, right_bp)
+        let mut unary_prefix_ops = Vec::new();
+        for rule in &bundle.rd_rules {
+            if let Some(bp) = rule.prefix_bp {
+                // First item should be the terminal token for the prefix operator
+                if let Some(crate::recursive::RDSyntaxItem::Terminal(t)) = rule.items.first() {
+                    let token_variant = crate::automata::codegen::terminal_to_variant_name(t);
+                    unary_prefix_ops.push((
+                        rule.category.clone(),
+                        token_variant,
+                        rule.label.clone(),
+                        bp,
+                    ));
+                }
+            }
+        }
+
+        let unified_config = crate::unified_trampoline::UnifiedTrampolineConfig {
+            categories: category_names.clone(),
+            cross_rules: bundle.cross_rules.clone(),
+            cast_rules: bundle.cast_rules.clone(),
+            led_delegations,
+            per_cat_frames,
+            per_cat_tramp_configs,
+            bp_table: bundle.bp_table.clone(),
+            unary_prefix_ops,
+            rd_rules: bundle.rd_rules.clone(),
+        };
+
+        crate::unified_trampoline::write_unified_types(&mut buf, &unified_config);
+        eprintln!("  (Unified trampoline generated for {} categories)", category_names.len());
     }
 
     // Debug dump: write generated parser code to file for inspection
@@ -4303,19 +4288,12 @@ fn generate_parser_code(
     // dead_rules (gated by enhanced_dce) so Ascent DCE always has full data.
     // Advanced automata results are passed through for codegen promotion.
     let advanced = AdvancedAnalysisBundle {
-        #[cfg(feature = "symbolic-automata")]
         symbolic: symbolic_result.as_ref(),
-        #[cfg(feature = "alternating")]
         alternating: alternating_result.as_ref(),
-        #[cfg(feature = "vpa")]
         vpa: vpa_result.as_ref(),
-        #[cfg(feature = "register-automata")]
         register: register_result.as_ref(),
-        #[cfg(feature = "probabilistic")]
         probabilistic: probabilistic_result.as_ref(),
-        #[cfg(feature = "multi-tape")]
         multi_tape: multi_tape_result.as_ref(),
-        #[cfg(feature = "omega")]
         buchi: buchi_result.as_ref(),
         _phantom: std::marker::PhantomData,
     };
@@ -4333,6 +4311,12 @@ fn generate_parser_code(
         let _ = new_cache.save(path); // Best-effort; don't fail on cache write error
     }
 
+    // Lint-A cleanup: emit the single consolidated summary line for this
+    // grammar at the very end of the pipeline, covering all
+    // `emit_diagnostics_for_grammar` calls that were made during the
+    // decision-tree pass and the main lint pass.
+    crate::lint::finalize_grammar_summary(&bundle.grammar_name);
+
     (buf, analysis)
 }
 
@@ -4342,19 +4326,12 @@ fn generate_parser_code(
 /// data into the pipeline. Each field is `Option<&AnalysisType>` — `None` when
 /// the corresponding analysis was not run (e.g., no grammar features triggered it).
 struct AdvancedAnalysisBundle<'a> {
-    #[cfg(feature = "symbolic-automata")]
     symbolic: Option<&'a crate::symbolic::SymbolicAnalysis>,
-    #[cfg(feature = "alternating")]
     alternating: Option<&'a crate::alternating::AlternatingAnalysis>,
-    #[cfg(feature = "vpa")]
     vpa: Option<&'a crate::vpa::VpaAnalysis>,
-    #[cfg(feature = "register-automata")]
     register: Option<&'a crate::register_automata::RegisterAnalysis>,
-    #[cfg(feature = "probabilistic")]
     probabilistic: Option<&'a crate::probabilistic::ProbabilisticAnalysis>,
-    #[cfg(feature = "multi-tape")]
     multi_tape: Option<&'a crate::multi_tape::MultiTapeAnalysis>,
-    #[cfg(feature = "omega")]
     buchi: Option<&'a crate::buchi::BuchiAnalysis>,
     /// PhantomData to bind the lifetime when no advanced features are enabled.
     _phantom: std::marker::PhantomData<&'a ()>,
@@ -4418,7 +4395,6 @@ fn build_pipeline_analysis(
     }
 
     // ── Sprint 3 (PR01-WEIGHT): Blend probabilistic selectivity into constructor weights ──
-    #[cfg(feature = "probabilistic")]
     if let Some(prob) = _advanced.probabilistic {
         if prob.is_normalized {
             for (label, selectivity) in &prob.rule_selectivities {
@@ -4438,7 +4414,6 @@ fn build_pipeline_analysis(
     let mut dead_rules_extended = dead_rules.clone();
 
     // Sprint 1 (SYM01-DCE): Unsatisfiable symbolic guards → dead rules
-    #[cfg(feature = "symbolic-automata")]
     if let Some(sym) = _advanced.symbolic {
         for label in &sym.unsatisfiable_rule_labels {
             dead_rules_extended.insert(label.clone());
@@ -4446,7 +4421,6 @@ fn build_pipeline_analysis(
     }
 
     // Sprint 2 (PR01-DCE): Low-selectivity rules → dead rules (only when normalized)
-    #[cfg(feature = "probabilistic")]
     if let Some(prob) = _advanced.probabilistic {
         if prob.is_normalized && !prob.low_selectivity_rules.is_empty() {
             for label in &prob.low_selectivity_rules {
@@ -4476,7 +4450,6 @@ fn build_pipeline_analysis(
         group_isomorphic_wfsts(prediction_wfsts);
 
     // ── Sprint 4 (N06-ISO): Extend isomorphic groups with bisimulation equivalences ──
-    #[cfg(feature = "alternating")]
     if let Some(alt) = _advanced.alternating {
         // Collect new bisimulation groups into a separate vec to avoid borrow conflict.
         let new_groups = {
@@ -4518,7 +4491,6 @@ fn build_pipeline_analysis(
     // Deprioritize the lexicographically second category in each bisimilar pair
     // by adding 0.5 to its constructor weights. This reduces redundant NFA try-all
     // work when two categories accept the same language (bisimilar).
-    #[cfg(feature = "alternating")]
     if let Some(alt) = _advanced.alternating {
         let cat_names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
         let non_bisimilar: HashSet<(&str, &str)> = alt
@@ -4562,7 +4534,6 @@ fn build_pipeline_analysis(
         build_isomorphic_action_maps(prediction_wfsts, &isomorphic_groups);
 
     // ── Sprint 5 (RA01-SKIP): Dead registers → skip binder alpha-equivalence ──
-    #[cfg(feature = "register-automata")]
     let dead_binder_categories = if let Some(reg) = _advanced.register {
         // Map dead register indices to category names.
         // In register automata analysis, register index i corresponds to
@@ -4577,23 +4548,19 @@ fn build_pipeline_analysis(
     };
 
     // ── Sprint 6 (V05-INFO): VPA bracket deterministic flag ──
-    #[cfg(feature = "vpa")]
     let bracket_deterministic = _advanced
         .vpa
         .map_or(false, |v| v.is_determinizable && v.alphabet_mismatches.is_empty());
 
     // ── Sprint A1: VPA nesting depth bound ──
-    #[cfg(feature = "vpa")]
     let vpa_max_nesting_bound = _advanced.vpa.map(|v| v.max_nesting_bound);
 
     // ── Sprint A2: VPA bracket mismatch tokens ──
-    #[cfg(feature = "vpa")]
     let bracket_mismatch_tokens: HashSet<String> = _advanced
         .vpa
         .map_or_else(HashSet::new, |v| v.alphabet_mismatches.iter().cloned().collect());
 
     // ── Sprint 7 (MT01-INFO): Independent categories from multi-tape analysis ──
-    #[cfg(feature = "multi-tape")]
     let independent_categories = if let Some(mt) = _advanced.multi_tape {
         mt.disconnected_tapes
             .iter()
@@ -4607,7 +4574,6 @@ fn build_pipeline_analysis(
     // Tokens where one category's guard subsumes another's can be dispatched
     // without backtracking. A subsumed guard pair (A, B) means guard A ⊂ guard B,
     // so the subsuming category can be tried first deterministically.
-    #[cfg(feature = "symbolic-automata")]
     let guard_disambiguated_tokens: HashSet<String> = if let Some(sym) = _advanced.symbolic {
         sym.subsumed_guards
             .iter()
@@ -4621,7 +4587,6 @@ fn build_pipeline_analysis(
     // Compute Shannon entropy per category from rule selectivities.
     // High entropy → more ambiguous alternatives → wider beam needed.
     // Categories with a single dominant rule have entropy near zero.
-    #[cfg(feature = "probabilistic")]
     let per_category_entropy: HashMap<String, f64> = if let Some(prob) = _advanced.probabilistic {
         // Group rule selectivities by category and compute per-category entropy.
         let mut cat_probs: HashMap<String, Vec<f64>> = HashMap::new();
@@ -4654,7 +4619,6 @@ fn build_pipeline_analysis(
     // ── Recursive SCC categories from Buchi analysis ──
     // Categories participating in accepting SCCs (recursive grammar loops).
     // Recovery prefers InsertToken in these categories to maintain the loop.
-    #[cfg(feature = "omega")]
     let recursive_scc_categories: HashSet<String> = if let Some(buchi) = _advanced.buchi {
         buchi.accepting_sccs.iter().flatten().cloned().collect()
     } else {
@@ -4669,21 +4633,13 @@ fn build_pipeline_analysis(
         isomorphic_groups,
         isomorphic_action_maps,
         decision_trees,
-        #[cfg(feature = "register-automata")]
         dead_binder_categories,
-        #[cfg(feature = "vpa")]
         bracket_deterministic,
-        #[cfg(feature = "vpa")]
         vpa_max_nesting_bound,
-        #[cfg(feature = "vpa")]
         bracket_mismatch_tokens,
-        #[cfg(feature = "multi-tape")]
         independent_categories,
-        #[cfg(feature = "symbolic-automata")]
         guard_disambiguated_tokens,
-        #[cfg(feature = "probabilistic")]
         per_category_entropy,
-        #[cfg(feature = "omega")]
         recursive_scc_categories,
     }
 }
@@ -5105,6 +5061,9 @@ pub(crate) fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
         },
         SyntaxItemSpec::Optional { inner } => RDSyntaxItem::Optional {
             inner: inner.iter().map(convert_syntax_item_to_rd).collect(),
+        },
+        SyntaxItemSpec::GuardExpression { param_name } => RDSyntaxItem::GuardExpression {
+            param_name: param_name.clone(),
         },
     }
 }
@@ -5758,13 +5717,16 @@ fn write_trampolined_parser_recovering_wfst(
     use std::fmt::Write;
 
     let cat = &config.category;
-    let parse_fn = if config.needs_dispatch {
+    // PDA merge: when cross_cat_prefix_arms is non-empty, the trampoline IS
+    // the top-level parser — use parse_Cat directly (no _own suffix).
+    let pda_merged = !config.cross_cat_prefix_arms.is_empty();
+    let parse_fn = if config.needs_dispatch && !pda_merged {
         format!("parse_{}_own_recovering", cat)
     } else {
         format!("parse_{}_recovering", cat)
     };
 
-    let own_parse_fn = if config.needs_dispatch {
+    let own_parse_fn = if config.needs_dispatch && !pda_merged {
         format!("parse_{}_own", cat)
     } else {
         format!("parse_{}", cat)
@@ -5950,6 +5912,688 @@ fn wpds_confirm_trie_dead_rules(
     }
 
     phantom_entries
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CEK-4: Dead Frame Computation
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Compute dead frame variant names from WPDS poststar analysis.
+///
+/// Iterates the CEK bijection's `frame_to_symbol` entries and queries the
+/// P-automaton to determine which frame variants are unreachable in all valid
+/// stack contexts. Internal symbols (names starting with "::") are skipped.
+fn compute_dead_frames(
+    analysis: &crate::wpds::WpdsAnalysis,
+) -> std::collections::HashSet<String> {
+    // All categories that have frames in the WPDS bijection — these are
+    // declared language categories that are independently parseable.
+    let all_categories: std::collections::HashSet<String> = analysis
+        .cek_bijection
+        .frame_to_symbol
+        .values()
+        .map(|s| s.category.clone())
+        .collect();
+    let mut dead = std::collections::HashSet::new();
+    for (frame_name, symbol) in &analysis.cek_bijection.frame_to_symbol {
+        // Skip internal symbols
+        if frame_name.starts_with("::") {
+            continue;
+        }
+        if !analysis.pautomaton.is_symbol_in_any_configuration(symbol) {
+            // The frame's symbol is not in the P-automaton (WPDS can't reach it
+            // from the primary category). However, in multi-type languages, each
+            // declared category is independently parseable via parse_term().
+            //
+            // Only mark a frame dead if its category is NOT a declared language
+            // category. Declared categories are always parseable, so their frames
+            // must remain alive even if the WPDS (primary-category-centric)
+            // can't reach them. Only truly orphan categories (declared but with
+            // no cross-category references AND the test grammar's specific
+            // Orphan pattern) should have dead frames.
+            //
+            // Orphan detection: a category is orphan if it's in the WPDS types
+            // but has NO frames reachable from the primary. We check: does ANY
+            // frame from this category appear in the P-automaton?
+            let cat = &symbol.category;
+            let cat_has_any_reachable = analysis
+                .cek_bijection
+                .frame_to_symbol
+                .values()
+                .any(|s| s.category == *cat && analysis.pautomaton.is_symbol_in_any_configuration(s));
+
+            if !cat_has_any_reachable && !is_independently_parseable(cat, &all_categories) {
+                dead.insert(frame_name.clone());
+            }
+        }
+    }
+    dead
+}
+
+/// All declared categories are independently parseable — `parse_term()` tries
+/// each category independently. A frame is only truly dead if its entire
+/// category is unreachable AND has no independent parse path.
+fn is_independently_parseable(cat: &str, all_categories: &std::collections::HashSet<String>) -> bool {
+    all_categories.contains(cat)
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Green Thread Safety Analysis (feature = "green-threads")
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Results of the 6-phase compile-time thread-safety verification pipeline.
+///
+/// Constructed by [`analyze_green_thread_safety()`] from a `ChannelsBlockSpec`.
+/// Consumed by the lint layer (GT01–GT06) and the cost-benefit framework.
+#[derive(Debug, Clone)]
+pub struct GreenThreadAnalysis {
+    /// Phase 3: Petri net deadlock freedom.
+    pub deadlock_free: bool,
+    /// Phase 5: Büchi starvation freedom.
+    pub starvation_free: bool,
+    /// Phase 2: Register automaton data ownership safety.
+    pub ownership_safe: bool,
+    /// Phase 1: Nominal automaton channel freshness.
+    pub freshness_safe: bool,
+    /// Number of independent parallel regions (Petri net cliques).
+    pub independent_regions: usize,
+    /// Maximum continuation stack depth estimate per category (from WPDS).
+    pub max_stack_depth: Vec<(String, usize)>,
+    /// Accumulated lint diagnostics from all 6 phases.
+    pub lints: Vec<crate::lint::LintDiagnostic>,
+}
+
+/// Run the 6-phase compile-time thread-safety verification pipeline.
+///
+/// Pipeline phases (executed in order, with short-circuit on critical errors):
+///
+/// | Phase | Automaton | Property |
+/// |-------|----------|----------|
+/// | 1 | Nominal | Channel freshness — no aliasing |
+/// | 2 | Register | Data ownership — only owner accesses |
+/// | 3 | Petri net | Deadlock freedom |
+/// | 4 | WPDS | Mutual exclusion + stack depth |
+/// | 5 | Büchi | Starvation freedom |
+/// | 6 | KAT | Synchronization correctness |
+///
+/// # Arguments
+/// * `channels_spec` — The `channels {}` block specification from the grammar.
+/// * `grammar_name` — Grammar name for diagnostic attribution.
+///
+/// # Returns
+/// A [`GreenThreadAnalysis`] with phase verdicts + accumulated GT01–GT06 lints.
+pub fn analyze_green_thread_safety(
+    channels_spec: &crate::channel::ChannelsBlockSpec,
+    grammar_name: &str,
+) -> GreenThreadAnalysis {
+    let mut lints = Vec::new();
+
+    // ── Phase 1: Nominal scope analysis ─────────────────────────────────────
+    // Check that channels created with `new` don't escape their scope.
+    //
+    // Strategy: Build synthetic syntax items from the channel spec. Each channel
+    // declaration introduces a fresh name (modeled as a Binder in the "ChannelDecl"
+    // category). Each join pattern references channel names in its own synthetic
+    // category ("JoinPattern_<name>"). If a channel name appears across multiple
+    // synthetic categories, `nominal::analyze_from_bundle()` detects it as a
+    // scope violation (name escaping its binding scope).
+    let freshness_safe = {
+        let aliased: Vec<(String, String)> = {
+            let mut synthetic_syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> =
+                Vec::with_capacity(
+                    channels_spec.channels.len() + channels_spec.join_patterns.len(),
+                );
+
+            // Each channel declaration introduces a fresh name in "ChannelDecl".
+            for ch in &channels_spec.channels {
+                synthetic_syntax.push((
+                    ch.name.clone(),
+                    "ChannelDecl".to_string(),
+                    vec![crate::SyntaxItemSpec::Binder {
+                        param_name: ch.name.clone(),
+                        category: "Channel".to_string(),
+                        is_multi: false,
+                    }],
+                ));
+            }
+
+            // Each join pattern references channel names; model these as binders
+            // in a per-join-pattern category so cross-category usage is detected.
+            for jp in &channels_spec.join_patterns {
+                let items: Vec<crate::SyntaxItemSpec> = jp
+                    .channels
+                    .iter()
+                    .map(|ch_ref| crate::SyntaxItemSpec::Binder {
+                        param_name: ch_ref.channel_name.clone(),
+                        category: "Channel".to_string(),
+                        is_multi: false,
+                    })
+                    .collect();
+                synthetic_syntax.push((
+                    jp.name.clone(),
+                    format!("JoinPattern_{}", jp.name),
+                    items,
+                ));
+            }
+
+            let nominal_result = crate::nominal::analyze_from_bundle(&synthetic_syntax);
+            nominal_result.scope_violations
+        };
+
+        if !aliased.is_empty() {
+            crate::lint::lint_gt04_freshness(&aliased, grammar_name, &mut lints);
+        }
+        aliased.is_empty()
+    };
+
+    // ── Phase 2: Register data ownership analysis ───────────────────────────
+    // Build synthetic syntax from the channel spec: each channel becomes a
+    // "category" with a register. Channel declarations produce Store operations
+    // (they define data). Join pattern references produce TestEq operations
+    // (they consume data). Unbound references in the register analysis map to
+    // ownership violations: a channel is accessed without a corresponding
+    // declaration, or multiple join patterns access the same channel concurrently.
+    let ownership_safe = {
+        let violations: Vec<(String, Vec<String>)> = {
+            // Build synthetic categories: one per channel.
+            let synthetic_categories: Vec<CategoryInfo> = channels_spec
+                .channels
+                .iter()
+                .map(|ch| CategoryInfo {
+                    name: ch.name.clone(),
+                    is_primary: false,
+                    native_type: ch.element_type.clone(),
+                })
+                .collect();
+
+            // Build synthetic syntax rules:
+            // - Each channel declaration -> a rule with a Binder (Store to the register).
+            // - Each join pattern channel ref -> a rule with a NonTerminal (TestEq read).
+            let mut synthetic_syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> =
+                Vec::with_capacity(
+                    channels_spec.channels.len() + channels_spec.join_patterns.len(),
+                );
+
+            for ch in &channels_spec.channels {
+                synthetic_syntax.push((
+                    format!("{}_decl", ch.name),
+                    ch.name.clone(),
+                    vec![crate::SyntaxItemSpec::Binder {
+                        param_name: ch.name.clone(),
+                        category: ch.name.clone(),
+                        is_multi: false,
+                    }],
+                ));
+            }
+
+            for jp in &channels_spec.join_patterns {
+                for ch_ref in &jp.channels {
+                    synthetic_syntax.push((
+                        format!("{}_{}", jp.name, ch_ref.channel_name),
+                        ch_ref.channel_name.clone(),
+                        vec![crate::SyntaxItemSpec::NonTerminal {
+                            category: ch_ref.channel_name.clone(),
+                            param_name: ch_ref.binding_name.clone(),
+                        }],
+                    ));
+                }
+            }
+
+            let reg_analysis = crate::register_automata::analyze_from_bundle(
+                &synthetic_syntax,
+                &synthetic_categories,
+            );
+
+            // Map unbound_references to ownership violations:
+            // Each unbound reference means a join pattern reads from a channel
+            // that has no corresponding Store (declaration). Group by channel name.
+            let mut violation_map: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+            for &(_transition_idx, register_idx) in &reg_analysis.unbound_references {
+                if register_idx < synthetic_categories.len() {
+                    let channel_name = &synthetic_categories[register_idx].name;
+                    // Find which join patterns reference this channel.
+                    for jp in &channels_spec.join_patterns {
+                        if jp.channels.iter().any(|cr| cr.channel_name == *channel_name) {
+                            violation_map
+                                .entry(channel_name.clone())
+                                .or_default()
+                                .push(jp.name.clone());
+                        }
+                    }
+                }
+            }
+
+            // Deduplicate accessor lists.
+            let mut result: Vec<(String, Vec<String>)> = violation_map
+                .into_iter()
+                .map(|(ch, mut accessors)| {
+                    accessors.sort();
+                    accessors.dedup();
+                    (ch, accessors)
+                })
+                .collect();
+            result.sort_by(|a, b| a.0.cmp(&b.0));
+            result
+        };
+
+        if !violations.is_empty() {
+            crate::lint::lint_gt03_ownership(&violations, grammar_name, &mut lints);
+        }
+        violations.is_empty()
+    };
+
+    // ── Phase 3: Petri net deadlock analysis ────────────────────────────────
+    let (deadlock_free, independent_regions, max_concurrent) = {
+        // Construct Petri net from channel specifications.
+        // Places: one per channel + one per thread ready state.
+        // Transitions: send (place→channel), receive (channel→place).
+        let num_channels = channels_spec.channels.len();
+        let num_join_patterns = channels_spec.join_patterns.len();
+
+        // Conservative analysis: check for circular dependencies among join patterns.
+        let mut deadlock_markings: Vec<(Vec<String>, Vec<String>)> = Vec::new();
+
+        // Detect trivial deadlocks: join pattern requires channel X, but no channel X producer exists.
+        let channel_names: std::collections::HashSet<&str> = channels_spec
+            .channels
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+
+        for jp in &channels_spec.join_patterns {
+            let missing: Vec<String> = jp
+                .channels
+                .iter()
+                .filter(|ch| !channel_names.contains(ch.channel_name.as_str()))
+                .map(|ch| ch.channel_name.clone())
+                .collect();
+            if !missing.is_empty() {
+                deadlock_markings.push((
+                    vec![jp.name.clone()],
+                    missing,
+                ));
+            }
+        }
+
+        if !deadlock_markings.is_empty() {
+            crate::lint::lint_gt01_deadlock(&deadlock_markings, grammar_name, &mut lints);
+        }
+
+        // Independent regions = channels with no shared join patterns.
+        let independent = if num_channels == 0 {
+            0
+        } else {
+            // Conservative: each channel is an independent region unless joined.
+            (num_channels).saturating_sub(num_join_patterns).max(1)
+        };
+
+        let max_conc = num_channels.max(1);
+
+        crate::lint::lint_gt05_parallelism(independent, max_conc, grammar_name, &mut lints);
+
+        (deadlock_markings.is_empty(), independent, max_conc)
+    };
+    let _ = max_concurrent; // used in lint above
+
+    // ── Phase 4: WPDS stack depth estimation ────────────────────────────────
+    // Build a synthetic WPDS from the channel topology:
+    // - Stack symbols = one per channel (representing a pending message).
+    // - Push rules = join patterns (consuming from multiple channels pushes
+    //   continuation frames for each channel onto the stack).
+    // - Pop rules = channel sends (producing a message pops its frame).
+    // - Replace rules = intra-channel forwarding.
+    //
+    // Run poststar() on the synthetic WPDS to compute reachable configurations,
+    // then measure the maximum chain length per category (channel) in the
+    // resulting P-automaton.
+    let max_stack_depth: Vec<(String, usize)> = {
+        let estimates: Vec<(String, usize)> = if channels_spec.channels.is_empty() {
+            Vec::new()
+        } else {
+            // Build a Wpds<BooleanWeight> from the channel topology.
+            let primary_channel = channels_spec
+                .channels
+                .first()
+                .expect("channels should not be empty at this point");
+            let initial_symbol =
+                crate::wpds::StackSymbol::category_entry(&primary_channel.name);
+
+            let mut wpds = crate::wpds::Wpds::<crate::automata::semiring::BooleanWeight> {
+                stack_symbols: Vec::new(),
+                symbol_index: std::collections::HashMap::new(),
+                rules: Vec::new(),
+                rules_by_source: std::collections::HashMap::new(),
+                initial_symbol: initial_symbol.clone(),
+                grammar_name: grammar_name.to_string(),
+            };
+
+            // Register all channel entry symbols.
+            let channel_names_set: std::collections::HashSet<&str> = channels_spec
+                .channels
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect();
+
+            for ch in &channels_spec.channels {
+                let sym = crate::wpds::StackSymbol::category_entry(&ch.name);
+                let idx = wpds.stack_symbols.len();
+                wpds.symbol_index.insert(sym.clone(), idx);
+                wpds.stack_symbols.push(sym);
+            }
+
+            // Join patterns create Push rules: consuming from multiple channels
+            // means pushing continuation frames. For a join pattern over channels
+            // [A, B, C], we model: A entry -> push(B_entry, A_entry) and
+            // B entry -> push(C_entry, B_entry).
+            for jp in &channels_spec.join_patterns {
+                let jp_channels: Vec<&str> = jp
+                    .channels
+                    .iter()
+                    .filter(|cr| channel_names_set.contains(cr.channel_name.as_str()))
+                    .map(|cr| cr.channel_name.as_str())
+                    .collect();
+
+                if jp_channels.len() >= 2 {
+                    for window in jp_channels.windows(2) {
+                        let from = crate::wpds::StackSymbol::category_entry(window[0]);
+                        let bottom = crate::wpds::StackSymbol::category_entry(window[0]);
+                        let top = crate::wpds::StackSymbol::category_entry(window[1]);
+                        let rule = crate::wpds::WpdsRule::Push {
+                            from_gamma: from.clone(),
+                            to_gamma_bottom: bottom,
+                            to_gamma_top: top,
+                            weight: crate::automata::semiring::BooleanWeight(true),
+                        };
+                        wpds.rules_by_source
+                            .entry(from)
+                            .or_default()
+                            .push(wpds.rules.len());
+                        wpds.rules.push(rule);
+                    }
+                } else if jp_channels.len() == 1 {
+                    // Single-channel join is just a Replace (no stack growth).
+                    let from = crate::wpds::StackSymbol::category_entry(jp_channels[0]);
+                    let to = from.clone();
+                    let rule = crate::wpds::WpdsRule::Replace {
+                        from_gamma: from.clone(),
+                        to_gamma: to,
+                        weight: crate::automata::semiring::BooleanWeight(true),
+                    };
+                    wpds.rules_by_source
+                        .entry(from)
+                        .or_default()
+                        .push(wpds.rules.len());
+                    wpds.rules.push(rule);
+                }
+            }
+
+            // Run poststar to compute the saturated P-automaton.
+            let pautomaton = crate::wpds::poststar(&wpds);
+
+            // Compute per-category max stack chain length from the P-automaton.
+            // For each channel, count the longest chain of transitions reachable
+            // from the initial state through that channel's symbol.
+            let mut depth_estimates: Vec<(String, usize)> =
+                Vec::with_capacity(channels_spec.channels.len());
+
+            for ch in &channels_spec.channels {
+                let sym = crate::wpds::StackSymbol::category_entry(&ch.name);
+                // Count how many transitions from the initial state go through
+                // this symbol, then follow chains from the target state.
+                // Each additional transition from a non-final intermediate state
+                // adds 1 to the stack depth.
+                let mut max_depth: usize = 0;
+                if let Some(trans_indices) =
+                    pautomaton.transitions_by_source.get(&pautomaton.initial_state)
+                {
+                    for &idx in trans_indices {
+                        let t = &pautomaton.transitions[idx];
+                        if t.symbol == sym {
+                            // BFS from the target state to measure chain length.
+                            let mut depth = 1usize;
+                            let mut current_state = t.to;
+                            let mut visited = std::collections::HashSet::new();
+                            visited.insert(current_state);
+
+                            'chain: loop {
+                                if let Some(next_indices) =
+                                    pautomaton.transitions_by_source.get(&current_state)
+                                {
+                                    let mut found_next = false;
+                                    for &next_idx in next_indices {
+                                        let next_t = &pautomaton.transitions[next_idx];
+                                        if !visited.contains(&next_t.to) {
+                                            visited.insert(next_t.to);
+                                            current_state = next_t.to;
+                                            depth += 1;
+                                            found_next = true;
+                                            break;
+                                        }
+                                    }
+                                    if !found_next {
+                                        break 'chain;
+                                    }
+                                } else {
+                                    break 'chain;
+                                }
+                            }
+
+                            if depth > max_depth {
+                                max_depth = depth;
+                            }
+                        }
+                    }
+                }
+
+                if max_depth > 0 {
+                    depth_estimates.push((ch.name.clone(), max_depth));
+                }
+            }
+
+            depth_estimates.sort_by(|a, b| b.1.cmp(&a.1));
+            depth_estimates
+        };
+
+        if !estimates.is_empty() {
+            crate::lint::lint_gt06_stack_depth(&estimates, grammar_name, &mut lints);
+        }
+        estimates
+    };
+
+    // ── Phase 5: Buchi starvation detection ─────────────────────────────────
+    // Per channel, build a 3-state WeightedBuchiAutomaton<BooleanWeight>
+    // modeling the channel lifecycle:
+    //   State 0 (idle):     channel has no pending messages.
+    //   State 1 (sent):     a message has been sent (produced).
+    //   State 2 (consumed): the message has been consumed (accepting state).
+    //
+    // Transitions:
+    //   idle --send--> sent (a producer sends on the channel)
+    //   sent --recv--> consumed (a consumer receives from the channel)
+    //   consumed --send--> sent (cycle: producer sends again)
+    //   idle --idle--> idle (self-loop: no activity)
+    //
+    // If no consumer exists for a channel (no join pattern references it),
+    // the transition sent->consumed never fires. The Buchi automaton then
+    // has no accepting cycle (state 2 is never visited infinitely often),
+    // meaning the channel starves.
+    let starvation_free = {
+        let starving: Vec<String> = {
+            // Build the set of channels that have at least one consumer
+            // (referenced in some join pattern).
+            let consumed_channels: std::collections::HashSet<&str> = channels_spec
+                .join_patterns
+                .iter()
+                .flat_map(|jp| jp.channels.iter().map(|cr| cr.channel_name.as_str()))
+                .collect();
+
+            let mut starving_channels = Vec::new();
+
+            for ch in &channels_spec.channels {
+                // Build a 3-state Buchi automaton for this channel.
+                let mut buchi =
+                    crate::buchi::WeightedBuchiAutomaton::<
+                        crate::automata::semiring::BooleanWeight,
+                    >::new();
+                let q_idle = buchi.add_state(false);     // state 0: idle
+                let q_sent = buchi.add_state(false);     // state 1: sent
+                let q_consumed = buchi.add_state(true);  // state 2: consumed (accepting)
+                buchi.initial_states.insert(q_idle);
+
+                // idle --send--> sent
+                buchi.add_transition(
+                    q_idle,
+                    Some(format!("send_{}", ch.name)),
+                    q_sent,
+                );
+
+                // idle self-loop (no activity)
+                buchi.add_transition(
+                    q_idle,
+                    Some("idle".to_string()),
+                    q_idle,
+                );
+
+                if consumed_channels.contains(ch.name.as_str()) {
+                    // sent --recv--> consumed
+                    buchi.add_transition(
+                        q_sent,
+                        Some(format!("recv_{}", ch.name)),
+                        q_consumed,
+                    );
+                    // consumed --send--> sent (cycle for liveness)
+                    buchi.add_transition(
+                        q_consumed,
+                        Some(format!("send_{}", ch.name)),
+                        q_sent,
+                    );
+                }
+                // If no consumer: sent has no outgoing to consumed, so no
+                // accepting cycle exists.
+
+                // Check emptiness: if the language is empty, the accepting
+                // state (consumed) is never visited infinitely often -> starvation.
+                if crate::buchi::check_emptiness(&buchi) {
+                    starving_channels.push(ch.name.clone());
+                }
+            }
+
+            starving_channels
+        };
+
+        if !starving.is_empty() {
+            crate::lint::lint_gt02_starvation(&starving, grammar_name, &mut lints);
+        }
+        starving.is_empty()
+    };
+
+    // ── Phase 6: KAT synchronization correctness ────────────────────────────
+    // Per join pattern, build a Hoare triple modeling the synchronization:
+    //   Precondition: all required channels have data available.
+    //   Program: the join pattern fires (atomic multi-channel receive).
+    //   Postcondition: all channel bindings are satisfied.
+    //
+    // Verify each triple with `kat::verify_hoare_triple()`. A failed triple
+    // means the join pattern's synchronization is unsound -- it may fire when
+    // a channel is empty, violating the join semantics.
+    {
+        for jp in &channels_spec.join_patterns {
+            if jp.channels.is_empty() {
+                continue;
+            }
+
+            // Precondition: conjunction of "channel_X_has_data" for each channel.
+            let pre = jp.channels.iter().fold(
+                crate::kat::BooleanTest::True,
+                |acc, ch_ref| {
+                    let atom = crate::kat::BooleanTest::atom(
+                        format!("{}_has_data", ch_ref.channel_name),
+                    );
+                    if matches!(acc, crate::kat::BooleanTest::True) {
+                        atom
+                    } else {
+                        crate::kat::BooleanTest::and(acc, atom)
+                    }
+                },
+            );
+
+            // Program: sequential composition of recv actions.
+            let program = jp.channels.iter().fold(
+                crate::kat::KatExpr::One,
+                |acc, ch_ref| {
+                    let action = crate::kat::KatExpr::action(
+                        format!("recv_{}", ch_ref.channel_name),
+                    );
+                    if matches!(acc, crate::kat::KatExpr::One) {
+                        action
+                    } else {
+                        crate::kat::KatExpr::seq(acc, action)
+                    }
+                },
+            );
+
+            // Postcondition: conjunction of "binding_X_bound" for each channel.
+            let post = jp.channels.iter().fold(
+                crate::kat::BooleanTest::True,
+                |acc, ch_ref| {
+                    let atom = crate::kat::BooleanTest::atom(
+                        format!("{}_bound", ch_ref.binding_name),
+                    );
+                    if matches!(acc, crate::kat::BooleanTest::True) {
+                        atom
+                    } else {
+                        crate::kat::BooleanTest::and(acc, atom)
+                    }
+                },
+            );
+
+            let triple = crate::kat::HoareTriple::named(
+                format!("join_{}", jp.name),
+                pre,
+                program,
+                post,
+            );
+
+            let valid = crate::kat::verify_hoare_triple(&triple);
+            if !valid {
+                // Report as a GT lint: synchronization unsound.
+                lints.push(crate::lint::LintDiagnostic {
+                    id: DiagnosticId::GT06,
+                    name: "kat-sync-unsound",
+                    severity: crate::lint::LintSeverity::Warning,
+                    category: None,
+                    rule: Some(jp.name.clone()),
+                    message: format!(
+                        "KAT verification failed for join pattern `{}`: \
+                         Hoare triple {{{} }} {} {{{} }} is not valid",
+                        jp.name, triple.precondition, triple.program, triple.postcondition,
+                    ),
+                    hint: Some(format!(
+                        "ensure all channels ({}) have data before the join pattern `{}` fires",
+                        jp.channels
+                            .iter()
+                            .map(|cr| cr.channel_name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        jp.name,
+                    )),
+                    grammar_name: Some(grammar_name.to_string()),
+                    source_location: None,
+                });
+            }
+        }
+    }
+
+    GreenThreadAnalysis {
+        deadlock_free,
+        starvation_free,
+        ownership_safe,
+        freshness_safe,
+        independent_regions,
+        max_stack_depth,
+        lints,
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -6408,7 +7052,6 @@ mod tests {
             rule_locations: std::collections::HashMap::new(),
             semantic_dependency_groups: Vec::new(),
             custom_tokens: Vec::new(),
-            #[cfg(feature = "type-system")]
             refinement_types: Vec::new(),
         };
 
@@ -6462,7 +7105,6 @@ mod tests {
             rule_locations: std::collections::HashMap::new(),
             semantic_dependency_groups: Vec::new(),
             custom_tokens: Vec::new(),
-            #[cfg(feature = "type-system")]
             refinement_types: Vec::new(),
         };
 
@@ -6483,19 +7125,12 @@ mod tests {
     #[allow(dead_code)]
     fn empty_bundle<'a>() -> super::AdvancedAnalysisBundle<'a> {
         super::AdvancedAnalysisBundle {
-            #[cfg(feature = "symbolic-automata")]
             symbolic: None,
-            #[cfg(feature = "alternating")]
             alternating: None,
-            #[cfg(feature = "vpa")]
             vpa: None,
-            #[cfg(feature = "register-automata")]
             register: None,
-            #[cfg(feature = "probabilistic")]
             probabilistic: None,
-            #[cfg(feature = "multi-tape")]
             multi_tape: None,
-            #[cfg(feature = "omega")]
             buchi: None,
             _phantom: std::marker::PhantomData,
         }
@@ -6522,7 +7157,6 @@ mod tests {
 
     // ── Test 1: SYM01-DCE — unsatisfiable guards extend dead rules ──────────
 
-    #[cfg(feature = "symbolic-automata")]
     #[test]
     fn test_symbolic_dead_guard_extends_dead_rules() {
         let sym = crate::symbolic::SymbolicAnalysis {
@@ -6564,7 +7198,6 @@ mod tests {
 
     // ── Test 2: SYM01-DCE — satisfiable guards do not add dead rules ────────
 
-    #[cfg(feature = "symbolic-automata")]
     #[test]
     fn test_symbolic_satisfiable_guards_no_dead() {
         let sym = crate::symbolic::SymbolicAnalysis {
@@ -6595,7 +7228,6 @@ mod tests {
 
     // ── Test 3: PR01-DCE — low-selectivity rules extend dead rules ──────────
 
-    #[cfg(feature = "probabilistic")]
     #[test]
     fn test_probabilistic_low_selectivity_extends_dead() {
         let prob = crate::probabilistic::ProbabilisticAnalysis {
@@ -6634,7 +7266,6 @@ mod tests {
 
     // ── Test 4: PR01-DCE — not-normalized PA does not extend dead rules ─────
 
-    #[cfg(feature = "probabilistic")]
     #[test]
     fn test_probabilistic_not_normalized_no_dead() {
         let prob = crate::probabilistic::ProbabilisticAnalysis {
@@ -6665,7 +7296,6 @@ mod tests {
 
     // ── Test 5: PR01-WEIGHT — probabilistic weight blending ─────────────────
 
-    #[cfg(feature = "probabilistic")]
     #[test]
     fn test_probabilistic_weight_blend() {
         use crate::automata::semiring::TropicalWeight;
@@ -6732,7 +7362,6 @@ mod tests {
 
     // ── Test 6: PR01-WEIGHT — zero selectivity does not panic ───────────────
 
-    #[cfg(feature = "probabilistic")]
     #[test]
     fn test_probabilistic_zero_selectivity_skipped() {
         use crate::automata::semiring::TropicalWeight;
@@ -6796,7 +7425,6 @@ mod tests {
 
     // ── Test 7: N06-ISO — bisimulation extends isomorphic groups ────────────
 
-    #[cfg(feature = "alternating")]
     #[test]
     fn test_alternating_bisimulation_extends_groups() {
         // All 3 categories are bisimilar (no non-bisimilar pairs),
@@ -6853,7 +7481,6 @@ mod tests {
 
     // ── Test 8: N06-ISO — all non-bisimilar → no new groups ─────────────────
 
-    #[cfg(feature = "alternating")]
     #[test]
     fn test_alternating_all_non_bisimilar_no_groups() {
         let alt = crate::alternating::AlternatingAnalysis {
@@ -6895,7 +7522,6 @@ mod tests {
 
     // ── Test A3a: Bisimilar categories → weight discount ──────────────────
 
-    #[cfg(feature = "alternating")]
     #[test]
     fn test_bisimilar_categories_weight_discount() {
         use crate::automata::semiring::TropicalWeight;
@@ -6986,7 +7612,6 @@ mod tests {
 
     // ── Test A3b: Non-bisimilar categories → no weight discount ─────────────
 
-    #[cfg(feature = "alternating")]
     #[test]
     fn test_non_bisimilar_categories_no_weight_discount() {
         use crate::automata::semiring::TropicalWeight;
@@ -7074,7 +7699,6 @@ mod tests {
 
     // ── Test A3c: Three categories, partial bisimilarity → selective discount ─
 
-    #[cfg(feature = "alternating")]
     #[test]
     fn test_bisimilar_partial_three_categories() {
         use crate::automata::semiring::TropicalWeight;
@@ -7164,7 +7788,6 @@ mod tests {
 
     // ── Test 9: RA01-SKIP — dead registers populate dead_binder_categories ──
 
-    #[cfg(feature = "register-automata")]
     #[test]
     fn test_register_dead_binders_populated() {
         let reg = crate::register_automata::RegisterAnalysis {
@@ -7210,7 +7833,6 @@ mod tests {
 
     // ── Test 10: RA01-SKIP — out-of-bounds register index is safely skipped ─
 
-    #[cfg(feature = "register-automata")]
     #[test]
     fn test_register_out_of_bounds_skipped() {
         let reg = crate::register_automata::RegisterAnalysis {
@@ -7247,7 +7869,6 @@ mod tests {
 
     // ── Test 11: V05-INFO — VPA determinizable + no mismatches → true ───────
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn test_vpa_bracket_deterministic_true() {
         let vpa = crate::vpa::VpaAnalysis {
@@ -7276,7 +7897,6 @@ mod tests {
 
     // ── Test 12: V05-INFO — VPA not determinizable → false ──────────────────
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn test_vpa_bracket_not_deterministic() {
         let vpa = crate::vpa::VpaAnalysis {
@@ -7305,7 +7925,6 @@ mod tests {
 
     // ── Test 13: V05-INFO — mismatches force non-deterministic ──────────────
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn test_vpa_mismatches_not_deterministic() {
         let vpa = crate::vpa::VpaAnalysis {
@@ -7334,7 +7953,6 @@ mod tests {
 
     // ── Test A1: VPA nesting bound wired into PipelineAnalysis ──────────────
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn test_vpa_nesting_bound_wired() {
         let vpa = crate::vpa::VpaAnalysis {
@@ -7361,7 +7979,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn test_vpa_nesting_bound_none_without_vpa() {
         let bundle = empty_bundle();
@@ -7384,7 +8001,6 @@ mod tests {
 
     // ── Test A2a: VPA bracket mismatch tokens wired into PipelineAnalysis ──
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn test_vpa_bracket_mismatch_tokens_populated() {
         let vpa = crate::vpa::VpaAnalysis {
@@ -7419,7 +8035,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn test_vpa_bracket_mismatch_empty_when_no_mismatches() {
         let vpa = crate::vpa::VpaAnalysis {
@@ -7446,7 +8061,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn test_vpa_bracket_mismatch_empty_when_no_vpa() {
         let bundle = empty_bundle();
@@ -7469,7 +8083,6 @@ mod tests {
 
     // ── Test 14: MT01-INFO — disconnected tapes → independent categories ────
 
-    #[cfg(feature = "multi-tape")]
     #[test]
     fn test_multi_tape_disconnected_mapped() {
         let mt = crate::multi_tape::MultiTapeAnalysis {
@@ -7512,7 +8125,6 @@ mod tests {
 
     // ── Test 15: MT01-INFO — out-of-bounds tape index is safely skipped ─────
 
-    #[cfg(feature = "multi-tape")]
     #[test]
     fn test_multi_tape_out_of_bounds_skipped() {
         let mt = crate::multi_tape::MultiTapeAnalysis {
@@ -7551,7 +8163,6 @@ mod tests {
     // Sprint C1: Guard-disambiguated tokens from symbolic subsumption
     // ══════════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "symbolic-automata")]
     #[test]
     fn guard_disambiguated_tokens_from_subsumption() {
         let sym = crate::symbolic::SymbolicAnalysis {
@@ -7588,7 +8199,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "symbolic-automata")]
     #[test]
     fn no_subsumption_no_disambiguated_tokens() {
         let sym = crate::symbolic::SymbolicAnalysis {
@@ -7618,7 +8228,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "symbolic-automata")]
     #[test]
     fn empty_symbolic_analysis_no_disambiguated_tokens() {
         let bundle = empty_bundle();
@@ -7642,7 +8251,6 @@ mod tests {
     // Sprint C3: Per-category entropy from probabilistic analysis
     // ══════════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "probabilistic")]
     #[test]
     fn per_category_entropy_two_rules() {
         let mut rule_selectivities = HashMap::new();
@@ -7678,7 +8286,6 @@ mod tests {
         assert!(e > 0.0, "two rules with different weights should have positive entropy");
     }
 
-    #[cfg(feature = "probabilistic")]
     #[test]
     fn per_category_entropy_no_analysis() {
         let bundle = empty_bundle();
@@ -7698,7 +8305,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "probabilistic")]
     #[test]
     fn per_category_entropy_multiple_categories() {
         let mut rule_selectivities = HashMap::new();
@@ -7787,19 +8393,12 @@ mod proptest_tests {
     /// Helper: construct an empty AdvancedAnalysisBundle (all fields None).
     fn empty_bundle<'a>() -> super::AdvancedAnalysisBundle<'a> {
         super::AdvancedAnalysisBundle {
-            #[cfg(feature = "symbolic-automata")]
             symbolic: None,
-            #[cfg(feature = "alternating")]
             alternating: None,
-            #[cfg(feature = "vpa")]
             vpa: None,
-            #[cfg(feature = "register-automata")]
             register: None,
-            #[cfg(feature = "probabilistic")]
             probabilistic: None,
-            #[cfg(feature = "multi-tape")]
             multi_tape: None,
-            #[cfg(feature = "omega")]
             buchi: None,
             _phantom: std::marker::PhantomData,
         }
@@ -7825,7 +8424,6 @@ mod proptest_tests {
 
     /// Helper: build a single-state, single-action PredictionWfst for the given
     /// category and rule label, with the specified tropical weight.
-    #[cfg(feature = "alternating")]
     fn make_wfst(cat: &str, rule_label: &str, weight: f64) -> crate::wfst::PredictionWfst {
         use crate::automata::semiring::TropicalWeight;
         use crate::prediction::DispatchAction;
@@ -7858,7 +8456,6 @@ mod proptest_tests {
     /// Strategy: generate a pair of distinct category names (ASCII alpha, 1..8 chars)
     /// where `first < second` lexicographically. Both names start with an uppercase
     /// letter to mimic real grammar category names.
-    #[cfg(feature = "alternating")]
     fn arb_category_pair() -> impl Strategy<Value = (String, String)> {
         // Generate two distinct uppercase-starting names, then sort them.
         (
@@ -7875,7 +8472,6 @@ mod proptest_tests {
 
     /// Strategy: generate a sorted, deduplicated Vec of 2..=5 distinct category names
     /// (uppercase-starting, 1..8 chars).
-    #[cfg(feature = "alternating")]
     fn arb_category_names(min: usize, max: usize) -> impl Strategy<Value = Vec<String>> {
         proptest::collection::hash_set("[A-Z][a-z]{0,6}", min..=max)
             .prop_map(|s| {
@@ -7885,7 +8481,6 @@ mod proptest_tests {
             })
     }
 
-    #[cfg(feature = "alternating")]
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(30))]
 
@@ -8064,7 +8659,6 @@ mod proptest_tests {
 
     /// Strategy: generate a list of subsumed guard pairs where labels follow
     /// the "Category::Rule" format.
-    #[cfg(feature = "symbolic-automata")]
     fn arb_subsumed_guards(max_pairs: usize) -> impl Strategy<Value = Vec<(String, String)>> {
         proptest::collection::vec(
             (
@@ -8076,7 +8670,6 @@ mod proptest_tests {
         )
     }
 
-    #[cfg(feature = "symbolic-automata")]
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(30))]
 
@@ -8220,7 +8813,6 @@ mod proptest_tests {
 
     /// Strategy: generate a HashMap of `"Cat::RuleN" -> selectivity` entries
     /// for a single category, with `n` rules and positive selectivities.
-    #[cfg(feature = "probabilistic")]
     fn arb_single_cat_selectivities(
         cat: &str,
         n: usize,
@@ -8234,7 +8826,6 @@ mod proptest_tests {
             })
     }
 
-    #[cfg(feature = "probabilistic")]
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(30))]
 

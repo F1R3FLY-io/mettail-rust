@@ -7,9 +7,9 @@
 
 #![allow(dead_code)]
 
-use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
-use crate::ast::language::LanguageDef;
-use crate::ast::types::TypeExpr;
+use mettail_ast::grammar::{GrammarItem, GrammarRule, TermParam};
+use mettail_ast::language::LanguageDef;
+use mettail_ast::types::TypeExpr;
 use std::collections::{HashMap, HashSet};
 
 /// Analysis result for a single category's hash-consing applicability.
@@ -121,7 +121,7 @@ fn collect_category_refs(rule: &GrammarRule, categories: &HashSet<String>) -> Ha
     // Check old-syntax (items)
     for item in &rule.items {
         match item {
-            GrammarItem::NonTerminal(nt) => {
+            GrammarItem::NonTerminal { ident: nt, .. } => {
                 let name = nt.to_string();
                 if categories.contains(&name) {
                     refs.insert(name);

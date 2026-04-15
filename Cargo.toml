@@ -1,5 +1,5 @@
 [workspace]
-members = ["macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query",
+members = ["ast", "macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query", "testkit", "simulation",
     # "ascent/ascent",
     # "ascent/ascent_base",
     # "ascent/ascent_macro",
@@ -22,8 +22,6 @@ mettail-repl = { path = "repl" }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 
-[features]
-wfst-log = ["mettail-repl/wfst-log"]
 
 [workspace.package]
 version = "0.1.0"
@@ -36,7 +34,7 @@ homepage = "https://github.com/cb-wells/mettail-rust"
 [workspace.dependencies]
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
 quote = "1.0"
-syn = { version = "2.0", features = ["full", "extra-traits"] }
+syn = { version = "2.0", features = ["full", "extra-traits", "visit-mut"] }
 proc-macro-error = "1.0"
 regex = "1.0"
 rand = "0.8"

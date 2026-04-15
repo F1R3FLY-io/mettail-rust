@@ -60,6 +60,7 @@ fn calculator_spec() -> LanguageSpec {
         sync: None,
         tree_invariants: Vec::new(),
         refinement_types: Vec::new(),
+        guard_config: None,
     }
 }
 

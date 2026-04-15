@@ -7,154 +7,27 @@ license.workspace = true
 description = "PraTTaIL: Pratt + Recursive Descent parser generator with automata-optimized lexing for MeTTaIL"
 
 [features]
-## Log semiring (LogWeight), forward-backward, N-best, log-pushing, training.
-wfst-log = ["dep:serde", "dep:postcard"]
-## Complex-amplitude semiring for quantum CTMC simulation (MeTTaIL-Gillespie).
-quantum = ["dep:num-complex"]
-## Grammar-aware expression generator (proptest-based) for benchmarks and tests.
-grammar-gen = ["dep:proptest"]
-## AL03: SIMD-accelerated whitespace skipping using portable SIMD (std::simd).
-## Requires nightly Rust. Processes 16 bytes at a time for whitespace scanning.
-simd-whitespace = []
-
-# ── Mathematical Analysis & Theorem Proving Features ─────────────────────────
-
-## Relational weight domain: binary relations on finite sets (SLAM/BLAST-style).
-## Heap-allocated semiring; needed for Boolean program analysis via WPDSs.
-wpds-relational = []
-## EWPDS: Extended WPDS with merging functions for local variable analysis.
-wpds-extended = []
-## ARA: Affine-Relation Analysis weight domain (vector spaces of matrices).
-## Depends on wpds-relational for the HeapSemiring trait.
-wpds-ara = ["dep:nalgebra", "wpds-relational"]
-## Provenance semiring N[X]: polynomial semiring tracking HOW facts are derived.
-provenance = []
-## Layered proof output: human-readable explanations + Rocq certificates.
-proofs = ["provenance"]
-## TRS analysis: confluence (critical pairs), termination (dependency pairs).
-trs-analysis = []
-## E-graph equality saturation: enhanced joinability, term simplification,
-## equivalence discovery (Willsey et al., POPL 2021).
-egraph = ["trs-analysis"]
-## Visibly Pushdown Automata: decidable equivalence/inclusion for structured parsing.
-vpa = []
-## Weighted Tree Automata: term recognition, ranking, and transduction.
-tree-automata = []
-## Buchi/Parity automata: infinite-word acceptance for liveness properties.
-omega = []
-## LTL model checking: WPDS x Buchi product for temporal property verification.
-ltl = ["omega"]
-## Alternating automata: universal branching for game semantics and CTL.
-alternating = []
-## Nominal automata: orbit-finite sets for name-passing calculi.
-nominal = []
-## Petri nets / VASS: concurrent process analysis (deadlock, boundedness).
-petri = []
-## Cost Register Automata: streaming quantitative computation.
-cra = []
-## Kleene Algebra with Tests: decidable Hoare logic, program equivalence.
-kat = []
-## Theory morphisms: cross-theory translation and proof transfer.
-morphisms = []
-
-# ── Constraint Theory Suite ───────────────────────────────────────────────────
-
-## LogicT fair backtracking search framework: msplit-based LogicT monad
-## (Kiselyov et al., ICFP 2005), ConstraintTheory trait, TheoryAlgebra bridge.
-logict = []
-## Presburger arithmetic: automata-based decision procedure for multi-variable
-## linear integer arithmetic (Büchi 1960). Pure Rust, zero external deps.
-presburger = ["logict"]
-## Structural unification (Martelli & Montanari 1982): ConstraintTheory for
-## pattern matching, type variable solving, polymorphic type instantiation.
-unification = ["logict"]
-## Subtype lattice: ConstraintTheory for type hierarchy analysis with join/meet
-## (LUB/GLB) operations, transitive closure, exhaustiveness checking.
-lattice-theory = ["logict"]
-## Pluggable type system framework: TypeSystem trait, LatticeTypeSystem,
-## RefinementTypeSystem, TypeSystemAlgebra bridge to BooleanAlgebra.
-type-system = ["logict", "lattice-theory"]
-## Set-theoretic types: CDuce/XDuce-style union/intersection/negation types
-## modeled as tree automata languages. Subtyping via language inclusion.
-set-theoretic-types = ["type-system", "tree-automata"]
-
-# ── Advanced Automata Infrastructure ──────────────────────────────────────────
-
-## Symbolic automata: predicate-labeled transitions, BooleanAlgebra trait,
-## decidability classification (T1-T4), guard analysis.
-symbolic-automata = ["kat"]
-## Weighted MSO logic: grammar property specification, lint-as-formula,
-## Büchi-Elgot-Trakhtenbrot bridge (Droste & Gastin 2007).
-weighted-mso = ["symbolic-automata"]
-## Parity alternating tree automata: mu-calculus model checking on ASTs,
-## structural verification, test generation (Emerson & Jutla 1991).
-parity-tree-automata = ["alternating", "tree-automata"]
-## Register automata: data-aware finite-state computation, context-sensitive
-## parsing, binding verification (Kaminski & Francez 1994).
-register-automata = ["nominal"]
-## Probabilistic automata: statistical disambiguation, expected-case
-## optimization, corpus-driven weight training.
-probabilistic = ["wfst-log"]
-## Multi-tape automata: synchronized multi-stream computation,
-## multi-channel receives, parallel tokenization (Kempe 2004).
-multi-tape = ["wfst-log"]
-## Multiset automata: process multiplicity, resource-bounded parsing,
-## cardinality predicates (Müller, Weiß & Lochau 2024).
-multiset-automata = []
-## Weighted two-way transducers: bidirectional weighted transductions,
-## cross-channel constraint propagation (Feng & Maletti 2022).
-two-way-transducer = ["wfst-log"]
-## Symbolic Finite Transducers: output-producing transductions over infinite
-## domains. Composition, pre/post-image, functionality (D'Antoni & Veanes 2012).
-sft = ["symbolic-automata"]
-## Predicate Dispatch Automaton: algebraic variety classification for directed
-## module dispatch. Decomposes predicate formulas into morphemes and activates
-## only the relevant Phase 7 modules (Eilenberg variety theorem).
-predicate-dispatch = ["symbolic-automata", "weighted-mso"]
-
-# ── Convenience groups ───────────────────────────────────────────────────────
-
-## Grammar-level analysis (tree automata + VPA + TRS + e-graph).
-analysis = ["tree-automata", "vpa", "trs-analysis", "egraph"]
-## Program verification (omega + LTL + KAT + relational WPDS).
-verification = ["omega", "ltl", "kat", "wpds-relational"]
-## Process algebra analysis (nominal + Petri + omega + alternating + symbolic + two-way).
-process-algebra = ["nominal", "petri", "omega", "alternating", "symbolic-automata",
-                   "two-way-transducer"]
-## Predicated types infrastructure (all modules needed for predicate evaluation).
-predicated-types = ["symbolic-automata", "weighted-mso", "parity-tree-automata",
-                    "register-automata", "multi-tape", "multiset-automata",
-                    "two-way-transducer", "sft",
-                    "presburger", "unification", "lattice-theory",
-                    "type-system", "set-theoretic-types"]
-## Everything: all analysis, verification, and advanced automata features.
-full-analysis = [
-    "wfst-log", "quantum",
-    "wpds-relational", "wpds-extended", "wpds-ara",
-    "provenance", "proofs",
-    "trs-analysis", "egraph", "vpa", "tree-automata",
-    "omega", "ltl", "alternating",
-    "nominal", "petri", "cra", "kat", "morphisms",
-    "symbolic-automata", "weighted-mso",
-    "parity-tree-automata", "register-automata",
-    "probabilistic", "multi-tape", "multiset-automata",
-    "two-way-transducer", "sft",
-    "predicate-dispatch",
-    "logict", "presburger", "unification", "lattice-theory",
-    "type-system", "set-theoretic-types",
-]
+## Ascent parallel fixpoint: switches ascent! → ascent_par! for parallel rewriting.
+## Currently broken by upstream ascent 0.8.0 codegen bug (E0596: mutable borrow
+## in Fn closure). See docs/design/exploring/ascent_parallel_issue.md.
+ascent-parallel = []
 
 [dependencies]
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
-serde = { version = "1", features = ["derive"], optional = true }
-postcard = { version = "1", features = ["alloc"], optional = true }
-proptest = { version = "1", optional = true }
-num-complex = { version = "0.4", optional = true }
-nalgebra = { version = "0.33", optional = true }
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["alloc"] }
+proptest = { version = "1" }
+num-complex = { version = "0.4" }
+nalgebra = { version = "0.33" }
 pathmap = { git = "https://github.com/dylon/PathMap.git", branch = "feature/mettatron-fixes" }
 regex-syntax = { version = "0.8", default-features = false, features = ["unicode"] }
+im = { version = "15" }
+crossbeam-channel = { version = "0.5" }
+crossbeam-deque = { version = "0.8" }
+dashmap = { version = "6" }
+num_cpus = { version = "1" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -187,29 +60,31 @@ harness = false
 [[bench]]
 name = "bench_dispatch"
 harness = false
-required-features = ["grammar-gen"]
 
 [[bench]]
 name = "bench_presburger"
 harness = false
-required-features = ["presburger"]
 
 [[bench]]
 name = "bench_logict"
 harness = false
-required-features = ["logict"]
 
 [[bench]]
 name = "bench_type_system"
 harness = false
-required-features = ["type-system"]
 
 [[bench]]
 name = "bench_sft"
 harness = false
-required-features = ["sft"]
 
 [[bench]]
 name = "bench_egraph"
 harness = false
-required-features = ["egraph"]
+
+[[bench]]
+name = "bench_cesk_store"
+harness = false
+
+[[bench]]
+name = "bench_green_threads"
+harness = false

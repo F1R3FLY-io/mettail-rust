@@ -21,8 +21,8 @@ use super::common::{
     collect_nonterminal_fields, count_nonterminals, generate_tls_pool_iter, has_collection_field,
     relation_names, PoolArm,
 };
-use crate::ast::grammar::{GrammarItem, GrammarRule};
-use crate::ast::language::LanguageDef;
+use mettail_ast::grammar::{GrammarItem, GrammarRule, TermParam};
+use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeSet;
@@ -166,14 +166,18 @@ fn generate_regular_constructor_pool_arm(
         return None; // No fields to extract (nullary constructor)
     }
 
-    // Find indices of fields matching the target category
+    // Find indices of fields matching the target category.
+    // collect_nonterminal_fields returns all NonTerminal fields; we additionally
+    // need to know whether each field is a built-in (Var/Integer/…) so we can
+    // skip them. Re-inspect the rule items to get the kind.
     let matching_indices: Vec<usize> = fields
         .iter()
         .enumerate()
         .filter(|(_, (_, field_type))| {
+            // Skip built-in types (Var, Integer, etc.) — not exported categories
             let ft_str = field_type.to_string();
-            // Skip Var and Integer — they are built-in types, not exported categories
-            ft_str != "Var" && ft_str != "Integer" && **field_type == *tgt
+            !mettail_ast::grammar::NonTerminalKind::classify(&ft_str).is_builtin()
+                && **field_type == *tgt
         })
         .map(|(i, _)| i)
         .collect();
@@ -217,13 +221,29 @@ fn generate_binding_constructor_pool_arm(
     src: &Ident,
     tgt: &Ident,
 ) -> Option<PoolArm> {
+    // Phase 3A (predicated types): skip pool-arm generation for
+    // guarded constructors. The actual variant has an extra
+    // BehavioralPred field that breaks the simple
+    // `count_nonterminals`-based arity computation. Pool-arm
+    // generation is used for cross-category extraction (e.g., for
+    // recursive substitution); guarded constructors are excluded
+    // from this analysis pending Phase 8 work.
+    let has_guard_slot = rule
+        .term_context
+        .as_ref()
+        .map(|ctx| ctx.iter().any(|p| matches!(p, TermParam::GuardBody { .. })))
+        .unwrap_or(false);
+    if has_guard_slot {
+        return None;
+    }
+
     let label = &rule.label;
     let (_binder_idx, body_indices) = &rule.bindings[0];
     let body_idx = body_indices[0];
 
     // Get body category
     let body_cat = match &rule.items[body_idx] {
-        GrammarItem::NonTerminal(cat) => cat,
+        GrammarItem::NonTerminal { ident: cat, .. } => cat,
         _ => return None,
     };
 
@@ -259,10 +279,9 @@ fn generate_binding_constructor_pool_arm(
                         quote! { buf.push(#scope_name.inner().unsafe_body.as_ref().clone()); },
                     );
                 }
-            } else if let GrammarItem::NonTerminal(cat) = item {
+            } else if let GrammarItem::NonTerminal { ident: cat, kind } = item {
                 let name = format_ident!("f{}", ast_field_idx);
-                let cat_str = cat.to_string();
-                if cat_str != "Var" && cat_str != "Integer" && *cat == *tgt {
+                if !kind.is_builtin() && *cat == *tgt {
                     field_bindings.push(quote! { #name });
                     pushes.push(quote! { buf.push(#name.as_ref().clone()); });
                 } else {

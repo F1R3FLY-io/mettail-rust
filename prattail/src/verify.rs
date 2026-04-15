@@ -751,6 +751,8 @@ mod tests {
             context_rule_tables: HashMap::new(),
             cross_category_bp: HashMap::new(),
             context_unambiguous: HashMap::new(),
+            cek_bijection: crate::wpds::CekWpdsBijection::default(),
+            pautomaton: crate::wpds::PAutomaton::new(0),
         }
     }
 

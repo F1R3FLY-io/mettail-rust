@@ -8,8 +8,8 @@
 use super::common::{
     generate_tls_pool_iter, in_cat_filter, relation_names, CategoryFilter, PoolArm,
 };
-use crate::ast::grammar::{GrammarItem, GrammarRule};
-use crate::ast::language::LanguageDef;
+use mettail_ast::grammar::{GrammarItem, GrammarRule};
+use mettail_ast::language::LanguageDef;
 use crate::logic::bloom_filter::BloomFilter;
 use crate::logic::rules as unified_rules;
 use proc_macro2::TokenStream;
@@ -162,7 +162,7 @@ fn compute_equation_active_constructors(language: &LanguageDef) -> HashSet<Strin
 
             // Check if any non-terminal field belongs to an active category
             let has_active_field = rule.items.iter().any(|item| {
-                if let GrammarItem::NonTerminal(cat) = item {
+                if let GrammarItem::NonTerminal { ident: cat, .. } = item {
                     active_categories.contains(&cat.to_string())
                 } else {
                     false
@@ -226,9 +226,6 @@ fn generate_congruence_rules(
     // Key: (category_str, vec of field_type_str)
     let mut groups: BTreeMap<(String, Vec<String>), Vec<&GrammarRule>> = BTreeMap::new();
 
-    let var_str = "Var";
-    let int_str = "Integer";
-
     for grammar_rule in &language.terms {
         // Skip categories not in the filter
         if !in_cat_filter(&grammar_rule.category, cat_filter) {
@@ -271,13 +268,17 @@ fn generate_congruence_rules(
             continue;
         }
 
-        // Collect non-terminal argument categories
+        // Collect non-terminal argument categories (skip built-in types like Var, Integer)
         let arg_cats: Vec<String> = grammar_rule
             .items
             .iter()
             .filter_map(|item| {
-                if let GrammarItem::NonTerminal(cat) = item {
-                    Some(cat.to_string())
+                if let GrammarItem::NonTerminal { ident: cat, kind } = item {
+                    if kind.is_builtin() {
+                        None // Skip Var, Integer, Boolean, etc.
+                    } else {
+                        Some(cat.to_string())
+                    }
                 } else {
                     None
                 }
@@ -285,12 +286,7 @@ fn generate_congruence_rules(
             .collect();
 
         if arg_cats.is_empty() {
-            continue; // Nullary constructor
-        }
-
-        // Skip constructors with Var or Integer arguments
-        if arg_cats.iter().any(|c| c == var_str || c == int_str) {
-            continue;
+            continue; // Nullary constructor or all-builtin arguments
         }
 
         let key = (grammar_rule.category.to_string(), arg_cats);
@@ -429,13 +425,25 @@ fn generate_congruence_rules(
             });
         }
 
+        // F1: Eqrel dereference fix — ascent_par! uses parallel eqrel relations
+        // (CEqRelIndCommon) whose iterators yield &&(T, T) instead of &(T, T).
+        // We bind fresh temporary variables from the eqrel join and immediately
+        // clone-dereference them via `if *sf == sf_tmp.clone()`. This performs
+        // the equality check while normalizing the reference level.
+        // Works with both ascent! (no-op clone) and ascent_par! (strips &&T → T).
         let eq_checks: Vec<TokenStream> = eq_check_pairs
             .iter()
             .map(|(i, ft_str)| {
                 let eq_arg_rel = format_ident!("eq_{}", ft_str.to_lowercase());
                 let sf = &s_fields[*i];
                 let tf = &t_fields[*i];
-                quote! { #eq_arg_rel(#sf, #tf) }
+                let sf_tmp = format_ident!("__eqcong_{}", sf);
+                let tf_tmp = format_ident!("__eqcong_{}", tf);
+                quote! {
+                    #eq_arg_rel(#sf_tmp, #tf_tmp),
+                    if #sf == #sf_tmp.clone(),
+                    if #tf == #tf_tmp.clone()
+                }
             })
             .collect();
 
@@ -539,7 +547,7 @@ fn generate_congruence_rules(
     if emit_diagnostics && bcg03_pruned_count > 0 {
         mettail_prattail::lint::emit_diagnostic(
             &mettail_prattail::lint::LintDiagnostic {
-                id: "G36",
+                id: mettail_prattail::lint::DiagnosticId::G36,
                 name: "equation-inert-congruence-pruned",
                 severity: mettail_prattail::lint::LintSeverity::Note,
                 category: None,
@@ -568,7 +576,7 @@ fn generate_congruence_rules(
             .collect();
         mettail_prattail::lint::emit_diagnostic(
             &mettail_prattail::lint::LintDiagnostic {
-                id: "G37",
+                id: mettail_prattail::lint::DiagnosticId::G37,
                 name: "bloom-filter-eq-congruence-guard",
                 severity: mettail_prattail::lint::LintSeverity::Note,
                 category: None,
@@ -759,17 +767,18 @@ pub fn stratify_equation_rules(language: &LanguageDef) -> StratificationInfo {
             .items
             .iter()
             .filter_map(|item| {
-                if let GrammarItem::NonTerminal(cat) = item {
-                    Some(cat.to_string())
+                if let GrammarItem::NonTerminal { ident: cat, kind } = item {
+                    if kind.is_builtin() {
+                        None // Skip Var, Integer, Boolean, etc.
+                    } else {
+                        Some(cat.to_string())
+                    }
                 } else {
                     None
                 }
             })
             .collect();
         if arg_cats.is_empty() {
-            continue;
-        }
-        if arg_cats.iter().any(|c| c == "Var" || c == "Integer") {
             continue;
         }
         let key = (grammar_rule.category.to_string(), arg_cats);
@@ -903,11 +912,11 @@ pub fn stratify_equation_rules(language: &LanguageDef) -> StratificationInfo {
 /// depends on `eq_C` (because congruence rules for C feed into the equation).
 /// This is conservative: we collect all categories mentioned in the pattern.
 fn collect_pattern_eq_deps(
-    pattern: &crate::ast::pattern::Pattern,
+    pattern: &mettail_ast::pattern::Pattern,
     language: &LanguageDef,
     deps: &mut BTreeSet<String>,
 ) {
-    use crate::ast::pattern::{Pattern, PatternTerm};
+    use mettail_ast::pattern::{Pattern, PatternTerm};
     match pattern {
         Pattern::Term(pt) => match pt {
             PatternTerm::Var(_) => {},
@@ -918,7 +927,7 @@ fn collect_pattern_eq_deps(
                 // Also collect field categories (constructor's field types)
                 if let Some(rule) = language.get_constructor(constructor) {
                     for item in &rule.items {
-                        if let GrammarItem::NonTerminal(field_cat) = item {
+                        if let GrammarItem::NonTerminal { ident: field_cat, .. } = item {
                             deps.insert(field_cat.to_string());
                         }
                     }
@@ -1162,9 +1171,9 @@ mod tests {
         terms: Vec<(&str, &str, Vec<&str>)>, // (label, category, [field_categories])
         equations: Vec<(&str, &str, &str)>,   // (name, lhs_constructor, rhs_constructor)
     ) -> LanguageDef {
-        use crate::ast::grammar::{GrammarItem, GrammarRule};
-        use crate::ast::language::{Equation, LangType, LanguageDef};
-        use crate::ast::pattern::{Pattern, PatternTerm};
+        use mettail_ast::grammar::{GrammarItem, GrammarRule};
+        use mettail_ast::language::{Equation, LangType, LanguageDef};
+        use mettail_ast::pattern::{Pattern, PatternTerm};
         use proc_macro2::Span;
         use syn::Ident;
 
@@ -1181,7 +1190,7 @@ mod tests {
             .map(|(label, category, field_cats)| {
                 let items: Vec<GrammarItem> = field_cats
                     .iter()
-                    .map(|fc| GrammarItem::NonTerminal(Ident::new(fc, Span::call_site())))
+                    .map(|fc| GrammarItem::non_terminal(Ident::new(fc, Span::call_site())))
                     .collect();
                 GrammarRule {
                     label: Ident::new(label, Span::call_site()),
@@ -1194,6 +1203,7 @@ mod tests {
                     eval_mode: None,
                     is_right_assoc: false,
                     prefix_bp: None,
+                    tier_directive: None,
                 }
             })
             .collect();
@@ -1237,6 +1247,7 @@ mod tests {
             equations: eqs,
             rewrites: vec![],
             logic: None,
+            guard_config: None,
         }
     }
 

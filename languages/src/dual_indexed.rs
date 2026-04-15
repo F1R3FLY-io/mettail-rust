@@ -33,8 +33,19 @@
 //! type generation to the standard `bin_rel_provider` adaptor types.
 
 use std::hash::{BuildHasherDefault, Hash};
+use std::marker::PhantomData;
+use std::sync::Mutex;
 
-use ascent::internal::{Freezable, RelIndexMerge};
+use std::rc::Rc;
+
+use ascent::internal::{
+    CRelFullIndexWrite, CRelIndexWrite, Freezable, RelFullIndexRead, RelFullIndexWrite,
+    RelIndexMerge, RelIndexRead, RelIndexReadAll, RelIndexWrite,
+    ToRelIndex, ToRelIndex0,
+};
+use ascent::internal::{CRelIndexRead, CRelIndexReadAll};
+use ascent::rayon;
+use ascent::rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use ascent_byods_rels::adaptor::bin_rel::ByodsBinRel;
 use hashbrown::HashMap;
 use rustc_hash::FxHasher;
@@ -49,6 +60,51 @@ type FxHashSet<T> = hashbrown::HashSet<T, FxBuildHasher>;
 
 /// Iterator over elements of an `FxHashSet`.
 pub type HashSetIter<'a, T> = hashbrown::hash_set::Iter<'a, T>;
+
+// ---------------------------------------------------------------------------
+// IteratorFromDyn: clonable dynamic iterator (matches ascent-byods-rels pattern)
+// ---------------------------------------------------------------------------
+
+/// A clonable iterator backed by a boxed `dyn Iterator` and an `Rc`-wrapped
+/// producer closure that can recreate the iterator on clone.
+///
+/// This mirrors the private `IteratorFromDyn` in `ascent-byods-rels`.
+pub struct IteratorFromDyn<'a, T> {
+    iter: Box<dyn Iterator<Item = T> + 'a>,
+    producer: Rc<dyn Fn() -> Box<dyn Iterator<Item = T> + 'a> + 'a>,
+}
+
+impl<'a, T> IteratorFromDyn<'a, T> {
+    pub fn new<F: Fn() -> Iter + 'a, Iter: Iterator<Item = T> + 'a>(producer: F) -> Self {
+        Self::from_box_clo(move || Box::new(producer()))
+    }
+
+    pub fn from_box_clo<F: Fn() -> Box<dyn Iterator<Item = T> + 'a> + 'a>(producer: F) -> Self {
+        let iter = producer();
+        Self {
+            iter,
+            producer: Rc::new(producer) as _,
+        }
+    }
+}
+
+impl<T> Iterator for IteratorFromDyn<'_, T> {
+    type Item = T;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
+
+impl<T> Clone for IteratorFromDyn<'_, T> {
+    fn clone(&self) -> Self {
+        Self {
+            iter: (self.producer)(),
+            producer: self.producer.clone(),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // DualIndexedRel: the `rel_ind_common` type
@@ -220,6 +276,845 @@ impl<T: Clone + Hash + Eq + 'static> ByodsBinRel for DualIndexedRel<T> {
 }
 
 // ---------------------------------------------------------------------------
+// Concurrent dual-indexed relation for ascent_par!
+// ---------------------------------------------------------------------------
+
+/// Convert `&T` to `&(T,)`. Sound because `(T,)` has the same repr as `T`.
+/// Same pattern as `ceqrel_ind.rs` in ascent-byods-rels.
+pub(crate) fn ref_to_singleton_tuple_ref<T>(x: &T) -> &(T,) {
+    unsafe { std::mem::transmute(x) }
+}
+
+/// Concurrent dual-indexed binary relation for `ascent_par!`.
+///
+/// Uses an enum state machine following the `CEqRelIndCommon` pattern:
+/// - `Unfrozen`: Writable via `Mutex<DualIndexedRel<T>>` for concurrent access
+/// - `Frozen`: Immutable snapshot for parallel reads via Rayon iterators
+pub enum CDualIndexedRel<T: Clone + Hash + Eq> {
+    Unfrozen(Mutex<DualIndexedRel<T>>),
+    Frozen(DualIndexedRel<T>),
+}
+
+impl<T: Clone + Hash + Eq> CDualIndexedRel<T> {
+    fn unwrap_frozen(&self) -> &DualIndexedRel<T> {
+        match self {
+            CDualIndexedRel::Frozen(rel) => rel,
+            CDualIndexedRel::Unfrozen(_) => {
+                panic!("CDualIndexedRel: unexpected state (unwrap_frozen called on Unfrozen)")
+            }
+        }
+    }
+
+    fn unwrap_mut_frozen(&mut self) -> &mut DualIndexedRel<T> {
+        match self {
+            CDualIndexedRel::Frozen(rel) => rel,
+            CDualIndexedRel::Unfrozen(_) => {
+                panic!("CDualIndexedRel: unexpected state (unwrap_mut_frozen called on Unfrozen)")
+            }
+        }
+    }
+
+    fn unwrap_unfrozen(&self) -> &Mutex<DualIndexedRel<T>> {
+        match self {
+            CDualIndexedRel::Unfrozen(m) => m,
+            CDualIndexedRel::Frozen(_) => {
+                panic!("CDualIndexedRel: unexpected state (unwrap_unfrozen called on Frozen)")
+            }
+        }
+    }
+
+    fn unwrap_mut_unfrozen(&mut self) -> &mut DualIndexedRel<T> {
+        match self {
+            CDualIndexedRel::Unfrozen(m) => m.get_mut().expect(
+                "CDualIndexedRel: unexpected state (unwrap_mut_unfrozen: mutex poisoned)",
+            ),
+            CDualIndexedRel::Frozen(_) => {
+                panic!(
+                    "CDualIndexedRel: unexpected state (unwrap_mut_unfrozen called on Frozen)"
+                )
+            }
+        }
+    }
+}
+
+impl<T: Clone + Hash + Eq> Default for CDualIndexedRel<T> {
+    fn default() -> Self {
+        CDualIndexedRel::Frozen(DualIndexedRel::default())
+    }
+}
+
+impl<T: Clone + Hash + Eq> Clone for CDualIndexedRel<T> {
+    fn clone(&self) -> Self {
+        match self {
+            CDualIndexedRel::Unfrozen(m) => CDualIndexedRel::Unfrozen(Mutex::new(
+                m.lock()
+                    .expect("CDualIndexedRel: unexpected state (clone: mutex poisoned)")
+                    .clone(),
+            )),
+            CDualIndexedRel::Frozen(rel) => CDualIndexedRel::Frozen(rel.clone()),
+        }
+    }
+}
+
+impl<T: Clone + Hash + Eq> Freezable for CDualIndexedRel<T> {
+    // No-op: state transitions are managed by RelIndexMerge.
+}
+
+impl<T: Clone + Hash + Eq> RelIndexMerge for CDualIndexedRel<T> {
+    fn move_index_contents(_from: &mut Self, _to: &mut Self) {
+        unimplemented!("merge_delta_to_total_new_to_delta must be used instead")
+    }
+
+    fn init(new: &mut Self, _delta: &mut Self, _total: &mut Self) {
+        *new = CDualIndexedRel::Unfrozen(Mutex::new(DualIndexedRel::default()));
+    }
+
+    fn merge_delta_to_total_new_to_delta(new: &mut Self, delta: &mut Self, total: &mut Self) {
+        // Merge delta (Frozen) into total (Frozen).
+        let total_inner = total.unwrap_mut_frozen();
+        let delta_inner = delta.unwrap_mut_frozen();
+        for (x, y) in delta_inner.iter_all() {
+            total_inner.insert(x.clone(), y.clone());
+        }
+
+        // Take new's unfrozen content as the new delta (Frozen).
+        let new_content = std::mem::take(new.unwrap_mut_unfrozen());
+        *delta = CDualIndexedRel::Frozen(new_content);
+
+        // Reset new to empty Unfrozen.
+        *new = CDualIndexedRel::Unfrozen(Mutex::new(DualIndexedRel::default()));
+    }
+}
+
+impl<T: Clone + Hash + Eq> RelIndexWrite for CDualIndexedRel<T> {
+    type Key = (T, T);
+    type Value = ();
+
+    fn index_insert(&mut self, key: Self::Key, _value: Self::Value) {
+        self.unwrap_mut_unfrozen().insert(key.0, key.1);
+    }
+}
+
+impl<T: Clone + Hash + Eq> CRelIndexWrite for CDualIndexedRel<T> {
+    type Key = (T, T);
+    type Value = ();
+
+    fn index_insert(&self, key: Self::Key, _value: Self::Value) {
+        self.unwrap_unfrozen()
+            .lock()
+            .expect("CDualIndexedRel: unexpected state (CRelIndexWrite: mutex poisoned)")
+            .insert(key.0, key.1);
+    }
+}
+
+impl<T: Clone + Hash + Eq> RelFullIndexWrite for CDualIndexedRel<T> {
+    type Key = (T, T);
+    type Value = ();
+
+    fn insert_if_not_present(&mut self, key: &Self::Key, _v: Self::Value) -> bool {
+        self.unwrap_mut_unfrozen()
+            .insert(key.0.clone(), key.1.clone())
+    }
+}
+
+impl<T: Clone + Hash + Eq> CRelFullIndexWrite for CDualIndexedRel<T> {
+    type Key = (T, T);
+    type Value = ();
+
+    fn insert_if_not_present(&self, key: &Self::Key, _v: Self::Value) -> bool {
+        self.unwrap_unfrozen()
+            .lock()
+            .expect("CDualIndexedRel: unexpected state (CRelFullIndexWrite: mutex poisoned)")
+            .insert(key.0.clone(), key.1.clone())
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + 'a> RelIndexRead<'a> for CDualIndexedRel<T> {
+    type Key = (T, T);
+    type Value = ();
+    type IteratorType = std::iter::Once<()>;
+
+    fn index_get(&'a self, key: &Self::Key) -> Option<Self::IteratorType> {
+        let rel = self.unwrap_frozen();
+        if rel.contains(&key.0, &key.1) {
+            Some(std::iter::once(()))
+        } else {
+            None
+        }
+    }
+
+    fn len_estimate(&self) -> usize {
+        self.unwrap_frozen().count_estimate()
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + Sync + 'a> CRelIndexRead<'a> for CDualIndexedRel<T> {
+    type Key = (T, T);
+    type Value = ();
+    type IteratorType = rayon::iter::Once<()>;
+
+    fn c_index_get(&'a self, key: &Self::Key) -> Option<Self::IteratorType> {
+        let rel = self.unwrap_frozen();
+        if rel.contains(&key.0, &key.1) {
+            Some(rayon::iter::once(()))
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + 'a> RelIndexReadAll<'a> for CDualIndexedRel<T> {
+    type Key = (&'a T, &'a T);
+    type Value = ();
+    type ValueIteratorType = std::iter::Once<()>;
+    type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
+
+    fn iter_all(&'a self) -> Self::AllIteratorType {
+        Box::new(
+            self.unwrap_frozen()
+                .iter_all()
+                .map(|pair| (pair, std::iter::once(()))),
+        )
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + Sync + Send + 'a> CRelIndexReadAll<'a> for CDualIndexedRel<T> {
+    type Key = (&'a T, &'a T);
+    type Value = ();
+    type ValueIteratorType = rayon::iter::Once<()>;
+    type AllIteratorType = rayon::iter::Map<
+        DualAllPairsParIter<'a, T>,
+        fn((&'a T, &'a T)) -> ((&'a T, &'a T), rayon::iter::Once<()>),
+    >;
+
+    fn c_iter_all(&'a self) -> Self::AllIteratorType {
+        DualAllPairsParIter(self.unwrap_frozen()).map(|pair| (pair, rayon::iter::once(())))
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq> RelFullIndexRead<'a> for CDualIndexedRel<T> {
+    type Key = (T, T);
+
+    fn contains_key(&'a self, key: &Self::Key) -> bool {
+        self.unwrap_frozen().contains(&key.0, &key.1)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DualInd0: forward index (col0 -> col1)
+// ---------------------------------------------------------------------------
+
+pub struct DualInd0<'a, T: Clone + Hash + Eq>(pub(crate) &'a CDualIndexedRel<T>);
+
+impl<'a, T: Clone + Hash + Eq> RelIndexRead<'a> for DualInd0<'a, T> {
+    type Key = (T,);
+    type Value = (&'a T,);
+    type IteratorType = std::iter::Map<HashSetIter<'a, T>, fn(&T) -> (&T,)>;
+
+    fn index_get(&'a self, key: &Self::Key) -> Option<Self::IteratorType> {
+        self.0
+            .unwrap_frozen()
+            .forward
+            .get(&key.0)
+            .map(|set| set.iter().map((|x| (x,)) as fn(&T) -> (&T,)))
+    }
+
+    fn len_estimate(&self) -> usize {
+        self.0.unwrap_frozen().forward.len()
+    }
+}
+
+/// Clonable parallel iterator over values in a forward-index `FxHashSet`.
+/// Stores a reference to the set rather than the non-Clone `ParIter` itself.
+#[derive(Clone)]
+pub struct DualInd0CRelReadIter<'a, T: Clone + Hash + Eq + Sync> {
+    set: &'a FxHashSet<T>,
+}
+
+impl<'a, T: Clone + Hash + Eq + Sync + Send> ParallelIterator for DualInd0CRelReadIter<'a, T> {
+    type Item = (&'a T,);
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+    where
+        C: rayon::iter::plumbing::UnindexedConsumer<Self::Item>,
+    {
+        self.set
+            .par_iter()
+            .map(|x| (x,))
+            .drive_unindexed(consumer)
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + Sync + Send> CRelIndexRead<'a> for DualInd0<'a, T> {
+    type Key = (T,);
+    type Value = (&'a T,);
+    type IteratorType = DualInd0CRelReadIter<'a, T>;
+
+    fn c_index_get(&'a self, key: &Self::Key) -> Option<Self::IteratorType> {
+        self.0
+            .unwrap_frozen()
+            .forward
+            .get(&key.0)
+            .map(|set| DualInd0CRelReadIter { set })
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq> RelIndexReadAll<'a> for DualInd0<'a, T> {
+    type Key = &'a (T,);
+    type Value = (&'a T,);
+    type ValueIteratorType = std::iter::Map<HashSetIter<'a, T>, for<'aa> fn(&'aa T) -> (&'aa T,)>;
+    type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
+
+    fn iter_all(&'a self) -> Self::AllIteratorType {
+        Box::new(
+            self.0
+                .unwrap_frozen()
+                .forward
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        ref_to_singleton_tuple_ref(k),
+                        v.iter().map((|x| (x,)) as for<'aa> fn(&'aa T) -> (&'aa T,)),
+                    )
+                }),
+        )
+    }
+}
+
+/// Parallel iterator over `DualInd0`'s forward index entries.
+/// Yields `(key_ref, par_iter_over_values)` for each forward-map entry.
+#[derive(Clone)]
+pub struct DualInd0ParIter<'a, T: Clone + Hash + Eq + Sync>(&'a DualIndexedRel<T>);
+
+impl<'a, T: Clone + Hash + Eq + Sync + Send> ParallelIterator for DualInd0ParIter<'a, T> {
+    type Item = (
+        &'a (T,),
+        rayon::iter::Map<hashbrown::hash_set::rayon::ParIter<'a, T>, fn(&T) -> (&T,)>,
+    );
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+    where
+        C: rayon::iter::plumbing::UnindexedConsumer<Self::Item>,
+    {
+        self.0
+            .forward
+            .par_iter()
+            .map(|(k, v)| {
+                let vals: rayon::iter::Map<
+                    hashbrown::hash_set::rayon::ParIter<'a, T>,
+                    fn(&T) -> (&T,),
+                > = v.par_iter().map(|x| (x,));
+                (ref_to_singleton_tuple_ref(k), vals)
+            })
+            .drive_unindexed(consumer)
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + Sync + Send> CRelIndexReadAll<'a> for DualInd0<'a, T> {
+    type Key = &'a (T,);
+    type Value = (&'a T,);
+    type ValueIteratorType =
+        rayon::iter::Map<hashbrown::hash_set::rayon::ParIter<'a, T>, fn(&T) -> (&T,)>;
+    type AllIteratorType = DualInd0ParIter<'a, T>;
+
+    fn c_iter_all(&'a self) -> Self::AllIteratorType {
+        DualInd0ParIter(self.0.unwrap_frozen())
+    }
+}
+
+impl<T: Clone + Hash + Eq> RelIndexWrite for DualInd0<'_, T> {
+    type Key = (T,);
+    type Value = (T,);
+    fn index_insert(&mut self, _key: Self::Key, _value: Self::Value) { /* noop */ }
+}
+
+impl<T: Clone + Hash + Eq> CRelIndexWrite for DualInd0<'_, T> {
+    type Key = (T,);
+    type Value = (T,);
+    fn index_insert(&self, _key: Self::Key, _value: Self::Value) { /* noop */ }
+}
+
+impl<T: Clone + Hash + Eq> RelIndexMerge for DualInd0<'_, T> {
+    fn move_index_contents(_from: &mut Self, _to: &mut Self) { /* noop */ }
+}
+
+// ---------------------------------------------------------------------------
+// DualInd1: reverse index (col1 -> col0)
+// ---------------------------------------------------------------------------
+
+pub struct DualInd1<'a, T: Clone + Hash + Eq>(pub(crate) &'a CDualIndexedRel<T>);
+
+impl<'a, T: Clone + Hash + Eq> RelIndexRead<'a> for DualInd1<'a, T> {
+    type Key = (T,);
+    type Value = (&'a T,);
+    type IteratorType = std::iter::Map<std::slice::Iter<'a, T>, fn(&T) -> (&T,)>;
+
+    fn index_get(&'a self, key: &Self::Key) -> Option<Self::IteratorType> {
+        self.0
+            .unwrap_frozen()
+            .reverse
+            .get(&key.0)
+            .map(|v| v.iter().map((|x| (x,)) as fn(&T) -> (&T,)))
+    }
+
+    fn len_estimate(&self) -> usize {
+        self.0.unwrap_frozen().reverse.len()
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + Sync + Send> CRelIndexRead<'a> for DualInd1<'a, T> {
+    type Key = (T,);
+    type Value = (&'a T,);
+    type IteratorType =
+        rayon::iter::Map<rayon::slice::Iter<'a, T>, fn(&T) -> (&T,)>;
+
+    fn c_index_get(&'a self, key: &Self::Key) -> Option<Self::IteratorType> {
+        self.0
+            .unwrap_frozen()
+            .reverse
+            .get(&key.0)
+            .map(|v| v.par_iter().map((|x| (x,)) as fn(&T) -> (&T,)))
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq> RelIndexReadAll<'a> for DualInd1<'a, T> {
+    type Key = &'a (T,);
+    type Value = (&'a T,);
+    type ValueIteratorType =
+        std::iter::Map<std::slice::Iter<'a, T>, for<'aa> fn(&'aa T) -> (&'aa T,)>;
+    type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
+
+    fn iter_all(&'a self) -> Self::AllIteratorType {
+        Box::new(
+            self.0
+                .unwrap_frozen()
+                .reverse
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        ref_to_singleton_tuple_ref(k),
+                        v.iter().map((|x| (x,)) as for<'aa> fn(&'aa T) -> (&'aa T,)),
+                    )
+                }),
+        )
+    }
+}
+
+/// Parallel iterator over `DualInd1`'s reverse index entries.
+#[derive(Clone)]
+pub struct DualInd1ParIter<'a, T: Clone + Hash + Eq + Sync>(&'a DualIndexedRel<T>);
+
+impl<'a, T: Clone + Hash + Eq + Sync + Send> ParallelIterator for DualInd1ParIter<'a, T> {
+    type Item = (
+        &'a (T,),
+        rayon::iter::Map<rayon::slice::Iter<'a, T>, fn(&T) -> (&T,)>,
+    );
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+    where
+        C: rayon::iter::plumbing::UnindexedConsumer<Self::Item>,
+    {
+        self.0
+            .reverse
+            .par_iter()
+            .map(|(k, v)| {
+                let vals: rayon::iter::Map<rayon::slice::Iter<'a, T>, fn(&T) -> (&T,)> =
+                    v.par_iter().map(|x| (x,));
+                (ref_to_singleton_tuple_ref(k), vals)
+            })
+            .drive_unindexed(consumer)
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + Sync + Send> CRelIndexReadAll<'a> for DualInd1<'a, T> {
+    type Key = &'a (T,);
+    type Value = (&'a T,);
+    type ValueIteratorType =
+        rayon::iter::Map<rayon::slice::Iter<'a, T>, fn(&T) -> (&T,)>;
+    type AllIteratorType = DualInd1ParIter<'a, T>;
+
+    fn c_iter_all(&'a self) -> Self::AllIteratorType {
+        DualInd1ParIter(self.0.unwrap_frozen())
+    }
+}
+
+impl<T: Clone + Hash + Eq> RelIndexWrite for DualInd1<'_, T> {
+    type Key = (T,);
+    type Value = (T,);
+    fn index_insert(&mut self, _key: Self::Key, _value: Self::Value) { /* noop */ }
+}
+
+impl<T: Clone + Hash + Eq> CRelIndexWrite for DualInd1<'_, T> {
+    type Key = (T,);
+    type Value = (T,);
+    fn index_insert(&self, _key: Self::Key, _value: Self::Value) { /* noop */ }
+}
+
+impl<T: Clone + Hash + Eq> RelIndexMerge for DualInd1<'_, T> {
+    fn move_index_contents(_from: &mut Self, _to: &mut Self) { /* noop */ }
+}
+
+// ---------------------------------------------------------------------------
+// DualInd0_1: full index (both columns bound)
+// ---------------------------------------------------------------------------
+
+pub struct DualInd0_1<'a, T: Clone + Hash + Eq>(&'a CDualIndexedRel<T>);
+
+impl<'a, T: Clone + Hash + Eq + 'a> RelIndexRead<'a> for DualInd0_1<'a, T> {
+    type Key = <CDualIndexedRel<T> as RelIndexRead<'a>>::Key;
+    type Value = <CDualIndexedRel<T> as RelIndexRead<'a>>::Value;
+    type IteratorType = <CDualIndexedRel<T> as RelIndexRead<'a>>::IteratorType;
+
+    fn index_get(&'a self, key: &Self::Key) -> Option<Self::IteratorType> {
+        self.0.index_get(key)
+    }
+
+    fn len_estimate(&self) -> usize {
+        self.0.len_estimate()
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + Sync + 'a> CRelIndexRead<'a> for DualInd0_1<'a, T> {
+    type Key = <CDualIndexedRel<T> as CRelIndexRead<'a>>::Key;
+    type Value = <CDualIndexedRel<T> as CRelIndexRead<'a>>::Value;
+    type IteratorType = <CDualIndexedRel<T> as CRelIndexRead<'a>>::IteratorType;
+
+    fn c_index_get(&'a self, key: &Self::Key) -> Option<Self::IteratorType> {
+        self.0.c_index_get(key)
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + 'a> RelIndexReadAll<'a> for DualInd0_1<'a, T> {
+    type Key = <CDualIndexedRel<T> as RelIndexReadAll<'a>>::Key;
+    type Value = <CDualIndexedRel<T> as RelIndexReadAll<'a>>::Value;
+    type ValueIteratorType = <CDualIndexedRel<T> as RelIndexReadAll<'a>>::ValueIteratorType;
+    type AllIteratorType = <CDualIndexedRel<T> as RelIndexReadAll<'a>>::AllIteratorType;
+
+    fn iter_all(&'a self) -> Self::AllIteratorType {
+        RelIndexReadAll::iter_all(self.0)
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + Sync + Send + 'a> CRelIndexReadAll<'a> for DualInd0_1<'a, T> {
+    type Key = <CDualIndexedRel<T> as CRelIndexReadAll<'a>>::Key;
+    type Value = <CDualIndexedRel<T> as CRelIndexReadAll<'a>>::Value;
+    type ValueIteratorType = <CDualIndexedRel<T> as CRelIndexReadAll<'a>>::ValueIteratorType;
+    type AllIteratorType = <CDualIndexedRel<T> as CRelIndexReadAll<'a>>::AllIteratorType;
+
+    fn c_iter_all(&'a self) -> Self::AllIteratorType {
+        self.0.c_iter_all()
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq> RelFullIndexRead<'a> for DualInd0_1<'a, T> {
+    type Key = <CDualIndexedRel<T> as RelFullIndexRead<'a>>::Key;
+
+    fn contains_key(&'a self, key: &Self::Key) -> bool {
+        self.0.contains_key(key)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DualInd0_1Write: serial write wrapper for full index
+// ---------------------------------------------------------------------------
+
+pub struct DualInd0_1Write<'a, T: Clone + Hash + Eq>(&'a mut CDualIndexedRel<T>);
+
+impl<T: Clone + Hash + Eq> RelIndexWrite for DualInd0_1Write<'_, T> {
+    type Key = (T, T);
+    type Value = ();
+
+    fn index_insert(&mut self, key: Self::Key, value: Self::Value) {
+        self.0.index_insert(key, value)
+    }
+}
+
+impl<T: Clone + Hash + Eq> RelFullIndexWrite for DualInd0_1Write<'_, T> {
+    type Key = <CDualIndexedRel<T> as RelFullIndexWrite>::Key;
+    type Value = <CDualIndexedRel<T> as RelFullIndexWrite>::Value;
+
+    fn insert_if_not_present(&mut self, key: &Self::Key, v: Self::Value) -> bool {
+        self.0.insert_if_not_present(key, v)
+    }
+}
+
+impl<T: Clone + Hash + Eq> RelIndexMerge for DualInd0_1Write<'_, T> {
+    fn move_index_contents(_from: &mut Self, _to: &mut Self) { /* noop */ }
+}
+
+// ---------------------------------------------------------------------------
+// DualInd0_1CWrite: concurrent write wrapper for full index
+// ---------------------------------------------------------------------------
+
+pub struct DualInd0_1CWrite<'a, T: Clone + Hash + Eq>(&'a CDualIndexedRel<T>);
+
+impl<T: Clone + Hash + Eq> CRelIndexWrite for DualInd0_1CWrite<'_, T> {
+    type Key = (T, T);
+    type Value = ();
+
+    fn index_insert(&self, key: Self::Key, _value: Self::Value) {
+        self.0
+            .unwrap_unfrozen()
+            .lock()
+            .expect("CDualIndexedRel: unexpected state (DualInd0_1CWrite: mutex poisoned)")
+            .insert(key.0, key.1);
+    }
+}
+
+impl<T: Clone + Hash + Eq> CRelFullIndexWrite for DualInd0_1CWrite<'_, T> {
+    type Key = <CDualIndexedRel<T> as CRelFullIndexWrite>::Key;
+    type Value = <CDualIndexedRel<T> as CRelFullIndexWrite>::Value;
+
+    fn insert_if_not_present(&self, key: &Self::Key, v: Self::Value) -> bool {
+        CRelFullIndexWrite::insert_if_not_present(self.0, key, v)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DualIndNone: unindexed access (iterates all pairs)
+// ---------------------------------------------------------------------------
+
+pub struct DualIndNone<'a, T: Clone + Hash + Eq>(&'a CDualIndexedRel<T>);
+
+impl<'a, T: Clone + Hash + Eq> RelIndexRead<'a> for DualIndNone<'a, T> {
+    type Key = ();
+    type Value = (&'a T, &'a T);
+    type IteratorType = IteratorFromDyn<'a, (&'a T, &'a T)>;
+
+    fn index_get(&'a self, _key: &Self::Key) -> Option<Self::IteratorType> {
+        Some(IteratorFromDyn::new(|| self.0.unwrap_frozen().iter_all()))
+    }
+
+    fn len_estimate(&self) -> usize {
+        1
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + Sync + Send> CRelIndexRead<'a> for DualIndNone<'a, T> {
+    type Key = ();
+    type Value = (&'a T, &'a T);
+    type IteratorType = DualAllPairsParIter<'a, T>;
+
+    fn c_index_get(&'a self, _key: &Self::Key) -> Option<Self::IteratorType> {
+        Some(DualAllPairsParIter(self.0.unwrap_frozen()))
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq> RelIndexReadAll<'a> for DualIndNone<'a, T> {
+    type Key = ();
+    type Value = (&'a T, &'a T);
+    type ValueIteratorType = IteratorFromDyn<'a, (&'a T, &'a T)>;
+    type AllIteratorType = std::option::IntoIter<(Self::Key, Self::ValueIteratorType)>;
+
+    fn iter_all(&'a self) -> Self::AllIteratorType {
+        self.index_get(&()).map(|iter| ((), iter)).into_iter()
+    }
+}
+
+impl<'a, T: Clone + Hash + Eq + Sync + Send> CRelIndexReadAll<'a> for DualIndNone<'a, T> {
+    type Key = ();
+    type Value = (&'a T, &'a T);
+    type ValueIteratorType = DualAllPairsParIter<'a, T>;
+    type AllIteratorType = rayon::iter::Once<(Self::Key, Self::ValueIteratorType)>;
+
+    fn c_iter_all(&'a self) -> Self::AllIteratorType {
+        rayon::iter::once(((), DualAllPairsParIter(self.0.unwrap_frozen())))
+    }
+}
+
+impl<T: Clone + Hash + Eq> RelIndexWrite for DualIndNone<'_, T> {
+    type Key = ();
+    type Value = (T, T);
+    fn index_insert(&mut self, _key: Self::Key, _value: Self::Value) { /* noop */ }
+}
+
+impl<T: Clone + Hash + Eq> CRelIndexWrite for DualIndNone<'_, T> {
+    type Key = ();
+    type Value = (T, T);
+    fn index_insert(&self, _key: Self::Key, _value: Self::Value) { /* noop */ }
+}
+
+impl<T: Clone + Hash + Eq> RelIndexMerge for DualIndNone<'_, T> {
+    fn move_index_contents(_from: &mut Self, _to: &mut Self) { /* noop */ }
+}
+
+// ---------------------------------------------------------------------------
+// Parallel iterator: all (col0, col1) pairs
+// ---------------------------------------------------------------------------
+
+/// Parallel iterator over all (col0, col1) pairs in a `DualIndexedRel`.
+#[derive(Clone)]
+pub struct DualAllPairsParIter<'a, T: Clone + Hash + Eq + Sync>(&'a DualIndexedRel<T>);
+
+impl<'a, T: Clone + Hash + Eq + Sync + Send> ParallelIterator for DualAllPairsParIter<'a, T> {
+    type Item = (&'a T, &'a T);
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+    where
+        C: rayon::iter::plumbing::UnindexedConsumer<Self::Item>,
+    {
+        self.0
+            .forward
+            .par_iter()
+            .flat_map(|(x, x_set)| x_set.par_iter().map(move |y| (x, y)))
+            .drive_unindexed(consumer)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Adaptor types: ToRelIndex / ToRelIndex0
+// ---------------------------------------------------------------------------
+
+pub struct ToDualInd0<T>(PhantomData<T>);
+impl<T> Default for ToDualInd0<T> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+impl<T> Freezable for ToDualInd0<T> {}
+
+impl<T: Clone + Hash + Eq> ToRelIndex<CDualIndexedRel<T>> for ToDualInd0<T> {
+    type RelIndex<'a>
+        = DualInd0<'a, T>
+    where
+        T: 'a;
+
+    fn to_rel_index<'a>(
+        &'a self,
+        rel: &'a CDualIndexedRel<T>,
+    ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndex<'a> {
+        DualInd0(rel)
+    }
+
+    type RelIndexWrite<'a>
+        = DualInd0<'a, T>
+    where
+        T: 'a;
+
+    fn to_rel_index_write<'a>(
+        &'a mut self,
+        rel: &'a mut CDualIndexedRel<T>,
+    ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndexWrite<'a> {
+        DualInd0(rel)
+    }
+}
+
+pub struct ToDualInd1<T>(PhantomData<T>);
+impl<T> Default for ToDualInd1<T> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+impl<T> Freezable for ToDualInd1<T> {}
+
+impl<T: Clone + Hash + Eq> ToRelIndex<CDualIndexedRel<T>> for ToDualInd1<T> {
+    type RelIndex<'a>
+        = DualInd1<'a, T>
+    where
+        T: 'a;
+
+    fn to_rel_index<'a>(
+        &'a self,
+        rel: &'a CDualIndexedRel<T>,
+    ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndex<'a> {
+        DualInd1(rel)
+    }
+
+    type RelIndexWrite<'a>
+        = DualInd1<'a, T>
+    where
+        T: 'a;
+
+    fn to_rel_index_write<'a>(
+        &'a mut self,
+        rel: &'a mut CDualIndexedRel<T>,
+    ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndexWrite<'a> {
+        DualInd1(rel)
+    }
+}
+
+pub struct ToDualInd0_1<T>(PhantomData<T>);
+impl<T> Default for ToDualInd0_1<T> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+impl<T> Freezable for ToDualInd0_1<T> {}
+
+impl<T: Clone + Hash + Eq> ToRelIndex0<CDualIndexedRel<T>> for ToDualInd0_1<T> {
+    type RelIndex<'a>
+        = DualInd0_1<'a, T>
+    where
+        T: 'a;
+
+    fn to_rel_index<'a>(
+        &'a self,
+        rel: &'a CDualIndexedRel<T>,
+    ) -> <Self as ToRelIndex0<CDualIndexedRel<T>>>::RelIndex<'a> {
+        DualInd0_1(rel)
+    }
+
+    type RelIndexWrite<'a>
+        = DualInd0_1Write<'a, T>
+    where
+        T: 'a;
+
+    fn to_rel_index_write<'a>(
+        &'a mut self,
+        rel: &'a mut CDualIndexedRel<T>,
+    ) -> <Self as ToRelIndex0<CDualIndexedRel<T>>>::RelIndexWrite<'a> {
+        DualInd0_1Write(rel)
+    }
+
+    type CRelIndexWrite<'a>
+        = DualInd0_1CWrite<'a, T>
+    where
+        Self: 'a,
+        CDualIndexedRel<T>: 'a;
+
+    fn to_c_rel_index_write<'a>(
+        &'a self,
+        rel: &'a CDualIndexedRel<T>,
+    ) -> <Self as ToRelIndex0<CDualIndexedRel<T>>>::CRelIndexWrite<'a> {
+        DualInd0_1CWrite(rel)
+    }
+}
+
+pub struct ToDualIndNone<T>(PhantomData<T>);
+impl<T> Default for ToDualIndNone<T> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+impl<T> Freezable for ToDualIndNone<T> {}
+
+impl<T: Clone + Hash + Eq> ToRelIndex<CDualIndexedRel<T>> for ToDualIndNone<T> {
+    type RelIndex<'a>
+        = DualIndNone<'a, T>
+    where
+        T: 'a;
+
+    fn to_rel_index<'a>(
+        &'a self,
+        rel: &'a CDualIndexedRel<T>,
+    ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndex<'a> {
+        DualIndNone(rel)
+    }
+
+    type RelIndexWrite<'a>
+        = DualIndNone<'a, T>
+    where
+        T: 'a;
+
+    fn to_rel_index_write<'a>(
+        &'a mut self,
+        rel: &'a mut CDualIndexedRel<T>,
+    ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndexWrite<'a> {
+        DualIndNone(rel)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BYODS provider macros
 // ---------------------------------------------------------------------------
 // These macros are invoked by Ascent's codegen when a relation is annotated
@@ -238,30 +1133,41 @@ macro_rules! dual_indexed_rel {
     ($name:ident, ($col0:ty, $col1:ty), $indices:expr, ser, ()) => {
         ::std::vec::Vec<($col0, $col1)>
     };
+    ($name:ident, ($col0:ty, $col1:ty), $indices:expr, par, ()) => {
+        ::std::vec::Vec<($col0, $col1)>
+    };
 }
 pub use dual_indexed_rel as rel;
 
-/// Central data structure: `DualIndexedRel<T>`.
+/// Central data structure: `DualIndexedRel<T>` for serial, `CDualIndexedRel<T>` for parallel.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! dual_indexed_rel_ind_common {
     ($name:ident, ($col0:ty, $col1:ty), $indices:expr, ser, ()) => {
         $crate::dual_indexed::DualIndexedRel<$col0>
     };
+    ($name:ident, ($col0:ty, $col1:ty), $indices:expr, par, ()) => {
+        $crate::dual_indexed::CDualIndexedRel<$col0>
+    };
 }
 pub use dual_indexed_rel_ind_common as rel_ind_common;
 
-/// Full index (both columns bound): delegates to `bin_rel_provider` adaptor.
+/// Full index (both columns bound): delegates to `bin_rel_provider` adaptor for serial,
+/// `ToDualInd0_1` for parallel.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! dual_indexed_rel_full_ind {
     ($name:ident, ($col0:ty, $col1:ty), $indices:expr, ser, (), $key:ty, $val:ty) => {
         ascent_byods_rels::adaptor::bin_rel::ToByodsBinRelInd0_1<$col0, $col1>
     };
+    ($name:ident, ($col0:ty, $col1:ty), $indices:expr, par, (), $key:ty, $val:ty) => {
+        $crate::dual_indexed::ToDualInd0_1<$col0>
+    };
 }
 pub use dual_indexed_rel_full_ind as rel_full_ind;
 
-/// Per-column index: delegates to `bin_rel_provider` adaptor types.
+/// Per-column index: delegates to `bin_rel_provider` adaptor types for serial,
+/// `ToDualInd*` types for parallel.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! dual_indexed_rel_ind {
@@ -273,6 +1179,15 @@ macro_rules! dual_indexed_rel_ind {
     };
     ($name:ident, ($col0:ty, $col1:ty), $indices:expr, ser, (), [], $key:ty, $val:ty) => {
         ascent_byods_rels::adaptor::bin_rel::ToByodsBinRelIndNone<$col0, $col1>
+    };
+    ($name:ident, ($col0:ty, $col1:ty), $indices:expr, par, (), [0], $key:ty, $val:ty) => {
+        $crate::dual_indexed::ToDualInd0<$col0>
+    };
+    ($name:ident, ($col0:ty, $col1:ty), $indices:expr, par, (), [1], $key:ty, $val:ty) => {
+        $crate::dual_indexed::ToDualInd1<$col0>
+    };
+    ($name:ident, ($col0:ty, $col1:ty), $indices:expr, par, (), [], $key:ty, $val:ty) => {
+        $crate::dual_indexed::ToDualIndNone<$col0>
     };
 }
 pub use dual_indexed_rel_ind as rel_ind;

@@ -5,6 +5,7 @@
 //! - `display` - Display trait implementations (AST → text)
 //! - `var_inference` - Variable type inference for parser lambda resolution
 
+pub mod debug;
 pub mod display;
 pub mod parser;
 pub mod var_inference;

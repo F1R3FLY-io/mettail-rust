@@ -11,8 +11,8 @@
 
 use std::collections::HashSet;
 
-use crate::ast::{
-    grammar::{GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam},
+use mettail_ast::{
+    grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
     language::{AttributeValue, LanguageDef},
     types::{CollectionType, TypeExpr},
 };
@@ -157,7 +157,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                 .sync_constraints
                 .iter()
                 .map(|sc| match sc {
-                    crate::ast::language::SyncConstraint::Align {
+                    mettail_ast::language::SyncConstraint::Align {
                         stream_a,
                         stream_b,
                         boundary_pattern,
@@ -166,7 +166,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                         stream_b: stream_b.to_string(),
                         boundary_pattern: boundary_pattern.clone(),
                     },
-                    crate::ast::language::SyncConstraint::Track { auxiliary, primary } => {
+                    mettail_ast::language::SyncConstraint::Track { auxiliary, primary } => {
                         SyncConstraintSpec::Track {
                             auxiliary: auxiliary.to_string(),
                             primary: primary.to_string(),
@@ -223,7 +223,97 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         })
         .collect();
 
+    // Lower the guard configuration (design doc §2A) from the macro AST
+    // to the pipeline-side `GuardConfigSpec`. `None` is preserved as `None`.
+    spec.guard_config = language
+        .guard_config
+        .as_ref()
+        .map(lower_guard_config);
+
     spec
+}
+
+/// Lower a `GuardConfig` (macros-side, syn-based) to a `GuardConfigSpec`
+/// (prattail-side, syn-free). All identifiers are converted to strings;
+/// `syn::Type` becomes its quoted token-stream representation.
+///
+/// This is the central data flow point that detaches the pipeline from
+/// the `syn` crate while preserving the user's guard configuration.
+fn lower_guard_config(gc: &mettail_ast::language::GuardConfig) -> mettail_prattail::GuardConfigSpec {
+    use mettail_prattail::{GuardConfigSpec, JoinPatternSpec, TheoryRegistrationSpec};
+    use std::collections::HashMap;
+
+    // Theories: identifier → string, syn::Type → quoted string
+    let theories: Vec<TheoryRegistrationSpec> = gc
+        .theories
+        .iter()
+        .map(|t| {
+            // Convert the syn::Type to its quoted token-stream form so the
+            // pipeline (which has no syn dependency) can compare against
+            // known theory type names like "PresburgerAlgebra".
+            let ty = &t.theory_type;
+            let theory_type = quote::quote!(#ty).to_string();
+            TheoryRegistrationSpec {
+                name: t.name.to_string(),
+                theory_type,
+                handled_types: t
+                    .handled_types
+                    .as_ref()
+                    .map(|cats| cats.iter().map(|c| c.to_string()).collect()),
+            }
+        })
+        .collect();
+
+    // Channel categories and join patterns (when present)
+    let (channel_categories, join_patterns): (Option<Vec<String>>, Vec<JoinPatternSpec>) =
+        match &gc.channels {
+            Some(cfg) => {
+                let cats: Vec<String> = cfg
+                    .channel_categories
+                    .iter()
+                    .map(|d| d.category.to_string())
+                    .collect();
+                let joins: Vec<JoinPatternSpec> = cfg
+                    .join_patterns
+                    .iter()
+                    .map(|jp| JoinPatternSpec {
+                        label: jp.label.to_string(),
+                        channel_categories: jp
+                            .channel_params
+                            .iter()
+                            .map(|p| p.category.to_string())
+                            .collect(),
+                    })
+                    .collect();
+                (Some(cats), joins)
+            }
+            None => (None, Vec::new()),
+        };
+
+    // Per-predicate annotation overrides
+    let mut selectivity_overrides: HashMap<String, f64> = HashMap::new();
+    let mut cost_overrides: HashMap<String, u32> = HashMap::new();
+    if let Some(preds) = gc.builtin_predicates.as_ref() {
+        for p in preds {
+            let name = p.name.to_string();
+            if let Some(s) = p.annotations.selectivity {
+                selectivity_overrides.insert(name.clone(), s);
+            }
+            if let Some(c) = p.annotations.cost {
+                cost_overrides.insert(name, c);
+            }
+        }
+    }
+
+    GuardConfigSpec {
+        theories,
+        channel_categories,
+        join_patterns,
+        selectivity_overrides,
+        cost_overrides,
+        has_explicit_connectives: gc.connectives.is_some(),
+        has_explicit_predicates: gc.builtin_predicates.is_some(),
+    }
 }
 
 /// Convert a single grammar rule to a PraTTaIL `RuleSpecInput`.
@@ -291,7 +381,8 @@ fn convert_syntax_pattern(
                     TermParam::MultiAbstraction { binder, body, .. } => {
                         binder.to_string() == name_str || body.to_string() == name_str
                     },
-                    TermParam::GuardBody { .. } => false,
+                    // Phase 2F: guard slot references match their slot name.
+                    TermParam::GuardBody { name } => name.to_string() == name_str,
                 }) {
                     match param {
                         TermParam::Simple { ty, .. } => {
@@ -335,9 +426,13 @@ fn convert_syntax_pattern(
                                 });
                             }
                         },
-                        TermParam::GuardBody { .. } => {
-                            // Guard bodies are not syntax items; handled by
-                            // behavioral guard evaluator.
+                        TermParam::GuardBody { name } => {
+                            // Phase 2F: emit a GuardExpression item so the
+                            // generated parser switches into the
+                            // predicate sublanguage parser at this point.
+                            items.push(SyntaxItemSpec::GuardExpression {
+                                param_name: name.to_string(),
+                            });
                         },
                     }
                 } else {
@@ -372,7 +467,8 @@ fn classify_param_from_context(
         TermParam::MultiAbstraction { binder, body, .. } => {
             binder.to_string() == name_str || body.to_string() == name_str
         },
-        TermParam::GuardBody { .. } => false,
+        // Phase 2F: guard slot references match their slot name.
+        TermParam::GuardBody { name } => name.to_string() == name_str,
     }) {
         match param {
             TermParam::Abstraction { binder, ty, .. } if binder.to_string() == name_str => {
@@ -408,9 +504,10 @@ fn classify_param_from_context(
                     param_name: name_str.to_string(),
                 }
             },
-            TermParam::GuardBody { .. } => {
-                // Guard bodies are not syntax items; treat as ident capture fallback.
-                SyntaxItemSpec::IdentCapture { param_name: name_str.to_string() }
+            TermParam::GuardBody { name } => {
+                // Phase 2F: emit GuardExpression; the parser switches
+                // to the predicate sublanguage parser here.
+                SyntaxItemSpec::GuardExpression { param_name: name.to_string() }
             },
         }
     } else {
@@ -641,9 +738,9 @@ fn convert_grammar_items(
             GrammarItem::Terminal(text) => {
                 items.push(SyntaxItemSpec::Terminal(text.clone()));
             },
-            GrammarItem::NonTerminal(nt) => {
+            GrammarItem::NonTerminal { ident: nt, kind } => {
                 let nt_str = nt.to_string();
-                if nt_str == "Var" || nt_str == "Ident" {
+                if matches!(kind, NonTerminalKind::Var) || nt_str == "Ident" {
                     items.push(SyntaxItemSpec::IdentCapture { param_name: nt_str.to_lowercase() });
                 } else if cat_names.contains(&nt_str) {
                     items.push(SyntaxItemSpec::NonTerminal {

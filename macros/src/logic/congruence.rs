@@ -13,10 +13,10 @@ use super::common::{
     count_nonterminals, generate_tls_pool_iter, in_cat_filter, relation_names, CategoryFilter,
     PoolArm,
 };
-use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
-use crate::ast::language::{LanguageDef, RewriteRule};
-use crate::ast::pattern::{Pattern, PatternTerm};
-use crate::ast::types::TypeExpr;
+use mettail_ast::grammar::{GrammarItem, GrammarRule, TermParam};
+use mettail_ast::language::{LanguageDef, RewriteRule};
+use mettail_ast::pattern::{Pattern, PatternTerm};
+use mettail_ast::types::TypeExpr;
 use crate::logic::bloom_filter::BloomFilter;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -92,7 +92,7 @@ pub fn generate_all_explicit_congruences(
     if emit_diagnostics && art04_rw_guarded_count > 0 {
         mettail_prattail::lint::emit_diagnostic(
             &mettail_prattail::lint::LintDiagnostic {
-                id: "G38",
+                id: mettail_prattail::lint::DiagnosticId::G38,
                 name: "bloom-filter-rw-congruence-guard",
                 severity: mettail_prattail::lint::LintSeverity::Note,
                 category: None,
@@ -239,7 +239,7 @@ fn find_rewrite_context_in_term(
             let mut field_idx = 0;
             for item in rule.items.iter() {
                 match item {
-                    GrammarItem::NonTerminal(field_cat) => {
+                    GrammarItem::NonTerminal { ident: field_cat, .. } => {
                         if let Some(arg) = args.get(field_idx) {
                             if let Pattern::Term(PatternTerm::Var(v)) = arg {
                                 if v == source_var {
@@ -652,7 +652,7 @@ fn field_is_boxed_in_ast(rule: &GrammarRule, field_idx: usize) -> bool {
     let mut idx = 0;
     for item in &rule.items {
         match item {
-            GrammarItem::NonTerminal(_) => {
+            GrammarItem::NonTerminal { .. } => {
                 if idx == field_idx {
                     return true;
                 }
@@ -699,7 +699,7 @@ fn get_binder_body_category(rule: &GrammarRule, field_idx: usize) -> Option<Iden
                     if idx == field_idx {
                         // Found the binder - get the body type
                         if let Some(&body_item_idx) = body_indices.first() {
-                            if let Some(GrammarItem::NonTerminal(body_cat)) =
+                            if let Some(GrammarItem::NonTerminal { ident: body_cat, .. }) =
                                 rule.items.get(body_item_idx)
                             {
                                 return Some(body_cat.clone());
@@ -709,7 +709,7 @@ fn get_binder_body_category(rule: &GrammarRule, field_idx: usize) -> Option<Iden
                     idx += 1;
                 } else if matches!(
                     item,
-                    GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }
+                    GrammarItem::NonTerminal { .. } | GrammarItem::Collection { .. }
                 ) {
                     idx += 1;
                 }

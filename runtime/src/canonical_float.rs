@@ -25,7 +25,7 @@ use std::hash::{Hash, Hasher};
 /// Wraps `f64` with canonicalization in the constructor so that `Eq`, `Hash`, and `Ord`
 /// are well-defined. Use [CanonicalFloat64::from] to construct and [CanonicalFloat64::get]
 /// to obtain the raw value for arithmetic or display.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct CanonicalFloat64(f64);
 
 impl CanonicalFloat64 {
@@ -49,11 +49,27 @@ impl From<f64> for CanonicalFloat64 {
     }
 }
 
+// `From<u8>` is required by `SafeArith::safe_product` / `safe_sum` to construct
+// the fold identity (`1u8` or `0u8`). Trivially finite, no canonicalisation needed.
+impl From<u8> for CanonicalFloat64 {
+    fn from(x: u8) -> Self {
+        CanonicalFloat64(x as f64)
+    }
+}
+
 impl CanonicalFloat64 {
     /// Returns the raw f64 value (for native eval, display, or arithmetic outside this type).
     #[inline]
     pub fn get(self) -> f64 {
         self.0
+    }
+
+    /// Fallible constructor that rejects `NaN`. `±Inf` is accepted (it's a
+    /// legitimate extended-real value). Use this when callers want the strict
+    /// "finite-only or ±Inf" discipline that `SafeArith` applies internally.
+    #[inline]
+    pub fn try_finite(x: f64) -> Option<Self> {
+        if x.is_nan() { None } else { Some(Self::from(x)) }
     }
 }
 
@@ -222,7 +238,7 @@ impl CanonicalFloat64 {
 /// Canonical f32 for use in category enums and Ascent relations.
 ///
 /// Same semantics as [CanonicalFloat64]: NaN and -0 canonicalized; total Ord with NaN last.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct CanonicalFloat32(f32);
 
 impl CanonicalFloat32 {
@@ -242,6 +258,21 @@ impl CanonicalFloat32 {
 impl From<f32> for CanonicalFloat32 {
     fn from(x: f32) -> Self {
         CanonicalFloat32(Self::canonicalize(x))
+    }
+}
+
+// `From<u8>` for `SafeArith::safe_product` / `safe_sum` fold identities.
+impl From<u8> for CanonicalFloat32 {
+    fn from(x: u8) -> Self {
+        CanonicalFloat32(x as f32)
+    }
+}
+
+impl CanonicalFloat32 {
+    /// Fallible constructor that rejects `NaN` (`±Inf` accepted).
+    #[inline]
+    pub fn try_finite(x: f32) -> Option<Self> {
+        if x.is_nan() { None } else { Some(Self::from(x)) }
     }
 }
 

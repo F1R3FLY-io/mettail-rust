@@ -926,7 +926,9 @@ eq_name(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_NAME_EQ_CONG_0.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_proc(s_f0, t_f0);
+    eq_proc(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone();
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
@@ -939,7 +941,9 @@ eq_proc(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_1.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_name(s_f0, t_f0);
+    eq_name(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone();
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
@@ -967,7 +971,9 @@ eq_proc(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_2.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_proc(s_f0, t_f0);
+    eq_proc(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone();
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
@@ -1016,8 +1022,12 @@ eq_proc(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_3.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_proc(s_f0, t_f0),
-    eq_proc(s_f1, t_f1);
+    eq_proc(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone(),
+    eq_proc(__eqcong_s_f1, __eqcong_t_f1),
+    if s_f1 == __eqcong_s_f1.clone(),
+    if t_f1 == __eqcong_t_f1.clone();
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
@@ -1030,8 +1040,12 @@ eq_proc(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_4.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_name(s_f0, t_f0),
-    eq_proc(s_f1, t_f1);
+    eq_name(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone(),
+    eq_proc(__eqcong_s_f1, __eqcong_t_f1),
+    if s_f1 == __eqcong_s_f1.clone(),
+    if t_f1 == __eqcong_t_f1.clone();
 
 eq_proc(s.clone(), t.clone()),
 proc(t.clone()) <--
@@ -1064,7 +1078,9 @@ proc(t.clone()) <--
 
     // Rewrite rules
 rw_proc(s_orig.clone(), t) <--
-    eq_proc(s_orig, s),
+    eq_proc(__eqrel_s_orig, __eqrel_s),
+    let s_orig = __eqrel_s_orig.clone(),
+    let s = __eqrel_s.clone(),
     if let Proc::PPar(ref s_f0) = s,
     for (s_f0_e0, _count_0) in s_f0.iter(),
     if let Proc::PInputs(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
@@ -1079,7 +1095,9 @@ rw_proc(s_orig.clone(), t) <--
     let t = (Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, { let (__binders, __body) = ((s_f0_e0_f1.clone()).clone()).unbind(); let __vars : Vec < & mettail_runtime::FreeVar < String >> = __binders.iter().map(| b | & b.0).collect(); let __repls = { let __map_coll = (__zip_collected_1.clone()).clone(); __map_coll.iter().map(| __elem | Name::NQuote(Box::new((__elem).clone()))).collect::< Vec < _ >> () }; (* __body).multi_substitute_name(& __vars, & __repls) }); bag })).normalize();
 
 rw_proc(s_orig.clone(), t) <--
-    eq_proc(s_orig, s),
+    eq_proc(__eqrel_s_orig, __eqrel_s),
+    let s_orig = __eqrel_s_orig.clone(),
+    let s = __eqrel_s.clone(),
     if let Proc::PDrop(ref s_f0) = s,
     let s_f0_deref = &** s_f0,
     if let Name::NQuote(ref s_f0_deref_f0) = s_f0_deref,
@@ -1111,11 +1129,11 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
-        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() + * b.clone())),
-        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() + * b.clone())),
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(< _ as::mettail_runtime::SafeArith >::safe_add(* a.clone(), * b.clone()) ?)),
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(< _ as::mettail_runtime::SafeArith >::safe_add(* a.clone(), * b.clone()) ?)),
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1125,11 +1143,11 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
-        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() - * b.clone())),
-        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() - * b.clone())),
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(< _ as::mettail_runtime::SafeArith >::safe_sub(* a.clone(), * b.clone()) ?)),
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(< _ as::mettail_runtime::SafeArith >::safe_sub(* a.clone(), * b.clone()) ?)),
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1139,11 +1157,11 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
-        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() * * b.clone())),
-        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() * * b.clone())),
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(< _ as::mettail_runtime::SafeArith >::safe_mul(* a.clone(), * b.clone()) ?)),
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(< _ as::mettail_runtime::SafeArith >::safe_mul(* a.clone(), * b.clone()) ?)),
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1153,11 +1171,11 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
-        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() / * b.clone())),
-        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() / * b.clone())),
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(< _ as::mettail_runtime::SafeArith >::safe_div(* a.clone(), * b.clone()) ?)),
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(< _ as::mettail_runtime::SafeArith >::safe_div(* a.clone(), * b.clone()) ?)),
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1167,11 +1185,11 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
         (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))), _ => Proc::Err, },
         (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x == y))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1181,11 +1199,11 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
         (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))), _ => Proc::Err, },
         (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1195,11 +1213,11 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
         (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))), _ => Proc::Err, },
         (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x > y))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1209,11 +1227,11 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
         (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))), _ => Proc::Err, },
         (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x < y))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1223,11 +1241,11 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
         (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))), _ => Proc::Err, },
         (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x >= y))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1237,11 +1255,11 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
         (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))), _ => Proc::Err, },
         (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x <= y))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1249,10 +1267,10 @@ fold_proc(s.clone(), res) <--
     if let Proc::Not(inner) = s,
     fold_proc(inner.as_ref().clone(), lv),
     let a = lv,
-    let res = ({ match & a {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match & a {
         Proc::CastBool(b) => match &** b { Bool::BoolLit(v) => Proc::CastBool(Box::new(Bool::BoolLit(! v))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1262,10 +1280,10 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
         (Proc::CastBool(a), Proc::CastBool(b)) => match (&** a, &** b) { (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(* x &&* y))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1275,10 +1293,10 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
         (Proc::CastBool(a), Proc::CastBool(b)) => match (&** a, &** b) { (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(* x || * y))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1288,10 +1306,10 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ match (& a, & b) {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match (& a, & b) {
         (Proc::CastStr(a), Proc::CastStr(b)) => match (&** a, &** b) { (Str::StringLit(x), Str::StringLit(y)) => Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y)))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1299,10 +1317,10 @@ fold_proc(s.clone(), res) <--
     if let Proc::Len(inner) = s,
     fold_proc(inner.as_ref().clone(), lv),
     let p = lv,
-    let res = ({ match & p {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match & p {
         Proc::CastStr(inner) => match &** inner { Str::StringLit(x) => Proc::CastInt(Box::new(Int::NumLit(x.len() as i64))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1310,13 +1328,13 @@ fold_proc(s.clone(), res) <--
     if let Proc::ToInt(inner) = s,
     fold_proc(inner.as_ref().clone(), lv),
     let p = lv,
-    let res = ({ match & p {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match & p {
         Proc::CastInt(x) => Proc::CastInt(x.clone()),
         Proc::CastFloat(x) => match &** x { Float::FloatLit(f) => Proc::CastInt(Box::new(Int::NumLit(f.get() as i64))), _ => Proc::Err, },
         Proc::CastBool(x) => match &** x { Bool::BoolLit(b) => Proc::CastInt(Box::new(Int::NumLit(if * b { 1 } else { 0 }))), _ => Proc::Err, },
         Proc::CastStr(x) => match &** x { Str::StringLit(s) => Proc::CastInt(Box::new(Int::NumLit(s.parse().unwrap_or(0)))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1324,13 +1342,13 @@ fold_proc(s.clone(), res) <--
     if let Proc::ToFloat(inner) = s,
     fold_proc(inner.as_ref().clone(), lv),
     let p = lv,
-    let res = ({ match & p {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match & p {
         Proc::CastFloat(x) => Proc::CastFloat(x.clone()),
         Proc::CastInt(x) => match &** x { Int::NumLit(i) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(* i as f64)))), _ => Proc::Err, },
         Proc::CastBool(x) => match &** x { Bool::BoolLit(b) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(if * b { 1.0 } else { 0.0 })))), _ => Proc::Err, },
         Proc::CastStr(x) => match &** x { Str::StringLit(s) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(s.parse::< f64 > ().unwrap_or(0.0))))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1338,13 +1356,13 @@ fold_proc(s.clone(), res) <--
     if let Proc::ToBool(inner) = s,
     fold_proc(inner.as_ref().clone(), lv),
     let p = lv,
-    let res = ({ match & p {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match & p {
         Proc::CastBool(x) => Proc::CastBool(x.clone()),
         Proc::CastInt(x) => match &** x { Int::NumLit(i) => Proc::CastBool(Box::new(Bool::BoolLit(* i != 0))), _ => Proc::Err, },
         Proc::CastFloat(x) => match &** x { Float::FloatLit(f) => Proc::CastBool(Box::new(Bool::BoolLit(f.get() != 0.0))), _ => Proc::Err, },
         Proc::CastStr(x) => match &** x { Str::StringLit(s) => Proc::CastBool(Box::new(Bool::BoolLit(s.parse::< bool > ().unwrap_or(false)))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 fold_proc(s.clone(), res) <--
@@ -1352,13 +1370,13 @@ fold_proc(s.clone(), res) <--
     if let Proc::ToStr(inner) = s,
     fold_proc(inner.as_ref().clone(), lv),
     let p = lv,
-    let res = ({ match & p {
+    if let Some(res) = (|| -> std::option::Option < _ > { std::option::Option::Some({ match & p {
         Proc::CastStr(x) => Proc::CastStr(x.clone()),
         Proc::CastInt(x) => match &** x { Int::NumLit(i) => Proc::CastStr(Box::new(Str::StringLit(i.to_string()))), _ => Proc::Err, },
         Proc::CastFloat(x) => match &** x { Float::FloatLit(f) => Proc::CastStr(Box::new(Str::StringLit(f.to_string()))), _ => Proc::Err, },
         Proc::CastBool(x) => match &** x { Bool::BoolLit(b) => Proc::CastStr(Box::new(Str::StringLit(b.to_string()))), _ => Proc::Err, },
         _ => Proc::Err,
-    } }),
+    } }) }) (),
     if (match & res { Proc::Err => false, _ => true });
 
 rw_proc(s.clone(), t.clone()) <--
@@ -1514,13 +1532,17 @@ rw_proc(lhs.clone(), match (lhs, vi) {
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_proc(field_val, t);
 
-rw_proc(a.clone(), c.clone()) <--
-    eq_proc(a, b),
-    rw_proc(b.clone(), c);
+rw_proc(__eqrel_closure_a.clone(), c.clone()) <--
+    eq_proc(__eqrel_a, __eqrel_b),
+    let __eqrel_closure_a = __eqrel_a.clone(),
+    let __eqrel_closure_b = __eqrel_b.clone(),
+    rw_proc(__eqrel_closure_b, c);
 
-rw_name(a.clone(), c.clone()) <--
-    eq_name(a, b),
-    rw_name(b.clone(), c);
+rw_name(__eqrel_closure_a.clone(), c.clone()) <--
+    eq_name(__eqrel_a, __eqrel_b),
+    let __eqrel_closure_a = __eqrel_a.clone(),
+    let __eqrel_closure_b = __eqrel_b.clone(),
+    rw_name(__eqrel_closure_b, c);
 
 
     // Custom logic

@@ -1,0 +1,1 @@
+Bug confirmed: int(-0.5) fails to parse because '-' triggers Int's Neg prefix rule before Float's negative literal. This is a parser FIRST-set ambiguity bug in NFA try-all dispatch for cross-category cast rules.

@@ -17,13 +17,28 @@
 //! 3. **Equation Rules**: Add reflexivity, congruence, and user-defined equalities
 //! 4. **Rewrite Rules**: Base rewrites + congruence rules (propagate through constructors)
 
-use crate::ast::grammar::{GrammarItem, TermParam};
-use crate::ast::types::{EvalMode, TypeExpr};
-use crate::{ast::language::LanguageDef, logic::rules::generate_base_rewrites};
+use mettail_ast::grammar::{GrammarItem, TermParam};
+use mettail_ast::types::{EvalMode, TypeExpr};
+use mettail_ast::language::LanguageDef;
+use crate::logic::rules::generate_base_rewrites;
 use common::{in_cat_filter, CategoryFilter};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
+
+/// Rewrite user `![...]` Rust code to a closure that returns `Option<T>`:
+/// every `+ - * / % unary-neg .pow .product::<_>()` etc. becomes a
+/// `SafeArith`/`SafeFloat` call with `?` short-circuit on overflow/NaN.
+///
+/// This is the Ascent-rule-side counterpart of the same rewriting used in
+/// `eval.rs::generate_eval_method` for `try_eval`. The two must stay in sync —
+/// both paths evaluate the same user expression and must agree on whether a
+/// given input is rewritten vs. stuck.
+///
+/// `rust_code` is the parsed `syn::Expr` from `rule.rust_code.as_ref().unwrap().code`.
+fn safeify_rust_code(rust_code: &syn::Expr) -> TokenStream {
+    crate::gen::native::rust_code_rewrite::safeify_and_wrap(rust_code)
+}
 
 mod antipattern;
 mod bloom_filter;
@@ -32,9 +47,11 @@ pub mod common;
 mod equations;
 pub mod fusion;
 pub mod helpers;
+pub mod multi_channel_analysis;
 mod pattern_codec;
 pub mod pattern_trie;
 mod relations;
+pub mod stratification;
 mod writer;
 
 pub mod congruence;
@@ -58,7 +75,7 @@ pub use congruence::generate_all_explicit_congruences;
 /// Returns the diagnostic for local collection. Callers accumulate diagnostics
 /// and emit them in batch (with optional grouping) at the end of each analysis section.
 fn build_lint(
-    id: &'static str,
+    id: mettail_prattail::lint::DiagnosticId,
     name: &'static str,
     severity: mettail_prattail::lint::LintSeverity,
     message: String,
@@ -150,7 +167,7 @@ pub fn generate_ascent_source(
     // These are suppressed from eqrel generation (would cause non-convergence)
     // and handled by normalize arms + directional rewrites instead.
     let (cancellation_pairs, cancellation_equations) =
-        crate::ast::pattern::detect_cancellation_pairs(language);
+        mettail_ast::pattern::detect_cancellation_pairs(language);
     emit_cancellation_pair_lints(&cancellation_pairs, language, &grammar_name);
 
     // A-RT05: Compile-time depth delta analysis.
@@ -176,7 +193,7 @@ pub fn generate_ascent_source(
         let rule_count = language.equations.len() + language.rewrites.len();
         let cat_count = language.types.len();
         mettail_prattail::lint::emit_diagnostic(&build_lint(
-            "G41", "normalize-dedup-active",
+            mettail_prattail::lint::DiagnosticId::G41, "normalize-dedup-active",
             mettail_prattail::lint::LintSeverity::Note,
             format!(
                 "BCG05 normalize-on-insert dedup: hash guards emitted for {} rule(s) across {} category(ies)",
@@ -228,7 +245,7 @@ pub fn generate_ascent_source(
                 truncated.join("; ")
             };
             mettail_prattail::lint::emit_diagnostic(&build_lint(
-                "G42", "eq-strata-analysis",
+                mettail_prattail::lint::DiagnosticId::G42, "eq-strata-analysis",
                 mettail_prattail::lint::LintSeverity::Note,
                 format!(
                     "BCG06 equation stratification: {}",
@@ -256,7 +273,7 @@ pub fn generate_ascent_source(
     } else {
         // Emit diagnostic for fused rule generation
         mettail_prattail::lint::emit_diagnostic(&build_lint(
-            "G42", "rule-fusion-codegen",
+            mettail_prattail::lint::DiagnosticId::G42, "rule-fusion-codegen",
             mettail_prattail::lint::LintSeverity::Note,
             format!(
                 "BCG02: {} fused rule(s) generated for safe deconstruction-rewrite chains",
@@ -345,7 +362,7 @@ pub fn generate_ascent_source(
     if let Err(e) = writer::write_ascent_file(&grammar_name, &theory_name, &formatted_source) {
         // I10 emits immediately (one-off infrastructure diagnostic, not groupable)
         mettail_prattail::lint::emit_diagnostic(&build_lint(
-            "I10", "ascent-file-write-failed",
+            mettail_prattail::lint::DiagnosticId::I10, "ascent-file-write-failed",
             mettail_prattail::lint::LintSeverity::Warning,
             format!("failed to write Ascent Datalog file: {}", e),
             Some("check directory permissions".to_string()),
@@ -381,7 +398,7 @@ pub fn generate_ascent_source(
                 };
                 if eliminated {
                     macro_diagnostics.push(build_lint(
-                        "G26", "equation-subsumed",
+                        mettail_prattail::lint::DiagnosticId::G26, "equation-subsumed",
                         mettail_prattail::lint::LintSeverity::Note,
                         format!("equation `{}` eliminated — subsumed by more general equation `{}`", specific_name, general_name),
                         Some(format!("the more general equation `{}` covers all cases", general_name)),
@@ -389,7 +406,7 @@ pub fn generate_ascent_source(
                     ));
                 } else {
                     macro_diagnostics.push(build_lint(
-                        "G27", "rule-subsumption-candidate",
+                        mettail_prattail::lint::DiagnosticId::G27, "rule-subsumption-candidate",
                         mettail_prattail::lint::LintSeverity::Warning,
                         format!(
                             "rule `{}` may be subsumed by more general rule `{}` \
@@ -407,7 +424,7 @@ pub fn generate_ascent_source(
             let group_count = alpha_groups.len();
             let total_rules: usize = alpha_groups.iter().map(|g| g.len()).sum();
             macro_diagnostics.push(build_lint(
-                "G28", "alpha-equivalent-groups",
+                mettail_prattail::lint::DiagnosticId::G28, "alpha-equivalent-groups",
                 mettail_prattail::lint::LintSeverity::Note,
                 format!(
                     "{} alpha-equivalent LHS pattern group(s) detected ({} rules total) \
@@ -423,7 +440,7 @@ pub fn generate_ascent_source(
         let independent = dep_groups.iter().filter(|g| g.len() == 1).count();
         if dep_groups.len() > 1 {
             macro_diagnostics.push(build_lint(
-                "G29", "dependency-groups",
+                mettail_prattail::lint::DiagnosticId::G29, "dependency-groups",
                 mettail_prattail::lint::LintSeverity::Note,
                 format!(
                     "{} fine-grained dependency group(s) detected ({} independent, {} cross-group)",
@@ -477,7 +494,7 @@ pub fn generate_ascent_source(
                 .map(|(i, group)| format!("  group {}: [{}]", i, group.join(", ")))
                 .collect();
             mettail_prattail::lint::emit_diagnostic(&build_lint(
-                "G30", "isomorphic-wfst-groups",
+                mettail_prattail::lint::DiagnosticId::G30, "isomorphic-wfst-groups",
                 mettail_prattail::lint::LintSeverity::Note,
                 format!(
                     "{} isomorphic WFST group(s) detected ({} categories total) \
@@ -502,7 +519,7 @@ pub fn generate_ascent_source(
         rules::generate_ground_rewrite_seeds(language);
     if ground_count > 0 {
         emit_collected_diagnostics(vec![build_lint(
-            "G35",
+            mettail_prattail::lint::DiagnosticId::G35,
             "ground-rewrite-short-circuit",
             mettail_prattail::lint::LintSeverity::Note,
             format!(
@@ -574,7 +591,7 @@ fn compute_subsumed_equations(language: &LanguageDef, grammar_name: &str) -> Has
 
     if !subsumed.is_empty() {
         mettail_prattail::lint::emit_diagnostic(&build_lint(
-            "G31", "subsumed-equations-eliminated",
+            mettail_prattail::lint::DiagnosticId::G31, "subsumed-equations-eliminated",
             mettail_prattail::lint::LintSeverity::Note,
             format!("{} subsumed equation(s) eliminated from Ascent codegen", subsumed.len()),
             Some("subsumed equations are redundant and have been removed from Ascent codegen".to_string()),
@@ -598,18 +615,18 @@ fn compute_subsumed_equations(language: &LanguageDef, grammar_name: &str) -> Has
 /// a problem for categories with explicit congruence rewrites (which can
 /// introduce the cancellation pattern at runtime).
 fn emit_cancellation_pair_lints(
-    pairs: &[crate::ast::pattern::CancellationPair],
+    pairs: &[mettail_ast::pattern::CancellationPair],
     language: &LanguageDef,
     grammar_name: &str,
 ) {
-    use crate::ast::pattern::{Pattern, PatternTerm};
+    use mettail_ast::pattern::{Pattern, PatternTerm};
 
     for pair in pairs {
         let eq_rel = pair.outer_category.to_string().to_lowercase();
 
         // G25: note — cancellation pair detected and suppressed
         mettail_prattail::lint::emit_diagnostic(&build_lint(
-            "G25", "cancellation-pair-detected",
+            mettail_prattail::lint::DiagnosticId::G25, "cancellation-pair-detected",
             mettail_prattail::lint::LintSeverity::Note,
             format!("equation `{}` is a cancellation pair and has been suppressed", pair.equation_name),
             Some(format!(
@@ -629,13 +646,13 @@ fn emit_cancellation_pair_lints(
                         args: outer_args,
                     }),
                     Pattern::Term(PatternTerm::Var(rhs_var)),
-                ) if outer == &pair.outer_constructor && outer_args.len() == 1 => {
+                ) if outer.to_string() == pair.outer_constructor.to_string() && outer_args.len() == 1 => {
                     // Check inner: Apply(inner_ctor, [Var(X)])
                     match &outer_args[0] {
                         Pattern::Term(PatternTerm::Apply {
                             constructor: inner,
                             args: inner_args,
-                        }) if inner == &pair.inner_constructor && inner_args.len() == 1 => {
+                        }) if inner.to_string() == pair.inner_constructor.to_string() && inner_args.len() == 1 => {
                             // Check innermost is Var(X) matching RHS
                             match &inner_args[0] {
                                 Pattern::Term(PatternTerm::Var(lhs_var)) => {
@@ -667,7 +684,7 @@ fn emit_cancellation_pair_lints(
 
             if has_congruence_rewrites {
                 mettail_prattail::lint::emit_diagnostic(&build_lint(
-                    "W09", "cancellation-pair-missing-rewrite",
+                    mettail_prattail::lint::DiagnosticId::W09, "cancellation-pair-missing-rewrite",
                     mettail_prattail::lint::LintSeverity::Warning,
                     format!("cancellation pair `{}` has no corresponding rewrite", pair.equation_name),
                     Some(format!(
@@ -722,7 +739,7 @@ fn emit_depth_delta_lints(language: &LanguageDef, grammar_name: &str) {
         };
 
         diagnostics.push(mettail_prattail::lint::LintDiagnostic {
-            id: "A01",
+            id: mettail_prattail::lint::DiagnosticId::A01,
             name: "depth-increasing-rule",
             severity: mettail_prattail::lint::LintSeverity::Note,
             category,
@@ -744,7 +761,7 @@ fn emit_depth_delta_lints(language: &LanguageDef, grammar_name: &str) {
     // Summary diagnostic: bounded vs unbounded
     if is_bounded {
         diagnostics.push(build_lint(
-            "A01",
+            mettail_prattail::lint::DiagnosticId::A01,
             "depth-bounded-grammar",
             mettail_prattail::lint::LintSeverity::Note,
             format!(
@@ -756,7 +773,7 @@ fn emit_depth_delta_lints(language: &LanguageDef, grammar_name: &str) {
         ));
     } else if !increasing.is_empty() {
         diagnostics.push(build_lint(
-            "A01",
+            mettail_prattail::lint::DiagnosticId::A01,
             "depth-unbounded-grammar",
             mettail_prattail::lint::LintSeverity::Warning,
             format!(
@@ -805,12 +822,12 @@ fn emit_antipattern_lints(language: &LanguageDef, grammar_name: &str) {
             build_lint(
                 // Map antipattern code to a lint id (reuse the code as id)
                 match w.code {
-                    "C-AP01" => "C-AP01",
-                    "C-AP02" => "C-AP02",
-                    "C-AP03" => "C-AP03",
-                    "C-AP04" => "C-AP04",
-                    "C-AP05" => "C-AP05",
-                    _ => "C-AP00", // should not happen
+                    "C-AP01" => mettail_prattail::lint::DiagnosticId::CAP01,
+                    "C-AP02" => mettail_prattail::lint::DiagnosticId::CAP02,
+                    "C-AP03" => mettail_prattail::lint::DiagnosticId::CAP03,
+                    "C-AP04" => mettail_prattail::lint::DiagnosticId::CAP04,
+                    "C-AP05" => mettail_prattail::lint::DiagnosticId::CAP05,
+                    _ => mettail_prattail::lint::DiagnosticId::CAP00, // should not happen
                 },
                 match w.code {
                     "C-AP01" => "cubic-transitivity-blowup",
@@ -963,7 +980,7 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
         let eq_rel = format!("eq_{}", cat_lower);
 
         // Find constructors for this category with non-terminal args
-        let constructors_with_args: Vec<&crate::ast::grammar::GrammarRule> = language
+        let constructors_with_args: Vec<&mettail_ast::grammar::GrammarRule> = language
             .terms
             .iter()
             .filter(|r| {
@@ -980,17 +997,19 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
                 .items
                 .iter()
                 .filter_map(|item| {
-                    if let GrammarItem::NonTerminal(c) = item {
-                        Some(c.to_string())
+                    if let GrammarItem::NonTerminal { ident: c, kind } = item {
+                        if kind.is_builtin() {
+                            None // Skip Var, Integer, Boolean, etc.
+                        } else {
+                            Some(c.to_string())
+                        }
                     } else {
                         None
                     }
                 })
                 .collect();
 
-            if arg_cats.is_empty()
-                || arg_cats.iter().any(|c| c == "Var" || c == "Integer")
-            {
+            if arg_cats.is_empty() {
                 continue;
             }
 
@@ -1052,7 +1071,7 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
 
             // Also check for EnvQuery relations in premises
             for premise in &rw.premises {
-                if let crate::ast::language::Premise::RelationQuery { relation, .. } = premise {
+                if let mettail_ast::language::Premise::RelationQuery { relation, .. } = premise {
                     body.insert(relation.to_string());
                 }
             }
@@ -1140,7 +1159,7 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
 
         // HOL step rules join on rw_<field_cat> for each non-terminal arg
         for item in &rule.items {
-            if let GrammarItem::NonTerminal(field_cat) = item {
+            if let GrammarItem::NonTerminal { ident: field_cat, .. } = item {
                 body.insert(format!(
                     "rw_{}",
                     field_cat.to_string().to_lowercase()
@@ -1173,7 +1192,7 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
 
         // Fold rules join on fold_<field_cat> for each non-terminal arg
         for item in &rule.items {
-            if let GrammarItem::NonTerminal(field_cat) = item {
+            if let GrammarItem::NonTerminal { ident: field_cat, .. } = item {
                 body.insert(format!(
                     "fold_{}",
                     field_cat.to_string().to_lowercase()
@@ -1199,7 +1218,7 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
             }
             for item in &rule.items {
                 match item {
-                    GrammarItem::NonTerminal(tgt) => {
+                    GrammarItem::NonTerminal { ident: tgt, .. } => {
                         decon_pairs.insert((src.clone(), tgt.to_string()));
                     }
                     GrammarItem::Collection { element_type, .. } => {
@@ -1231,11 +1250,11 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
 /// For a congruence rule like `if S ~> T then (Ctor ... S ...) ~> (Ctor ... T ...)`,
 /// this finds the category of the field position where `S` appears in the constructor.
 fn find_congruence_field_category(
-    lhs: &crate::ast::pattern::Pattern,
+    lhs: &mettail_ast::pattern::Pattern,
     source_var: &str,
     language: &LanguageDef,
 ) -> Option<String> {
-    use crate::ast::pattern::{Pattern, PatternTerm};
+    use mettail_ast::pattern::{Pattern, PatternTerm};
 
     match lhs {
         Pattern::Term(PatternTerm::Apply { constructor, args }) => {
@@ -1243,7 +1262,7 @@ fn find_congruence_field_category(
             let mut nt_idx = 0;
             for item in &grammar_rule.items {
                 match item {
-                    GrammarItem::NonTerminal(field_cat) => {
+                    GrammarItem::NonTerminal { ident: field_cat, .. } => {
                         if nt_idx < args.len() {
                             if let Pattern::Term(PatternTerm::Var(v)) = &args[nt_idx] {
                                 if v.to_string() == source_var {
@@ -1297,7 +1316,7 @@ fn analyze_delta_guards(language: &LanguageDef) -> DeltaGuardAnalysis {
     let always_active_rules: Vec<String> = descriptors
         .iter()
         .filter(|desc| {
-            let families: HashSet<&str> = desc
+            let families: HashSet<RelationFamily> = desc
                 .body_relations
                 .iter()
                 .map(|rel| classify_relation_family(rel))
@@ -1319,7 +1338,7 @@ fn analyze_delta_guards(language: &LanguageDef) -> DeltaGuardAnalysis {
     }
 
     // Count distinct relation families across all rules
-    let mut all_families: HashSet<&str> = HashSet::new();
+    let mut all_families: HashSet<RelationFamily> = HashSet::new();
     for desc in &descriptors {
         for rel in desc.body_relations.iter().chain(desc.head_relations.iter()) {
             all_families.insert(classify_relation_family(rel));
@@ -1348,24 +1367,65 @@ fn analyze_delta_guards(language: &LanguageDef) -> DeltaGuardAnalysis {
 /// - `"cat"` — category relations (e.g., `proc`, `name`, `int`)
 /// - `"eq"` — equality relations (e.g., `eq_proc`)
 /// - `"rw"` — rewrite relations (e.g., `rw_proc`)
-/// - `"fold"` — fold relations (e.g., `fold_int`)
-/// - `"projection"` — collection projections (e.g., `ppar_contains`)
-/// - `"custom"` — user-defined relations
-fn classify_relation_family(rel: &str) -> &str {
-    if rel.starts_with("eq_") {
-        "eq"
-    } else if rel.starts_with("rw_") {
-        "rw"
-    } else if rel.starts_with("fold_") {
-        "fold"
-    } else if rel.ends_with("_contains") {
-        "projection"
-    } else if rel == "step_term" {
-        "custom"
-    } else {
-        // Bare category names (e.g., "proc", "name") are in the "cat" family
-        "cat"
+/// - `Fold` — fold relations (e.g., `fold_int`)
+/// - `Projection` — collection projections (e.g., `ppar_contains`)
+/// - `Custom` — user-defined relations
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RelationFamily {
+    /// Equality relations (prefix `eq_`)
+    Eq,
+    /// Rewrite relations (prefix `rw_`)
+    Rewrite,
+    /// Fold relations (prefix `fold_`)
+    Fold,
+    /// Collection projection relations (suffix `_contains`)
+    Projection,
+    /// User-defined relations (`step_term`)
+    Custom,
+    /// Bare category relations (e.g., `proc`, `name`)
+    Category,
+}
+
+impl RelationFamily {
+    /// Classify a relation name into its family.
+    fn classify(rel: &str) -> Self {
+        if rel.starts_with("eq_") {
+            Self::Eq
+        } else if rel.starts_with("rw_") {
+            Self::Rewrite
+        } else if rel.starts_with("fold_") {
+            Self::Fold
+        } else if rel.ends_with("_contains") {
+            Self::Projection
+        } else if rel == "step_term" {
+            Self::Custom
+        } else {
+            Self::Category
+        }
     }
+
+    /// Return the canonical string form for display/diagnostics.
+    const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Eq => "eq",
+            Self::Rewrite => "rw",
+            Self::Fold => "fold",
+            Self::Projection => "projection",
+            Self::Custom => "custom",
+            Self::Category => "cat",
+        }
+    }
+}
+
+impl std::fmt::Display for RelationFamily {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Classify a relation name into its [`RelationFamily`].
+fn classify_relation_family(rel: &str) -> RelationFamily {
+    RelationFamily::classify(rel)
 }
 
 /// A-RT02: Emit compile-time lint diagnostics for semi-naive delta guard analysis.
@@ -1482,7 +1542,7 @@ fn emit_delta_guard_lints(language: &LanguageDef, grammar_name: &str) {
     };
 
     diagnostics.push(build_lint(
-        "G39",
+        mettail_prattail::lint::DiagnosticId::G39,
         "semi-naive-delta-groups",
         mettail_prattail::lint::LintSeverity::Note,
         message,
@@ -1493,7 +1553,7 @@ fn emit_delta_guard_lints(language: &LanguageDef, grammar_name: &str) {
     // G40: Per-rule detail for always-active rules
     for rule_name in &analysis.always_active_rules {
         diagnostics.push(build_lint(
-            "G40",
+            mettail_prattail::lint::DiagnosticId::G40,
             "always-active-rule",
             mettail_prattail::lint::LintSeverity::Note,
             format!(
@@ -1639,8 +1699,14 @@ pub fn generate_rewrite_rules(
         let rn = common::relation_names(&lang_type.name);
         let eq_rel = &rn.eq_rel;
         let rw_rel = &rn.rw_rel;
+        // F1: Eqrel dereference fix — bind temporaries from eqrel join and
+        // clone-dereference to handle ascent_par!'s &&(T,T) iterator type.
         rules.push(quote! {
-            #rw_rel(a.clone(), c.clone()) <-- #eq_rel(a, b), #rw_rel(b.clone(), c);
+            #rw_rel(__eqrel_closure_a.clone(), c.clone()) <--
+                #eq_rel(__eqrel_a, __eqrel_b),
+                let __eqrel_closure_a = __eqrel_a.clone(),
+                let __eqrel_closure_b = __eqrel_b.clone(),
+                #rw_rel(__eqrel_closure_b, c);
         });
     }
 
@@ -1687,7 +1753,7 @@ fn generate_pre_stratum_content(
             if let Some(ref ctx) = rule.term_context {
                 for param in ctx {
                     if let TermParam::Simple { ty, .. } = param {
-                        if let crate::ast::types::TypeExpr::Base(cat) = ty {
+                        if let mettail_ast::types::TypeExpr::Base(cat) = ty {
                             ground_categories.insert(cat.to_string());
                         }
                     }
@@ -1773,7 +1839,7 @@ fn generate_ground_hol_step_rules(
         let non_terminal_count = rule
             .items
             .iter()
-            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+            .filter(|item| matches!(item, GrammarItem::NonTerminal { .. }))
             .count();
         if non_terminal_count == 0 {
             continue;
@@ -1794,6 +1860,9 @@ fn generate_ground_hol_step_rules(
         let result_lit_label = common::literal_label_for(language, category)
             .expect("native category must have literal label");
         let rust_code = &rule.rust_code.as_ref().expect("checked above").code;
+        // `safe_code` is an `Option<_>`-returning closure call; Ascent binds it
+        // with `if let Some(__eval_val) = #safe_code`. See `safeify_rust_code`.
+        let safe_code = safeify_rust_code(rust_code);
 
         match non_terminal_count {
             2 => {
@@ -1808,8 +1877,8 @@ fn generate_ground_hol_step_rules(
                     if let (Some(TypeExpr::Base(left_ty)), Some(TypeExpr::Base(right_ty))) =
                         (simple.first(), simple.get(1))
                     {
-                        let left_lit = common::literal_label_for(language, left_ty);
-                        let right_lit = common::literal_label_for(language, right_ty);
+                        let left_lit = common::literal_label_for(language, &left_ty);
+                        let right_lit = common::literal_label_for(language, &right_ty);
                         match (left_lit, right_lit) {
                             (Some(ll), Some(rl)) => Some((left_ty.clone(), ll, right_ty.clone(), rl)),
                             _ => None,
@@ -1839,7 +1908,8 @@ fn generate_ground_hol_step_rules(
                         if let #right_cat::#right_lit_label(b_ref) = right.as_ref(),
                         let a = a_ref.clone(),
                         let b = b_ref.clone(),
-                        let t = #category::#result_lit_label((#rust_code));
+                        if let Some(__eval_val) = #safe_code,
+                        let t = #category::#result_lit_label(__eval_val);
                 });
             },
             1 => {
@@ -1857,7 +1927,8 @@ fn generate_ground_hol_step_rules(
                         if let #category::#rule_label(inner) = #term_var,
                         if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
                         let #param_name = s_ref.clone(),
-                        let t = #category::#result_lit_label((#rust_code));
+                        if let Some(__eval_val) = #safe_code,
+                        let t = #category::#result_lit_label(__eval_val);
                 });
             },
             _ => {
@@ -1925,7 +1996,8 @@ fn generate_ground_hol_step_rules(
                         if let #category::#rule_label(#(#field_names),*) = __src,
                         #(#destructure_fields)*
                         #(#let_bindings)*
-                        let __dst = #category::#result_lit_label((#rust_code));
+                        if let Some(__eval_val) = #safe_code,
+                        let __dst = #category::#result_lit_label(__eval_val);
                 });
             },
         }
@@ -1972,7 +2044,7 @@ fn generate_hol_step_rules(
         let non_terminal_count = rule
             .items
             .iter()
-            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+            .filter(|item| matches!(item, GrammarItem::NonTerminal { .. }))
             .count();
         if non_terminal_count == 0 {
             continue;
@@ -1993,6 +2065,7 @@ fn generate_hol_step_rules(
         let result_lit_label = common::literal_label_for(language, category)
             .expect("native category must have literal label");
         let rust_code = &rule.rust_code.as_ref().unwrap().code;
+        let safe_code = safeify_rust_code(rust_code);
 
         // Sprint 3: look up constructor weight for sorting (lower = more frequent = first)
         let rule_weight = analysis
@@ -2015,8 +2088,8 @@ fn generate_hol_step_rules(
                     if let (Some(TypeExpr::Base(left_ty)), Some(TypeExpr::Base(right_ty))) =
                         (simple.first(), simple.get(1))
                     {
-                        let left_lit = common::literal_label_for(language, left_ty);
-                        let right_lit = common::literal_label_for(language, right_ty);
+                        let left_lit = common::literal_label_for(language, &left_ty);
+                        let right_lit = common::literal_label_for(language, &right_ty);
                         match (left_lit, right_lit) {
                             (Some(ll), Some(rl)) => {
                                 Some((left_ty.clone(), ll, right_ty.clone(), rl))
@@ -2040,6 +2113,13 @@ fn generate_hol_step_rules(
                     ),
                 };
 
+                // `#safe_code` is a closure call that returns `Option<T>` — the
+                // user's `#rust_code` with arithmetic rewritten through `SafeArith`
+                // (see `safeify_rust_code`). The `if let Some(...)` guard means a
+                // step that would have overflowed (e.g., `i32::MAX + 1`) simply does
+                // not fire: the term stays in its current form and the runner can
+                // reach it as a terminal state. This is the Ascent-rule counterpart
+                // of the PDA `try_eval` — each rule is a trampoline step.
                 binary_rust_rules.push((rule_weight, quote! {
                     #rw_rel(s.clone(), t) <--
                         #cat_rel(s),
@@ -2048,7 +2128,8 @@ fn generate_hol_step_rules(
                         if let #right_cat::#right_lit_label(b_ref) = right.as_ref(),
                         let a = a_ref.clone(),
                         let b = b_ref.clone(),
-                        let t = #category::#result_lit_label((#rust_code));
+                        if let Some(__eval_val) = #safe_code,
+                        let t = #category::#result_lit_label(__eval_val);
                 }));
             },
             1 => {
@@ -2070,13 +2151,17 @@ fn generate_hol_step_rules(
                 // Use a different name for the term so the param (e.g. s) can be bound
                 // for rust_code without shadowing
                 let term_var = format_ident!("orig");
+                // See note on binary rules: `#safe_code` is the `SafeArith`-rewritten
+                // form of `#rust_code`. Factorial overflow (n! for n ≥ 13 on i32)
+                // returns `None` from `safe_product`, so the rule skips that term.
                 unary_rust_rules.push((rule_weight, quote! {
                     #rw_rel(#term_var.clone(), t) <--
                         #cat_rel(#term_var),
                         if let #category::#label(inner) = #term_var,
                         if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
                         let #param_name = s_ref.clone(),
-                        let t = #category::#result_lit_label((#rust_code));
+                        if let Some(__eval_val) = #safe_code,
+                        let t = #category::#result_lit_label(__eval_val);
                 }));
             },
             _ => {
@@ -2145,14 +2230,17 @@ fn generate_hol_step_rules(
                     })
                     .collect();
 
-                // Use __src/__dst to avoid name collisions with user-defined param names
+                // Use __src/__dst to avoid name collisions with user-defined param names.
+                // `#safe_code` is the `SafeArith`-rewritten `#rust_code`; a `None`
+                // means this N-ary rule does not fire on this term (trampoline step).
                 nary_rust_rules.push((rule_weight, quote! {
                     #rw_rel(__src.clone(), __dst) <--
                         #cat_rel(__src),
                         if let #category::#label(#(#field_names),*) = __src,
                         #(#destructure_fields)*
                         #(#let_bindings)*
-                        let __dst = #category::#result_lit_label((#rust_code));
+                        if let Some(__eval_val) = #safe_code,
+                        let __dst = #category::#result_lit_label(__eval_val);
                 }));
             },
         }
@@ -2237,13 +2325,15 @@ fn generate_fold_big_step_rules(
                 }
                 let label = &rule.label;
 
-                let res_expr = if let Some(ref rust_block) = rule.rust_code {
-                    let rust_code = &rust_block.code;
-                    quote! { #category::#num_lit((#rust_code)) }
+                let rust_code = if let Some(ref rust_block) = rule.rust_code {
+                    &rust_block.code
                 } else {
                     continue;
                 };
+                let safe_code = safeify_rust_code(rust_code);
 
+                // `#safe_code` = `SafeArith`-rewritten `#rust_code`. Overflow
+                // returns `None` so the fold rule silently skips that term.
                 if param_count == 1 {
                     // Unary fold rule (e.g., Neg)
                     rules.push(quote! {
@@ -2253,7 +2343,8 @@ fn generate_fold_big_step_rules(
                             #fold_rel(inner.as_ref().clone(), iv),
                             if let #category::#num_lit(a_ref) = &iv,
                             let a = a_ref.clone(),
-                            let res = #res_expr;
+                            if let Some(__eval_val) = #safe_code,
+                            let res = #category::#num_lit(__eval_val);
                     });
                 } else {
                     // Binary fold rule (e.g., Add, Sub)
@@ -2267,7 +2358,8 @@ fn generate_fold_big_step_rules(
                             if let #category::#num_lit(b_ref) = &rv,
                             let a = a_ref.clone(),
                             let b = b_ref.clone(),
-                            let res = #res_expr;
+                            if let Some(__eval_val) = #safe_code,
+                            let res = #category::#num_lit(__eval_val);
                     });
                 }
             }
@@ -2321,6 +2413,7 @@ fn generate_fold_big_step_rules(
                 let param_names = fold_param_names(rule);
                 let label = &rule.label;
                 let rust_code = &rule.rust_code.as_ref().unwrap().code;
+                let safe_code = safeify_rust_code(rust_code);
 
                 // Only emit fold when result is not Err (e.g. Add only rewrites when both args are ints).
                 let filter_err = if category_has_err {
@@ -2332,6 +2425,8 @@ fn generate_fold_big_step_rules(
                     quote! {}
                 };
 
+                // `#safe_code` = `SafeArith`-rewritten `#rust_code`. Non-native
+                // fold bodies get the same overflow-to-`None` treatment.
                 if param_names.len() == 2 {
                     let p0 = &param_names[0];
                     let p1 = &param_names[1];
@@ -2343,7 +2438,7 @@ fn generate_fold_big_step_rules(
                             #fold_rel(right.as_ref().clone(), rv),
                             let #p0 = lv,
                             let #p1 = rv,
-                            let res = (#rust_code)
+                            if let Some(res) = #safe_code
                             #filter_err;
                     });
                 } else if param_names.len() == 1 {
@@ -2354,7 +2449,7 @@ fn generate_fold_big_step_rules(
                             if let #category::#label(inner) = s,
                             #fold_rel(inner.as_ref().clone(), lv),
                             let #p0 = lv,
-                            let res = (#rust_code)
+                            if let Some(res) = #safe_code
                             #filter_err;
                     });
                 }
@@ -3013,16 +3108,16 @@ mod tests {
 
     #[test]
     fn test_classify_relation_family() {
-        assert_eq!(classify_relation_family("proc"), "cat");
-        assert_eq!(classify_relation_family("name"), "cat");
-        assert_eq!(classify_relation_family("int"), "cat");
-        assert_eq!(classify_relation_family("eq_proc"), "eq");
-        assert_eq!(classify_relation_family("eq_name"), "eq");
-        assert_eq!(classify_relation_family("rw_proc"), "rw");
-        assert_eq!(classify_relation_family("rw_int"), "rw");
-        assert_eq!(classify_relation_family("fold_int"), "fold");
-        assert_eq!(classify_relation_family("ppar_contains"), "projection");
-        assert_eq!(classify_relation_family("step_term"), "custom");
+        assert_eq!(classify_relation_family("proc"), RelationFamily::Category);
+        assert_eq!(classify_relation_family("name"), RelationFamily::Category);
+        assert_eq!(classify_relation_family("int"), RelationFamily::Category);
+        assert_eq!(classify_relation_family("eq_proc"), RelationFamily::Eq);
+        assert_eq!(classify_relation_family("eq_name"), RelationFamily::Eq);
+        assert_eq!(classify_relation_family("rw_proc"), RelationFamily::Rewrite);
+        assert_eq!(classify_relation_family("rw_int"), RelationFamily::Rewrite);
+        assert_eq!(classify_relation_family("fold_int"), RelationFamily::Fold);
+        assert_eq!(classify_relation_family("ppar_contains"), RelationFamily::Projection);
+        assert_eq!(classify_relation_family("step_term"), RelationFamily::Custom);
     }
 
     #[test]
@@ -3079,16 +3174,16 @@ mod tests {
             head_relations: ["rw_proc".to_string()].into_iter().collect(),
         };
 
-        let families: HashSet<&str> = desc
+        let families: HashSet<RelationFamily> = desc
             .body_relations
             .iter()
             .map(|rel| classify_relation_family(rel))
             .collect();
 
         assert_eq!(families.len(), 3);
-        assert!(families.contains("cat"));
-        assert!(families.contains("eq"));
-        assert!(families.contains("rw"));
+        assert!(families.contains(&RelationFamily::Category));
+        assert!(families.contains(&RelationFamily::Eq));
+        assert!(families.contains(&RelationFamily::Rewrite));
     }
 
     #[test]

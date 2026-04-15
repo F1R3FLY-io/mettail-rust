@@ -22,6 +22,7 @@ use proc_macro2::TokenStream;
 
 use super::{partition::AlphabetPartition, semiring::TropicalWeight, Dfa, StateId, TokenKind, DEAD_STATE};
 use crate::CustomTokenSpec;
+use crate::lint::DiagnosticId;
 
 /// Threshold: use direct-coded for small DFAs, table-driven for larger ones.
 const DIRECT_CODED_THRESHOLD: usize = 30;
@@ -345,7 +346,7 @@ pub fn generate_lexer_string_hybrid(
 
         // Emit I16 diagnostic
         crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
-            id: "I16",
+            id: DiagnosticId::I16,
             name: "hybrid-lexer-active",
             severity: crate::lint::LintSeverity::Info,
             category: None,
@@ -658,10 +659,26 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind, custom_tokens: &[
         TokenKind::Eof => buf.push_str("Token::Eof"),
         TokenKind::Ident => buf.push_str("Token::Ident(text)"),
         TokenKind::Integer => {
-            buf.push_str("Token::Integer(text.parse::<i64>().expect(\"invalid integer literal\"))");
+            // Saturating parse: literals larger than i64::MAX (or smaller than
+            // i64::MIN) clamp rather than panic. The lexer regex that produces
+            // this call is permissive about digit count — a display→lex
+            // roundtrip on `NumLit(i64::MIN)` writes `-9223372036854775808`
+            // whose unsigned-magnitude part (`9223372036854775808`) exceeds
+            // `i64::MAX`, triggering `ParseIntError::PosOverflow`. `expect`
+            // panicked inside `catch_unwind`'s caller, producing the
+            // double-panic abort seen in simulation runs.
+            buf.push_str(
+                "Token::Integer(text.parse::<i64>().unwrap_or_else(|_| \
+                 if text.starts_with('-') { i64::MIN } else { i64::MAX }))",
+            );
         },
         TokenKind::Float => {
-            buf.push_str("Token::Float(text.parse::<f64>().expect(\"invalid float literal\"))");
+            // `f64::from_str` returns `Ok(±Inf)` for values that overflow the
+            // representable range, so it never errors on well-formed numeric
+            // input. A parse failure here means the lexer regex produced
+            // something non-numeric, which is a lexer bug — we clamp to 0.0
+            // rather than panic so simulation surface errors don't abort.
+            buf.push_str("Token::Float(text.parse::<f64>().unwrap_or(0.0))");
         },
         TokenKind::True => buf.push_str("Token::Boolean(true)"),
         TokenKind::False => buf.push_str("Token::Boolean(false)"),
@@ -1012,11 +1029,12 @@ fn token_kind_to_constructor(kind: &TokenKind, text_var: &str, custom_tokens: &[
         TokenKind::Eof => "Token::Eof".to_string(),
         TokenKind::Ident => format!("Token::Ident({})", text_var),
         TokenKind::Integer => format!(
-            "Token::Integer({}.parse::<i64>().expect(\"invalid integer literal\"))",
+            "Token::Integer({0}.parse::<i64>().unwrap_or_else(|_| \
+             if {0}.starts_with('-') {{ i64::MIN }} else {{ i64::MAX }}))",
             text_var
         ),
         TokenKind::Float => format!(
-            "Token::Float({}.parse::<f64>().expect(\"invalid float literal\"))",
+            "Token::Float({}.parse::<f64>().unwrap_or(0.0))",
             text_var
         ),
         TokenKind::True => "Token::Boolean(true)".to_string(),

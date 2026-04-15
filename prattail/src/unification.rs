@@ -798,6 +798,12 @@ fn item_to_term(
             head: "binder_collection".into(),
             args: vec![],
         },
+
+        crate::SyntaxItemSpec::GuardExpression { param_name } => {
+            let next = param_index.len();
+            let idx = *param_index.entry(param_name.clone()).or_insert(next);
+            TermExpr::Var(idx)
+        }
     }
 }
 

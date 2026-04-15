@@ -55,14 +55,15 @@ language! {
         Concat . a:Str, b:Str |- a "++" b : Str ![[a, b].concat()] step;
         AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
         // Int operations
-        AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
-        SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
-        MulInt . a:Int, b:Int |- a "*" b : Int ![a * b] fold;
-        DivInt . a:Int, b:Int |- a "/" b : Int ![a / b] fold;
-        ModInt . a:Int, b:Int |- a "%" b : Int ![a % b] fold;
-        PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] step right;
-        Neg . a:Int |- "-" a : Int ![(-a)] fold;
-        Fact . a:Int |- a "!" : Int ![{ (1..=a.max(0)).product::<i32>() }] step;
+        AddInt . a:Int, b:Int |- a "+" b : Int ![{ a.checked_add(b).unwrap_or(0) }] fold;
+        SubInt . a:Int, b:Int |- a "-" b : Int ![{ a.checked_sub(b).unwrap_or(0) }] fold;
+        MulInt . a:Int, b:Int |- a "*" b : Int ![{ a.checked_mul(b).unwrap_or(0) }] fold;
+        DivInt . a:Int, b:Int |- a "/" b : Int ![{ if b == 0 { 0 } else { a.checked_div(b).unwrap_or(0) } }] fold;
+        ModInt . a:Int, b:Int |- a "%" b : Int ![{ if b == 0 { 0 } else { a.checked_rem(b).unwrap_or(0) } }] fold;
+        PowInt . a:Int, b:Int |- a "^" b : Int ![{ a.checked_pow(b.max(0) as u32).unwrap_or(0) }] step right;
+        Neg . a:Int |- "-" a : Int ![{ a.checked_neg().unwrap_or(0) }] fold;
+        Fact . a:Int |- a "!" : Int ![{ (1..=a.max(0)).try_fold(1i32, |acc, x| acc.checked_mul(x)).unwrap_or(0) }] step;
+        NegFloat . a:Float |- "-" a : Float ![{ mettail_runtime::CanonicalFloat64::from(-a.get()) }] fold;
         // Float operations
         AddFloat . a:Float, b:Float |- a "+" b : Float ![a + b] fold;
         SubFloat . a:Float, b:Float |- a "-" b : Float ![a - b] fold;
@@ -91,7 +92,7 @@ language! {
         BoolId . a:Bool |- "bool" "(" a ")" : Bool ![a] step;
         StrId . a:Str |- "str" "(" a ")" : Str ![a] step;
         // Custom operation (PraTTaIL test feature)
-        CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
+        CustomOp . a:Int, b:Int |- a "~" b : Int ![{ 2i32.checked_mul(a).and_then(|x| 3i32.checked_mul(b).and_then(|y| x.checked_add(y))).unwrap_or(0) }] fold;
     },
     equations {
     },
@@ -163,6 +164,7 @@ language! {
         AddIntCongL . | S ~> T |- (AddInt S R) ~> (AddInt T R);
         AddIntCongR . | S ~> T |- (AddInt L S) ~> (AddInt L T);
         NegCong . | S ~> T |- (Neg S) ~> (Neg T);
+        NegFloatCong . | S ~> T |- (NegFloat S) ~> (NegFloat T);
         SubIntCongL . | S ~> T |- (SubInt S R) ~> (SubInt T R);
         SubIntCongR . | S ~> T |- (SubInt L S) ~> (SubInt L T);
         MulIntCongL . | S ~> T |- (MulInt S R) ~> (MulInt T R);

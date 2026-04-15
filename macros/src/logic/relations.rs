@@ -5,9 +5,9 @@
 //! for unified extraction into custom_relations.
 
 use super::common::relation_names;
-use crate::ast::grammar::TermParam;
-use crate::ast::language::LanguageDef;
-use crate::ast::types::EvalMode;
+use mettail_ast::grammar::TermParam;
+use mettail_ast::language::LanguageDef;
+use mettail_ast::types::EvalMode;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeSet;
@@ -112,7 +112,7 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
     for rdef in &language.refinement_types {
         let rel_name = format_ident!("is_refined_{}", rdef.name.to_string().to_lowercase());
         let base_type_str = match &rdef.base_type {
-            crate::ast::types::TypeExpr::Base(id) => id.to_string(),
+            mettail_ast::types::TypeExpr::Base(id) => id.to_string(),
             _ => continue,
         };
         out.push(RelationForExtraction {
@@ -269,7 +269,7 @@ fn generate_refinement_relations(language: &LanguageDef) -> Vec<TokenStream> {
         let base_cat = &rdef.base_type;
         // Resolve the base type identifier from TypeExpr.
         let base_ident = match base_cat {
-            crate::ast::types::TypeExpr::Base(id) => id.clone(),
+            mettail_ast::types::TypeExpr::Base(id) => id.clone(),
             _ => continue, // Only base types supported as refinement base for now
         };
 

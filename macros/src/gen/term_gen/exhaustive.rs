@@ -11,8 +11,8 @@
     clippy::unnecessary_filter_map
 )]
 
-use crate::ast::{
-    grammar::{GrammarItem, GrammarRule, TermParam},
+use mettail_ast::{
+    grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
     language::LanguageDef,
 };
 use crate::gen::term_gen::is_lang_type;
@@ -181,7 +181,7 @@ fn generate_depth_0_cases(
             .filter(|item| {
                 matches!(
                     item,
-                    GrammarItem::NonTerminal(_)
+                    GrammarItem::NonTerminal { .. }
                         | GrammarItem::Binder { .. }
                         | GrammarItem::Collection { .. }
                 )
@@ -195,8 +195,8 @@ fn generate_depth_0_cases(
             });
         } else if non_terminals.len() == 1 {
             // Check if it's a Var constructor
-            if let GrammarItem::NonTerminal(nt) = non_terminals[0] {
-                if nt.to_string() == "Var" {
+            if let GrammarItem::NonTerminal { kind, .. } = non_terminals[0] {
+                if *kind == NonTerminalKind::Var {
                     // Check if this is NumLit with a native type
                     let label_str = label.to_string();
                     let is_numlit = label_str == "NumLit";
@@ -265,7 +265,7 @@ fn generate_depth_d_cases(
             .items
             .iter()
             .filter_map(|item| match item {
-                GrammarItem::NonTerminal(nt) => Some(nt.clone()),
+                GrammarItem::NonTerminal { ident: nt, .. } => Some(nt.clone()),
                 GrammarItem::Binder { category } => Some(category.clone()),
                 _ => None,
             })
@@ -275,8 +275,19 @@ fn generate_depth_d_cases(
             continue; // Nullary
         }
 
-        if non_terminals.len() == 1 && non_terminals[0].to_string() == "Var" {
-            continue; // Var constructor
+        if non_terminals.len() == 1 {
+            // Skip Var constructor at depth > 0
+            if let Some(kind) = rule.items.iter().find_map(|item| {
+                if let GrammarItem::NonTerminal { kind, .. } = item {
+                    Some(*kind)
+                } else {
+                    None
+                }
+            }) {
+                if kind == NonTerminalKind::Var {
+                    continue; // Var constructor
+                }
+            }
         }
 
         // Generate recursive case
@@ -307,7 +318,7 @@ fn generate_simple_constructor_case(
         .items
         .iter()
         .filter_map(|item| match item {
-            GrammarItem::NonTerminal(nt) => Some(nt.clone()),
+            GrammarItem::NonTerminal { ident: nt, .. } => Some(nt.clone()),
             _ => None,
         })
         .collect();
@@ -332,7 +343,7 @@ fn generate_unary_case(
     language: &LanguageDef,
 ) -> TokenStream {
     let field_name = category_to_field_name(arg_cat);
-    let is_var = arg_cat.to_string() == "Var";
+    let is_var = NonTerminalKind::classify(&arg_cat.to_string()) == NonTerminalKind::Var;
 
     if is_lang_type(arg_cat, language) {
         let constructor = if is_var {
@@ -464,6 +475,21 @@ fn generate_binder_constructor_case(
 ) -> TokenStream {
     let label = &rule.label;
 
+    // Phase 3A (predicated types): exhaustive term generation for
+    // guarded constructors requires exhaustive predicate generation,
+    // which is out of scope for the current term_gen pipeline.
+    // Constructors with `?guard:Guard` slots are skipped from
+    // exhaustive generation; tests that need to construct guarded
+    // terms should build them by hand.
+    let has_guard_slot = rule
+        .term_context
+        .as_ref()
+        .map(|ctx| ctx.iter().any(|p| matches!(p, TermParam::GuardBody { .. })))
+        .unwrap_or(false);
+    if has_guard_slot {
+        return quote! {};
+    }
+
     // For binder constructors, we need to:
     // 1. Get non-binder, non-body arguments
     // 2. Generate the body at various depths
@@ -480,7 +506,7 @@ fn generate_binder_constructor_case(
         }
 
         match item {
-            GrammarItem::NonTerminal(cat) => {
+            GrammarItem::NonTerminal { ident: cat, .. } => {
                 arg_positions.push((i, cat.clone()));
             },
             GrammarItem::Collection { .. } => {
@@ -494,7 +520,7 @@ fn generate_binder_constructor_case(
 
     // Find the body category
     let body_cat = match &rule.items[body_idx] {
-        GrammarItem::NonTerminal(cat) => cat,
+        GrammarItem::NonTerminal { ident: cat, .. } => cat,
         _ => panic!("Body should be a NonTerminal"),
     };
 
@@ -796,7 +822,7 @@ fn generate_collection_constructor_case(
                 return None;
             }
             match item {
-                GrammarItem::NonTerminal(cat) => Some((i, cat.clone())),
+                GrammarItem::NonTerminal { ident: cat, .. } => Some((i, cat.clone())),
                 _ => None,
             }
         })

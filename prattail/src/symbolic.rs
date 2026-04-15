@@ -1023,6 +1023,74 @@ impl<A: BooleanAlgebra> SymbolicAutomaton<A> {
         result
     }
 
+    /// Union of two SFAs over the same algebra.
+    ///
+    /// Builds a single NFA whose state space is the disjoint union of
+    /// `self`'s and `other`'s state spaces. Initial states from both
+    /// automata are marked initial in the result; accepting states are
+    /// preserved. Transitions are renumbered into the combined index
+    /// space. The resulting NFA accepts exactly the union of the two
+    /// languages.
+    ///
+    /// # Complexity
+    ///
+    /// O(|Q1| + |Q2| + |delta1| + |delta2|). Unlike intersection, no
+    /// product construction is performed; the union is purely
+    /// structural.
+    pub fn union(&self, other: &Self) -> Self {
+        let mut result = SymbolicAutomaton::new(self.algebra.clone());
+
+        // Copy `self`'s states; record the offset for renumbering.
+        let self_offset = 0;
+        for state in &self.states {
+            let new_label = state
+                .label
+                .clone()
+                .map(|l| format!("L:{}", l))
+                .or_else(|| Some(format!("L:q{}", state.id)));
+            result.add_state(state.is_accepting, new_label);
+        }
+
+        // Copy `other`'s states with an offset.
+        let other_offset = self.states.len();
+        for state in &other.states {
+            let new_label = state
+                .label
+                .clone()
+                .map(|l| format!("R:{}", l))
+                .or_else(|| Some(format!("R:q{}", state.id)));
+            result.add_state(state.is_accepting, new_label);
+        }
+
+        // Mark initial states from both sides.
+        for &init in &self.initial_states {
+            result.set_initial(init + self_offset);
+        }
+        for &init in &other.initial_states {
+            result.set_initial(init + other_offset);
+        }
+
+        // Copy `self`'s transitions.
+        for trans in &self.transitions {
+            result.add_transition(
+                trans.from + self_offset,
+                trans.to + self_offset,
+                trans.guard.clone(),
+            );
+        }
+
+        // Copy `other`'s transitions with renumbering.
+        for trans in &other.transitions {
+            result.add_transition(
+                trans.from + other_offset,
+                trans.to + other_offset,
+                trans.guard.clone(),
+            );
+        }
+
+        result
+    }
+
     /// Complement the automaton.
     ///
     /// Determinizes the automaton first (if it is nondeterministic), then
@@ -1788,10 +1856,8 @@ pub fn analyze_from_bundle(
 ///
 /// Delegates per-predicate compilation to `analyze_from_bundle()`.
 /// M1 is always active (base module in every dispatch signature).
-#[cfg(feature = "predicate-dispatch")]
 pub struct SymbolicCompiler;
 
-#[cfg(feature = "predicate-dispatch")]
 impl crate::predicate_dispatch::PredicateCompiler for SymbolicCompiler {
     type Output = SymbolicAnalysis;
 

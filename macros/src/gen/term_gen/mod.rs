@@ -8,7 +8,7 @@ mod random;
 pub use exhaustive::*;
 pub use random::*;
 
-use crate::ast::language::LanguageDef;
+use mettail_ast::language::LanguageDef;
 use syn::Ident;
 
 pub fn is_lang_type(cat: &Ident, language: &LanguageDef) -> bool {

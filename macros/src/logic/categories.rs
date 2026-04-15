@@ -12,8 +12,8 @@ use super::common::{
     compute_category_reachability, compute_demanded_categories, filter_reachable_by_demand,
     has_collection_field, in_cat_filter, is_multi_binder, relation_names, CategoryFilter,
 };
-use crate::ast::grammar::TermParam;
-use crate::ast::{
+use mettail_ast::grammar::TermParam;
+use mettail_ast::{
     grammar::{GrammarItem, GrammarRule},
     language::LanguageDef,
 };
@@ -53,7 +53,7 @@ pub fn generate_category_rules(language: &LanguageDef, cat_filter: CategoryFilte
                 .map(|(s, t)| format!("({}, {})", s, t))
                 .collect();
             mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
-                id: "G34",
+                id: mettail_prattail::lint::DiagnosticId::G34,
                 name: "demand-driven-deconstruction",
                 severity: mettail_prattail::lint::LintSeverity::Note,
                 category: None,
@@ -196,7 +196,7 @@ fn generate_collection_plus_binding_deconstruction(
     category: &Ident,
     constructor: &GrammarRule,
 ) -> Option<Vec<TokenStream>> {
-    use crate::ast::types::TypeExpr;
+    use mettail_ast::types::TypeExpr;
 
     // Only for multi-binder + collection (e.g. PInputs): term_context has MultiAbstraction and Simple(Vec)
     let term_context = constructor.term_context.as_ref()?;
@@ -227,7 +227,7 @@ fn generate_collection_plus_binding_deconstruction(
     let (_binder_idx, body_indices) = &constructor.bindings[0];
     let body_idx = body_indices.first()?;
     let body_cat = match &constructor.items[*body_idx] {
-        GrammarItem::NonTerminal(cat) => cat,
+        GrammarItem::NonTerminal { ident: cat, .. } => cat,
         _ => return None,
     };
     // Multi-binder scope → wrap as MLam{body_cat} so the scope appears in the category as a lambda

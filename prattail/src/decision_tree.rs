@@ -29,6 +29,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
+use crate::lint::DiagnosticId;
+
 use pathmap::PathMap;
 use pathmap::ring::{AlgebraicResult, Lattice, DistributiveLattice};
 
@@ -1800,7 +1802,7 @@ pub enum EmissionStrategy {
 
 /// Construct a `LintDiagnostic` for a decision-tree analysis result.
 fn dt_diagnostic(
-    id: &'static str,
+    id: DiagnosticId,
     name: &'static str,
     severity: crate::lint::LintSeverity,
     category: &str,
@@ -1871,7 +1873,7 @@ pub fn precision_ambiguity_reports(
             };
 
             diagnostics.push(dt_diagnostic(
-                "D01",
+                DiagnosticId::D01,
                 "precision-ambiguity",
                 crate::lint::LintSeverity::Note,
                 &tree.category,
@@ -1940,7 +1942,7 @@ pub fn unresolvable_ambiguity_reports(
                     candidates.iter().map(|c| c.rule_label.as_str()).collect();
 
                 diagnostics.push(dt_diagnostic(
-                    "D02",
+                    DiagnosticId::D02,
                     "unresolvable-ambiguity",
                     crate::lint::LintSeverity::Warning,
                     &tree.category,
@@ -1997,7 +1999,7 @@ pub fn unreachable_rule_detection(
     unreachable
         .into_iter()
         .map(|label| dt_diagnostic(
-            "D03",
+            DiagnosticId::D03,
             "trie-unreachable-rule",
             crate::lint::LintSeverity::Warning,
             &tree.category,
@@ -2015,7 +2017,7 @@ pub fn unreachable_rule_detection(
 pub fn min_lookahead_report(tree: &CategoryDecisionTree, grammar_name: &str) -> crate::lint::LintDiagnostic {
     let depth = tree.stats.min_lookahead;
     dt_diagnostic(
-        "D04",
+        DiagnosticId::D04,
         "min-lookahead-depth",
         crate::lint::LintSeverity::Note,
         &tree.category,
@@ -2038,7 +2040,7 @@ pub fn min_lookahead_report(tree: &CategoryDecisionTree, grammar_name: &str) -> 
 /// Layer 4: Grammar complexity metrics.
 pub fn complexity_metrics(tree: &CategoryDecisionTree, grammar_name: &str) -> crate::lint::LintDiagnostic {
     dt_diagnostic(
-        "D05",
+        DiagnosticId::D05,
         "decision-tree-summary",
         crate::lint::LintSeverity::Note,
         &tree.category,
@@ -2156,7 +2158,7 @@ pub fn wfst_consistency_check(
                 let trie_reachable = tree.segments.first().map_or(false, |s| s.contains(&path));
                 if !trie_reachable {
                     diagnostics.push(dt_diagnostic(
-                        "D06",
+                        DiagnosticId::D06,
                         "wfst-trie-inconsistency",
                         crate::lint::LintSeverity::Warning,
                         &tree.category,
@@ -2186,7 +2188,7 @@ pub fn optimization_suggestions(tree: &CategoryDecisionTree, grammar_name: &str)
             if let DecisionAction::Ambiguous { candidates } = action {
                 if candidates.len() == 2 {
                     suggestions.push(dt_diagnostic(
-                        "D08",
+                        DiagnosticId::D08,
                         "optimization-suggestion",
                         crate::lint::LintSeverity::Note,
                         &tree.category,
@@ -2205,7 +2207,7 @@ pub fn optimization_suggestions(tree: &CategoryDecisionTree, grammar_name: &str)
                     let labels: Vec<&str> =
                         candidates.iter().map(|c| c.rule_label.as_str()).collect();
                     suggestions.push(dt_diagnostic(
-                        "D08",
+                        DiagnosticId::D08,
                         "optimization-suggestion",
                         crate::lint::LintSeverity::Note,
                         &tree.category,
@@ -2236,7 +2238,7 @@ pub fn conflict_resolution_guidance(tree: &CategoryDecisionTree, grammar_name: &
                 let labels: Vec<&str> =
                     candidates.iter().map(|c| c.rule_label.as_str()).collect();
                 guidance.push(dt_diagnostic(
-                    "D09",
+                    DiagnosticId::D09,
                     "conflict-resolution-guide",
                     crate::lint::LintSeverity::Note,
                     &tree.category,
@@ -2348,7 +2350,7 @@ pub fn coverage_report_with_suggestions(
         }
 
         diagnostics.push(dt_diagnostic(
-            "D07",
+            DiagnosticId::D07,
             "path-coverage-report",
             crate::lint::LintSeverity::Note,
             &tree.category,
@@ -4259,7 +4261,7 @@ mod tests {
         /* Both rules truncate at the same NT boundary → same path [if, (].
          * pjoin merges them into Ambiguous. D01 should fire. */
         assert!(
-            diags.iter().any(|d| d.id == "D01"),
+            diags.iter().any(|d| d.id == DiagnosticId::D01),
             "D01 should fire for ambiguous prefix: {:?}",
             diags,
         );
@@ -4304,7 +4306,7 @@ mod tests {
         let tree = builder.get_tree("Int").expect("should have Int tree");
         let diags = unresolvable_ambiguity_reports(tree, &token_ids, "test");
         /* The ambiguous node [if, (] is a leaf (NT boundary truncated both) → D02 fires */
-        let d02s: Vec<_> = diags.iter().filter(|d| d.id == "D02").collect();
+        let d02s: Vec<_> = diags.iter().filter(|d| d.id == DiagnosticId::D02).collect();
         assert!(
             !d02s.is_empty(),
             "D02 should fire for unresolvable ambiguity at trie leaf: diags={:?}",
@@ -4340,7 +4342,7 @@ mod tests {
 
         let diags = unreachable_rule_detection(tree, &all_labels, "test");
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "D03");
+        assert_eq!(diags[0].id, DiagnosticId::D03);
         assert!(diags[0].message.contains("GhostRule"));
     }
 
@@ -4370,7 +4372,7 @@ mod tests {
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
         let diag = min_lookahead_report(tree, "test");
-        assert_eq!(diag.id, "D04");
+        assert_eq!(diag.id, DiagnosticId::D04);
         /* Both rules have distinct first tokens → LL(1) */
         assert!(
             diag.message.contains("depth 1") || diag.message.contains("LL(1)"),
@@ -4401,7 +4403,7 @@ mod tests {
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
         let diag = complexity_metrics(tree, "test");
-        assert_eq!(diag.id, "D05");
+        assert_eq!(diag.id, DiagnosticId::D05);
         assert!(diag.message.contains("decision tree"));
     }
 
@@ -4436,7 +4438,7 @@ mod tests {
         /* No paths covered → D07 fires */
         let covered = HashSet::new();
         let diags = coverage_report(tree, &covered, "test");
-        assert!(diags.iter().any(|d| d.id == "D07"));
+        assert!(diags.iter().any(|d| d.id == DiagnosticId::D07));
 
         /* All paths covered → D07 should not fire */
         let all_covered: HashSet<Vec<u8>> = paths.iter().map(|p| p.path_bytes.clone()).collect();
@@ -4480,7 +4482,7 @@ mod tests {
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
         let diags = optimization_suggestions(tree, "test");
-        let d08s: Vec<_> = diags.iter().filter(|d| d.id == "D08").collect();
+        let d08s: Vec<_> = diags.iter().filter(|d| d.id == DiagnosticId::D08).collect();
         assert!(
             !d08s.is_empty(),
             "D08 should fire for ambiguous rules: {:?}",
@@ -4523,7 +4525,7 @@ mod tests {
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
         let diags = conflict_resolution_guidance(tree, "test");
-        let d09s: Vec<_> = diags.iter().filter(|d| d.id == "D09").collect();
+        let d09s: Vec<_> = diags.iter().filter(|d| d.id == DiagnosticId::D09).collect();
         assert!(
             !d09s.is_empty(),
             "D09 should fire for conflicting rules: {:?}",
@@ -5357,7 +5359,7 @@ mod tests {
 
         let diags = wfst_consistency_check(tree, &wfst, &token_ids, "test");
         // "if" maps to KwIf which is in the trie at single-byte path → no D06
-        let d06s: Vec<_> = diags.iter().filter(|d| d.id == "D06").collect();
+        let d06s: Vec<_> = diags.iter().filter(|d| d.id == DiagnosticId::D06).collect();
         assert!(d06s.is_empty(), "D06 should not fire when consistent: {:?}", d06s);
     }
 
@@ -5397,7 +5399,7 @@ mod tests {
         let wfst = wfst_builder.build();
 
         let diags = wfst_consistency_check(tree, &wfst, &token_ids, "test");
-        let d06s: Vec<_> = diags.iter().filter(|d| d.id == "D06").collect();
+        let d06s: Vec<_> = diags.iter().filter(|d| d.id == DiagnosticId::D06).collect();
         assert!(!d06s.is_empty(), "D06 should fire for inconsistent token: {:?}", diags);
         assert!(d06s[0].message.contains("float"), "D06 message should mention the token");
     }
@@ -5601,7 +5603,7 @@ mod tests {
         let diags = coverage_report(tree, &covered, "test");
         assert!(diags.len() == 1, "should have exactly one D07 diagnostic");
         let d07 = &diags[0];
-        assert_eq!(d07.id, "D07");
+        assert_eq!(d07.id, DiagnosticId::D07);
         // Should contain coverage fraction: "1/N"
         assert!(
             d07.message.contains("1/"),

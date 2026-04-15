@@ -106,8 +106,12 @@ eq_num(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_NUM_EQ_CONG_0.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_num(s_f0, t_f0),
-    eq_num(s_f1, t_f1);
+    eq_num(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone(),
+    eq_num(__eqcong_s_f1, __eqcong_t_f1),
+    if s_f1 == __eqcong_s_f1.clone(),
+    if t_f1 == __eqcong_t_f1.clone();
 
 
     // Rewrite rules
@@ -124,7 +128,8 @@ fold_num(s.clone(), res) <--
     if let Num::NumLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let res = Num::NumLit((a + b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_add(a, b) ?) }) (),
+    let res = Num::NumLit(__eval_val);
 
 fold_num(s.clone(), res) <--
     num(s),
@@ -135,7 +140,8 @@ fold_num(s.clone(), res) <--
     if let Num::NumLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let res = Num::NumLit((a - b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_sub(a, b) ?) }) (),
+    let res = Num::NumLit(__eval_val);
 
 fold_num(s.clone(), res) <--
     num(s),
@@ -146,7 +152,8 @@ fold_num(s.clone(), res) <--
     if let Num::NumLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let res = Num::NumLit((a / b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_div(a, b) ?) }) (),
+    let res = Num::NumLit(__eval_val);
 
 rw_num(s.clone(), t.clone()) <--
     num(s),
@@ -186,8 +193,10 @@ rw_num(lhs.clone(), match (lhs, vi) {
     } let iter_buf = std::mem::take(& mut buf); POOL_NUM_SCONG_NUM.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_num(field_val, t);
 
-rw_num(a.clone(), c.clone()) <--
-    eq_num(a, b),
-    rw_num(b.clone(), c);
+rw_num(__eqrel_closure_a.clone(), c.clone()) <--
+    eq_num(__eqrel_a, __eqrel_b),
+    let __eqrel_closure_a = __eqrel_a.clone(),
+    let __eqrel_closure_b = __eqrel_b.clone(),
+    rw_num(__eqrel_closure_b, c);
 
 }

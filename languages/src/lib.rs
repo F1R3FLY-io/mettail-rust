@@ -11,15 +11,23 @@
 
 pub mod ambient;
 pub mod calculator;
+pub mod guarded_rho;
 pub mod lambda;
-#[cfg(feature = "test-languages")]
 pub mod led_test;
 pub mod rhocalc;
 
 // Composition test languages — module order matters for proc-macro registry population.
 // fragments and base_lang must compile before their consumers.
-#[cfg(feature = "test-languages")]
 pub mod composition;
+
+// Re-export composition language modules at crate root for generated test file access.
+// Generated test files use `mettail_languages::{name}::*` which requires crate-root modules.
+pub use composition::base_lang as basemath;
+pub use composition::extended_lang as extmath;
+pub use composition::mixed_lang as mixedmath;
+pub use composition::grammar_import_lang as importedmath;
+pub use led_test as ledtest;
+pub use guarded_rho as guardedrho;
 
 // Re-export eqrel for the generated Ascent code
 // The generated code uses `#[ds(crate::eqrel)]` which expects eqrel at crate root

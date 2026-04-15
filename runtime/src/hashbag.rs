@@ -204,6 +204,28 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         self.total_count == 0
     }
 
+    /// Inserts an element into the bag `count` times.
+    ///
+    /// This is more efficient than calling `insert()` in a loop because
+    /// it performs a single hash lookup and adds the count directly.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mettail_runtime::HashBag;
+    ///
+    /// let mut bag = HashBag::new();
+    /// bag.insert_n("a", 3);
+    /// assert_eq!(HashBag::count(&bag, &"a"), 3);
+    /// assert_eq!(bag.len(), 3);
+    /// ```
+    pub fn insert_n(&mut self, item: T, count: usize) {
+        if count > 0 {
+            *self.counts.entry(item).or_insert(0) += count;
+            self.total_count += count;
+        }
+    }
+
     /// Returns an iterator over `(element, count)` pairs.
     ///
     /// The order of iteration is arbitrary.
@@ -311,6 +333,20 @@ impl<T: Clone + Hash + Eq> Default for HashBag<T> {
 impl<T: Clone + Hash + Eq> FromIterator<T> for HashBag<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         Self::from_iter(iter)
+    }
+}
+
+/// Consuming iterator over `(element, count)` pairs.
+///
+/// Yields each unique element along with its multiplicity, consuming the
+/// `HashBag`. Used by the iterative drop implementation to take ownership
+/// of elements for stack-safe deallocation.
+impl<T: Clone + Hash + Eq> IntoIterator for HashBag<T> {
+    type Item = (T, usize);
+    type IntoIter = std::collections::hash_map::IntoIter<T, usize>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.counts.into_iter()
     }
 }
 

@@ -254,8 +254,12 @@ eq_proc(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_0.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_name(s_f0, t_f0),
-    eq_proc(s_f1, t_f1);
+    eq_name(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone(),
+    eq_proc(__eqcong_s_f1, __eqcong_t_f1),
+    if s_f1 == __eqcong_s_f1.clone(),
+    if t_f1 == __eqcong_t_f1.clone();
 
 eq_proc(s.clone(), t.clone()),
 proc(t.clone()) <--
@@ -428,7 +432,9 @@ proc(t.clone()) <--
 
     // Rewrite rules
 rw_proc(s_orig.clone(), t) <--
-    eq_proc(s_orig, s),
+    eq_proc(__eqrel_s_orig, __eqrel_s),
+    let s_orig = __eqrel_s_orig.clone(),
+    let s = __eqrel_s.clone(),
     if let Proc::PPar(ref s_f0) = s,
     for (s_f0_e0, _count_0) in s_f0.iter(),
     if let Proc::PAmb(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
@@ -444,14 +450,18 @@ rw_proc(s_orig.clone(), t) <--
     if & s_f0_e1 != & s_f0_e0,
     if let Proc::PAmb(ref s_f0_e1_f0, ref s_f0_e1_f1) = s_f0_e1,
     let s_f0_e1_f0_deref = &** s_f0_e1_f0,
-    eq_name(s_f0_e0_f1_deref_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()),
+    eq_name(__eqpat_a_M, __eqpat_b_M),
+    if s_f0_e0_f1_deref_f0_e0_f0_deref.clone() == __eqpat_a_M.clone(),
+    if s_f0_e1_f0_deref.clone() == __eqpat_b_M.clone(),
     let s_f0_e1_f1_deref = &** s_f0_e1_f1,
     let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); bag.remove(& s_f0_e1); bag },
     if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f0_e0_f1_deref_f0_e0_f0_deref.clone()).clone()), Box::new(Proc::PPar({ let mut bag = mettail_runtime::HashBag::new(); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f0_e0_f0_deref.clone()).clone()), Box::new(Proc::PPar({ let mut bag = (s_f0_e0_f1_deref_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f0_e0_f1_deref_f0_e0_f1_deref.clone()).clone()); bag })))); Proc::insert_into_ppar(& mut bag, (s_f0_e1_f1_deref.clone()).clone()); bag })))); bag })).normalize();
 
 rw_proc(s_orig.clone(), t) <--
-    eq_proc(s_orig, s),
+    eq_proc(__eqrel_s_orig, __eqrel_s),
+    let s_orig = __eqrel_s_orig.clone(),
+    let s = __eqrel_s.clone(),
     if let Proc::PAmb(ref s_f0, ref s_f1) = s,
     let s_f0_deref = &** s_f0,
     let s_f1_deref = &** s_f1,
@@ -464,7 +474,9 @@ rw_proc(s_orig.clone(), t) <--
     for (s_f1_deref_f0_e0_f1_deref_f0_e0, _count_1) in s_f1_deref_f0_e0_f1_deref_f0.iter(),
     if let Proc::POut(ref s_f1_deref_f0_e0_f1_deref_f0_e0_f0, ref s_f1_deref_f0_e0_f1_deref_f0_e0_f1) = s_f1_deref_f0_e0_f1_deref_f0_e0,
     let s_f1_deref_f0_e0_f1_deref_f0_e0_f0_deref = &** s_f1_deref_f0_e0_f1_deref_f0_e0_f0,
-    eq_name(s_f0_deref.clone(), s_f1_deref_f0_e0_f1_deref_f0_e0_f0_deref.clone()),
+    eq_name(__eqpat_a_M, __eqpat_b_M),
+    if s_f0_deref.clone() == __eqpat_a_M.clone(),
+    if s_f1_deref_f0_e0_f1_deref_f0_e0_f0_deref.clone() == __eqpat_b_M.clone(),
     let s_f1_deref_f0_e0_f1_deref_f0_e0_f1_deref = &** s_f1_deref_f0_e0_f1_deref_f0_e0_f1,
     let s_f1_deref_f0_e0_f1_deref_f0_rest = { let mut bag = s_f1_deref_f0_e0_f1_deref_f0.clone(); bag.remove(& s_f1_deref_f0_e0_f1_deref_f0_e0); bag },
     for (s_f1_deref_f0_e1, _count_2) in s_f1_deref_f0.iter(),
@@ -474,7 +486,9 @@ rw_proc(s_orig.clone(), t) <--
     let t = (Proc::PPar({ let mut bag = (s_f1_deref_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f1_deref_f0_e0_f0_deref.clone()).clone()), Box::new(Proc::PPar({ let mut bag = (s_f1_deref_f0_e0_f1_deref_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f1_deref_f0_e0_f1_deref_f0_e0_f1_deref.clone()).clone()); bag })))); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f0_deref.clone()).clone()), Box::new((s_f1_deref_f0_e1.clone()).clone()))); bag })).normalize();
 
 rw_proc(s_orig.clone(), t) <--
-    eq_proc(s_orig, s),
+    eq_proc(__eqrel_s_orig, __eqrel_s),
+    let s_orig = __eqrel_s_orig.clone(),
+    let s = __eqrel_s.clone(),
     if let Proc::PPar(ref s_f0) = s,
     for (s_f0_e0, _count_0) in s_f0.iter(),
     if let Proc::POpen(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
@@ -484,7 +498,9 @@ rw_proc(s_orig.clone(), t) <--
     if & s_f0_e1 != & s_f0_e0,
     if let Proc::PAmb(ref s_f0_e1_f0, ref s_f0_e1_f1) = s_f0_e1,
     let s_f0_e1_f0_deref = &** s_f0_e1_f0,
-    eq_name(s_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()),
+    eq_name(__eqpat_a_N, __eqpat_b_N),
+    if s_f0_e0_f0_deref.clone() == __eqpat_a_N.clone(),
+    if s_f0_e1_f0_deref.clone() == __eqpat_b_N.clone(),
     let s_f0_e1_f1_deref = &** s_f0_e1_f1,
     let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); bag.remove(& s_f0_e1); bag },
     if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
@@ -519,12 +535,16 @@ rw_proc(lhs.clone(), match (lhs, vi) {
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_proc(field_val, t);
 
-rw_proc(a.clone(), c.clone()) <--
-    eq_proc(a, b),
-    rw_proc(b.clone(), c);
+rw_proc(__eqrel_closure_a.clone(), c.clone()) <--
+    eq_proc(__eqrel_a, __eqrel_b),
+    let __eqrel_closure_a = __eqrel_a.clone(),
+    let __eqrel_closure_b = __eqrel_b.clone(),
+    rw_proc(__eqrel_closure_b, c);
 
-rw_name(a.clone(), c.clone()) <--
-    eq_name(a, b),
-    rw_name(b.clone(), c);
+rw_name(__eqrel_closure_a.clone(), c.clone()) <--
+    eq_name(__eqrel_a, __eqrel_b),
+    let __eqrel_closure_a = __eqrel_a.clone(),
+    let __eqrel_closure_b = __eqrel_b.clone(),
+    rw_name(__eqrel_closure_b, c);
 
 }

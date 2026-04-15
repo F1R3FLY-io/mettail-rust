@@ -3,7 +3,7 @@
 //! Converts MeTTaIL grammar rules into Blockly block definitions
 
 use super::{ArgType, BlockArg, BlockDefinition, ConnectionType};
-use crate::ast::grammar::{GrammarItem, GrammarRule};
+use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind};
 
 /// Generate a Blockly block definition from a grammar rule
 pub fn generate_block_definition(rule: &GrammarRule, theory_name: &str) -> BlockDefinition {
@@ -164,7 +164,7 @@ fn extract_shape(items: &[GrammarItem]) -> String {
                 }
                 shape.push_str(s);
             },
-            GrammarItem::NonTerminal(_) | GrammarItem::Binder { .. } => {
+            GrammarItem::NonTerminal { .. } | GrammarItem::Binder { .. } => {
                 if !shape.is_empty() {
                     shape.push(' ');
                 }
@@ -200,11 +200,9 @@ fn generate_message_and_args(items: &[GrammarItem]) -> (String, Vec<BlockArg>) {
                 message.push_str(s);
             },
 
-            GrammarItem::NonTerminal(category) => {
-                let cat_str = category.to_string();
-
+            GrammarItem::NonTerminal { ident: category, kind } => {
                 // Special handling for Var pseudo-terminal
-                if cat_str == "Var" {
+                if *kind == NonTerminalKind::Var {
                     if !message.is_empty() {
                         message.push(' ');
                     }
@@ -227,6 +225,7 @@ fn generate_message_and_args(items: &[GrammarItem]) -> (String, Vec<BlockArg>) {
                 }
                 message.push_str(&format!("%{}", arg_index));
 
+                let cat_str = category.to_string();
                 let arg_name = generate_arg_name(arg_index, &cat_str, items);
                 let arg_type = determine_arg_type(arg_index, items);
 
@@ -319,7 +318,7 @@ fn has_binder_before_index(items: &[GrammarItem], target_index: usize) -> bool {
                     return true;
                 }
             },
-            GrammarItem::NonTerminal(cat) if *cat != "Var" => {
+            GrammarItem::NonTerminal { kind, .. } if *kind != NonTerminalKind::Var => {
                 arg_count += 1;
             },
             GrammarItem::Collection { .. } => {

@@ -36,7 +36,7 @@
 //! - **Binder/MultiBinder**: inline scope opening; body `match_pattern` call
 //!   re-enters the iterative engine (one re-entry per binder level)
 
-use crate::ast::language::LanguageDef;
+use mettail_ast::language::LanguageDef;
 use crate::gen::generate_var_label;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use proc_macro2::TokenStream;
@@ -470,13 +470,13 @@ fn generate_collection_match_arm(
     category: &Ident,
     label: &Ident,
     _element_cat: &Ident,
-    coll_type: &crate::ast::types::CollectionType,
+    coll_type: &mettail_ast::types::CollectionType,
     _language: &LanguageDef,
 ) -> TokenStream {
     let var_label = generate_var_label(category);
 
     match coll_type {
-        crate::ast::types::CollectionType::HashBag => {
+        mettail_ast::types::CollectionType::HashBag => {
             quote! {
                 (#category::#label(g_bag), #category::#label(p_bag)) => {
                     let g_elems: Vec<_> = g_bag.iter()
@@ -534,7 +534,7 @@ fn generate_collection_match_arm(
                 }
             }
         }
-        crate::ast::types::CollectionType::Vec => {
+        mettail_ast::types::CollectionType::Vec => {
             quote! {
                 (#category::#label(g_vec), #category::#label(p_vec)) => {
                     if g_vec.len() != p_vec.len() {
@@ -550,7 +550,7 @@ fn generate_collection_match_arm(
                 }
             }
         }
-        crate::ast::types::CollectionType::HashSet => {
+        mettail_ast::types::CollectionType::HashSet => {
             quote! {
                 (#category::#label(g_set), #category::#label(p_set)) => {
                     let g_elems: Vec<_> = g_set.iter().cloned().collect();
@@ -602,6 +602,19 @@ fn generate_binder_match_arm_inline(
         .map(|(i, field)| {
             let gname = &g_fields[i];
             let pname = &p_fields[i];
+            // Phase 3A: predicate slots compare via structural equality.
+            // A behavioral predicate is treated as an atomic token for
+            // matching purposes — `ground.match_pattern(pattern)` succeeds
+            // iff the two predicates are structurally equal. Variables
+            // inside a predicate are NOT FreeVars of the host category
+            // and do not need binding.
+            if field.is_predicate {
+                return quote! {
+                    if #gname != #pname {
+                        return None;
+                    }
+                };
+            }
             if field.is_collection {
                 quote! {
                     if (**#gname).len() != (**#pname).len() {
@@ -663,6 +676,14 @@ fn generate_multi_binder_match_arm_inline(
         .map(|(i, field)| {
             let gname = &g_fields[i];
             let pname = &p_fields[i];
+            // Phase 3A: predicate slots compare via structural equality.
+            if field.is_predicate {
+                return quote! {
+                    if #gname != #pname {
+                        return None;
+                    }
+                };
+            }
             if field.is_collection {
                 quote! {
                     if (**#gname).len() != (**#pname).len() {

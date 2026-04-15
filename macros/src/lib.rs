@@ -8,7 +8,6 @@
 //! - Metadata for REPL introspection
 //! - Language implementation struct
 
-mod ast;
 mod gen;
 mod logic;
 
@@ -16,10 +15,10 @@ use proc_macro::TokenStream;
 use proc_macro_error::{abort, proc_macro_error};
 use syn::parse_macro_input;
 
-use ast::compose::ComposeDef;
-use ast::language::LanguageDef;
-use ast::merge::{apply_extends, apply_includes, apply_mixins};
-use ast::validation::validate_language;
+use mettail_ast::compose::ComposeDef;
+use mettail_ast::language::LanguageDef;
+use mettail_ast::merge::{apply_extends, apply_includes, apply_mixins};
+use mettail_ast::validation::validate_language;
 use gen::{
     generate_all, generate_blockly_definitions, generate_language_impl, generate_metadata,
     write_blockly_blocks, write_blockly_categories,
@@ -38,7 +37,7 @@ pub fn language(input: TokenStream) -> TokenStream {
     // Store binary-encoded input tokens in registry (no bridge types retained).
     // MUST happen before any processing so consuming grammars get the full
     // unprocessed rule set.
-    ast::registry::register_language(&lang_name, &input_for_registry);
+    mettail_ast::registry::register_language(&lang_name, &input_for_registry);
 
     // Apply composition clauses in order:
     // 1. extends — full inheritance (Error on duplicate labels)
@@ -60,6 +59,17 @@ pub fn language(input: TokenStream) -> TokenStream {
         let span = e.span();
         let msg = e.message();
         abort!(span, "{}", msg);
+    }
+
+    // Phase 3F (predicated types): stratification analysis. Walks the
+    // language's logic relations and ?guard:Guard predicates to detect
+    // negation cycles. Non-stratifiable programs make Ascent's fixpoint
+    // semantics undefined, so this is a hard error (STRAT01).
+    let strat_report = logic::stratification::analyze(&language_def);
+    if strat_report.has_violations() {
+        for (_id, msg) in strat_report.diagnostics() {
+            abort!(language_def.name.span(), "{}", msg);
+        }
     }
 
     // Generate the Rust AST types and operations (also captures WFST pipeline analysis)
@@ -93,14 +103,46 @@ pub fn language(input: TokenStream) -> TokenStream {
         &ground_rewrite_seeds,
     );
 
-    // Generate Blockly block definitions
-    let blockly_output = generate_blockly_definitions(&language_def);
-    if let Err(e) = write_blockly_blocks(&language_def.name.to_string(), &blockly_output) {
-        eprintln!("Warning: Failed to write Blockly blocks: {}", e);
+    // Generate test file for cargo test / cargo nextest integration.
+    // Gated by `options { emit_tests: true }` (default: true).
+    let emit_tests = language_def
+        .options
+        .get("emit_tests")
+        .and_then(|v| match v {
+            mettail_ast::language::AttributeValue::Bool(b) => Some(*b),
+            _ => None,
+        })
+        .unwrap_or(true);
+    if emit_tests {
+        gen::test_gen::write_test_file(&language_def, &pipeline_analysis);
     }
-    if let Err(e) = write_blockly_categories(&language_def.name.to_string(), &blockly_output) {
-        eprintln!("Warning: Failed to write Blockly categories: {}", e);
+
+    // Generate per-language simulation CLI binary.
+    // Gated by `options { emit_simulator: true }` (default: true).
+    gen::test_gen::write_simulation_binary_if_enabled(&language_def);
+
+    // Generate Blockly block definitions.
+    // Gated by `options { emit_blockly: true }` (default: true).
+    let emit_blockly = language_def
+        .options
+        .get("emit_blockly")
+        .and_then(|v| match v {
+            mettail_ast::language::AttributeValue::Bool(b) => Some(*b),
+            _ => None,
+        })
+        .unwrap_or(true);
+    if emit_blockly {
+        let blockly_output = generate_blockly_definitions(&language_def);
+        if let Err(e) = write_blockly_blocks(&language_def.name.to_string(), &blockly_output) {
+            eprintln!("Warning: Failed to write Blockly blocks: {}", e);
+        }
+        if let Err(e) = write_blockly_categories(&language_def.name.to_string(), &blockly_output) {
+            eprintln!("Warning: Failed to write Blockly categories: {}", e);
+        }
     }
+
+    // Generate public proptest strategies (gated behind `strategies` feature)
+    let public_strategies = gen::test_gen::strategies::generate_public_strategies(&language_def);
 
     let combined = quote::quote! {
         #ast_code
@@ -108,6 +150,19 @@ pub fn language(input: TokenStream) -> TokenStream {
         #ascent_code
         #metadata_code
         #language_code
+
+        /// Public proptest strategies for generating random well-formed terms.
+        ///
+        /// Enabled by the `strategies` feature flag. Provides tape-based
+        /// iterative term builders and `arb_{cat}(max_depth)` strategy
+        /// functions for property-based testing by external crates.
+        #[cfg(feature = "strategies")]
+        pub mod strategies {
+            use super::*;
+            use proptest::prelude::*;
+            use proptest::strategy::BoxedStrategy;
+            #public_strategies
+        }
     };
 
     TokenStream::from(combined)
@@ -133,15 +188,15 @@ pub fn language(input: TokenStream) -> TokenStream {
 pub fn language_fragment(input: TokenStream) -> TokenStream {
     // Clone input BEFORE parse_macro_input! consumes it.
     let input_for_registry: proc_macro2::TokenStream = input.clone().into();
-    let fragment_def = parse_macro_input!(input as ast::fragment::FragmentDef);
+    let fragment_def = parse_macro_input!(input as mettail_ast::fragment::FragmentDef);
 
     // Validate: all category references in terms exist in types
-    if let Err(msg) = ast::fragment::validate_fragment(&fragment_def) {
+    if let Err(msg) = mettail_ast::fragment::validate_fragment(&fragment_def) {
         abort!(fragment_def.name.span(), "{}", msg);
     }
 
     let frag_name = fragment_def.name.to_string();
-    ast::registry::register_fragment(&frag_name, &input_for_registry);
+    mettail_ast::registry::register_fragment(&frag_name, &input_for_registry);
 
     // Fragments generate NO code — the consuming language! generates everything
     TokenStream::new()

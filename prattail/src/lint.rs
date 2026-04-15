@@ -103,11 +103,225 @@ impl fmt::Display for LintSeverity {
     }
 }
 
+/// Generate the `DiagnosticId` enum, `as_str()`, and `Display` from a single table.
+macro_rules! define_diagnostic_ids {
+    ( $( $variant:ident => $str:literal ),* $(,)? ) => {
+        /// Strongly-typed diagnostic identifier.
+        ///
+        /// Each variant corresponds to a unique lint/diagnostic code.
+        /// Use [`DiagnosticId::as_str()`] or `Display` for the string form.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum DiagnosticId {
+            $( $variant, )*
+        }
+
+        impl DiagnosticId {
+            /// Return the canonical string form (e.g., `"W01"`, `"C-AP03"`).
+            pub const fn as_str(&self) -> &'static str {
+                match self {
+                    $( DiagnosticId::$variant => $str, )*
+                }
+            }
+        }
+
+        impl fmt::Display for DiagnosticId {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+    };
+}
+
+define_diagnostic_ids! {
+    // ── Annotation (A) ──
+    A01 => "A01", A02 => "A02", A03 => "A03", A04 => "A04", A05 => "A05",
+    A06 => "A06", A07 => "A07", A08 => "A08", A09 => "A09", A10 => "A10",
+
+    // ── Cross-category (C) ──
+    C01 => "C01", C02 => "C02", C04 => "C04",
+    CAP00 => "C-AP00", CAP01 => "C-AP01", CAP02 => "C-AP02",
+    CAP03 => "C-AP03", CAP04 => "C-AP04", CAP05 => "C-AP05",
+
+    // ── CEK machine ──
+    CEK01 => "CEK01", CEK03 => "CEK03",
+
+    // ── Composition (COMP / X) ──
+    COMP08 => "COMP-08",
+    X01 => "X01", X02 => "X02", X03 => "X03", X04 => "X04",
+    X05 => "X05", X06 => "X06", X07 => "X07",
+
+    // ── Decision tree (D) ──
+    D01 => "D01", D02 => "D02", D03 => "D03", D04 => "D04", D05 => "D05",
+    D06 => "D06", D07 => "D07", D08 => "D08", D09 => "D09", D10 => "D10",
+    D11 => "D11", D12 => "D12", D13 => "D13", D14 => "D14",
+
+    // ── Disambiguation (DIS) ──
+    DIS01 => "DIS01", DIS02 => "DIS02", DIS03 => "DIS03", DIS04 => "DIS04", DIS05 => "DIS05",
+
+    // ── Error (E) ──
+    E01 => "E01", E02 => "E02",
+
+    // ── E-graph (EG) ──
+    EG01 => "EG01", EG02 => "EG02", EG03 => "EG03", EG04 => "EG04",
+
+    // ── Grammar (G) ──
+    G01 => "G01", G02 => "G02", G03 => "G03", G04 => "G04", G05 => "G05",
+    G06 => "G06", G07 => "G07", G08 => "G08", G09 => "G09", G10 => "G10",
+    G24 => "G24", G25 => "G25", G26 => "G26", G27 => "G27",
+    G28 => "G28", G29 => "G29", G30 => "G30", G31 => "G31",
+    G32 => "G32", G34 => "G34", G35 => "G35",
+    G36 => "G36", G37 => "G37", G38 => "G38",
+    G39 => "G39", G40 => "G40", G41 => "G41", G42 => "G42",
+
+    // ── Grammar type (GT) ──
+    GT01 => "GT01", GT02 => "GT02", GT03 => "GT03",
+    GT04 => "GT04", GT05 => "GT05", GT06 => "GT06",
+
+    // ── Infrastructure (I) ──
+    I01 => "I01", I02 => "I02", I03 => "I03", I04 => "I04",
+    I05 => "I05", I06 => "I06", I07 => "I07", I08 => "I08", I09 => "I09",
+    I10 => "I10", I11 => "I11", I12 => "I12", I13 => "I13", I14 => "I14", I15 => "I15",
+    I16 => "I16", I17 => "I17", I18 => "I18", I19 => "I19",
+    I20 => "I20", I21 => "I21",
+
+    // ── Keyword (K) ──
+    K01 => "K01", K02 => "K02",
+
+    // ── Lexer (L / LEX) ──
+    L01 => "L01", L02 => "L02",
+    LEX02 => "LEX02", LEX03 => "LEX03", LEX04 => "LEX04", LEX05 => "LEX05",
+
+    // ── Literal (LT) ──
+    LT01 => "LT01",
+
+    // ── Morphism (M) ──
+    M01 => "M01", M02 => "M02",
+
+    // ── Missing (MS) ──
+    MS01 => "MS01", MS02 => "MS02",
+
+    // ── MSO ──
+    MSO01 => "MSO01", MSO02 => "MSO02", MSO03 => "MSO03",
+
+    // ── Multitrack (MT) ──
+    MT01 => "MT01", MT02 => "MT02",
+
+    // ── Naming (N) ──
+    N01 => "N01", N02 => "N02", N03 => "N03", N04 => "N04",
+    N05 => "N05", N06 => "N06", N07 => "N07",
+
+    // ── Optimization (O) ──
+    O01 => "O01", O02 => "O02",
+
+    // ── Parsing (P) ──
+    P02 => "P02", P03 => "P03", P04 => "P04", P05 => "P05", P06 => "P06",
+
+    // ── Parallel (PAR) ──
+    PAR01 => "PAR01", PAR02 => "PAR02", PAR03 => "PAR03",
+    PAR04 => "PAR04", PAR05 => "PAR05",
+
+    // ── Parser bridge (PB) ──
+    PB01 => "PB01", PB02 => "PB02", PB03 => "PB03",
+
+    // ── Prediction (PD) ──
+    PD01 => "PD01", PD02 => "PD02", PD03 => "PD03", PD04 => "PD04",
+
+    // ── Prefix (PR) ──
+    PR01 => "PR01", PR02 => "PR02", PR03 => "PR03", PR04 => "PR04",
+
+    // ── Pattern (PT) ──
+    PT01 => "PT01", PT02 => "PT02", PT03 => "PT03",
+
+    // ── Recovery (R) ──
+    R01 => "R01", R02 => "R02", R05 => "R05", R06 => "R06", R07 => "R07",
+
+    // ── Runtime analysis (RA) ──
+    RA01 => "RA01", RA02 => "RA02", RA03 => "RA03",
+
+    // ── Runtime (RT) ──
+    RT01 => "RT01", RT02 => "RT02", RT03 => "RT03",
+    RT04 => "RT04", RT05 => "RT05", RT06 => "RT06",
+
+    // ── Syntax (S) ──
+    S01 => "S01", S02 => "S02", S03 => "S03", S04 => "S04", S05 => "S05", S06 => "S06",
+
+    // ── SFT ──
+    SFT01 => "SFT01", SFT02 => "SFT02", SFT03 => "SFT03", SFT04 => "SFT04",
+
+    // ── Slash (SL) ──
+    SL01 => "SL01", SL02 => "SL02",
+
+    // ── Stratification (STRAT) — predicated types Phase 3F ──
+    STRAT01 => "STRAT01",
+
+    // ── DNF normalization (DNF) — predicated types Phase 1B ──
+    DNF01 => "DNF01",
+
+    // ── Tier override (TIER) — predicated types Phase 11 ──
+    TIER01 => "TIER01",
+
+    // ── Tokenization (TOK) — predicated types Phase 1A ──
+    TOK01 => "TOK01",
+
+    // ── Symbol (SYM) ──
+    SYM01 => "SYM01", SYM02 => "SYM02", SYM03 => "SYM03", SYM04 => "SYM04",
+
+    // ── Type (T) ──
+    T01 => "T01", T02 => "T02", T03 => "T03", T04 => "T04",
+
+    // ── Type witness (TW) ──
+    TW01 => "TW01", TW02 => "TW02", TW03 => "TW03",
+
+    // ── Unification (UN) ──
+    UN01 => "UN01", UN02 => "UN02", UN03 => "UN03",
+
+    // ── Validation (V) ──
+    V01 => "V01", V02 => "V02", V03 => "V03", V04 => "V04", V05 => "V05", V06 => "V06",
+
+    // ── WFST (W) ──
+    W01 => "W01", W02 => "W02", W03 => "W03", W04 => "W04",
+    W05 => "W05", W06 => "W06", W07 => "W07",
+    W09 => "W09", W10 => "W10", W11 => "W11", W12 => "W12", W13 => "W13", W14 => "W14", W16 => "W16",
+
+    // ── Zone (Z) ──
+    Z01 => "Z01",
+}
+
+impl DiagnosticId {
+    /// True if this is a runtime (RT) diagnostic.
+    #[inline]
+    pub const fn is_runtime(&self) -> bool {
+        matches!(self,
+            DiagnosticId::RT01 | DiagnosticId::RT02 | DiagnosticId::RT03 |
+            DiagnosticId::RT04 | DiagnosticId::RT05 | DiagnosticId::RT06
+        )
+    }
+
+    /// True if this diagnostic ID is groupable by [`group_diagnostics`].
+    #[inline]
+    pub const fn is_groupable(&self) -> bool {
+        matches!(self,
+            DiagnosticId::W01  | DiagnosticId::W02  | DiagnosticId::W03  |
+            DiagnosticId::W05  | DiagnosticId::W07  | DiagnosticId::G03  |
+            DiagnosticId::G08  | DiagnosticId::G27  | DiagnosticId::D01  |
+            DiagnosticId::D02  | DiagnosticId::D03  | DiagnosticId::D08  |
+            DiagnosticId::D09  | DiagnosticId::A01  | DiagnosticId::A04  |
+            DiagnosticId::A08  | DiagnosticId::CAP03 | DiagnosticId::CAP05 |
+            DiagnosticId::DIS01 | DiagnosticId::W10 | DiagnosticId::W12 |
+            DiagnosticId::W14  |
+            // Lint-B cleanup: high-volume IDs that produce many
+            // near-identical duplicates in unconfigured languages.
+            DiagnosticId::M01  | DiagnosticId::K01  | DiagnosticId::SYM02 |
+            DiagnosticId::N02  | DiagnosticId::N05
+        )
+    }
+}
+
 /// A structured lint diagnostic.
 #[derive(Debug, Clone)]
 pub struct LintDiagnostic {
-    /// Lint ID (e.g., "G01", "W01", "C01").
-    pub id: &'static str,
+    /// Lint ID (e.g., `DiagnosticId::G01`, `DiagnosticId::W01`).
+    pub id: DiagnosticId,
     /// Human-readable lint name (e.g., "left-recursion", "dead-rule").
     pub name: &'static str,
     /// Severity level.
@@ -219,102 +433,72 @@ pub struct LintContext<'a> {
     pub math_analysis_elapsed: Option<std::time::Duration>,
 
     /// Confluence analysis (TRS critical pairs).
-    #[cfg(feature = "trs-analysis")]
     pub confluence_result: Option<&'a crate::confluence::ConfluenceAnalysis>,
     /// Termination analysis (dependency pairs).
-    #[cfg(feature = "trs-analysis")]
     pub termination_result: Option<&'a crate::termination::TerminationResult>,
     /// VPA analysis (structured sublanguage).
-    #[cfg(feature = "vpa")]
     pub vpa_result: Option<&'a crate::vpa::VpaAnalysis>,
     /// Weighted tree automaton analysis.
-    #[cfg(feature = "tree-automata")]
     pub wta_result: Option<&'a crate::tree_automaton::WtaAnalysis>,
     /// EWPDS merge site analysis.
-    #[cfg(feature = "wpds-extended")]
     pub ewpds_result: Option<&'a crate::ewpds::EwpdsAnalysis>,
     /// ARA affine-relation analysis.
-    #[cfg(feature = "wpds-ara")]
     pub ara_result: Option<&'a crate::ara::AraAnalysis>,
     /// Petri net analysis.
-    #[cfg(feature = "petri")]
     pub petri_result: Option<&'a crate::petri::PetriAnalysis>,
     /// Nominal automaton analysis.
-    #[cfg(feature = "nominal")]
     pub nominal_result: Option<&'a crate::nominal::NominalAnalysis>,
     /// Alternating automaton analysis.
-    #[cfg(feature = "alternating")]
     pub alternating_result: Option<&'a crate::alternating::AlternatingAnalysis>,
     /// LTL model checking results.
-    #[cfg(feature = "ltl")]
     pub ltl_results: Option<&'a Vec<crate::ltl::LtlCheckResult>>,
     /// Provenance tracking results.
-    #[cfg(feature = "provenance")]
     pub provenance_result: Option<&'a crate::provenance::ProvenanceAnalysis>,
     /// Cost register automaton analysis.
-    #[cfg(feature = "cra")]
     pub cra_result: Option<&'a crate::cra::CraAnalysis>,
     /// Theory morphism check.
-    #[cfg(feature = "morphisms")]
     pub morphism_result: Option<&'a crate::morphism::MorphismCheck>,
     /// KAT check (Hoare triples, equivalences).
-    #[cfg(feature = "kat")]
     pub kat_result: Option<&'a crate::kat::KatCheck>,
 
     // ── Advanced automata analysis results ──────────────────────────────────
 
     /// Symbolic automata guard analysis.
-    #[cfg(feature = "symbolic-automata")]
     pub symbolic_result: Option<&'a crate::symbolic::SymbolicAnalysis>,
     /// Weighted Büchi automaton analysis.
-    #[cfg(feature = "omega")]
     pub buchi_result: Option<&'a crate::buchi::BuchiAnalysis>,
     /// Weighted MSO logic analysis.
-    #[cfg(feature = "weighted-mso")]
     pub mso_result: Option<&'a crate::weighted_mso::MsoAnalysis>,
     /// Probabilistic automaton analysis.
-    #[cfg(feature = "probabilistic")]
     pub probabilistic_result: Option<&'a crate::probabilistic::ProbabilisticAnalysis>,
     /// Register automaton analysis.
-    #[cfg(feature = "register-automata")]
     pub register_result: Option<&'a crate::register_automata::RegisterAnalysis>,
     /// Parity tree automaton analysis.
-    #[cfg(feature = "parity-tree-automata")]
     pub parity_tree_result: Option<&'a crate::parity_tree::ParityTreeAnalysis>,
     /// Multi-tape automaton analysis.
-    #[cfg(feature = "multi-tape")]
     pub multi_tape_result: Option<&'a crate::multi_tape::MultiTapeAnalysis>,
     /// Multiset automaton analysis.
-    #[cfg(feature = "multiset-automata")]
     pub multiset_result: Option<&'a crate::multiset_automata::MultisetAnalysisResult>,
     /// Two-way transducer analysis.
-    #[cfg(feature = "two-way-transducer")]
     pub two_way_result: Option<&'a crate::two_way_transducer::TwoWayAnalysis>,
     /// Symbolic finite transducer analysis.
-    #[cfg(feature = "sft")]
     pub sft_result: Option<&'a crate::sft::SftAnalysis>,
     /// E-graph equality saturation analysis.
-    #[cfg(feature = "egraph")]
     pub egraph_result: Option<&'a crate::egraph::EGraphAnalysis>,
     /// Predicate dispatch diagnostics.
-    #[cfg(feature = "predicate-dispatch")]
     pub dispatch_diagnostics: Option<&'a crate::predicate_dispatch::DispatchDiagnostics>,
 
     // ── Constraint theory analysis results ──────────────────────────────────
 
     /// Presburger arithmetic guard analysis results.
-    #[cfg(feature = "presburger")]
     pub presburger_result: Option<&'a crate::presburger::PresburgerAnalysis>,
     /// Structural unification guard analysis results.
-    #[cfg(feature = "unification")]
     pub unification_result: Option<&'a crate::unification::UnificationAnalysis>,
     /// Subtype lattice guard analysis results.
-    #[cfg(feature = "lattice-theory")]
     pub lattice_result: Option<&'a crate::lattice_theory::LatticeAnalysis>,
 
     // ── Refinement type analysis results ─────────────────────────────────
     /// Refinement type analysis (satisfiability, subtyping, decidability).
-    #[cfg(feature = "type-system")]
     pub refinement_analysis: Option<&'a crate::pipeline::RefinementAnalysisResult>,
 }
 
@@ -437,7 +621,7 @@ pub fn run_lints_cached(ctx: &LintContext, use_cache: bool) -> Vec<LintDiagnosti
     if cached_hash == Some(grammar_hash) {
         // Cache hit: skip all lints
         return vec![LintDiagnostic {
-            id: "I18",
+            id: DiagnosticId::I18,
             name: "lint-cache-hit",
             severity: LintSeverity::Info,
             category: None,
@@ -497,7 +681,6 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     lint_w06_weight_inversion(ctx, &mut diagnostics);
     lint_w10_spillover_eliminable_by_lookahead(ctx, &mut diagnostics);
     lint_w11_context_narrowing_deterministic(ctx, &mut diagnostics);
-    #[cfg(feature = "wfst-log")]
     lint_w12_training_would_improve(ctx, &mut diagnostics);
 
     // ── Recovery lints ──
@@ -534,7 +717,6 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     // ── Mathematical analysis lints ──
 
     // TRS analysis (confluence + termination)
-    #[cfg(feature = "trs-analysis")]
     {
         lint_t01_non_joinable_critical_pair(ctx, &mut diagnostics);
         lint_t02_confluence_verified(ctx, &mut diagnostics);
@@ -543,14 +725,12 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     }
 
     // VPA analysis
-    #[cfg(feature = "vpa")]
     {
         lint_v01_vpa_determinizable(ctx, &mut diagnostics);
         lint_v02_vpa_alphabet_mismatch(ctx, &mut diagnostics);
     }
 
     // WTA analysis
-    #[cfg(feature = "tree-automata")]
     {
         lint_v03_wta_unrecognized_term(ctx, &mut diagnostics);
         lint_v04_wta_hot_path(ctx, &mut diagnostics);
@@ -564,65 +744,54 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     lint_s03_cegar_refinement(ctx, &mut diagnostics);
 
     // EWPDS
-    #[cfg(feature = "wpds-extended")]
     lint_s04_ewpds_merge_site(ctx, &mut diagnostics);
 
     // ARA
-    #[cfg(feature = "wpds-ara")]
     lint_s05_ara_invariant(ctx, &mut diagnostics);
 
     // Algebraic
     lint_s06_algebraic_summary(ctx, &mut diagnostics);
 
     // Petri nets
-    #[cfg(feature = "petri")]
     {
         lint_n01_deadlock_risk(ctx, &mut diagnostics);
         lint_n02_unbounded_channel(ctx, &mut diagnostics);
     }
 
     // Nominal automata
-    #[cfg(feature = "nominal")]
     {
         lint_n03_scope_violation(ctx, &mut diagnostics);
         lint_n04_scope_narrowing(ctx, &mut diagnostics);
     }
 
     // Alternating automata
-    #[cfg(feature = "alternating")]
     lint_n05_non_bisimilar(ctx, &mut diagnostics);
 
     // LTL model checking
-    #[cfg(feature = "ltl")]
     {
         lint_l01_ltl_violated(ctx, &mut diagnostics);
         lint_l02_ltl_verified(ctx, &mut diagnostics);
     }
 
     // Provenance
-    #[cfg(feature = "provenance")]
     lint_e01_provenance_trace(ctx, &mut diagnostics);
 
     // CRA
-    #[cfg(feature = "cra")]
     lint_e02_cra_cost_anomaly(ctx, &mut diagnostics);
 
     // Morphisms
-    #[cfg(feature = "morphisms")]
     {
         lint_m01_morphism_gap(ctx, &mut diagnostics);
         lint_m02_morphism_preservation_failure(ctx, &mut diagnostics);
     }
 
     // KAT
-    #[cfg(feature = "kat")]
     {
         lint_k01_hoare_failure(ctx, &mut diagnostics);
         lint_k02_kat_equivalence(ctx, &mut diagnostics);
     }
 
     // Symbolic automata
-    #[cfg(feature = "symbolic-automata")]
     {
         lint_sym01_unsatisfiable_guard(ctx, &mut diagnostics);
         lint_sym02_overlapping_guards(ctx, &mut diagnostics);
@@ -631,28 +800,24 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     }
 
     // Weighted Büchi
-    #[cfg(feature = "omega")]
     {
         lint_o01_weighted_buchi_non_convergent(ctx, &mut diagnostics);
         lint_o02_weighted_buchi_heavy_cycle(ctx, &mut diagnostics);
     }
 
     // Weighted Alternating (polynomial AWA) — uses existing alternating_result
-    #[cfg(feature = "alternating")]
     {
         lint_n06_weighted_parity_non_convergent(ctx, &mut diagnostics);
         lint_n07_weighted_branching_imbalance(ctx, &mut diagnostics);
     }
 
     // Weighted VPA — uses existing vpa_result
-    #[cfg(feature = "vpa")]
     {
         lint_v05_weighted_vpa_non_determinizable(ctx, &mut diagnostics);
         lint_v06_weighted_vpa_inclusion_failure(ctx, &mut diagnostics);
     }
 
     // Parity tree automata
-    #[cfg(feature = "parity-tree-automata")]
     {
         lint_pt01_pata_emptiness_violation(ctx, &mut diagnostics);
         lint_pt02_pata_subsumption(ctx, &mut diagnostics);
@@ -660,7 +825,6 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     }
 
     // Register automata
-    #[cfg(feature = "register-automata")]
     {
         lint_ra01_unbound_data_reference(ctx, &mut diagnostics);
         lint_ra02_redundant_register(ctx, &mut diagnostics);
@@ -668,7 +832,6 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     }
 
     // Probabilistic automata
-    #[cfg(feature = "probabilistic")]
     {
         lint_pr01_low_selectivity_rule(ctx, &mut diagnostics);
         lint_pr02_non_stochastic_state(ctx, &mut diagnostics);
@@ -677,21 +840,18 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     }
 
     // Multi-tape automata
-    #[cfg(feature = "multi-tape")]
     {
         lint_mt01_multi_channel_overlap(ctx, &mut diagnostics);
         lint_mt02_multi_tape_disconnected(ctx, &mut diagnostics);
     }
 
     // Multiset automata
-    #[cfg(feature = "multiset-automata")]
     {
         lint_ms01_unsatisfiable_cardinality(ctx, &mut diagnostics);
         lint_ms02_redundant_feature_check(ctx, &mut diagnostics);
     }
 
     // Weighted MSO logic
-    #[cfg(feature = "weighted-mso")]
     {
         lint_mso01_unrestricted_universal_set(ctx, &mut diagnostics);
         lint_mso02_non_recognizable_step(ctx, &mut diagnostics);
@@ -699,7 +859,6 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     }
 
     // Two-way transducers
-    #[cfg(feature = "two-way-transducer")]
     {
         lint_tw01_circular_channel_dependency(ctx, &mut diagnostics);
         lint_tw02_one_way_sufficient(ctx, &mut diagnostics);
@@ -707,7 +866,6 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     }
 
     // Symbolic finite transducers
-    #[cfg(feature = "sft")]
     {
         lint_sft01_empty_domain(ctx, &mut diagnostics);
         lint_sft02_constant_output(ctx, &mut diagnostics);
@@ -716,7 +874,6 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     }
 
     // E-graph equality saturation
-    #[cfg(feature = "egraph")]
     {
         lint_eg01_discovered_equivalences(ctx, &mut diagnostics);
         lint_eg02_simplifiable_guard(ctx, &mut diagnostics);
@@ -761,7 +918,6 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     lint_dis05_nfa_try_all_set_size(ctx, &mut diagnostics);
 
     // ── Predicate dispatch lints (PD01–PD04) ──
-    #[cfg(feature = "predicate-dispatch")]
     {
         lint_pd01_degenerate_predicate(ctx, &mut diagnostics);
         lint_pd02_all_modules_activated(ctx, &mut diagnostics);
@@ -770,28 +926,23 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     }
 
     // ── Constraint theory lints ──
-    #[cfg(feature = "presburger")]
     {
         lint_pb01_unsatisfiable_arithmetic_guard(ctx, &mut diagnostics);
         lint_pb02_tautological_arithmetic_guard(ctx, &mut diagnostics);
         lint_pb03_subsumed_arithmetic_guard(ctx, &mut diagnostics);
     }
-    #[cfg(feature = "unification")]
     {
         lint_un01_unsatisfiable_unification_guard(ctx, &mut diagnostics);
         lint_un02_tautological_unification_guard(ctx, &mut diagnostics);
         lint_un03_subsumed_unification_guard(ctx, &mut diagnostics);
     }
-    #[cfg(feature = "lattice-theory")]
     {
         lint_sl01_unsatisfiable_subtype_constraint(ctx, &mut diagnostics);
         lint_sl02_redundant_subtype_constraint(ctx, &mut diagnostics);
     }
-    #[cfg(feature = "logict")]
     lint_lt01_search_bound_exceeded(ctx, &mut diagnostics);
 
     // ── Refinement type lints ──
-    #[cfg(feature = "type-system")]
     {
         lint_rt01_unsatisfiable_refinement(ctx, &mut diagnostics);
         lint_rt02_tautological_refinement(ctx, &mut diagnostics);
@@ -800,6 +951,10 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
         lint_rt05_decidability_tier(ctx, &mut diagnostics);
         lint_rt06_name_shadow(ctx, &mut diagnostics);
     }
+
+    // ── CEK machine lints ──
+    lint_cek01_dead_capture_in_frame(ctx, &mut diagnostics);
+    lint_cek03_unreachable_frame_variant(ctx, &mut diagnostics);
 
     diagnostics
 }
@@ -981,18 +1136,80 @@ pub fn colorize_backtick_spans(text: &str, start: &str, end: &str) -> String {
     result
 }
 
-/// Emit all lint diagnostics to stderr with ANSI-colorized output and a grammar-name header.
+// ══════════════════════════════════════════════════════════════════════════════
+// Per-grammar lint emission state (Lint-A cleanup)
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// The pipeline driver calls `emit_diagnostics_for_grammar` multiple times per
+// grammar (once after decision-tree analyses, once after the main lint pass).
+// Without coalescing, the user sees two `linting grammar` headers and two
+// `summary` lines per grammar, which is confusing.
+//
+// The `GRAMMAR_LINT_STATE` thread-local tracks per-grammar state across calls,
+// so that:
+//
+//   • The `linting grammar <Name>` header is printed exactly once per grammar.
+//   • Severity counts accumulate across calls.
+//   • A single consolidated summary is printed by `finalize_grammar_summary`
+//     at the end of the pipeline (unconditionally, not only when diagnostics
+//     are hidden by the severity filter).
+
+#[derive(Debug, Default, Clone, Copy)]
+struct GrammarLintState {
+    header_printed: bool,
+    error_count: u32,
+    warning_count: u32,
+    note_count: u32,
+    info_count: u32,
+    shown: u32,
+}
+
+thread_local! {
+    static GRAMMAR_LINT_STATE: std::cell::RefCell<HashMap<String, GrammarLintState>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// Reset the per-grammar lint state for the current thread.
 ///
-/// When `PRATTAIL_LINT_VERBOSE` is set, emits individual diagnostics (useful for CI/filtering).
-/// Otherwise, groups repeated lint IDs into compact summaries via [`group_diagnostics()`].
+/// Called by tests to ensure state from one test does not leak into the
+/// next. Proc-macro expansion is single-threaded per crate, so this is
+/// unnecessary in production.
+pub fn reset_grammar_lint_state() {
+    GRAMMAR_LINT_STATE.with(|cell| cell.borrow_mut().clear());
+}
+
+/// Emit all lint diagnostics to stderr with ANSI-colorized output and a
+/// grammar-name header.
+///
+/// **Coalescing (Lint-A cleanup).** Multiple calls for the *same grammar
+/// name* are coalesced: the `linting grammar` header is printed only
+/// once, and severity counts accumulate across calls. The consolidated
+/// summary is printed by [`finalize_grammar_summary`] (called once per
+/// grammar by the pipeline driver), not by this function.
+///
+/// **Verbose mode.** When `PRATTAIL_LINT_VERBOSE` is set, emits individual
+/// diagnostics (useful for CI/filtering). Otherwise, groups repeated lint
+/// IDs into compact summaries via [`group_diagnostics()`].
 pub fn emit_diagnostics_for_grammar(grammar_name: &str, diagnostics: &[LintDiagnostic]) {
     if diagnostics.is_empty() {
         return;
     }
-    eprintln!(
-        "  {}linting{} grammar `{}`",
-        ansi::BOLD_CYAN, ansi::RESET, grammar_name,
-    );
+
+    // Print the header iff this is the first call for this grammar.
+    let already_printed = GRAMMAR_LINT_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        let entry = state.entry(grammar_name.to_string()).or_default();
+        let was_printed = entry.header_printed;
+        entry.header_printed = true;
+        was_printed
+    });
+    if !already_printed {
+        eprintln!(
+            "  {}linting{} grammar `{}`",
+            ansi::BOLD_CYAN, ansi::RESET, grammar_name,
+        );
+    }
+
     let verbose = std::env::var("PRATTAIL_LINT_VERBOSE").is_ok();
     let level = lint_level();
     let to_emit = if verbose {
@@ -1000,7 +1217,8 @@ pub fn emit_diagnostics_for_grammar(grammar_name: &str, diagnostics: &[LintDiagn
     } else {
         group_diagnostics(diagnostics.to_vec())
     };
-    // Count by severity (on full set, before filtering)
+
+    // Count by severity (on grouped set, before filtering)
     let mut error_count = 0u32;
     let mut warning_count = 0u32;
     let mut note_count = 0u32;
@@ -1013,6 +1231,7 @@ pub fn emit_diagnostics_for_grammar(grammar_name: &str, diagnostics: &[LintDiagn
             LintSeverity::Info => info_count += 1,
         }
     }
+
     // Emit filtered diagnostics
     let mut shown = 0u32;
     for diag in &to_emit {
@@ -1021,14 +1240,54 @@ pub fn emit_diagnostics_for_grammar(grammar_name: &str, diagnostics: &[LintDiagn
             shown += 1;
         }
     }
-    // Summary when some diagnostics were hidden by severity filter
-    let total = error_count + warning_count + note_count + info_count;
-    if shown < total {
+
+    // Accumulate into per-grammar state for the consolidated summary.
+    GRAMMAR_LINT_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        let entry = state.entry(grammar_name.to_string()).or_default();
+        entry.error_count += error_count;
+        entry.warning_count += warning_count;
+        entry.note_count += note_count;
+        entry.info_count += info_count;
+        entry.shown += shown;
+    });
+}
+
+/// Emit a single consolidated summary line for the given grammar, covering
+/// all `emit_diagnostics_for_grammar` calls made for it during this
+/// expansion.
+///
+/// Should be called *once* per grammar by the pipeline driver, after all
+/// lint passes have finished. If no diagnostics were ever emitted for
+/// this grammar, this function is a no-op.
+///
+/// The summary is **unconditional**: it is printed whether or not any
+/// diagnostics were hidden by `PRATTAIL_LINT_LEVEL`. This gives the
+/// user a stable per-grammar overview at the tail of each grammar's
+/// lint output (Lint-C cleanup).
+pub fn finalize_grammar_summary(grammar_name: &str) {
+    let state_opt = GRAMMAR_LINT_STATE.with(|cell| cell.borrow().get(grammar_name).copied());
+    let Some(state) = state_opt else {
+        return;
+    };
+    if !state.header_printed {
+        return;
+    }
+    let total =
+        state.error_count + state.warning_count + state.note_count + state.info_count;
+    let hidden = total.saturating_sub(state.shown);
+    if hidden > 0 {
         eprintln!(
             "  {}summary{} ({}): {} error(s), {} warning(s), {} note(s), {} info(s) [{} shown, {} hidden by PRATTAIL_LINT_LEVEL]",
             ansi::BOLD_CYAN, ansi::RESET, grammar_name,
-            error_count, warning_count, note_count, info_count,
-            shown, total - shown,
+            state.error_count, state.warning_count, state.note_count, state.info_count,
+            state.shown, hidden,
+        );
+    } else {
+        eprintln!(
+            "  {}summary{} ({}): {} error(s), {} warning(s), {} note(s), {} info(s)",
+            ansi::BOLD_CYAN, ansi::RESET, grammar_name,
+            state.error_count, state.warning_count, state.note_count, state.info_count,
         );
     }
 }
@@ -1041,13 +1300,6 @@ pub fn has_errors(diagnostics: &[LintDiagnostic]) -> bool {
 // ══════════════════════════════════════════════════════════════════════════════
 // Diagnostic Grouping
 // ══════════════════════════════════════════════════════════════════════════════
-
-/// Known lint IDs eligible for grouping.
-const GROUPABLE_IDS: &[&str] = &[
-    "W01", "W02", "W03", "W05", "W07", "G03", "G08", "G27",
-    "D01", "D02", "D03", "D08", "D09",
-    "A01", "A04", "A08", "C-AP03", "C-AP05", "DIS01", "W10", "W12", "W14",
-];
 
 /// Group repeated lint diagnostics into compact summaries.
 ///
@@ -1063,12 +1315,12 @@ pub fn group_diagnostics(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic
     }
 
     // Partition by lint ID, tracking first-occurrence index per ID
-    let mut by_id: BTreeMap<&str, Vec<LintDiagnostic>> = BTreeMap::new();
-    let mut first_index: HashMap<&str, usize> = HashMap::new();
+    let mut by_id: BTreeMap<DiagnosticId, Vec<LintDiagnostic>> = BTreeMap::new();
+    let mut first_index: HashMap<DiagnosticId, usize> = HashMap::new();
     let mut non_groupable: Vec<(usize, LintDiagnostic)> = Vec::new();
 
     for (i, diag) in diagnostics.into_iter().enumerate() {
-        if GROUPABLE_IDS.contains(&diag.id) {
+        if diag.id.is_groupable() {
             first_index.entry(diag.id).or_insert(i);
             by_id.entry(diag.id).or_default().push(diag);
         } else {
@@ -1080,34 +1332,40 @@ pub fn group_diagnostics(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic
     let mut indexed: Vec<(usize, Vec<LintDiagnostic>)> = Vec::new();
 
     for (id, items) in by_id {
-        let idx = first_index[id];
+        let idx = first_index[&id];
         if items.len() == 1 {
             indexed.push((idx, items));
         } else {
             let grouped = match id {
-                "W01" => group_w01(items),
-                "W02" => group_w02(items),
-                "W03" => group_w03(items),
-                "W05" => group_w05(items),
-                "W07" => group_w07(items),
-                "G03" => group_g03(items),
-                "G08" => group_g08(items),
-                "G27" => group_g27(items),
-                "D01" => group_ambiguity_by_category("D01", "precision-ambiguity", "precision ambiguity", items),
-                "D02" => group_ambiguity_by_category("D02", "unresolvable-ambiguity", "unresolvable ambiguity", items),
-                "D03" => group_ambiguity_by_category("D03", "trie-unreachable-rule", "unreachable trie rule(s)", items),
-                "D08" => group_ambiguity_by_category("D08", "optimization-suggestion", "optimization suggestion(s)", items),
-                "D09" => group_ambiguity_by_category("D09", "conflict-resolution-guide", "conflict resolution guidance", items),
-                "A01" => group_a01(items),
-                "A04" => group_a04(items),
-                "A08" => group_a08(items),
-                "C-AP03" => group_cap03(items),
-                "C-AP05" => group_cap05(items),
-                "DIS01" => group_dis01(items),
-                "W10" => group_w10(items),
-                "W12" => group_w12(items),
-                "W14" => group_w14(items),
-                _ => items, // unreachable due to GROUPABLE_IDS check
+                DiagnosticId::W01 => group_w01(items),
+                DiagnosticId::W02 => group_w02(items),
+                DiagnosticId::W03 => group_w03(items),
+                DiagnosticId::W05 => group_w05(items),
+                DiagnosticId::W07 => group_w07(items),
+                DiagnosticId::G03 => group_g03(items),
+                DiagnosticId::G08 => group_g08(items),
+                DiagnosticId::G27 => group_g27(items),
+                DiagnosticId::D01 => group_ambiguity_by_category(DiagnosticId::D01, "precision-ambiguity", "precision ambiguity", items),
+                DiagnosticId::D02 => group_ambiguity_by_category(DiagnosticId::D02, "unresolvable-ambiguity", "unresolvable ambiguity", items),
+                DiagnosticId::D03 => group_ambiguity_by_category(DiagnosticId::D03, "trie-unreachable-rule", "unreachable trie rule(s)", items),
+                DiagnosticId::D08 => group_ambiguity_by_category(DiagnosticId::D08, "optimization-suggestion", "optimization suggestion(s)", items),
+                DiagnosticId::D09 => group_ambiguity_by_category(DiagnosticId::D09, "conflict-resolution-guide", "conflict resolution guidance", items),
+                DiagnosticId::A01 => group_a01(items),
+                DiagnosticId::A04 => group_a04(items),
+                DiagnosticId::A08 => group_a08(items),
+                DiagnosticId::CAP03 => group_cap03(items),
+                DiagnosticId::CAP05 => group_cap05(items),
+                DiagnosticId::DIS01 => group_dis01(items),
+                DiagnosticId::W10 => group_w10(items),
+                DiagnosticId::W12 => group_w12(items),
+                DiagnosticId::W14 => group_w14(items),
+                // Lint-B cleanup groupers for high-volume IDs.
+                DiagnosticId::M01 => group_m01(items),
+                DiagnosticId::K01 => group_k01(items),
+                DiagnosticId::SYM02 => group_sym02(items),
+                DiagnosticId::N02 => group_n02(items),
+                DiagnosticId::N05 => group_n05(items),
+                _ => items, // unreachable due to is_groupable() check
             };
             indexed.push((idx, grouped));
         }
@@ -1181,12 +1439,12 @@ fn group_w01(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
 ///
 /// Output: `"ambiguous prefix dispatch in N categories\n  Cat: token matches [R1, R2]; ..."`
 fn group_w02(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
-    group_ambiguity_by_category("W02", "nfa-ambiguous-prefix", "ambiguous NFA prefix dispatch", diagnostics)
+    group_ambiguity_by_category(DiagnosticId::W02, "nfa-ambiguous-prefix", "ambiguous NFA prefix dispatch", diagnostics)
 }
 
 /// Group W03 (high-ambiguity-token) by category.
 fn group_w03(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
-    group_ambiguity_by_category("W03", "high-ambiguity-token", "high-ambiguity tokens", diagnostics)
+    group_ambiguity_by_category(DiagnosticId::W03, "high-ambiguity-token", "high-ambiguity tokens", diagnostics)
 }
 
 /// Group W05 (composed-dispatch-ambiguity) by category.
@@ -1263,7 +1521,7 @@ fn group_w05(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
     }
 
     vec![LintDiagnostic {
-        id: "W05",
+        id: DiagnosticId::W05,
         name: "composed-dispatch-ambiguity",
         severity: LintSeverity::Warning,
         category: None,
@@ -1321,7 +1579,7 @@ fn group_w07(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
 ///
 /// Output: `"ambiguous prefix dispatch in N categories\n  Cat: token1 matches [R1, R2]; ..."`
 fn group_g03(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
-    group_ambiguity_by_category("G03", "ambiguous-prefix", "ambiguous prefix dispatch", diagnostics)
+    group_ambiguity_by_category(DiagnosticId::G03, "ambiguous-prefix", "ambiguous prefix dispatch", diagnostics)
 }
 
 /// Group G08 (missing-cast-to-root) into a single diagnostic listing all isolated categories.
@@ -1432,7 +1690,7 @@ fn group_g27(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
 ///
 /// Each diagnostic's message is preserved as a sub-item under its category.
 fn group_ambiguity_by_category(
-    id: &'static str,
+    id: DiagnosticId,
     name: &'static str,
     description: &str,
     diagnostics: Vec<LintDiagnostic>,
@@ -1519,7 +1777,7 @@ fn group_a01(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
             .collect();
 
         result.push(LintDiagnostic {
-            id: "A01",
+            id: DiagnosticId::A01,
             name: "unbounded-term-growth",
             severity: LintSeverity::Warning,
             category: None,
@@ -1571,7 +1829,7 @@ fn group_a04(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
         .collect();
 
     vec![LintDiagnostic {
-        id: "A04",
+        id: DiagnosticId::A04,
         name: "high-dependency-constructors",
         severity,
         category: None,
@@ -1624,7 +1882,7 @@ fn group_a08(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
         .collect();
 
     vec![LintDiagnostic {
-        id: "A08",
+        id: DiagnosticId::A08,
         name: "equation-subsumed-rewrites",
         severity,
         category: None,
@@ -1665,7 +1923,7 @@ fn group_cap03(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
     }
 
     vec![LintDiagnostic {
-        id: "C-AP03",
+        id: DiagnosticId::CAP03,
         name: "deep-congruence-chains",
         severity: LintSeverity::Warning,
         category: None,
@@ -1710,7 +1968,7 @@ fn group_cap05(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
 
     let total = entries.len();
     vec![LintDiagnostic {
-        id: "C-AP05",
+        id: DiagnosticId::CAP05,
         name: "clone-storm-risk",
         severity: LintSeverity::Warning,
         category: None,
@@ -1739,7 +1997,7 @@ fn group_dis01(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
         .collect();
 
     vec![LintDiagnostic {
-        id: "DIS01",
+        id: DiagnosticId::DIS01,
         name: "hot-path-misalignment",
         severity: LintSeverity::Note,
         category: None,
@@ -1773,7 +2031,7 @@ fn group_w10(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
     }
 
     vec![LintDiagnostic {
-        id: "W10",
+        id: DiagnosticId::W10,
         name: "nfa-spillover-lookahead",
         severity,
         category: None,
@@ -1820,7 +2078,7 @@ fn group_w12(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
 
     let total = entries.len();
     vec![LintDiagnostic {
-        id: "W12",
+        id: DiagnosticId::W12,
         name: "dispatch-entropy",
         severity,
         category: None,
@@ -1854,7 +2112,7 @@ fn group_w14(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
     }
 
     vec![LintDiagnostic {
-        id: "W14",
+        id: DiagnosticId::W14,
         name: "wpds-confirmed-ambiguity",
         severity,
         category: None,
@@ -1866,6 +2124,299 @@ fn group_w14(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
         ),
         hint,
         grammar_name,
+        source_location: None,
+    }]
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Lint-B cleanup: groupers for high-volume diagnostic IDs
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// The following groupers each collapse N duplicate-or-similar diagnostics
+// into a single count-prefixed summary line. The design pattern:
+//
+//   1. Partition the input by some key (usually the message text or a
+//      source/target field extracted from the message).
+//   2. Single-key groups pass through unchanged (avoid adding noise when
+//      there is no duplication to collapse).
+//   3. Multi-key groups emit one summary per key with an "N occurrence(s)"
+//      prefix and a semicolon-separated list of the distinct variant texts.
+//
+// Shared utility `collect_unique_messages` below deduplicates message
+// strings while preserving insertion order.
+
+/// Deduplicate messages preserving insertion order.
+fn collect_unique_messages(diagnostics: &[LintDiagnostic]) -> Vec<String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for diag in diagnostics {
+        if seen.insert(diag.message.clone()) {
+            result.push(diag.message.clone());
+        }
+    }
+    result
+}
+
+/// Group M01 (theory-morphism gap) diagnostics.
+///
+/// Input: N warnings of the form
+/// `"theory morphism incomplete — missing constructor mapping: [MissingOperation] Type::Constructor: ..."`.
+/// Output: 1 warning of the form
+/// `"N theory morphism gap(s) (K unique): Type::Constructor; ..."`.
+fn group_m01(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    if diagnostics.len() <= 1 {
+        return diagnostics;
+    }
+    let first = diagnostics[0].clone();
+    let unique_msgs = collect_unique_messages(&diagnostics);
+    // Try to extract the "Type::Constructor" fragment from each unique
+    // message. Format:
+    //   "theory morphism incomplete — missing constructor mapping:
+    //    [MissingOperation] X::Y: ..."
+    let fragments: Vec<String> = unique_msgs
+        .iter()
+        .map(|m| {
+            // Look for "[MissingOperation] " prefix. The text that follows
+            // is typically of the form `Type::Constructor: Source operation
+            // '…' has no translation case`. We want just the
+            // `Type::Constructor` fragment — the `::` is a type-path
+            // separator, while the first `: ` (colon-space) is the label
+            // terminator.
+            if let Some(idx) = m.find("[MissingOperation] ") {
+                let after = &m[idx + "[MissingOperation] ".len()..];
+                // Find the first ": " (colon followed by space) — this is
+                // the label terminator. `::` does not match because there
+                // is no space after the second colon.
+                if let Some(colon_space) = after.find(": ") {
+                    return after[..colon_space].to_string();
+                }
+                return after.to_string();
+            }
+            // Fallback: show the full (deduped) message
+            m.clone()
+        })
+        .collect();
+
+    let total = diagnostics.len();
+    let unique_count = unique_msgs.len();
+    let message = if unique_count == 1 {
+        format!(
+            "{} theory morphism gap(s) — missing constructor mapping for `{}`",
+            total, fragments[0],
+        )
+    } else {
+        format!(
+            "{} theory morphism gap(s) ({} unique): {}",
+            total,
+            unique_count,
+            fragments.join("; "),
+        )
+    };
+
+    vec![LintDiagnostic {
+        id: DiagnosticId::M01,
+        name: "theory-morphism-gap",
+        severity: first.severity,
+        category: None,
+        rule: None,
+        message,
+        hint: first.hint.clone(),
+        grammar_name: first.grammar_name.clone(),
+        source_location: None,
+    }]
+}
+
+/// Group K01 (KAT Hoare-triple failure) diagnostics.
+///
+/// Input: N warnings of the form
+/// `"Hoare triple failed: [A -> B] {A_reachable} call_A_B {B_reachable}"`.
+/// Output: 1 warning of the form
+/// `"N KAT Hoare-triple failures: A→B; C→D; ..."`.
+fn group_k01(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    if diagnostics.len() <= 1 {
+        return diagnostics;
+    }
+    let first = diagnostics[0].clone();
+    // Extract the "A -> B" type pair from each message.
+    let mut pairs: Vec<String> = Vec::new();
+    for diag in &diagnostics {
+        // Message format: "Hoare triple failed: [A -> B] ..."
+        if let Some(start) = diag.message.find('[') {
+            if let Some(end) = diag.message[start..].find(']') {
+                let inside = &diag.message[start + 1..start + end];
+                let pair = inside.replace(" -> ", "→").trim().to_string();
+                if !pairs.contains(&pair) {
+                    pairs.push(pair);
+                }
+            }
+        }
+    }
+    let total = diagnostics.len();
+    let message = if pairs.is_empty() {
+        format!("{} KAT Hoare-triple failures", total)
+    } else {
+        format!(
+            "{} KAT Hoare-triple failures: {}",
+            total,
+            pairs.join("; "),
+        )
+    };
+
+    vec![LintDiagnostic {
+        id: DiagnosticId::K01,
+        name: "kat-hoare-triple-failure",
+        severity: first.severity,
+        category: None,
+        rule: None,
+        message,
+        hint: first.hint.clone(),
+        grammar_name: first.grammar_name.clone(),
+        source_location: None,
+    }]
+}
+
+/// Group SYM02 (symbolic-automaton overlap) diagnostics by category.
+///
+/// Input: N notes of the form `"guards R1 and R2 overlap on ..."` scoped
+/// to some category. Output: 1 note per grammar summarizing the count
+/// per category.
+fn group_sym02(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    if diagnostics.len() <= 1 {
+        return diagnostics;
+    }
+    let first = diagnostics[0].clone();
+    use std::collections::BTreeMap;
+    let mut by_cat: BTreeMap<String, usize> = BTreeMap::new();
+    for diag in &diagnostics {
+        let cat = diag.category.clone().unwrap_or_else(|| "(unknown)".to_string());
+        *by_cat.entry(cat).or_default() += 1;
+    }
+    let total = diagnostics.len();
+    let cat_summary: Vec<String> = by_cat
+        .iter()
+        .map(|(cat, n)| format!("{}:{}", cat, n))
+        .collect();
+    let message = format!(
+        "{} symbolic-automaton guard overlaps across {} category(ies): {}",
+        total,
+        by_cat.len(),
+        cat_summary.join(", "),
+    );
+
+    vec![LintDiagnostic {
+        id: DiagnosticId::SYM02,
+        name: "sfa-guard-overlap",
+        severity: first.severity,
+        category: None,
+        rule: None,
+        message,
+        hint: first.hint.clone(),
+        grammar_name: first.grammar_name.clone(),
+        source_location: None,
+    }]
+}
+
+/// Group N02 (Petri-net unbounded place) diagnostics.
+///
+/// Input: N warnings of the form `"place X has unbounded token capacity"`.
+/// Output: 1 warning of the form
+/// `"N places with unbounded token capacity: [P1, P2, ...]"`.
+fn group_n02(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    if diagnostics.len() <= 1 {
+        return diagnostics;
+    }
+    let first = diagnostics[0].clone();
+    // Extract the place name between backticks from each message.
+    let mut places: Vec<String> = Vec::new();
+    for diag in &diagnostics {
+        if let Some(start) = diag.message.find('`') {
+            if let Some(end) = diag.message[start + 1..].find('`') {
+                let place = diag.message[start + 1..start + 1 + end].to_string();
+                if !places.contains(&place) {
+                    places.push(place);
+                }
+            }
+        }
+    }
+    let total = diagnostics.len();
+    let message = if places.is_empty() {
+        format!("{} places with unbounded token capacity", total)
+    } else {
+        format!(
+            "{} places with unbounded token capacity: [{}]",
+            total,
+            places.join(", "),
+        )
+    };
+
+    vec![LintDiagnostic {
+        id: DiagnosticId::N02,
+        name: "petri-unbounded-place",
+        severity: first.severity,
+        category: None,
+        rule: None,
+        message,
+        hint: first.hint.clone(),
+        grammar_name: first.grammar_name.clone(),
+        source_location: None,
+    }]
+}
+
+/// Group N05 (alternating bisimulation non-equivalence) diagnostics.
+///
+/// Input: N warnings of the form
+/// `"categories `A` and `B` are not bisimilar (attacker wins game)"`.
+/// Output: 1 warning of the form
+/// `"N category pairs are not bisimilar: (A,B); (C,D); ..."`.
+fn group_n05(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    if diagnostics.len() <= 1 {
+        return diagnostics;
+    }
+    let first = diagnostics[0].clone();
+    let mut pairs: Vec<String> = Vec::new();
+    for diag in &diagnostics {
+        // Extract the two backtick-quoted category names from the message.
+        let mut ticks: Vec<String> = Vec::new();
+        let mut remaining = diag.message.as_str();
+        while let Some(start) = remaining.find('`') {
+            remaining = &remaining[start + 1..];
+            if let Some(end) = remaining.find('`') {
+                ticks.push(remaining[..end].to_string());
+                remaining = &remaining[end + 1..];
+            } else {
+                break;
+            }
+            if ticks.len() == 2 {
+                break;
+            }
+        }
+        if ticks.len() == 2 {
+            let pair = format!("({},{})", ticks[0], ticks[1]);
+            if !pairs.contains(&pair) {
+                pairs.push(pair);
+            }
+        }
+    }
+    let total = diagnostics.len();
+    let message = if pairs.is_empty() {
+        format!("{} category pairs are not bisimilar", total)
+    } else {
+        format!(
+            "{} category pairs are not bisimilar: {}",
+            total,
+            pairs.join("; "),
+        )
+    };
+
+    vec![LintDiagnostic {
+        id: DiagnosticId::N05,
+        name: "alt-bisim-not-equivalent",
+        severity: first.severity,
+        category: None,
+        rule: None,
+        message,
+        hint: first.hint.clone(),
+        grammar_name: first.grammar_name.clone(),
         source_location: None,
     }]
 }
@@ -1902,7 +2453,7 @@ fn lint_g01_left_recursion(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnost
 
                 if !is_infix_pattern && !is_postfix_pattern && !is_mixfix_pattern {
                     diagnostics.push(LintDiagnostic {
-                        id: "G01",
+                        id: DiagnosticId::G01,
                         name: "left-recursion",
                         severity: LintSeverity::Warning,
                         category: Some(category.clone()),
@@ -1946,7 +2497,7 @@ fn lint_g02_unused_category(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
     for cat_name in &category_names {
         if !referenced.contains(*cat_name) {
             diagnostics.push(LintDiagnostic {
-                id: "G02",
+                id: DiagnosticId::G02,
                 name: "unused-category",
                 severity: LintSeverity::Warning,
                 category: Some(cat_name.to_string()),
@@ -2051,7 +2602,7 @@ fn lint_g03_ambiguous_prefix(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
                 };
 
                 diagnostics.push(LintDiagnostic {
-                    id: "G03",
+                    id: DiagnosticId::G03,
                     name: "ambiguous-prefix",
                     severity: LintSeverity::Warning,
                     category: Some(cat.clone()),
@@ -2153,7 +2704,7 @@ fn lint_g04_duplicate_rule_label(ctx: &LintContext, diagnostics: &mut Vec<LintDi
         let key = (category.as_str(), label.as_str());
         if let Some(&_existing) = seen.get(&key) {
             diagnostics.push(LintDiagnostic {
-                id: "G04",
+                id: DiagnosticId::G04,
                 name: "duplicate-rule-label",
                 severity: LintSeverity::Error,
                 category: Some(category.clone()),
@@ -2190,7 +2741,7 @@ fn lint_g05_empty_category(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnost
             .any(|(_, category, _)| category.as_str() == cat.name);
         if !has_rules {
             diagnostics.push(LintDiagnostic {
-                id: "G05",
+                id: DiagnosticId::G05,
                 name: "empty-category",
                 severity: LintSeverity::Warning,
                 category: Some(cat.name.clone()),
@@ -2256,7 +2807,7 @@ fn lint_g06_shadowed_operator(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
 
         for terminal in overlap {
             diagnostics.push(LintDiagnostic {
-                id: "G06",
+                id: DiagnosticId::G06,
                 name: "shadowed-operator",
                 severity: LintSeverity::Note,
                 category: Some(cat.clone()),
@@ -2326,6 +2877,9 @@ fn syntax_signature(syntax: &[SyntaxItemSpec]) -> String {
                 let inner_sig = syntax_signature(inner);
                 parts.push(format!("OPT({})", inner_sig))
             }
+            SyntaxItemSpec::GuardExpression { param_name } => {
+                parts.push(format!("GUARD({})", param_name))
+            }
         }
     }
     parts.join("|")
@@ -2351,7 +2905,7 @@ fn lint_g07_identical_rules(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
         for (_, labels) in &sig_to_labels {
             if labels.len() > 1 {
                 diagnostics.push(LintDiagnostic {
-                    id: "G07",
+                    id: DiagnosticId::G07,
                     name: "identical-rules",
                     severity: LintSeverity::Warning,
                     category: Some(cat.clone()),
@@ -2529,6 +3083,10 @@ fn encode_syntax_item(item: &SyntaxItemSpec, env: &mut DebruijnEnv, buf: &mut Ve
             }
             buf.push(0x0B); // End tag
         }
+        SyntaxItemSpec::GuardExpression { param_name } => {
+            buf.push(env.resolve(param_name));
+            buf.push(0x0C); // GuardExpression tag (Phase 2F)
+        }
     }
 }
 
@@ -2585,7 +3143,7 @@ fn lint_g24_alpha_equivalent_rules(ctx: &LintContext, diagnostics: &mut Vec<Lint
             }
 
             diagnostics.push(LintDiagnostic {
-                id: "G24",
+                id: DiagnosticId::G24,
                 name: "alpha-equivalent-rules",
                 severity: LintSeverity::Warning,
                 category: Some(cat.clone()),
@@ -2688,7 +3246,7 @@ fn lint_g08_missing_cast_to_root(ctx: &LintContext, diagnostics: &mut Vec<LintDi
 
         if !found {
             diagnostics.push(LintDiagnostic {
-                id: "G08",
+                id: DiagnosticId::G08,
                 name: "missing-cast-to-root",
                 severity: LintSeverity::Warning,
                 category: Some(cat_name.to_string()),
@@ -2732,7 +3290,7 @@ fn lint_g09_unbalanced_delimiters(ctx: &LintContext, diagnostics: &mut Vec<LintD
 
             if open_count != close_count {
                 diagnostics.push(LintDiagnostic {
-                    id: "G09",
+                    id: DiagnosticId::G09,
                     name: "unbalanced-delimiters",
                     severity: LintSeverity::Warning,
                     category: Some(category.clone()),
@@ -2827,7 +3385,7 @@ fn lint_g10_ambiguous_associativity(ctx: &LintContext, diagnostics: &mut Vec<Lin
             if has_mixed {
                 let op_names: Vec<&str> = group.iter().map(|op| op.terminal.as_str()).collect();
                 diagnostics.push(LintDiagnostic {
-                    id: "G10",
+                    id: DiagnosticId::G10,
                     name: "ambiguous-associativity",
                     severity: LintSeverity::Warning,
                     category: Some(cat.clone()),
@@ -2982,9 +3540,9 @@ fn lint_w01_dead_rule(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) 
         // technically reachable — this is a diagnostic hint, not a dead-code warning.
         let (lint_id, lint_name, severity) = match &w {
             crate::pipeline::DeadRuleWarning::NearlyDeadPath { .. } => {
-                ("W07", "nearly-dead-path", LintSeverity::Note)
+                (DiagnosticId::W07, "nearly-dead-path", LintSeverity::Note)
             }
-            _ => ("W01", "dead-rule", LintSeverity::Warning),
+            _ => (DiagnosticId::W01, "dead-rule", LintSeverity::Warning),
         };
 
         diagnostics.push(LintDiagnostic {
@@ -3023,7 +3581,7 @@ fn lint_w01_dead_rule(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) 
                     crate::decision_tree::DispatchStrategy::NotPresent => Vec::new(),
                 };
                 diagnostics.push(LintDiagnostic {
-                    id: "W01",
+                    id: DiagnosticId::W01,
                     name: "dead-prefix",
                     severity: LintSeverity::Note,
                     category: Some(cat_name.clone()),
@@ -3103,7 +3661,7 @@ fn lint_w02_nfa_ambiguous_prefix(ctx: &LintContext, diagnostics: &mut Vec<LintDi
                 };
 
                 diagnostics.push(LintDiagnostic {
-                    id: "W02",
+                    id: DiagnosticId::W02,
                     name: "nfa-ambiguous-prefix",
                     severity,
                     category: Some(cat_name.clone()),
@@ -3141,7 +3699,7 @@ fn lint_w03_high_ambiguity_token(ctx: &LintContext, diagnostics: &mut Vec<LintDi
                                 .map(|(a, _)| a.action.rule_label().to_string())
                                 .collect();
                             diagnostics.push(LintDiagnostic {
-                                id: "W03",
+                                id: DiagnosticId::W03,
                                 name: "high-ambiguity-token",
                                 severity: LintSeverity::Warning,
                                 category: Some(cat.clone()),
@@ -3188,7 +3746,7 @@ fn lint_w04_weight_gap_anomaly(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
 
                         if gap > 5.0 {
                             diagnostics.push(LintDiagnostic {
-                                id: "W04",
+                                id: DiagnosticId::W04,
                                 name: "weight-gap-anomaly",
                                 severity: LintSeverity::Note,
                                 category: Some(cat.clone()),
@@ -3255,7 +3813,7 @@ fn lint_w06_weight_inversion(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
                             // than more-specific (higher spec)
                             if spec_i < spec_j && w_i < w_j {
                                 diagnostics.push(LintDiagnostic {
-                                    id: "W06",
+                                    id: DiagnosticId::W06,
                                     name: "weight-inversion",
                                     severity: LintSeverity::Note,
                                     category: Some(cat.clone()),
@@ -3313,7 +3871,7 @@ fn lint_w10_spillover_eliminable_by_lookahead(
                 // Check if two-token lookahead resolves this group
                 if let Some(label) = wfst.is_deterministic_context(&[token]) {
                     diagnostics.push(LintDiagnostic {
-                        id: "W10",
+                        id: DiagnosticId::W10,
                         name: "spillover-eliminable-by-lookahead",
                         severity: LintSeverity::Note,
                         category: Some(cat_name.clone()),
@@ -3336,7 +3894,7 @@ fn lint_w10_spillover_eliminable_by_lookahead(
                     let (_, count) = wfst.context_narrowing(&[token]);
                     if count > 0 && (count as usize) < rules.len() {
                         diagnostics.push(LintDiagnostic {
-                            id: "W10",
+                            id: DiagnosticId::W10,
                             name: "spillover-eliminable-by-lookahead",
                             severity: LintSeverity::Note,
                             category: Some(cat_name.clone()),
@@ -3393,7 +3951,7 @@ fn lint_w11_context_narrowing_deterministic(
                 {
                     if let Some(label) = wfst.is_deterministic_context(&[&token]) {
                         diagnostics.push(LintDiagnostic {
-                            id: "W11",
+                            id: DiagnosticId::W11,
                             name: "context-narrowing-deterministic",
                             severity: LintSeverity::Note,
                             category: Some(cat_name.clone()),
@@ -3424,7 +3982,6 @@ fn lint_w11_context_narrowing_deterministic(
 
 /// W12: Compute Shannon entropy at each dispatch point. High entropy suggests
 /// training would improve weight assignment.
-#[cfg(feature = "wfst-log")]
 fn lint_w12_training_would_improve(
     ctx: &LintContext,
     diagnostics: &mut Vec<LintDiagnostic>,
@@ -3436,7 +3993,7 @@ fn lint_w12_training_would_improve(
         if entropy_bits > 2.0 {
             let num_actions = wfst.num_actions();
             diagnostics.push(LintDiagnostic {
-                id: "W12",
+                id: DiagnosticId::W12,
                 name: "training-would-improve",
                 severity: LintSeverity::Note,
                 category: Some(cat_name.clone()),
@@ -3502,7 +4059,7 @@ fn lint_w13_wpds_unreachable(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
             .copied();
 
         diagnostics.push(LintDiagnostic {
-            id: "W13",
+            id: DiagnosticId::W13,
             name: "wpds-unreachable",
             severity: LintSeverity::Warning,
             category: Some(unreachable.category.clone()),
@@ -3591,7 +4148,7 @@ fn lint_d14_wpds_complexity_report(ctx: &LintContext, diagnostics: &mut Vec<Lint
     }
 
     diagnostics.push(LintDiagnostic {
-        id: "D14",
+        id: DiagnosticId::D14,
         name: "wpds-complexity-report",
         severity: LintSeverity::Info,
         category: None,
@@ -3620,7 +4177,7 @@ fn lint_p05_wpds_pipeline_cost(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
     };
 
     diagnostics.push(LintDiagnostic {
-        id: "P05",
+        id: DiagnosticId::P05,
         name: "wpds-pipeline-cost",
         severity: LintSeverity::Info,
         category: None,
@@ -3660,7 +4217,7 @@ fn lint_w14_wpds_confirmed_ambiguity(ctx: &LintContext, diagnostics: &mut Vec<Li
         if !analysis.reachable_categories.contains(cat) {
             // Category is WPDS-unreachable → the ambiguity is a false positive
             diagnostics.push(LintDiagnostic {
-                id: "W14",
+                id: DiagnosticId::W14,
                 name: "wpds-confirmed-ambiguity",
                 severity: LintSeverity::Note,
                 category: Some(cat.clone()),
@@ -3697,7 +4254,7 @@ fn lint_w14_wpds_confirmed_ambiguity(ctx: &LintContext, diagnostics: &mut Vec<Li
 
             if fan_in > 0 && calling_context_count > 1 {
                 diagnostics.push(LintDiagnostic {
-                    id: "W14",
+                    id: DiagnosticId::W14,
                     name: "wpds-confirmed-ambiguity",
                     severity: LintSeverity::Note,
                     category: Some(cat.clone()),
@@ -3745,7 +4302,7 @@ fn lint_comp08_refactoring_suggestions(ctx: &LintContext, diagnostics: &mut Vec<
         let fo = cg.fan_out.get(cat).copied().unwrap_or(0);
         if fi > 5 && fo > 5 {
             diagnostics.push(LintDiagnostic {
-                id: "COMP-08",
+                id: DiagnosticId::COMP08,
                 name: "wpds-refactoring-suggestion",
                 severity: LintSeverity::Note,
                 category: Some(cat.clone()),
@@ -3786,7 +4343,7 @@ fn lint_comp08_refactoring_suggestions(ctx: &LintContext, diagnostics: &mut Vec<
                 .unwrap_or("unknown");
 
             diagnostics.push(LintDiagnostic {
-                id: "COMP-08",
+                id: DiagnosticId::COMP08,
                 name: "wpds-refactoring-suggestion",
                 severity: LintSeverity::Note,
                 category: Some(cat.clone()),
@@ -3811,7 +4368,7 @@ fn lint_comp08_refactoring_suggestions(ctx: &LintContext, diagnostics: &mut Vec<
     for cycle in &analysis.cycles {
         if cycle.categories.len() > 2 {
             diagnostics.push(LintDiagnostic {
-                id: "COMP-08",
+                id: DiagnosticId::COMP08,
                 name: "wpds-refactoring-suggestion",
                 severity: LintSeverity::Note,
                 category: None,
@@ -3887,7 +4444,7 @@ fn lint_w16_wpds_weight_inversion(ctx: &LintContext, diagnostics: &mut Vec<LintD
                     && wpds_a_weight > wpds_b_weight + 0.5
                 {
                     diagnostics.push(LintDiagnostic {
-                        id: "W16",
+                        id: DiagnosticId::W16,
                         name: "wpds-weight-inversion",
                         severity: LintSeverity::Warning,
                         category: Some(cat.clone()),
@@ -3935,7 +4492,7 @@ fn lint_r01_empty_sync_set(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnost
             };
 
             diagnostics.push(LintDiagnostic {
-                id: "R01",
+                id: DiagnosticId::R01,
                 name: "empty-sync-set",
                 severity: LintSeverity::Warning,
                 category: Some(rwfst.category().to_string()),
@@ -3997,7 +4554,7 @@ fn lint_r02_sparse_recovery(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
             };
 
             diagnostics.push(LintDiagnostic {
-                id: "R02",
+                id: DiagnosticId::R02,
                 name: "sparse-recovery",
                 severity: LintSeverity::Note,
                 category: Some(rwfst.category().to_string()),
@@ -4091,7 +4648,7 @@ fn lint_r05_missing_bracket_sync(ctx: &LintContext, diagnostics: &mut Vec<LintDi
 
                 if !has_close_sync {
                     diagnostics.push(LintDiagnostic {
-                        id: "R05",
+                        id: DiagnosticId::R05,
                         name: "missing-bracket-sync",
                         severity: LintSeverity::Warning,
                         category: Some(cat.clone()),
@@ -4138,7 +4695,7 @@ fn lint_r06_inverted_recovery_costs(ctx: &LintContext, diagnostics: &mut Vec<Lin
 
             if cost_i > cost_j {
                 diagnostics.push(LintDiagnostic {
-                    id: "R06",
+                    id: DiagnosticId::R06,
                     name: "inverted-recovery-costs",
                     severity: LintSeverity::Warning,
                     category: None,
@@ -4215,7 +4772,7 @@ fn lint_r07_transposition_candidate(ctx: &LintContext, diagnostics: &mut Vec<Lin
     }
 
     diagnostics.push(LintDiagnostic {
-        id: "R07",
+        id: DiagnosticId::R07,
         name: "transposition-candidate",
         severity: LintSeverity::Note,
         category: None,
@@ -4336,7 +4893,7 @@ fn lint_c01_cast_cycle(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>)
                         let cycle_str = cycle_path.join(" -> ");
 
                         diagnostics.push(LintDiagnostic {
-                            id: "C01",
+                            id: DiagnosticId::C01,
                             name: "cast-cycle",
                             severity: LintSeverity::Error,
                             category: None,
@@ -4427,7 +4984,7 @@ fn lint_c02_transitive_cast_redundancy(ctx: &LintContext, diagnostics: &mut Vec<
 
         if has_indirect {
             diagnostics.push(LintDiagnostic {
-                id: "C02",
+                id: DiagnosticId::C02,
                 name: "transitive-cast-redundancy",
                 severity: LintSeverity::Note,
                 category: None,
@@ -4514,7 +5071,7 @@ fn lint_c04_wide_cross_overlap(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
                 };
 
                 diagnostics.push(LintDiagnostic {
-                    id: "C04",
+                    id: DiagnosticId::C04,
                     name: "wide-cross-overlap",
                     severity: LintSeverity::Note,
                     category: None,
@@ -4550,7 +5107,7 @@ fn lint_p02_high_nfa_spillover(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
             LintSeverity::Note
         };
         diagnostics.push(LintDiagnostic {
-            id: "P02",
+            id: DiagnosticId::P02,
             name: "high-nfa-spillover",
             severity,
             category: None,
@@ -4640,7 +5197,7 @@ fn lint_p03_deep_cast_nesting(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
             LintSeverity::Note
         };
         diagnostics.push(LintDiagnostic {
-            id: "P03",
+            id: DiagnosticId::P03,
             name: "deep-cast-nesting",
             severity,
             category: None,
@@ -4682,7 +5239,7 @@ fn lint_p04_many_alternatives(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
                             LintSeverity::Note
                         };
                         diagnostics.push(LintDiagnostic {
-                            id: "P04",
+                            id: DiagnosticId::P04,
                             name: "many-alternatives",
                             severity,
                             category: Some(cat.clone()),
@@ -4836,7 +5393,7 @@ fn lint_x01_composition_ambiguity_introduction(
             sorted_new.sort_unstable();
 
             diagnostics.push(LintDiagnostic {
-                id: "X01",
+                id: DiagnosticId::X01,
                 name: "composition-ambiguity-introduction",
                 severity: LintSeverity::Warning,
                 category: Some(cat.clone()),
@@ -4905,7 +5462,7 @@ fn lint_x02_composition_priority_shadowing(
                 // A is shadowed by B: A's best weight is strictly worse (higher)
                 if best_a.weight > best_b.weight {
                     diagnostics.push(LintDiagnostic {
-                        id: "X02",
+                        id: DiagnosticId::X02,
                         name: "composition-priority-shadowing",
                         severity: LintSeverity::Warning,
                         category: Some(cat.clone()),
@@ -4985,7 +5542,7 @@ fn lint_x03_composition_dead_rule_creation(
             .map(|r| r.category.clone());
 
         diagnostics.push(LintDiagnostic {
-            id: "X03",
+            id: DiagnosticId::X03,
             name: "composition-dead-rule-creation",
             severity: LintSeverity::Warning,
             category: category.clone(),
@@ -5141,7 +5698,7 @@ fn lint_x04_composition_cast_chain_break(
         };
 
         diagnostics.push(LintDiagnostic {
-            id: "X04",
+            id: DiagnosticId::X04,
             name: "composition-cast-chain-break",
             severity: LintSeverity::Error,
             category: Some(dst.clone()),
@@ -5216,7 +5773,7 @@ fn lint_x05_composition_terminal_collision(
             let cats_b: Vec<&str> = semantics_b.iter().map(|(cat, _)| cat.as_str()).collect();
 
             diagnostics.push(LintDiagnostic {
-                id: "X05",
+                id: DiagnosticId::X05,
                 name: "composition-terminal-collision",
                 severity: LintSeverity::Warning,
                 category: None,
@@ -5292,7 +5849,7 @@ fn lint_w03_cross_category_hotspot(ctx: &LintContext, diagnostics: &mut Vec<Lint
             .map(|(cat, count)| format!("{}: {}", cat, count))
             .collect();
         diagnostics.push(LintDiagnostic {
-            id: "W03",
+            id: DiagnosticId::W03,
             name: "cross-category-hotspot",
             severity: LintSeverity::Note,
             category: None,
@@ -5376,7 +5933,7 @@ fn lint_g32_prefix_isomorphism(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
             let mut sorted = cats.clone();
             sorted.sort();
             diagnostics.push(LintDiagnostic {
-                id: "G32",
+                id: DiagnosticId::G32,
                 name: "prefix-isomorphism",
                 severity: LintSeverity::Note,
                 category: None,
@@ -5433,7 +5990,7 @@ fn lint_d10_lookahead_waste(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
             let depth1_pct = depth1_count as f64 / total_tokens as f64 * 100.0;
             if depth1_pct >= 80.0 {
                 diagnostics.push(LintDiagnostic {
-                    id: "D10",
+                    id: DiagnosticId::D10,
                     name: "lookahead-waste",
                     severity: LintSeverity::Note,
                     category: Some(cat_name.clone()),
@@ -5494,7 +6051,7 @@ fn lint_d13_ascent_trie_correlation(ctx: &LintContext, diagnostics: &mut Vec<Lin
 
         for orphan in &orphans {
             diagnostics.push(LintDiagnostic {
-                id: "D13",
+                id: DiagnosticId::D13,
                 name: "parsed-but-unrewritten",
                 severity: LintSeverity::Note,
                 category: Some(cat_name.clone()),
@@ -5521,7 +6078,6 @@ fn lint_d13_ascent_trie_correlation(ctx: &LintContext, diagnostics: &mut Vec<Lin
 
 // ── TRS analysis lints (T01-T04) ────────────────────────────────────────────
 
-#[cfg(feature = "trs-analysis")]
 fn lint_t01_non_joinable_critical_pair(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let analysis = match ctx.confluence_result {
         Some(a) => a,
@@ -5533,7 +6089,7 @@ fn lint_t01_non_joinable_critical_pair(ctx: &LintContext, diagnostics: &mut Vec<
             Some(crate::confluence::JoinabilityResult::NotJoinable { .. })
         ) {
             diagnostics.push(LintDiagnostic {
-                id: "T01",
+                id: DiagnosticId::T01,
                 name: "non-joinable-critical-pair",
                 severity: LintSeverity::Warning,
                 category: None,
@@ -5553,7 +6109,6 @@ fn lint_t01_non_joinable_critical_pair(ctx: &LintContext, diagnostics: &mut Vec<
     }
 }
 
-#[cfg(feature = "trs-analysis")]
 fn lint_t02_confluence_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let analysis = match ctx.confluence_result {
         Some(a) => a,
@@ -5561,7 +6116,7 @@ fn lint_t02_confluence_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDia
     };
     if analysis.is_confluent {
         diagnostics.push(LintDiagnostic {
-            id: "T02",
+            id: DiagnosticId::T02,
             name: "confluence-verified",
             severity: LintSeverity::Note,
             category: None,
@@ -5577,7 +6132,6 @@ fn lint_t02_confluence_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDia
     }
 }
 
-#[cfg(feature = "trs-analysis")]
 fn lint_t03_non_terminating_cycle(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.termination_result {
         Some(r) => r,
@@ -5589,7 +6143,7 @@ fn lint_t03_non_terminating_cycle(ctx: &LintContext, diagnostics: &mut Vec<LintD
     } = result
     {
         diagnostics.push(LintDiagnostic {
-            id: "T03",
+            id: DiagnosticId::T03,
             name: "non-terminating-cycle",
             severity: LintSeverity::Warning,
             category: None,
@@ -5608,7 +6162,6 @@ fn lint_t03_non_terminating_cycle(ctx: &LintContext, diagnostics: &mut Vec<LintD
     }
 }
 
-#[cfg(feature = "trs-analysis")]
 fn lint_t04_termination_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.termination_result {
         Some(r) => r,
@@ -5616,7 +6169,7 @@ fn lint_t04_termination_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDi
     };
     if matches!(result, crate::termination::TerminationResult::Terminating) {
         diagnostics.push(LintDiagnostic {
-            id: "T04",
+            id: DiagnosticId::T04,
             name: "termination-verified",
             severity: LintSeverity::Note,
             category: None,
@@ -5631,7 +6184,6 @@ fn lint_t04_termination_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDi
 
 // ── VPA lints (V01-V02) ─────────────────────────────────────────────────────
 
-#[cfg(feature = "vpa")]
 fn lint_v01_vpa_determinizable(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let analysis = match ctx.vpa_result {
         Some(a) => a,
@@ -5639,7 +6191,7 @@ fn lint_v01_vpa_determinizable(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
     };
     if analysis.is_determinizable {
         diagnostics.push(LintDiagnostic {
-            id: "V01",
+            id: DiagnosticId::V01,
             name: "vpa-determinizable",
             severity: LintSeverity::Note,
             category: None,
@@ -5655,7 +6207,6 @@ fn lint_v01_vpa_determinizable(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
     }
 }
 
-#[cfg(feature = "vpa")]
 fn lint_v02_vpa_alphabet_mismatch(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let analysis = match ctx.vpa_result {
         Some(a) => a,
@@ -5663,7 +6214,7 @@ fn lint_v02_vpa_alphabet_mismatch(ctx: &LintContext, diagnostics: &mut Vec<LintD
     };
     for mismatch in &analysis.alphabet_mismatches {
         diagnostics.push(LintDiagnostic {
-            id: "V02",
+            id: DiagnosticId::V02,
             name: "vpa-alphabet-mismatch",
             severity: LintSeverity::Warning,
             category: None,
@@ -5684,7 +6235,6 @@ fn lint_v02_vpa_alphabet_mismatch(ctx: &LintContext, diagnostics: &mut Vec<LintD
 
 // ── WTA lints (V03-V04) ─────────────────────────────────────────────────────
 
-#[cfg(feature = "tree-automata")]
 fn lint_v03_wta_unrecognized_term(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let analysis = match ctx.wta_result {
         Some(a) => a,
@@ -5692,7 +6242,7 @@ fn lint_v03_wta_unrecognized_term(ctx: &LintContext, diagnostics: &mut Vec<LintD
     };
     for term in &analysis.unrecognized_terms {
         diagnostics.push(LintDiagnostic {
-            id: "V03",
+            id: DiagnosticId::V03,
             name: "wta-unrecognized-term",
             severity: LintSeverity::Warning,
             category: None,
@@ -5710,7 +6260,6 @@ fn lint_v03_wta_unrecognized_term(ctx: &LintContext, diagnostics: &mut Vec<LintD
     }
 }
 
-#[cfg(feature = "tree-automata")]
 fn lint_v04_wta_hot_path(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let analysis = match ctx.wta_result {
         Some(a) => a,
@@ -5718,7 +6267,7 @@ fn lint_v04_wta_hot_path(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic
     };
     for path in &analysis.hot_paths {
         diagnostics.push(LintDiagnostic {
-            id: "V04",
+            id: DiagnosticId::V04,
             name: "wta-hot-path",
             severity: LintSeverity::Note,
             category: None,
@@ -5743,7 +6292,7 @@ fn lint_s01_safety_violation(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
     };
     if !result.safe {
         diagnostics.push(LintDiagnostic {
-            id: "S01",
+            id: DiagnosticId::S01,
             name: "safety-violation",
             severity: LintSeverity::Warning,
             category: None,
@@ -5768,7 +6317,7 @@ fn lint_s02_safety_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
     };
     if result.safe {
         diagnostics.push(LintDiagnostic {
-            id: "S02",
+            id: DiagnosticId::S02,
             name: "safety-verified",
             severity: LintSeverity::Note,
             category: None,
@@ -5792,7 +6341,7 @@ fn lint_s03_cegar_refinement(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
         .map(|s| format!("{}", s.verdict))
         .unwrap_or_else(|| "unknown".to_string());
     diagnostics.push(LintDiagnostic {
-        id: "S03",
+        id: DiagnosticId::S03,
         name: "cegar-refinement",
         severity: LintSeverity::Note,
         category: None,
@@ -5808,7 +6357,6 @@ fn lint_s03_cegar_refinement(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
     });
 }
 
-#[cfg(feature = "wpds-extended")]
 fn lint_s04_ewpds_merge_site(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.ewpds_result {
         Some(r) => r,
@@ -5816,7 +6364,7 @@ fn lint_s04_ewpds_merge_site(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
     };
     if result.merge_site_count > 0 {
         diagnostics.push(LintDiagnostic {
-            id: "S04",
+            id: DiagnosticId::S04,
             name: "ewpds-merge-site",
             severity: LintSeverity::Note,
             category: None,
@@ -5833,14 +6381,13 @@ fn lint_s04_ewpds_merge_site(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
     }
 }
 
-#[cfg(feature = "wpds-ara")]
 fn lint_s05_ara_invariant(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.ara_result {
         Some(r) => r,
         None => return,
     };
     diagnostics.push(LintDiagnostic {
-        id: "S05",
+        id: DiagnosticId::S05,
         name: "ara-invariant",
         severity: LintSeverity::Note,
         category: None,
@@ -5861,7 +6408,7 @@ fn lint_s06_algebraic_summary(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
         None => return,
     };
     diagnostics.push(LintDiagnostic {
-        id: "S06",
+        id: DiagnosticId::S06,
         name: "algebraic-summary",
         severity: LintSeverity::Note,
         category: None,
@@ -5878,7 +6425,6 @@ fn lint_s06_algebraic_summary(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
 
 // ── Concurrency lints (N01-N05) ─────────────────────────────────────────────
 
-#[cfg(feature = "petri")]
 fn lint_n01_deadlock_risk(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.petri_result {
         Some(r) => r,
@@ -5886,7 +6432,7 @@ fn lint_n01_deadlock_risk(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnosti
     };
     if result.has_deadlock_risk {
         diagnostics.push(LintDiagnostic {
-            id: "N01",
+            id: DiagnosticId::N01,
             name: "deadlock-risk",
             severity: LintSeverity::Warning,
             category: None,
@@ -5905,7 +6451,6 @@ fn lint_n01_deadlock_risk(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnosti
     }
 }
 
-#[cfg(feature = "petri")]
 fn lint_n02_unbounded_channel(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.petri_result {
         Some(r) => r,
@@ -5913,7 +6458,7 @@ fn lint_n02_unbounded_channel(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
     };
     for place in &result.unbounded_places {
         diagnostics.push(LintDiagnostic {
-            id: "N02",
+            id: DiagnosticId::N02,
             name: "unbounded-channel",
             severity: LintSeverity::Warning,
             category: None,
@@ -5932,7 +6477,6 @@ fn lint_n02_unbounded_channel(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
     }
 }
 
-#[cfg(feature = "nominal")]
 fn lint_n03_scope_violation(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.nominal_result {
         Some(r) => r,
@@ -5940,7 +6484,7 @@ fn lint_n03_scope_violation(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
     };
     for (name, context) in &result.scope_violations {
         diagnostics.push(LintDiagnostic {
-            id: "N03",
+            id: DiagnosticId::N03,
             name: "scope-violation",
             severity: LintSeverity::Warning,
             category: None,
@@ -5958,7 +6502,6 @@ fn lint_n03_scope_violation(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
     }
 }
 
-#[cfg(feature = "nominal")]
 fn lint_n04_scope_narrowing(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.nominal_result {
         Some(r) => r,
@@ -5966,7 +6509,7 @@ fn lint_n04_scope_narrowing(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
     };
     for (binder, suggestion) in &result.narrowing_candidates {
         diagnostics.push(LintDiagnostic {
-            id: "N04",
+            id: DiagnosticId::N04,
             name: "scope-narrowing",
             severity: LintSeverity::Note,
             category: None,
@@ -5982,7 +6525,6 @@ fn lint_n04_scope_narrowing(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
     }
 }
 
-#[cfg(feature = "alternating")]
 fn lint_n05_non_bisimilar(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.alternating_result {
         Some(r) => r,
@@ -5990,7 +6532,7 @@ fn lint_n05_non_bisimilar(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnosti
     };
     for (cat_a, cat_b) in &result.non_bisimilar_pairs {
         diagnostics.push(LintDiagnostic {
-            id: "N05",
+            id: DiagnosticId::N05,
             name: "non-bisimilar",
             severity: LintSeverity::Warning,
             category: None,
@@ -6011,7 +6553,6 @@ fn lint_n05_non_bisimilar(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnosti
 
 // ── Temporal lints (L01-L02) ────────────────────────────────────────────────
 
-#[cfg(feature = "ltl")]
 fn lint_l01_ltl_violated(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let results = match ctx.ltl_results {
         Some(r) => r,
@@ -6021,7 +6562,7 @@ fn lint_l01_ltl_violated(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic
         if let crate::ltl::LtlCheckResult::Violated { prefix, .. } = result {
             let desc = prefix.first().map(|s| s.as_str()).unwrap_or("unknown");
             diagnostics.push(LintDiagnostic {
-                id: "L01",
+                id: DiagnosticId::L01,
                 name: "ltl-violated",
                 severity: LintSeverity::Warning,
                 category: None,
@@ -6041,7 +6582,6 @@ fn lint_l01_ltl_violated(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic
     }
 }
 
-#[cfg(feature = "ltl")]
 fn lint_l02_ltl_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let results = match ctx.ltl_results {
         Some(r) => r,
@@ -6053,7 +6593,7 @@ fn lint_l02_ltl_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic
         .count();
     if satisfied_count > 0 {
         diagnostics.push(LintDiagnostic {
-            id: "L02",
+            id: DiagnosticId::L02,
             name: "ltl-verified",
             severity: LintSeverity::Note,
             category: None,
@@ -6072,7 +6612,6 @@ fn lint_l02_ltl_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic
 
 // ── Extension lints (E01-E02) ───────────────────────────────────────────────
 
-#[cfg(feature = "provenance")]
 fn lint_e01_provenance_trace(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.provenance_result {
         Some(r) => r,
@@ -6080,7 +6619,7 @@ fn lint_e01_provenance_trace(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
     };
     if !result.provenance_traces.is_empty() {
         diagnostics.push(LintDiagnostic {
-            id: "E01",
+            id: DiagnosticId::E01,
             name: "provenance-trace",
             severity: LintSeverity::Note,
             category: None,
@@ -6096,7 +6635,6 @@ fn lint_e01_provenance_trace(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
     }
 }
 
-#[cfg(feature = "cra")]
 fn lint_e02_cra_cost_anomaly(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.cra_result {
         Some(r) => r,
@@ -6104,7 +6642,7 @@ fn lint_e02_cra_cost_anomaly(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
     };
     for (desc, value) in &result.cost_anomalies {
         diagnostics.push(LintDiagnostic {
-            id: "E02",
+            id: DiagnosticId::E02,
             name: "cra-cost-anomaly",
             severity: LintSeverity::Warning,
             category: None,
@@ -6124,7 +6662,6 @@ fn lint_e02_cra_cost_anomaly(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
 
 // ── Morphism lints (M01-M02) ────────────────────────────────────────────────
 
-#[cfg(feature = "morphisms")]
 fn lint_m01_morphism_gap(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.morphism_result {
         Some(r) => r,
@@ -6132,7 +6669,7 @@ fn lint_m01_morphism_gap(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic
     };
     for gap in &result.gaps {
         diagnostics.push(LintDiagnostic {
-            id: "M01",
+            id: DiagnosticId::M01,
             name: "morphism-gap",
             severity: LintSeverity::Warning,
             category: None,
@@ -6151,7 +6688,6 @@ fn lint_m01_morphism_gap(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic
     }
 }
 
-#[cfg(feature = "morphisms")]
 fn lint_m02_morphism_preservation_failure(
     ctx: &LintContext,
     diagnostics: &mut Vec<LintDiagnostic>,
@@ -6162,7 +6698,7 @@ fn lint_m02_morphism_preservation_failure(
     };
     for failure in &result.preservation_failures {
         diagnostics.push(LintDiagnostic {
-            id: "M02",
+            id: DiagnosticId::M02,
             name: "morphism-preservation-failure",
             severity: LintSeverity::Warning,
             category: None,
@@ -6182,7 +6718,6 @@ fn lint_m02_morphism_preservation_failure(
 
 // ── KAT lints (K01-K02) ────────────────────────────────────────────────────
 
-#[cfg(feature = "kat")]
 fn lint_k01_hoare_failure(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.kat_result {
         Some(r) => r,
@@ -6191,7 +6726,7 @@ fn lint_k01_hoare_failure(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnosti
     for (desc, passed) in &result.hoare_results {
         if !passed {
             diagnostics.push(LintDiagnostic {
-                id: "K01",
+                id: DiagnosticId::K01,
                 name: "hoare-failure",
                 severity: LintSeverity::Warning,
                 category: None,
@@ -6211,7 +6746,6 @@ fn lint_k01_hoare_failure(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnosti
     }
 }
 
-#[cfg(feature = "kat")]
 fn lint_k02_kat_equivalence(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.kat_result {
         Some(r) => r,
@@ -6219,7 +6753,7 @@ fn lint_k02_kat_equivalence(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
     };
     for (expr1, expr2, equivalent) in &result.equivalence_results {
         diagnostics.push(LintDiagnostic {
-            id: "K02",
+            id: DiagnosticId::K02,
             name: "kat-equivalence",
             severity: LintSeverity::Note,
             category: None,
@@ -6249,7 +6783,7 @@ fn lint_p06_analysis_pipeline_cost(ctx: &LintContext, diagnostics: &mut Vec<Lint
         return;
     }
     diagnostics.push(LintDiagnostic {
-        id: "P06",
+        id: DiagnosticId::P06,
         name: "analysis-pipeline-cost",
         severity: LintSeverity::Note,
         category: None,
@@ -6300,7 +6834,7 @@ fn lint_a01_fixpoint_non_convergence(ctx: &LintContext, diagnostics: &mut Vec<Li
         // creating depth growth (e.g., f(x) => f(f(x)) pattern when used as rewrite)
         if self_refs.len() >= 2 && terminal_count <= 1 && nt_count >= 2 {
             diagnostics.push(LintDiagnostic {
-                id: "A01",
+                id: DiagnosticId::A01,
                 name: "fixpoint-non-convergence",
                 severity: LintSeverity::Warning,
                 category: Some(category.clone()),
@@ -6349,7 +6883,7 @@ fn lint_a02_redundant_congruence(ctx: &LintContext, diagnostics: &mut Vec<LintDi
 
         if referenced_as_field && own_rules.len() <= 1 && !cat_info.is_primary {
             diagnostics.push(LintDiagnostic {
-                id: "A02",
+                id: DiagnosticId::A02,
                 name: "redundant-congruence",
                 severity: LintSeverity::Note,
                 category: Some(cat_info.name.clone()),
@@ -6402,7 +6936,7 @@ fn lint_a03_eq_rw_category_mismatch(ctx: &LintContext, diagnostics: &mut Vec<Lin
         {
             // Category has parsing rules but no equation/rewrite rules reference it
             diagnostics.push(LintDiagnostic {
-                id: "A03",
+                id: DiagnosticId::A03,
                 name: "eq-rw-category-mismatch",
                 severity: LintSeverity::Note,
                 category: Some(cat_info.name.clone()),
@@ -6463,7 +6997,7 @@ fn lint_a04_large_equivalence_class(ctx: &LintContext, diagnostics: &mut Vec<Lin
             };
 
             diagnostics.push(LintDiagnostic {
-                id: "A04",
+                id: DiagnosticId::A04,
                 name: "large-equivalence-class",
                 severity: LintSeverity::Warning,
                 category,
@@ -6507,7 +7041,7 @@ fn lint_a05_self_referential_equation(ctx: &LintContext, diagnostics: &mut Vec<L
             {
                 if nt_cat == category {
                     diagnostics.push(LintDiagnostic {
-                        id: "A05",
+                        id: DiagnosticId::A05,
                         name: "self-referential-equation",
                         severity: LintSeverity::Warning,
                         category: Some(category.clone()),
@@ -6567,7 +7101,7 @@ fn lint_a06_missing_equation_congruence(ctx: &LintContext, diagnostics: &mut Vec
 
                 if !has_equation_constructors {
                     diagnostics.push(LintDiagnostic {
-                        id: "A06",
+                        id: DiagnosticId::A06,
                         name: "missing-equation-congruence",
                         severity: LintSeverity::Note,
                         category: Some(category.clone()),
@@ -6606,7 +7140,7 @@ fn lint_a07_fixpoint_iteration_anomaly(ctx: &LintContext, diagnostics: &mut Vec<
 
     if group_count > 10 && max_group_size > 5 {
         diagnostics.push(LintDiagnostic {
-            id: "A07",
+            id: DiagnosticId::A07,
             name: "fixpoint-iteration-anomaly",
             severity: LintSeverity::Warning,
             category: None,
@@ -6648,7 +7182,7 @@ fn lint_a08_equation_subsumes_rewrite(ctx: &LintContext, diagnostics: &mut Vec<L
                 .find(|(l, _, _)| l == label)
                 .map(|(_, c, _)| c.clone());
             diagnostics.push(LintDiagnostic {
-                id: "A08",
+                id: DiagnosticId::A08,
                 name: "equation-subsumes-rewrite",
                 severity: LintSeverity::Note,
                 category,
@@ -6683,7 +7217,7 @@ fn lint_a09_ascent_struct_size(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
 
     if rule_estimate > 100 {
         diagnostics.push(LintDiagnostic {
-            id: "A09",
+            id: DiagnosticId::A09,
             name: "ascent-struct-size",
             severity: LintSeverity::Warning,
             category: None,
@@ -6701,7 +7235,7 @@ fn lint_a09_ascent_struct_size(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
         });
     } else if relation_count > 50 {
         diagnostics.push(LintDiagnostic {
-            id: "A09",
+            id: DiagnosticId::A09,
             name: "ascent-struct-size",
             severity: LintSeverity::Note,
             category: None,
@@ -6745,7 +7279,7 @@ fn lint_a10_unreachable_equation_variable(ctx: &LintContext, diagnostics: &mut V
             let capture_count = captures.iter().filter(|&&c| c == capture).count();
             if capture_count == 1 && !nt_params.contains(capture) && captures.len() > 1 {
                 diagnostics.push(LintDiagnostic {
-                    id: "A10",
+                    id: DiagnosticId::A10,
                     name: "unreachable-equation-variable",
                     severity: LintSeverity::Note,
                     category: Some(category.clone()),
@@ -6810,7 +7344,7 @@ fn lint_lex02_unreachable_token_pattern(
             // Only check proper prefix relationship for non-single-char tokens
             if a.len() > 1 && b.starts_with(a.as_str()) && b.len() > a.len() {
                 diagnostics.push(LintDiagnostic {
-                    id: "LEX02",
+                    id: DiagnosticId::LEX02,
                     name: "unreachable-token-pattern",
                     severity: LintSeverity::Note,
                     category: None,
@@ -6851,7 +7385,7 @@ fn lint_lex03_excessive_equiv_classes(
 
     if distinct_chars.len() > 25 {
         diagnostics.push(LintDiagnostic {
-            id: "LEX03",
+            id: DiagnosticId::LEX03,
             name: "excessive-equiv-classes",
             severity: LintSeverity::Note,
             category: None,
@@ -6884,7 +7418,7 @@ fn lint_lex04_dfa_state_explosion(ctx: &LintContext, diagnostics: &mut Vec<LintD
 
     if terminal_count > 50 {
         diagnostics.push(LintDiagnostic {
-            id: "LEX04",
+            id: DiagnosticId::LEX04,
             name: "dfa-state-explosion",
             severity: LintSeverity::Note,
             category: None,
@@ -6917,7 +7451,7 @@ fn lint_lex05_float_integer_ambiguity(
 
     if has_integer && has_float {
         diagnostics.push(LintDiagnostic {
-            id: "LEX05",
+            id: DiagnosticId::LEX05,
             name: "float-integer-ambiguity",
             severity: LintSeverity::Note,
             category: None,
@@ -6989,7 +7523,7 @@ fn lint_par01_deep_rd_chain(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
         let depth = max_depth(&cat_info.name, &call_graph, &mut visited);
         if depth > 5 {
             diagnostics.push(LintDiagnostic {
-                id: "PAR01",
+                id: DiagnosticId::PAR01,
                 name: "deep-rd-chain",
                 severity: LintSeverity::Warning,
                 category: Some(cat_info.name.clone()),
@@ -7029,7 +7563,7 @@ fn lint_par02_unused_bp_level(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
 
         if gap_count > 3 && total_levels > 6 {
             diagnostics.push(LintDiagnostic {
-                id: "PAR02",
+                id: DiagnosticId::PAR02,
                 name: "unused-bp-level",
                 severity: LintSeverity::Note,
                 category: None,
@@ -7084,7 +7618,7 @@ fn lint_par03_postfix_prefix_collision(
         if let Some(postfix) = postfix_tokens.get(category) {
             for token in prefix.intersection(postfix) {
                 diagnostics.push(LintDiagnostic {
-                    id: "PAR03",
+                    id: DiagnosticId::PAR03,
                     name: "postfix-prefix-collision",
                     severity: LintSeverity::Warning,
                     category: Some(category.to_string()),
@@ -7125,7 +7659,7 @@ fn lint_par04_mixfix_ambiguous_delimiter(
             if let Some(ref following) = part.following_terminal {
                 if infix_tokens.contains(following.as_str()) {
                     diagnostics.push(LintDiagnostic {
-                        id: "PAR04",
+                        id: DiagnosticId::PAR04,
                         name: "mixfix-ambiguous-delimiter",
                         severity: LintSeverity::Warning,
                         category: Some(op.category.clone()),
@@ -7180,7 +7714,7 @@ fn lint_par05_trampoline_frame_variant_count(
 
         if frame_variants > 15 {
             diagnostics.push(LintDiagnostic {
-                id: "PAR05",
+                id: DiagnosticId::PAR05,
                 name: "trampoline-frame-variant-count",
                 severity: LintSeverity::Note,
                 category: Some(cat_info.name.clone()),
@@ -7231,7 +7765,7 @@ fn lint_dis01_hot_path_misalignment(ctx: &LintContext, diagnostics: &mut Vec<Lin
         if let Some(first) = wfst.actions.first() {
             if (first.weight.value() - min_weight).abs() > 0.01 {
                 diagnostics.push(LintDiagnostic {
-                    id: "DIS01",
+                    id: DiagnosticId::DIS01,
                     name: "hot-path-misalignment",
                     severity: LintSeverity::Note,
                     category: Some(cat.clone()),
@@ -7272,7 +7806,7 @@ fn lint_dis02_cold_arm_ratio(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
 
         if ratio > 0.8 {
             diagnostics.push(LintDiagnostic {
-                id: "DIS02",
+                id: DiagnosticId::DIS02,
                 name: "cold-arm-ratio",
                 severity: LintSeverity::Note,
                 category: Some(cat.clone()),
@@ -7300,7 +7834,7 @@ fn lint_dis03_decision_tree_depth(ctx: &LintContext, diagnostics: &mut Vec<LintD
     for (cat, tree) in ctx.decision_trees {
         if tree.stats.max_depth > 8 {
             diagnostics.push(LintDiagnostic {
-                id: "DIS03",
+                id: DiagnosticId::DIS03,
                 name: "decision-tree-depth",
                 severity: LintSeverity::Warning,
                 category: Some(cat.clone()),
@@ -7334,7 +7868,7 @@ fn lint_dis04_backtrack_elimination_coverage(
 
         if ratio < 1.0 && total > 2 {
             diagnostics.push(LintDiagnostic {
-                id: "DIS04",
+                id: DiagnosticId::DIS04,
                 name: "backtrack-elimination-coverage",
                 severity: LintSeverity::Note,
                 category: Some(cat.clone()),
@@ -7365,7 +7899,7 @@ fn lint_dis05_nfa_try_all_set_size(ctx: &LintContext, diagnostics: &mut Vec<Lint
         // Check ambiguous nodes for large candidate sets
         if tree.stats.ambiguous_nodes > 5 {
             diagnostics.push(LintDiagnostic {
-                id: "DIS05",
+                id: DiagnosticId::DIS05,
                 name: "nfa-try-all-set-size",
                 severity: LintSeverity::Warning,
                 category: Some(cat.clone()),
@@ -7391,7 +7925,6 @@ fn lint_dis05_nfa_try_all_set_size(ctx: &LintContext, diagnostics: &mut Vec<Lint
 
 // ── Symbolic automata (SYM01-SYM04) ──────────────────────────────────────────
 
-#[cfg(feature = "symbolic-automata")]
 fn lint_sym01_unsatisfiable_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.symbolic_result {
         Some(r) => r,
@@ -7400,7 +7933,7 @@ fn lint_sym01_unsatisfiable_guard(ctx: &LintContext, diagnostics: &mut Vec<LintD
     for (desc, sat) in &result.guard_satisfiability {
         if !sat {
             diagnostics.push(LintDiagnostic {
-                id: "SYM01",
+                id: DiagnosticId::SYM01,
                 name: "unsatisfiable-guard",
                 severity: LintSeverity::Warning,
                 category: None,
@@ -7414,7 +7947,6 @@ fn lint_sym01_unsatisfiable_guard(ctx: &LintContext, diagnostics: &mut Vec<LintD
     }
 }
 
-#[cfg(feature = "symbolic-automata")]
 fn lint_sym02_overlapping_guards(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.symbolic_result {
         Some(r) => r,
@@ -7422,7 +7954,7 @@ fn lint_sym02_overlapping_guards(ctx: &LintContext, diagnostics: &mut Vec<LintDi
     };
     for (g1, g2) in &result.overlapping_guards {
         diagnostics.push(LintDiagnostic {
-            id: "SYM02",
+            id: DiagnosticId::SYM02,
             name: "overlapping-guards",
             severity: LintSeverity::Warning,
             category: None,
@@ -7435,7 +7967,6 @@ fn lint_sym02_overlapping_guards(ctx: &LintContext, diagnostics: &mut Vec<LintDi
     }
 }
 
-#[cfg(feature = "symbolic-automata")]
 fn lint_sym03_subsumed_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.symbolic_result {
         Some(r) => r,
@@ -7443,7 +7974,7 @@ fn lint_sym03_subsumed_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
     };
     for (sub, sup) in &result.subsumed_guards {
         diagnostics.push(LintDiagnostic {
-            id: "SYM03",
+            id: DiagnosticId::SYM03,
             name: "subsumed-guard",
             severity: LintSeverity::Note,
             category: None,
@@ -7456,7 +7987,6 @@ fn lint_sym03_subsumed_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
     }
 }
 
-#[cfg(feature = "symbolic-automata")]
 fn lint_sym04_non_minimal_guards(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.symbolic_result {
         Some(r) => r,
@@ -7464,7 +7994,7 @@ fn lint_sym04_non_minimal_guards(ctx: &LintContext, diagnostics: &mut Vec<LintDi
     };
     if result.num_states > 10 && !result.subsumed_guards.is_empty() {
         diagnostics.push(LintDiagnostic {
-            id: "SYM04",
+            id: DiagnosticId::SYM04,
             name: "non-minimal-guards",
             severity: LintSeverity::Note,
             category: None,
@@ -7482,7 +8012,6 @@ fn lint_sym04_non_minimal_guards(ctx: &LintContext, diagnostics: &mut Vec<LintDi
 
 // ── Weighted Büchi (O01-O02) ─────────────────────────────────────────────────
 
-#[cfg(feature = "omega")]
 fn lint_o01_weighted_buchi_non_convergent(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.buchi_result {
         Some(r) => r,
@@ -7492,7 +8021,7 @@ fn lint_o01_weighted_buchi_non_convergent(ctx: &LintContext, diagnostics: &mut V
     // Warn when the automaton structure suggests convergence issues.
     if !result.has_accepting_cycle && result.num_states > 1 {
         diagnostics.push(LintDiagnostic {
-            id: "O01",
+            id: DiagnosticId::O01,
             name: "weighted-buchi-non-convergent",
             severity: LintSeverity::Warning,
             category: None,
@@ -7508,7 +8037,6 @@ fn lint_o01_weighted_buchi_non_convergent(ctx: &LintContext, diagnostics: &mut V
     }
 }
 
-#[cfg(feature = "omega")]
 fn lint_o02_weighted_buchi_heavy_cycle(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.buchi_result {
         Some(r) => r,
@@ -7516,7 +8044,7 @@ fn lint_o02_weighted_buchi_heavy_cycle(ctx: &LintContext, diagnostics: &mut Vec<
     };
     if result.has_accepting_cycle && result.num_accepting > result.num_states / 2 {
         diagnostics.push(LintDiagnostic {
-            id: "O02",
+            id: DiagnosticId::O02,
             name: "weighted-buchi-heavy-cycle",
             severity: LintSeverity::Note,
             category: None,
@@ -7534,7 +8062,6 @@ fn lint_o02_weighted_buchi_heavy_cycle(ctx: &LintContext, diagnostics: &mut Vec<
 
 // ── Weighted Alternating (N06-N07) ───────────────────────────────────────────
 
-#[cfg(feature = "alternating")]
 fn lint_n06_weighted_parity_non_convergent(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.alternating_result {
         Some(r) => r,
@@ -7546,7 +8073,7 @@ fn lint_n06_weighted_parity_non_convergent(ctx: &LintContext, diagnostics: &mut 
     let pair_count = result.non_bisimilar_pairs.len();
     if pair_count > 3 && result.state_count > 5 {
         diagnostics.push(LintDiagnostic {
-            id: "N06",
+            id: DiagnosticId::N06,
             name: "weighted-parity-non-convergent",
             severity: LintSeverity::Warning,
             category: None,
@@ -7562,7 +8089,6 @@ fn lint_n06_weighted_parity_non_convergent(ctx: &LintContext, diagnostics: &mut 
     }
 }
 
-#[cfg(feature = "alternating")]
 fn lint_n07_weighted_branching_imbalance(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.alternating_result {
         Some(r) => r,
@@ -7577,7 +8103,7 @@ fn lint_n07_weighted_branching_imbalance(ctx: &LintContext, diagnostics: &mut Ve
     };
     if total_pairs > 0 && result.non_bisimilar_pairs.len() == total_pairs {
         diagnostics.push(LintDiagnostic {
-            id: "N07",
+            id: DiagnosticId::N07,
             name: "weighted-branching-imbalance",
             severity: LintSeverity::Note,
             category: None,
@@ -7595,7 +8121,6 @@ fn lint_n07_weighted_branching_imbalance(ctx: &LintContext, diagnostics: &mut Ve
 
 // ── Weighted VPA (V05-V06) ───────────────────────────────────────────────────
 
-#[cfg(feature = "vpa")]
 fn lint_v05_weighted_vpa_non_determinizable(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.vpa_result {
         Some(r) => r,
@@ -7605,7 +8130,7 @@ fn lint_v05_weighted_vpa_non_determinizable(ctx: &LintContext, diagnostics: &mut
     // exponential blowup risk during determinization.
     if !result.is_determinizable && !result.alphabet_mismatches.is_empty() {
         diagnostics.push(LintDiagnostic {
-            id: "V05",
+            id: DiagnosticId::V05,
             name: "weighted-vpa-non-determinizable",
             severity: LintSeverity::Warning,
             category: None,
@@ -7621,7 +8146,6 @@ fn lint_v05_weighted_vpa_non_determinizable(ctx: &LintContext, diagnostics: &mut
     }
 }
 
-#[cfg(feature = "vpa")]
 fn lint_v06_weighted_vpa_inclusion_failure(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.vpa_result {
         Some(r) => r,
@@ -7631,7 +8155,7 @@ fn lint_v06_weighted_vpa_inclusion_failure(ctx: &LintContext, diagnostics: &mut 
     // checking will be expensive or may fail.
     if !result.is_determinizable && result.state_count > 20 {
         diagnostics.push(LintDiagnostic {
-            id: "V06",
+            id: DiagnosticId::V06,
             name: "weighted-vpa-inclusion-failure",
             severity: LintSeverity::Warning,
             category: None,
@@ -7649,7 +8173,6 @@ fn lint_v06_weighted_vpa_inclusion_failure(ctx: &LintContext, diagnostics: &mut 
 
 // ── Parity Tree Automata (PT01-PT03) ─────────────────────────────────────────
 
-#[cfg(feature = "parity-tree-automata")]
 fn lint_pt01_pata_emptiness_violation(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.parity_tree_result {
         Some(r) => r,
@@ -7657,7 +8180,7 @@ fn lint_pt01_pata_emptiness_violation(ctx: &LintContext, diagnostics: &mut Vec<L
     };
     if result.is_empty {
         diagnostics.push(LintDiagnostic {
-            id: "PT01",
+            id: DiagnosticId::PT01,
             name: "pata-emptiness-violation",
             severity: LintSeverity::Warning,
             category: None,
@@ -7670,7 +8193,6 @@ fn lint_pt01_pata_emptiness_violation(ctx: &LintContext, diagnostics: &mut Vec<L
     }
 }
 
-#[cfg(feature = "parity-tree-automata")]
 fn lint_pt02_pata_subsumption(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.parity_tree_result {
         Some(r) => r,
@@ -7678,7 +8200,7 @@ fn lint_pt02_pata_subsumption(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
     };
     if result.num_states > 0 && result.max_priority == 0 {
         diagnostics.push(LintDiagnostic {
-            id: "PT02",
+            id: DiagnosticId::PT02,
             name: "pata-subsumption",
             severity: LintSeverity::Note,
             category: None,
@@ -7694,7 +8216,6 @@ fn lint_pt02_pata_subsumption(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
     }
 }
 
-#[cfg(feature = "parity-tree-automata")]
 fn lint_pt03_pata_high_priority(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.parity_tree_result {
         Some(r) => r,
@@ -7702,7 +8223,7 @@ fn lint_pt03_pata_high_priority(ctx: &LintContext, diagnostics: &mut Vec<LintDia
     };
     if result.priority_depth > 4 {
         diagnostics.push(LintDiagnostic {
-            id: "PT03",
+            id: DiagnosticId::PT03,
             name: "pata-high-priority",
             severity: LintSeverity::Note,
             category: None,
@@ -7720,7 +8241,6 @@ fn lint_pt03_pata_high_priority(ctx: &LintContext, diagnostics: &mut Vec<LintDia
 
 // ── Register Automata (RA01-RA03) ────────────────────────────────────────────
 
-#[cfg(feature = "register-automata")]
 fn lint_ra01_unbound_data_reference(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.register_result {
         Some(r) => r,
@@ -7728,7 +8248,7 @@ fn lint_ra01_unbound_data_reference(ctx: &LintContext, diagnostics: &mut Vec<Lin
     };
     for (trans_idx, reg_idx) in &result.unbound_references {
         diagnostics.push(LintDiagnostic {
-            id: "RA01",
+            id: DiagnosticId::RA01,
             name: "unbound-data-reference",
             severity: LintSeverity::Warning,
             category: None,
@@ -7744,7 +8264,6 @@ fn lint_ra01_unbound_data_reference(ctx: &LintContext, diagnostics: &mut Vec<Lin
     }
 }
 
-#[cfg(feature = "register-automata")]
 fn lint_ra02_redundant_register(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.register_result {
         Some(r) => r,
@@ -7752,7 +8271,7 @@ fn lint_ra02_redundant_register(ctx: &LintContext, diagnostics: &mut Vec<LintDia
     };
     for reg_idx in &result.dead_registers {
         diagnostics.push(LintDiagnostic {
-            id: "RA02",
+            id: DiagnosticId::RA02,
             name: "redundant-register",
             severity: LintSeverity::Note,
             category: None,
@@ -7765,7 +8284,6 @@ fn lint_ra02_redundant_register(ctx: &LintContext, diagnostics: &mut Vec<LintDia
     }
 }
 
-#[cfg(feature = "register-automata")]
 fn lint_ra03_register_equivalence(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.register_result {
         Some(r) => r,
@@ -7774,7 +8292,7 @@ fn lint_ra03_register_equivalence(ctx: &LintContext, diagnostics: &mut Vec<LintD
     // Flag when all registers are dead — suggests the RA is effectively a plain FA.
     if result.num_registers > 0 && result.dead_registers.len() == result.num_registers {
         diagnostics.push(LintDiagnostic {
-            id: "RA03",
+            id: DiagnosticId::RA03,
             name: "register-equivalence",
             severity: LintSeverity::Note,
             category: None,
@@ -7792,7 +8310,6 @@ fn lint_ra03_register_equivalence(ctx: &LintContext, diagnostics: &mut Vec<LintD
 
 // ── Probabilistic Automata (PR01-PR04) ───────────────────────────────────────
 
-#[cfg(feature = "probabilistic")]
 fn lint_pr01_low_selectivity_rule(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.probabilistic_result {
         Some(r) => r,
@@ -7800,7 +8317,7 @@ fn lint_pr01_low_selectivity_rule(ctx: &LintContext, diagnostics: &mut Vec<LintD
     };
     for rule in &result.low_selectivity_rules {
         diagnostics.push(LintDiagnostic {
-            id: "PR01",
+            id: DiagnosticId::PR01,
             name: "low-selectivity-rule",
             severity: LintSeverity::Warning,
             category: None,
@@ -7813,7 +8330,6 @@ fn lint_pr01_low_selectivity_rule(ctx: &LintContext, diagnostics: &mut Vec<LintD
     }
 }
 
-#[cfg(feature = "probabilistic")]
 fn lint_pr02_non_stochastic_state(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.probabilistic_result {
         Some(r) => r,
@@ -7821,7 +8337,7 @@ fn lint_pr02_non_stochastic_state(ctx: &LintContext, diagnostics: &mut Vec<LintD
     };
     if !result.is_normalized {
         diagnostics.push(LintDiagnostic {
-            id: "PR02",
+            id: DiagnosticId::PR02,
             name: "non-stochastic-state",
             severity: LintSeverity::Warning,
             category: None,
@@ -7834,7 +8350,6 @@ fn lint_pr02_non_stochastic_state(ctx: &LintContext, diagnostics: &mut Vec<LintD
     }
 }
 
-#[cfg(feature = "probabilistic")]
 fn lint_pr03_high_entropy_category(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.probabilistic_result {
         Some(r) => r,
@@ -7843,7 +8358,7 @@ fn lint_pr03_high_entropy_category(ctx: &LintContext, diagnostics: &mut Vec<Lint
     // High entropy (> 2.0 nats ~ > 7 equally-likely alternatives) suggests ambiguity.
     if result.mean_entropy > 2.0 {
         diagnostics.push(LintDiagnostic {
-            id: "PR03",
+            id: DiagnosticId::PR03,
             name: "high-entropy-category",
             severity: LintSeverity::Note,
             category: None,
@@ -7859,7 +8374,6 @@ fn lint_pr03_high_entropy_category(ctx: &LintContext, diagnostics: &mut Vec<Lint
     }
 }
 
-#[cfg(feature = "probabilistic")]
 fn lint_pr04_expected_depth_anomaly(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.probabilistic_result {
         Some(r) => r,
@@ -7868,7 +8382,7 @@ fn lint_pr04_expected_depth_anomaly(ctx: &LintContext, diagnostics: &mut Vec<Lin
     // Selectivity very close to 0 suggests the automaton barely accepts anything.
     if result.total_selectivity < 0.01 && result.num_states > 1 {
         diagnostics.push(LintDiagnostic {
-            id: "PR04",
+            id: DiagnosticId::PR04,
             name: "expected-depth-anomaly",
             severity: LintSeverity::Note,
             category: None,
@@ -7886,7 +8400,6 @@ fn lint_pr04_expected_depth_anomaly(ctx: &LintContext, diagnostics: &mut Vec<Lin
 
 // ── Multi-Tape Automata (MT01-MT02) ──────────────────────────────────────────
 
-#[cfg(feature = "multi-tape")]
 fn lint_mt01_multi_channel_overlap(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.multi_tape_result {
         Some(r) => r,
@@ -7894,7 +8407,7 @@ fn lint_mt01_multi_channel_overlap(ctx: &LintContext, diagnostics: &mut Vec<Lint
     };
     for (t1, t2) in &result.overlapping_tapes {
         diagnostics.push(LintDiagnostic {
-            id: "MT01",
+            id: DiagnosticId::MT01,
             name: "multi-channel-overlap",
             severity: LintSeverity::Warning,
             category: None,
@@ -7910,7 +8423,6 @@ fn lint_mt01_multi_channel_overlap(ctx: &LintContext, diagnostics: &mut Vec<Lint
     }
 }
 
-#[cfg(feature = "multi-tape")]
 fn lint_mt02_multi_tape_disconnected(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.multi_tape_result {
         Some(r) => r,
@@ -7918,7 +8430,7 @@ fn lint_mt02_multi_tape_disconnected(ctx: &LintContext, diagnostics: &mut Vec<Li
     };
     for tape_idx in &result.disconnected_tapes {
         diagnostics.push(LintDiagnostic {
-            id: "MT02",
+            id: DiagnosticId::MT02,
             name: "multi-tape-disconnected",
             severity: LintSeverity::Note,
             category: None,
@@ -7936,7 +8448,6 @@ fn lint_mt02_multi_tape_disconnected(ctx: &LintContext, diagnostics: &mut Vec<Li
 
 // ── Multiset Automata (MS01-MS02) ────────────────────────────────────────────
 
-#[cfg(feature = "multiset-automata")]
 fn lint_ms01_unsatisfiable_cardinality(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.multiset_result {
         Some(r) => r,
@@ -7944,7 +8455,7 @@ fn lint_ms01_unsatisfiable_cardinality(ctx: &LintContext, diagnostics: &mut Vec<
     };
     for constraint in &result.unsatisfiable_constraints {
         diagnostics.push(LintDiagnostic {
-            id: "MS01",
+            id: DiagnosticId::MS01,
             name: "unsatisfiable-cardinality",
             severity: LintSeverity::Warning,
             category: None,
@@ -7962,7 +8473,6 @@ fn lint_ms01_unsatisfiable_cardinality(ctx: &LintContext, diagnostics: &mut Vec<
     }
 }
 
-#[cfg(feature = "multiset-automata")]
 fn lint_ms02_redundant_feature_check(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.multiset_result {
         Some(r) => r,
@@ -7974,7 +8484,7 @@ fn lint_ms02_redundant_feature_check(ctx: &LintContext, diagnostics: &mut Vec<Li
         && result.unsatisfiable_constraints.is_empty()
     {
         diagnostics.push(LintDiagnostic {
-            id: "MS02",
+            id: DiagnosticId::MS02,
             name: "redundant-feature-check",
             severity: LintSeverity::Note,
             category: None,
@@ -7992,7 +8502,6 @@ fn lint_ms02_redundant_feature_check(ctx: &LintContext, diagnostics: &mut Vec<Li
 
 // ── Weighted MSO Logic (MSO01-MSO03) ─────────────────────────────────────────
 
-#[cfg(feature = "weighted-mso")]
 fn lint_mso01_unrestricted_universal_set(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.mso_result {
         Some(r) => r,
@@ -8001,7 +8510,7 @@ fn lint_mso01_unrestricted_universal_set(ctx: &LintContext, diagnostics: &mut Ve
     use crate::weighted_mso::MsoFormulaClass;
     if matches!(result.formula_class, MsoFormulaClass::Full) {
         diagnostics.push(LintDiagnostic {
-            id: "MSO01",
+            id: DiagnosticId::MSO01,
             name: "unrestricted-universal-set",
             severity: LintSeverity::Warning,
             category: None,
@@ -8014,7 +8523,6 @@ fn lint_mso01_unrestricted_universal_set(ctx: &LintContext, diagnostics: &mut Ve
     }
 }
 
-#[cfg(feature = "weighted-mso")]
 fn lint_mso02_non_recognizable_step(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.mso_result {
         Some(r) => r,
@@ -8023,7 +8531,7 @@ fn lint_mso02_non_recognizable_step(ctx: &LintContext, diagnostics: &mut Vec<Lin
     use crate::symbolic::DecidabilityTier;
     if matches!(result.decidability, DecidabilityTier::SemiDecidable | DecidabilityTier::Undecidable) {
         diagnostics.push(LintDiagnostic {
-            id: "MSO02",
+            id: DiagnosticId::MSO02,
             name: "non-recognizable-step",
             severity: LintSeverity::Warning,
             category: None,
@@ -8039,7 +8547,6 @@ fn lint_mso02_non_recognizable_step(ctx: &LintContext, diagnostics: &mut Vec<Lin
     }
 }
 
-#[cfg(feature = "weighted-mso")]
 fn lint_mso03_equivalent_formulas(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.mso_result {
         Some(r) => r,
@@ -8049,7 +8556,7 @@ fn lint_mso03_equivalent_formulas(ctx: &LintContext, diagnostics: &mut Vec<LintD
     if result.is_sentence && !result.free_vars.is_empty() {
         // This shouldn't happen (sentence = no free vars), but flag inconsistency.
         diagnostics.push(LintDiagnostic {
-            id: "MSO03",
+            id: DiagnosticId::MSO03,
             name: "equivalent-formulas",
             severity: LintSeverity::Note,
             category: None,
@@ -8064,7 +8571,6 @@ fn lint_mso03_equivalent_formulas(ctx: &LintContext, diagnostics: &mut Vec<LintD
 
 // ── Two-Way Transducers (TW01-TW03) ─────────────────────────────────────────
 
-#[cfg(feature = "two-way-transducer")]
 fn lint_tw01_circular_channel_dependency(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.two_way_result {
         Some(r) => r,
@@ -8072,7 +8578,7 @@ fn lint_tw01_circular_channel_dependency(ctx: &LintContext, diagnostics: &mut Ve
     };
     for cycle in &result.deadlock_cycles {
         diagnostics.push(LintDiagnostic {
-            id: "TW01",
+            id: DiagnosticId::TW01,
             name: "circular-channel-dependency",
             severity: LintSeverity::Warning,
             category: None,
@@ -8088,7 +8594,6 @@ fn lint_tw01_circular_channel_dependency(ctx: &LintContext, diagnostics: &mut Ve
     }
 }
 
-#[cfg(feature = "two-way-transducer")]
 fn lint_tw02_one_way_sufficient(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.two_way_result {
         Some(r) => r,
@@ -8096,7 +8601,7 @@ fn lint_tw02_one_way_sufficient(ctx: &LintContext, diagnostics: &mut Vec<LintDia
     };
     if result.is_one_way_equivalent && result.num_backward == 0 {
         diagnostics.push(LintDiagnostic {
-            id: "TW02",
+            id: DiagnosticId::TW02,
             name: "one-way-sufficient",
             severity: LintSeverity::Note,
             category: None,
@@ -8112,7 +8617,6 @@ fn lint_tw02_one_way_sufficient(ctx: &LintContext, diagnostics: &mut Vec<LintDia
     }
 }
 
-#[cfg(feature = "two-way-transducer")]
 fn lint_tw03_constraint_propagation_divergent(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.two_way_result {
         Some(r) => r,
@@ -8121,7 +8625,7 @@ fn lint_tw03_constraint_propagation_divergent(ctx: &LintContext, diagnostics: &m
     // If there are backward states and deadlock cycles, constraint propagation may diverge.
     if result.num_backward > 0 && !result.deadlock_cycles.is_empty() {
         diagnostics.push(LintDiagnostic {
-            id: "TW03",
+            id: DiagnosticId::TW03,
             name: "constraint-propagation-divergent",
             severity: LintSeverity::Warning,
             category: None,
@@ -8140,7 +8644,6 @@ fn lint_tw03_constraint_propagation_divergent(ctx: &LintContext, diagnostics: &m
 // ── Symbolic Finite Transducers (SFT01-SFT04) ────────────────────────────────
 
 /// SFT01: SFT has empty domain (dead transduction — no input ever triggers it).
-#[cfg(feature = "sft")]
 fn lint_sft01_empty_domain(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.sft_result {
         Some(r) => r,
@@ -8148,7 +8651,7 @@ fn lint_sft01_empty_domain(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnost
     };
     for label in &result.empty_domain_labels {
         diagnostics.push(LintDiagnostic {
-            id: "SFT01",
+            id: DiagnosticId::SFT01,
             name: "empty-domain-transduction",
             severity: LintSeverity::Warning,
             category: None,
@@ -8165,7 +8668,6 @@ fn lint_sft01_empty_domain(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnost
 }
 
 /// SFT02: SFT always produces the same constant output (simplifiable).
-#[cfg(feature = "sft")]
 fn lint_sft02_constant_output(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.sft_result {
         Some(r) => r,
@@ -8173,7 +8675,7 @@ fn lint_sft02_constant_output(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
     };
     for label in &result.constant_output_labels {
         diagnostics.push(LintDiagnostic {
-            id: "SFT02",
+            id: DiagnosticId::SFT02,
             name: "constant-output-transduction",
             severity: LintSeverity::Note,
             category: None,
@@ -8190,7 +8692,6 @@ fn lint_sft02_constant_output(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
 }
 
 /// SFT03: SFT is not single-valued (nondeterministic output).
-#[cfg(feature = "sft")]
 fn lint_sft03_nondeterministic(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.sft_result {
         Some(r) => r,
@@ -8199,7 +8700,7 @@ fn lint_sft03_nondeterministic(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
     let nonfunctional_count = result.num_transducers.saturating_sub(result.functional_count);
     if nonfunctional_count > 0 {
         diagnostics.push(LintDiagnostic {
-            id: "SFT03",
+            id: DiagnosticId::SFT03,
             name: "nondeterministic-transduction",
             severity: LintSeverity::Note,
             category: None,
@@ -8216,7 +8717,6 @@ fn lint_sft03_nondeterministic(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
 }
 
 /// SFT04: Two SFTs produce identical input-output behavior (dedup opportunity).
-#[cfg(feature = "sft")]
 fn lint_sft04_equivalent_pair(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.sft_result {
         Some(r) => r,
@@ -8224,7 +8724,7 @@ fn lint_sft04_equivalent_pair(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
     };
     for (a, b) in &result.equivalent_pairs {
         diagnostics.push(LintDiagnostic {
-            id: "SFT04",
+            id: DiagnosticId::SFT04,
             name: "equivalent-transductions",
             severity: LintSeverity::Note,
             category: None,
@@ -8245,7 +8745,6 @@ fn lint_sft04_equivalent_pair(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// EG01: E-graph saturation discovered non-obvious equivalences.
-#[cfg(feature = "egraph")]
 fn lint_eg01_discovered_equivalences(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.egraph_result {
         Some(r) => r,
@@ -8253,7 +8752,7 @@ fn lint_eg01_discovered_equivalences(ctx: &LintContext, diagnostics: &mut Vec<Li
     };
     for (a, b) in &result.discovered_equivalences {
         diagnostics.push(LintDiagnostic {
-            id: "EG01",
+            id: DiagnosticId::EG01,
             name: "discovered-equivalence",
             severity: LintSeverity::Note,
             category: None,
@@ -8270,7 +8769,6 @@ fn lint_eg01_discovered_equivalences(ctx: &LintContext, diagnostics: &mut Vec<Li
 }
 
 /// EG02: Guard expression simplifiable via equality saturation.
-#[cfg(feature = "egraph")]
 fn lint_eg02_simplifiable_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.egraph_result {
         Some(r) => r,
@@ -8278,7 +8776,7 @@ fn lint_eg02_simplifiable_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDia
     };
     for (original, simplified) in &result.simplified_guards {
         diagnostics.push(LintDiagnostic {
-            id: "EG02",
+            id: DiagnosticId::EG02,
             name: "simplifiable-guard",
             severity: LintSeverity::Note,
             category: None,
@@ -8295,7 +8793,6 @@ fn lint_eg02_simplifiable_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDia
 }
 
 /// EG03: Saturation did not converge within iteration limit.
-#[cfg(feature = "egraph")]
 fn lint_eg03_saturation_non_convergence(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.egraph_result {
         Some(r) => r,
@@ -8303,7 +8800,7 @@ fn lint_eg03_saturation_non_convergence(ctx: &LintContext, diagnostics: &mut Vec
     };
     if !result.converged {
         diagnostics.push(LintDiagnostic {
-            id: "EG03",
+            id: DiagnosticId::EG03,
             name: "saturation-non-convergence",
             severity: LintSeverity::Warning,
             category: None,
@@ -8321,7 +8818,6 @@ fn lint_eg03_saturation_non_convergence(ctx: &LintContext, diagnostics: &mut Vec
 }
 
 /// EG04: E-graph found joinability witness for critical pair that normalization couldn't.
-#[cfg(feature = "egraph")]
 fn lint_eg04_joinability_witness(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.egraph_result {
         Some(r) => r,
@@ -8329,7 +8825,7 @@ fn lint_eg04_joinability_witness(ctx: &LintContext, diagnostics: &mut Vec<LintDi
     };
     for (pair_idx, witness) in &result.joinability_witnesses {
         diagnostics.push(LintDiagnostic {
-            id: "EG04",
+            id: DiagnosticId::EG04,
             name: "joinability-witness",
             severity: LintSeverity::Note,
             category: None,
@@ -8352,7 +8848,6 @@ fn lint_eg04_joinability_witness(ctx: &LintContext, diagnostics: &mut Vec<LintDi
 /// PD01: Predicate activates no specialized module beyond base (M1 + M10).
 ///
 /// Indicates a trivially evaluable guard that may be removable.
-#[cfg(feature = "predicate-dispatch")]
 fn lint_pd01_degenerate_predicate(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let diag = match ctx.dispatch_diagnostics {
         Some(d) => d,
@@ -8361,7 +8856,7 @@ fn lint_pd01_degenerate_predicate(ctx: &LintContext, diagnostics: &mut Vec<LintD
     for &idx in &diag.degenerate_predicates {
         let profile = &diag.profiles[idx];
         diagnostics.push(LintDiagnostic {
-            id: "PD01",
+            id: DiagnosticId::PD01,
             name: "degenerate-predicate",
             severity: LintSeverity::Warning,
             category: None,
@@ -8378,7 +8873,6 @@ fn lint_pd01_degenerate_predicate(ctx: &LintContext, diagnostics: &mut Vec<LintD
 }
 
 /// PD02: Predicate activates all 11 modules (no dispatch benefit).
-#[cfg(feature = "predicate-dispatch")]
 fn lint_pd02_all_modules_activated(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let diag = match ctx.dispatch_diagnostics {
         Some(d) => d,
@@ -8387,7 +8881,7 @@ fn lint_pd02_all_modules_activated(ctx: &LintContext, diagnostics: &mut Vec<Lint
     for &idx in &diag.full_activation_predicates {
         let profile = &diag.profiles[idx];
         diagnostics.push(LintDiagnostic {
-            id: "PD02",
+            id: DiagnosticId::PD02,
             name: "all-modules-activated",
             severity: LintSeverity::Note,
             category: None,
@@ -8406,7 +8900,6 @@ fn lint_pd02_all_modules_activated(ctx: &LintContext, diagnostics: &mut Vec<Lint
 }
 
 /// PD03: Dispatch savings report (informational).
-#[cfg(feature = "predicate-dispatch")]
 fn lint_pd03_dispatch_savings(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let diag = match ctx.dispatch_diagnostics {
         Some(d) => d,
@@ -8414,7 +8907,7 @@ fn lint_pd03_dispatch_savings(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
     };
     if diag.total_modules_skipped > 0 {
         diagnostics.push(LintDiagnostic {
-            id: "PD03",
+            id: DiagnosticId::PD03,
             name: "dispatch-savings",
             severity: LintSeverity::Info,
             category: None,
@@ -8431,7 +8924,6 @@ fn lint_pd03_dispatch_savings(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
 }
 
 /// PD04: Cross-channel predicate detected but `two-way-transducer` feature not enabled.
-#[cfg(feature = "predicate-dispatch")]
 fn lint_pd04_missing_feature_gate(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let diag = match ctx.dispatch_diagnostics {
         Some(d) => d,
@@ -8439,7 +8931,7 @@ fn lint_pd04_missing_feature_gate(ctx: &LintContext, diagnostics: &mut Vec<LintD
     };
     for &idx in &diag.cross_channel_without_two_way {
         diagnostics.push(LintDiagnostic {
-            id: "PD04",
+            id: DiagnosticId::PD04,
             name: "missing-feature-gate",
             severity: LintSeverity::Warning,
             category: None,
@@ -8457,7 +8949,6 @@ fn lint_pd04_missing_feature_gate(ctx: &LintContext, diagnostics: &mut Vec<LintD
 
 // ── Constraint theory lints (PB01–PB03, UN01–UN03, SL01–SL02, LT01) ─────────
 
-#[cfg(feature = "presburger")]
 fn lint_pb01_unsatisfiable_arithmetic_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.presburger_result {
         Some(r) => r,
@@ -8465,7 +8956,7 @@ fn lint_pb01_unsatisfiable_arithmetic_guard(ctx: &LintContext, diagnostics: &mut
     };
     for (desc, rule) in &result.unsatisfiable_guards {
         diagnostics.push(LintDiagnostic {
-            id: "PB01",
+            id: DiagnosticId::PB01,
             name: "unsatisfiable-arithmetic-guard",
             severity: LintSeverity::Warning,
             category: None,
@@ -8478,7 +8969,6 @@ fn lint_pb01_unsatisfiable_arithmetic_guard(ctx: &LintContext, diagnostics: &mut
     }
 }
 
-#[cfg(feature = "presburger")]
 fn lint_pb02_tautological_arithmetic_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.presburger_result {
         Some(r) => r,
@@ -8486,7 +8976,7 @@ fn lint_pb02_tautological_arithmetic_guard(ctx: &LintContext, diagnostics: &mut 
     };
     for (desc, rule) in &result.tautological_guards {
         diagnostics.push(LintDiagnostic {
-            id: "PB02",
+            id: DiagnosticId::PB02,
             name: "tautological-arithmetic-guard",
             severity: LintSeverity::Note,
             category: None,
@@ -8499,7 +8989,6 @@ fn lint_pb02_tautological_arithmetic_guard(ctx: &LintContext, diagnostics: &mut 
     }
 }
 
-#[cfg(feature = "presburger")]
 fn lint_pb03_subsumed_arithmetic_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.presburger_result {
         Some(r) => r,
@@ -8507,7 +8996,7 @@ fn lint_pb03_subsumed_arithmetic_guard(ctx: &LintContext, diagnostics: &mut Vec<
     };
     for (subsuming, subsumed, rule) in &result.subsumed_guards {
         diagnostics.push(LintDiagnostic {
-            id: "PB03",
+            id: DiagnosticId::PB03,
             name: "subsumed-arithmetic-guard",
             severity: LintSeverity::Note,
             category: None,
@@ -8523,7 +9012,6 @@ fn lint_pb03_subsumed_arithmetic_guard(ctx: &LintContext, diagnostics: &mut Vec<
     }
 }
 
-#[cfg(feature = "unification")]
 fn lint_un01_unsatisfiable_unification_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.unification_result {
         Some(r) => r,
@@ -8531,7 +9019,7 @@ fn lint_un01_unsatisfiable_unification_guard(ctx: &LintContext, diagnostics: &mu
     };
     for (desc, rule) in &result.unsatisfiable_guards {
         diagnostics.push(LintDiagnostic {
-            id: "UN01",
+            id: DiagnosticId::UN01,
             name: "unsatisfiable-unification-guard",
             severity: LintSeverity::Warning,
             category: None,
@@ -8547,7 +9035,6 @@ fn lint_un01_unsatisfiable_unification_guard(ctx: &LintContext, diagnostics: &mu
     }
 }
 
-#[cfg(feature = "unification")]
 fn lint_un02_tautological_unification_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.unification_result {
         Some(r) => r,
@@ -8555,7 +9042,7 @@ fn lint_un02_tautological_unification_guard(ctx: &LintContext, diagnostics: &mut
     };
     for (desc, rule) in &result.tautological_guards {
         diagnostics.push(LintDiagnostic {
-            id: "UN02",
+            id: DiagnosticId::UN02,
             name: "tautological-unification-guard",
             severity: LintSeverity::Note,
             category: None,
@@ -8571,7 +9058,6 @@ fn lint_un02_tautological_unification_guard(ctx: &LintContext, diagnostics: &mut
     }
 }
 
-#[cfg(feature = "unification")]
 fn lint_un03_subsumed_unification_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.unification_result {
         Some(r) => r,
@@ -8579,7 +9065,7 @@ fn lint_un03_subsumed_unification_guard(ctx: &LintContext, diagnostics: &mut Vec
     };
     for (general, specific, rule) in &result.subsumed_guards {
         diagnostics.push(LintDiagnostic {
-            id: "UN03",
+            id: DiagnosticId::UN03,
             name: "subsumed-unification-guard",
             severity: LintSeverity::Note,
             category: None,
@@ -8595,7 +9081,6 @@ fn lint_un03_subsumed_unification_guard(ctx: &LintContext, diagnostics: &mut Vec
     }
 }
 
-#[cfg(feature = "lattice-theory")]
 fn lint_sl01_unsatisfiable_subtype_constraint(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.lattice_result {
         Some(r) => r,
@@ -8603,7 +9088,7 @@ fn lint_sl01_unsatisfiable_subtype_constraint(ctx: &LintContext, diagnostics: &m
     };
     for (desc, rule) in &result.unsatisfiable_constraints {
         diagnostics.push(LintDiagnostic {
-            id: "SL01",
+            id: DiagnosticId::SL01,
             name: "unsatisfiable-subtype-constraint",
             severity: LintSeverity::Warning,
             category: None,
@@ -8619,7 +9104,6 @@ fn lint_sl01_unsatisfiable_subtype_constraint(ctx: &LintContext, diagnostics: &m
     }
 }
 
-#[cfg(feature = "lattice-theory")]
 fn lint_sl02_redundant_subtype_constraint(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.lattice_result {
         Some(r) => r,
@@ -8627,7 +9111,7 @@ fn lint_sl02_redundant_subtype_constraint(ctx: &LintContext, diagnostics: &mut V
     };
     for (desc, rule) in &result.redundant_constraints {
         diagnostics.push(LintDiagnostic {
-            id: "SL02",
+            id: DiagnosticId::SL02,
             name: "redundant-subtype-constraint",
             severity: LintSeverity::Note,
             category: None,
@@ -8643,7 +9127,6 @@ fn lint_sl02_redundant_subtype_constraint(ctx: &LintContext, diagnostics: &mut V
     }
 }
 
-#[cfg(feature = "logict")]
 fn lint_lt01_search_bound_exceeded(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     // LT01 is emitted when LogicT search hits its depth limit.
     // Any ConstraintTheory with non-empty label() can trigger it.
@@ -8652,11 +9135,10 @@ fn lint_lt01_search_bound_exceeded(ctx: &LintContext, diagnostics: &mut Vec<Lint
     // Lattice theory: decidable — search bound never exceeded.
 
     // Unification: may exceed on deeply nested CustomMatch alternatives.
-    #[cfg(feature = "unification")]
     if let Some(result) = ctx.unification_result {
         for desc in &result.search_bound_exceeded {
             diagnostics.push(LintDiagnostic {
-                id: "LT01",
+                id: DiagnosticId::LT01,
                 name: "logict-search-bound-exceeded",
                 severity: LintSeverity::Warning,
                 category: None,
@@ -8675,7 +9157,6 @@ fn lint_lt01_search_bound_exceeded(ctx: &LintContext, diagnostics: &mut Vec<Lint
 
 // ── Refinement type lints (RT01–RT06) ─────────────────────────────────────────
 
-#[cfg(feature = "type-system")]
 fn lint_rt01_unsatisfiable_refinement(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.refinement_analysis {
         Some(r) => r,
@@ -8683,7 +9164,7 @@ fn lint_rt01_unsatisfiable_refinement(ctx: &LintContext, diagnostics: &mut Vec<L
     };
     for (name, reason) in &result.unsatisfiable {
         diagnostics.push(LintDiagnostic {
-            id: "RT01",
+            id: DiagnosticId::RT01,
             name: "unsatisfiable-refinement-predicate",
             severity: LintSeverity::Warning,
             category: None,
@@ -8699,7 +9180,6 @@ fn lint_rt01_unsatisfiable_refinement(ctx: &LintContext, diagnostics: &mut Vec<L
     }
 }
 
-#[cfg(feature = "type-system")]
 fn lint_rt02_tautological_refinement(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.refinement_analysis {
         Some(r) => r,
@@ -8707,7 +9187,7 @@ fn lint_rt02_tautological_refinement(ctx: &LintContext, diagnostics: &mut Vec<Li
     };
     for (name, reason) in &result.tautological {
         diagnostics.push(LintDiagnostic {
-            id: "RT02",
+            id: DiagnosticId::RT02,
             name: "tautological-refinement-predicate",
             severity: LintSeverity::Note,
             category: None,
@@ -8723,7 +9203,6 @@ fn lint_rt02_tautological_refinement(ctx: &LintContext, diagnostics: &mut Vec<Li
     }
 }
 
-#[cfg(feature = "type-system")]
 fn lint_rt03_empty_intersection(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.refinement_analysis {
         Some(r) => r,
@@ -8731,7 +9210,7 @@ fn lint_rt03_empty_intersection(ctx: &LintContext, diagnostics: &mut Vec<LintDia
     };
     for (type_a, type_b, reason) in &result.empty_intersections {
         diagnostics.push(LintDiagnostic {
-            id: "RT03",
+            id: DiagnosticId::RT03,
             name: "empty-refinement-intersection",
             severity: LintSeverity::Warning,
             category: None,
@@ -8747,7 +9226,6 @@ fn lint_rt03_empty_intersection(ctx: &LintContext, diagnostics: &mut Vec<LintDia
     }
 }
 
-#[cfg(feature = "type-system")]
 fn lint_rt04_subtype_detected(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.refinement_analysis {
         Some(r) => r,
@@ -8755,7 +9233,7 @@ fn lint_rt04_subtype_detected(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
     };
     for (sub, sup) in &result.subtype_pairs {
         diagnostics.push(LintDiagnostic {
-            id: "RT04",
+            id: DiagnosticId::RT04,
             name: "refinement-subtype-detected",
             severity: LintSeverity::Note,
             category: None,
@@ -8771,7 +9249,6 @@ fn lint_rt04_subtype_detected(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
     }
 }
 
-#[cfg(feature = "type-system")]
 fn lint_rt05_decidability_tier(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.refinement_analysis {
         Some(r) => r,
@@ -8779,7 +9256,7 @@ fn lint_rt05_decidability_tier(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
     };
     for (name, tier) in &result.decidability_tiers {
         diagnostics.push(LintDiagnostic {
-            id: "RT05",
+            id: DiagnosticId::RT05,
             name: "refinement-decidability-tier",
             severity: LintSeverity::Note,
             category: None,
@@ -8795,7 +9272,6 @@ fn lint_rt05_decidability_tier(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
     }
 }
 
-#[cfg(feature = "type-system")]
 fn lint_rt06_name_shadow(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.refinement_analysis {
         Some(r) => r,
@@ -8803,7 +9279,7 @@ fn lint_rt06_name_shadow(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic
     };
     for (refinement_name, base_name) in &result.name_shadows {
         diagnostics.push(LintDiagnostic {
-            id: "RT06",
+            id: DiagnosticId::RT06,
             name: "refinement-type-shadows-base",
             severity: LintSeverity::Warning,
             category: None,
@@ -8814,6 +9290,308 @@ fn lint_rt06_name_shadow(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic
             ),
             hint: Some("rename the refinement type to avoid ambiguity with the base type".to_string()),
             grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CEK Machine Lints
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// CEK01: Detect frame variants carrying captures that are never referenced
+/// by subsequent segments or the final constructor.
+///
+/// Severity: Note (informational — optimization opportunity).
+fn lint_cek01_dead_capture_in_frame(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    use crate::trampoline::{split_rd_handler, constructor_capture_names, compute_live_captures, capture_name};
+
+    for rd_rule in ctx.rd_rules {
+        let segments = split_rd_handler(rd_rule);
+        if segments.len() < 2 {
+            continue; // No multi-segment rules, no dead captures possible
+        }
+
+        let ctor_names = constructor_capture_names(rd_rule);
+        let live_captures = compute_live_captures(&segments, &ctor_names);
+
+        for (i, (seg, live)) in segments.iter().zip(live_captures.iter()).enumerate() {
+            // Skip segments without nonterminals (no frame is pushed)
+            if seg.nonterminal.is_none() {
+                continue;
+            }
+
+            let dead_count = seg.accumulated_captures.len() - live.len();
+            if dead_count > 0 {
+                let dead_names: Vec<String> = seg
+                    .accumulated_captures
+                    .iter()
+                    .filter(|cap| !live.iter().any(|l| capture_name(l) == capture_name(cap)))
+                    .map(|cap| capture_name(cap))
+                    .collect();
+
+                diagnostics.push(LintDiagnostic {
+                    id: DiagnosticId::CEK01,
+                    name: "dead-capture-in-frame",
+                    severity: LintSeverity::Note,
+                    category: Some(rd_rule.category.clone()),
+                    rule: Some(rd_rule.label.clone()),
+                    message: format!(
+                        "frame variant `{}` segment {} carries {} dead capture(s): {}",
+                        seg.frame_variant,
+                        i,
+                        dead_count,
+                        dead_names.join(", "),
+                    ),
+                    hint: Some(
+                        "enable CEK01:EnvironmentTrimming to eliminate dead captures from frame variants"
+                            .to_string(),
+                    ),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
+                });
+            }
+        }
+    }
+}
+
+/// CEK03: Unreachable frame variant detected by WPDS poststar analysis.
+///
+/// Reports frame variants that are unreachable in any valid stack context,
+/// as determined by the P-automaton from WPDS poststar saturation.
+/// When enabled, the codegen suppresses these variants, their prefix arms,
+/// and their unwind handlers.
+fn lint_cek03_unreachable_frame_variant(
+    ctx: &LintContext<'_>,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    let analysis = match ctx.wpds_analysis {
+        Some(a) => a,
+        None => return,
+    };
+
+    for (frame_name, symbol) in &analysis.cek_bijection.frame_to_symbol {
+        // Skip internal symbols
+        if frame_name.starts_with("::") {
+            continue;
+        }
+        if !analysis.pautomaton.is_symbol_in_any_configuration(symbol) {
+            diagnostics.push(LintDiagnostic {
+                id: DiagnosticId::CEK03,
+                name: "unreachable-frame-variant",
+                severity: LintSeverity::Note,
+                category: None,
+                rule: None,
+                message: format!(
+                    "frame variant '{}' is unreachable in all valid stack contexts",
+                    frame_name,
+                ),
+                hint: Some(
+                    "enable CEK03:DeadFrameElimination to suppress codegen for unreachable frame variants"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Green Thread Safety Lints (feature = "green-threads")
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// GT01: Deadlock detected in channel configuration.
+///
+/// Fires when the Petri net constructed from the `channels {}` block has a
+/// reachable marking where no transition is enabled but not all threads are
+/// complete. This indicates a circular-wait deadlock.
+///
+/// Severity: Error — the grammar is provably unsafe.
+pub fn lint_gt01_deadlock(
+    deadlock_markings: &[(Vec<String>, Vec<String>)], // (blocked_threads, empty_channels)
+    grammar_name: &str,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    for (blocked, empty) in deadlock_markings {
+        diagnostics.push(LintDiagnostic {
+            id: DiagnosticId::GT01,
+            name: "deadlock-detected",
+            severity: LintSeverity::Error,
+            category: None,
+            rule: None,
+            message: format!(
+                "deadlock: {} thread(s) blocked on empty channel(s) {}",
+                blocked.len(),
+                empty.join(", ")
+            ),
+            hint: Some(format!(
+                "threads {} are waiting on channels that no other thread can write to",
+                blocked.join(", ")
+            )),
+            grammar_name: Some(grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// GT02: Potential starvation in long-running process.
+///
+/// Fires when the Büchi automaton product finds an infinite execution
+/// where some thread never makes progress (violates the fairness property
+/// GF(thread_i progresses)).
+///
+/// Severity: Warning — may cause starvation under certain schedulers.
+pub fn lint_gt02_starvation(
+    starving_threads: &[String],
+    grammar_name: &str,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    for thread_name in starving_threads {
+        diagnostics.push(LintDiagnostic {
+            id: DiagnosticId::GT02,
+            name: "potential-starvation",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "thread `{}` may starve: infinite execution exists where it never progresses",
+                thread_name
+            ),
+            hint: Some(
+                "ensure the scheduler provides fair scheduling or add explicit yield points"
+                    .to_string(),
+            ),
+            grammar_name: Some(grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// GT03: Data ownership violation.
+///
+/// Fires when the register automaton analysis detects concurrent access
+/// to a channel's buffer register by multiple threads without synchronization.
+///
+/// Severity: Error — potential data race.
+pub fn lint_gt03_ownership(
+    violations: &[(String, Vec<String>)], // (channel_name, accessing_threads)
+    grammar_name: &str,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    for (channel, threads) in violations {
+        diagnostics.push(LintDiagnostic {
+            id: DiagnosticId::GT03,
+            name: "data-ownership-violation",
+            severity: LintSeverity::Error,
+            category: None,
+            rule: None,
+            message: format!(
+                "channel `{}` accessed concurrently by threads: {}",
+                channel,
+                threads.join(", ")
+            ),
+            hint: Some(
+                "ensure only one thread writes to the channel at a time, or use explicit synchronization"
+                    .to_string(),
+            ),
+            grammar_name: Some(grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// GT04: Channel freshness violation (aliased private channel).
+///
+/// Fires when the nominal automaton analysis detects that a channel
+/// created with `new` has been aliased — its name escapes the intended scope.
+///
+/// Severity: Warning — may break name-hiding guarantees.
+pub fn lint_gt04_freshness(
+    aliased_channels: &[(String, String)], // (channel_name, escaping_via_rule)
+    grammar_name: &str,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    for (channel, rule) in aliased_channels {
+        diagnostics.push(LintDiagnostic {
+            id: DiagnosticId::GT04,
+            name: "channel-freshness-violation",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: Some(rule.clone()),
+            message: format!(
+                "private channel `{}` may be aliased via rule `{}`",
+                channel, rule
+            ),
+            hint: Some(
+                "channels created with `new` should not escape their scope — check for name leaks"
+                    .to_string(),
+            ),
+            grammar_name: Some(grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// GT05: Parallelism report (N independent regions).
+///
+/// Informational lint reporting the maximum number of independent
+/// parallel regions detected by the Petri net analysis.
+///
+/// Severity: Note — informational for scheduler tuning.
+pub fn lint_gt05_parallelism(
+    independent_regions: usize,
+    max_concurrent: usize,
+    grammar_name: &str,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    diagnostics.push(LintDiagnostic {
+        id: DiagnosticId::GT05,
+        name: "parallelism-report",
+        severity: LintSeverity::Note,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} independent parallel region(s) detected; max {} concurrent green threads",
+            independent_regions, max_concurrent
+        ),
+        hint: None,
+        grammar_name: Some(grammar_name.to_string()),
+        source_location: None,
+    });
+}
+
+/// GT06: Stack depth estimate from WPDS analysis.
+///
+/// Reports the WPDS-computed upper bound on green thread continuation
+/// stack depth for each category.
+///
+/// Severity: Note — informational for stack preallocation hints.
+pub fn lint_gt06_stack_depth(
+    depth_estimates: &[(String, usize)], // (category, max_depth)
+    grammar_name: &str,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    for (category, depth) in depth_estimates {
+        diagnostics.push(LintDiagnostic {
+            id: DiagnosticId::GT06,
+            name: "stack-depth-estimate",
+            severity: LintSeverity::Note,
+            category: Some(category.clone()),
+            rule: None,
+            message: format!(
+                "WPDS estimates max continuation stack depth of {} for category `{}`",
+                depth, category
+            ),
+            hint: if *depth > 1000 {
+                Some(format!(
+                    "depth {} is high — consider preallocation or tail-call optimization",
+                    depth
+                ))
+            } else {
+                None
+            },
+            grammar_name: Some(grammar_name.to_string()),
             source_location: None,
         });
     }
@@ -8892,68 +9670,38 @@ mod tests {
         cegar_result_data: Option<crate::cegar::CegarLog>,
         algebraic_result_data: Option<crate::algebraic::AlgebraicSummary>,
         math_analysis_elapsed_data: Option<std::time::Duration>,
-        #[cfg(feature = "trs-analysis")]
         confluence_result_data: Option<crate::confluence::ConfluenceAnalysis>,
-        #[cfg(feature = "trs-analysis")]
         termination_result_data: Option<crate::termination::TerminationResult>,
-        #[cfg(feature = "vpa")]
         vpa_result_data: Option<crate::vpa::VpaAnalysis>,
-        #[cfg(feature = "tree-automata")]
         wta_result_data: Option<crate::tree_automaton::WtaAnalysis>,
-        #[cfg(feature = "wpds-extended")]
         ewpds_result_data: Option<crate::ewpds::EwpdsAnalysis>,
-        #[cfg(feature = "wpds-ara")]
         ara_result_data: Option<crate::ara::AraAnalysis>,
-        #[cfg(feature = "petri")]
         petri_result_data: Option<crate::petri::PetriAnalysis>,
-        #[cfg(feature = "nominal")]
         nominal_result_data: Option<crate::nominal::NominalAnalysis>,
-        #[cfg(feature = "alternating")]
         alternating_result_data: Option<crate::alternating::AlternatingAnalysis>,
-        #[cfg(feature = "ltl")]
         ltl_results_data: Option<Vec<crate::ltl::LtlCheckResult>>,
-        #[cfg(feature = "provenance")]
         provenance_result_data: Option<crate::provenance::ProvenanceAnalysis>,
-        #[cfg(feature = "cra")]
         cra_result_data: Option<crate::cra::CraAnalysis>,
-        #[cfg(feature = "morphisms")]
         morphism_result_data: Option<crate::morphism::MorphismCheck>,
-        #[cfg(feature = "kat")]
         kat_result_data: Option<crate::kat::KatCheck>,
         // ── Advanced automata analysis result fields ──
-        #[cfg(feature = "symbolic-automata")]
         symbolic_result_data: Option<crate::symbolic::SymbolicAnalysis>,
-        #[cfg(feature = "omega")]
         buchi_result_data: Option<crate::buchi::BuchiAnalysis>,
-        #[cfg(feature = "weighted-mso")]
         mso_result_data: Option<crate::weighted_mso::MsoAnalysis>,
-        #[cfg(feature = "probabilistic")]
         probabilistic_result_data: Option<crate::probabilistic::ProbabilisticAnalysis>,
-        #[cfg(feature = "register-automata")]
         register_result_data: Option<crate::register_automata::RegisterAnalysis>,
-        #[cfg(feature = "parity-tree-automata")]
         parity_tree_result_data: Option<crate::parity_tree::ParityTreeAnalysis>,
-        #[cfg(feature = "multi-tape")]
         multi_tape_result_data: Option<crate::multi_tape::MultiTapeAnalysis>,
-        #[cfg(feature = "multiset-automata")]
         multiset_result_data: Option<crate::multiset_automata::MultisetAnalysisResult>,
-        #[cfg(feature = "two-way-transducer")]
         two_way_result_data: Option<crate::two_way_transducer::TwoWayAnalysis>,
-        #[cfg(feature = "sft")]
         sft_result_data: Option<crate::sft::SftAnalysis>,
-        #[cfg(feature = "egraph")]
         egraph_result_data: Option<crate::egraph::EGraphAnalysis>,
-        #[cfg(feature = "predicate-dispatch")]
         dispatch_diagnostics_data: Option<crate::predicate_dispatch::DispatchDiagnostics>,
         // ── Constraint theory analysis result fields ──
-        #[cfg(feature = "presburger")]
         presburger_result_data: Option<crate::presburger::PresburgerAnalysis>,
-        #[cfg(feature = "unification")]
         unification_result_data: Option<crate::unification::UnificationAnalysis>,
-        #[cfg(feature = "lattice-theory")]
         lattice_result_data: Option<crate::lattice_theory::LatticeAnalysis>,
         // ── Refinement type analysis result fields ──
-        #[cfg(feature = "type-system")]
         refinement_analysis_data: Option<crate::pipeline::RefinementAnalysisResult>,
     }
 
@@ -8989,68 +9737,38 @@ mod tests {
                 cegar_result_data: None,
                 algebraic_result_data: None,
                 math_analysis_elapsed_data: None,
-                #[cfg(feature = "trs-analysis")]
                 confluence_result_data: None,
-                #[cfg(feature = "trs-analysis")]
                 termination_result_data: None,
-                #[cfg(feature = "vpa")]
                 vpa_result_data: None,
-                #[cfg(feature = "tree-automata")]
                 wta_result_data: None,
-                #[cfg(feature = "wpds-extended")]
                 ewpds_result_data: None,
-                #[cfg(feature = "wpds-ara")]
                 ara_result_data: None,
-                #[cfg(feature = "petri")]
                 petri_result_data: None,
-                #[cfg(feature = "nominal")]
                 nominal_result_data: None,
-                #[cfg(feature = "alternating")]
                 alternating_result_data: None,
-                #[cfg(feature = "ltl")]
                 ltl_results_data: None,
-                #[cfg(feature = "provenance")]
                 provenance_result_data: None,
-                #[cfg(feature = "cra")]
                 cra_result_data: None,
-                #[cfg(feature = "morphisms")]
                 morphism_result_data: None,
-                #[cfg(feature = "kat")]
                 kat_result_data: None,
                 // ── Advanced automata analysis result fields ──
-                #[cfg(feature = "symbolic-automata")]
                 symbolic_result_data: None,
-                #[cfg(feature = "omega")]
                 buchi_result_data: None,
-                #[cfg(feature = "weighted-mso")]
                 mso_result_data: None,
-                #[cfg(feature = "probabilistic")]
                 probabilistic_result_data: None,
-                #[cfg(feature = "register-automata")]
                 register_result_data: None,
-                #[cfg(feature = "parity-tree-automata")]
                 parity_tree_result_data: None,
-                #[cfg(feature = "multi-tape")]
                 multi_tape_result_data: None,
-                #[cfg(feature = "multiset-automata")]
                 multiset_result_data: None,
-                #[cfg(feature = "two-way-transducer")]
                 two_way_result_data: None,
-                #[cfg(feature = "sft")]
                 sft_result_data: None,
-                #[cfg(feature = "egraph")]
                 egraph_result_data: None,
-                #[cfg(feature = "predicate-dispatch")]
                 dispatch_diagnostics_data: None,
                 // ── Constraint theory analysis result fields ──
-                #[cfg(feature = "presburger")]
                 presburger_result_data: None,
-                #[cfg(feature = "unification")]
                 unification_result_data: None,
-                #[cfg(feature = "lattice-theory")]
                 lattice_result_data: None,
                 // ── Refinement type analysis result fields ──
-                #[cfg(feature = "type-system")]
                 refinement_analysis_data: None,
             }
         }
@@ -9086,68 +9804,38 @@ mod tests {
                 cegar_result: self.cegar_result_data.as_ref(),
                 algebraic_result: self.algebraic_result_data.as_ref(),
                 math_analysis_elapsed: self.math_analysis_elapsed_data,
-                #[cfg(feature = "trs-analysis")]
                 confluence_result: self.confluence_result_data.as_ref(),
-                #[cfg(feature = "trs-analysis")]
                 termination_result: self.termination_result_data.as_ref(),
-                #[cfg(feature = "vpa")]
                 vpa_result: self.vpa_result_data.as_ref(),
-                #[cfg(feature = "tree-automata")]
                 wta_result: self.wta_result_data.as_ref(),
-                #[cfg(feature = "wpds-extended")]
                 ewpds_result: self.ewpds_result_data.as_ref(),
-                #[cfg(feature = "wpds-ara")]
                 ara_result: self.ara_result_data.as_ref(),
-                #[cfg(feature = "petri")]
                 petri_result: self.petri_result_data.as_ref(),
-                #[cfg(feature = "nominal")]
                 nominal_result: self.nominal_result_data.as_ref(),
-                #[cfg(feature = "alternating")]
                 alternating_result: self.alternating_result_data.as_ref(),
-                #[cfg(feature = "ltl")]
                 ltl_results: self.ltl_results_data.as_ref(),
-                #[cfg(feature = "provenance")]
                 provenance_result: self.provenance_result_data.as_ref(),
-                #[cfg(feature = "cra")]
                 cra_result: self.cra_result_data.as_ref(),
-                #[cfg(feature = "morphisms")]
                 morphism_result: self.morphism_result_data.as_ref(),
-                #[cfg(feature = "kat")]
                 kat_result: self.kat_result_data.as_ref(),
                 // ── Advanced automata analysis results ──
-                #[cfg(feature = "symbolic-automata")]
                 symbolic_result: self.symbolic_result_data.as_ref(),
-                #[cfg(feature = "omega")]
                 buchi_result: self.buchi_result_data.as_ref(),
-                #[cfg(feature = "weighted-mso")]
                 mso_result: self.mso_result_data.as_ref(),
-                #[cfg(feature = "probabilistic")]
                 probabilistic_result: self.probabilistic_result_data.as_ref(),
-                #[cfg(feature = "register-automata")]
                 register_result: self.register_result_data.as_ref(),
-                #[cfg(feature = "parity-tree-automata")]
                 parity_tree_result: self.parity_tree_result_data.as_ref(),
-                #[cfg(feature = "multi-tape")]
                 multi_tape_result: self.multi_tape_result_data.as_ref(),
-                #[cfg(feature = "multiset-automata")]
                 multiset_result: self.multiset_result_data.as_ref(),
-                #[cfg(feature = "two-way-transducer")]
                 two_way_result: self.two_way_result_data.as_ref(),
-                #[cfg(feature = "sft")]
                 sft_result: self.sft_result_data.as_ref(),
-                #[cfg(feature = "egraph")]
                 egraph_result: self.egraph_result_data.as_ref(),
-                #[cfg(feature = "predicate-dispatch")]
                 dispatch_diagnostics: self.dispatch_diagnostics_data.as_ref(),
                 // ── Constraint theory analysis results ──
-                #[cfg(feature = "presburger")]
                 presburger_result: self.presburger_result_data.as_ref(),
-                #[cfg(feature = "unification")]
                 unification_result: self.unification_result_data.as_ref(),
-                #[cfg(feature = "lattice-theory")]
                 lattice_result: self.lattice_result_data.as_ref(),
                 // ── Refinement type analysis results ──
-                #[cfg(feature = "type-system")]
                 refinement_analysis: self.refinement_analysis_data.as_ref(),
             }
         }
@@ -9178,7 +9866,7 @@ mod tests {
         lint_g01_left_recursion(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "G01");
+        assert_eq!(diags[0].id, DiagnosticId::G01);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
@@ -9223,7 +9911,7 @@ mod tests {
         lint_g02_unused_category(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "G02");
+        assert_eq!(diags[0].id, DiagnosticId::G02);
         assert!(diags[0].message.contains("Unused"));
     }
 
@@ -9264,7 +9952,7 @@ mod tests {
         lint_g03_ambiguous_prefix(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "G03");
+        assert_eq!(diags[0].id, DiagnosticId::G03);
     }
 
     #[test]
@@ -9304,7 +9992,7 @@ mod tests {
         lint_g04_duplicate_rule_label(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "G04");
+        assert_eq!(diags[0].id, DiagnosticId::G04);
         assert_eq!(diags[0].severity, LintSeverity::Error);
     }
 
@@ -9336,7 +10024,7 @@ mod tests {
         lint_g05_empty_category(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "G05");
+        assert_eq!(diags[0].id, DiagnosticId::G05);
         assert!(diags[0].message.contains("Empty"));
     }
 
@@ -9387,7 +10075,7 @@ mod tests {
         lint_g07_identical_rules(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "G07");
+        assert_eq!(diags[0].id, DiagnosticId::G07);
     }
 
     #[test]
@@ -9437,7 +10125,7 @@ mod tests {
         lint_g08_missing_cast_to_root(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "G08");
+        assert_eq!(diags[0].id, DiagnosticId::G08);
         assert!(diags[0].message.contains("Int"));
     }
 
@@ -9482,7 +10170,7 @@ mod tests {
         lint_g09_unbalanced_delimiters(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "G09");
+        assert_eq!(diags[0].id, DiagnosticId::G09);
     }
 
     #[test]
@@ -9554,7 +10242,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_g09_unbalanced_delimiters(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1, "compound terminal `in(` without `)` should be unbalanced");
-        assert_eq!(diags[0].id, "G09");
+        assert_eq!(diags[0].id, DiagnosticId::G09);
     }
 
     #[test]
@@ -9614,7 +10302,7 @@ mod tests {
         lint_g10_ambiguous_associativity(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "G10");
+        assert_eq!(diags[0].id, DiagnosticId::G10);
     }
 
     #[test]
@@ -9664,7 +10352,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_r06_inverted_recovery_costs(&b.ctx(), &mut diags);
 
-        assert!(diags.iter().any(|d| d.id == "R06"));
+        assert!(diags.iter().any(|d| d.id == DiagnosticId::R06));
     }
 
     #[test]
@@ -9699,7 +10387,7 @@ mod tests {
         lint_r07_transposition_candidate(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "R07 should emit exactly 1 summary note");
-        assert_eq!(diags[0].id, "R07");
+        assert_eq!(diags[0].id, DiagnosticId::R07);
         assert!(diags[0].message.contains("1 operator pair(s)"));
         assert!(diags[0].message.contains("`+`"));
         assert!(diags[0].message.contains("`++`"));
@@ -9748,7 +10436,7 @@ mod tests {
             "R07 should emit exactly 1 summary note, not {} individual notes",
             diags.len(),
         );
-        assert_eq!(diags[0].id, "R07");
+        assert_eq!(diags[0].id, DiagnosticId::R07);
         // The summary should mention the total count (36 pairs)
         assert!(
             diags[0].message.contains("36 operator pair(s)"),
@@ -9780,7 +10468,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_c01_cast_cycle(&b.ctx(), &mut diags);
 
-        assert!(diags.iter().any(|d| d.id == "C01" && d.severity == LintSeverity::Error));
+        assert!(diags.iter().any(|d| d.id == DiagnosticId::C01 && d.severity == LintSeverity::Error));
     }
 
     #[test]
@@ -9835,7 +10523,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_c02_transitive_cast_redundancy(&b.ctx(), &mut diags);
 
-        assert!(diags.iter().any(|d| d.id == "C02"));
+        assert!(diags.iter().any(|d| d.id == DiagnosticId::C02));
     }
 
     #[test]
@@ -9870,7 +10558,7 @@ mod tests {
         lint_p02_high_nfa_spillover(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "P02");
+        assert_eq!(diags[0].id, DiagnosticId::P02);
     }
 
     #[test]
@@ -9921,7 +10609,7 @@ mod tests {
         lint_p03_deep_cast_nesting(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "P03");
+        assert_eq!(diags[0].id, DiagnosticId::P03);
     }
 
     #[test]
@@ -9947,7 +10635,7 @@ mod tests {
     #[test]
     fn lint_display_format() {
         let diag = LintDiagnostic {
-            id: "C01",
+            id: DiagnosticId::C01,
             name: "cast-cycle",
             severity: LintSeverity::Error,
             category: None,
@@ -9966,7 +10654,7 @@ mod tests {
     #[test]
     fn lint_display_no_hint() {
         let diag = LintDiagnostic {
-            id: "G06",
+            id: DiagnosticId::G06,
             name: "shadowed-operator",
             severity: LintSeverity::Note,
             category: Some("Int".to_string()),
@@ -9986,7 +10674,7 @@ mod tests {
     #[test]
     fn lint_display_with_source_location() {
         let diag = LintDiagnostic {
-            id: "G09",
+            id: DiagnosticId::G09,
             name: "unbalanced-delimiters",
             severity: LintSeverity::Warning,
             category: Some("Proc".to_string()),
@@ -10006,7 +10694,7 @@ mod tests {
     #[test]
     fn lint_display_no_location_when_line_zero() {
         let diag = LintDiagnostic {
-            id: "G01",
+            id: DiagnosticId::G01,
             name: "left-recursion",
             severity: LintSeverity::Warning,
             category: Some("Int".to_string()),
@@ -10068,7 +10756,7 @@ mod tests {
         ].into();
 
         let diags = run_lints(&b.ctx());
-        let w07_diags: Vec<_> = diags.iter().filter(|d| d.id == "W07").collect();
+        let w07_diags: Vec<_> = diags.iter().filter(|d| d.id == DiagnosticId::W07).collect();
         assert!(w07_diags.is_empty(), "well-connected grammar should not emit W07: {:?}", w07_diags);
     }
 
@@ -10225,7 +10913,7 @@ mod tests {
         lint_x01_composition_ambiguity_introduction(&b.ctx(), &comp_ctx, &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 ambiguity lint for new token Star: {:?}", diags);
-        assert_eq!(diags[0].id, "X01");
+        assert_eq!(diags[0].id, DiagnosticId::X01);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("Star"), "message should mention the new token: {}", diags[0].message);
     }
@@ -10320,7 +11008,7 @@ mod tests {
         lint_x02_composition_priority_shadowing(&b.ctx(), &comp_ctx, &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 shadowing lint: {:?}", diags);
-        assert_eq!(diags[0].id, "X02");
+        assert_eq!(diags[0].id, DiagnosticId::X02);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("AddA"));
         assert!(diags[0].message.contains("AddB"));
@@ -10401,7 +11089,7 @@ mod tests {
         lint_x03_composition_dead_rule_creation(&b.ctx(), &comp_ctx, &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 newly-dead lint: {:?}", diags);
-        assert_eq!(diags[0].id, "X03");
+        assert_eq!(diags[0].id, DiagnosticId::X03);
         assert!(diags[0].message.contains("Foo"));
         assert!(diags[0].message.contains("grammar A"));
     }
@@ -10486,7 +11174,7 @@ mod tests {
         // Merged has NO casts → reachability = {}
         // Broken: {(A,B), (A,C), (B,C)}
         assert_eq!(diags.len(), 3, "expected 3 broken cast chain lints: {:?}", diags);
-        assert!(diags.iter().all(|d| d.id == "X04"));
+        assert!(diags.iter().all(|d| d.id == DiagnosticId::X04));
         assert!(diags.iter().all(|d| d.severity == LintSeverity::Error));
     }
 
@@ -10568,7 +11256,7 @@ mod tests {
         lint_x05_composition_terminal_collision(&b.ctx(), &comp_ctx, &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 terminal collision lint: {:?}", diags);
-        assert_eq!(diags[0].id, "X05");
+        assert_eq!(diags[0].id, DiagnosticId::X05);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("+"));
         assert!(diags[0].message.contains("infix"));
@@ -10664,9 +11352,9 @@ mod tests {
 
         // Should have at least X02 (shadowing on Plus) and X05 (collision on *)
         // and X03 (Orphan newly dead)
-        let x02_count = diags.iter().filter(|d| d.id == "X02").count();
-        let x03_count = diags.iter().filter(|d| d.id == "X03").count();
-        let x05_count = diags.iter().filter(|d| d.id == "X05").count();
+        let x02_count = diags.iter().filter(|d| d.id == DiagnosticId::X02).count();
+        let x03_count = diags.iter().filter(|d| d.id == DiagnosticId::X03).count();
+        let x05_count = diags.iter().filter(|d| d.id == DiagnosticId::X05).count();
 
         assert!(x02_count >= 1, "expected X02 shadowing lint: {:?}", diags);
         assert_eq!(x03_count, 1, "expected 1 X03 dead-rule lint: {:?}", diags);
@@ -10912,7 +11600,7 @@ mod tests {
     #[test]
     fn format_diagnostic_colored_info_with_grammar_name() {
         let diag = LintDiagnostic {
-            id: "I01",
+            id: DiagnosticId::I01,
             name: "transducer-cascade",
             severity: LintSeverity::Info,
             category: None,
@@ -10933,7 +11621,7 @@ mod tests {
     #[test]
     fn format_diagnostic_colored_no_grammar_name() {
         let diag = LintDiagnostic {
-            id: "I08",
+            id: DiagnosticId::I08,
             name: "env-override-active",
             severity: LintSeverity::Warning,
             category: None,
@@ -10954,7 +11642,7 @@ mod tests {
     #[test]
     fn format_diagnostic_colored_info_with_hint() {
         let diag = LintDiagnostic {
-            id: "I04",
+            id: DiagnosticId::I04,
             name: "beam-feature-required",
             severity: LintSeverity::Warning,
             category: None,
@@ -10976,7 +11664,7 @@ mod tests {
     // ══════════════════════════════════════════════════════════════════════
 
     fn make_diag(
-        id: &'static str,
+        id: DiagnosticId,
         name: &'static str,
         severity: LintSeverity,
         category: Option<&str>,
@@ -11005,15 +11693,14 @@ mod tests {
 
     #[test]
     fn group_w01_single_passes_through() {
-        let diag = make_diag(
-            "W01", "dead-rule", LintSeverity::Warning,
+        let diag = make_diag(DiagnosticId::W01, "dead-rule", LintSeverity::Warning,
             Some("Int"), Some("FloatToStr"),
             "rule `FloatToStr` in category `Int` is unreachable",
             Some("remove the rule or add a unique dispatch token"),
         );
         let result = group_diagnostics(vec![diag.clone()]);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "W01");
+        assert_eq!(result[0].id, DiagnosticId::W01);
         assert_eq!(result[0].category.as_deref(), Some("Int"));
     }
 
@@ -11021,15 +11708,15 @@ mod tests {
     fn group_w01_multiple_same_type() {
         let hint = "remove the rule or add a unique dispatch token";
         let diags = vec![
-            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Str"), Some("FloatToStr"), "rule `FloatToStr` unreachable", Some(hint)),
-            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Str"), Some("BoolToStr"), "rule `BoolToStr` unreachable", Some(hint)),
-            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Bool"), Some("IntToBool"), "rule `IntToBool` unreachable", Some(hint)),
-            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Int"), Some("FloatToInt"), "rule `FloatToInt` unreachable", Some(hint)),
-            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Int"), Some("StrToInt"), "rule `StrToInt` unreachable", Some(hint)),
+            make_diag(DiagnosticId::W01, "dead-rule", LintSeverity::Warning, Some("Str"), Some("FloatToStr"), "rule `FloatToStr` unreachable", Some(hint)),
+            make_diag(DiagnosticId::W01, "dead-rule", LintSeverity::Warning, Some("Str"), Some("BoolToStr"), "rule `BoolToStr` unreachable", Some(hint)),
+            make_diag(DiagnosticId::W01, "dead-rule", LintSeverity::Warning, Some("Bool"), Some("IntToBool"), "rule `IntToBool` unreachable", Some(hint)),
+            make_diag(DiagnosticId::W01, "dead-rule", LintSeverity::Warning, Some("Int"), Some("FloatToInt"), "rule `FloatToInt` unreachable", Some(hint)),
+            make_diag(DiagnosticId::W01, "dead-rule", LintSeverity::Warning, Some("Int"), Some("StrToInt"), "rule `StrToInt` unreachable", Some(hint)),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1, "5 W01 with same hint should become 1 grouped diagnostic");
-        assert_eq!(result[0].id, "W01");
+        assert_eq!(result[0].id, DiagnosticId::W01);
         assert!(result[0].message.contains("5 rules are unreachable"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Str: FloatToStr, BoolToStr"), "should list Str rules: {}", result[0].message);
         assert!(result[0].message.contains("Bool: IntToBool"), "should list Bool rules: {}", result[0].message);
@@ -11040,26 +11727,26 @@ mod tests {
     #[test]
     fn group_w01_mixed_types_separate() {
         let diags = vec![
-            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Str"), Some("FloatToStr"), "rule unreachable", Some("hint A")),
-            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Str"), Some("BoolToStr"), "rule unreachable", Some("hint A")),
-            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Int"), Some("BadRule"), "rule unreachable", Some("hint B")),
+            make_diag(DiagnosticId::W01, "dead-rule", LintSeverity::Warning, Some("Str"), Some("FloatToStr"), "rule unreachable", Some("hint A")),
+            make_diag(DiagnosticId::W01, "dead-rule", LintSeverity::Warning, Some("Str"), Some("BoolToStr"), "rule unreachable", Some("hint A")),
+            make_diag(DiagnosticId::W01, "dead-rule", LintSeverity::Warning, Some("Int"), Some("BadRule"), "rule unreachable", Some("hint B")),
         ];
         let result = group_diagnostics(diags);
         // Two different hints → two groups (one grouped, one pass-through)
         assert_eq!(result.len(), 2, "different hints produce separate groups");
-        assert_eq!(result[0].id, "W01");
-        assert_eq!(result[1].id, "W01");
+        assert_eq!(result[0].id, DiagnosticId::W01);
+        assert_eq!(result[1].id, DiagnosticId::W01);
     }
 
     #[test]
     fn group_g03_multiple_categories() {
         let diags = vec![
-            make_diag("G03", "ambiguous-prefix", LintSeverity::Warning, Some("Int"), None, "ambiguous prefix for token `kw` in Int", Some("add unique dispatch tokens")),
-            make_diag("G03", "ambiguous-prefix", LintSeverity::Warning, Some("Float"), None, "ambiguous prefix for token `kw` in Float", Some("add unique dispatch tokens")),
+            make_diag(DiagnosticId::G03, "ambiguous-prefix", LintSeverity::Warning, Some("Int"), None, "ambiguous prefix for token `kw` in Int", Some("add unique dispatch tokens")),
+            make_diag(DiagnosticId::G03, "ambiguous-prefix", LintSeverity::Warning, Some("Float"), None, "ambiguous prefix for token `kw` in Float", Some("add unique dispatch tokens")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "G03");
+        assert_eq!(result[0].id, DiagnosticId::G03);
         assert!(result[0].message.contains("2 ambiguous prefix dispatch"), "message: {}", result[0].message);
         assert!(result[0].message.contains("2 categories"), "message: {}", result[0].message);
     }
@@ -11067,13 +11754,13 @@ mod tests {
     #[test]
     fn group_g08_all_merged() {
         let diags = vec![
-            make_diag("G08", "missing-cast-to-root", LintSeverity::Warning, Some("Float"), None, "no cast path from category `Float` to primary category `Proc`", Some("add a cast rule")),
-            make_diag("G08", "missing-cast-to-root", LintSeverity::Warning, Some("Bool"), None, "no cast path from category `Bool` to primary category `Proc`", Some("add a cast rule")),
-            make_diag("G08", "missing-cast-to-root", LintSeverity::Warning, Some("Str"), None, "no cast path from category `Str` to primary category `Proc`", Some("add a cast rule")),
+            make_diag(DiagnosticId::G08, "missing-cast-to-root", LintSeverity::Warning, Some("Float"), None, "no cast path from category `Float` to primary category `Proc`", Some("add a cast rule")),
+            make_diag(DiagnosticId::G08, "missing-cast-to-root", LintSeverity::Warning, Some("Bool"), None, "no cast path from category `Bool` to primary category `Proc`", Some("add a cast rule")),
+            make_diag(DiagnosticId::G08, "missing-cast-to-root", LintSeverity::Warning, Some("Str"), None, "no cast path from category `Str` to primary category `Proc`", Some("add a cast rule")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "G08");
+        assert_eq!(result[0].id, DiagnosticId::G08);
         assert!(result[0].message.contains("3 categories have no cast path"), "message: {}", result[0].message);
         assert!(result[0].message.contains("isolated: Float, Bool, Str"), "message: {}", result[0].message);
     }
@@ -11081,42 +11768,42 @@ mod tests {
     #[test]
     fn group_preserves_non_grouped_ids() {
         let diags = vec![
-            make_diag("G01", "left-recursion", LintSeverity::Warning, Some("Int"), Some("Bad"), "left recursive", None),
-            make_diag("C01", "cast-cycle", LintSeverity::Error, None, None, "cycle detected", None),
+            make_diag(DiagnosticId::G01, "left-recursion", LintSeverity::Warning, Some("Int"), Some("Bad"), "left recursive", None),
+            make_diag(DiagnosticId::C01, "cast-cycle", LintSeverity::Error, None, None, "cycle detected", None),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].id, "G01");
-        assert_eq!(result[1].id, "C01");
+        assert_eq!(result[0].id, DiagnosticId::G01);
+        assert_eq!(result[1].id, DiagnosticId::C01);
     }
 
     #[test]
     fn group_mixed_ids_preserves_order() {
         let diags = vec![
-            make_diag("G01", "left-recursion", LintSeverity::Warning, Some("Int"), None, "left recursive", None),
-            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Str"), Some("R1"), "dead", Some("hint")),
-            make_diag("C01", "cast-cycle", LintSeverity::Error, None, None, "cycle", None),
-            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Str"), Some("R2"), "dead", Some("hint")),
+            make_diag(DiagnosticId::G01, "left-recursion", LintSeverity::Warning, Some("Int"), None, "left recursive", None),
+            make_diag(DiagnosticId::W01, "dead-rule", LintSeverity::Warning, Some("Str"), Some("R1"), "dead", Some("hint")),
+            make_diag(DiagnosticId::C01, "cast-cycle", LintSeverity::Error, None, None, "cycle", None),
+            make_diag(DiagnosticId::W01, "dead-rule", LintSeverity::Warning, Some("Str"), Some("R2"), "dead", Some("hint")),
         ];
         let result = group_diagnostics(diags);
         // G01 at index 0, W01 grouped at index 1 (first occurrence position), C01 at index 2
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0].id, "G01");
-        assert_eq!(result[1].id, "W01");
+        assert_eq!(result[0].id, DiagnosticId::G01);
+        assert_eq!(result[1].id, DiagnosticId::W01);
         assert!(result[1].message.contains("2 rules are unreachable"), "W01 should be grouped");
-        assert_eq!(result[2].id, "C01");
+        assert_eq!(result[2].id, DiagnosticId::C01);
     }
 
     #[test]
     fn group_g27_by_general_rule() {
         let diags = vec![
-            make_diag("G27", "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `AmbNew` may be subsumed by more general rule `AmbCong`", Some("review")),
-            make_diag("G27", "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `OutRule` may be subsumed by more general rule `AmbCong`", Some("review")),
-            make_diag("G27", "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `FooRule` may be subsumed by more general rule `AmbCong`", Some("review")),
+            make_diag(DiagnosticId::G27, "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `AmbNew` may be subsumed by more general rule `AmbCong`", Some("review")),
+            make_diag(DiagnosticId::G27, "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `OutRule` may be subsumed by more general rule `AmbCong`", Some("review")),
+            make_diag(DiagnosticId::G27, "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `FooRule` may be subsumed by more general rule `AmbCong`", Some("review")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "G27");
+        assert_eq!(result[0].id, DiagnosticId::G27);
         assert!(result[0].message.contains("3 rules may be subsumed"), "message: {}", result[0].message);
         assert!(result[0].message.contains("candidates: AmbNew, OutRule, FooRule"), "message: {}", result[0].message);
     }
@@ -11124,21 +11811,20 @@ mod tests {
     #[test]
     fn group_g27_different_generals() {
         let diags = vec![
-            make_diag("G27", "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `A` may be subsumed by more general rule `Gen1`", Some("review")),
-            make_diag("G27", "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `B` may be subsumed by more general rule `Gen2`", Some("review")),
+            make_diag(DiagnosticId::G27, "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `A` may be subsumed by more general rule `Gen1`", Some("review")),
+            make_diag(DiagnosticId::G27, "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `B` may be subsumed by more general rule `Gen2`", Some("review")),
         ];
         let result = group_diagnostics(diags);
         // Two different general rules → each passes through individually (single-item groups)
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].id, "G27");
-        assert_eq!(result[1].id, "G27");
+        assert_eq!(result[0].id, DiagnosticId::G27);
+        assert_eq!(result[1].id, DiagnosticId::G27);
     }
 
     #[test]
     fn group_w05_by_category() {
         let diags: Vec<LintDiagnostic> = (0..5)
-            .map(|i| make_diag(
-                "W05", "composed-dispatch-ambiguity", LintSeverity::Warning,
+            .map(|i| make_diag(DiagnosticId::W05, "composed-dispatch-ambiguity", LintSeverity::Warning,
                 Some("Float"), None,
                 &format!(
                     "2-way ambiguity at DFA state {}: 2 derivations\n\
@@ -11149,8 +11835,7 @@ mod tests {
                 ),
                 Some("WFST weights are auto-assigned by rule specificity and declaration order; restructure rules to have distinct first tokens, or reorder rule declarations to change priority"),
             ))
-            .chain((0..3).map(|i| make_diag(
-                "W05", "composed-dispatch-ambiguity", LintSeverity::Warning,
+            .chain((0..3).map(|i| make_diag(DiagnosticId::W05, "composed-dispatch-ambiguity", LintSeverity::Warning,
                 Some("Int"), None,
                 &format!(
                     "2-way ambiguity at DFA state {}: 2 derivations\n\
@@ -11164,7 +11849,7 @@ mod tests {
             .collect();
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1, "8 W05 should become 1 grouped: {:#?}", result.iter().map(|d| &d.message).collect::<Vec<_>>());
-        assert_eq!(result[0].id, "W05");
+        assert_eq!(result[0].id, DiagnosticId::W05);
         assert!(result[0].message.contains("8 ambiguities resolved"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Float:"), "should list Float: {}", result[0].message);
         assert!(result[0].message.contains("Int:"), "should list Int: {}", result[0].message);
@@ -11172,8 +11857,7 @@ mod tests {
 
     #[test]
     fn group_w05_single_passes_through() {
-        let diag = make_diag(
-            "W05", "composed-dispatch-ambiguity", LintSeverity::Warning,
+        let diag = make_diag(DiagnosticId::W05, "composed-dispatch-ambiguity", LintSeverity::Warning,
             Some("Float"), None, "2-way ambiguity at DFA state 0", Some("hint"),
         );
         let result = group_diagnostics(vec![diag]);
@@ -11184,13 +11868,13 @@ mod tests {
     #[test]
     fn group_w07_multiple() {
         let diags = vec![
-            make_diag("W07", "nearly-dead-path", LintSeverity::Note, Some("Str"), Some("R1"), "nearly dead", Some("hint")),
-            make_diag("W07", "nearly-dead-path", LintSeverity::Note, Some("Str"), Some("R2"), "nearly dead", Some("hint")),
-            make_diag("W07", "nearly-dead-path", LintSeverity::Note, Some("Bool"), Some("R3"), "nearly dead", Some("hint")),
+            make_diag(DiagnosticId::W07, "nearly-dead-path", LintSeverity::Note, Some("Str"), Some("R1"), "nearly dead", Some("hint")),
+            make_diag(DiagnosticId::W07, "nearly-dead-path", LintSeverity::Note, Some("Str"), Some("R2"), "nearly dead", Some("hint")),
+            make_diag(DiagnosticId::W07, "nearly-dead-path", LintSeverity::Note, Some("Bool"), Some("R3"), "nearly dead", Some("hint")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "W07");
+        assert_eq!(result[0].id, DiagnosticId::W07);
         assert!(result[0].message.contains("3 rules on nearly-dead paths"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Bool: R3"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Str: R1, R2"), "message: {}", result[0].message);
@@ -11211,7 +11895,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_s01_safety_violation(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "S01");
+        assert_eq!(diags[0].id, DiagnosticId::S01);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
@@ -11243,7 +11927,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_s02_safety_verified(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "S02");
+        assert_eq!(diags[0].id, DiagnosticId::S02);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
@@ -11279,7 +11963,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_s03_cegar_refinement(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "S03");
+        assert_eq!(diags[0].id, DiagnosticId::S03);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
@@ -11306,7 +11990,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_s06_algebraic_summary(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "S06");
+        assert_eq!(diags[0].id, DiagnosticId::S06);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
@@ -11329,7 +12013,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_p06_analysis_pipeline_cost(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "P06");
+        assert_eq!(diags[0].id, DiagnosticId::P06);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
@@ -11346,7 +12030,6 @@ mod tests {
     // T01-T04: TRS Analysis (feature = "trs-analysis")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "trs-analysis")]
     #[test]
     fn t01_fires_on_non_joinable() {
         use crate::confluence::{ConfluenceAnalysis, CriticalPair, JoinabilityResult, Term};
@@ -11370,11 +12053,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_t01_non_joinable_critical_pair(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "T01");
+        assert_eq!(diags[0].id, DiagnosticId::T01);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "trs-analysis")]
     #[test]
     fn t01_silent_when_none() {
         let b = CtxBuilder::new();
@@ -11383,7 +12065,6 @@ mod tests {
         assert!(diags.is_empty());
     }
 
-    #[cfg(feature = "trs-analysis")]
     #[test]
     fn t02_fires_when_confluent() {
         use crate::confluence::ConfluenceAnalysis;
@@ -11398,11 +12079,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_t02_confluence_verified(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "T02");
+        assert_eq!(diags[0].id, DiagnosticId::T02);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
-    #[cfg(feature = "trs-analysis")]
     #[test]
     fn t02_silent_when_not_confluent() {
         use crate::confluence::ConfluenceAnalysis;
@@ -11419,7 +12099,6 @@ mod tests {
         assert!(diags.is_empty());
     }
 
-    #[cfg(feature = "trs-analysis")]
     #[test]
     fn t03_fires_on_non_terminating() {
         use crate::termination::TerminationResult;
@@ -11431,11 +12110,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_t03_non_terminating_cycle(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "T03");
+        assert_eq!(diags[0].id, DiagnosticId::T03);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "trs-analysis")]
     #[test]
     fn t03_silent_when_terminating() {
         use crate::termination::TerminationResult;
@@ -11446,7 +12124,6 @@ mod tests {
         assert!(diags.is_empty());
     }
 
-    #[cfg(feature = "trs-analysis")]
     #[test]
     fn t04_fires_when_terminating() {
         use crate::termination::TerminationResult;
@@ -11455,11 +12132,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_t04_termination_verified(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "T04");
+        assert_eq!(diags[0].id, DiagnosticId::T04);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
-    #[cfg(feature = "trs-analysis")]
     #[test]
     fn t04_silent_when_not_terminating() {
         use crate::termination::TerminationResult;
@@ -11477,7 +12153,6 @@ mod tests {
     // V01-V02: VPA (feature = "vpa")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn v01_fires_when_determinizable() {
         let mut b = CtxBuilder::new();
@@ -11490,11 +12165,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_v01_vpa_determinizable(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "V01");
+        assert_eq!(diags[0].id, DiagnosticId::V01);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn v01_silent_when_not_determinizable() {
         let mut b = CtxBuilder::new();
@@ -11509,7 +12183,6 @@ mod tests {
         assert!(diags.is_empty());
     }
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn v02_fires_on_mismatch() {
         let mut b = CtxBuilder::new();
@@ -11522,11 +12195,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_v02_vpa_alphabet_mismatch(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "V02");
+        assert_eq!(diags[0].id, DiagnosticId::V02);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "vpa")]
     #[test]
     fn v02_silent_when_no_mismatch() {
         let mut b = CtxBuilder::new();
@@ -11545,7 +12217,6 @@ mod tests {
     // V03-V04: WTA (feature = "tree-automata")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "tree-automata")]
     #[test]
     fn v03_fires_on_unrecognized() {
         let mut b = CtxBuilder::new();
@@ -11558,11 +12229,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_v03_wta_unrecognized_term(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "V03");
+        assert_eq!(diags[0].id, DiagnosticId::V03);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "tree-automata")]
     #[test]
     fn v03_silent_when_all_recognized() {
         let mut b = CtxBuilder::new();
@@ -11577,7 +12247,6 @@ mod tests {
         assert!(diags.is_empty());
     }
 
-    #[cfg(feature = "tree-automata")]
     #[test]
     fn v04_fires_on_hot_path() {
         let mut b = CtxBuilder::new();
@@ -11590,11 +12259,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_v04_wta_hot_path(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "V04");
+        assert_eq!(diags[0].id, DiagnosticId::V04);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
-    #[cfg(feature = "tree-automata")]
     #[test]
     fn v04_silent_when_no_hot_paths() {
         let mut b = CtxBuilder::new();
@@ -11613,7 +12281,6 @@ mod tests {
     // S04: EWPDS Merge Site (feature = "wpds-extended")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "wpds-extended")]
     #[test]
     fn s04_fires_with_merge_sites() {
         let mut b = CtxBuilder::new();
@@ -11624,11 +12291,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_s04_ewpds_merge_site(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "S04");
+        assert_eq!(diags[0].id, DiagnosticId::S04);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
-    #[cfg(feature = "wpds-extended")]
     #[test]
     fn s04_silent_when_no_sites() {
         let mut b = CtxBuilder::new();
@@ -11645,7 +12311,6 @@ mod tests {
     // S05: ARA Invariant (feature = "wpds-ara")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "wpds-ara")]
     #[test]
     fn s05_fires_with_ara() {
         let mut b = CtxBuilder::new();
@@ -11660,11 +12325,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_s05_ara_invariant(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "S05");
+        assert_eq!(diags[0].id, DiagnosticId::S05);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
-    #[cfg(feature = "wpds-ara")]
     #[test]
     fn s05_silent_when_none() {
         let b = CtxBuilder::new();
@@ -11677,7 +12341,6 @@ mod tests {
     // N01-N02: Petri Net (feature = "petri")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "petri")]
     #[test]
     fn n01_fires_on_deadlock() {
         let mut b = CtxBuilder::new();
@@ -11690,11 +12353,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_n01_deadlock_risk(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "N01");
+        assert_eq!(diags[0].id, DiagnosticId::N01);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "petri")]
     #[test]
     fn n01_silent_when_no_deadlock() {
         let mut b = CtxBuilder::new();
@@ -11709,7 +12371,6 @@ mod tests {
         assert!(diags.is_empty());
     }
 
-    #[cfg(feature = "petri")]
     #[test]
     fn n02_fires_on_unbounded() {
         let mut b = CtxBuilder::new();
@@ -11722,11 +12383,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_n02_unbounded_channel(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "N02");
+        assert_eq!(diags[0].id, DiagnosticId::N02);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "petri")]
     #[test]
     fn n02_silent_when_bounded() {
         let mut b = CtxBuilder::new();
@@ -11745,7 +12405,6 @@ mod tests {
     // N03-N04: Nominal (feature = "nominal")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "nominal")]
     #[test]
     fn n03_fires_on_scope_violation() {
         let mut b = CtxBuilder::new();
@@ -11757,11 +12416,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_n03_scope_violation(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "N03");
+        assert_eq!(diags[0].id, DiagnosticId::N03);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "nominal")]
     #[test]
     fn n03_silent_when_no_violations() {
         let mut b = CtxBuilder::new();
@@ -11775,7 +12433,6 @@ mod tests {
         assert!(diags.is_empty());
     }
 
-    #[cfg(feature = "nominal")]
     #[test]
     fn n04_fires_on_narrowing() {
         let mut b = CtxBuilder::new();
@@ -11787,11 +12444,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_n04_scope_narrowing(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "N04");
+        assert_eq!(diags[0].id, DiagnosticId::N04);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
-    #[cfg(feature = "nominal")]
     #[test]
     fn n04_silent_when_no_candidates() {
         let mut b = CtxBuilder::new();
@@ -11809,7 +12465,6 @@ mod tests {
     // N05: Alternating Bisimulation (feature = "alternating")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "alternating")]
     #[test]
     fn n05_fires_on_non_bisimilar() {
         let mut b = CtxBuilder::new();
@@ -11820,11 +12475,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_n05_non_bisimilar(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "N05");
+        assert_eq!(diags[0].id, DiagnosticId::N05);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "alternating")]
     #[test]
     fn n05_silent_when_bisimilar() {
         let mut b = CtxBuilder::new();
@@ -11841,7 +12495,6 @@ mod tests {
     // L01-L02: LTL (feature = "ltl")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "ltl")]
     #[test]
     fn l01_fires_on_violated() {
         let mut b = CtxBuilder::new();
@@ -11852,11 +12505,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_l01_ltl_violated(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "L01");
+        assert_eq!(diags[0].id, DiagnosticId::L01);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "ltl")]
     #[test]
     fn l01_silent_when_satisfied() {
         let mut b = CtxBuilder::new();
@@ -11866,7 +12518,6 @@ mod tests {
         assert!(diags.is_empty());
     }
 
-    #[cfg(feature = "ltl")]
     #[test]
     fn l02_fires_when_satisfied() {
         let mut b = CtxBuilder::new();
@@ -11874,11 +12525,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_l02_ltl_verified(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "L02");
+        assert_eq!(diags[0].id, DiagnosticId::L02);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
-    #[cfg(feature = "ltl")]
     #[test]
     fn l02_silent_when_violated() {
         let mut b = CtxBuilder::new();
@@ -11895,7 +12545,6 @@ mod tests {
     // E01: Provenance Trace (feature = "provenance")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "provenance")]
     #[test]
     fn e01_fires_with_traces() {
         let mut b = CtxBuilder::new();
@@ -11905,11 +12554,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_e01_provenance_trace(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "E01");
+        assert_eq!(diags[0].id, DiagnosticId::E01);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
-    #[cfg(feature = "provenance")]
     #[test]
     fn e01_silent_when_no_traces() {
         let mut b = CtxBuilder::new();
@@ -11925,7 +12573,6 @@ mod tests {
     // E02: CRA Cost Anomaly (feature = "cra")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "cra")]
     #[test]
     fn e02_fires_on_anomaly() {
         let mut b = CtxBuilder::new();
@@ -11937,11 +12584,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_e02_cra_cost_anomaly(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "E02");
+        assert_eq!(diags[0].id, DiagnosticId::E02);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "cra")]
     #[test]
     fn e02_silent_when_no_anomalies() {
         let mut b = CtxBuilder::new();
@@ -11959,7 +12605,6 @@ mod tests {
     // M01-M02: Morphism (feature = "morphisms")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "morphisms")]
     #[test]
     fn m01_fires_on_gap() {
         let mut b = CtxBuilder::new();
@@ -11975,11 +12620,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_m01_morphism_gap(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "M01");
+        assert_eq!(diags[0].id, DiagnosticId::M01);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "morphisms")]
     #[test]
     fn m01_silent_when_complete() {
         let mut b = CtxBuilder::new();
@@ -11993,7 +12637,6 @@ mod tests {
         assert!(diags.is_empty());
     }
 
-    #[cfg(feature = "morphisms")]
     #[test]
     fn m02_fires_on_failure() {
         let mut b = CtxBuilder::new();
@@ -12005,11 +12648,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_m02_morphism_preservation_failure(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "M02");
+        assert_eq!(diags[0].id, DiagnosticId::M02);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "morphisms")]
     #[test]
     fn m02_silent_when_preserved() {
         let mut b = CtxBuilder::new();
@@ -12027,7 +12669,6 @@ mod tests {
     // K01-K02: KAT (feature = "kat")
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "kat")]
     #[test]
     fn k01_fires_on_hoare_failure() {
         let mut b = CtxBuilder::new();
@@ -12038,11 +12679,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_k01_hoare_failure(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "K01");
+        assert_eq!(diags[0].id, DiagnosticId::K01);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
     }
 
-    #[cfg(feature = "kat")]
     #[test]
     fn k01_silent_when_hoare_passes() {
         let mut b = CtxBuilder::new();
@@ -12055,7 +12695,6 @@ mod tests {
         assert!(diags.is_empty());
     }
 
-    #[cfg(feature = "kat")]
     #[test]
     fn k02_fires_with_equivalence() {
         let mut b = CtxBuilder::new();
@@ -12066,11 +12705,10 @@ mod tests {
         let mut diags = Vec::new();
         lint_k02_kat_equivalence(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "K02");
+        assert_eq!(diags[0].id, DiagnosticId::K02);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
-    #[cfg(feature = "kat")]
     #[test]
     fn k02_silent_when_none() {
         let b = CtxBuilder::new();
@@ -12108,7 +12746,7 @@ mod tests {
         lint_a01_fixpoint_non_convergence(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "A01");
+        assert_eq!(diags[0].id, DiagnosticId::A01);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("Wrap"));
     }
@@ -12162,7 +12800,7 @@ mod tests {
         lint_a05_self_referential_equation(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "A05");
+        assert_eq!(diags[0].id, DiagnosticId::A05);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("Identity"));
     }
@@ -12213,7 +12851,7 @@ mod tests {
         lint_a09_ascent_struct_size(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "A09");
+        assert_eq!(diags[0].id, DiagnosticId::A09);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("Ascent rules"));
     }
@@ -12247,7 +12885,7 @@ mod tests {
         lint_lex05_float_integer_ambiguity(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "LEX05");
+        assert_eq!(diags[0].id, DiagnosticId::LEX05);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
@@ -12292,7 +12930,7 @@ mod tests {
         lint_par01_deep_rd_chain(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "PAR01");
+        assert_eq!(diags[0].id, DiagnosticId::PAR01);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("A"));
     }
@@ -12352,7 +12990,7 @@ mod tests {
         lint_dis03_decision_tree_depth(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, "DIS03");
+        assert_eq!(diags[0].id, DiagnosticId::DIS03);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("Expr"));
         assert!(diags[0].message.contains("12"));
@@ -12429,7 +13067,7 @@ mod tests {
         // Second call with same context: should hit cache
         let diags2 = run_lints_cached(&ctx, true);
         // On cache hit, we get a single I18 diagnostic
-        let i18 = diags2.iter().filter(|d| d.id == "I18").count();
+        let i18 = diags2.iter().filter(|d| d.id == DiagnosticId::I18).count();
         assert_eq!(i18, 1, "cache hit should emit exactly one I18 diagnostic");
     }
 
@@ -12440,13 +13078,13 @@ mod tests {
     #[test]
     fn group_a01_multiple_categories() {
         let diags = vec![
-            make_diag("A01", "fixpoint-non-convergence", LintSeverity::Warning, Some("Proc"), Some("ApplyRw"), "rule `ApplyRw` has 2 self-referential nonterminals with 1 terminal(s) — potential unbounded term growth", Some("ensure complementary depth-reducing rules exist")),
-            make_diag("A01", "fixpoint-non-convergence", LintSeverity::Warning, Some("Proc"), Some("EvalRw"), "rule `EvalRw` has 3 self-referential nonterminals with 0 terminal(s) — potential unbounded term growth", Some("ensure complementary depth-reducing rules exist")),
-            make_diag("A01", "fixpoint-non-convergence", LintSeverity::Warning, Some("Name"), Some("NewRw"), "rule `NewRw` has 2 self-referential nonterminals with 1 terminal(s) — potential unbounded term growth", Some("ensure complementary depth-reducing rules exist")),
+            make_diag(DiagnosticId::A01, "fixpoint-non-convergence", LintSeverity::Warning, Some("Proc"), Some("ApplyRw"), "rule `ApplyRw` has 2 self-referential nonterminals with 1 terminal(s) — potential unbounded term growth", Some("ensure complementary depth-reducing rules exist")),
+            make_diag(DiagnosticId::A01, "fixpoint-non-convergence", LintSeverity::Warning, Some("Proc"), Some("EvalRw"), "rule `EvalRw` has 3 self-referential nonterminals with 0 terminal(s) — potential unbounded term growth", Some("ensure complementary depth-reducing rules exist")),
+            make_diag(DiagnosticId::A01, "fixpoint-non-convergence", LintSeverity::Warning, Some("Name"), Some("NewRw"), "rule `NewRw` has 2 self-referential nonterminals with 1 terminal(s) — potential unbounded term growth", Some("ensure complementary depth-reducing rules exist")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "A01");
+        assert_eq!(result[0].id, DiagnosticId::A01);
         assert_eq!(result[0].name, "unbounded-term-growth");
         assert!(result[0].message.contains("3 rules"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Name(NewRw)"), "message: {}", result[0].message);
@@ -12456,13 +13094,13 @@ mod tests {
     #[test]
     fn group_a04_multiple_constructors() {
         let diags = vec![
-            make_diag("A04", "large-equivalence-class", LintSeverity::Warning, Some("Proc"), Some("PPar"), "constructor `PPar` appears in 4 dependency groups — potential exponential equivalence class blowup", Some("consider using HashBag")),
-            make_diag("A04", "large-equivalence-class", LintSeverity::Warning, Some("Proc"), Some("PNew"), "constructor `PNew` appears in 3 dependency groups — potential exponential equivalence class blowup", Some("consider using HashBag")),
-            make_diag("A04", "large-equivalence-class", LintSeverity::Warning, Some("Name"), Some("NQuote"), "constructor `NQuote` appears in 5 dependency groups — potential exponential equivalence class blowup", Some("consider using HashBag")),
+            make_diag(DiagnosticId::A04, "large-equivalence-class", LintSeverity::Warning, Some("Proc"), Some("PPar"), "constructor `PPar` appears in 4 dependency groups — potential exponential equivalence class blowup", Some("consider using HashBag")),
+            make_diag(DiagnosticId::A04, "large-equivalence-class", LintSeverity::Warning, Some("Proc"), Some("PNew"), "constructor `PNew` appears in 3 dependency groups — potential exponential equivalence class blowup", Some("consider using HashBag")),
+            make_diag(DiagnosticId::A04, "large-equivalence-class", LintSeverity::Warning, Some("Name"), Some("NQuote"), "constructor `NQuote` appears in 5 dependency groups — potential exponential equivalence class blowup", Some("consider using HashBag")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "A04");
+        assert_eq!(result[0].id, DiagnosticId::A04);
         assert_eq!(result[0].name, "high-dependency-constructors");
         assert!(result[0].message.contains("3 constructors"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Name(NQuote)"), "message: {}", result[0].message);
@@ -12472,13 +13110,13 @@ mod tests {
     #[test]
     fn group_a08_multiple_constructors() {
         let diags = vec![
-            make_diag("A08", "equation-subsumes-rewrite", LintSeverity::Note, Some("Proc"), Some("PPar"), "constructor `PPar` appears in 2 dependency groups — an equation may subsume a rewrite", Some("check whether the rewrite is redundant")),
-            make_diag("A08", "equation-subsumes-rewrite", LintSeverity::Note, Some("Proc"), Some("PNew"), "constructor `PNew` appears in 3 dependency groups — an equation may subsume a rewrite", Some("check whether the rewrite is redundant")),
-            make_diag("A08", "equation-subsumes-rewrite", LintSeverity::Note, Some("Name"), Some("NQuote"), "constructor `NQuote` appears in 2 dependency groups — an equation may subsume a rewrite", Some("check whether the rewrite is redundant")),
+            make_diag(DiagnosticId::A08, "equation-subsumes-rewrite", LintSeverity::Note, Some("Proc"), Some("PPar"), "constructor `PPar` appears in 2 dependency groups — an equation may subsume a rewrite", Some("check whether the rewrite is redundant")),
+            make_diag(DiagnosticId::A08, "equation-subsumes-rewrite", LintSeverity::Note, Some("Proc"), Some("PNew"), "constructor `PNew` appears in 3 dependency groups — an equation may subsume a rewrite", Some("check whether the rewrite is redundant")),
+            make_diag(DiagnosticId::A08, "equation-subsumes-rewrite", LintSeverity::Note, Some("Name"), Some("NQuote"), "constructor `NQuote` appears in 2 dependency groups — an equation may subsume a rewrite", Some("check whether the rewrite is redundant")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "A08");
+        assert_eq!(result[0].id, DiagnosticId::A08);
         assert_eq!(result[0].name, "equation-subsumed-rewrites");
         assert!(result[0].message.contains("3 constructors"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Name(NQuote)"), "message: {}", result[0].message);
@@ -12488,12 +13126,12 @@ mod tests {
     #[test]
     fn group_cap03_multiple_categories() {
         let diags = vec![
-            make_diag("C-AP03", "deep-congruence-chain", LintSeverity::Warning, None, None, "deep congruence chain: category `Proc` has a self-recursive constructor field — congruence chain depth is unbounded", Some("consider adding depth bounds")),
-            make_diag("C-AP03", "deep-congruence-chain", LintSeverity::Warning, None, None, "deep congruence chain: category `Name` has unbounded congruence chain depth (indirect cycle)", Some("consider adding depth bounds")),
+            make_diag(DiagnosticId::CAP03, "deep-congruence-chain", LintSeverity::Warning, None, None, "deep congruence chain: category `Proc` has a self-recursive constructor field — congruence chain depth is unbounded", Some("consider adding depth bounds")),
+            make_diag(DiagnosticId::CAP03, "deep-congruence-chain", LintSeverity::Warning, None, None, "deep congruence chain: category `Name` has unbounded congruence chain depth (indirect cycle)", Some("consider adding depth bounds")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "C-AP03");
+        assert_eq!(result[0].id, DiagnosticId::CAP03);
         assert_eq!(result[0].name, "deep-congruence-chains");
         assert!(result[0].message.contains("2 categories"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Proc"), "message: {}", result[0].message);
@@ -12503,12 +13141,12 @@ mod tests {
     #[test]
     fn group_cap05_multiple_constructors() {
         let diags = vec![
-            make_diag("C-AP05", "clone-storm-collection-field", LintSeverity::Warning, None, None, "clone storm: constructor `PPar` (category `Proc`) has a `HashBag(Proc)` collection field — congruence rules will clone the entire collection on every rule firing", Some("use reference counting")),
-            make_diag("C-AP05", "clone-storm-collection-field", LintSeverity::Warning, None, None, "clone storm: constructor `NSend` (category `Name`) has a `Vec(Proc)` collection field — congruence rules will clone the entire collection on every rule firing", Some("use reference counting")),
+            make_diag(DiagnosticId::CAP05, "clone-storm-collection-field", LintSeverity::Warning, None, None, "clone storm: constructor `PPar` (category `Proc`) has a `HashBag(Proc)` collection field — congruence rules will clone the entire collection on every rule firing", Some("use reference counting")),
+            make_diag(DiagnosticId::CAP05, "clone-storm-collection-field", LintSeverity::Warning, None, None, "clone storm: constructor `NSend` (category `Name`) has a `Vec(Proc)` collection field — congruence rules will clone the entire collection on every rule firing", Some("use reference counting")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "C-AP05");
+        assert_eq!(result[0].id, DiagnosticId::CAP05);
         assert_eq!(result[0].name, "clone-storm-risk");
         assert!(result[0].message.contains("2 constructors"), "message: {}", result[0].message);
         assert!(result[0].message.contains("PPar(Proc)"), "message: {}", result[0].message);
@@ -12518,13 +13156,13 @@ mod tests {
     #[test]
     fn group_dis01_multiple_categories() {
         let diags = vec![
-            make_diag("DIS01", "hot-path-misalignment", LintSeverity::Note, Some("Proc"), None, "category `Proc`: WFST action table first weight 3.00 != minimum weight 1.00 (codegen CD01 compensates)", Some("WFST builder should finalize in weight order")),
-            make_diag("DIS01", "hot-path-misalignment", LintSeverity::Note, Some("Name"), None, "category `Name`: WFST action table first weight 5.00 != minimum weight 2.00 (codegen CD01 compensates)", Some("WFST builder should finalize in weight order")),
-            make_diag("DIS01", "hot-path-misalignment", LintSeverity::Note, Some("Expr"), None, "category `Expr`: WFST action table first weight 4.00 != minimum weight 1.00 (codegen CD01 compensates)", Some("WFST builder should finalize in weight order")),
+            make_diag(DiagnosticId::DIS01, "hot-path-misalignment", LintSeverity::Note, Some("Proc"), None, "category `Proc`: WFST action table first weight 3.00 != minimum weight 1.00 (codegen CD01 compensates)", Some("WFST builder should finalize in weight order")),
+            make_diag(DiagnosticId::DIS01, "hot-path-misalignment", LintSeverity::Note, Some("Name"), None, "category `Name`: WFST action table first weight 5.00 != minimum weight 2.00 (codegen CD01 compensates)", Some("WFST builder should finalize in weight order")),
+            make_diag(DiagnosticId::DIS01, "hot-path-misalignment", LintSeverity::Note, Some("Expr"), None, "category `Expr`: WFST action table first weight 4.00 != minimum weight 1.00 (codegen CD01 compensates)", Some("WFST builder should finalize in weight order")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "DIS01");
+        assert_eq!(result[0].id, DiagnosticId::DIS01);
         assert_eq!(result[0].name, "hot-path-misalignment");
         assert!(result[0].message.contains("3 categories"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Proc"), "message: {}", result[0].message);
@@ -12535,13 +13173,13 @@ mod tests {
     #[test]
     fn group_w10_multiple_categories() {
         let diags = vec![
-            make_diag("W10", "spillover-eliminable-by-lookahead", LintSeverity::Note, Some("Proc"), None, "NFA spillover for token `kw_new` in `Proc` could be eliminated with 1-token lookahead (resolves to `PNew`)", Some("two-token WFST disambiguation resolves this")),
-            make_diag("W10", "spillover-eliminable-by-lookahead", LintSeverity::Note, Some("Proc"), None, "NFA spillover for token `kw_for` in `Proc` narrows from 3 to 1 candidates with ContextWeight analysis", Some("consider extending lookahead depth")),
-            make_diag("W10", "spillover-eliminable-by-lookahead", LintSeverity::Note, Some("Name"), None, "NFA spillover for token `ident` in `Name` could be eliminated with 1-token lookahead (resolves to `NVar`)", Some("two-token WFST disambiguation resolves this")),
+            make_diag(DiagnosticId::W10, "spillover-eliminable-by-lookahead", LintSeverity::Note, Some("Proc"), None, "NFA spillover for token `kw_new` in `Proc` could be eliminated with 1-token lookahead (resolves to `PNew`)", Some("two-token WFST disambiguation resolves this")),
+            make_diag(DiagnosticId::W10, "spillover-eliminable-by-lookahead", LintSeverity::Note, Some("Proc"), None, "NFA spillover for token `kw_for` in `Proc` narrows from 3 to 1 candidates with ContextWeight analysis", Some("consider extending lookahead depth")),
+            make_diag(DiagnosticId::W10, "spillover-eliminable-by-lookahead", LintSeverity::Note, Some("Name"), None, "NFA spillover for token `ident` in `Name` could be eliminated with 1-token lookahead (resolves to `NVar`)", Some("two-token WFST disambiguation resolves this")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "W10");
+        assert_eq!(result[0].id, DiagnosticId::W10);
         assert_eq!(result[0].name, "nfa-spillover-lookahead");
         assert!(result[0].message.contains("2 categories"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Proc"), "message: {}", result[0].message);
@@ -12551,12 +13189,12 @@ mod tests {
     #[test]
     fn group_w12_multiple_categories() {
         let diags = vec![
-            make_diag("W12", "training-would-improve", LintSeverity::Note, Some("Proc"), None, "category `Proc` has high dispatch entropy (3.21 bits, 2.22 nats) across 10 actions — WFST weight training would likely improve disambiguation quality", Some("use SpilloverTrainer")),
-            make_diag("W12", "training-would-improve", LintSeverity::Note, Some("Name"), None, "category `Name` has high dispatch entropy (2.85 bits, 1.98 nats) across 7 actions — WFST weight training would likely improve disambiguation quality", Some("use SpilloverTrainer")),
+            make_diag(DiagnosticId::W12, "training-would-improve", LintSeverity::Note, Some("Proc"), None, "category `Proc` has high dispatch entropy (3.21 bits, 2.22 nats) across 10 actions — WFST weight training would likely improve disambiguation quality", Some("use SpilloverTrainer")),
+            make_diag(DiagnosticId::W12, "training-would-improve", LintSeverity::Note, Some("Name"), None, "category `Name` has high dispatch entropy (2.85 bits, 1.98 nats) across 7 actions — WFST weight training would likely improve disambiguation quality", Some("use SpilloverTrainer")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "W12");
+        assert_eq!(result[0].id, DiagnosticId::W12);
         assert_eq!(result[0].name, "dispatch-entropy");
         assert!(result[0].message.contains("2 categories"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Proc(3.21 bits)"), "message: {}", result[0].message);
@@ -12566,13 +13204,13 @@ mod tests {
     #[test]
     fn group_w14_multiple_categories() {
         let diags = vec![
-            make_diag("W14", "wpds-confirmed-ambiguity", LintSeverity::Note, Some("Proc"), None, "NFA spillover for `Proc` is confirmed at pushdown level (3 calling contexts, fan-in=2)", Some("the ambiguity is genuine")),
-            make_diag("W14", "wpds-confirmed-ambiguity", LintSeverity::Note, Some("Name"), None, "NFA spillover for `Name` may be a WFST false-positive (category is WPDS-unreachable)", Some("WPDS stack-aware analysis suggests unreachable")),
-            make_diag("W14", "wpds-confirmed-ambiguity", LintSeverity::Note, Some("Expr"), None, "NFA spillover for `Expr` is confirmed at pushdown level (2 calling contexts, fan-in=1)", Some("the ambiguity is genuine")),
+            make_diag(DiagnosticId::W14, "wpds-confirmed-ambiguity", LintSeverity::Note, Some("Proc"), None, "NFA spillover for `Proc` is confirmed at pushdown level (3 calling contexts, fan-in=2)", Some("the ambiguity is genuine")),
+            make_diag(DiagnosticId::W14, "wpds-confirmed-ambiguity", LintSeverity::Note, Some("Name"), None, "NFA spillover for `Name` may be a WFST false-positive (category is WPDS-unreachable)", Some("WPDS stack-aware analysis suggests unreachable")),
+            make_diag(DiagnosticId::W14, "wpds-confirmed-ambiguity", LintSeverity::Note, Some("Expr"), None, "NFA spillover for `Expr` is confirmed at pushdown level (2 calling contexts, fan-in=1)", Some("the ambiguity is genuine")),
         ];
         let result = group_diagnostics(diags);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "W14");
+        assert_eq!(result[0].id, DiagnosticId::W14);
         assert_eq!(result[0].name, "wpds-confirmed-ambiguity");
         assert!(result[0].message.contains("3 categories"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Proc"), "message: {}", result[0].message);
@@ -12616,7 +13254,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_a02_redundant_congruence(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1, "expected 1 A02 diagnostic, got: {:?}", diags);
-        assert_eq!(diags[0].id, "A02");
+        assert_eq!(diags[0].id, DiagnosticId::A02);
         assert_eq!(diags[0].category.as_deref(), Some("Atom"));
     }
 
@@ -12706,7 +13344,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_a03_eq_rw_category_mismatch(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1, "expected 1 A03 diagnostic, got: {:?}", diags);
-        assert_eq!(diags[0].id, "A03");
+        assert_eq!(diags[0].id, DiagnosticId::A03);
         assert_eq!(diags[0].category.as_deref(), Some("Atom"));
     }
 
@@ -12780,7 +13418,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_a04_large_equivalence_class(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1, "expected 1 A04 diagnostic, got: {:?}", diags);
-        assert_eq!(diags[0].id, "A04");
+        assert_eq!(diags[0].id, DiagnosticId::A04);
         assert_eq!(diags[0].rule.as_deref(), Some("Add"));
     }
 
@@ -12840,7 +13478,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_a06_missing_equation_congruence(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1, "expected 1 A06 diagnostic, got: {:?}", diags);
-        assert_eq!(diags[0].id, "A06");
+        assert_eq!(diags[0].id, DiagnosticId::A06);
         assert_eq!(diags[0].rule.as_deref(), Some("Wrap"));
         assert!(diags[0].message.contains("Atom"), "message should mention Atom: {}", diags[0].message);
     }
@@ -12953,7 +13591,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_a07_fixpoint_iteration_anomaly(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1, "expected 1 A07 diagnostic, got: {:?}", diags);
-        assert_eq!(diags[0].id, "A07");
+        assert_eq!(diags[0].id, DiagnosticId::A07);
         assert!(diags[0].message.contains("11 dependency groups"), "message: {}", diags[0].message);
     }
 
@@ -13015,7 +13653,7 @@ mod tests {
         let mut diags = Vec::new();
         lint_a08_equation_subsumes_rewrite(&b.ctx(), &mut diags);
         assert_eq!(diags.len(), 1, "expected 1 A08 diagnostic, got: {:?}", diags);
-        assert_eq!(diags[0].id, "A08");
+        assert_eq!(diags[0].id, DiagnosticId::A08);
         assert_eq!(diags[0].rule.as_deref(), Some("Add"));
     }
 
@@ -13069,7 +13707,7 @@ mod tests {
         lint_a10_unreachable_equation_variable(&b.ctx(), &mut diags);
         // Both "x" and "y" appear once, neither matches NT param "body", and captures.len() > 1
         assert_eq!(diags.len(), 2, "expected 2 A10 diagnostics, got: {:?}", diags);
-        assert!(diags.iter().all(|d| d.id == "A10"));
+        assert!(diags.iter().all(|d| d.id == DiagnosticId::A10));
         let var_names: HashSet<_> = diags.iter().map(|d| d.message.clone()).collect();
         assert!(var_names.iter().any(|m| m.contains("`x`")), "should mention x: {:?}", var_names);
         assert!(var_names.iter().any(|m| m.contains("`y`")), "should mention y: {:?}", var_names);
@@ -13108,7 +13746,7 @@ mod tests {
         // "x": count=1, not in nt_params? No, "x" IS in nt_params => skip.
         // "y": count=1, not in nt_params, captures.len()=2>1 => fires.
         assert_eq!(diags.len(), 1, "expected 1 A10 diagnostic for y, got: {:?}", diags);
-        assert_eq!(diags[0].id, "A10");
+        assert_eq!(diags[0].id, DiagnosticId::A10);
         assert!(diags[0].message.contains("`y`"), "should flag y: {}", diags[0].message);
     }
 
@@ -13191,7 +13829,7 @@ mod tests {
         lint_g06_shadowed_operator(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected exactly one G06 diagnostic");
-        assert_eq!(diags[0].id, "G06");
+        assert_eq!(diags[0].id, DiagnosticId::G06);
         assert_eq!(diags[0].severity, LintSeverity::Note);
         assert!(diags[0].message.contains("`-`"), "message should mention `-`");
         assert!(diags[0].message.contains("Expr"), "message should mention category");
@@ -13272,7 +13910,7 @@ mod tests {
         lint_g32_prefix_isomorphism(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected one G32 diagnostic");
-        assert_eq!(diags[0].id, "G32");
+        assert_eq!(diags[0].id, DiagnosticId::G32);
         assert!(diags[0].message.contains("Expr"), "message: {}", diags[0].message);
         assert!(diags[0].message.contains("Type"), "message: {}", diags[0].message);
     }
@@ -13351,7 +13989,7 @@ mod tests {
         lint_r01_empty_sync_set(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected one R01 diagnostic");
-        assert_eq!(diags[0].id, "R01");
+        assert_eq!(diags[0].id, DiagnosticId::R01);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("Expr"), "message: {}", diags[0].message);
         assert!(diags[0].message.contains("no sync tokens"), "message: {}", diags[0].message);
@@ -13392,7 +14030,7 @@ mod tests {
         lint_r02_sparse_recovery(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected one R02 diagnostic");
-        assert_eq!(diags[0].id, "R02");
+        assert_eq!(diags[0].id, DiagnosticId::R02);
         assert_eq!(diags[0].severity, LintSeverity::Note);
         assert!(diags[0].message.contains("Expr"), "message: {}", diags[0].message);
         assert!(diags[0].message.contains("only 1"), "message: {}", diags[0].message);
@@ -13452,7 +14090,7 @@ mod tests {
         lint_r05_missing_bracket_sync(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected one R05 diagnostic");
-        assert_eq!(diags[0].id, "R05");
+        assert_eq!(diags[0].id, DiagnosticId::R05);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("`(`"), "message: {}", diags[0].message);
         assert!(diags[0].message.contains("RParen"), "message: {}", diags[0].message);
@@ -13521,7 +14159,7 @@ mod tests {
         lint_c04_wide_cross_overlap(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected one C04 diagnostic");
-        assert_eq!(diags[0].id, "C04");
+        assert_eq!(diags[0].id, DiagnosticId::C04);
         assert_eq!(diags[0].severity, LintSeverity::Note);
         assert!(diags[0].message.contains("Expr"), "message: {}", diags[0].message);
         assert!(diags[0].message.contains("Type"), "message: {}", diags[0].message);
@@ -13622,7 +14260,7 @@ mod tests {
         lint_d10_lookahead_waste(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected one D10 diagnostic");
-        assert_eq!(diags[0].id, "D10");
+        assert_eq!(diags[0].id, DiagnosticId::D10);
         assert_eq!(diags[0].severity, LintSeverity::Note);
         assert!(diags[0].message.contains("Expr"), "message: {}", diags[0].message);
         assert!(diags[0].message.contains("4-token max lookahead"), "message: {}", diags[0].message);
@@ -13698,7 +14336,7 @@ mod tests {
         lint_d13_ascent_trie_correlation(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected one D13 for orphan 'Lit'");
-        assert_eq!(diags[0].id, "D13");
+        assert_eq!(diags[0].id, DiagnosticId::D13);
         assert_eq!(diags[0].severity, LintSeverity::Note);
         assert!(diags[0].message.contains("Lit"), "message: {}", diags[0].message);
     }
@@ -13783,13 +14421,15 @@ mod tests {
             context_rule_tables: HashMap::new(),
             cross_category_bp: HashMap::new(),
             context_unambiguous: HashMap::new(),
+            cek_bijection: crate::wpds::CekWpdsBijection::default(),
+            pautomaton: crate::wpds::PAutomaton::new(0),
         });
 
         let mut diags = Vec::new();
         lint_d14_wpds_complexity_report(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected one D14 diagnostic");
-        assert_eq!(diags[0].id, "D14");
+        assert_eq!(diags[0].id, DiagnosticId::D14);
         assert_eq!(diags[0].severity, LintSeverity::Info);
         assert!(diags[0].message.contains("WPDS analysis"), "message: {}", diags[0].message);
         assert!(diags[0].message.contains("|Γ|=5"), "message should show symbol count: {}", diags[0].message);
@@ -13844,7 +14484,7 @@ mod tests {
         lint_p04_many_alternatives(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected one P04 diagnostic");
-        assert_eq!(diags[0].id, "P04");
+        assert_eq!(diags[0].id, DiagnosticId::P04);
         assert!(diags[0].message.contains("Ident"), "message: {}", diags[0].message);
         assert!(diags[0].message.contains("5 rules"), "message: {}", diags[0].message);
     }
@@ -13917,13 +14557,15 @@ mod tests {
             context_rule_tables: HashMap::new(),
             cross_category_bp: HashMap::new(),
             context_unambiguous: HashMap::new(),
+            cek_bijection: crate::wpds::CekWpdsBijection::default(),
+            pautomaton: crate::wpds::PAutomaton::new(0),
         });
 
         let mut diags = Vec::new();
         lint_p05_wpds_pipeline_cost(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected one P05 diagnostic");
-        assert_eq!(diags[0].id, "P05");
+        assert_eq!(diags[0].id, DiagnosticId::P05);
         assert_eq!(diags[0].severity, LintSeverity::Info);
         assert!(diags[0].message.contains("WPDS analysis completed"), "message: {}", diags[0].message);
         assert!(diags[0].message.contains("|Γ|=3"), "message: {}", diags[0].message);
@@ -13966,6 +14608,8 @@ mod tests {
             context_rule_tables: HashMap::new(),
             cross_category_bp: HashMap::new(),
             context_unambiguous: HashMap::new(),
+            cek_bijection: crate::wpds::CekWpdsBijection::default(),
+            pautomaton: crate::wpds::PAutomaton::new(0),
         }
     }
 
@@ -13986,7 +14630,7 @@ mod tests {
         lint_w01_dead_rule(&b.ctx(), &mut diags);
 
         assert!(
-            diags.iter().any(|d| d.id == "W01" && d.severity == LintSeverity::Warning),
+            diags.iter().any(|d| d.id == DiagnosticId::W01 && d.severity == LintSeverity::Warning),
             "W01 should fire for WfstUnreachable warning: {:?}",
             diags,
         );
@@ -14011,7 +14655,7 @@ mod tests {
         lint_w01_dead_rule(&b.ctx(), &mut diags);
 
         assert!(
-            diags.iter().any(|d| d.id == "W01" && d.severity == LintSeverity::Warning),
+            diags.iter().any(|d| d.id == DiagnosticId::W01 && d.severity == LintSeverity::Warning),
             "W01 should fire for LiteralNoNativeType: {:?}",
             diags,
         );
@@ -14032,7 +14676,7 @@ mod tests {
         lint_w01_dead_rule(&b.ctx(), &mut diags);
 
         assert!(
-            diags.iter().any(|d| d.id == "W01"),
+            diags.iter().any(|d| d.id == DiagnosticId::W01),
             "W01 should fire for UnreachableCategory: {:?}",
             diags,
         );
@@ -14056,12 +14700,12 @@ mod tests {
 
         // NearlyDeadPath should emit W07 with Note severity, not W01
         assert!(
-            diags.iter().any(|d| d.id == "W07" && d.severity == LintSeverity::Note),
+            diags.iter().any(|d| d.id == DiagnosticId::W07 && d.severity == LintSeverity::Note),
             "NearlyDeadPath should emit W07 Note, not W01 Warning: {:?}",
             diags,
         );
         assert!(
-            !diags.iter().any(|d| d.id == "W01"),
+            !diags.iter().any(|d| d.id == DiagnosticId::W01),
             "NearlyDeadPath should NOT emit W01",
         );
     }
@@ -14075,7 +14719,7 @@ mod tests {
 
         // W01 also computes A4/A8 warnings internally, but with empty
         // categories/rules/syntax/first_sets those should produce nothing.
-        let w01_count = diags.iter().filter(|d| d.id == "W01").count();
+        let w01_count = diags.iter().filter(|d| d.id == DiagnosticId::W01).count();
         assert_eq!(w01_count, 0, "W01 should not fire with no warnings: {:?}", diags);
     }
 
@@ -14103,7 +14747,7 @@ mod tests {
         lint_w03_high_ambiguity_token(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 W03 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, "W03");
+        assert_eq!(diags[0].id, DiagnosticId::W03);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("Ident"), "message should mention token: {}", diags[0].message);
         assert!(diags[0].message.contains("3"), "message should mention count: {}", diags[0].message);
@@ -14171,7 +14815,7 @@ mod tests {
         lint_w04_weight_gap_anomaly(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 W04 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, "W04");
+        assert_eq!(diags[0].id, DiagnosticId::W04);
         assert_eq!(diags[0].severity, LintSeverity::Note);
         assert!(diags[0].message.contains("Plus"), "message should mention token: {}", diags[0].message);
         assert!(diags[0].message.contains("AddExpr"), "message should mention best rule: {}", diags[0].message);
@@ -14259,7 +14903,7 @@ mod tests {
         lint_w06_weight_inversion(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 W06 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, "W06");
+        assert_eq!(diags[0].id, DiagnosticId::W06);
         assert_eq!(diags[0].severity, LintSeverity::Note);
         assert!(diags[0].message.contains("Short"), "message should mention less-specific rule: {}", diags[0].message);
         assert!(diags[0].message.contains("Long"), "message should mention more-specific rule: {}", diags[0].message);
@@ -14324,7 +14968,7 @@ mod tests {
         lint_w13_wpds_unreachable(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 W13 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, "W13");
+        assert_eq!(diags[0].id, DiagnosticId::W13);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("OrphanRule"), "message: {}", diags[0].message);
         assert!(diags[0].message.contains("Orphan"), "message: {}", diags[0].message);
@@ -14375,7 +15019,7 @@ mod tests {
         lint_w14_wpds_confirmed_ambiguity(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 W14 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, "W14");
+        assert_eq!(diags[0].id, DiagnosticId::W14);
         assert_eq!(diags[0].severity, LintSeverity::Note);
         assert!(
             diags[0].message.contains("false-positive"),
@@ -14417,7 +15061,7 @@ mod tests {
         lint_w14_wpds_confirmed_ambiguity(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 W14 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, "W14");
+        assert_eq!(diags[0].id, DiagnosticId::W14);
         assert!(
             diags[0].message.contains("confirmed"),
             "message should mention confirmed: {}",
@@ -14540,12 +15184,10 @@ mod tests {
     // RT01–RT06: Refinement Type Lints
     // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "type-system")]
     fn make_refinement_analysis() -> crate::pipeline::RefinementAnalysisResult {
         crate::pipeline::RefinementAnalysisResult::default()
     }
 
-    #[cfg(feature = "type-system")]
     #[test]
     fn rt01_fires_on_unsatisfiable_refinement() {
         let mut b = CtxBuilder::new();
@@ -14561,12 +15203,11 @@ mod tests {
         lint_rt01_unsatisfiable_refinement(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 RT01 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, "RT01");
+        assert_eq!(diags[0].id, DiagnosticId::RT01);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("NeverInt"), "message: {}", diags[0].message);
     }
 
-    #[cfg(feature = "type-system")]
     #[test]
     fn rt01_silent_when_no_analysis() {
         let b = CtxBuilder::new();
@@ -14575,7 +15216,6 @@ mod tests {
         assert!(diags.is_empty(), "absent analysis should not trigger RT01");
     }
 
-    #[cfg(feature = "type-system")]
     #[test]
     fn rt02_fires_on_tautological_refinement() {
         let mut b = CtxBuilder::new();
@@ -14591,11 +15231,10 @@ mod tests {
         lint_rt02_tautological_refinement(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 RT02 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, "RT02");
+        assert_eq!(diags[0].id, DiagnosticId::RT02);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
-    #[cfg(feature = "type-system")]
     #[test]
     fn rt03_fires_on_empty_intersection() {
         let mut b = CtxBuilder::new();
@@ -14612,13 +15251,12 @@ mod tests {
         lint_rt03_empty_intersection(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 RT03 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, "RT03");
+        assert_eq!(diags[0].id, DiagnosticId::RT03);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("PosInt"), "message: {}", diags[0].message);
         assert!(diags[0].message.contains("NegInt"), "message: {}", diags[0].message);
     }
 
-    #[cfg(feature = "type-system")]
     #[test]
     fn rt04_fires_on_subtype_pair() {
         let mut b = CtxBuilder::new();
@@ -14634,11 +15272,10 @@ mod tests {
         lint_rt04_subtype_detected(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 RT04 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, "RT04");
+        assert_eq!(diags[0].id, DiagnosticId::RT04);
         assert_eq!(diags[0].severity, LintSeverity::Note);
     }
 
-    #[cfg(feature = "type-system")]
     #[test]
     fn rt05_fires_on_decidability_tier() {
         let mut b = CtxBuilder::new();
@@ -14654,12 +15291,11 @@ mod tests {
         lint_rt05_decidability_tier(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 RT05 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, "RT05");
+        assert_eq!(diags[0].id, DiagnosticId::RT05);
         assert_eq!(diags[0].severity, LintSeverity::Note);
         assert!(diags[0].message.contains("T2"), "message: {}", diags[0].message);
     }
 
-    #[cfg(feature = "type-system")]
     #[test]
     fn rt06_fires_on_name_shadow() {
         let mut b = CtxBuilder::new();
@@ -14675,12 +15311,11 @@ mod tests {
         lint_rt06_name_shadow(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 RT06 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, "RT06");
+        assert_eq!(diags[0].id, DiagnosticId::RT06);
         assert_eq!(diags[0].severity, LintSeverity::Warning);
         assert!(diags[0].message.contains("shadows"), "message: {}", diags[0].message);
     }
 
-    #[cfg(feature = "type-system")]
     #[test]
     fn rt_lints_run_in_run_lints() {
         let mut b = CtxBuilder::new();
@@ -14697,7 +15332,769 @@ mod tests {
         b.refinement_analysis_data = Some(analysis);
 
         let diags = run_lints(&b.ctx());
-        let rt_diags: Vec<_> = diags.iter().filter(|d| d.id.starts_with("RT")).collect();
+        let rt_diags: Vec<_> = diags.iter().filter(|d| d.id.is_runtime()).collect();
         assert_eq!(rt_diags.len(), 2, "expected 2 RT diagnostics (RT01 + RT05): {:?}", rt_diags);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // Lint-E: Tests for the refined linter output
+    // ═════════════════════════════════════════════════════════════════════
+    //
+    // These tests live in a nested module so the local `make_diag`
+    // helper does not collide with the outer `tests` module's helper
+    // of the same name but different signature.
+    mod lint_e {
+        use super::super::*;
+
+        fn make_diag(
+            id: DiagnosticId,
+            grammar: &str,
+            message: &str,
+            severity: LintSeverity,
+        ) -> LintDiagnostic {
+            LintDiagnostic {
+                id,
+                name: "test",
+                severity,
+                category: None,
+                rule: None,
+                message: message.to_string(),
+                hint: None,
+                grammar_name: Some(grammar.to_string()),
+                source_location: None,
+            }
+        }
+
+    #[test]
+    fn lint_e_m01_is_groupable() {
+        assert!(DiagnosticId::M01.is_groupable());
+        assert!(DiagnosticId::K01.is_groupable());
+        assert!(DiagnosticId::SYM02.is_groupable());
+        assert!(DiagnosticId::N02.is_groupable());
+        assert!(DiagnosticId::N05.is_groupable());
+    }
+
+    #[test]
+    fn lint_e_group_m01_collapses_identical_messages() {
+        // Three identical M01 warnings — should collapse to 1.
+        let diags = vec![
+            make_diag(
+                DiagnosticId::M01,
+                "Calc",
+                "theory morphism incomplete — missing constructor mapping: \
+                 [MissingOperation] Int::Tern: Source operation 'Int::Tern' \
+                 (Int::Tern: Int x Int x Int -> Int) has no translation case",
+                LintSeverity::Warning,
+            ),
+            make_diag(
+                DiagnosticId::M01,
+                "Calc",
+                "theory morphism incomplete — missing constructor mapping: \
+                 [MissingOperation] Int::Tern: Source operation 'Int::Tern' \
+                 (Int::Tern: Int x Int x Int -> Int) has no translation case",
+                LintSeverity::Warning,
+            ),
+            make_diag(
+                DiagnosticId::M01,
+                "Calc",
+                "theory morphism incomplete — missing constructor mapping: \
+                 [MissingOperation] Int::Tern: Source operation 'Int::Tern' \
+                 (Int::Tern: Int x Int x Int -> Int) has no translation case",
+                LintSeverity::Warning,
+            ),
+        ];
+        let grouped = group_m01(diags);
+        assert_eq!(grouped.len(), 1);
+        assert!(grouped[0].message.starts_with("3 theory morphism gap"));
+        // Single-unique-message path reports the specific identifier.
+        assert!(grouped[0].message.contains("Int::Tern"));
+    }
+
+    #[test]
+    fn lint_e_group_m01_multiple_uniques() {
+        // Three M01 warnings with 2 unique messages — should collapse to 1
+        // summary that lists both unique identifiers.
+        let diags = vec![
+            make_diag(
+                DiagnosticId::M01,
+                "Calc",
+                "theory morphism incomplete — missing constructor mapping: \
+                 [MissingOperation] Num::NegNum: ...",
+                LintSeverity::Warning,
+            ),
+            make_diag(
+                DiagnosticId::M01,
+                "Calc",
+                "theory morphism incomplete — missing constructor mapping: \
+                 [MissingOperation] Num::FactNum: ...",
+                LintSeverity::Warning,
+            ),
+            make_diag(
+                DiagnosticId::M01,
+                "Calc",
+                "theory morphism incomplete — missing constructor mapping: \
+                 [MissingOperation] Num::NegNum: ...",
+                LintSeverity::Warning,
+            ),
+        ];
+        let grouped = group_m01(diags);
+        assert_eq!(grouped.len(), 1);
+        assert!(grouped[0].message.contains("3"));
+        assert!(grouped[0].message.contains("2 unique"));
+        assert!(grouped[0].message.contains("Num::NegNum"));
+        assert!(grouped[0].message.contains("Num::FactNum"));
+    }
+
+    #[test]
+    fn lint_e_group_k01_extracts_type_pairs() {
+        let diags = vec![
+            make_diag(
+                DiagnosticId::K01,
+                "Calc",
+                "Hoare triple failed: [Str -> Bool] {Str_reachable} call_Str_Bool {Bool_reachable}",
+                LintSeverity::Warning,
+            ),
+            make_diag(
+                DiagnosticId::K01,
+                "Calc",
+                "Hoare triple failed: [Int -> Str] {Int_reachable} call_Int_Str {Str_reachable}",
+                LintSeverity::Warning,
+            ),
+        ];
+        let grouped = group_k01(diags);
+        assert_eq!(grouped.len(), 1);
+        assert!(grouped[0].message.contains("2 KAT Hoare-triple failures"));
+        assert!(grouped[0].message.contains("Str→Bool"));
+        assert!(grouped[0].message.contains("Int→Str"));
+    }
+
+    #[test]
+    fn lint_e_group_n02_extracts_place_names() {
+        let diags = vec![
+            LintDiagnostic {
+                id: DiagnosticId::N02,
+                name: "test",
+                severity: LintSeverity::Warning,
+                category: None,
+                rule: None,
+                message: "place `Float` has unbounded token capacity".to_string(),
+                hint: None,
+                grammar_name: Some("Calc".to_string()),
+                source_location: None,
+            },
+            LintDiagnostic {
+                id: DiagnosticId::N02,
+                name: "test",
+                severity: LintSeverity::Warning,
+                category: None,
+                rule: None,
+                message: "place `Str` has unbounded token capacity".to_string(),
+                hint: None,
+                grammar_name: Some("Calc".to_string()),
+                source_location: None,
+            },
+            LintDiagnostic {
+                id: DiagnosticId::N02,
+                name: "test",
+                severity: LintSeverity::Warning,
+                category: None,
+                rule: None,
+                message: "place `Int` has unbounded token capacity".to_string(),
+                hint: None,
+                grammar_name: Some("Calc".to_string()),
+                source_location: None,
+            },
+        ];
+        let grouped = group_n02(diags);
+        assert_eq!(grouped.len(), 1);
+        assert!(grouped[0].message.contains("3 places with unbounded"));
+        assert!(grouped[0].message.contains("Float"));
+        assert!(grouped[0].message.contains("Str"));
+        assert!(grouped[0].message.contains("Int"));
+    }
+
+    #[test]
+    fn lint_e_group_n05_extracts_category_pairs() {
+        let diags = vec![
+            LintDiagnostic {
+                id: DiagnosticId::N05,
+                name: "test",
+                severity: LintSeverity::Warning,
+                category: None,
+                rule: None,
+                message: "categories `Int` and `Float` are not bisimilar (attacker wins game)"
+                    .to_string(),
+                hint: None,
+                grammar_name: Some("Calc".to_string()),
+                source_location: None,
+            },
+            LintDiagnostic {
+                id: DiagnosticId::N05,
+                name: "test",
+                severity: LintSeverity::Warning,
+                category: None,
+                rule: None,
+                message: "categories `Bool` and `Str` are not bisimilar (attacker wins game)"
+                    .to_string(),
+                hint: None,
+                grammar_name: Some("Calc".to_string()),
+                source_location: None,
+            },
+        ];
+        let grouped = group_n05(diags);
+        assert_eq!(grouped.len(), 1);
+        assert!(grouped[0].message.contains("2 category pairs"));
+        assert!(grouped[0].message.contains("(Int,Float)"));
+        assert!(grouped[0].message.contains("(Bool,Str)"));
+    }
+
+    #[test]
+    fn lint_e_group_sym02_aggregates_by_category() {
+        let diags = vec![
+            LintDiagnostic {
+                id: DiagnosticId::SYM02,
+                name: "test",
+                severity: LintSeverity::Note,
+                category: Some("Proc".to_string()),
+                rule: None,
+                message: "SFA overlap 1".to_string(),
+                hint: None,
+                grammar_name: Some("Rho".to_string()),
+                source_location: None,
+            },
+            LintDiagnostic {
+                id: DiagnosticId::SYM02,
+                name: "test",
+                severity: LintSeverity::Note,
+                category: Some("Proc".to_string()),
+                rule: None,
+                message: "SFA overlap 2".to_string(),
+                hint: None,
+                grammar_name: Some("Rho".to_string()),
+                source_location: None,
+            },
+            LintDiagnostic {
+                id: DiagnosticId::SYM02,
+                name: "test",
+                severity: LintSeverity::Note,
+                category: Some("Name".to_string()),
+                rule: None,
+                message: "SFA overlap 3".to_string(),
+                hint: None,
+                grammar_name: Some("Rho".to_string()),
+                source_location: None,
+            },
+        ];
+        let grouped = group_sym02(diags);
+        assert_eq!(grouped.len(), 1);
+        assert!(grouped[0].message.contains("3"));
+        assert!(grouped[0].message.contains("Name:1"));
+        assert!(grouped[0].message.contains("Proc:2"));
+    }
+
+    #[test]
+    fn lint_e_single_item_passes_through_unchanged() {
+        // Groupers should not modify single-item groups.
+        for id in [
+            DiagnosticId::M01,
+            DiagnosticId::K01,
+            DiagnosticId::SYM02,
+            DiagnosticId::N02,
+            DiagnosticId::N05,
+        ] {
+            let diag = make_diag(id, "G", "unique message", LintSeverity::Warning);
+            let grouped = group_diagnostics(vec![diag.clone()]);
+            assert_eq!(grouped.len(), 1);
+            assert_eq!(grouped[0].message, "unique message");
+        }
+    }
+
+    #[test]
+    fn lint_e_grammar_lint_state_coalesces_headers() {
+        reset_grammar_lint_state();
+
+        let diag1 = make_diag(
+            DiagnosticId::A01,
+            "TestLang",
+            "first",
+            LintSeverity::Warning,
+        );
+        let diag2 = make_diag(
+            DiagnosticId::A01,
+            "TestLang",
+            "second",
+            LintSeverity::Warning,
+        );
+
+        // Two emit calls for the same grammar: the thread-local should
+        // record exactly one header-printed flag and accumulate counts.
+        emit_diagnostics_for_grammar("TestLang", &[diag1]);
+        emit_diagnostics_for_grammar("TestLang", &[diag2]);
+
+        GRAMMAR_LINT_STATE.with(|cell| {
+            let state = cell.borrow();
+            let entry = state.get("TestLang").expect("entry should exist");
+            assert!(entry.header_printed);
+            assert_eq!(entry.warning_count, 2);
+        });
+
+        reset_grammar_lint_state();
+    }
+
+    #[test]
+    fn lint_e_finalize_grammar_summary_noop_when_no_diagnostics() {
+        reset_grammar_lint_state();
+        // Never called emit_diagnostics_for_grammar — finalize should
+        // be a no-op without touching state.
+        finalize_grammar_summary("UnknownLang");
+        GRAMMAR_LINT_STATE.with(|cell| {
+            assert!(cell.borrow().get("UnknownLang").is_none());
+        });
+    }
+
+    #[test]
+    fn lint_e_finalize_aggregates_across_passes() {
+        reset_grammar_lint_state();
+
+        // Simulate two passes (one warning each).
+        let pass1 = vec![make_diag(
+            DiagnosticId::A01,
+            "MultiPass",
+            "p1",
+            LintSeverity::Warning,
+        )];
+        let pass2 = vec![make_diag(
+            DiagnosticId::A01,
+            "MultiPass",
+            "p2",
+            LintSeverity::Warning,
+        )];
+        emit_diagnostics_for_grammar("MultiPass", &pass1);
+        emit_diagnostics_for_grammar("MultiPass", &pass2);
+
+        // Verify accumulated counts.
+        GRAMMAR_LINT_STATE.with(|cell| {
+            let state = cell.borrow();
+            let entry = state.get("MultiPass").expect("entry exists");
+            assert_eq!(entry.warning_count, 2);
+            assert!(entry.header_printed);
+        });
+
+        // finalize is idempotent / non-destructive.
+        finalize_grammar_summary("MultiPass");
+        GRAMMAR_LINT_STATE.with(|cell| {
+            let state = cell.borrow();
+            let entry = state.get("MultiPass").expect("entry still exists");
+            assert_eq!(entry.warning_count, 2);
+        });
+
+        reset_grammar_lint_state();
+    }
+
+    // ── Property tests ───────────────────────────────────────────────────
+    use proptest::prelude::*;
+
+    proptest! {
+        /// For any N >= 1 identical M01 diagnostics, the grouper
+        /// produces exactly 1 output diagnostic whose message begins
+        /// with "N theory morphism gap".
+        #[test]
+        fn proptest_lint_e_m01_collapses_to_one(n in 1usize..32) {
+            let diags: Vec<LintDiagnostic> = (0..n)
+                .map(|_| make_diag(
+                    DiagnosticId::M01,
+                    "G",
+                    "theory morphism incomplete — missing constructor mapping: \
+                     [MissingOperation] Int::Tern: ...",
+                    LintSeverity::Warning,
+                ))
+                .collect();
+            let grouped = group_m01(diags);
+            if n == 1 {
+                // Single-item passes through unchanged.
+                prop_assert_eq!(grouped.len(), 1);
+            } else {
+                prop_assert_eq!(grouped.len(), 1);
+                let expected_prefix = format!("{} theory morphism gap", n);
+                prop_assert!(grouped[0].message.starts_with(&expected_prefix));
+            }
+        }
+
+        /// For any N >= 1 identical K01 diagnostics with the same type
+        /// pair, the grouper produces exactly 1 output diagnostic.
+        #[test]
+        fn proptest_lint_e_k01_collapses_to_one(n in 1usize..32) {
+            let diags: Vec<LintDiagnostic> = (0..n)
+                .map(|_| make_diag(
+                    DiagnosticId::K01,
+                    "G",
+                    "Hoare triple failed: [A -> B] ...",
+                    LintSeverity::Warning,
+                ))
+                .collect();
+            let grouped = group_k01(diags);
+            prop_assert_eq!(grouped.len(), 1);
+        }
+    }
+    } // end of `mod lint_e`
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Phase 13 (predicated types): coverage for advanced-automata lints
+    // ══════════════════════════════════════════════════════════════════════
+
+    mod predicated_types_lint_coverage {
+        use super::*;
+        use crate::multi_tape::MultiTapeAnalysis;
+        use crate::parity_tree::ParityTreeAnalysis;
+        use crate::symbolic::{DecidabilityTier, SymbolicAnalysis};
+        use crate::two_way_transducer::TwoWayAnalysis;
+        use crate::weighted_mso::{MsoAnalysis, MsoFormulaClass};
+
+        // ── DiagnosticId identity tests for the new IDs ──
+
+        #[test]
+        fn strat01_id_string() {
+            assert_eq!(DiagnosticId::STRAT01.as_str(), "STRAT01");
+            assert_eq!(format!("{}", DiagnosticId::STRAT01), "STRAT01");
+        }
+
+        #[test]
+        fn tier01_id_string() {
+            assert_eq!(DiagnosticId::TIER01.as_str(), "TIER01");
+            assert_eq!(format!("{}", DiagnosticId::TIER01), "TIER01");
+        }
+
+        #[test]
+        fn dnf01_id_string() {
+            assert_eq!(DiagnosticId::DNF01.as_str(), "DNF01");
+        }
+
+        #[test]
+        fn tok01_id_string() {
+            assert_eq!(DiagnosticId::TOK01.as_str(), "TOK01");
+        }
+
+        // ── SYM01: unsatisfiable guard ──
+
+        #[test]
+        fn sym01_fires_when_guard_unsatisfiable() {
+            let mut b = CtxBuilder::new();
+            b.symbolic_result_data = Some(SymbolicAnalysis {
+                num_states: 2,
+                num_transitions: 1,
+                guard_satisfiability: vec![("dead_guard".to_string(), false)],
+                overlapping_guards: vec![],
+                subsumed_guards: vec![],
+                unsatisfiable_rule_labels: vec![],
+            });
+            let mut diags = Vec::new();
+            lint_sym01_unsatisfiable_guard(&b.ctx(), &mut diags);
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags[0].id, DiagnosticId::SYM01);
+        }
+
+        #[test]
+        fn sym01_clean_when_all_guards_satisfiable() {
+            let mut b = CtxBuilder::new();
+            b.symbolic_result_data = Some(SymbolicAnalysis {
+                num_states: 2,
+                num_transitions: 1,
+                guard_satisfiability: vec![("g".to_string(), true)],
+                overlapping_guards: vec![],
+                subsumed_guards: vec![],
+                unsatisfiable_rule_labels: vec![],
+            });
+            let mut diags = Vec::new();
+            lint_sym01_unsatisfiable_guard(&b.ctx(), &mut diags);
+            assert!(diags.is_empty());
+        }
+
+        // ── SYM02: overlapping guards ──
+
+        #[test]
+        fn sym02_fires_on_overlapping_guards() {
+            let mut b = CtxBuilder::new();
+            b.symbolic_result_data = Some(SymbolicAnalysis {
+                num_states: 2,
+                num_transitions: 2,
+                guard_satisfiability: vec![],
+                overlapping_guards: vec![("g1".to_string(), "g2".to_string())],
+                subsumed_guards: vec![],
+                unsatisfiable_rule_labels: vec![],
+            });
+            let mut diags = Vec::new();
+            lint_sym02_overlapping_guards(&b.ctx(), &mut diags);
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags[0].id, DiagnosticId::SYM02);
+        }
+
+        #[test]
+        fn sym02_clean_when_no_overlap() {
+            let mut b = CtxBuilder::new();
+            b.symbolic_result_data = Some(SymbolicAnalysis {
+                num_states: 2,
+                num_transitions: 2,
+                guard_satisfiability: vec![],
+                overlapping_guards: vec![],
+                subsumed_guards: vec![],
+                unsatisfiable_rule_labels: vec![],
+            });
+            let mut diags = Vec::new();
+            lint_sym02_overlapping_guards(&b.ctx(), &mut diags);
+            assert!(diags.is_empty());
+        }
+
+        // ── SYM03: subsumed guard ──
+
+        #[test]
+        fn sym03_fires_on_subsumption() {
+            let mut b = CtxBuilder::new();
+            b.symbolic_result_data = Some(SymbolicAnalysis {
+                num_states: 2,
+                num_transitions: 2,
+                guard_satisfiability: vec![],
+                overlapping_guards: vec![],
+                subsumed_guards: vec![("sub".to_string(), "sup".to_string())],
+                unsatisfiable_rule_labels: vec![],
+            });
+            let mut diags = Vec::new();
+            lint_sym03_subsumed_guard(&b.ctx(), &mut diags);
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags[0].id, DiagnosticId::SYM03);
+        }
+
+        // ── SYM04: non-minimal guards ──
+
+        #[test]
+        fn sym04_fires_on_large_subsumption_set() {
+            let mut b = CtxBuilder::new();
+            b.symbolic_result_data = Some(SymbolicAnalysis {
+                num_states: 12, // > 10 threshold
+                num_transitions: 20,
+                guard_satisfiability: vec![],
+                overlapping_guards: vec![],
+                subsumed_guards: vec![("sub".to_string(), "sup".to_string())],
+                unsatisfiable_rule_labels: vec![],
+            });
+            let mut diags = Vec::new();
+            lint_sym04_non_minimal_guards(&b.ctx(), &mut diags);
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags[0].id, DiagnosticId::SYM04);
+        }
+
+        #[test]
+        fn sym04_clean_for_small_automaton() {
+            let mut b = CtxBuilder::new();
+            b.symbolic_result_data = Some(SymbolicAnalysis {
+                num_states: 5, // < 10 threshold
+                num_transitions: 4,
+                guard_satisfiability: vec![],
+                overlapping_guards: vec![],
+                subsumed_guards: vec![("a".to_string(), "b".to_string())],
+                unsatisfiable_rule_labels: vec![],
+            });
+            let mut diags = Vec::new();
+            lint_sym04_non_minimal_guards(&b.ctx(), &mut diags);
+            assert!(diags.is_empty());
+        }
+
+        // ── MSO01: full MSO unrestricted ∀X ──
+
+        #[test]
+        fn mso01_fires_on_full_mso() {
+            let mut b = CtxBuilder::new();
+            b.mso_result_data = Some(MsoAnalysis {
+                formula_class: MsoFormulaClass::Full,
+                decidability: DecidabilityTier::Undecidable,
+                free_vars: HashSet::new(),
+                free_set_vars: HashSet::new(),
+                is_sentence: true,
+            });
+            let mut diags = Vec::new();
+            lint_mso01_unrestricted_universal_set(&b.ctx(), &mut diags);
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags[0].id, DiagnosticId::MSO01);
+        }
+
+        #[test]
+        fn mso01_clean_for_restricted() {
+            let mut b = CtxBuilder::new();
+            b.mso_result_data = Some(MsoAnalysis {
+                formula_class: MsoFormulaClass::Restricted,
+                decidability: DecidabilityTier::CompileTimeDecidable,
+                free_vars: HashSet::new(),
+                free_set_vars: HashSet::new(),
+                is_sentence: true,
+            });
+            let mut diags = Vec::new();
+            lint_mso01_unrestricted_universal_set(&b.ctx(), &mut diags);
+            assert!(diags.is_empty());
+        }
+
+        // ── MSO02: non-recognizable step ──
+
+        #[test]
+        fn mso02_fires_on_semi_decidable() {
+            let mut b = CtxBuilder::new();
+            b.mso_result_data = Some(MsoAnalysis {
+                formula_class: MsoFormulaClass::RestrictedExistential,
+                decidability: DecidabilityTier::SemiDecidable,
+                free_vars: HashSet::new(),
+                free_set_vars: HashSet::new(),
+                is_sentence: true,
+            });
+            let mut diags = Vec::new();
+            lint_mso02_non_recognizable_step(&b.ctx(), &mut diags);
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags[0].id, DiagnosticId::MSO02);
+        }
+
+        // ── MT01: multi-channel overlap ──
+
+        #[test]
+        fn mt01_fires_on_overlapping_tapes() {
+            let mut b = CtxBuilder::new();
+            b.multi_tape_result_data = Some(MultiTapeAnalysis {
+                num_states: 4,
+                num_tapes: 2,
+                disconnected_tapes: vec![],
+                overlapping_tapes: vec![(0, 1)],
+            });
+            let mut diags = Vec::new();
+            lint_mt01_multi_channel_overlap(&b.ctx(), &mut diags);
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags[0].id, DiagnosticId::MT01);
+        }
+
+        #[test]
+        fn mt01_clean_when_tapes_distinct() {
+            let mut b = CtxBuilder::new();
+            b.multi_tape_result_data = Some(MultiTapeAnalysis {
+                num_states: 4,
+                num_tapes: 2,
+                disconnected_tapes: vec![],
+                overlapping_tapes: vec![],
+            });
+            let mut diags = Vec::new();
+            lint_mt01_multi_channel_overlap(&b.ctx(), &mut diags);
+            assert!(diags.is_empty());
+        }
+
+        // ── MT02: disconnected multi-tape ──
+
+        #[test]
+        fn mt02_fires_on_disconnected_tape() {
+            let mut b = CtxBuilder::new();
+            b.multi_tape_result_data = Some(MultiTapeAnalysis {
+                num_states: 4,
+                num_tapes: 2,
+                disconnected_tapes: vec![1],
+                overlapping_tapes: vec![],
+            });
+            let mut diags = Vec::new();
+            lint_mt02_multi_tape_disconnected(&b.ctx(), &mut diags);
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags[0].id, DiagnosticId::MT02);
+        }
+
+        // ── TW01: circular channel dependency ──
+
+        #[test]
+        fn tw01_fires_on_deadlock_cycle() {
+            let mut b = CtxBuilder::new();
+            b.two_way_result_data = Some(TwoWayAnalysis {
+                num_states: 4,
+                num_forward: 2,
+                num_backward: 2,
+                is_one_way_equivalent: false,
+                deadlock_cycles: vec![vec!["ch1".to_string(), "ch2".to_string()]],
+            });
+            let mut diags = Vec::new();
+            lint_tw01_circular_channel_dependency(&b.ctx(), &mut diags);
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags[0].id, DiagnosticId::TW01);
+        }
+
+        #[test]
+        fn tw01_clean_without_cycles() {
+            let mut b = CtxBuilder::new();
+            b.two_way_result_data = Some(TwoWayAnalysis {
+                num_states: 4,
+                num_forward: 2,
+                num_backward: 2,
+                is_one_way_equivalent: false,
+                deadlock_cycles: vec![],
+            });
+            let mut diags = Vec::new();
+            lint_tw01_circular_channel_dependency(&b.ctx(), &mut diags);
+            assert!(diags.is_empty());
+        }
+
+        // ── TW02: one-way sufficient ──
+
+        #[test]
+        fn tw02_fires_when_one_way_equivalent() {
+            let mut b = CtxBuilder::new();
+            b.two_way_result_data = Some(TwoWayAnalysis {
+                num_states: 4,
+                num_forward: 4,
+                num_backward: 0,
+                is_one_way_equivalent: true,
+                deadlock_cycles: vec![],
+            });
+            let mut diags = Vec::new();
+            lint_tw02_one_way_sufficient(&b.ctx(), &mut diags);
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags[0].id, DiagnosticId::TW02);
+        }
+
+        // ── TW03: constraint propagation divergent ──
+
+        #[test]
+        fn tw03_fires_with_backward_and_cycles() {
+            let mut b = CtxBuilder::new();
+            b.two_way_result_data = Some(TwoWayAnalysis {
+                num_states: 4,
+                num_forward: 2,
+                num_backward: 2,
+                is_one_way_equivalent: false,
+                deadlock_cycles: vec![vec!["a".to_string(), "b".to_string()]],
+            });
+            let mut diags = Vec::new();
+            lint_tw03_constraint_propagation_divergent(&b.ctx(), &mut diags);
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags[0].id, DiagnosticId::TW03);
+        }
+
+        // ── PT01: PATA emptiness violation ──
+
+        #[test]
+        fn pt01_fires_on_empty_pata() {
+            let mut b = CtxBuilder::new();
+            b.parity_tree_result_data = Some(ParityTreeAnalysis {
+                num_states: 0,
+                max_priority: 0,
+                is_empty: true,
+                priority_depth: 0,
+            });
+            let mut diags = Vec::new();
+            lint_pt01_pata_emptiness_violation(&b.ctx(), &mut diags);
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags[0].id, DiagnosticId::PT01);
+        }
+
+        #[test]
+        fn pt01_clean_for_non_empty_pata() {
+            let mut b = CtxBuilder::new();
+            b.parity_tree_result_data = Some(ParityTreeAnalysis {
+                num_states: 5,
+                max_priority: 2,
+                is_empty: false,
+                priority_depth: 2,
+            });
+            let mut diags = Vec::new();
+            lint_pt01_pata_emptiness_violation(&b.ctx(), &mut diags);
+            assert!(diags.is_empty());
+        }
     }
 }

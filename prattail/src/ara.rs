@@ -93,28 +93,24 @@ impl AraWeight {
     /// # Panics
     ///
     /// Panics if any basis matrix is not `dim x dim`.
-    pub fn new(bases: Vec<DMatrix<f64>>, dim: usize) -> Self {
+    pub fn new(bases: Vec<DMatrix<f64>>, dim: usize) -> Result<Self, String> {
         for (i, m) in bases.iter().enumerate() {
-            assert_eq!(
-                m.nrows(),
-                dim,
-                "AraWeight::new: basis matrix {} has {} rows, expected {}",
-                i,
-                m.nrows(),
-                dim
-            );
-            assert_eq!(
-                m.ncols(),
-                dim,
-                "AraWeight::new: basis matrix {} has {} cols, expected {}",
-                i,
-                m.ncols(),
-                dim
-            );
+            if m.nrows() != dim {
+                return Err(format!(
+                    "AraWeight::new: basis matrix {} has {} rows, expected {}",
+                    i, m.nrows(), dim
+                ));
+            }
+            if m.ncols() != dim {
+                return Err(format!(
+                    "AraWeight::new: basis matrix {} has {} cols, expected {}",
+                    i, m.ncols(), dim
+                ));
+            }
         }
         let mut w = AraWeight { bases, dim };
         w.basis_reduce();
-        w
+        Ok(w)
     }
 
     /// Create the zero weight: empty vector space (no affine relations).
@@ -163,27 +159,26 @@ impl AraWeight {
     /// For 2 variables (dim=3), the assignment `x_1 = 2*x_0 + 5`:
     /// ```
     /// # use mettail_prattail::ara::AraWeight;
-    /// let w = AraWeight::from_assignment(1, &[2.0, 0.0], 5.0, 3);
+    /// let w = AraWeight::from_assignment(1, &[2.0, 0.0], 5.0, 3).expect("valid AraWeight");
     /// // Matrix:
     /// // [1  0  0]   (x_0 unchanged)
     /// // [2  0  5]   (x_1 = 2*x_0 + 5)
     /// // [0  0  1]   (homogeneous row)
     /// ```
-    pub fn from_assignment(var_idx: usize, coefficients: &[f64], constant: f64, dim: usize) -> Self {
+    pub fn from_assignment(var_idx: usize, coefficients: &[f64], constant: f64, dim: usize) -> Result<Self, String> {
         let n = dim - 1;
-        assert!(
-            var_idx < n,
-            "AraWeight::from_assignment: var_idx {} must be < n={}",
-            var_idx,
-            n
-        );
-        assert_eq!(
-            coefficients.len(),
-            n,
-            "AraWeight::from_assignment: coefficients length {} must equal n={}",
-            coefficients.len(),
-            n
-        );
+        if var_idx >= n {
+            return Err(format!(
+                "AraWeight::from_assignment: var_idx {} must be < n={}",
+                var_idx, n
+            ));
+        }
+        if coefficients.len() != n {
+            return Err(format!(
+                "AraWeight::from_assignment: coefficients length {} must equal n={}",
+                coefficients.len(), n
+            ));
+        }
 
         let mut m = DMatrix::identity(dim, dim);
         // Replace row `var_idx` with the assignment
@@ -192,10 +187,10 @@ impl AraWeight {
         }
         m[(var_idx, n)] = constant;
 
-        AraWeight {
+        Ok(AraWeight {
             bases: vec![m],
             dim,
-        }
+        })
     }
 
     /// Combine (oplus): join of two vector spaces = span(union of bases).
@@ -1018,7 +1013,7 @@ mod tests {
     #[test]
     fn test_zero_is_additive_identity() {
         // w + 0 = w
-        let w = AraWeight::from_assignment(0, &[0.0, 0.0], 42.0, DIM);
+        let w = AraWeight::from_assignment(0, &[0.0, 0.0], 42.0, DIM).expect("valid AraWeight");
         let result = w.combine(&zero());
         assert_same_space(&result, &w);
 
@@ -1030,7 +1025,7 @@ mod tests {
     #[test]
     fn test_one_is_multiplicative_identity() {
         // w * 1 = w
-        let w = AraWeight::from_assignment(0, &[0.0, 1.0], 3.0, DIM);
+        let w = AraWeight::from_assignment(0, &[0.0, 1.0], 3.0, DIM).expect("valid AraWeight");
         let result = w.extend(&one());
         assert_same_space(&result, &w);
 
@@ -1042,7 +1037,7 @@ mod tests {
     #[test]
     fn test_zero_annihilates_left() {
         // 0 * w = 0
-        let w = AraWeight::from_assignment(1, &[2.0, 0.0], 5.0, DIM);
+        let w = AraWeight::from_assignment(1, &[2.0, 0.0], 5.0, DIM).expect("valid AraWeight");
         let result = zero().extend(&w);
         assert!(result.is_zero(), "zero * w should be zero");
     }
@@ -1050,7 +1045,7 @@ mod tests {
     #[test]
     fn test_zero_annihilates_right() {
         // w * 0 = 0
-        let w = AraWeight::from_assignment(0, &[1.0, 1.0], 0.0, DIM);
+        let w = AraWeight::from_assignment(0, &[1.0, 1.0], 0.0, DIM).expect("valid AraWeight");
         let result = w.extend(&zero());
         assert!(result.is_zero(), "w * zero should be zero");
     }
@@ -1058,8 +1053,8 @@ mod tests {
     #[test]
     fn test_combine_is_commutative() {
         // a + b = b + a
-        let a = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM);
-        let b = AraWeight::from_assignment(1, &[0.0, 0.0], 2.0, DIM);
+        let a = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM).expect("valid AraWeight");
+        let b = AraWeight::from_assignment(1, &[0.0, 0.0], 2.0, DIM).expect("valid AraWeight");
         let ab = a.combine(&b);
         let ba = b.combine(&a);
         assert_same_space(&ab, &ba);
@@ -1068,9 +1063,9 @@ mod tests {
     #[test]
     fn test_combine_is_associative() {
         // (a + b) + c = a + (b + c)
-        let a = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM);
-        let b = AraWeight::from_assignment(1, &[0.0, 0.0], 2.0, DIM);
-        let c = AraWeight::from_assignment(0, &[1.0, 1.0], 0.0, DIM);
+        let a = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM).expect("valid AraWeight");
+        let b = AraWeight::from_assignment(1, &[0.0, 0.0], 2.0, DIM).expect("valid AraWeight");
+        let c = AraWeight::from_assignment(0, &[1.0, 1.0], 0.0, DIM).expect("valid AraWeight");
 
         let ab_c = a.combine(&b).combine(&c);
         let a_bc = a.combine(&b.combine(&c));
@@ -1080,9 +1075,9 @@ mod tests {
     #[test]
     fn test_extend_is_associative() {
         // (a * b) * c = a * (b * c)
-        let a = AraWeight::from_assignment(0, &[0.0, 1.0], 3.0, DIM);
-        let b = AraWeight::from_assignment(1, &[2.0, 0.0], 1.0, DIM);
-        let c = AraWeight::from_assignment(0, &[1.0, 1.0], -1.0, DIM);
+        let a = AraWeight::from_assignment(0, &[0.0, 1.0], 3.0, DIM).expect("valid AraWeight");
+        let b = AraWeight::from_assignment(1, &[2.0, 0.0], 1.0, DIM).expect("valid AraWeight");
+        let c = AraWeight::from_assignment(0, &[1.0, 1.0], -1.0, DIM).expect("valid AraWeight");
 
         let ab_c = a.extend(&b).extend(&c);
         let a_bc = a.extend(&b.extend(&c));
@@ -1092,9 +1087,9 @@ mod tests {
     #[test]
     fn test_extend_distributes_over_combine() {
         // a * (b + c) = (a * b) + (a * c)  [left distributivity]
-        let a = AraWeight::from_assignment(0, &[0.0, 1.0], 1.0, DIM);
-        let b = AraWeight::from_assignment(1, &[1.0, 0.0], 2.0, DIM);
-        let c = AraWeight::from_assignment(1, &[0.0, 0.0], 5.0, DIM);
+        let a = AraWeight::from_assignment(0, &[0.0, 1.0], 1.0, DIM).expect("valid AraWeight");
+        let b = AraWeight::from_assignment(1, &[1.0, 0.0], 2.0, DIM).expect("valid AraWeight");
+        let c = AraWeight::from_assignment(1, &[0.0, 0.0], 5.0, DIM).expect("valid AraWeight");
 
         let lhs = a.extend(&b.combine(&c));
         let rhs = a.extend(&b).combine(&a.extend(&c));
@@ -1106,7 +1101,7 @@ mod tests {
     #[test]
     fn test_basis_reduce_removes_duplicates() {
         let m = DMatrix::identity(DIM, DIM);
-        let w = AraWeight::new(vec![m.clone(), m.clone(), m], DIM);
+        let w = AraWeight::new(vec![m.clone(), m.clone(), m], DIM).expect("valid AraWeight");
         assert_eq!(w.rank(), 1, "Three copies of identity should reduce to rank 1");
         assert!(w.is_one());
     }
@@ -1121,7 +1116,7 @@ mod tests {
 
         let m2 = &m1 * 2.0;
 
-        let w = AraWeight::new(vec![m1, m2], DIM);
+        let w = AraWeight::new(vec![m1, m2], DIM).expect("valid AraWeight");
         assert_eq!(w.rank(), 1, "Scalar multiple should be eliminated by basis reduction");
     }
 
@@ -1134,13 +1129,13 @@ mod tests {
         let mut m2 = DMatrix::zeros(DIM, DIM);
         m2[(1, 1)] = 1.0;
 
-        let w = AraWeight::new(vec![m1, m2], DIM);
+        let w = AraWeight::new(vec![m1, m2], DIM).expect("valid AraWeight");
         assert_eq!(w.rank(), 2, "Two independent matrices should both survive reduction");
     }
 
     #[test]
     fn test_basis_reduce_empty() {
-        let w = AraWeight::new(Vec::new(), DIM);
+        let w = AraWeight::new(Vec::new(), DIM).expect("valid AraWeight");
         assert!(w.is_zero());
         assert_eq!(w.rank(), 0);
     }
@@ -1174,7 +1169,7 @@ mod tests {
     fn test_extract_constant_assignment() {
         // Assignment: x_0 = 5, x_1 unchanged
         // Matrix: [[0, 0, 5], [0, 1, 0], [0, 0, 1]]
-        let w = AraWeight::from_assignment(0, &[0.0, 0.0], 5.0, DIM);
+        let w = AraWeight::from_assignment(0, &[0.0, 0.0], 5.0, DIM).expect("valid AraWeight");
         let relations = w.extract_affine_relations();
         // The relation x_0 = 5 should be discoverable.
         // We check that at least one relation involves x_0 with a non-zero coefficient.
@@ -1190,7 +1185,7 @@ mod tests {
     fn test_extract_copy_assignment() {
         // Assignment: x_0 = x_1 + 3
         // Matrix: [[0, 1, 3], [0, 1, 0], [0, 0, 1]]
-        let w = AraWeight::from_assignment(0, &[0.0, 1.0], 3.0, DIM);
+        let w = AraWeight::from_assignment(0, &[0.0, 1.0], 3.0, DIM).expect("valid AraWeight");
         let relations = w.extract_affine_relations();
         // Should discover a relation like x_0 - x_1 - 3 = 0, i.e., x_0 = x_1 + 3
         assert!(
@@ -1204,9 +1199,9 @@ mod tests {
     #[test]
     fn test_sequential_assignments() {
         // First: x_0 = x_1 + 1
-        let w1 = AraWeight::from_assignment(0, &[0.0, 1.0], 1.0, DIM);
+        let w1 = AraWeight::from_assignment(0, &[0.0, 1.0], 1.0, DIM).expect("valid AraWeight");
         // Second: x_1 = x_0 + 2
-        let w2 = AraWeight::from_assignment(1, &[1.0, 0.0], 2.0, DIM);
+        let w2 = AraWeight::from_assignment(1, &[1.0, 0.0], 2.0, DIM).expect("valid AraWeight");
 
         // Compose: w1 then w2
         // After w1: x_0' = x_1 + 1, x_1' = x_1
@@ -1284,7 +1279,7 @@ mod tests {
 
     #[test]
     fn test_assignment_is_not_identity() {
-        let w = AraWeight::from_assignment(0, &[0.0, 0.0], 5.0, DIM);
+        let w = AraWeight::from_assignment(0, &[0.0, 0.0], 5.0, DIM).expect("valid AraWeight");
         assert!(!w.is_one(), "Non-trivial assignment should not be identity");
         assert!(!w.is_zero(), "Non-trivial assignment should not be zero");
     }
@@ -1294,7 +1289,7 @@ mod tests {
     #[test]
     fn test_single_variable() {
         // 1 variable: dim = 2, matrices are 2x2
-        let w = AraWeight::from_assignment(0, &[0.0], 7.0, 2);
+        let w = AraWeight::from_assignment(0, &[0.0], 7.0, 2).expect("valid AraWeight");
         assert_eq!(w.dim, 2);
         assert_eq!(w.rank(), 1);
         assert_eq!(w.bases[0].nrows(), 2);
@@ -1303,7 +1298,7 @@ mod tests {
     #[test]
     fn test_three_variables() {
         // 3 variables: dim = 4, matrices are 4x4
-        let w = AraWeight::from_assignment(2, &[1.0, 0.0, 0.0], 10.0, 4);
+        let w = AraWeight::from_assignment(2, &[1.0, 0.0, 0.0], 10.0, 4).expect("valid AraWeight");
         assert_eq!(w.dim, 4);
         assert_eq!(w.rank(), 1);
         assert_eq!(w.bases[0].nrows(), 4);
@@ -1327,8 +1322,8 @@ mod tests {
 
     #[test]
     fn test_combine_increases_rank() {
-        let a = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM);
-        let b = AraWeight::from_assignment(1, &[0.0, 0.0], 2.0, DIM);
+        let a = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM).expect("valid AraWeight");
+        let b = AraWeight::from_assignment(1, &[0.0, 0.0], 2.0, DIM).expect("valid AraWeight");
 
         let combined = a.combine(&b);
         assert!(
@@ -1345,8 +1340,8 @@ mod tests {
 
     #[test]
     fn test_heap_semiring_plus_is_combine() {
-        let a = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM);
-        let b = AraWeight::from_assignment(1, &[0.0, 0.0], 2.0, DIM);
+        let a = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM).expect("valid AraWeight");
+        let b = AraWeight::from_assignment(1, &[0.0, 0.0], 2.0, DIM).expect("valid AraWeight");
 
         let via_combine = a.combine(&b);
         let via_plus = a.plus(&b);
@@ -1355,8 +1350,8 @@ mod tests {
 
     #[test]
     fn test_heap_semiring_times_is_extend() {
-        let a = AraWeight::from_assignment(0, &[0.0, 1.0], 1.0, DIM);
-        let b = AraWeight::from_assignment(1, &[1.0, 0.0], 2.0, DIM);
+        let a = AraWeight::from_assignment(0, &[0.0, 1.0], 1.0, DIM).expect("valid AraWeight");
+        let b = AraWeight::from_assignment(1, &[1.0, 0.0], 2.0, DIM).expect("valid AraWeight");
 
         let via_extend = a.extend(&b);
         let via_times = a.times(&b);
@@ -1394,8 +1389,8 @@ mod tests {
 
     #[test]
     fn test_display_rank() {
-        let a = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM);
-        let b = AraWeight::from_assignment(1, &[0.0, 0.0], 2.0, DIM);
+        let a = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM).expect("valid AraWeight");
+        let b = AraWeight::from_assignment(1, &[0.0, 0.0], 2.0, DIM).expect("valid AraWeight");
         let combined = a.combine(&b);
         let s = combined.to_string();
         assert!(s.contains("rank="), "Display should show rank: {}", s);
@@ -1431,15 +1426,15 @@ mod tests {
     #[test]
     fn test_combine_with_self() {
         // w + w = w (idempotent for vector spaces: span(S union S) = span(S))
-        let w = AraWeight::from_assignment(0, &[0.0, 1.0], 3.0, DIM);
+        let w = AraWeight::from_assignment(0, &[0.0, 1.0], 3.0, DIM).expect("valid AraWeight");
         let result = w.combine(&w);
         assert_same_space(&result, &w);
     }
 
     #[test]
     fn test_extend_preserves_dim() {
-        let a = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM);
-        let b = AraWeight::from_assignment(1, &[1.0, 0.0], 2.0, DIM);
+        let a = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM).expect("valid AraWeight");
+        let b = AraWeight::from_assignment(1, &[1.0, 0.0], 2.0, DIM).expect("valid AraWeight");
         let result = a.extend(&b);
         assert_eq!(result.dim, DIM);
     }
@@ -1447,7 +1442,7 @@ mod tests {
     #[test]
     fn test_multiple_combines_reduce() {
         // Combining many copies should still reduce to the same rank
-        let w = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM);
+        let w = AraWeight::from_assignment(0, &[0.0, 0.0], 1.0, DIM).expect("valid AraWeight");
         let mut result = w.clone();
         for _ in 0..10 {
             result = result.combine(&w);
@@ -1459,27 +1454,27 @@ mod tests {
     fn test_new_validates_dimensions() {
         let m = DMatrix::identity(DIM, DIM);
         // This should succeed
-        let w = AraWeight::new(vec![m], DIM);
+        let w = AraWeight::new(vec![m], DIM).expect("valid AraWeight");
         assert_eq!(w.rank(), 1);
     }
 
     #[test]
-    #[should_panic(expected = "basis matrix 0 has 2 rows, expected 3")]
     fn test_new_rejects_wrong_dimensions() {
         let m = DMatrix::identity(2, 2);
-        let _ = AraWeight::new(vec![m], 3);
+        let err = AraWeight::new(vec![m], 3).unwrap_err();
+        assert!(err.contains("basis matrix 0 has 2 rows, expected 3"), "{err}");
     }
 
     #[test]
-    #[should_panic(expected = "var_idx 2 must be < n=2")]
     fn test_from_assignment_rejects_out_of_range_var() {
-        let _ = AraWeight::from_assignment(2, &[0.0, 0.0], 1.0, DIM);
+        let err = AraWeight::from_assignment(2, &[0.0, 0.0], 1.0, DIM).unwrap_err();
+        assert!(err.contains("var_idx 2 must be < n=2"), "{err}");
     }
 
     #[test]
-    #[should_panic(expected = "coefficients length 1 must equal n=2")]
     fn test_from_assignment_rejects_wrong_coefficient_count() {
-        let _ = AraWeight::from_assignment(0, &[1.0], 1.0, DIM);
+        let err = AraWeight::from_assignment(0, &[1.0], 1.0, DIM).unwrap_err();
+        assert!(err.contains("coefficients length 1 must equal n=2"), "{err}");
     }
 
     // ── AraWpdsRule Tests ───────────────────────────────────────────────────
@@ -1513,7 +1508,7 @@ mod tests {
         let sym1 = crate::wpds::StackSymbol::category_entry("Expr");
         let sym2 = crate::wpds::StackSymbol::rule_position("Expr", "Add", 1);
         let sym3 = crate::wpds::StackSymbol::category_entry("Type");
-        let w = AraWeight::from_assignment(0, &[0.0, 0.0], 5.0, DIM);
+        let w = AraWeight::from_assignment(0, &[0.0, 0.0], 5.0, DIM).expect("valid AraWeight");
         let rule = AraWpdsRule::Push {
             from_gamma: sym1.clone(),
             to_gamma_bottom: sym2,
@@ -1532,7 +1527,7 @@ mod tests {
         let mut m = DMatrix::zeros(DIM, DIM);
         m[(0, 0)] = 1e-15;
         m[(1, 1)] = 1e-15;
-        let w = AraWeight::new(vec![m], DIM);
+        let w = AraWeight::new(vec![m], DIM).expect("valid AraWeight");
         assert!(
             w.is_zero(),
             "Near-zero matrix should reduce to zero weight"
@@ -1541,14 +1536,14 @@ mod tests {
 
     #[test]
     fn test_approx_eq_same_weight() {
-        let w = AraWeight::from_assignment(0, &[1.0, 0.0], 3.0, DIM);
+        let w = AraWeight::from_assignment(0, &[1.0, 0.0], 3.0, DIM).expect("valid AraWeight");
         assert!(w.approx_eq(&w, 1e-8), "Weight should be approx_eq to itself");
     }
 
     #[test]
     fn test_approx_eq_different_weights() {
-        let a = AraWeight::from_assignment(0, &[1.0, 0.0], 3.0, DIM);
-        let b = AraWeight::from_assignment(0, &[0.0, 1.0], 3.0, DIM);
+        let a = AraWeight::from_assignment(0, &[1.0, 0.0], 3.0, DIM).expect("valid AraWeight");
+        let b = AraWeight::from_assignment(0, &[0.0, 1.0], 3.0, DIM).expect("valid AraWeight");
         assert!(
             !a.approx_eq(&b, 1e-8),
             "Different assignments should not be approx_eq"
@@ -1570,9 +1565,9 @@ mod tests {
     #[test]
     fn test_right_distributivity() {
         // (b + c) * a = (b * a) + (c * a)
-        let a = AraWeight::from_assignment(0, &[0.0, 1.0], 1.0, DIM);
-        let b = AraWeight::from_assignment(1, &[1.0, 0.0], 2.0, DIM);
-        let c = AraWeight::from_assignment(1, &[0.0, 0.0], 5.0, DIM);
+        let a = AraWeight::from_assignment(0, &[0.0, 1.0], 1.0, DIM).expect("valid AraWeight");
+        let b = AraWeight::from_assignment(1, &[1.0, 0.0], 2.0, DIM).expect("valid AraWeight");
+        let c = AraWeight::from_assignment(1, &[0.0, 0.0], 5.0, DIM).expect("valid AraWeight");
 
         let lhs = b.combine(&c).extend(&a);
         let rhs = b.extend(&a).combine(&c.extend(&a));
@@ -1584,7 +1579,7 @@ mod tests {
     #[test]
     fn test_combine_idempotent() {
         // w + w = w for any w (vector space join is idempotent)
-        let w = AraWeight::from_assignment(0, &[2.0, 3.0], -1.0, DIM);
+        let w = AraWeight::from_assignment(0, &[2.0, 3.0], -1.0, DIM).expect("valid AraWeight");
         let result = w.combine(&w);
         assert_same_space(&result, &w);
         assert_eq!(
@@ -1600,9 +1595,9 @@ mod tests {
     fn test_four_variables_composition() {
         let dim = 5; // 4 variables
         // x_0 = x_1 + x_2
-        let w1 = AraWeight::from_assignment(0, &[0.0, 1.0, 1.0, 0.0], 0.0, dim);
+        let w1 = AraWeight::from_assignment(0, &[0.0, 1.0, 1.0, 0.0], 0.0, dim).expect("valid AraWeight");
         // x_3 = 2*x_0 - x_1
-        let w2 = AraWeight::from_assignment(3, &[2.0, -1.0, 0.0, 0.0], 0.0, dim);
+        let w2 = AraWeight::from_assignment(3, &[2.0, -1.0, 0.0, 0.0], 0.0, dim).expect("valid AraWeight");
 
         let composed = w1.extend(&w2);
         assert_eq!(composed.dim, dim);
@@ -1631,6 +1626,8 @@ mod tests {
             context_rule_tables: HashMap::new(),
             cross_category_bp: HashMap::new(),
             context_unambiguous: HashMap::new(),
+            cek_bijection: crate::wpds::CekWpdsBijection::default(),
+            pautomaton: crate::wpds::PAutomaton::new(0),
         }
     }
 

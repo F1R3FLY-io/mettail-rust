@@ -1,8 +1,8 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-use crate::ast::grammar::{GrammarItem, TermParam};
-use crate::ast::language::LanguageDef;
-use crate::ast::pattern::CancellationPair;
+use mettail_ast::grammar::{GrammarItem, NonTerminalKind, TermParam};
+use mettail_ast::language::LanguageDef;
+use mettail_ast::pattern::CancellationPair;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -50,8 +50,10 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
                 bag: &mut mettail_runtime::HashBag<#category>,
                 elem: #category
             ) {
+                // Use ref-binding to avoid moving out of elem (which has impl Drop).
+                // We only need to iterate over the inner bag by reference.
                 match elem {
-                    #category::#label(inner) => {
+                    #category::#label(ref inner) => {
                         // Flatten: recursively merge inner bag contents
                         for (e, count) in inner.iter() {
                             for _ in 0..count {
@@ -59,6 +61,7 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
                                 Self::#helper_name(bag, e.clone());
                             }
                         }
+                        // `elem` drops here with its original inner bag intact
                     }
                     _ => {
                         // Normal insert - not a nested collection
@@ -147,7 +150,7 @@ pub fn generate_normalize_functions(
                     let fields: Vec<_> = rule
                         .items
                         .iter()
-                        .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+                        .filter(|item| matches!(item, GrammarItem::NonTerminal { .. }))
                         .collect();
                     if fields.is_empty() {
                         return Some(quote! { #category::#label => self.clone() });
@@ -160,7 +163,7 @@ pub fn generate_normalize_functions(
                         .iter()
                         .zip(field_names.iter())
                         .map(|(item, name)| {
-                            if let GrammarItem::NonTerminal(field_cat) = item {
+                            if let GrammarItem::NonTerminal { ident: field_cat, .. } = item {
                                 if field_cat == category {
                                     quote! { Box::new(#name.as_ref().normalize()) }
                                 } else {
@@ -324,7 +327,7 @@ pub fn generate_normalize_functions(
                         .filter(|item| {
                             matches!(
                                 item,
-                                GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }
+                                GrammarItem::NonTerminal { .. } | GrammarItem::Collection { .. }
                             )
                         })
                         .collect();
@@ -337,7 +340,7 @@ pub fn generate_normalize_functions(
                     } else if fields.len() == 1 {
                         // Single field constructor
                         match fields[0] {
-                            GrammarItem::NonTerminal(field_cat) if field_cat == category => {
+                            GrammarItem::NonTerminal { ident: field_cat, kind: NonTerminalKind::Category } if field_cat == category => {
                                 // Recursive case - normalize the field
                                 Some(quote! {
                                     #category::#label(f0) => {
@@ -345,8 +348,7 @@ pub fn generate_normalize_functions(
                                     }
                                 })
                             },
-                            GrammarItem::NonTerminal(field_cat)
-                                if field_cat.to_string() == "Var" =>
+                            GrammarItem::NonTerminal { kind: NonTerminalKind::Var, .. } =>
                             {
                                 // Var field - just clone (no Box)
                                 Some(quote! {
@@ -375,13 +377,11 @@ pub fn generate_normalize_functions(
                             .map(|(i, field)| {
                                 let field_name = &field_names[i];
                                 match field {
-                                    GrammarItem::NonTerminal(field_cat) => {
-                                        // Check if field is same category or another normalizable type
-                                        let field_cat_str = field_cat.to_string();
+                                    GrammarItem::NonTerminal { ident: field_cat, kind } => {
                                         if field_cat == category {
                                             // Same category - normalize recursively (boxed)
                                             quote! { Box::new(#field_name.as_ref().normalize()) }
-                                        } else if field_cat_str == "Var" {
+                                        } else if *kind == NonTerminalKind::Var {
                                             // Var field - not boxed, just clone
                                             quote! { #field_name.clone() }
                                         } else if language
@@ -418,6 +418,27 @@ pub fn generate_normalize_functions(
                     let (_binder_idx, body_indices) = &rule.bindings[0];
                     let body_idx = body_indices[0];
 
+                    // Phase 3A-C3 (predicated types): the actual
+                    // generated enum variant includes any
+                    // `?guard:Guard` slots from term_context as
+                    // BehavioralPred fields. To keep destructure
+                    // arity correct, we count them and emit
+                    // `pf{i}_pred` placeholders interleaved with the
+                    // grammar-item-derived field names. The exact
+                    // position of each predicate field within the
+                    // enum variant follows the term_context order
+                    // (channel, ?guard, scope), so we synthesize the
+                    // pattern from term_context when present.
+                    let guard_count = rule
+                        .term_context
+                        .as_ref()
+                        .map(|ctx| {
+                            ctx.iter()
+                                .filter(|p| matches!(p, TermParam::GuardBody { .. }))
+                                .count()
+                        })
+                        .unwrap_or(0);
+
                     let mut field_names = Vec::new();
                     let mut scope_field_idx = None;
                     for (i, item) in rule.items.iter().enumerate() {
@@ -425,7 +446,7 @@ pub fn generate_normalize_functions(
                             continue; // Skip binder
                         }
                         match item {
-                            GrammarItem::NonTerminal(_) => {
+                            GrammarItem::NonTerminal { .. } => {
                                 if i == body_idx {
                                     scope_field_idx = Some(field_names.len());
                                     field_names.push(format_ident!("scope"));
@@ -438,6 +459,23 @@ pub fn generate_normalize_functions(
                     }
 
                     let scope_idx = scope_field_idx.expect("Should have scope");
+
+                    // Insert predicate placeholders right before the
+                    // scope field (matches the enum variant layout
+                    // generated by `enums.rs`, where guard slots
+                    // appear in term_context order, between simple
+                    // params and the scoped continuation).
+                    if guard_count > 0 {
+                        let scope_name = field_names[scope_idx].clone();
+                        let mut new_names: Vec<_> =
+                            field_names.iter().take(scope_idx).cloned().collect();
+                        for g in 0..guard_count {
+                            new_names.push(format_ident!("pf{}_pred", g));
+                        }
+                        new_names.push(scope_name);
+                        field_names = new_names;
+                    }
+                    let scope_idx = scope_idx + guard_count;
 
                     // Generate field reconstruction
                     let reconstructed_fields: Vec<_> = field_names
@@ -602,9 +640,12 @@ fn generate_cancellation_pair_arm(pair: &CancellationPair) -> TokenStream {
     quote! {
         #outer_cat::#outer_ctor(f0) => {
             let inner_normalized = f0.as_ref().normalize();
+            // Use ref-binding to avoid moving out of inner_normalized (which
+            // has impl Drop). We clone the inner body for the cancellation
+            // case and clone the whole value for the non-matching case.
             match inner_normalized {
-                #inner_cat::#inner_ctor(p) => p.as_ref().normalize(),
-                other => #outer_cat::#outer_ctor(Box::new(other)),
+                #inner_cat::#inner_ctor(ref p) => p.as_ref().normalize(),
+                ref other => #outer_cat::#outer_ctor(Box::new(other.clone())),
             }
         }
     }

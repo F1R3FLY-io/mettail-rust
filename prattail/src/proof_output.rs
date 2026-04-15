@@ -187,16 +187,13 @@ impl fmt::Display for ProofOutput {
 /// Confluence and termination parameters require the `trs-analysis` feature;
 /// safety checking is always available.
 pub fn generate_certificates(
-    #[cfg(feature = "trs-analysis")]
     confluence_result: Option<&crate::confluence::ConfluenceAnalysis>,
-    #[cfg(feature = "trs-analysis")]
     termination_result: Option<&crate::termination::TerminationResult>,
     safety_result: Option<&crate::verify::SafetyResult<crate::automata::semiring::BooleanWeight>>,
 ) -> Vec<ProofOutput> {
     let mut outputs = Vec::new();
 
     // Confluence certificate
-    #[cfg(feature = "trs-analysis")]
     if let Some(analysis) = confluence_result {
         if analysis.is_confluent {
             let mut proof = ProofOutput::new(
@@ -239,7 +236,6 @@ pub fn generate_certificates(
     }
 
     // Termination certificate
-    #[cfg(feature = "trs-analysis")]
     if let Some(result) = termination_result {
         match result {
             crate::termination::TerminationResult::Terminating => {
@@ -402,9 +398,7 @@ mod tests {
             witness_trace: Vec::new(),
         };
         let certs = generate_certificates(
-            #[cfg(feature = "trs-analysis")]
             None,
-            #[cfg(feature = "trs-analysis")]
             None,
             Some(&safety_result),
         );
@@ -414,9 +408,7 @@ mod tests {
     #[test]
     fn test_generate_certificates_all_none() {
         let certs = generate_certificates(
-            #[cfg(feature = "trs-analysis")]
             None,
-            #[cfg(feature = "trs-analysis")]
             None,
             None,
         );

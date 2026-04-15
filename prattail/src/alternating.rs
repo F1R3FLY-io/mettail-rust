@@ -1127,6 +1127,9 @@ fn extract_item_label(item: &crate::SyntaxItemSpec) -> String {
             format!("BCOL:{}:{}", param_name, separator)
         }
         crate::SyntaxItemSpec::Optional { .. } => "OPT".to_string(),
+        crate::SyntaxItemSpec::GuardExpression { param_name } => {
+            format!("GUARD:{}", param_name)
+        }
     }
 }
 
@@ -1137,10 +1140,8 @@ fn extract_item_label(item: &crate::SyntaxItemSpec) -> String {
 /// Compiler adapter for the Alternating Weighted Automata module (M3).
 ///
 /// Activated by `ForallFinite`/`ForallInfinite` morphemes (alternating variety).
-#[cfg(feature = "predicate-dispatch")]
 pub struct AlternatingCompiler;
 
-#[cfg(feature = "predicate-dispatch")]
 impl crate::predicate_dispatch::PredicateCompiler for AlternatingCompiler {
     type Output = AlternatingAnalysis;
 
@@ -1152,6 +1153,124 @@ impl crate::predicate_dispatch::PredicateCompiler for AlternatingCompiler {
         categories: &[crate::pipeline::CategoryInfo],
     ) -> Self::Output {
         analyze_from_bundle(all_syntax, categories)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GT-11: Fork/Join Cost Analysis for Green Threads
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Cost analysis for parallel fork/join decisions.
+///
+/// Uses the alternating automaton's universal branching to model
+/// fork/join cost: universal states = all-must-complete (join),
+/// existential states = any-can-proceed (fork).
+///
+/// The analysis compares the estimated cost of parallel execution
+/// (dominated by the slowest branch plus fork/join overhead) against
+/// serial execution (sum of all branch costs) to determine whether
+/// parallelism is beneficial.
+///
+/// # Fields
+///
+/// - `should_parallelize`: `true` when parallel execution is estimated
+///   to be faster than serial execution.
+/// - `parallel_cost`: The estimated wall-clock cost of parallel execution,
+///   computed as `max(branch_costs) + fork_overhead + join_overhead`.
+/// - `serial_cost`: The estimated wall-clock cost of serial execution,
+///   computed as `sum(branch_costs)`.
+/// - `speedup_ratio`: The ratio `serial_cost / parallel_cost`. Values
+///   greater than 1.0 indicate parallelism is beneficial.
+/// - `parallelism_degree`: The number of independent branches that can
+///   execute concurrently (i.e., the length of `branch_costs`).
+#[derive(Debug, Clone)]
+pub struct ForkJoinCostAnalysis {
+    /// Whether parallelism is beneficial (fork cost < serial cost).
+    pub should_parallelize: bool,
+    /// Estimated cost of parallel execution (fork + join overhead + max branch).
+    pub parallel_cost: f64,
+    /// Estimated cost of serial execution (sum of all branches).
+    pub serial_cost: f64,
+    /// Speedup ratio (serial / parallel). Values > 1.0 favor parallelism.
+    pub speedup_ratio: f64,
+    /// Number of independent branches that can execute concurrently.
+    pub parallelism_degree: usize,
+}
+
+/// Analyze whether a set of channel operations should be parallelized or serialized.
+///
+/// Uses the alternating automaton's branching model to reason about fork/join cost:
+/// - **Universal states** represent join points (all branches must complete).
+/// - **Existential states** represent fork points (any branch can proceed).
+/// - Edge weights represent estimated execution time for each branch.
+///
+/// The cost model is:
+/// - **Serial cost** = sum of all `branch_costs` (branches run sequentially).
+/// - **Parallel cost** = `max(branch_costs) + fork_overhead + join_overhead`
+///   (branches run concurrently; total time is dominated by the slowest branch
+///   plus the overhead of forking and joining).
+/// - **Speedup ratio** = `serial_cost / parallel_cost`.
+/// - **Should parallelize** = `parallel_cost < serial_cost`.
+///
+/// # Arguments
+///
+/// * `branch_costs` - Estimated execution time for each independent branch.
+///   An empty slice yields zero costs with `should_parallelize = false`.
+/// * `join_overhead` - Fixed overhead cost for synchronizing (joining) all
+///   branches after parallel execution.
+/// * `fork_overhead` - Fixed overhead cost for spawning parallel branches.
+///
+/// # Examples
+///
+/// ```ignore
+/// let result = analyze_fork_join_cost(&[10.0, 20.0, 15.0], 2.0, 1.0);
+/// assert!(result.should_parallelize);
+/// assert_eq!(result.parallelism_degree, 3);
+/// ```
+pub fn analyze_fork_join_cost(
+    branch_costs: &[f64],
+    join_overhead: f64,
+    fork_overhead: f64,
+) -> ForkJoinCostAnalysis {
+    let parallelism_degree = branch_costs.len();
+
+    if branch_costs.is_empty() {
+        return ForkJoinCostAnalysis {
+            should_parallelize: false,
+            parallel_cost: 0.0,
+            serial_cost: 0.0,
+            speedup_ratio: 1.0,
+            parallelism_degree: 0,
+        };
+    }
+
+    // Serial cost: sum of all branch costs (sequential execution).
+    let serial_cost: f64 = branch_costs.iter().sum();
+
+    // Parallel cost: max branch cost + fork + join overhead.
+    // The slowest branch dominates wall-clock time; overhead is additive.
+    let max_branch = branch_costs
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
+    let parallel_cost = max_branch + fork_overhead + join_overhead;
+
+    // Speedup ratio: how much faster parallel is relative to serial.
+    // Guard against division by zero (parallel_cost == 0 implies all costs are zero).
+    let speedup_ratio = if parallel_cost > 0.0 {
+        serial_cost / parallel_cost
+    } else {
+        1.0
+    };
+
+    let should_parallelize = parallel_cost < serial_cost;
+
+    ForkJoinCostAnalysis {
+        should_parallelize,
+        parallel_cost,
+        serial_cost,
+        speedup_ratio,
+        parallelism_degree,
     }
 }
 
@@ -1824,5 +1943,111 @@ mod tests {
             "single symbol should be transition + terminal, got {:?}",
             w
         );
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GT-11 Tests: Fork/Join Cost Analysis
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod green_thread_fork_join_tests {
+    use super::*;
+
+    const EPS: f64 = 1e-9;
+
+    #[test]
+    fn fork_join_empty_branches() {
+        // No branches: serial and parallel costs are zero, no parallelism.
+        let result = analyze_fork_join_cost(&[], 1.0, 1.0);
+        assert!(!result.should_parallelize);
+        assert!((result.serial_cost - 0.0).abs() < EPS);
+        assert!((result.parallel_cost - 0.0).abs() < EPS);
+        assert!((result.speedup_ratio - 1.0).abs() < EPS);
+        assert_eq!(result.parallelism_degree, 0);
+    }
+
+    #[test]
+    fn fork_join_single_branch_no_benefit() {
+        // Single branch: parallel adds overhead but has no parallelism benefit.
+        // Serial = 10.0, parallel = 10.0 + 1.0 + 2.0 = 13.0 > serial.
+        let result = analyze_fork_join_cost(&[10.0], 2.0, 1.0);
+        assert!(!result.should_parallelize);
+        assert!((result.serial_cost - 10.0).abs() < EPS);
+        assert!((result.parallel_cost - 13.0).abs() < EPS);
+        assert_eq!(result.parallelism_degree, 1);
+        assert!(result.speedup_ratio < 1.0, "single branch should not benefit from parallelism");
+    }
+
+    #[test]
+    fn fork_join_two_equal_branches_beneficial() {
+        // Two equal branches of cost 10 each with low overhead.
+        // Serial = 20.0, parallel = 10.0 + 0.5 + 0.5 = 11.0.
+        // Speedup = 20/11 ~ 1.818.
+        let result = analyze_fork_join_cost(&[10.0, 10.0], 0.5, 0.5);
+        assert!(result.should_parallelize);
+        assert!((result.serial_cost - 20.0).abs() < EPS);
+        assert!((result.parallel_cost - 11.0).abs() < EPS);
+        assert!(result.speedup_ratio > 1.5, "two equal branches should yield significant speedup");
+        assert_eq!(result.parallelism_degree, 2);
+    }
+
+    #[test]
+    fn fork_join_high_overhead_cancels_benefit() {
+        // Three branches: serial = 30.0, but overhead is very high.
+        // parallel = max(10.0, 10.0, 10.0) + 15.0 + 15.0 = 40.0 > serial.
+        let result = analyze_fork_join_cost(&[10.0, 10.0, 10.0], 15.0, 15.0);
+        assert!(!result.should_parallelize);
+        assert!((result.serial_cost - 30.0).abs() < EPS);
+        assert!((result.parallel_cost - 40.0).abs() < EPS);
+        assert_eq!(result.parallelism_degree, 3);
+    }
+
+    #[test]
+    fn fork_join_many_branches_large_speedup() {
+        // 10 branches of cost 5.0 each, low overhead.
+        // Serial = 50.0, parallel = 5.0 + 0.1 + 0.1 = 5.2.
+        // Speedup = 50/5.2 ~ 9.6.
+        let branches: Vec<f64> = vec![5.0; 10];
+        let result = analyze_fork_join_cost(&branches, 0.1, 0.1);
+        assert!(result.should_parallelize);
+        assert!((result.serial_cost - 50.0).abs() < EPS);
+        assert!((result.parallel_cost - 5.2).abs() < EPS);
+        assert!(result.speedup_ratio > 9.0, "10 equal branches should yield ~10x speedup");
+        assert_eq!(result.parallelism_degree, 10);
+    }
+
+    #[test]
+    fn fork_join_unequal_branches() {
+        // Unequal branches: [1.0, 2.0, 100.0]. One dominant branch.
+        // Serial = 103.0, parallel = 100.0 + 0.5 + 0.5 = 101.0.
+        // Speedup = 103/101 ~ 1.02. Marginal benefit because one branch dominates.
+        let result = analyze_fork_join_cost(&[1.0, 2.0, 100.0], 0.5, 0.5);
+        assert!(result.should_parallelize);
+        assert!((result.serial_cost - 103.0).abs() < EPS);
+        assert!((result.parallel_cost - 101.0).abs() < EPS);
+        assert!(result.speedup_ratio > 1.0 && result.speedup_ratio < 1.1,
+            "one dominant branch limits speedup: ratio = {}", result.speedup_ratio);
+        assert_eq!(result.parallelism_degree, 3);
+    }
+
+    #[test]
+    fn fork_join_zero_overhead() {
+        // Zero overhead: parallel cost = max branch cost.
+        // Serial = 15.0, parallel = 5.0. Speedup = 3.0.
+        let result = analyze_fork_join_cost(&[5.0, 5.0, 5.0], 0.0, 0.0);
+        assert!(result.should_parallelize);
+        assert!((result.parallel_cost - 5.0).abs() < EPS);
+        assert!((result.speedup_ratio - 3.0).abs() < EPS);
+    }
+
+    #[test]
+    fn fork_join_zero_cost_branches() {
+        // All branches have zero cost. Serial = 0, parallel = 0 + overhead.
+        // Should not parallelize (overhead > 0 = serial cost).
+        let result = analyze_fork_join_cost(&[0.0, 0.0, 0.0], 0.1, 0.1);
+        assert!(!result.should_parallelize);
+        assert!((result.serial_cost - 0.0).abs() < EPS);
+        assert!((result.parallel_cost - 0.2).abs() < EPS);
     }
 }

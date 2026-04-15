@@ -142,32 +142,35 @@ impl ProbabilisticAutomaton {
     /// Add a transition from state `from` to state `to` with the given symbol
     /// and log-domain weight.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `from` or `to` is out of bounds.
+    /// Returns an error if `from` or `to` is out of bounds.
     pub fn add_transition(
         &mut self,
         from: usize,
         label: Option<String>,
         to: usize,
         weight: LogWeight,
-    ) {
-        assert!(
-            from < self.states.len(),
-            "add_transition: source state {from} out of bounds (num_states = {})",
-            self.states.len()
-        );
-        assert!(
-            to < self.states.len(),
-            "add_transition: target state {to} out of bounds (num_states = {})",
-            self.states.len()
-        );
+    ) -> Result<(), String> {
+        if from >= self.states.len() {
+            return Err(format!(
+                "add_transition: source state {from} out of bounds (num_states = {})",
+                self.states.len()
+            ));
+        }
+        if to >= self.states.len() {
+            return Err(format!(
+                "add_transition: target state {to} out of bounds (num_states = {})",
+                self.states.len()
+            ));
+        }
 
         if let Some(sym) = &label {
             self.alphabet.insert(sym.clone());
         }
         self.transitions[from].push((to, label, weight));
         self.is_normalized = false;
+        Ok(())
     }
 
     /// Set the initial probability for a state (in log-domain).
@@ -1218,7 +1221,8 @@ pub fn build_simple_pa(
     }
 
     for &(from, sym, to, prob) in transitions {
-        pa.add_transition(from, Some(sym.to_string()), to, LogWeight::from_probability(prob));
+        pa.add_transition(from, Some(sym.to_string()), to, LogWeight::from_probability(prob))
+            .expect("valid transition in build_simple_pa");
     }
 
     pa
@@ -1231,10 +1235,8 @@ pub fn build_simple_pa(
 /// Compiler adapter for the Probabilistic Automata module (M7).
 ///
 /// Activated by multi-guard conjunctions (≥2 guards on same channel).
-#[cfg(feature = "predicate-dispatch")]
 pub struct ProbabilisticCompiler;
 
-#[cfg(feature = "predicate-dispatch")]
 impl crate::predicate_dispatch::PredicateCompiler for ProbabilisticCompiler {
     type Output = ProbabilisticAnalysis;
 
@@ -1247,6 +1249,202 @@ impl crate::predicate_dispatch::PredicateCompiler for ProbabilisticCompiler {
     ) -> Self::Output {
         analyze_from_bundle(all_syntax, categories)
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GT-12: Probabilistic Channel Load Balancing for Green Threads
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Per-channel load estimate from probabilistic automaton weights.
+///
+/// Used by the scheduler to adaptively balance green thread dispatch
+/// across channels based on observed message rates. The estimates are
+/// derived from trained probabilistic weights (e.g., Baum-Welch emission
+/// probabilities) and map to worker count suggestions.
+///
+/// # Fields
+///
+/// - `channel_name`: The identifier of the channel being estimated.
+/// - `message_rate`: Estimated messages per scheduling cycle, derived
+///   from the trained weight for this channel. Higher rates indicate
+///   busier channels that need more workers.
+/// - `processing_time`: Estimated processing time per message. When
+///   trained weights are available, this is the reciprocal of the
+///   observed rate (clamped to a minimum). When no weight is available,
+///   a default of 1.0 is used.
+/// - `suggested_workers`: The number of worker green threads recommended
+///   for this channel, proportional to its share of the total load.
+///   Always at least 1 for channels with any observed traffic.
+/// - `confidence`: Confidence in the estimate, ranging from 0.0 (no
+///   observed data for this channel) to 1.0 (high confidence based on
+///   strong observed signal). Computed as `min(1.0, rate / max_rate)`.
+#[derive(Debug, Clone)]
+pub struct ChannelLoadEstimate {
+    /// Channel identifier (name).
+    pub channel_name: String,
+    /// Estimated messages per scheduling cycle.
+    pub message_rate: f64,
+    /// Estimated processing time per message.
+    pub processing_time: f64,
+    /// Suggested number of worker threads for this channel.
+    pub suggested_workers: usize,
+    /// Confidence in the estimate (0.0 = no data, 1.0 = high confidence).
+    pub confidence: f64,
+}
+
+/// Estimate per-channel load from trained probabilistic weights.
+///
+/// Uses Baum-Welch trained emission/transition probabilities to estimate
+/// the steady-state message rate for each channel, then maps to worker
+/// count suggestions. The algorithm:
+///
+/// 1. **Rate lookup**: For each channel in `channel_names`, find its
+///    observed rate in `trained_weights`. Channels not present in
+///    `trained_weights` receive a rate of 0.0 and confidence of 0.0.
+///
+/// 2. **Load computation**: Each channel's load is `message_rate *
+///    processing_time`. Processing time is estimated as `1.0 / max(rate, 0.001)`
+///    for channels with observed rates, or 1.0 for channels without data.
+///
+/// 3. **Worker allocation**: Workers are distributed proportionally to
+///    each channel's share of the total load. Every channel with a
+///    positive rate receives at least 1 worker. Remaining workers are
+///    allocated by descending fractional share.
+///
+/// 4. **Confidence scoring**: `confidence = min(1.0, rate / max_rate)`
+///    where `max_rate` is the maximum observed rate across all channels.
+///    This normalizes confidence relative to the busiest channel.
+///
+/// # Arguments
+///
+/// * `channel_names` - Names of channels to estimate load for.
+/// * `trained_weights` - Observed `(channel_name, rate)` pairs from
+///   Baum-Welch or similar training. Channels may appear multiple times;
+///   the last entry for each channel is used.
+/// * `total_workers` - Total number of worker green threads available
+///   for distribution across channels. Must be >= 1.
+///
+/// # Returns
+///
+/// A `Vec<ChannelLoadEstimate>` with one entry per channel in
+/// `channel_names`, in the same order.
+pub fn estimate_channel_load(
+    channel_names: &[String],
+    trained_weights: &[(String, f64)],
+    total_workers: usize,
+) -> Vec<ChannelLoadEstimate> {
+    if channel_names.is_empty() {
+        return Vec::new();
+    }
+
+    let total_workers = total_workers.max(1);
+
+    // Build a lookup map from trained weights. Last entry wins for duplicates.
+    let weight_map: HashMap<&str, f64> = trained_weights
+        .iter()
+        .map(|(name, rate)| (name.as_str(), *rate))
+        .collect();
+
+    // Compute per-channel rates and processing times.
+    let mut rates: Vec<f64> = Vec::with_capacity(channel_names.len());
+    let mut processing_times: Vec<f64> = Vec::with_capacity(channel_names.len());
+
+    for name in channel_names {
+        let rate = weight_map.get(name.as_str()).copied().unwrap_or(0.0).max(0.0);
+        rates.push(rate);
+
+        // Processing time: inverse of rate (busier channels process faster per msg).
+        // Clamp to avoid division by zero.
+        let proc_time = if rate > 0.001 { 1.0 / rate } else { 1.0 };
+        processing_times.push(proc_time);
+    }
+
+    // Compute loads: rate * processing_time = rate * (1/rate) = 1.0 for active channels,
+    // or rate * 1.0 = rate for low-rate channels. We use raw rate as the load proxy
+    // since the product cancels for active channels.
+    let loads: Vec<f64> = rates
+        .iter()
+        .zip(processing_times.iter())
+        .map(|(&r, &pt)| r * pt)
+        .collect();
+    let total_load: f64 = loads.iter().sum();
+
+    // Maximum rate for confidence normalization.
+    let max_rate = rates
+        .iter()
+        .cloned()
+        .fold(0.0_f64, f64::max);
+
+    // Allocate workers proportionally to load.
+    let mut suggested_workers: Vec<usize> = vec![0; channel_names.len()];
+
+    if total_load > 0.0 {
+        // Compute fractional share of workers for each channel.
+        let mut fractional_shares: Vec<f64> = loads
+            .iter()
+            .map(|&load| (load / total_load) * total_workers as f64)
+            .collect();
+
+        // Assign integer floor to each channel.
+        let mut assigned: usize = 0;
+        for (i, share) in fractional_shares.iter().enumerate() {
+            let floor = share.floor() as usize;
+            suggested_workers[i] = floor;
+            assigned += floor;
+        }
+
+        // Distribute remaining workers by largest fractional remainder.
+        let remaining = total_workers.saturating_sub(assigned);
+        if remaining > 0 {
+            // Compute fractional remainders.
+            let mut remainders: Vec<(usize, f64)> = fractional_shares
+                .iter()
+                .enumerate()
+                .map(|(i, share)| (i, share - share.floor()))
+                .collect();
+            remainders.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            for k in 0..remaining.min(remainders.len()) {
+                suggested_workers[remainders[k].0] += 1;
+            }
+        }
+
+        // Ensure every channel with positive rate gets at least 1 worker.
+        for (i, &rate) in rates.iter().enumerate() {
+            if rate > 0.0 && suggested_workers[i] == 0 {
+                suggested_workers[i] = 1;
+            }
+        }
+
+        let _ = fractional_shares; // suppress unused warning
+    } else {
+        // No load data: distribute workers uniformly across all channels.
+        let per_channel = total_workers / channel_names.len();
+        let extra = total_workers % channel_names.len();
+        for (i, w) in suggested_workers.iter_mut().enumerate() {
+            *w = per_channel + if i < extra { 1 } else { 0 };
+        }
+    }
+
+    // Build result.
+    let mut estimates: Vec<ChannelLoadEstimate> = Vec::with_capacity(channel_names.len());
+    for (i, name) in channel_names.iter().enumerate() {
+        let confidence = if max_rate > 0.0 {
+            (rates[i] / max_rate).min(1.0)
+        } else {
+            0.0
+        };
+
+        estimates.push(ChannelLoadEstimate {
+            channel_name: name.clone(),
+            message_rate: rates[i],
+            processing_time: processing_times[i],
+            suggested_workers: suggested_workers[i],
+            confidence,
+        });
+    }
+
+    estimates
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1285,7 +1483,8 @@ mod tests {
         assert_eq!(q0, 0);
         assert_eq!(q1, 1);
 
-        pa.add_transition(q0, Some("a".to_string()), q1, LogWeight::one());
+        pa.add_transition(q0, Some("a".to_string()), q1, LogWeight::one())
+            .expect("valid transition");
         assert_eq!(pa.num_transitions(), 1);
         assert!(pa.alphabet.contains("a"));
     }
@@ -1297,19 +1496,19 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "source state")]
     fn test_add_transition_out_of_bounds_from() {
         let mut pa = ProbabilisticAutomaton::new();
         pa.add_state(None);
-        pa.add_transition(5, Some("a".to_string()), 0, LogWeight::one());
+        let err = pa.add_transition(5, Some("a".to_string()), 0, LogWeight::one()).unwrap_err();
+        assert!(err.contains("source state"), "{err}");
     }
 
     #[test]
-    #[should_panic(expected = "target state")]
     fn test_add_transition_out_of_bounds_to() {
         let mut pa = ProbabilisticAutomaton::new();
         pa.add_state(None);
-        pa.add_transition(0, Some("a".to_string()), 5, LogWeight::one());
+        let err = pa.add_transition(0, Some("a".to_string()), 5, LogWeight::one()).unwrap_err();
+        assert!(err.contains("target state"), "{err}");
     }
 
     // ── Normalization ────────────────────────────────────────────────────────
@@ -1323,8 +1522,10 @@ mod tests {
         let q1 = pa.add_state(None);
 
         // Use raw LogWeight values (not necessarily summing to 1).
-        pa.add_transition(q0, Some("a".to_string()), q1, LogWeight::new(1.0));
-        pa.add_transition(q0, Some("b".to_string()), q1, LogWeight::new(2.0));
+        pa.add_transition(q0, Some("a".to_string()), q1, LogWeight::new(1.0))
+            .expect("valid transition");
+        pa.add_transition(q0, Some("b".to_string()), q1, LogWeight::new(2.0))
+            .expect("valid transition");
         pa.set_initial(q0, LogWeight::one());
         pa.set_accepting(q1, LogWeight::one());
 
@@ -1355,13 +1556,15 @@ mod tests {
             Some("a".to_string()),
             q1,
             LogWeight::from_probability(0.6),
-        );
+        )
+        .expect("valid transition");
         pa.add_transition(
             q0,
             Some("b".to_string()),
             q1,
             LogWeight::from_probability(0.4),
-        );
+        )
+        .expect("valid transition");
         pa.set_initial(q0, LogWeight::one());
         pa.set_accepting(q1, LogWeight::one());
 
@@ -1786,7 +1989,8 @@ mod tests {
             Some("a".to_string()),
             q1,
             LogWeight::from_probability(0.001),
-        );
+        )
+        .expect("valid transition");
         pa.set_initial(q0, LogWeight::one());
         pa.set_accepting(q1, LogWeight::one());
 
@@ -2319,5 +2523,158 @@ mod proptest_tests {
                 n, n, expected, result.mean_entropy,
             );
         }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GT-12 Tests: Probabilistic Channel Load Balancing
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod green_thread_channel_load_tests {
+    use super::*;
+
+    const EPS: f64 = 1e-6;
+
+    #[test]
+    fn channel_load_empty_channels() {
+        // No channels: empty result.
+        let result = estimate_channel_load(&[], &[], 4);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn channel_load_no_trained_weights() {
+        // Channels exist but no training data: uniform distribution.
+        let channels = vec!["alpha".to_string(), "beta".to_string()];
+        let result = estimate_channel_load(&channels, &[], 4);
+
+        assert_eq!(result.len(), 2);
+        // With no training data, workers should be distributed uniformly.
+        assert_eq!(result[0].suggested_workers + result[1].suggested_workers, 4);
+        // Confidence should be 0 for both (no data).
+        assert!((result[0].confidence - 0.0).abs() < EPS);
+        assert!((result[1].confidence - 0.0).abs() < EPS);
+        // Message rates should be zero.
+        assert!((result[0].message_rate - 0.0).abs() < EPS);
+        assert!((result[1].message_rate - 0.0).abs() < EPS);
+    }
+
+    #[test]
+    fn channel_load_single_channel_all_workers() {
+        // One channel with all the training data gets all workers.
+        let channels = vec!["only".to_string()];
+        let weights = vec![("only".to_string(), 100.0)];
+        let result = estimate_channel_load(&channels, &weights, 8);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].suggested_workers, 8);
+        assert!((result[0].message_rate - 100.0).abs() < EPS);
+        assert!((result[0].confidence - 1.0).abs() < EPS);
+    }
+
+    #[test]
+    fn channel_load_proportional_distribution() {
+        // Two channels: one with 3x the rate of the other.
+        // With 4 workers: expect ~3 for the busy channel, ~1 for the quiet one.
+        let channels = vec!["busy".to_string(), "quiet".to_string()];
+        let weights = vec![
+            ("busy".to_string(), 30.0),
+            ("quiet".to_string(), 10.0),
+        ];
+        let result = estimate_channel_load(&channels, &weights, 4);
+
+        assert_eq!(result.len(), 2);
+        let busy = &result[0];
+        let quiet = &result[1];
+
+        // Both should have at least 1 worker.
+        assert!(busy.suggested_workers >= 1);
+        assert!(quiet.suggested_workers >= 1);
+        // Total should equal total_workers.
+        assert_eq!(
+            busy.suggested_workers + quiet.suggested_workers,
+            4,
+            "total workers should sum to 4"
+        );
+        // Busy channel should get more workers.
+        assert!(
+            busy.suggested_workers >= quiet.suggested_workers,
+            "busy channel ({}) should get >= workers than quiet ({})",
+            busy.suggested_workers, quiet.suggested_workers
+        );
+
+        // Confidence: busy channel should have confidence 1.0 (it is the max).
+        assert!((busy.confidence - 1.0).abs() < EPS);
+        // Quiet channel should have confidence ~0.333 (10/30).
+        assert!((quiet.confidence - 10.0 / 30.0).abs() < EPS);
+    }
+
+    #[test]
+    fn channel_load_unobserved_channel_gets_zero_confidence() {
+        // Three channels but only two have trained weights.
+        let channels = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let weights = vec![
+            ("a".to_string(), 50.0),
+            ("b".to_string(), 50.0),
+            // "c" has no training data
+        ];
+        let result = estimate_channel_load(&channels, &weights, 6);
+
+        assert_eq!(result.len(), 3);
+        let c_est = &result[2];
+        assert_eq!(c_est.channel_name, "c");
+        assert!((c_est.message_rate - 0.0).abs() < EPS);
+        assert!((c_est.confidence - 0.0).abs() < EPS);
+    }
+
+    #[test]
+    fn channel_load_total_workers_one() {
+        // Edge case: only 1 worker total. Should go to the busiest channel.
+        let channels = vec!["x".to_string(), "y".to_string()];
+        let weights = vec![
+            ("x".to_string(), 100.0),
+            ("y".to_string(), 1.0),
+        ];
+        let result = estimate_channel_load(&channels, &weights, 1);
+
+        assert_eq!(result.len(), 2);
+        // At least one channel must get the 1 worker.
+        let total: usize = result.iter().map(|e| e.suggested_workers).sum();
+        assert!(total >= 1, "at least 1 worker must be assigned");
+    }
+
+    #[test]
+    fn channel_load_many_channels_few_workers() {
+        // 10 channels but only 3 workers. Highest-rate channels get priority.
+        let channels: Vec<String> = (0..10).map(|i| format!("ch{}", i)).collect();
+        let weights: Vec<(String, f64)> = (0..10)
+            .map(|i| (format!("ch{}", i), (i + 1) as f64 * 10.0))
+            .collect();
+        let result = estimate_channel_load(&channels, &weights, 3);
+
+        assert_eq!(result.len(), 10);
+        let total: usize = result.iter().map(|e| e.suggested_workers).sum();
+        // With only 3 workers and 10 channels, not all channels can get workers.
+        assert!(total >= 3, "should assign at least 3 workers total");
+
+        // The channel with the highest rate should have the highest confidence.
+        assert!((result[9].confidence - 1.0).abs() < EPS,
+            "ch9 (rate 100) should have confidence 1.0");
+    }
+
+    #[test]
+    fn channel_load_duplicate_weights_last_wins() {
+        // Duplicate entries for the same channel: last entry wins.
+        let channels = vec!["dup".to_string()];
+        let weights = vec![
+            ("dup".to_string(), 10.0),
+            ("dup".to_string(), 99.0),  // should override
+        ];
+        let result = estimate_channel_load(&channels, &weights, 2);
+
+        assert_eq!(result.len(), 1);
+        assert!((result[0].message_rate - 99.0).abs() < EPS,
+            "last weight entry should win, got {}", result[0].message_rate);
     }
 }

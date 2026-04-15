@@ -15,8 +15,8 @@
 //!
 //! `is_ground()` fixes both: zero arithmetic, deep recursive traversal.
 
-use crate::ast::language::LanguageDef;
-use crate::ast::types::CollectionType;
+use mettail_ast::language::LanguageDef;
+use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -101,6 +101,16 @@ fn collection_all_ground(name: TokenStream, coll_type: &CollectionType) -> Token
 /// Generate the `is_ground` check for a single field, dispatching to
 /// `collection_all_ground` for collection fields.
 fn field_ground_check(field: &FieldInfo, name: &Ident) -> TokenStream {
+    // Phase 3A-C1 (predicated types): a `BehavioralPred` field is
+    // always trivially "ground" from the host-category perspective.
+    // Variables inside a predicate (e.g., `halts(y)` referencing a
+    // pattern-bound `y`) are bound by the parent's `MatchBindings`,
+    // not by host-category `FreeVar<String>`s.
+    let _ = name;
+    if field.is_predicate {
+        return quote! { true };
+    }
+    let _ = name;
     if field.is_collection {
         let coll_type = field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag);
         collection_all_ground(quote! { #name }, coll_type)

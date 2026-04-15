@@ -1,11 +1,11 @@
-#![allow(clippy::cmp_owned, clippy::single_match)]
+#![allow(clippy::single_match)]
 
-use crate::ast::{
-    grammar::{GrammarItem, GrammarRule, TermParam},
+use mettail_ast::{
+    grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
     language::LanguageDef,
     types::{CollectionType, TypeExpr},
 };
-use crate::gen::native::native_type_to_string;
+use crate::gen::native::NativeType;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -41,16 +41,13 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
         if let Some(native_type) = &lang_type.native_type {
             if !has_literal_rule {
                 let literal_label = generate_literal_label(native_type);
-                let type_str = native_type_to_string(native_type);
+                let nt = NativeType::from_syn_type(native_type);
                 // str is unsized; use String. f32/f64 use canonical wrapper for Eq/Hash/Ord.
-                let payload_type = if type_str == "str" {
-                    quote! { std::string::String }
-                } else if type_str == "f64" {
-                    quote! { mettail_runtime::CanonicalFloat64 }
-                } else if type_str == "f32" {
-                    quote! { mettail_runtime::CanonicalFloat32 }
-                } else {
-                    quote! { #native_type }
+                let payload_type = match nt {
+                    NativeType::Str => quote! { std::string::String },
+                    NativeType::Float64 => quote! { mettail_runtime::CanonicalFloat64 },
+                    NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
+                    _ => quote! { #native_type },
                 };
                 variants.push(quote! {
                     #literal_label(#payload_type)
@@ -109,8 +106,16 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             });
         }
 
-        // All category enums use full derives; float categories use canonical wrapper payload (Eq/Hash/Ord).
-        let derives = quote! { #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, mettail_runtime::BoundTerm)] };
+        // Float categories use canonical wrapper payload (Eq/Hash/Ord).
+        // NOTE: Debug is NOT derived — it is manually implemented via an iterative work-stack
+        // in gen/syntax/debug.rs to avoid stack overflow on deeply nested terms.
+        // NOTE: Clone is NOT derived — it is manually implemented via an iterative
+        // work-stack in gen/term_ops/iterative_clone.rs to avoid stack overflow
+        // on deeply nested terms.
+        // NOTE: PartialEq, Eq, PartialOrd, Ord, Hash are NOT derived — they are manually
+        // implemented via iterative work-stacks in gen/term_ops/iterative_cmp.rs and
+        // gen/term_ops/iterative_hash.rs to avoid stack overflow on deeply nested terms.
+        let derives = quote! { #[derive(mettail_runtime::BoundTerm)] };
         quote! {
             #derives
             pub enum #cat_name {
@@ -125,7 +130,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
 }
 
 /// Rust type for a literal rule's single field (Integer, Boolean, StringLiteral, FloatLiteral).
-fn literal_payload_type(nt: &str, category: &syn::Ident, language: &LanguageDef) -> TokenStream {
+fn literal_payload_type(kind: NonTerminalKind, category: &syn::Ident, language: &LanguageDef) -> TokenStream {
     let native_type_for_category = || {
         language
             .types
@@ -133,23 +138,21 @@ fn literal_payload_type(nt: &str, category: &syn::Ident, language: &LanguageDef)
             .find(|t| t.name == *category)
             .and_then(|t| t.native_type.as_ref())
     };
-    match nt {
-        "Integer" => {
+    match kind {
+        NonTerminalKind::Integer => {
             if let Some(native_type) = native_type_for_category() {
                 quote! { #native_type }
             } else {
                 quote! { i32 }
             }
         },
-        "Boolean" => quote! { bool },
-        "StringLiteral" => quote! { std::string::String },
-        "FloatLiteral" => {
+        NonTerminalKind::Boolean => quote! { bool },
+        NonTerminalKind::StringLiteral => quote! { std::string::String },
+        NonTerminalKind::FloatLiteral => {
             if let Some(native_type) = native_type_for_category() {
-                let s = native_type_to_string(native_type);
-                if s == "f32" {
-                    quote! { mettail_runtime::CanonicalFloat32 }
-                } else {
-                    quote! { mettail_runtime::CanonicalFloat64 }
+                match NativeType::from_syn_type(native_type) {
+                    NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
+                    _ => quote! { mettail_runtime::CanonicalFloat64 },
                 }
             } else {
                 quote! { mettail_runtime::CanonicalFloat64 }
@@ -176,7 +179,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
     // Count non-terminal and collection items (these become fields)
     #[derive(Clone)]
     enum FieldType {
-        NonTerminal(syn::Ident),
+        NonTerminal(syn::Ident, NonTerminalKind),
         Collection {
             coll_type: CollectionType,
             element_type: syn::Ident,
@@ -187,7 +190,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
         .items
         .iter()
         .filter_map(|item| match item {
-            GrammarItem::NonTerminal(ident) => Some(FieldType::NonTerminal(ident.clone())),
+            GrammarItem::NonTerminal { ident, kind } => Some(FieldType::NonTerminal(ident.clone(), *kind)),
             GrammarItem::Collection { coll_type, element_type, .. } => {
                 Some(FieldType::Collection {
                     coll_type: coll_type.clone(),
@@ -203,21 +206,17 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
         // Unit variant
         quote! { #label }
     } else if fields.len() == 1 {
-        #[allow(clippy::cmp_owned)]
         match &fields[0] {
-            FieldType::NonTerminal(ident)
-                if crate::gen::is_literal_nonterminal(&ident.to_string()) =>
-            {
-                // Literal rule: payload type from nonterminal name (Integer, Boolean, StringLiteral, FloatLiteral)
-                let nt = ident.to_string();
-                let payload_type = literal_payload_type(&nt, &rule.category, language);
+            FieldType::NonTerminal(_, kind) if kind.is_literal() => {
+                // Literal rule: payload type from nonterminal kind (Integer, Boolean, StringLiteral, FloatLiteral)
+                let payload_type = literal_payload_type(*kind, &rule.category, language);
                 quote! { #label(#payload_type) }
             },
-            FieldType::NonTerminal(ident) if ident.to_string() == "Var" => {
+            FieldType::NonTerminal(_, NonTerminalKind::Var) => {
                 // Special case: Var field - always use OrdVar
                 quote! { #label(mettail_runtime::OrdVar) }
             },
-            FieldType::NonTerminal(ident) => {
+            FieldType::NonTerminal(ident, _) => {
                 // Single non-terminal field
                 quote! { #label(Box<#ident>) }
             },
@@ -236,10 +235,10 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
         let field_types: Vec<TokenStream> = fields
             .iter()
             .map(|f| match f {
-                FieldType::NonTerminal(ident) if ident.to_string() == "Var" => {
+                FieldType::NonTerminal(_, NonTerminalKind::Var) => {
                     quote! { mettail_runtime::OrdVar }
                 },
-                FieldType::NonTerminal(ident) => {
+                FieldType::NonTerminal(ident, _) => {
                     quote! { Box<#ident> }
                 },
                 FieldType::Collection { coll_type, element_type } => {
@@ -294,8 +293,24 @@ fn generate_variant_from_term_context(
                 }
             },
             TermParam::GuardBody { .. } => {
-                // Guard bodies do not generate enum variant fields;
-                // they are evaluated by the behavioral guard evaluator.
+                // Phase 2D (predicated types, 2026-04-08):
+                // Generate a positional field of type
+                // `mettail_runtime::BehavioralPred` to carry the
+                // per-instance behavioral predicate parsed at
+                // source-parse time by the language-generic
+                // `mettail_prattail::parser::predicate::PredicateParser`
+                // (Phase 1B).
+                //
+                // The field is passive runtime data used for shape
+                // dispatch, display, and hash-consing — not for
+                // runtime evaluation. Behavioral predicates are
+                // evaluated via direct Ascent JOIN clauses emitted
+                // by the macro at compile time (see
+                // `compile_guard_to_ascent_clauses` and §8 of
+                // `docs/design/predicated-types.md`).
+                fields.push(quote! {
+                    mettail_runtime::BehavioralPred
+                });
             },
         }
     }
@@ -326,7 +341,7 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
     };
 
     let body_cat = match &rule.items[body_idx] {
-        GrammarItem::NonTerminal(cat) => cat,
+        GrammarItem::NonTerminal { ident: cat, .. } => cat,
         _ => panic!("Body index doesn't point to a NonTerminal"),
     };
 
@@ -346,12 +361,11 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
         } else {
             // Regular field (comes before or after, but not binder or body)
             match item {
-                GrammarItem::NonTerminal(cat) => {
-                    if cat.to_string() == "Var" {
-                        fields.push(quote! { mettail_runtime::Var<String> });
-                    } else {
-                        fields.push(quote! { Box<#cat> });
-                    }
+                GrammarItem::NonTerminal { kind: NonTerminalKind::Var, .. } => {
+                    fields.push(quote! { mettail_runtime::Var<String> });
+                },
+                GrammarItem::NonTerminal { ident: cat, .. } => {
+                    fields.push(quote! { Box<#cat> });
                 },
                 GrammarItem::Collection { coll_type, element_type, .. } => {
                     // Collection becomes a field with the appropriate collection type
@@ -387,35 +401,28 @@ fn type_expr_to_field_type(
 ) -> TokenStream {
     match ty {
         TypeExpr::Base(ident) => {
-            let name = ident.to_string();
-            if name == "Var" {
-                quote! { mettail_runtime::OrdVar }
-            } else if name == "Integer" {
-                quote! { i64 }
-            } else if name == "Boolean" {
-                quote! { bool }
-            } else if name == "StringLiteral" {
-                quote! { std::string::String }
-            } else if name == "FloatLiteral" {
-                let canonical = language_category
-                    .and_then(|(lang, cat)| {
-                        lang.types
-                            .iter()
-                            .find(|t| t.name == *cat)
-                            .and_then(|t| t.native_type.as_ref())
-                    })
-                    .map(|native_type| {
-                        let s = native_type_to_string(native_type);
-                        if s == "f32" {
-                            quote! { mettail_runtime::CanonicalFloat32 }
-                        } else {
-                            quote! { mettail_runtime::CanonicalFloat64 }
-                        }
-                    })
-                    .unwrap_or_else(|| quote! { mettail_runtime::CanonicalFloat64 });
-                canonical
-            } else {
-                quote! { Box<#ident> }
+            match NonTerminalKind::classify(&ident.to_string()) {
+                NonTerminalKind::Var => quote! { mettail_runtime::OrdVar },
+                NonTerminalKind::Integer => quote! { i64 },
+                NonTerminalKind::Boolean => quote! { bool },
+                NonTerminalKind::StringLiteral => quote! { std::string::String },
+                NonTerminalKind::FloatLiteral => {
+                    language_category
+                        .and_then(|(lang, cat)| {
+                            lang.types
+                                .iter()
+                                .find(|t| t.name == *cat)
+                                .and_then(|t| t.native_type.as_ref())
+                        })
+                        .map(|native_type| {
+                            match NativeType::from_syn_type(native_type) {
+                                NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
+                                _ => quote! { mettail_runtime::CanonicalFloat64 },
+                            }
+                        })
+                        .unwrap_or_else(|| quote! { mettail_runtime::CanonicalFloat64 })
+                },
+                NonTerminalKind::Category => quote! { Box<#ident> },
             }
         },
         TypeExpr::Collection { coll_type, element } => {

@@ -19,6 +19,7 @@ use crate::dispatch::{CastRule, CrossCategoryRule};
 use crate::pipeline::{CategoryInfo, ParserBundle};
 use crate::prediction::{compute_first_sets, compute_follow_sets_from_inputs, FirstSet};
 use crate::recursive::{CollectionKind, RDRuleInfo, RDSyntaxItem};
+use crate::lint::DiagnosticId;
 use crate::{LanguageSpec, RuleSpec, SyntaxItemSpec};
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -136,7 +137,7 @@ pub fn write_ebnf_output(ebnf: &str, language_name: &str, dump_target: &str) {
 
     if let Err(e) = std::fs::create_dir_all(&dir) {
         crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
-            id: "I11",
+            id: DiagnosticId::I11,
             name: "ebnf-dump-failed",
             severity: crate::lint::LintSeverity::Warning,
             category: None,
@@ -153,7 +154,7 @@ pub fn write_ebnf_output(ebnf: &str, language_name: &str, dump_target: &str) {
     match std::fs::write(&path, ebnf) {
         Ok(()) => {
             crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
-                id: "I12",
+                id: DiagnosticId::I12,
                 name: "ebnf-dump-success",
                 severity: crate::lint::LintSeverity::Info,
                 category: None,
@@ -166,7 +167,7 @@ pub fn write_ebnf_output(ebnf: &str, language_name: &str, dump_target: &str) {
         }
         Err(e) => {
             crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
-                id: "I11",
+                id: DiagnosticId::I11,
                 name: "ebnf-dump-failed",
                 severity: crate::lint::LintSeverity::Warning,
                 category: None,
@@ -842,6 +843,9 @@ fn format_syntax_item(item: &SyntaxItemSpec) -> String {
             let items: Vec<String> = inner.iter().map(format_syntax_item).collect();
             format!("[ {} ]", items.join(" "))
         },
+        SyntaxItemSpec::GuardExpression { param_name } => {
+            format!("<guard:{}>", param_name)
+        },
     }
 }
 
@@ -1318,6 +1322,7 @@ mod tests {
             sync: None,
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
         }
     }
 
@@ -1521,7 +1526,6 @@ mod tests {
             rule_locations: std::collections::HashMap::new(),
             semantic_dependency_groups: Vec::new(),
             custom_tokens: Vec::new(),
-            #[cfg(feature = "type-system")]
             refinement_types: Vec::new(),
         }
     }
@@ -1623,6 +1627,9 @@ mod tests {
             },
             SyntaxItemSpec::Optional { inner } => RDSyntaxItem::Optional {
                 inner: inner.iter().map(convert_syntax_item).collect(),
+            },
+            SyntaxItemSpec::GuardExpression { param_name } => RDSyntaxItem::GuardExpression {
+                param_name: param_name.clone(),
             },
         }
     }
@@ -1738,6 +1745,7 @@ mod tests {
             sync: None,
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
         };
 
         let bundle = build_bundle(&spec);
@@ -1816,6 +1824,7 @@ mod tests {
             sync: None,
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
         };
 
         let bundle = build_bundle(&spec);
@@ -1887,6 +1896,7 @@ mod tests {
             sync: None,
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
         };
 
         let bundle = build_bundle(&spec);

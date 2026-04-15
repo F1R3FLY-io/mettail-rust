@@ -1,0 +1,32 @@
+# Rocq project file for CEK machine bisimulation proofs
+#
+# Verifies correctness of PraTTaIL's trampolined parser via CEK machine
+# operational semantics and WPDS forward simulation:
+#
+#   1. CekTransitions          — Formal transition rules (10 rules),
+#                                configurations, frames, abstraction function
+#   2. TrampolineEquivalence   — CEK.1: parse_rec = parse_tramp
+#   3. WpdsSimulation          — CEK.2: forward simulation by WPDS,
+#                                CEK.3: dead rule soundness corollary
+#   4. TailCallCorrectness     — CEK.4: tail_wrap = full push/pop
+#   5. Defunctionalization      — CEK.5: Frame_Cat is correct defunctionalization
+#
+# Dependency order:
+#   CekTransitions.v           — (standalone)
+#   TrampolineEquivalence.v    — (standalone)
+#   WpdsSimulation.v           — (standalone)
+#   TailCallCorrectness.v      — (standalone)
+#   Defunctionalization.v       — (standalone)
+#
+# All files are self-contained (no inter-file imports).
+
+-Q theories Trampoline
+
+# Source files (no dependencies between them)
+theories/CekTransitions.v
+theories/TrampolineEquivalence.v
+theories/WpdsSimulation.v
+theories/TailCallCorrectness.v
+theories/Defunctionalization.v
+theories/CeskStoreCorrectness.v
+theories/CeskMutation.v

@@ -11,12 +11,11 @@
     clippy::unnecessary_filter_map
 )]
 
-use crate::ast::{
-    grammar::{GrammarItem, GrammarRule, TermParam},
+use mettail_ast::{
+    grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
     language::LanguageDef,
 };
-use crate::gen::is_literal_nonterminal;
-use crate::gen::native::native_type_to_string;
+use crate::gen::native::NativeType;
 use crate::gen::term_gen::is_lang_type;
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -132,7 +131,7 @@ fn generate_random_depth_0(
         let non_terminals: Vec<_> = rule
             .items
             .iter()
-            .filter(|item| matches!(item, GrammarItem::NonTerminal(_) | GrammarItem::Binder { .. }))
+            .filter(|item| matches!(item, GrammarItem::NonTerminal { .. } | GrammarItem::Binder { .. }))
             .collect();
 
         if non_terminals.is_empty() {
@@ -140,9 +139,8 @@ fn generate_random_depth_0(
             cases.push(quote! { #cat_name::#label });
         } else if non_terminals.len() == 1 {
             // Check if it's a Var or literal constructor (Integer, Boolean, StringLiteral, FloatLiteral)
-            if let GrammarItem::NonTerminal(nt) = non_terminals[0] {
-                let nt_str = nt.to_string();
-                if nt_str == "Var" {
+            if let GrammarItem::NonTerminal { ident: nt, kind } = non_terminals[0] {
+                if *kind == NonTerminalKind::Var {
                     // VarRef or other Var rules - generate variables
                     cases.push(quote! {
                         if !vars.is_empty() {
@@ -164,24 +162,24 @@ fn generate_random_depth_0(
                             )
                         }
                     });
-                } else if is_literal_nonterminal(&nt_str) {
+                } else if kind.is_literal() {
                     // Literal rules - generate random native values
-                    let literal_case = match nt_str.as_str() {
-                        "Integer" => quote! {
+                    let literal_case = match kind {
+                        NonTerminalKind::Integer => quote! {
                             let val = rng.gen_range(-100i32..100i32);
                             #cat_name::#label(val)
                         },
-                        "Boolean" => quote! {
+                        NonTerminalKind::Boolean => quote! {
                             let val: bool = rng.gen();
                             #cat_name::#label(val)
                         },
-                        "FloatLiteral" => {
+                        NonTerminalKind::FloatLiteral => {
                             let is_f32 = language
                                 .types
                                 .iter()
                                 .find(|t| t.name == *cat_name)
                                 .and_then(|t| t.native_type.as_ref())
-                                .map(|n| native_type_to_string(n) == "f32")
+                                .map(|n| NativeType::from_syn_type(n).is_float() && NativeType::from_syn_type(n) == NativeType::Float32)
                                 .unwrap_or(false);
                             let (wrapper_ty, val_ty) = if is_f32 {
                                 (
@@ -199,7 +197,7 @@ fn generate_random_depth_0(
                                 #cat_name::#label(#wrapper_ty::from(val))
                             }
                         },
-                        "StringLiteral" => quote! {
+                        NonTerminalKind::StringLiteral => quote! {
                             let len = rng.gen_range(0..20usize);
                             let val = (0..len).map(|_| {
                                 let idx = rng.gen_range(0..26u8);
@@ -298,7 +296,7 @@ fn generate_random_depth_d(
             .items
             .iter()
             .filter_map(|item| match item {
-                GrammarItem::NonTerminal(nt) => Some(nt.clone()),
+                GrammarItem::NonTerminal { ident: nt, .. } => Some(nt.clone()),
                 GrammarItem::Binder { category } => Some(category.clone()),
                 _ => None,
             })
@@ -311,10 +309,33 @@ fn generate_random_depth_d(
 
         // Skip Var and literal constructors at depth > 0 (they're depth 0 only)
         if non_terminals.len() == 1 {
-            let nt_str = non_terminals[0].to_string();
-            if nt_str == "Var" || is_literal_nonterminal(&nt_str) {
-                continue;
+            if let Some(kind) = rule.items.iter().find_map(|item| {
+                if let GrammarItem::NonTerminal { kind, .. } = item {
+                    Some(*kind)
+                } else {
+                    None
+                }
+            }) {
+                if kind.is_builtin() {
+                    continue;
+                }
             }
+        }
+
+        // Phase 3A (predicated types): random term generation for
+        // guarded constructors requires random predicate generation,
+        // which is out of scope for the current term_gen pipeline.
+        // Constructors with `?guard:Guard` slots are skipped from
+        // random generation; tests that need to construct guarded
+        // terms should build them by hand. The same skip is applied
+        // in `exhaustive.rs:478-491` and `logic/helpers.rs`.
+        let has_guard_slot = rule
+            .term_context
+            .as_ref()
+            .map(|ctx| ctx.iter().any(|p| matches!(p, TermParam::GuardBody { .. })))
+            .unwrap_or(false);
+        if has_guard_slot {
+            continue;
         }
 
         // Generate case for this constructor
@@ -367,7 +388,7 @@ fn generate_random_simple_constructor(
         .items
         .iter()
         .filter_map(|item| match item {
-            GrammarItem::NonTerminal(nt) => Some(nt.clone()),
+            GrammarItem::NonTerminal { ident: nt, .. } => Some(nt.clone()),
             _ => None,
         })
         .collect();
@@ -402,12 +423,9 @@ fn generate_random_binary(
     arg2_cat: &Ident,
     language: &LanguageDef,
 ) -> TokenStream {
-    let arg1_str = arg1_cat.to_string();
-    let arg2_str = arg2_cat.to_string();
-
     // Handle Var specially - it's a built-in type, generate directly as OrdVar
-    let is_arg1_var = arg1_str == "Var";
-    let is_arg2_var = arg2_str == "Var";
+    let is_arg1_var = NonTerminalKind::classify(&arg1_cat.to_string()) == NonTerminalKind::Var;
+    let is_arg2_var = NonTerminalKind::classify(&arg2_cat.to_string()) == NonTerminalKind::Var;
 
     // If both args are non-exported and not Var, skip this constructor
     if !is_arg1_var && !is_lang_type(arg1_cat, language) {
@@ -509,7 +527,7 @@ fn generate_random_binder_constructor(
 
     // Find body category
     let body_cat = match &rule.items[body_idx] {
-        GrammarItem::NonTerminal(cat) => cat,
+        GrammarItem::NonTerminal { ident: cat, .. } => cat,
         _ => panic!("Body should be NonTerminal"),
     };
 
@@ -523,7 +541,7 @@ fn generate_random_binder_constructor(
                 None
             } else {
                 match item {
-                    GrammarItem::NonTerminal(cat) => Some((i, cat.clone())),
+                    GrammarItem::NonTerminal { ident: cat, .. } => Some((i, cat.clone())),
                     _ => None,
                 }
             }
@@ -558,7 +576,7 @@ fn generate_random_multi_binder_constructor(
 
     // Find body category
     let body_cat = match &rule.items[body_idx] {
-        GrammarItem::NonTerminal(cat) => cat,
+        GrammarItem::NonTerminal { ident: cat, .. } => cat,
         _ => panic!("Body should be NonTerminal"),
     };
 
@@ -576,7 +594,7 @@ fn generate_random_multi_binder_constructor(
                 None
             } else {
                 match item {
-                    GrammarItem::NonTerminal(cat) => Some((i, cat.clone())),
+                    GrammarItem::NonTerminal { ident: cat, .. } => Some((i, cat.clone())),
                     _ => None,
                 }
             }

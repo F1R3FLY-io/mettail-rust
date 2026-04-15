@@ -1155,10 +1155,8 @@ pub fn analyze(
 /// Compiler adapter for the Parity Tree Automata module (M5).
 ///
 /// Activated by recursive `letprop` / fixpoint definitions (μ-calculus variety).
-#[cfg(feature = "predicate-dispatch")]
 pub struct ParityTreeCompiler;
 
-#[cfg(feature = "predicate-dispatch")]
 impl crate::predicate_dispatch::PredicateCompiler for ParityTreeCompiler {
     type Output = ParityTreeAnalysis;
 

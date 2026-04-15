@@ -1,7 +1,17 @@
 # Ascent Parallel Execution Issue
 
 **Date**: November 9, 2025
-**Status**: 🔴 INCOMPATIBLE - Requires Code Generation Changes
+**Updated**: 2026-03-21
+**Status**: Resolved — `ascent-parallel` feature retained as no-op; `generate_ascent_struct()` always uses serial `ascent!`
+
+> **Resolution (2026-03-21):** The `dual_indexed` BYODS provider (used by all
+> generated languages) only implements serial Ascent traits. Rather than implementing
+> parallel-safe types (high effort, no proven need), `generate_ascent_struct()` was
+> changed to always emit `ascent!`. The `ascent-parallel` feature flag is kept for
+> forward compatibility. `compile_error!` guard arms in the provider macros prevent
+> accidental re-enablement. See `dual_indexed_parallel_limitation.md` for details.
+
+**Original Status**: 🔴 INCOMPATIBLE - Requires Code Generation Changes
 
 ---
 

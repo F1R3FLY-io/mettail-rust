@@ -13,8 +13,8 @@
 //! - Collections: 1 + max(element depths)
 //! - Binders: 1 + max(pre-scope field depths, body depth)
 
-use crate::ast::language::LanguageDef;
-use crate::ast::types::CollectionType;
+use mettail_ast::language::LanguageDef;
+use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -103,6 +103,13 @@ fn collection_max_depth(name: TokenStream, coll_type: &CollectionType) -> TokenS
 
 /// Compute depth contribution of a single field.
 fn field_depth_expr(field: &FieldInfo, name: &Ident) -> TokenStream {
+    // Phase 3A-C2 (predicated types): a `BehavioralPred` field is a
+    // constant-size payload, not part of host term nesting depth.
+    // A-RT05 convergence checks count host-term nesting only.
+    if field.is_predicate {
+        let _ = name;
+        return quote! { 0 };
+    }
     if field.is_collection {
         let coll_type = field
             .coll_type

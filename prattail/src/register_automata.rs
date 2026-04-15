@@ -256,9 +256,9 @@ impl<W: Semiring> RegisterAutomaton<W> {
 
     /// Add a transition to the automaton.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `ops.len() != self.num_registers`, or if `from` or `to`
+    /// Returns an error if `ops.len() != self.num_registers`, or if `from` or `to`
     /// are out of bounds.
     pub fn add_transition(
         &mut self,
@@ -267,26 +267,28 @@ impl<W: Semiring> RegisterAutomaton<W> {
         label: Option<String>,
         ops: Vec<RegisterOp>,
         weight: W,
-    ) {
-        assert_eq!(
-            ops.len(),
-            self.num_registers,
-            "ops length ({}) must equal num_registers ({})",
-            ops.len(),
-            self.num_registers,
-        );
-        assert!(
-            from < self.states.len(),
-            "source state {} out of bounds (num_states = {})",
-            from,
-            self.states.len(),
-        );
-        assert!(
-            to < self.states.len(),
-            "target state {} out of bounds (num_states = {})",
-            to,
-            self.states.len(),
-        );
+    ) -> Result<(), String> {
+        if ops.len() != self.num_registers {
+            return Err(format!(
+                "ops length ({}) must equal num_registers ({})",
+                ops.len(),
+                self.num_registers,
+            ));
+        }
+        if from >= self.states.len() {
+            return Err(format!(
+                "source state {} out of bounds (num_states = {})",
+                from,
+                self.states.len(),
+            ));
+        }
+        if to >= self.states.len() {
+            return Err(format!(
+                "target state {} out of bounds (num_states = {})",
+                to,
+                self.states.len(),
+            ));
+        }
         if let Some(ref lbl) = label {
             self.alphabet.insert(lbl.clone());
         }
@@ -297,6 +299,7 @@ impl<W: Semiring> RegisterAutomaton<W> {
             ops,
             weight,
         });
+        Ok(())
     }
 
     /// Number of states.
@@ -1013,10 +1016,8 @@ fn find_unbound_references(
 /// Compiler adapter for the Register Automata module (M6).
 ///
 /// Activated by equality/inequality/freshness relations (data language variety).
-#[cfg(feature = "predicate-dispatch")]
 pub struct RegisterCompiler;
 
-#[cfg(feature = "predicate-dispatch")]
 impl crate::predicate_dispatch::PredicateCompiler for RegisterCompiler {
     type Output = RegisterAnalysis;
 
@@ -1062,7 +1063,8 @@ mod tests {
             Some("open".to_string()),
             vec![RegisterOp::Store],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
         // close: test that data value equals register 0
         ra.add_transition(
             q1,
@@ -1070,7 +1072,8 @@ mod tests {
             Some("close".to_string()),
             vec![RegisterOp::TestEq],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
 
         ra
     }
@@ -1113,19 +1116,20 @@ mod tests {
             Some("read".to_string()),
             vec![RegisterOp::Nop],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
         assert!(ra.alphabet.contains("read"));
         assert_eq!(ra.num_transitions(), 1);
     }
 
     #[test]
-    #[should_panic(expected = "ops length")]
     fn test_add_transition_wrong_ops_length() {
         let mut ra: RegisterAutomaton<BooleanWeight> = RegisterAutomaton::new(2);
         ra.add_state(false, None);
         ra.add_state(false, None);
-        // Only 1 op instead of 2 — should panic.
-        ra.add_transition(0, 1, None, vec![RegisterOp::Nop], BooleanWeight::one());
+        // Only 1 op instead of 2 — should return error.
+        let err = ra.add_transition(0, 1, None, vec![RegisterOp::Nop], BooleanWeight::one()).unwrap_err();
+        assert!(err.contains("ops length"), "{err}");
     }
 
     // ── Evaluate tests ──────────────────────────────────────────────────────
@@ -1193,13 +1197,15 @@ mod tests {
             Some("a".to_string()),
             vec![RegisterOp::Store],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
         ra.add_transition(
             q1, q2,
             Some("b".to_string()),
             vec![RegisterOp::TestFresh],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
 
         // Fresh value: should accept.
         let word_fresh = vec![
@@ -1230,13 +1236,15 @@ mod tests {
             Some("a".to_string()),
             vec![RegisterOp::Store],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
         ra.add_transition(
             q1, q2,
             Some("b".to_string()),
             vec![RegisterOp::TestNeq],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
 
         // Different value: should accept.
         let word_diff = vec![
@@ -1266,7 +1274,8 @@ mod tests {
             Some("a".to_string()),
             vec![],
             TropicalWeight::new(2.0),
-        );
+        )
+        .expect("valid transition");
 
         let word = vec![(Some("a".to_string()), DataValue::Unit)];
         let result = ra.evaluate(&word);
@@ -1297,19 +1306,22 @@ mod tests {
             Some("a".to_string()),
             vec![RegisterOp::Store, RegisterOp::Nop],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
         ra.add_transition(
             q1, q2,
             Some("b".to_string()),
             vec![RegisterOp::Nop, RegisterOp::Store],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
         ra.add_transition(
             q2, q3,
             Some("c".to_string()),
             vec![RegisterOp::TestEq, RegisterOp::TestEq],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
 
         // All same: accept.
         let word_ok = vec![
@@ -1351,13 +1363,15 @@ mod tests {
             Some("a".to_string()),
             vec![RegisterOp::Store, RegisterOp::Store],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
         ra.add_transition(
             q1, q2,
             Some("b".to_string()),
             vec![RegisterOp::TestEq, RegisterOp::Nop], // reg 1 never tested
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
 
         let dead = ra.dead_registers();
         assert_eq!(dead, vec![1]);
@@ -1377,14 +1391,16 @@ mod tests {
             Some("a".to_string()),
             vec![RegisterOp::Store, RegisterOp::Store], // reg 1 dead
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
         // Only reg 0 is tested.
         ra.add_transition(
             q1, q0,
             Some("b".to_string()),
             vec![RegisterOp::TestEq, RegisterOp::Nop],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
 
         ra.normalize();
 
@@ -1429,13 +1445,15 @@ mod tests {
             Some("open".to_string()),
             vec![RegisterOp::Nop],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
         ra2.add_transition(
             q1, q2,
             Some("close".to_string()),
             vec![RegisterOp::Nop], // no TestEq — accepts all close values
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
 
         assert!(!ra1.check_equivalence(&ra2));
     }
@@ -1474,7 +1492,8 @@ mod tests {
             Some("x".to_string()),
             vec![RegisterOp::TestEq],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
 
         let analysis = analyze(&ra);
         assert_eq!(analysis.unbound_references.len(), 1);
@@ -1495,7 +1514,8 @@ mod tests {
             Some("x".to_string()),
             vec![RegisterOp::TestEq],
             BooleanWeight::one(),
-        );
+        )
+        .expect("valid transition");
 
         let analysis = analyze(&ra);
         assert!(analysis.unbound_references.is_empty());

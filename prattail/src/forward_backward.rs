@@ -427,7 +427,6 @@ mod tests {
         assert!(path.is_empty()); // Already at final
     }
 
-    #[cfg(feature = "wfst-log")]
     mod log_tests {
         use super::super::*;
         use crate::automata::semiring::LogWeight;

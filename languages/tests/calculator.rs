@@ -991,3 +991,666 @@ fn test_bcg05_repeated_evaluation_produces_correct_results() {
         displays
     );
 }
+
+#[test]
+fn debug_cross_category_cast() {
+    use mettail_languages::calculator::Int;
+
+    mettail_runtime::clear_var_cache();
+    let r1 = Int::parse("int(0.5)");
+    println!("int(0.5) -> {:?}", r1.as_ref().map(|p| format!("{}", p)));
+
+    mettail_runtime::clear_var_cache();
+    let r2 = Int::parse("int(true)");
+    println!("int(true) -> {:?}", r2.as_ref().map(|p| format!("{}", p)));
+
+    mettail_runtime::clear_var_cache();
+    let r3 = Int::parse(r#"int(str("hello"))"#);
+    println!(r#"int(str("hello")) -> {:?}"#, r3.as_ref().map(|p| format!("{}", p)));
+
+    mettail_runtime::clear_var_cache();
+    let r4 = Int::parse("int(b + 0.5)");
+    println!("int(b + 0.5) -> {:?}", r4.as_ref().map(|p| format!("{}", p)));
+
+    // Assert the simple cases work
+    assert!(r1.is_ok(), "int(0.5) should parse: {:?}", r1.err());
+    assert!(r2.is_ok(), "int(true) should parse: {:?}", r2.err());
+    assert!(r3.is_ok(), r#"int(str("hello")) should parse: {:?}"#, r3.err());
+}
+
+#[test]
+fn debug_complex_cast() {
+    use mettail_languages::calculator::Int;
+
+    // Simplified version of simulation failure
+    mettail_runtime::clear_var_cache();
+    let r = Int::parse("int(-0.5 ^ y)");
+    println!("int(-0.5 ^ y) -> {:?}", r.as_ref().map(|p| format!("{}", p)).map_err(|e| &e[..100.min(e.len())]));
+
+    mettail_runtime::clear_var_cache();
+    let r2 = Int::parse("int(-0.5)");
+    println!("int(-0.5) -> {:?}", r2.as_ref().map(|p| format!("{}", p)).map_err(|e| &e[..100.min(e.len())]));
+
+    mettail_runtime::clear_var_cache();
+    let r3 = Int::parse("int(0.5 ^ 2.0)");
+    println!("int(0.5 ^ 2.0) -> {:?}", r3.as_ref().map(|p| format!("{}", p)).map_err(|e| &e[..100.min(e.len())]));
+}
+
+#[test]
+fn debug_simulation_failures() {
+    use mettail_languages::calculator::Int;
+
+    let cases = vec![
+        r#"int(b == str("mnxbf"))"#,
+        "int(b >= true)",
+        r#"int((z <= "wn") != (true < a))"#,
+        "int((c > b) > 0.5)",
+        "int(x >= y)",
+    ];
+
+    for input in &cases {
+        mettail_runtime::clear_var_cache();
+        match Int::parse(input) {
+            Ok(p) => println!("{} -> OK: {}", input, p),
+            Err(e) => println!("{} -> ERR: {}", input, &e[..e.len().min(80)]),
+        }
+    }
+}
+
+#[test]
+fn debug_bool_parse_comparison() {
+    use mettail_languages::calculator::Bool;
+    
+    let cases = vec![
+        "b >= true",
+        "x >= y", 
+        "true >= false",
+        "b == true",
+    ];
+    for input in &cases {
+        mettail_runtime::clear_var_cache();
+        match Bool::parse(input) {
+            Ok(p) => println!("Bool::parse({}) -> OK: {}", input, p),
+            Err(e) => println!("Bool::parse({}) -> ERR: {}", input, &e[..e.len().min(100)]),
+        }
+    }
+}
+
+#[test]
+fn test_cross_category_infix_backtracking() {
+    use mettail_languages::calculator::{Bool, Int};
+
+    mettail_runtime::clear_var_cache();
+    let r1 = Bool::parse("b >= true");
+    assert!(r1.is_ok(), "b >= true should parse: {:?}", r1.err());
+
+    mettail_runtime::clear_var_cache();
+    let r2 = Bool::parse("b == true");
+    assert!(r2.is_ok(), "b == true should parse: {:?}", r2.err());
+
+    mettail_runtime::clear_var_cache();
+    let r3 = Int::parse("int(b >= true)");
+    assert!(r3.is_ok(), "int(b >= true) should parse: {:?}", r3.err());
+
+    mettail_runtime::clear_var_cache();
+    let r4 = Bool::parse("b == str(\"hello\")");
+    assert!(r4.is_ok(), "b == str(\"hello\") should parse: {:?}", r4.err());
+}
+
+#[test]
+fn debug_ne_operator() {
+    use mettail_languages::calculator::{Bool, Int};
+
+    let cases: Vec<(&str, Box<dyn Fn(&str) -> Result<String, String>>)> = vec![
+        ("b != true", Box::new(|s| Bool::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
+        ("b != false", Box::new(|s| Bool::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
+        ("int(b != true)", Box::new(|s| Int::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
+        ("int(y != 0.5)", Box::new(|s| Int::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
+        ("int(y != -0.5)", Box::new(|s| Int::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
+        ("b < true", Box::new(|s| Bool::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
+        ("b > true", Box::new(|s| Bool::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
+        ("b <= true", Box::new(|s| Bool::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
+    ];
+    for (input, parse_fn) in &cases {
+        mettail_runtime::clear_var_cache();
+        match parse_fn(input) {
+            Ok(p) => println!("{} -> OK: {}", input, p),
+            Err(e) => println!("{} -> ERR: {}", input, e),
+        }
+    }
+}
+
+#[test]
+fn debug_chained_comparisons() {
+    use mettail_languages::calculator::{Bool, Int};
+
+    let cases: Vec<(&str, &str)> = vec![
+        ("y != 0.5", "Bool"),
+        ("y != 0.5 > y", "Bool"),  // chained: (y != 0.5) > y or y != (0.5 > y)?
+        ("int(y != 0.5)", "Int"),
+        ("int(y != 0.5 > y)", "Int"),
+        ("int(y != 0.5 > y != 0.5)", "Int"),
+    ];
+    for (input, cat) in &cases {
+        mettail_runtime::clear_var_cache();
+        let result = if *cat == "Bool" {
+            Bool::parse(input).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(100)].to_string())
+        } else {
+            Int::parse(input).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(100)].to_string())
+        };
+        match result {
+            Ok(p) => println!("{} -> OK: {}", input, p),
+            Err(e) => println!("{} -> ERR: {}", input, e),
+        }
+    }
+}
+
+#[test]
+fn debug_display_chained_comparison() {
+    use mettail_languages::calculator::{Bool, Int};
+
+    // Construct GtBool(NeBool(BVar(x), BoolLit(true)), BVar(y))
+    mettail_runtime::clear_var_cache();
+    let x = mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x")));
+    let y_var = mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("y")));
+    let inner = Bool::NeBool(Box::new(Bool::BVar(x.clone())), Box::new(Bool::BoolLit(true)));
+    let outer = Bool::GtBool(Box::new(inner), Box::new(Bool::BVar(y_var)));
+    let displayed = format!("{}", outer);
+    println!("GtBool(NeBool(x, true), y) displays as: '{}'", displayed);
+
+    // Try to parse it back
+    mettail_runtime::clear_var_cache();
+    match Bool::parse(&displayed) {
+        Ok(p) => println!("  Parsed back: {}", p),
+        Err(e) => println!("  Parse error: {}", &e[..e.len().min(100)]),
+    }
+}
+
+#[test]
+fn debug_int_chained_comparison() {
+    use mettail_languages::calculator::Int;
+
+    let cases = vec![
+        "int(x != true > y)",
+        "int(x != 0.5 > y)",
+        "int(y != 0.5 > y != 0.5)",
+    ];
+    for input in &cases {
+        mettail_runtime::clear_var_cache();
+        match Int::parse(input) {
+            Ok(p) => println!("{} -> OK: {}", input, p),
+            Err(e) => println!("{} -> ERR: {}", input, &e[..e.len().min(80)]),
+        }
+    }
+}
+
+// --- Display roundtrip regression tests ---
+
+#[test]
+fn test_bool_display_roundtrip_nested_lt() {
+    use mettail_languages::calculator::Bool;
+    mettail_runtime::clear_var_cache();
+
+    // LtBool(LtBool(true,true), LtBool(true,true))
+    let a = || Bool::BoolLit(true);
+    let inner_left = Bool::LtBool(Box::new(a()), Box::new(a()));
+    let inner_right = Bool::LtBool(Box::new(a()), Box::new(a()));
+    let term = Bool::LtBool(Box::new(inner_left), Box::new(inner_right));
+
+    let displayed = format!("{}", term);
+    eprintln!("displayed: {:?}", displayed);
+
+    let parsed = Bool::parse(&displayed).expect("parse should succeed");
+    let re_displayed = format!("{}", parsed);
+    eprintln!("re_displayed: {:?}", re_displayed);
+
+    assert_eq!(displayed, re_displayed, "Display roundtrip should be idempotent");
+}
+
+#[test]
+fn test_bool_display_roundtrip_deep_lt() {
+    use mettail_languages::calculator::Bool;
+    mettail_runtime::clear_var_cache();
+
+    // LtBool(LtBool(LtBool(true,true), LtBool(true,true)), LtBool(LtBool(true,true), LtBool(true,true)))
+    let a = || Bool::BoolLit(true);
+    let l1 = Bool::LtBool(Box::new(a()), Box::new(a()));
+    let l2 = Bool::LtBool(Box::new(a()), Box::new(a()));
+    let l3 = Bool::LtBool(Box::new(a()), Box::new(a()));
+    let l4 = Bool::LtBool(Box::new(a()), Box::new(a()));
+    let left = Bool::LtBool(Box::new(l1), Box::new(l2));
+    let right = Bool::LtBool(Box::new(l3), Box::new(l4));
+    let term = Bool::LtBool(Box::new(left), Box::new(right));
+
+    let displayed = format!("{}", term);
+    eprintln!("displayed: {:?}", displayed);
+
+    let parsed = Bool::parse(&displayed).expect("parse should succeed");
+    let re_displayed = format!("{}", parsed);
+    eprintln!("re_displayed: {:?}", re_displayed);
+
+    assert_eq!(displayed, re_displayed, "Display roundtrip should be idempotent");
+}
+
+#[test]
+fn test_bool_display_roundtrip_deep_lt_vars() {
+    use mettail_languages::calculator::Bool;
+    mettail_runtime::clear_var_cache();
+
+    // Same tree but with variables instead of literals
+    let a = || Bool::BVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a".to_string())
+    )));
+    let l1 = Bool::LtBool(Box::new(a()), Box::new(a()));
+    let l2 = Bool::LtBool(Box::new(a()), Box::new(a()));
+    let l3 = Bool::LtBool(Box::new(a()), Box::new(a()));
+    let l4 = Bool::LtBool(Box::new(a()), Box::new(a()));
+    let left = Bool::LtBool(Box::new(l1), Box::new(l2));
+    let right = Bool::LtBool(Box::new(l3), Box::new(l4));
+    let term = Bool::LtBool(Box::new(left), Box::new(right));
+
+    let displayed = format!("{}", term);
+    eprintln!("displayed: {:?}", displayed);
+
+    let parsed = Bool::parse(&displayed).expect("parse should succeed");
+    let re_displayed = format!("{}", parsed);
+    eprintln!("re_displayed: {:?}", re_displayed);
+    eprintln!("parsed debug: {:?}", parsed);
+
+    assert_eq!(displayed, re_displayed, "Display roundtrip for LtBool with vars");
+}
+
+// --- Display roundtrip regression tests ---
+// These test that cross-category dispatch backtracking and the cur_bp == 0
+// guard produce stable canonical forms for same-category expressions.
+
+#[test]
+fn display_roundtrip_bool_xor_lt() {
+    use mettail_languages::calculator::Bool;
+    mettail_runtime::clear_var_cache();
+    // From proptest failure: Or(LtBool(Xor(c,c), a), ...)
+    // Inside xor RHS (cur_bp > 0), cross-cat dispatch is blocked → same-cat LtBool
+    let input = "(c xor c < a) or false";
+    let parsed = Bool::parse(input).expect("parse should succeed");
+    let displayed = format!("{}", parsed);
+    let reparsed = Bool::parse(&displayed).expect("reparse should succeed");
+    let redisplayed = format!("{}", reparsed);
+    assert_eq!(displayed, redisplayed, "Canonical form should be stable for '{}'", input);
+}
+
+#[test]
+fn display_roundtrip_bool_nested_not_lt() {
+    use mettail_languages::calculator::Bool;
+    mettail_runtime::clear_var_cache();
+    // From proptest failure: Not(LtBool(Not(c), c))
+    let input = "not (not c < c)";
+    let parsed = Bool::parse(input).expect("parse should succeed");
+    let displayed = format!("{}", parsed);
+    let reparsed = Bool::parse(&displayed).expect("reparse should succeed");
+    let redisplayed = format!("{}", reparsed);
+    assert_eq!(displayed, redisplayed, "Canonical form should be stable for '{}'", input);
+}
+
+#[test]
+fn display_roundtrip_bool_mixed_lt_lteq() {
+    use mettail_languages::calculator::Bool;
+    mettail_runtime::clear_var_cache();
+    // From proptest failure: mixed < and <= operators
+    let input = "not (not a < a <= c)";
+    let parsed = Bool::parse(input).expect("parse should succeed");
+    let displayed = format!("{}", parsed);
+    let reparsed = Bool::parse(&displayed).expect("reparse should succeed");
+    let redisplayed = format!("{}", reparsed);
+    assert_eq!(displayed, redisplayed, "Canonical form should be stable for '{}'", input);
+}
+
+// --- Cross-category dispatch regression tests ---
+// These test cases come from stochastic simulator failures where cross-category
+// comparison operators inside int(...) casts failed to parse because the Bool
+// parser's cross-cat dispatch had duplicate match arms for tokens shared across
+// multiple source categories (e.g., Token::Minus in both Int and Float FIRST sets).
+
+#[test]
+fn parse_int_cross_cat_comparison_ne() {
+    use mettail_languages::calculator::Int;
+    mettail_runtime::clear_var_cache();
+    // int(-N != b) requires Bool to dispatch Token::Minus to Int source
+    for input in &[
+        "int(-1 != 0)",
+        "int(-1 != b)",
+        "int(-543610622 != b)",
+    ] {
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+#[test]
+fn parse_int_cross_cat_comparison_lt() {
+    use mettail_languages::calculator::Int;
+    mettail_runtime::clear_var_cache();
+    for input in &[
+        "int(-1 < 0)",
+        "int(-1924974980 < x)",
+    ] {
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+#[test]
+fn parse_int_cross_cat_comparison_le() {
+    use mettail_languages::calculator::Int;
+    mettail_runtime::clear_var_cache();
+    for input in &[
+        "int(-1 <= 0)",
+        "int(-928988166 <= y)",
+        "int(-928988166 <= y <= (-928988166 <= y))",
+    ] {
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+#[test]
+fn parse_int_cross_cat_comparison_ge() {
+    use mettail_languages::calculator::Int;
+    mettail_runtime::clear_var_cache();
+    for input in &[
+        "int(-1 >= 0)",
+        "int(-715541275 >= a)",
+    ] {
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+#[test]
+fn parse_int_cross_cat_eq_with_modulo() {
+    use mettail_languages::calculator::Int;
+    mettail_runtime::clear_var_cache();
+    // int(a == x % x): == is both Bool infix (EqBool) and cross-cat (EqInt).
+    // The cross-cat dispatch must handle this without a peek-ahead blocking it.
+    let result = Int::parse("int(a == x % x)");
+    assert!(result.is_ok(), "Failed to parse 'int(a == x % x)': {:?}", result.err());
+}
+
+#[test]
+fn parse_int_nested_cross_cat_str() {
+    use mettail_languages::calculator::Int;
+    mettail_runtime::clear_var_cache();
+    // int(str(...)) requires Str → Int cast to exist or Bool to handle str(...)
+    let input = "int(str(-1 <= a))";
+    // This may or may not parse depending on grammar rules. If it fails, that's
+    // acceptable — but it should not crash.
+    let _ = Int::parse(input);
+}
+
+#[test]
+fn parse_int_cross_cat_in_expression() {
+    use mettail_languages::calculator::Int;
+    mettail_runtime::clear_var_cache();
+    // Cross-category comparison as operand of Int operators
+    for input in &[
+        "int(-1 != 0)!",          // postfix on cross-cat result
+        "-1 ^ int(-1 != 0)",      // cross-cat in RHS of power
+    ] {
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+// --- Stochastic simulator regression tests ---
+// All 30 unique failing inputs collected from simulate_calculator runs.
+// These are the AUTHORITATIVE regression suite for cross-category parsing bugs.
+// Each input is tested for parse success (Ok) or graceful error (Err) — no panics.
+// Inputs that SHOULD parse successfully use assert!(result.is_ok()).
+// Inputs that are genuinely unparsable (grammar limitation) use let _ = result.
+
+#[test]
+fn trace_cross_cat_parse_steps() {
+    use mettail_languages::calculator::{Bool, Int};
+
+    let cases: &[(&str, &str)] = &[
+        ("Bool", "c == -1"),
+        ("Bool", "c == -1 <= -2"),
+        ("Bool", "c > a"),
+        ("Bool", r#"c > a ++ """#),
+        ("Int",  "int(c == -1)"),
+        ("Int",  "int(c == -1 <= -2)"),
+        ("Int",  "int(c > a)"),
+        ("Int",  r#"int(c > a ++ "")"#),
+        ("Int",  "int(-1 != 0)"),
+        ("Int",  "int(-a > c % x)"),
+        ("Bool", r#"z != "lv" >= (false >= true)"#),
+        ("Int",  r#"int(z != "lv" >= (false >= true))"#),
+    ];
+    for (cat, input) in cases {
+        mettail_runtime::clear_var_cache();
+        let result = match *cat {
+            "Bool" => Bool::parse(input).map(|v| format!("{:?}", v)),
+            "Int"  => Int::parse(input).map(|v| format!("{:?}", v)),
+            _ => unreachable!(),
+        };
+        match &result {
+            Ok(v) => eprintln!("[{}] '{}' => OK: {}", cat, input, &v[..v.len().min(120)]),
+            Err(e) => eprintln!("[{}] '{}' => ERR: {}", cat, input, &e[..e.len().min(120)]),
+        }
+    }
+    // No assertion — this test is purely diagnostic
+}
+
+#[test]
+fn simulator_regression_original_6() {
+    use mettail_languages::calculator::Int;
+    // The original 6 failures from the user's first report.
+    // All involve cross-category comparison operators inside int(...) casts.
+    let must_parse = &[
+        r#"int(-543610622 != b)"#,                    // int(NeInt(Neg, IVar))
+        r#"int(-928988166 <= y <= (-928988166 <= y))"#, // chained cross-cat <=
+        r#"int(-715541275 >= a)"#,                     // simplified: no postfix
+        r#"int(-1924974980 < x)"#,                     // simplified: no tilde
+        r#"int(-1364203178 != -724684863)"#,           // both operands negative
+    ];
+    for input in must_parse {
+        mettail_runtime::clear_var_cache();
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+#[test]
+fn simulator_regression_full_expressions() {
+    use mettail_languages::calculator::Int;
+    // Full expressions from the original report (with surrounding context).
+    let must_parse = &[
+        r#"int(-744428796) ^ int(c) ? y ~ int(-379296706) : int(-543610622 != b)"#,
+        r#"-1313951767 ^ (-165227314 * x) - int(-1364203178 != -724684863)"#,
+        r#"int(-715541275 >= a)!"#,
+        r#"int(-1924974980 < x) ~ -|a|"#,
+    ];
+    for input in must_parse {
+        mettail_runtime::clear_var_cache();
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+#[test]
+fn simulator_regression_cross_cat_dispatch_chaining() {
+    use mettail_languages::calculator::Int;
+    // Failures caused by duplicate deterministic match arms in cross-cat dispatch.
+    // Token::Minus shared by Int and Float FIRST sets → second arm was dead code.
+    let must_parse = &[
+        r#"int(-a > c % x)"#,                          // -a as cross-cat prefix
+        r#"int(-y == y!)"#,                             // -y with postfix on RHS
+        r#"int(c == -301055575 <= -1136349513)"#,       // chained comparisons
+        r#"int(-220439700 > 1827376848 == c != -0.5)"#, // 3 chained operators
+        r#"int(b >= 2039068204 <= b >= -2074699644)"#,  // 3 chained >= and <=
+    ];
+    for input in must_parse {
+        mettail_runtime::clear_var_cache();
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+#[test]
+fn simulator_regression_cross_cat_with_strings() {
+    use mettail_languages::calculator::Int;
+    // Comparisons involving string operands inside int(...).
+    // Fixed by longest-match dispatch (Str source consumes ++ and string literals).
+    let must_parse = &[
+        r#"int(c > a ++ "")"#,                         // Str concat in comparison
+        r#"int(z >= x ++ "")"#,                         // >= with Str concat
+        r#"int(b == y ++ "")"#,                         // == with Str concat
+        r#"int(x == a ++ "")"#,                         // == with Str concat
+        r#"int(y < "edce" == y < "edce")"#,             // Str comparison chain
+        r#"int(z > 1691216401 == a < "um")"#,           // mixed Int/Str comparisons
+        r#"int(a >= "opnxjvm" < a >= "opnxjvm")"#,     // Str >= chain
+    ];
+    for input in must_parse {
+        mettail_runtime::clear_var_cache();
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+#[test]
+fn simulator_regression_cross_cat_with_parens() {
+    use mettail_languages::calculator::Int;
+    // Cross-category expressions with parenthesized sub-expressions.
+    // Fixed by chain detection + implicit cast synthesis.
+    let must_parse = &[
+        r#"int((c > y) < c != 0.5)"#,                  // parenthesized LHS
+        r#"int((1077498015 == x) > b != "")"#,          // parenthesized EqInt
+        r#"int((-0.5 < 0.5) <= b != "hh")"#,           // Float comparison in parens
+    ];
+    for input in must_parse {
+        mettail_runtime::clear_var_cache();
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+#[test]
+fn simulator_regression_bool_prefix_tokens() {
+    use mettail_languages::calculator::Int;
+    // Expressions where Bool-only prefix tokens (true/false/bool(...)) appear
+    // inside int(...). Fixed by implicit cast synthesis in deterministic arms
+    // (e.g., Token::Minus → IntToBool, Token::StringLit → StrToBool).
+    let must_parse = &[
+        r#"int(false > b < -2080280922)"#,
+        r#"int(false > a > z < "eoxyaib")"#,
+        r#"int(true >= z < x <= "a")"#,
+        r#"int(bool(a) < y <= 807406639)"#,
+        r#"int(bool(x) >= c != -1798717939)"#,
+        r#"int((c < true) <= c >= -562932638)"#,
+        r#"int(y != true > x < "qua")"#,
+        r#"int(y and b == y < "x")"#,
+    ];
+    for input in must_parse {
+        mettail_runtime::clear_var_cache();
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+#[test]
+fn simulator_regression_nested_casts() {
+    use mettail_languages::calculator::Int;
+    // Nested cast expressions. Fixed by implicit cast synthesis enabling
+    // cross-category dispatch to chain through nested NFA alternatives.
+    let must_parse = &[
+        r#"int(str(-1633226738 <= a))"#,
+        r#"int(str(-1 <= a))"#,
+    ];
+    for input in must_parse {
+        mettail_runtime::clear_var_cache();
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+#[test]
+fn simulator_regression_cross_cat_with_floats() {
+    use mettail_languages::calculator::Int;
+    // Cross-category expressions with float literals.
+    // Fixed by chain detection + implicit cast synthesis (FloatToBool for 0.5).
+    let must_parse = &[
+        r#"int(y <= z < b <= 0.5)"#,                   // Float in comparison chain
+    ];
+    for input in must_parse {
+        mettail_runtime::clear_var_cache();
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+// ─── Deep-tree try_eval tests (stack safety / PDA trampoline) ────────────────
+//
+// These tests verify that `try_eval` handles deeply-nested same-category trees
+// without Rust-stack overflow. The work-stack PDA generated by the `language!`
+// macro turns what would be O(tree-depth) call-stack frames into O(1) call-stack
+// + O(tree-depth) heap-allocated work-stack frames.
+
+#[test]
+fn test_try_eval_deep_addint_10000() {
+    use mettail_languages::calculator::Int;
+    // Build AddInt(Lit(0), AddInt(Lit(1), ... AddInt(Lit(9999), Lit(10000)))).
+    // A 10 000-deep right-skewed chain of `+`. Recursive try_eval would overflow
+    // the default Rust stack; the PDA heap-allocates its work stack.
+    let mut term = Int::NumLit(10_000);
+    for i in (0..10_000).rev() {
+        term = Int::AddInt(Box::new(Int::NumLit(i)), Box::new(term));
+    }
+    let v = term.try_eval();
+    // Sum of 0..=10000 = 50_005_000 (within i32 range).
+    assert_eq!(v, Some(50_005_000),
+        "deep AddInt chain should evaluate without stack overflow");
+}
+
+#[test]
+fn test_try_eval_deep_neg_10000() {
+    use mettail_languages::calculator::Int;
+    // 10 000 nested unary negations of Lit(1). Even number of negs → result is 1.
+    let mut term = Int::NumLit(1);
+    for _ in 0..10_000 {
+        term = Int::Neg(Box::new(term));
+    }
+    let v = term.try_eval();
+    assert_eq!(v, Some(1),
+        "deep Neg chain should evaluate without stack overflow");
+}
+
+#[test]
+fn test_try_eval_deep_fact_no_panic() {
+    use mettail_languages::calculator::Int;
+    // Factorial of 50 overflows i32. Calculator's Fact rule uses
+    // `try_fold(..., checked_mul).unwrap_or(0)` so overflow returns 0, not panic.
+    // The important property: no panic, no stack overflow.
+    let term = Int::Fact(Box::new(Int::NumLit(50)));
+    let _ = term.try_eval(); // Should not panic.
+}
+
+#[test]
+fn test_try_eval_deep_mixed_ops_1000() {
+    use mettail_languages::calculator::Int;
+    // Alternating AddInt / MulInt / Neg at depth 1000. Tests that
+    // interleaving different same-category reductions on the work stack
+    // doesn't corrupt the value stack.
+    let mut term = Int::NumLit(1);
+    for i in 0..1000 {
+        term = match i % 3 {
+            0 => Int::AddInt(Box::new(term), Box::new(Int::NumLit(1))),  // +1
+            1 => Int::MulInt(Box::new(term), Box::new(Int::NumLit(1))),  // × 1 (identity)
+            _ => Int::Neg(Box::new(Int::Neg(Box::new(term)))),           // double-neg (identity)
+        };
+    }
+    let v = term.try_eval();
+    // `i % 3 == 0` for i in 0..1000 happens 334 times (0, 3, 6, ..., 999).
+    // Only the Add branch changes the value; Muls and double-Negs are identity.
+    // Start = 1, +334 increments of 1 → 335.
+    assert_eq!(v, Some(335),
+        "deep mixed-op chain: 1 initial + 334 increments");
+}

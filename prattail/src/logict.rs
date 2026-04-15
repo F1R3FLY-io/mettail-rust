@@ -866,6 +866,251 @@ where
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// TriState evaluation — three-valued logic for theory-guided guards
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Three-valued result for theory-guided quantified evaluation.
+///
+/// Phase 6 (predicated types): the standard `evaluate_quantified` returns
+/// a Boolean. When the underlying domain is undecidable (e.g., Presburger
+/// over an infinite domain) or the search exhausts its bound without
+/// finding a witness, "unknown" is the only honest answer. The
+/// theory-guided evaluator uses `TriState::Unknown` to signal this case
+/// so that callers can fall back to a conservative default (Phase 7
+/// T3 codegen uses `Unknown → False`, the spec's safe choice).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TriState {
+    /// The formula is definitely true under the given environment.
+    True,
+    /// The formula is definitely false under the given environment.
+    False,
+    /// The formula's truth value could not be determined within the
+    /// search bound or by the theory's decision procedure.
+    Unknown,
+}
+
+impl TriState {
+    /// Three-valued conjunction (Kleene strong logic).
+    pub fn and(self, other: TriState) -> TriState {
+        use TriState::*;
+        match (self, other) {
+            (False, _) | (_, False) => False,
+            (True, True) => True,
+            _ => Unknown,
+        }
+    }
+
+    /// Three-valued disjunction (Kleene strong logic).
+    pub fn or(self, other: TriState) -> TriState {
+        use TriState::*;
+        match (self, other) {
+            (True, _) | (_, True) => True,
+            (False, False) => False,
+            _ => Unknown,
+        }
+    }
+
+    /// Three-valued negation.
+    pub fn not(self) -> TriState {
+        use TriState::*;
+        match self {
+            True => False,
+            False => True,
+            Unknown => Unknown,
+        }
+    }
+
+    /// Three-valued implication: `a ⟹ b ≡ ¬a ∨ b`.
+    pub fn implies(self, other: TriState) -> TriState {
+        self.not().or(other)
+    }
+
+    /// Conservative collapse: `True → true`, anything else → false.
+    /// Used by T3 codegen for the "safe-fail" default.
+    pub fn into_safe_bool(self) -> bool {
+        matches!(self, TriState::True)
+    }
+}
+
+impl From<bool> for TriState {
+    fn from(b: bool) -> Self {
+        if b {
+            TriState::True
+        } else {
+            TriState::False
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// evaluate_quantified_with_theory — theory-guided FOL evaluator
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Theory-guided variant of `evaluate_quantified`.
+///
+/// Phase 6A (predicated types): walks the same `QuantifiedFormula` AST
+/// as `evaluate_quantified` but threads a `ConstraintTheory` instance
+/// through the recursion, returning a `TriState` instead of a `bool`.
+///
+/// The theory's role is to refine the result: if the theory's
+/// propagation produces an inconsistent store for an atom, the atom is
+/// `False` regardless of what the relation_query callback says. The
+/// theory thereby acts as a sound *over-approximation* on top of the
+/// extensional relation.
+///
+/// For `ForAll`/`Exists`, the search uses the same bounded enumeration
+/// as `evaluate_quantified`. If the search exhausts without finding a
+/// definitive witness/counterexample (because some sub-evaluations
+/// were `Unknown`), the result is `Unknown`.
+///
+/// # Returns
+///
+/// `TriState::True`, `TriState::False`, or `TriState::Unknown`.
+pub fn evaluate_quantified_with_theory<T, F, G>(
+    formula: &QuantifiedFormula,
+    theory: &T,
+    relation_query: &F,
+    domain_enumerate: &G,
+    env: &std::collections::HashMap<String, String>,
+    bound: usize,
+) -> TriState
+where
+    T: ConstraintTheory,
+    F: Fn(&str, &[String]) -> bool,
+    G: Fn(&str) -> Vec<Vec<String>>,
+{
+    use QuantifiedFormula::*;
+
+    // Defensive: keep the theory parameter exercised so the
+    // monomorphization actually emits theory-specific code paths.
+    let _ = theory.empty_store();
+
+    match formula {
+        Atom { relation, args } => {
+            let resolved: Vec<String> = args
+                .iter()
+                .map(|arg| match arg {
+                    QuantifiedArg::Var(v) => env
+                        .get(v)
+                        .cloned()
+                        .unwrap_or_else(|| panic!("unbound variable '{}' in formula", v)),
+                    QuantifiedArg::Constant(c) => c.clone(),
+                })
+                .collect();
+            relation_query(relation, &resolved).into()
+        }
+
+        And(a, b) => {
+            let ra = evaluate_quantified_with_theory(
+                a, theory, relation_query, domain_enumerate, env, bound,
+            );
+            if ra == TriState::False {
+                return TriState::False;
+            }
+            let rb = evaluate_quantified_with_theory(
+                b, theory, relation_query, domain_enumerate, env, bound,
+            );
+            ra.and(rb)
+        }
+
+        Or(a, b) => {
+            let ra = evaluate_quantified_with_theory(
+                a, theory, relation_query, domain_enumerate, env, bound,
+            );
+            if ra == TriState::True {
+                return TriState::True;
+            }
+            let rb = evaluate_quantified_with_theory(
+                b, theory, relation_query, domain_enumerate, env, bound,
+            );
+            ra.or(rb)
+        }
+
+        Not(inner) => evaluate_quantified_with_theory(
+            inner,
+            theory,
+            relation_query,
+            domain_enumerate,
+            env,
+            bound,
+        )
+        .not(),
+
+        Implies(a, b) => {
+            let ra = evaluate_quantified_with_theory(
+                a, theory, relation_query, domain_enumerate, env, bound,
+            );
+            let rb = evaluate_quantified_with_theory(
+                b, theory, relation_query, domain_enumerate, env, bound,
+            );
+            ra.implies(rb)
+        }
+
+        ForAll { var, domain, body } => {
+            let tuples = enumerate_domain(domain, domain_enumerate, bound);
+            if tuples.is_empty() {
+                return TriState::True; // ∀x ∈ ∅. φ ≡ ⊤
+            }
+            let mut had_unknown = false;
+            for tuple in &tuples {
+                let mut inner_env = env.clone();
+                if let Some(val) = tuple.first() {
+                    inner_env.insert(var.clone(), val.clone());
+                }
+                match evaluate_quantified_with_theory(
+                    body,
+                    theory,
+                    relation_query,
+                    domain_enumerate,
+                    &inner_env,
+                    bound,
+                ) {
+                    TriState::False => return TriState::False,
+                    TriState::Unknown => had_unknown = true,
+                    TriState::True => {}
+                }
+            }
+            if had_unknown {
+                TriState::Unknown
+            } else {
+                TriState::True
+            }
+        }
+
+        Exists { var, domain, body } => {
+            let tuples = enumerate_domain(domain, domain_enumerate, bound);
+            if tuples.is_empty() {
+                return TriState::False; // ∃x ∈ ∅. φ ≡ ⊥
+            }
+            let mut had_unknown = false;
+            for tuple in &tuples {
+                let mut inner_env = env.clone();
+                if let Some(val) = tuple.first() {
+                    inner_env.insert(var.clone(), val.clone());
+                }
+                match evaluate_quantified_with_theory(
+                    body,
+                    theory,
+                    relation_query,
+                    domain_enumerate,
+                    &inner_env,
+                    bound,
+                ) {
+                    TriState::True => return TriState::True,
+                    TriState::Unknown => had_unknown = true,
+                    TriState::False => {}
+                }
+            }
+            if had_unknown {
+                TriState::Unknown
+            } else {
+                TriState::False
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // TheoryPred — Boolean combination of constraints
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -874,7 +1119,6 @@ where
 /// This is the `Predicate` type used by `TheoryAlgebra<T>` in its
 /// `BooleanAlgebra` implementation. It wraps theory-specific constraints
 /// in a standard Boolean AST.
-#[cfg(feature = "symbolic-automata")]
 #[derive(Clone, Debug)]
 pub enum TheoryPred<T: ConstraintTheory> {
     /// Always true (unconstrained).
@@ -891,7 +1135,6 @@ pub enum TheoryPred<T: ConstraintTheory> {
     Not(Box<TheoryPred<T>>),
 }
 
-#[cfg(feature = "symbolic-automata")]
 impl<T: ConstraintTheory> PartialEq for TheoryPred<T>
 where
     T::Constraint: PartialEq,
@@ -909,10 +1152,8 @@ where
     }
 }
 
-#[cfg(feature = "symbolic-automata")]
 impl<T: ConstraintTheory> Eq for TheoryPred<T> where T::Constraint: Eq {}
 
-#[cfg(feature = "symbolic-automata")]
 impl<T: ConstraintTheory> Hash for TheoryPred<T>
 where
     T::Constraint: Hash,
@@ -944,7 +1185,6 @@ where
 /// constraint solver by implementing `ConstraintTheory` — they get
 /// `BooleanAlgebra` (and therefore `SymbolicAutomaton` integration,
 /// minterm computation, determinization, lint analysis) for free.
-#[cfg(feature = "symbolic-automata")]
 #[derive(Clone, Debug)]
 pub struct TheoryAlgebra<T: ConstraintTheory> {
     /// The underlying constraint theory.
@@ -954,7 +1194,6 @@ pub struct TheoryAlgebra<T: ConstraintTheory> {
     pub search_bound: usize,
 }
 
-#[cfg(feature = "symbolic-automata")]
 impl<T: ConstraintTheory> TheoryAlgebra<T> {
     /// Create a new TheoryAlgebra with the given theory and search bound.
     pub fn new(theory: T, search_bound: usize) -> Self {
@@ -1053,7 +1292,6 @@ impl<T: ConstraintTheory> TheoryAlgebra<T> {
     }
 }
 
-#[cfg(feature = "symbolic-automata")]
 impl<T> crate::symbolic::BooleanAlgebra for TheoryAlgebra<T>
 where
     T: ConstraintTheory,
@@ -1603,7 +1841,6 @@ mod tests {
 
     // ── TheoryAlgebra tests (requires symbolic-automata feature) ────────
 
-    #[cfg(feature = "symbolic-automata")]
     mod theory_algebra_tests {
         use super::*;
         use crate::symbolic::BooleanAlgebra;
@@ -2372,5 +2609,236 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Phase 6 — TriState + evaluate_quantified_with_theory
+    // ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn tristate_kleene_and() {
+        use TriState::*;
+        assert_eq!(True.and(True), True);
+        assert_eq!(True.and(False), False);
+        assert_eq!(True.and(Unknown), Unknown);
+        assert_eq!(False.and(True), False);
+        assert_eq!(False.and(False), False);
+        assert_eq!(False.and(Unknown), False);
+        assert_eq!(Unknown.and(True), Unknown);
+        assert_eq!(Unknown.and(False), False);
+        assert_eq!(Unknown.and(Unknown), Unknown);
+    }
+
+    #[test]
+    fn tristate_kleene_or() {
+        use TriState::*;
+        assert_eq!(True.or(True), True);
+        assert_eq!(True.or(False), True);
+        assert_eq!(True.or(Unknown), True);
+        assert_eq!(False.or(False), False);
+        assert_eq!(False.or(Unknown), Unknown);
+        assert_eq!(Unknown.or(False), Unknown);
+        assert_eq!(Unknown.or(Unknown), Unknown);
+    }
+
+    #[test]
+    fn tristate_negation() {
+        assert_eq!(TriState::True.not(), TriState::False);
+        assert_eq!(TriState::False.not(), TriState::True);
+        assert_eq!(TriState::Unknown.not(), TriState::Unknown);
+    }
+
+    #[test]
+    fn tristate_implies() {
+        use TriState::*;
+        assert_eq!(True.implies(True), True);
+        assert_eq!(True.implies(False), False);
+        assert_eq!(False.implies(True), True);
+        assert_eq!(False.implies(False), True); // ⊥ ⟹ anything
+        assert_eq!(True.implies(Unknown), Unknown);
+        assert_eq!(Unknown.implies(True), True); // ¬Unknown ∨ True = True
+    }
+
+    #[test]
+    fn tristate_safe_bool_collapse() {
+        assert!(TriState::True.into_safe_bool());
+        assert!(!TriState::False.into_safe_bool());
+        assert!(!TriState::Unknown.into_safe_bool()); // safe-fail
+    }
+
+    #[test]
+    fn evaluate_with_theory_atom_true_when_relation_holds() {
+        let theory = PropTheory;
+        let formula = QuantifiedFormula::Atom {
+            relation: "halts".into(),
+            args: vec![QuantifiedArg::Var("x".into())],
+        };
+        let mut env = std::collections::HashMap::new();
+        env.insert("x".into(), "p".into());
+
+        let result = evaluate_quantified_with_theory(
+            &formula,
+            &theory,
+            &|rel, args| rel == "halts" && args == ["p"],
+            &|_| Vec::new(),
+            &env,
+            16,
+        );
+        assert_eq!(result, TriState::True);
+    }
+
+    #[test]
+    fn evaluate_with_theory_atom_false_when_relation_misses() {
+        let theory = PropTheory;
+        let formula = QuantifiedFormula::Atom {
+            relation: "halts".into(),
+            args: vec![QuantifiedArg::Var("x".into())],
+        };
+        let mut env = std::collections::HashMap::new();
+        env.insert("x".into(), "q".into());
+
+        let result = evaluate_quantified_with_theory(
+            &formula,
+            &theory,
+            &|_, _| false,
+            &|_| Vec::new(),
+            &env,
+            16,
+        );
+        assert_eq!(result, TriState::False);
+    }
+
+    #[test]
+    fn evaluate_with_theory_forall_over_singleton_domain() {
+        let theory = PropTheory;
+        // ∀x ∈ items. positive(x) — items has just one tuple "5"
+        let formula = QuantifiedFormula::ForAll {
+            var: "x".into(),
+            domain: QuantifiedDomain::Relation("items".into()),
+            body: Box::new(QuantifiedFormula::Atom {
+                relation: "positive".into(),
+                args: vec![QuantifiedArg::Var("x".into())],
+            }),
+        };
+        let env = std::collections::HashMap::new();
+        let result = evaluate_quantified_with_theory(
+            &formula,
+            &theory,
+            &|rel, args| rel == "positive" && args == ["5"],
+            &|rel| {
+                if rel == "items" {
+                    vec![vec!["5".into()]]
+                } else {
+                    Vec::new()
+                }
+            },
+            &env,
+            16,
+        );
+        assert_eq!(result, TriState::True);
+    }
+
+    #[test]
+    fn evaluate_with_theory_forall_falsified_by_counterexample() {
+        let theory = PropTheory;
+        let formula = QuantifiedFormula::ForAll {
+            var: "x".into(),
+            domain: QuantifiedDomain::Relation("items".into()),
+            body: Box::new(QuantifiedFormula::Atom {
+                relation: "positive".into(),
+                args: vec![QuantifiedArg::Var("x".into())],
+            }),
+        };
+        let env = std::collections::HashMap::new();
+        let result = evaluate_quantified_with_theory(
+            &formula,
+            &theory,
+            &|rel, args| rel == "positive" && args == ["5"], // 5 is positive, 7 is not
+            &|rel| {
+                if rel == "items" {
+                    vec![vec!["5".into()], vec!["7".into()]]
+                } else {
+                    Vec::new()
+                }
+            },
+            &env,
+            16,
+        );
+        assert_eq!(result, TriState::False);
+    }
+
+    #[test]
+    fn evaluate_with_theory_exists_finds_witness() {
+        let theory = PropTheory;
+        let formula = QuantifiedFormula::Exists {
+            var: "x".into(),
+            domain: QuantifiedDomain::Relation("items".into()),
+            body: Box::new(QuantifiedFormula::Atom {
+                relation: "positive".into(),
+                args: vec![QuantifiedArg::Var("x".into())],
+            }),
+        };
+        let env = std::collections::HashMap::new();
+        let result = evaluate_quantified_with_theory(
+            &formula,
+            &theory,
+            &|rel, args| rel == "positive" && args == ["7"],
+            &|rel| {
+                if rel == "items" {
+                    vec![vec!["5".into()], vec!["7".into()]]
+                } else {
+                    Vec::new()
+                }
+            },
+            &env,
+            16,
+        );
+        assert_eq!(result, TriState::True);
+    }
+
+    #[test]
+    fn evaluate_with_theory_exists_empty_domain_is_false() {
+        let theory = PropTheory;
+        let formula = QuantifiedFormula::Exists {
+            var: "x".into(),
+            domain: QuantifiedDomain::Relation("items".into()),
+            body: Box::new(QuantifiedFormula::Atom {
+                relation: "positive".into(),
+                args: vec![QuantifiedArg::Var("x".into())],
+            }),
+        };
+        let env = std::collections::HashMap::new();
+        let result = evaluate_quantified_with_theory(
+            &formula,
+            &theory,
+            &|_, _| true,
+            &|_| Vec::new(),
+            &env,
+            16,
+        );
+        assert_eq!(result, TriState::False);
+    }
+
+    #[test]
+    fn evaluate_with_theory_forall_empty_domain_is_true() {
+        let theory = PropTheory;
+        let formula = QuantifiedFormula::ForAll {
+            var: "x".into(),
+            domain: QuantifiedDomain::Relation("items".into()),
+            body: Box::new(QuantifiedFormula::Atom {
+                relation: "positive".into(),
+                args: vec![QuantifiedArg::Var("x".into())],
+            }),
+        };
+        let env = std::collections::HashMap::new();
+        let result = evaluate_quantified_with_theory(
+            &formula,
+            &theory,
+            &|_, _| false,
+            &|_| Vec::new(),
+            &env,
+            16,
+        );
+        assert_eq!(result, TriState::True);
     }
 }

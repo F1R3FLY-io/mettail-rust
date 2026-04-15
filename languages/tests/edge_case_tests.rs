@@ -1308,7 +1308,6 @@ mod rhocalc_edge_cases {
 // Category 17: Composition Language Edge Cases (~10 tests)
 // ════════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "test-languages")]
 mod composition_edge_cases {
     use super::*;
     use mettail_languages::composition::composed_lang::CalcLambdaLanguage;
@@ -1372,7 +1371,6 @@ mod composition_edge_cases {
 // Category 18: LedTest Edge Cases (~9 tests)
 // ════════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "test-languages")]
 mod led_test_edge_cases {
     use mettail_languages::led_test::LedTestLanguage;
     use mettail_runtime::Language;

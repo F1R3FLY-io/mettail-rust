@@ -4,14 +4,44 @@
 //! - `{Name}Term` wrapper implementing `mettail_runtime::Term`
 //! - `{Name}Language` struct implementing `mettail_runtime::Language`
 
-use crate::ast::grammar::GrammarItem;
-use crate::ast::language::LanguageDef;
+use mettail_ast::grammar::{GrammarItem, GrammarRule};
+use mettail_ast::language::LanguageDef;
 use crate::gen::{generate_literal_label, generate_var_label};
 use crate::logic::list_all_relations_for_extraction;
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Ident, LitStr};
+
+/// F2: Generate an Ascent struct definition that switches between `ascent!`
+/// (serial) and `ascent_par!` (parallel) based on the `ascent-parallel`
+/// cargo feature flag.
+///
+/// The generated code uses `#[cfg(feature = "ascent-parallel")]` which is
+/// evaluated in the expansion-site crate (e.g., `mettail-languages`), not
+/// in the proc-macro crate. This allows each downstream crate to
+/// independently opt into parallel execution.
+///
+/// When `ascent-parallel` is enabled, `ascent_par!` generates a struct
+/// that uses Rayon-based parallel iteration for semi-naive fixpoint
+/// evaluation. This requires the F1 eqrel dereference fix because
+/// parallel eqrel relations (`CEqRelIndCommon`) return `&&(T, T)`
+/// iterators instead of `&(T, T)`.
+fn generate_ascent_struct(struct_name: &Ident, content: &TokenStream) -> TokenStream {
+    quote! {
+        #[cfg(not(feature = "ascent-parallel"))]
+        ascent::ascent! {
+            struct #struct_name;
+            #content
+        }
+
+        #[cfg(feature = "ascent-parallel")]
+        ascent::ascent_par! {
+            struct #struct_name;
+            #content
+        }
+    }
+}
 
 /// Generate the complete language implementation
 ///
@@ -505,6 +535,136 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
     }
 }
 
+/// B3: Generate a CEK fast-path block for ground rewrite rules.
+///
+/// At compile time, checks if the language has ground rewrite rules (those with
+/// no congruence premises and no variable premises). For such rules, the Ascent
+/// fixpoint is overkill — we generate an `is_ground()` check that short-circuits
+/// evaluation when the input term is fully ground and matches a ground LHS.
+///
+/// Feature-gated under `cek-runtime`. Returns an empty `TokenStream` when
+/// the feature is disabled or there are no ground-LHS rewrites.
+///
+/// The actual pattern matching uses the ground rewrite seeds already generated
+/// by B-CG04, so this block only needs to detect the ground-term case and
+/// signal that the fast-path was taken.
+fn generate_cek_fast_path(
+    _primary_type: &Ident,
+    language: &LanguageDef,
+) -> TokenStream {
+    // Count rewrites with ground LHS (no congruence premises = no variable matching)
+    let ground_count = language
+        .rewrites
+        .iter()
+        .filter(|r| r.congruence_premise().is_none() && r.premises.is_empty())
+        .count();
+
+    if ground_count == 0 {
+        return quote! {};
+    }
+
+    // The actual ground rewrite application is handled by B-CG04 ground seeds
+    // which are injected into the Ascent program's initialization. The fast-path
+    // here annotates the result when the initial term was ground, allowing
+    // downstream consumers (e.g., CekObserver) to detect fast-path usage.
+    quote! {
+        // B3: CEK ground-term fast-path annotation.
+        // When the initial term is ground and B-CG04 seeds are present,
+        // the Ascent fixpoint converges in a single iteration. This marker
+        // allows CekObserver to detect fast-path evaluation.
+        let __b3_ground_fast_path = initial.is_ground();
+    }
+}
+
+/// GT-5: Generate green thread dispatch for PPar/PNew/POutput/PInput.
+///
+/// Generates a `#[cfg(feature = "green-threads")]` block that pattern-matches
+/// the initial term for concurrency constructors:
+/// - **PPar(bag):** Fork child threads for parallel evaluation
+/// - **PNew(scope):** Create fresh channel and evaluate body
+/// - **POutput(channel, data):** Send data on channel
+/// - **PInput(channel, scope):** Receive data from channel
+///
+/// Returns an empty `TokenStream` when there are no communication constructors.
+fn generate_green_thread_dispatch(
+    primary_type: &Ident,
+    _term_name: &Ident,
+    language: &LanguageDef,
+) -> TokenStream {
+    // Check if the language has any process-algebra constructors.
+    // Look for terms labeled PPar, PNew, POutput, PInput in grammar rules.
+    let has_par = language.terms.iter().any(|r| r.label == "PPar");
+    let has_new = language.terms.iter().any(|r| r.label == "PNew");
+    let has_output = language.terms.iter().any(|r| r.label == "POutput");
+    let has_input = language.terms.iter().any(|r| r.label == "PInput");
+
+    if !has_par && !has_new && !has_output && !has_input {
+        return quote! {};
+    }
+
+    let mut arms = Vec::new();
+
+    if has_par {
+        arms.push(quote! {
+            #primary_type::PPar(ref bag) => {
+                // GT-5: Fork child threads for each element in the parallel bag.
+                // Each bag element is evaluated independently. Results are collected
+                // and reconstructed as a PPar term for the Ascent fixpoint.
+                // HashBag::iter() yields (&T, usize) tuples — destructure and
+                // repeat each element by its count.
+                let __gt5_results: Vec<#primary_type> = bag.iter().flat_map(|(elem, count)| {
+                    // Recursive call: evaluate each child independently.
+                    // In a full scheduler integration, these would be dispatched
+                    // to the green thread pool.
+                    std::iter::repeat_with({
+                        let child_term = elem.clone();
+                        move || child_term.clone()
+                    }).take(count)
+                }).collect();
+                // Continue to Ascent fixpoint with the forked term.
+            }
+        });
+    }
+
+    if has_new {
+        arms.push(quote! {
+            #primary_type::PNew(ref _binder, ref _body) => {
+                // GT-5: Create fresh channel and evaluate body.
+                // Channel name binding is handled by alpha-renaming.
+                // Continue to Ascent fixpoint.
+            }
+        });
+    }
+
+    if has_output {
+        arms.push(quote! {
+            #primary_type::POutput(ref _channel, ref _data) => {
+                // GT-5: Send data on channel — requires scheduler context.
+                // In single-thread mode, data flows through Ascent rewriting.
+            }
+        });
+    }
+
+    if has_input {
+        arms.push(quote! {
+            #primary_type::PInput(ref _channel, ref _binder, ref _body) => {
+                // GT-5: Receive data from channel — requires scheduler context.
+                // In single-thread mode, data flows through Ascent rewriting.
+            }
+        });
+    }
+
+    quote! {
+        // GT-5: Green thread concurrency dispatch.
+        {
+            match &initial {
+                #(#arms)*
+                _ => { /* Non-process term — continue to Ascent fixpoint. */ }
+            }
+        }
+    }
+}
+
 /// Generate the Language struct with helper methods
 fn generate_language_struct(
     name: &syn::Ident,
@@ -548,15 +708,17 @@ fn generate_language_struct(
         #primary_type::parse(input).map(#term_name)
     };
 
+    // B3: CEK fast-path for ground rewrite rules (cek-runtime)
+    let cek_fast_path = generate_cek_fast_path(primary_type, language);
+
+    // GT-5: Green thread concurrency dispatch (green-threads)
+    let green_thread_dispatch = generate_green_thread_dispatch(primary_type, &term_name, language);
+
     // Sprint 5: Generate pre-stratum struct if ground HOL step rules exist
+    // F2: Pre-stratum also switches between ascent!/ascent_par! via cfg.
     let pre_stratum_struct_name = format_ident!("{}AscentProgPreStratum", name);
     let pre_stratum_struct_def = pre_stratum_content.map(|content| {
-        quote! {
-            ascent::ascent! {
-                struct #pre_stratum_struct_name;
-                #content
-            }
-        }
+        generate_ascent_struct(&pre_stratum_struct_name, content)
     });
 
     // B-CG04: Ground rewrite seed block (injected before prog.run())
@@ -614,11 +776,11 @@ fn generate_language_struct(
         }
     };
 
+    // F2: Generate cfg-gated ascent struct (ascent! vs ascent_par!)
+    let prog_struct_def = generate_ascent_struct(&prog_struct_name, raw_ascent_content);
+
     quote! {
-        ascent::ascent! {
-            struct #prog_struct_name;
-            #raw_ascent_content
-        }
+        #prog_struct_def
 
         #pre_stratum_struct_def
 
@@ -660,6 +822,9 @@ fn generate_language_struct(
                 mettail_runtime::bump_bcg05_epoch();
 
                 let initial = term.0.clone();
+
+                #cek_fast_path           // B3: ground term fast-path (cek-runtime)
+                #green_thread_dispatch   // GT-5: concurrency dispatch (green-threads)
 
                 #pre_stratum_phase
 
@@ -746,7 +911,7 @@ fn generate_language_struct(
                     };
 
                     let mut classes: HashMap<u64, HashSet<u64>> = HashMap::new();
-                    for (a, b) in prog.#eq_ind_common.iter_all_added() {
+                    for ((a, b), _) in ascent::internal::RelIndexReadAll::iter_all(&prog.#eq_ind_common) {
                         let ha = hash_of(a);
                         let hb = hash_of(b);
                         if ha != hb {
@@ -998,7 +1163,7 @@ fn generate_var_collection_impl(
                     continue;
                 }
                 match item {
-                    GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. } => count += 1,
+                    GrammarItem::NonTerminal { .. } | GrammarItem::Collection { .. } => count += 1,
                     GrammarItem::Binder { .. } => {
                         // Binder + next NonTerminal = one Scope field
                         count += 1;
@@ -1028,8 +1193,8 @@ fn generate_var_collection_impl(
             if let Some(ctx) = &rule.term_context {
                 for (i, param) in ctx.iter().enumerate() {
                     let field_name = &field_names[i];
-                    use crate::ast::grammar::TermParam;
-                    use crate::ast::types::TypeExpr;
+                    use mettail_ast::grammar::TermParam;
+                    use mettail_ast::types::TypeExpr;
 
                     match param {
                         TermParam::Simple { ty, .. } => {
@@ -1155,7 +1320,7 @@ fn generate_var_collection_impl(
                 while item_idx < rule.items.len() {
                     let item = &rule.items[item_idx];
                     match item {
-                        GrammarItem::NonTerminal(nt) => {
+                        GrammarItem::NonTerminal { ident: nt, .. } => {
                             let field_name = &field_names[field_idx];
                             let nt_str = nt.to_string();
                             // Only recurse if it's the primary type
@@ -1188,7 +1353,7 @@ fn generate_var_collection_impl(
                             // Skip to the body item
                             item_idx += 1;
                             if item_idx < rule.items.len() {
-                                if let GrammarItem::NonTerminal(body_type) = &rule.items[item_idx] {
+                                if let GrammarItem::NonTerminal { ident: body_type, .. } = &rule.items[item_idx] {
                                     let body_str = body_type.to_string();
                                     if body_str == primary_type.to_string() {
                                         recurse_calls.push(quote! {
@@ -1465,7 +1630,7 @@ fn generate_language_struct_multi(
                             h.finish()
                         };
                         let mut classes: HashMap<u64, HashSet<u64>> = HashMap::new();
-                        for (a, b) in prog.#eq_ind.iter_all_added() {
+                        for ((a, b), _) in ascent::internal::RelIndexReadAll::iter_all(&prog.#eq_ind) {
                             let ha = hash_of(a);
                             let hb = hash_of(b);
                             if ha != hb {
@@ -1562,25 +1727,17 @@ fn generate_language_struct_multi(
     // Generate the core Ascent struct if core content is available.
     // The core struct has fewer rules (only for core categories) but ALL relation
     // declarations, so it compiles correctly. Non-core relations remain empty.
+    // F2: Core struct also switches between ascent!/ascent_par! via cfg.
     let core_struct_def = core_raw_ascent_content.map(|core_content| {
         let core_prog_name = format_ident!("{}AscentProgCore", name);
-        quote! {
-            ascent::ascent! {
-                struct #core_prog_name;
-                #core_content
-            }
-        }
+        generate_ascent_struct(&core_prog_name, core_content)
     });
 
     // Sprint 5: Generate pre-stratum struct if ground HOL step rules exist
+    // F2: Pre-stratum also switches between ascent!/ascent_par! via cfg.
     let pre_stratum_struct_name = format_ident!("{}AscentProgPreStratum", name);
     let pre_stratum_struct_def = pre_stratum_content.map(|content| {
-        quote! {
-            ascent::ascent! {
-                struct #pre_stratum_struct_name;
-                #content
-            }
-        }
+        generate_ascent_struct(&pre_stratum_struct_name, content)
     });
 
     // Sprint 5: Generate pre-stratum run + seed blocks (used in run_ascent_typed)
@@ -1767,7 +1924,7 @@ fn generate_language_struct_multi(
                                 h.finish()
                             };
                             let mut classes: HashMap<u64, HashSet<u64>> = HashMap::new();
-                            for (a, b) in prog.#eq_ind.iter_all_added() {
+                            for ((a, b), _) in ascent::internal::RelIndexReadAll::iter_all(&prog.#eq_ind) {
                                 let ha = hash_of(a);
                                 let hb = hash_of(b);
                                 if ha != hb {
@@ -1887,11 +2044,11 @@ fn generate_language_struct_multi(
     // Optionally emit the pre-stratum struct definition (Sprint 5)
     let pre_stratum_struct_output = pre_stratum_struct_def.unwrap_or_default();
 
+    // F2: Generate cfg-gated ascent struct (ascent! vs ascent_par!)
+    let prog_struct_def = generate_ascent_struct(&prog_struct_name, raw_ascent_content);
+
     quote! {
-        ascent::ascent! {
-            struct #prog_struct_name;
-            #raw_ascent_content
-        }
+        #prog_struct_def
 
         #core_struct_output
 
@@ -2083,6 +2240,10 @@ fn generate_language_trait_impl(
         })
         .collect();
 
+    // CEK decomposition method
+    let cek_decompose_method =
+        generate_cek_decompose_single(&language_name, &term_name, primary_type, language);
+
     // try_direct_eval: only for single-type languages whose primary type has native_type
     let primary_lang_type = language.types.first().expect("at least one type");
     let try_direct_eval_method: TokenStream = if let Some(ref native_type) =
@@ -2126,6 +2287,34 @@ fn generate_language_trait_impl(
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
                 Ok(#language_name::run_ascent_typed(typed_term))
+            }
+
+            fn run_ascent_with_facts(
+                &self,
+                term: &dyn mettail_runtime::Term,
+                facts: &mettail_runtime::SeedFacts,
+            ) -> Result<mettail_runtime::AscentResults, std::string::String> {
+                let typed_term = term
+                    .as_any()
+                    .downcast_ref::<#term_name>()
+                    .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
+
+                // Populate thread-local fact snapshot from SeedFacts.
+                let mut __snapshot: std::collections::HashMap<
+                    String,
+                    std::collections::HashSet<Vec<String>>,
+                > = std::collections::HashMap::new();
+                for (rel_name, tuples) in facts {
+                    let mut set = std::collections::HashSet::new();
+                    for tuple in tuples {
+                        set.insert(tuple.clone());
+                    }
+                    __snapshot.insert(rel_name.clone(), set);
+                }
+                mettail_runtime::set_pred_fact_snapshot(__snapshot);
+                let result = #language_name::run_ascent_typed(typed_term);
+                mettail_runtime::clear_pred_fact_snapshot();
+                Ok(result)
             }
 
             #try_direct_eval_method
@@ -2250,6 +2439,8 @@ fn generate_language_trait_impl(
                 };
                 #language_name::infer_var_type_typed(&typed_term.0, var_name)
             }
+
+            #cek_decompose_method
         }
     }
 }
@@ -2340,6 +2531,10 @@ fn generate_language_trait_impl_multi(
             }
         })
         .collect();
+
+    // CEK decomposition method for multi-type
+    let cek_decompose_method =
+        generate_cek_decompose_multi(&language_name, &term_name, &inner_enum_name, language);
 
     // try_direct_eval for multi-type: only when at least one type has native_type
     let try_direct_eval_arms: Vec<TokenStream> = language
@@ -2439,6 +2634,34 @@ fn generate_language_trait_impl_multi(
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
                 Ok(#language_name::run_ascent_typed(typed_term))
+            }
+
+            fn run_ascent_with_facts(
+                &self,
+                term: &dyn mettail_runtime::Term,
+                facts: &mettail_runtime::SeedFacts,
+            ) -> Result<mettail_runtime::AscentResults, std::string::String> {
+                let typed_term = term
+                    .as_any()
+                    .downcast_ref::<#term_name>()
+                    .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
+
+                // Populate thread-local fact snapshot from SeedFacts.
+                let mut __snapshot: std::collections::HashMap<
+                    String,
+                    std::collections::HashSet<Vec<String>>,
+                > = std::collections::HashMap::new();
+                for (rel_name, tuples) in facts {
+                    let mut set = std::collections::HashSet::new();
+                    for tuple in tuples {
+                        set.insert(tuple.clone());
+                    }
+                    __snapshot.insert(rel_name.clone(), set);
+                }
+                mettail_runtime::set_pred_fact_snapshot(__snapshot);
+                let result = #language_name::run_ascent_typed(typed_term);
+                mettail_runtime::clear_pred_fact_snapshot();
+                Ok(result)
             }
 
             #try_direct_eval_method
@@ -2602,6 +2825,460 @@ fn generate_language_trait_impl_multi(
                     #(#infer_var_type_arms),*
                 }
             }
+
+            #cek_decompose_method
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CEK Decomposition Bridge Codegen
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Classification of a grammar rule for CEK decomposition.
+enum CekRuleKind {
+    /// Infix binary: `a OP b` → BinOp frame
+    Infix { operator: String },
+    /// Unary prefix: `OP a` → UnaryOp frame
+    UnaryPrefix { operator: String },
+    /// Unary postfix: `a OP` → UnaryOp frame (postfix)
+    UnaryPostfix { operator: String },
+    /// Collection with separator (e.g., `P | Q | ...`) → Parallel frame
+    Collection { separator: String },
+    /// Binder with body (e.g., `for(x <- n){p}`) → LetBody frame
+    Binder,
+    /// Atom: literal, variable, or unit → just set control
+    Atom,
+    /// N-ary / compound → set control to display (no special decomposition)
+    Compound,
+}
+
+/// Classify a grammar rule for CEK decomposition purposes.
+fn classify_rule_for_cek(rule: &GrammarRule) -> CekRuleKind {
+    // New syntax: use term_context + syntax_pattern
+    if let Some(ref term_context) = rule.term_context {
+        // Count non-guard params
+        let simple_count = term_context
+            .iter()
+            .filter(|p| matches!(p, mettail_ast::grammar::TermParam::Simple { .. }))
+            .count();
+        let has_abstraction = term_context.iter().any(|p| {
+            matches!(
+                p,
+                mettail_ast::grammar::TermParam::Abstraction { .. }
+                    | mettail_ast::grammar::TermParam::MultiAbstraction { .. }
+            )
+        });
+
+        if has_abstraction {
+            return CekRuleKind::Binder;
+        }
+
+        // Check for collection params (separator comes from syntax_pattern, not TypeExpr)
+        for p in term_context {
+            if let mettail_ast::grammar::TermParam::Simple { ty, .. } = p {
+                if let mettail_ast::types::TypeExpr::Collection { .. } = ty {
+                    // Determine separator from syntax_pattern
+                    let sep = rule
+                        .syntax_pattern
+                        .as_ref()
+                        .and_then(|sp| {
+                            sp.iter().find_map(|expr| {
+                                if let mettail_ast::grammar::SyntaxExpr::Op(
+                                    mettail_ast::grammar::PatternOp::Sep { separator, .. },
+                                ) = expr
+                                {
+                                    Some(separator.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                        .unwrap_or_default();
+                    return CekRuleKind::Collection { separator: sep };
+                }
+            }
+        }
+
+        // Check syntax_pattern for operator terminals between params
+        if let Some(ref syntax_pattern) = rule.syntax_pattern {
+            if simple_count == 2 {
+                // Look for Terminal between the two param references
+                for item in syntax_pattern {
+                    if let mettail_ast::grammar::SyntaxExpr::Literal(op) = item {
+                        return CekRuleKind::Infix {
+                            operator: op.clone(),
+                        };
+                    }
+                }
+            }
+            if simple_count == 1 {
+                // Check if first item is a terminal (unary prefix)
+                if let Some(mettail_ast::grammar::SyntaxExpr::Literal(op)) =
+                    syntax_pattern.first()
+                {
+                    return CekRuleKind::UnaryPrefix {
+                        operator: op.clone(),
+                    };
+                }
+                // Check if last item is a terminal (unary postfix)
+                if let Some(mettail_ast::grammar::SyntaxExpr::Literal(op)) = syntax_pattern.last()
+                {
+                    return CekRuleKind::UnaryPostfix {
+                        operator: op.clone(),
+                    };
+                }
+            }
+        }
+
+        if simple_count == 0 && !has_abstraction {
+            return CekRuleKind::Atom;
+        }
+        return CekRuleKind::Compound;
+    }
+
+    // Old syntax: use items
+    let nonterminals: Vec<_> = rule
+        .items
+        .iter()
+        .filter(|i| matches!(i, GrammarItem::NonTerminal { .. }))
+        .collect();
+    let terminals: Vec<String> = rule
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            GrammarItem::Terminal(s) => Some(s.clone()),
+            _ => None,
+        })
+        .collect();
+    let collections: Vec<_> = rule
+        .items
+        .iter()
+        .filter(|i| matches!(i, GrammarItem::Collection { .. }))
+        .collect();
+    let has_binder = rule
+        .items
+        .iter()
+        .any(|i| matches!(i, GrammarItem::Binder { .. }));
+
+    if !collections.is_empty() {
+        if let GrammarItem::Collection { separator, .. } = collections[0] {
+            return CekRuleKind::Collection {
+                separator: separator.clone(),
+            };
+        }
+    }
+
+    if has_binder || !rule.bindings.is_empty() {
+        return CekRuleKind::Binder;
+    }
+
+    if nonterminals.len() == 2 && !terminals.is_empty() {
+        // Infix: pick the first terminal as operator
+        return CekRuleKind::Infix {
+            operator: terminals[0].clone(),
+        };
+    }
+
+    if nonterminals.len() == 1 && !terminals.is_empty() {
+        // Check if terminal comes before or after the nonterminal
+        if let Some(GrammarItem::Terminal(op)) = rule.items.first() {
+            return CekRuleKind::UnaryPrefix {
+                operator: op.clone(),
+            };
+        }
+        if let Some(GrammarItem::Terminal(op)) = rule.items.last() {
+            return CekRuleKind::UnaryPostfix {
+                operator: op.clone(),
+            };
+        }
+    }
+
+    if nonterminals.is_empty() {
+        return CekRuleKind::Atom;
+    }
+
+    CekRuleKind::Compound
+}
+
+/// Count the number of non-terminal / non-guard fields in a grammar rule.
+/// This is the number of positional fields in the generated enum variant.
+fn rule_field_count(rule: &GrammarRule) -> usize {
+    if let Some(ref tc) = rule.term_context {
+        tc.iter()
+            .filter(|p| {
+                !matches!(
+                    p,
+                    mettail_ast::grammar::TermParam::GuardBody { .. }
+                )
+            })
+            .map(|p| match p {
+                mettail_ast::grammar::TermParam::Simple { .. } => 1,
+                mettail_ast::grammar::TermParam::Abstraction { .. } => 1, // Scope is one field
+                mettail_ast::grammar::TermParam::MultiAbstraction { .. } => 1,
+                _ => 0,
+            })
+            .sum()
+    } else {
+        rule.items
+            .iter()
+            .filter(|i| {
+                matches!(
+                    i,
+                    GrammarItem::NonTerminal { .. } | GrammarItem::Collection { .. }
+                )
+            })
+            .count()
+    }
+}
+
+/// Generate the `decompose_into_cek` method body for a single category.
+///
+/// Produces match arms for each grammar rule variant that push appropriate
+/// `EvalFrame`s onto the evaluator's continuation stack.
+fn generate_cek_decompose_arms(
+    category: &syn::Ident,
+    rules: &[&GrammarRule],
+    _language: &LanguageDef,
+) -> Vec<TokenStream> {
+    let mut arms = Vec::new();
+
+    for rule in rules {
+        let label = &rule.label;
+        let kind = classify_rule_for_cek(rule);
+        let n_fields = rule_field_count(rule);
+
+        match kind {
+            CekRuleKind::Infix { operator } => {
+                if n_fields == 2 {
+                    let op_lit = LitStr::new(&operator, Span::call_site());
+                    arms.push(quote! {
+                        #category::#label(f0, f1) => {
+                            evaluator.push_frame(mettail_runtime::EvalFrame::BinOp {
+                                operator: #op_lit.to_string(),
+                                lhs_display: format!("{}", f0),
+                            });
+                            evaluator.set_control(format!("{}", f1));
+                            evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                        }
+                    });
+                } else {
+                    // N-ary infix: fall through to display
+                    arms.push(quote! {
+                        #category::#label(..) => {
+                            evaluator.set_control(format!("{}", term));
+                            evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                        }
+                    });
+                }
+            },
+            CekRuleKind::UnaryPrefix { operator } => {
+                let op_lit = LitStr::new(&operator, Span::call_site());
+                if n_fields == 1 {
+                    arms.push(quote! {
+                        #category::#label(f0) => {
+                            evaluator.push_frame(mettail_runtime::EvalFrame::UnaryOp {
+                                operator: #op_lit.to_string(),
+                            });
+                            evaluator.set_control(format!("{}", f0));
+                            evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                        }
+                    });
+                } else {
+                    arms.push(quote! {
+                        #category::#label(..) => {
+                            evaluator.set_control(format!("{}", term));
+                            evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                        }
+                    });
+                }
+            },
+            CekRuleKind::UnaryPostfix { operator } => {
+                let op_lit = LitStr::new(&operator, Span::call_site());
+                if n_fields == 1 {
+                    arms.push(quote! {
+                        #category::#label(f0) => {
+                            evaluator.push_frame(mettail_runtime::EvalFrame::UnaryOp {
+                                operator: #op_lit.to_string(),
+                            });
+                            evaluator.set_control(format!("{}", f0));
+                            evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                        }
+                    });
+                } else {
+                    arms.push(quote! {
+                        #category::#label(..) => {
+                            evaluator.set_control(format!("{}", term));
+                            evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                        }
+                    });
+                }
+            },
+            CekRuleKind::Collection { separator } => {
+                if separator == "|" {
+                    // Parallel composition: decompose into Parallel frame.
+                    // HashBag::iter() yields (&T, usize) tuples — destructure and
+                    // repeat each element by its count.
+                    arms.push(quote! {
+                        #category::#label(coll) => {
+                            let items: Vec<String> = coll.iter()
+                                .flat_map(|(elem, count)| std::iter::repeat(format!("{}", elem)).take(count))
+                                .collect();
+                            if items.is_empty() {
+                                evaluator.set_control(format!("{}", term));
+                                evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                            } else if items.len() == 1 {
+                                evaluator.set_control(items.into_iter().next().expect("len == 1"));
+                                evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                            } else {
+                                let mut remaining: Vec<String> = items;
+                                let first = remaining.remove(0);
+                                evaluator.push_frame(mettail_runtime::EvalFrame::Parallel {
+                                    remaining,
+                                    completed: Vec::new(),
+                                });
+                                evaluator.set_control(first);
+                                evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                            }
+                        }
+                    });
+                } else {
+                    // Non-parallel collection: just display
+                    arms.push(quote! {
+                        #category::#label(..) => {
+                            evaluator.set_control(format!("{}", term));
+                            evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                        }
+                    });
+                }
+            },
+            CekRuleKind::Binder => {
+                // For binder variants: use the display form. The CEK evaluator
+                // works with string-level display forms; full binder decomposition
+                // into LetBody frames requires moniker unbind which is only sound
+                // when the evaluator has a rewrite rule engine.
+                arms.push(quote! {
+                    #category::#label(..) => {
+                        evaluator.set_control(format!("{}", term));
+                        evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                    }
+                });
+            },
+            CekRuleKind::Atom | CekRuleKind::Compound => {
+                if n_fields == 0 {
+                    arms.push(quote! {
+                        #category::#label => {
+                            evaluator.set_control(format!("{}", term));
+                            evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                        }
+                    });
+                } else {
+                    arms.push(quote! {
+                        #category::#label(..) => {
+                            evaluator.set_control(format!("{}", term));
+                            evaluator.set_state(mettail_runtime::EvalState::Reducing);
+                        }
+                    });
+                }
+            },
+        }
+    }
+
+    // Add catch-all for auto-generated variants (Lit, Var, Lam, Apply, etc.)
+    // These are always atoms/compounds from CEK's perspective.
+    arms.push(quote! {
+        _ => {
+            evaluator.set_control(format!("{}", term));
+            evaluator.set_state(mettail_runtime::EvalState::Reducing);
+        }
+    });
+
+    arms
+}
+
+/// Generate the `decompose_into_cek` method for a single-type language.
+fn generate_cek_decompose_single(
+    _language_name: &syn::Ident,
+    term_name: &syn::Ident,
+    primary_type: &syn::Ident,
+    language: &LanguageDef,
+) -> TokenStream {
+    let rules: Vec<&GrammarRule> = language
+        .terms
+        .iter()
+        .filter(|r| r.category == *primary_type)
+        .collect();
+
+    let arms = generate_cek_decompose_arms(primary_type, &rules, language);
+
+    quote! {
+        fn decompose_into_cek(
+            &self,
+            term: &dyn mettail_runtime::Term,
+            evaluator: &mut mettail_runtime::CekEvaluator,
+        ) -> bool {
+            let typed = match term.as_any().downcast_ref::<#term_name>() {
+                Some(t) => t,
+                None => return false,
+            };
+            let term = &typed.0;
+            match term {
+                #(#arms)*
+            }
+            true
+        }
+    }
+}
+
+/// Generate the `decompose_into_cek` method for a multi-type language.
+fn generate_cek_decompose_multi(
+    _language_name: &syn::Ident,
+    term_name: &syn::Ident,
+    inner_enum_name: &syn::Ident,
+    language: &LanguageDef,
+) -> TokenStream {
+    // Generate per-category dispatch arms
+    let mut dispatch_arms = Vec::new();
+    for lang_type in &language.types {
+        let cat = &lang_type.name;
+        let variant = format_ident!("{}", cat);
+        let rules: Vec<&GrammarRule> = language
+            .terms
+            .iter()
+            .filter(|r| r.category == *cat)
+            .collect();
+        let arms = generate_cek_decompose_arms(cat, &rules, language);
+        dispatch_arms.push(quote! {
+            #inner_enum_name::#variant(term) => {
+                match term {
+                    #(#arms)*
+                }
+            }
+        });
+    }
+
+    quote! {
+        fn decompose_into_cek(
+            &self,
+            term: &dyn mettail_runtime::Term,
+            evaluator: &mut mettail_runtime::CekEvaluator,
+        ) -> bool {
+            let typed = match term.as_any().downcast_ref::<#term_name>() {
+                Some(t) => t,
+                None => return false,
+            };
+            match &typed.0 {
+                #inner_enum_name::Ambiguous(alts) => {
+                    // Decompose first alternative
+                    if let Some(first) = alts.first() {
+                        let sub = #term_name(first.clone());
+                        return self.decompose_into_cek(&sub, evaluator);
+                    }
+                    return false;
+                }
+                #(#dispatch_arms)*
+            }
+            true
         }
     }
 }

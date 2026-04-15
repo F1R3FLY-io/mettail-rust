@@ -159,6 +159,11 @@ When `classify_grammar()` detects guards requiring these theories, it sets the c
 | [Product Algebra](product-algebra.md) | Composing independent constraint domains |
 | [Theories Proposal](theories-proposal.md) | Future `language! { theories { ... } }` syntax (design proposal) |
 | [PathMap Integration](pathmap-integration.md) | PathMap-backed constraint stores, term encoding |
+| [Why Automata Instead of Solvers](why-automata-instead-of-solvers.md) | Comprehensive comparison of automata vs. SAT/SMT and LP/ILP solvers |
+| [Symbolic Automata Research Analysis](symbolic-automata-research-analysis.md) | In-depth analysis of four foundational SFA/SFT papers |
+| [Heyting Algebra Extensions](heyting-algebra-extensions.md) | Extending predicated types to non-Boolean domains via Heyting algebras (research direction) |
+| [Dispatch Optimization Analysis](dispatch-optimization-analysis.md) | Advanced indexing structures for optimizing guard dispatch (segment trees, BSP, trie composition, discrimination trees, inverted indexes) |
+| [Compile-Time Guard Analysis](compile-time-guard-analysis.md) | Algebras, automata, and algorithms needed for compile-time analysis per data type (strings, ADTs, containers, graphs via Heyting SFAs) |
 
 ---
 

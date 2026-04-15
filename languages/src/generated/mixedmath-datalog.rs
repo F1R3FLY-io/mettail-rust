@@ -203,7 +203,9 @@ eq_bool(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_BOOL_EQ_CONG_0.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_bool(s_f0, t_f0);
+    eq_bool(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone();
 
 eq_bool(s.clone(), t.clone()) <--
     bool(s),
@@ -219,8 +221,12 @@ eq_bool(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_BOOL_EQ_CONG_1.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_bool(s_f0, t_f0),
-    eq_bool(s_f1, t_f1);
+    eq_bool(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone(),
+    eq_bool(__eqcong_s_f1, __eqcong_t_f1),
+    if s_f1 == __eqcong_s_f1.clone(),
+    if t_f1 == __eqcong_t_f1.clone();
 
 eq_int(s.clone(), t.clone()) <--
     int(s),
@@ -233,7 +239,9 @@ eq_int(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_INT_EQ_CONG_2.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_int(s_f0, t_f0);
+    eq_int(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone();
 
 eq_int(s.clone(), t.clone()) <--
     int(s),
@@ -252,8 +260,12 @@ eq_int(s.clone(), t.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_INT_EQ_CONG_3.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_int(s_f0, t_f0),
-    eq_int(s_f1, t_f1);
+    eq_int(__eqcong_s_f0, __eqcong_t_f0),
+    if s_f0 == __eqcong_s_f0.clone(),
+    if t_f0 == __eqcong_t_f0.clone(),
+    eq_int(__eqcong_s_f1, __eqcong_t_f1),
+    if s_f1 == __eqcong_s_f1.clone(),
+    if t_f1 == __eqcong_t_f1.clone();
 
 
     // Rewrite rules
@@ -264,7 +276,8 @@ rw_bool(s.clone(), t) <--
     if let Bool::BoolLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let t = Bool::BoolLit((a && b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(a && b) }) (),
+    let t = Bool::BoolLit(__eval_val);
 
 rw_bool(s.clone(), t) <--
     bool(s),
@@ -273,14 +286,16 @@ rw_bool(s.clone(), t) <--
     if let Bool::BoolLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let t = Bool::BoolLit((a || b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(a || b) }) (),
+    let t = Bool::BoolLit(__eval_val);
 
 rw_bool(orig.clone(), t) <--
     bool(orig),
     if let Bool::Not(inner) = orig,
     if let Bool::BoolLit(s_ref) = inner.as_ref(),
     let a = s_ref.clone(),
-    let t = Bool::BoolLit((! a));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(! a) }) (),
+    let t = Bool::BoolLit(__eval_val);
 
 fold_int(t.clone(), t.clone()) <--
     int(t),
@@ -295,7 +310,8 @@ fold_int(s.clone(), res) <--
     if let Int::NumLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let res = Int::NumLit((a + b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_add(a, b) ?) }) (),
+    let res = Int::NumLit(__eval_val);
 
 fold_int(s.clone(), res) <--
     int(s),
@@ -306,7 +322,8 @@ fold_int(s.clone(), res) <--
     if let Int::NumLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let res = Int::NumLit((a - b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_sub(a, b) ?) }) (),
+    let res = Int::NumLit(__eval_val);
 
 fold_int(s.clone(), res) <--
     int(s),
@@ -317,7 +334,8 @@ fold_int(s.clone(), res) <--
     if let Int::NumLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    let res = Int::NumLit((a * b));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_mul(a, b) ?) }) (),
+    let res = Int::NumLit(__eval_val);
 
 fold_int(s.clone(), res) <--
     int(s),
@@ -325,7 +343,8 @@ fold_int(s.clone(), res) <--
     fold_int(inner.as_ref().clone(), iv),
     if let Int::NumLit(a_ref) = & iv,
     let a = a_ref.clone(),
-    let res = Int::NumLit(((- a)));
+    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some((< _ as::mettail_runtime::SafeArith >::safe_neg(a) ?)) }) (),
+    let res = Int::NumLit(__eval_val);
 
 rw_int(s.clone(), t.clone()) <--
     int(s),
@@ -396,12 +415,16 @@ rw_int(lhs.clone(), match (lhs, vi) {
     } let iter_buf = std::mem::take(& mut buf); POOL_INT_SCONG_INT.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_int(field_val, t);
 
-rw_bool(a.clone(), c.clone()) <--
-    eq_bool(a, b),
-    rw_bool(b.clone(), c);
+rw_bool(__eqrel_closure_a.clone(), c.clone()) <--
+    eq_bool(__eqrel_a, __eqrel_b),
+    let __eqrel_closure_a = __eqrel_a.clone(),
+    let __eqrel_closure_b = __eqrel_b.clone(),
+    rw_bool(__eqrel_closure_b, c);
 
-rw_int(a.clone(), c.clone()) <--
-    eq_int(a, b),
-    rw_int(b.clone(), c);
+rw_int(__eqrel_closure_a.clone(), c.clone()) <--
+    eq_int(__eqrel_a, __eqrel_b),
+    let __eqrel_closure_a = __eqrel_a.clone(),
+    let __eqrel_closure_b = __eqrel_b.clone(),
+    rw_int(__eqrel_closure_b, c);
 
 }

@@ -3,7 +3,24 @@
 //! Writes generated Blockly definitions to TypeScript files
 
 use super::{ArgType, BlockArg, BlockDefinition, BlocklyOutput, ConnectionType};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Write content to a file only if it differs from what is already on disk.
+///
+/// Skipping the write when content is unchanged prevents cargo from seeing a
+/// newer mtime on generated files and triggering spurious recompilation of the
+/// entire `mettail-languages` crate on every build.
+///
+/// Returns `true` if the file was written, `false` if it was unchanged.
+fn write_if_changed(path: &Path, content: &str) -> std::io::Result<bool> {
+    if let Ok(existing) = std::fs::read_to_string(path) {
+        if existing == content {
+            return Ok(false);
+        }
+    }
+    std::fs::write(path, content)?;
+    Ok(true)
+}
 
 /// Write block definitions to TypeScript file
 pub fn write_blockly_blocks(language_name: &str, output: &BlocklyOutput) -> std::io::Result<()> {
@@ -12,8 +29,9 @@ pub fn write_blockly_blocks(language_name: &str, output: &BlocklyOutput) -> std:
 
     let content = generate_blocks_typescript(output);
 
-    std::fs::write(&path, content)?;
-    eprintln!("  ({}) Generated Blockly blocks: {}", language_name, path.display());
+    if write_if_changed(&path, &content)? {
+        eprintln!("  ({}) Generated Blockly blocks: {}", language_name, path.display());
+    }
 
     Ok(())
 }
@@ -28,8 +46,9 @@ pub fn write_blockly_categories(
 
     let content = generate_categories_typescript(output);
 
-    std::fs::write(&path, content)?;
-    eprintln!("  ({}) Generated Blockly categories: {}", language_name, path.display());
+    if write_if_changed(&path, &content)? {
+        eprintln!("  ({}) Generated Blockly categories: {}", language_name, path.display());
+    }
 
     Ok(())
 }

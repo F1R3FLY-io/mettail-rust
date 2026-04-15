@@ -98,3 +98,8 @@ perf-profiles/
 
 .lia.cache
 .nia.cache
+
+*.regressions
+prattail-parser-*.rs
+
+*.proptest-regressions

@@ -142,7 +142,8 @@ fn has_nonterminal(item: &SyntaxItemSpec, cat_names: &[String]) -> bool {
         SyntaxItemSpec::Terminal(_)
         | SyntaxItemSpec::IdentCapture { .. }
         | SyntaxItemSpec::Binder { .. }
-        | SyntaxItemSpec::BinderCollection { .. } => false,
+        | SyntaxItemSpec::BinderCollection { .. }
+        | SyntaxItemSpec::GuardExpression { .. } => false,
     }
 }
 
@@ -450,6 +451,13 @@ fn syntax_item_strategy(
                 prop_oneof![Just(String::new()), combined,].boxed()
             }
         },
+
+        SyntaxItemSpec::GuardExpression { .. } => {
+            // Phase 2F: generator emits a placeholder predicate string.
+            // Proper predicate-sublanguage generation is deferred until
+            // the strategies pipeline gains a parser hook.
+            Just("halts(x)".to_string()).boxed()
+        },
     }
 }
 
@@ -666,6 +674,7 @@ mod tests {
             sync: None,
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
         }
     }
 

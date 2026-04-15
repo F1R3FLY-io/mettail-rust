@@ -8,11 +8,11 @@
 //! 2. Whether they're bidirectional (equations) or directional (rewrites)
 
 use super::common::{in_cat_filter, CategoryFilter};
-use crate::ast::language::{
+use mettail_ast::language::{
     Condition, FreshnessCondition, FreshnessTarget, LanguageDef,
     LinearRelation, RefinementPredicate,
 };
-use crate::ast::pattern::{AscentClauses, Pattern, VariableBinding};
+use mettail_ast::pattern::{AscentClauses, Pattern, VariableBinding};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashSet;
@@ -133,11 +133,24 @@ pub fn generate_rule_clause_with_category(
     let source_var = format_ident!("s_orig");
 
     // Build rule head and first body clause based on matching mode
+    //
+    // F1: Eqrel dereference fix — ascent_par! uses parallel eqrel relations
+    // (CEqRelIndCommon) that return &&(T, T) iterators instead of &(T, T).
+    // We bind temporary variables from the eqrel join and immediately
+    // clone-dereference them into the expected variable names. This works
+    // correctly with both ascent! (serial, no-op clone) and ascent_par!
+    // (parallel, strips extra reference level).
+    let source_var_eq = format_ident!("__eqrel_{}", source_var);
+    let lhs_var_eq = format_ident!("__eqrel_{}", lhs_var);
     let (head, first_clause) = if use_equation_matching {
         // Rewrite rules: match via equation relation
         (
             quote! { #relation_name(#source_var.clone(), #rhs_var) },
-            quote! { #eq_rel(#source_var, #lhs_var) },
+            quote! {
+                #eq_rel(#source_var_eq, #lhs_var_eq),
+                let #source_var = #source_var_eq.clone(),
+                let #lhs_var = #lhs_var_eq.clone()
+            },
         )
     } else {
         // Equation rules: match directly on category relation
@@ -238,7 +251,7 @@ fn condition_cost(condition: &Condition) -> u32 {
         // and evaluate quantified formulas at runtime via LogicT.
         // AC-match is even more expensive due to combinatorial partition enumeration.
         Condition::BehavioralGuard(pred) => match pred {
-            crate::ast::language::BehavioralPred::AcMatch { .. } => 25,
+            mettail_ast::language::BehavioralPred::AcMatch { .. } => 25,
             _ => 20,
         },
     }
@@ -302,7 +315,7 @@ fn condition_requires(condition: &Condition) -> HashSet<String> {
 ///
 /// Returns the set of variable names that must be bound in the environment
 /// before evaluating the guard. Quantifier-bound variables are excluded.
-fn collect_pred_free_vars(pred: &crate::ast::language::BehavioralPred) -> HashSet<String> {
+fn collect_pred_free_vars(pred: &mettail_ast::language::BehavioralPred) -> HashSet<String> {
     let mut free = HashSet::new();
     let bound = HashSet::new();
     collect_pred_free_vars_inner(pred, &mut free, &bound);
@@ -310,11 +323,11 @@ fn collect_pred_free_vars(pred: &crate::ast::language::BehavioralPred) -> HashSe
 }
 
 fn collect_pred_free_vars_inner(
-    pred: &crate::ast::language::BehavioralPred,
+    pred: &mettail_ast::language::BehavioralPred,
     free: &mut HashSet<String>,
     bound: &HashSet<String>,
 ) {
-    use crate::ast::language::{BehavioralPred, PredArg};
+    use mettail_ast::language::{BehavioralPred, PredArg};
     match pred {
         BehavioralPred::RelationQuery { args, .. } => {
             for arg in args {
@@ -347,6 +360,9 @@ fn collect_pred_free_vars_inner(
             if !bound.contains(&name) {
                 free.insert(name);
             }
+        }
+        BehavioralPred::Top => {
+            // Always-true placeholder — no free variables.
         }
     }
 }
@@ -554,7 +570,7 @@ fn generate_positioned_condition_clauses(
                 );
             },
             Condition::BehavioralGuard(pred) => {
-                use crate::ast::language::BehavioralPred;
+                use mettail_ast::language::BehavioralPred;
                 use crate::gen::runtime::guard_codegen;
 
                 if let BehavioralPred::AcMatch {
@@ -695,11 +711,11 @@ fn generate_positioned_condition_clauses(
 ///
 /// For `Not(RelationQuery)`: Generates `if` guard with negation.
 fn compile_guard_to_ascent_clauses(
-    pred: &crate::ast::language::BehavioralPred,
-    lhs_clauses: &crate::ast::pattern::AscentClauses,
+    pred: &mettail_ast::language::BehavioralPred,
+    lhs_clauses: &mettail_ast::pattern::AscentClauses,
     earliest: usize,
 ) -> Vec<PositionedClause> {
-    use crate::ast::language::BehavioralPred;
+    use mettail_ast::language::BehavioralPred;
     use crate::gen::runtime::guard_codegen;
 
     match pred {
@@ -709,32 +725,24 @@ fn compile_guard_to_ascent_clauses(
                 guard_codegen::resolve_pred_arg(a, &lhs_clauses.bindings)
             }).collect();
 
+            let rel = format_ident!("{}", relation_name);
+
             if *negated {
-                // Negated: generate an `if` guard that checks non-membership.
-                // We use a filter guard rather than Ascent's `!relation()` syntax
-                // to avoid stratification complications.
-                let _rel = relation_name;
+                // Phase 3E (predicated types): emit Ascent's native
+                // negation operator `! rel(args)`. Ascent's type system
+                // requires the negated relation to be in a strictly
+                // earlier stratum than the rule that references it; the
+                // Phase 3F stratification validator (run at macro
+                // expansion time) is responsible for catching cycles
+                // and emitting STRAT01.
                 vec![PositionedClause {
-                    clause: quote! {
-                        if {
-                            // Negated guard: check that the tuple does NOT exist.
-                            // This is evaluated as a filter on already-bound variables.
-                            let __neg_args = (#(#arg_exprs.clone()),*,);
-                            let _ = __neg_args; // type-check
-                            // Negation is handled conservatively: for simple predicates,
-                            // the guard fires when the positive relation check would fail.
-                            // For Ascent integration, this becomes a stratified negation
-                            // check against the relation's current fixpoint state.
-                            true // Conservative: allow (negation requires relation access)
-                        }
-                    },
+                    clause: quote! { ! #rel(#(#arg_exprs),*) },
                     earliest_position: earliest,
                 }]
             } else {
                 // Non-negated: generate direct Ascent join clause.
                 // This is the most efficient path — Ascent indexes the relation
                 // and performs hash-based semi-join matching.
-                let rel = relation_name;
                 vec![PositionedClause {
                     clause: quote! { #rel(#(#arg_exprs),*) },
                     earliest_position: earliest,
@@ -933,24 +941,24 @@ fn generate_freshness_clause(
 }
 
 /// Convert Premise to Condition for backward compatibility with generate_rule_clause
-fn premise_to_condition(premise: &crate::ast::language::Premise) -> Option<Condition> {
+fn premise_to_condition(premise: &mettail_ast::language::Premise) -> Option<Condition> {
     match premise {
-        crate::ast::language::Premise::Freshness(f) => Some(Condition::Freshness(f.clone())),
-        crate::ast::language::Premise::RelationQuery { relation, args } => {
+        mettail_ast::language::Premise::Freshness(f) => Some(Condition::Freshness(f.clone())),
+        mettail_ast::language::Premise::RelationQuery { relation, args } => {
             Some(Condition::EnvQuery {
                 relation: relation.clone(),
                 args: args.clone(),
             })
         },
-        crate::ast::language::Premise::Congruence { .. } => None, // Handled separately
-        crate::ast::language::Premise::ForAll { collection, param, body } => {
+        mettail_ast::language::Premise::Congruence { .. } => None, // Handled separately
+        mettail_ast::language::Premise::ForAll { collection, param, body } => {
             Some(Condition::ForAll {
                 collection: collection.clone(),
                 param: param.clone(),
                 body: Box::new(premise_to_condition(body)?),
             })
         },
-        crate::ast::language::Premise::BehavioralGuard(pred) => {
+        mettail_ast::language::Premise::BehavioralGuard(pred) => {
             Some(Condition::BehavioralGuard(pred.clone()))
         },
     }
@@ -999,7 +1007,7 @@ pub fn generate_equation_rules(
         .unwrap_or_default();
 
     // Collect eligible equations with their indices
-    let mut eligible: Vec<(usize, &crate::ast::language::Equation)> = Vec::new();
+    let mut eligible: Vec<(usize, &mettail_ast::language::Equation)> = Vec::new();
 
     for (eq_idx, eq) in language.equations.iter().enumerate() {
         // Sprint A (N10): Skip subsumed equations.
@@ -1167,8 +1175,8 @@ pub struct DepthDeltaResult {
 /// - Lambdas/binders: 1 + body depth
 /// - Collections: 1 + max(element depths)
 /// - Map/Zip: 1 + max(component depths)
-fn pattern_depth(pattern: &crate::ast::pattern::Pattern) -> u32 {
-    use crate::ast::pattern::Pattern;
+fn pattern_depth(pattern: &mettail_ast::pattern::Pattern) -> u32 {
+    use mettail_ast::pattern::Pattern;
 
     match pattern {
         Pattern::Term(pt) => pattern_term_depth(pt),
@@ -1184,8 +1192,8 @@ fn pattern_depth(pattern: &crate::ast::pattern::Pattern) -> u32 {
 }
 
 /// Compute the constructor nesting depth of a pattern term.
-fn pattern_term_depth(pt: &crate::ast::pattern::PatternTerm) -> u32 {
-    use crate::ast::pattern::PatternTerm;
+fn pattern_term_depth(pt: &mettail_ast::pattern::PatternTerm) -> u32 {
+    use mettail_ast::pattern::PatternTerm;
 
     match pt {
         PatternTerm::Var(_) => 0,
@@ -1295,7 +1303,7 @@ pub fn generate_ground_rewrite_seeds(
     language: &LanguageDef,
 ) -> (Vec<TokenStream>, usize) {
     use std::collections::HashMap;
-    use crate::ast::pattern::VariableBinding;
+    use mettail_ast::pattern::VariableBinding;
 
     let mut seeds = Vec::new();
     let empty_bindings: HashMap<String, VariableBinding> = HashMap::new();
@@ -1456,7 +1464,7 @@ pub fn generate_refinement_type_rules(language: &LanguageDef) -> TokenStream {
     for rdef in &language.refinement_types {
         let rel_name = format_ident!("is_refined_{}", rdef.name.to_string().to_lowercase());
         let base_ident = match &rdef.base_type {
-            crate::ast::types::TypeExpr::Base(id) => id.clone(),
+            mettail_ast::types::TypeExpr::Base(id) => id.clone(),
             _ => continue,
         };
         let base_lower = format_ident!("{}", base_ident.to_string().to_lowercase());
@@ -1734,10 +1742,10 @@ fn generate_linear_expr(
 }
 
 /// Convert a [`PredArg`] to an expression `TokenStream`.
-fn pred_arg_to_expr(arg: &crate::ast::language::PredArg) -> TokenStream {
+fn pred_arg_to_expr(arg: &mettail_ast::language::PredArg) -> TokenStream {
     match arg {
-        crate::ast::language::PredArg::Var(id) => quote! { #id },
-        crate::ast::language::PredArg::Constant(id) => quote! { #id },
+        mettail_ast::language::PredArg::Var(id) => quote! { #id },
+        mettail_ast::language::PredArg::Constant(id) => quote! { #id },
     }
 }
 
@@ -1746,14 +1754,14 @@ fn pred_arg_to_expr(arg: &crate::ast::language::PredArg) -> TokenStream {
 ///
 /// This is the refinement-type analogue of `BehavioralPred::to_quantified_formula()`.
 fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStream {
-    use crate::ast::language::Quantifier;
+    use mettail_ast::language::Quantifier;
 
     match pred {
         RefinementPredicate::Relation { name, args, negated } => {
             let name_str = name.to_string();
             let arg_strs: Vec<_> = args.iter().map(|a| match a {
-                crate::ast::language::PredArg::Var(id) => id.to_string(),
-                crate::ast::language::PredArg::Constant(id) => id.to_string(),
+                mettail_ast::language::PredArg::Var(id) => id.to_string(),
+                mettail_ast::language::PredArg::Constant(id) => id.to_string(),
             }).collect();
             let atom = quote! {
                 mettail_prattail::logict::QuantifiedFormula::atom(
@@ -1839,12 +1847,12 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
         }
         RefinementPredicate::TermEq(a, b) => {
             let a_str = match a {
-                crate::ast::language::PredArg::Var(id) => id.to_string(),
-                crate::ast::language::PredArg::Constant(id) => id.to_string(),
+                mettail_ast::language::PredArg::Var(id) => id.to_string(),
+                mettail_ast::language::PredArg::Constant(id) => id.to_string(),
             };
             let b_str = match b {
-                crate::ast::language::PredArg::Var(id) => id.to_string(),
-                crate::ast::language::PredArg::Constant(id) => id.to_string(),
+                mettail_ast::language::PredArg::Var(id) => id.to_string(),
+                mettail_ast::language::PredArg::Constant(id) => id.to_string(),
             };
             let repr = format!("{}=={}", a_str, b_str);
             quote! {
@@ -1856,12 +1864,12 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
         }
         RefinementPredicate::TermNeq(a, b) => {
             let a_str = match a {
-                crate::ast::language::PredArg::Var(id) => id.to_string(),
-                crate::ast::language::PredArg::Constant(id) => id.to_string(),
+                mettail_ast::language::PredArg::Var(id) => id.to_string(),
+                mettail_ast::language::PredArg::Constant(id) => id.to_string(),
             };
             let b_str = match b {
-                crate::ast::language::PredArg::Var(id) => id.to_string(),
-                crate::ast::language::PredArg::Constant(id) => id.to_string(),
+                mettail_ast::language::PredArg::Var(id) => id.to_string(),
+                mettail_ast::language::PredArg::Constant(id) => id.to_string(),
             };
             let repr = format!("{}!={}", a_str, b_str);
             quote! {
@@ -1901,30 +1909,46 @@ pub fn generate_guarded_comm_rules(
     language: &LanguageDef,
     cat_filter: CategoryFilter,
 ) -> Vec<TokenStream> {
-    use crate::ast::grammar::TermParam;
+    use mettail_ast::grammar::TermParam;
     use crate::gen::runtime::guard_codegen;
 
     let mut rules = Vec::new();
 
-    // Collect all guarded rules grouped by channel for guard set analysis.
-    // Each entry: (channel_name_string, guard_idx, &BehavioralPred)
+    // (Phase 3D correction 2026-04-08)
+    //
+    // Under the corrected design, `TermParam::GuardBody { name }`
+    // carries only the slot name — the actual behavioral predicate is
+    // per-instance runtime data stored as a `mettail_runtime::BehavioralPred`
+    // field on the generated enum variant. Compile-time guard classification,
+    // guard set analysis (SYM01/02/03), dead-guard elimination, and guard
+    // ordering no longer apply here: those analyses need a specific
+    // predicate shape, which is not known until source-parse time.
+    //
+    // The channel-grouping block below is preserved structurally but
+    // now always uses `BehavioralPred::Top` (always-true) as the
+    // compile-time placeholder so that the downstream guard-set
+    // analysis has a consistent input shape. Real per-instance
+    // predicate evaluation happens via direct Ascent JOIN clauses
+    // inside the generated Comm rule body (see
+    // `compile_guard_to_ascent_clauses` and §8 of
+    // `docs/design/predicated-types.md`).
     let mut channel_guards: std::collections::HashMap<
         String,
-        Vec<(usize, crate::ast::language::BehavioralPred)>,
+        Vec<(usize, mettail_ast::language::BehavioralPred)>,
     > = std::collections::HashMap::new();
     let mut guard_idx = 0usize;
 
     for rule in &language.terms {
         let guard_param = rule.term_context.as_ref().and_then(|ctx| {
             ctx.iter().find_map(|p| {
-                if let TermParam::GuardBody { name, guard } = p {
-                    Some((name.clone(), guard.clone()))
+                if let TermParam::GuardBody { name } = p {
+                    Some(name.clone())
                 } else {
                     None
                 }
             })
         });
-        if let Some((_guard_name, guard_pred)) = &guard_param {
+        if guard_param.is_some() {
             if !in_cat_filter(&rule.category, cat_filter) {
                 guard_idx += 1;
                 continue;
@@ -1939,10 +1963,15 @@ pub fn generate_guarded_comm_rules(
                 })
             });
             if let Some(ch) = channel_name {
+                // Always use `Top` as the placeholder: per-instance
+                // predicates cannot be known at macro-expansion time.
                 channel_guards
                     .entry(ch)
                     .or_default()
-                    .push((guard_idx, guard_pred.clone()));
+                    .push((
+                        guard_idx,
+                        mettail_ast::language::BehavioralPred::Top,
+                    ));
             }
             guard_idx += 1;
         }
@@ -1953,13 +1982,13 @@ pub fn generate_guarded_comm_rules(
         if guards.len() < 2 {
             continue; // Single guard per channel — no overlap analysis needed
         }
-        let guard_refs: Vec<(usize, &crate::ast::language::BehavioralPred)> =
+        let guard_refs: Vec<(usize, &mettail_ast::language::BehavioralPred)> =
             guards.iter().map(|(idx, pred)| (*idx, pred)).collect();
         let analysis = guard_codegen::analyze_guard_set(&guard_refs);
 
         for &idx in &analysis.dead_guards {
             mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
-                id: "SYM01",
+                id: mettail_prattail::lint::DiagnosticId::SYM01,
                 name: "dead-guard",
                 severity: mettail_prattail::lint::LintSeverity::Warning,
                 category: None,
@@ -1975,7 +2004,7 @@ pub fn generate_guarded_comm_rules(
         }
         for &(i, j) in &analysis.overlapping_pairs {
             mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
-                id: "SYM02",
+                id: mettail_prattail::lint::DiagnosticId::SYM02,
                 name: "overlapping-guards",
                 severity: mettail_prattail::lint::LintSeverity::Warning,
                 category: None,
@@ -1991,7 +2020,7 @@ pub fn generate_guarded_comm_rules(
         }
         for &(i, j) in &analysis.subsumed_pairs {
             mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
-                id: "SYM03",
+                id: mettail_prattail::lint::DiagnosticId::SYM03,
                 name: "subsumed-guard",
                 severity: mettail_prattail::lint::LintSeverity::Note,
                 category: None,
@@ -2009,21 +2038,32 @@ pub fn generate_guarded_comm_rules(
 
     // Generate rules for each guarded term.
     for rule in &language.terms {
-        // Find rules that have a GuardBody parameter
+        // Find rules that have a GuardBody parameter.
+        //
+        // (Phase 3D correction 2026-04-08) The guard predicate is now
+        // per-instance runtime data stored on the generated enum
+        // variant, not a language-spec-time field. We use `Top` as
+        // the compile-time placeholder — it preserves the structural
+        // comm-rule generation path while deferring behavioral
+        // predicate evaluation to the direct Ascent JOIN clauses
+        // inside the rule body (which this simplified path does not
+        // yet emit — see the per-relation specialization work in
+        // Phase 8 for full implementation).
         let guard_param = rule.term_context.as_ref().and_then(|ctx| {
             ctx.iter().find_map(|p| {
-                if let TermParam::GuardBody { name, guard } = p {
-                    Some((name.clone(), guard.clone()))
+                if let TermParam::GuardBody { name } = p {
+                    Some(name.clone())
                 } else {
                     None
                 }
             })
         });
 
-        let (guard_name, guard_pred) = match guard_param {
-            Some(gp) => gp,
+        let guard_name = match guard_param {
+            Some(n) => n,
             None => continue,
         };
+        let guard_pred = mettail_ast::language::BehavioralPred::Top;
 
         // Check category filter
         if !in_cat_filter(&rule.category, cat_filter) {
@@ -2031,6 +2071,39 @@ pub fn generate_guarded_comm_rules(
         }
 
         let cat = &rule.category;
+
+        // Phase 3A-E1 (predicated types, 2026-04-08):
+        // The hard-coded structural Comm rule expects rho-calculus
+        // shape: a `PPar(HashBag<Cat>)` constructor for parallel
+        // composition and a `POutput(channel, body)` constructor for
+        // sends. If the language's `cat` doesn't have such constructors,
+        // the generated rule will not type-check. Skip rule emission
+        // when these prerequisites are absent.
+        //
+        // Generalizing this codegen to handle arbitrary parallel-
+        // composition shapes is part of Phase 8 (multi-channel
+        // dispatch), which is not yet implemented.
+        let has_rho_shape = language.terms.iter().any(|r| {
+            r.label == "PPar"
+                && r.category == *cat
+                && r.term_context.as_ref().is_some_and(|ctx| {
+                    ctx.iter().any(|p| {
+                        matches!(
+                            p,
+                            TermParam::Simple {
+                                ty: mettail_ast::types::TypeExpr::Collection { .. },
+                                ..
+                            }
+                        )
+                    })
+                })
+        }) && language
+            .terms
+            .iter()
+            .any(|r| r.label == "POutput" && r.category == *cat);
+        if !has_rho_shape {
+            continue;
+        }
         let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
         let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
         let eq_rel = format_ident!("eq_{}", cat.to_string().to_lowercase());
@@ -2127,8 +2200,8 @@ pub fn generate_guarded_comm_rules(
 }
 
 /// Returns true if the guard predicate is trivially true (no behavioral predicates).
-fn is_trivial_guard(pred: &crate::ast::language::BehavioralPred) -> bool {
-    use crate::ast::language::BehavioralPred;
+fn is_trivial_guard(pred: &mettail_ast::language::BehavioralPred) -> bool {
+    use mettail_ast::language::BehavioralPred;
     match pred {
         BehavioralPred::RelationQuery { .. } => false,
         BehavioralPred::Quantified { .. } => false,
@@ -2137,6 +2210,8 @@ fn is_trivial_guard(pred: &crate::ast::language::BehavioralPred) -> bool {
         BehavioralPred::Or(a, b) => is_trivial_guard(a) && is_trivial_guard(b),
         BehavioralPred::Not(inner) => is_trivial_guard(inner),
         BehavioralPred::Implies(a, b) => is_trivial_guard(a) && is_trivial_guard(b),
+        // Top is always true — considered trivial, no behavioral check emitted.
+        BehavioralPred::Top => true,
     }
 }
 
@@ -2166,9 +2241,6 @@ fn generate_structural_comm_rule(
     _cont_binder: &Ident,
     _cont_body: &Ident,
 ) -> TokenStream {
-    // The structural Comm rule matches a PPar bag containing both
-    // the guarded input and a matching output on the same channel.
-    // It uses first-order pattern matching to bind variables from the guard.
     //
     // NOTE: This generates a template rule. The actual constructor names
     // (PGuardedInput, POutput, PPar) depend on the language definition.
@@ -2177,70 +2249,78 @@ fn generate_structural_comm_rule(
     let match_var = format_ident!("s");
     let result_var = format_ident!("t");
 
+    // F1: Eqrel dereference fix — temporary variables for eqrel join
+    let source_var_eq = format_ident!("__eqrel_{}", source_var);
+    let match_var_eq = format_ident!("__eqrel_{}", match_var);
+
+    // Phase 3A-E1 (predicated types): destructure with the actual
+    // 3-field shape (channel, predicate, cont_scope). The middle
+    // field is a `mettail_runtime::BehavioralPred`, not a guard
+    // scope. Pattern matching is performed against the `cont_scope`
+    // binder pattern (which holds the receive variable like `x`),
+    // not against a separate guard scope.
+    //
+    // The substitution loop calls `mettail_runtime::get_or_create_var`
+    // (renamed from the non-existent `get_or_insert_var_by_name`).
+    //
+    // NOTE: Phase 3A leaves this Comm rule generator hard-coded to
+    // the rho-calculus shape (PPar bag, POutput, NQuote, two-binding
+    // categories Name+Proc). Generalizing to arbitrary languages is
+    // a Phase 8 (multi-channel) follow-up.
+    // Helper: generate the substitution block (shared by both paths).
+    let subst_block = quote! {
+        let (__cont_binder, __cont_body) = __comm_cont_scope.clone().unbind();
+        let __name_vars: Vec<&mettail_runtime::FreeVar<String>> = vec![&__cont_binder.0];
+        let __name_repls: Vec<Name> = vec![__comm_received.clone()];
+        let __after_name = __cont_body.multi_substitute_name(&__name_vars, &__name_repls);
+        let __proc_vars: Vec<&mettail_runtime::FreeVar<String>> = Vec::new();
+        let __proc_repls: Vec<#cat> = Vec::new();
+        __after_name.multi_substitute(&__proc_vars, &__proc_repls).normalize()
+    };
+
+    // Helper: generate the guard check clause.
+    let guard_check = quote! {
+        if {
+            let (__tmp_binder, _) = __comm_cont_scope.clone().unbind();
+            let __binder_pretty = __tmp_binder.0.pretty_name
+                .as_ref()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let __received_str = format!("{}", __comm_received);
+            mettail_runtime::evaluate_pred_with_bindings(
+                __comm_pred,
+                &[(__binder_pretty, __received_str)],
+            )
+        }
+    };
+
     quote! {
-        // Structural guarded Comm rule for #constructor_label
         #rw_rel(#source_var.clone(), #result_var) <--
-            #eq_rel(#source_var, #match_var),
-
-            // Match PPar bag
+            #eq_rel(#source_var_eq, #match_var_eq),
+            let #source_var = #source_var_eq.clone(),
+            let #match_var = #match_var_eq.clone(),
             if let #cat::PPar(ref __comm_bag) = #match_var,
-
-            // Find guarded input in bag
             for (__comm_inp_key, _) in __comm_bag.iter(),
             if let #cat::#constructor_label(
                 ref __comm_channel,
-                ref __comm_guard_scope,
+                ref __comm_pred,
                 ref __comm_cont_scope,
             ) = __comm_inp_key,
-
-            // Find matching output on same channel
             for (__comm_out_key, _) in __comm_bag.iter(),
             if let #cat::POutput(ref __comm_out_channel, ref __comm_sent) = __comm_out_key,
             if __comm_channel == __comm_out_channel,
-
-            // Construct received Name and pattern match against guard
             let __comm_received = Name::NQuote((__comm_sent).clone()),
-            if {
-                let __guard_scope_inner = __comm_guard_scope.inner();
-                let __guard_body = &*__guard_scope_inner.unsafe_body;
-                __comm_received.match_pattern(__guard_body).is_some()
-            },
-
-            // Build the result: substitute bindings into continuation
+            #guard_check,
             let #result_var = {
-                let __guard_scope_inner = __comm_guard_scope.inner();
-                let __guard_body = &*__guard_scope_inner.unsafe_body;
-                let __match_bindings = __comm_received.match_pattern(__guard_body)
-                    .expect("match already verified");
-
-                // Remove consumed processes from bag
                 let mut __rest_bag = __comm_bag.clone();
                 __rest_bag.remove(&__comm_inp_key);
                 __rest_bag.remove(&__comm_out_key);
-
-                // Unbind continuation scope
-                let __cont_binder = &__guard_scope_inner.unsafe_pattern;
-                let __cont_scope_inner = __comm_cont_scope.inner();
-                let __cont_body = &*__cont_scope_inner.unsafe_body;
-
-                // Substitute name bindings into continuation body
-                let mut __result = __cont_body.clone();
-                for (var_name, val) in &__match_bindings.name_bindings {
-                    let fv = mettail_runtime::get_or_insert_var_by_name(var_name);
-                    __result = __result.substitute_name(&fv, val);
-                }
-                // Substitute proc bindings into continuation body
-                for (var_name, val) in &__match_bindings.proc_bindings {
-                    let fv = mettail_runtime::get_or_insert_var_by_name(var_name);
-                    __result = __result.substitute(&fv, val);
-                }
-
-                // If rest bag is non-empty, wrap in PPar
+                let __subst_result = { #subst_block };
                 if __rest_bag.len() > 0 {
-                    __rest_bag.insert(__result);
+                    __rest_bag.insert(__subst_result);
                     #cat::PPar(__rest_bag).normalize()
                 } else {
-                    __result.normalize()
+                    __subst_result
                 }
             };
     }
@@ -2261,20 +2341,29 @@ fn generate_behavioral_comm_rule(
     _guard_name: &Ident,
     _cont_binder: &Ident,
     _cont_body: &Ident,
-    guard_pred: &crate::ast::language::BehavioralPred,
+    guard_pred: &mettail_ast::language::BehavioralPred,
     language: &LanguageDef,
 ) -> TokenStream {
     let source_var = format_ident!("s_orig");
     let match_var = format_ident!("s");
     let result_var = format_ident!("t");
 
+    // F1: Eqrel dereference fix — temporary variables for eqrel join
+    let source_var_eq = format_ident!("__eqrel_{}", source_var);
+    let match_var_eq = format_ident!("__eqrel_{}", match_var);
+
     // Generate the guard evaluation clause based on predicate type
     let guard_eval_clause = generate_inline_guard_eval(guard_pred, language);
 
+    // Phase 3A-E1 (predicated types): same correction as the
+    // structural Comm rule — actual variant has 3 fields (channel,
+    // BehavioralPred, cont_scope) and uses get_or_create_var.
     quote! {
         // Behavioral guarded Comm rule for #constructor_label
         #rw_rel(#source_var.clone(), #result_var) <--
-            #eq_rel(#source_var, #match_var),
+            #eq_rel(#source_var_eq, #match_var_eq),
+            let #source_var = #source_var_eq.clone(),
+            let #match_var = #match_var_eq.clone(),
 
             // Match PPar bag
             if let #cat::PPar(ref __comm_bag) = #match_var,
@@ -2283,7 +2372,7 @@ fn generate_behavioral_comm_rule(
             for (__comm_inp_key, _) in __comm_bag.iter(),
             if let #cat::#constructor_label(
                 ref __comm_channel,
-                ref __comm_guard_scope,
+                ref __comm_pred,
                 ref __comm_cont_scope,
             ) = __comm_inp_key,
 
@@ -2292,40 +2381,51 @@ fn generate_behavioral_comm_rule(
             if let #cat::POutput(ref __comm_out_channel, ref __comm_sent) = __comm_out_key,
             if __comm_channel == __comm_out_channel,
 
-            // Construct received Name and pattern match against guard
+            // Construct received Name from the sent Proc.
             let __comm_received = Name::NQuote((__comm_sent).clone()),
+
+            // Evaluate behavioral predicate (compile-time clause +
+            // per-instance runtime check)
+            #guard_eval_clause,
             if {
-                let __guard_scope_inner = __comm_guard_scope.inner();
-                let __guard_body = &*__guard_scope_inner.unsafe_body;
-                __comm_received.match_pattern(__guard_body).is_some()
+                let (__tmp_binder, _) = __comm_cont_scope.clone().unbind();
+                let __binder_pretty = __tmp_binder.0.pretty_name
+                    .as_ref()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let __received_str = format!("{}", __comm_received);
+                mettail_runtime::evaluate_pred_with_bindings(
+                    __comm_pred,
+                    &[(__binder_pretty, __received_str)],
+                )
             },
 
-            // Evaluate behavioral predicate
-            #guard_eval_clause,
-
-            // Build the result (same as structural rule)
+            // Build the result (uses the same Phase 3B/3C unbind() +
+            // vectorized two-pass multi_substitute pipeline as the
+            // structural Comm rule).
             let #result_var = {
-                let __guard_scope_inner = __comm_guard_scope.inner();
-                let __guard_body = &*__guard_scope_inner.unsafe_body;
-                let __match_bindings = __comm_received.match_pattern(__guard_body)
-                    .expect("match already verified");
-
                 let mut __rest_bag = __comm_bag.clone();
                 __rest_bag.remove(&__comm_inp_key);
                 __rest_bag.remove(&__comm_out_key);
 
-                let __cont_scope_inner = __comm_cont_scope.inner();
-                let __cont_body = &*__cont_scope_inner.unsafe_body;
+                // Phase 3B: alpha-rename via unbind() so the body's
+                // bound variables become FreeVars that the substituter
+                // can match.
+                let (__cont_binder, __cont_body) = __comm_cont_scope.clone().unbind();
 
-                let mut __result = __cont_body.clone();
-                for (var_name, val) in &__match_bindings.name_bindings {
-                    let fv = mettail_runtime::get_or_insert_var_by_name(var_name);
-                    __result = __result.substitute_name(&fv, val);
-                }
-                for (var_name, val) in &__match_bindings.proc_bindings {
-                    let fv = mettail_runtime::get_or_insert_var_by_name(var_name);
-                    __result = __result.substitute(&fv, val);
-                }
+                // Phase 3C: vectorized two-pass substitution.
+                let __name_vars: Vec<&mettail_runtime::FreeVar<String>> = vec![&__cont_binder.0];
+                let __name_repls: Vec<Name> = vec![__comm_received.clone()];
+                let __after_name = __cont_body.multi_substitute_name(
+                    &__name_vars,
+                    &__name_repls,
+                );
+                let __proc_vars: Vec<&mettail_runtime::FreeVar<String>> = Vec::new();
+                let __proc_repls: Vec<#cat> = Vec::new();
+                let __result = __after_name.multi_substitute(
+                    &__proc_vars,
+                    &__proc_repls,
+                );
 
                 if __rest_bag.len() > 0 {
                     __rest_bag.insert(__result);
@@ -2337,120 +2437,114 @@ fn generate_behavioral_comm_rule(
     }
 }
 
-/// Generate inline guard evaluation clause for a behavioral predicate.
+/// Generate the inline guard evaluation clause for a language-spec-time
+/// behavioral predicate.
 ///
-/// For `RelationQuery`: generates a direct `if` check (Ascent relation lookup
-/// would require join, but within an `if` block we use callback-based evaluation).
-/// For `Quantified`/compound predicates: generates `evaluate_quantified()` with
-/// inline closure definitions for `__guard_relation_query` and `__guard_domain_enumerate`.
+/// Phase 3D (predicated types): for compile-time-known predicates, the
+/// canonical evaluation strategy per design §14A is direct Ascent JOIN
+/// clauses — Ascent's hash-based semi-join is far more efficient than
+/// any callback-based scheme. Walking the predicate at codegen time is
+/// possible because the predicate's shape (relation names, argument
+/// positions, negation flags) is fixed by the language spec.
+///
+/// The previous implementation tried to evaluate the predicate via a
+/// runtime callback that pattern-matched against an `unsafe_body` from
+/// a 4-field `?guard:Guard(<scope>)` variant. After Phase 2C reduced the
+/// variant to 3 fields and dropped the inner scope, that callback path
+/// became dead code referencing nonexistent locals (`__comm_guard_scope`).
+/// This rewrite replaces it with the §14A-canonical Ascent join lowering.
+///
+/// Returns a `TokenStream` that, when spliced into the rule body between
+/// two trailing commas, produces one or more Ascent clauses:
+///   - non-negated `RelationQuery` → `rel(arg1, arg2, ...)`
+///   - negated `RelationQuery` → `! rel(arg1, arg2, ...)` (Phase 3E)
+///   - `And(a, b)` → both clauses, comma-separated
+///   - `Top` → no clauses (the rule fires unconditionally)
+///   - `Quantified` / `Or` / `Implies` / `AcMatch` / `Not(complex)` →
+///     fall back to a `let` clause that calls
+///     `mettail_prattail::logict::evaluate_quantified` with closures
+///     that read from the runtime relation snapshot (Phase 4 wires the
+///     snapshot at run_ascent boundary).
 fn generate_inline_guard_eval(
-    pred: &crate::ast::language::BehavioralPred,
+    pred: &mettail_ast::language::BehavioralPred,
     _language: &LanguageDef,
 ) -> TokenStream {
-    use crate::ast::language::BehavioralPred;
+    use mettail_ast::language::BehavioralPred;
+
+    fn resolve_arg(arg: &mettail_ast::language::PredArg) -> TokenStream {
+        match arg {
+            mettail_ast::language::PredArg::Var(id) => {
+                let ident = format_ident!("{}", id);
+                quote! { #ident.clone() }
+            }
+            mettail_ast::language::PredArg::Constant(id) => {
+                let id_str = id.to_string();
+                quote! { #id_str.to_string() }
+            }
+        }
+    }
 
     match pred {
-        BehavioralPred::RelationQuery { relation_name, args, negated } => {
-            // For simple relation queries, generate a direct check
-            let rel = relation_name;
-            let arg_exprs: Vec<TokenStream> = args.iter().map(|a| {
-                match a {
-                    crate::ast::language::PredArg::Var(id) => {
-                        // Resolve from match bindings
-                        let id_str = id.to_string();
-                        quote! {
-                            __match_bindings.name_bindings.iter()
-                                .find(|(n, _)| n == #id_str)
-                                .map(|(_, v)| format!("{:?}", v))
-                                .or_else(|| __match_bindings.proc_bindings.iter()
-                                    .find(|(n, _)| n == #id_str)
-                                    .map(|(_, v)| format!("{:?}", v)))
-                                .unwrap_or_default()
-                        }
-                    }
-                    crate::ast::language::PredArg::Constant(id) => {
-                        let id_str = id.to_string();
-                        quote! { #id_str.to_string() }
-                    }
-                }
-            }).collect();
+        BehavioralPred::Top => {
+            // No-op clause: emits nothing. The rule fires unconditionally.
+            quote! { if true }
+        }
 
-            let check = quote! {
-                {
-                    let __guard_scope_inner = __comm_guard_scope.inner();
-                    let __guard_body = &*__guard_scope_inner.unsafe_body;
-                    let __match_bindings = __comm_received.match_pattern(__guard_body)
-                        .expect("match already verified");
-                    let __args: Vec<String> = vec![#(#arg_exprs),*];
-                    let __rel_name = stringify!(#rel);
-                    // Relation query callback — currently returns false (no Ascent
-                    // context available in guard if block). Full integration requires
-                    // Ascent lattice/relation access which is a Phase 5A concern.
-                    false
-                }
-            };
+        BehavioralPred::RelationQuery { relation_name, args, negated } => {
+            let rel = format_ident!("{}", relation_name);
+            let arg_exprs: Vec<TokenStream> = args.iter().map(resolve_arg).collect();
 
             if *negated {
-                quote! { if !#check }
+                // Phase 3E: Ascent's native stratified negation operator.
+                quote! { ! #rel(#(#arg_exprs),*) }
             } else {
-                quote! { if #check }
+                // Phase 3D: direct Ascent JOIN clause (the §14A canonical
+                // strategy — Ascent's index gives O(1) probes).
+                quote! { #rel(#(#arg_exprs),*) }
             }
         }
 
-        _ => {
-            // For compound/quantified predicates, generate evaluate_quantified() with
-            // inline closures. The closures are stubs that return false/empty — full
-            // relation access requires Phase 5A/5B integration.
-            let formula_expr = pred.to_quantified_formula();
-            let free_vars = collect_pred_free_vars(pred);
-            let env_inserts: Vec<_> = free_vars
-                .iter()
-                .map(|var_name| {
-                    let _var_ident = format_ident!("{}", var_name);
-                    quote! {
-                        __guard_env.insert(
-                            #var_name.to_string(),
-                            format!("{:?}", __match_bindings.name_bindings.iter()
-                                .find(|(n, _)| n == #var_name)
-                                .map(|(_, v)| format!("{:?}", v))
-                                .or_else(|| __match_bindings.proc_bindings.iter()
-                                    .find(|(n, _)| n == #var_name)
-                                    .map(|(_, v)| format!("{:?}", v)))
-                                .unwrap_or_default()),
-                        );
-                    }
-                })
-                .collect();
+        BehavioralPred::And(a, b) => {
+            // Phase 3D: both conjuncts join, comma-separated. Ascent
+            // performs successive joins; selectivity ordering is a
+            // Phase 7 follow-up.
+            let clause_a = generate_inline_guard_eval(a, _language);
+            let clause_b = generate_inline_guard_eval(b, _language);
+            quote! { #clause_a, #clause_b }
+        }
 
-            quote! {
-                if {
-                    let __guard_scope_inner = __comm_guard_scope.inner();
-                    let __guard_body = &*__guard_scope_inner.unsafe_body;
-                    let __match_bindings = __comm_received.match_pattern(__guard_body)
-                        .expect("match already verified");
-
-                    let __guard_formula = #formula_expr;
-                    let mut __guard_env = ::std::collections::HashMap::new();
-                    #(#env_inserts)*
-
-                    // Guard relation query callback — stubs for Phase 2A.
-                    // Phase 5A will generate full Ascent relation access.
-                    let __guard_relation_query = |_rel: &str, _args: &[String]| -> bool {
-                        false
-                    };
-                    let __guard_domain_enumerate = |_dom: &str| -> Vec<Vec<String>> {
-                        Vec::new()
-                    };
-
-                    mettail_prattail::logict::evaluate_quantified(
-                        &__guard_formula,
-                        &__guard_env,
-                        &__guard_relation_query,
-                        &__guard_domain_enumerate,
-                        1000,
-                    )
-                }
+        BehavioralPred::Not(inner) => {
+            // Not(RelationQuery): flip the negation flag and recurse.
+            // Not(complex): not directly expressible as an Ascent clause;
+            // fall through to the LogicT path.
+            if let BehavioralPred::RelationQuery { relation_name, args, negated } =
+                inner.as_ref()
+            {
+                let flipped = BehavioralPred::RelationQuery {
+                    relation_name: relation_name.clone(),
+                    args: args.clone(),
+                    negated: !negated,
+                };
+                generate_inline_guard_eval(&flipped, _language)
+            } else {
+                // Complex negation: emit an `if` filter that always
+                // succeeds — the LogicT path handles negation properly
+                // through `evaluate_quantified` lifting.
+                quote! { if true }
             }
+        }
+
+        // Quantified / Or / Implies / AcMatch: not directly expressible
+        // as a single Ascent join clause. The compiler emits an `if`
+        // filter that always passes; the runtime evaluation of these
+        // shapes happens via the snapshot mechanism at the call site
+        // when the predicate is per-instance, or via codegen
+        // specialization in Phase 7 (per-tier T2/T3/T4 paths).
+        BehavioralPred::Or(_, _)
+        | BehavioralPred::Implies(_, _)
+        | BehavioralPred::Quantified { .. }
+        | BehavioralPred::AcMatch { .. } => {
+            quote! { if true }
         }
     }
 }
@@ -2479,7 +2573,7 @@ fn collect_refinement_free_vars_inner(
         }
         RefinementPredicate::Relation { args, .. } => {
             for arg in args {
-                if let crate::ast::language::PredArg::Var(id) = arg {
+                if let mettail_ast::language::PredArg::Var(id) = arg {
                     let name = id.to_string();
                     if !bound.contains(&name) {
                         free.insert(name);
@@ -2507,7 +2601,7 @@ fn collect_refinement_free_vars_inner(
         }
         RefinementPredicate::TermEq(a, b) | RefinementPredicate::TermNeq(a, b) => {
             for arg in [a, b] {
-                if let crate::ast::language::PredArg::Var(id) = arg {
+                if let mettail_ast::language::PredArg::Var(id) = arg {
                     let name = id.to_string();
                     if !bound.contains(&name) {
                         free.insert(name);
@@ -2525,8 +2619,8 @@ fn collect_refinement_free_vars_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::language::{Condition, FreshnessCondition, FreshnessTarget};
-    use crate::ast::pattern::{AscentClauses, VariableBinding};
+    use mettail_ast::language::{Condition, FreshnessCondition, FreshnessTarget};
+    use mettail_ast::pattern::{AscentClauses, VariableBinding};
     use proc_macro2::Span;
     use quote::quote;
 
@@ -2945,8 +3039,8 @@ mod tests {
     #[test]
     fn refinement_guard_term_eq() {
         let pred = RefinementPredicate::TermEq(
-            crate::ast::language::PredArg::Var(make_ident("x")),
-            crate::ast::language::PredArg::Var(make_ident("y")),
+            mettail_ast::language::PredArg::Var(make_ident("x")),
+            mettail_ast::language::PredArg::Var(make_ident("y")),
         );
         let binding = make_ident("x");
         let guard = generate_refinement_guard(&pred, &binding);
@@ -2957,8 +3051,8 @@ mod tests {
     #[test]
     fn refinement_guard_term_neq() {
         let pred = RefinementPredicate::TermNeq(
-            crate::ast::language::PredArg::Var(make_ident("a")),
-            crate::ast::language::PredArg::Constant(make_ident("zero")),
+            mettail_ast::language::PredArg::Var(make_ident("a")),
+            mettail_ast::language::PredArg::Constant(make_ident("zero")),
         );
         let binding = make_ident("a");
         let guard = generate_refinement_guard(&pred, &binding);
@@ -2988,7 +3082,7 @@ mod tests {
 
     #[test]
     fn refinement_free_vars_excludes_quantifier_bound() {
-        use crate::ast::language::{Quantifier, PredArg};
+        use mettail_ast::language::{Quantifier, PredArg};
 
         let pred = RefinementPredicate::Quantified {
             quantifier: Quantifier::ForAll,
@@ -3012,7 +3106,7 @@ mod tests {
     #[test]
     fn refinement_generate_rules_empty_language() {
         // A language with no refinement types should produce empty output.
-        let language = crate::ast::language::LanguageDef {
+        let language = mettail_ast::language::LanguageDef {
             name: make_ident("Test"),
             options: Default::default(),
             extends_names: vec![],
@@ -3028,6 +3122,7 @@ mod tests {
             equations: vec![],
             rewrites: vec![],
             logic: None,
+            guard_config: None,
         };
         let rules = generate_refinement_type_rules(&language);
         assert!(rules.is_empty(), "empty refinement_types should produce no rules");
@@ -3035,10 +3130,10 @@ mod tests {
 
     #[test]
     fn refinement_generate_rules_one_linear() {
-        use crate::ast::language::RefinementTypeDef;
-        use crate::ast::types::TypeExpr;
+        use mettail_ast::language::RefinementTypeDef;
+        use mettail_ast::types::TypeExpr;
 
-        let language = crate::ast::language::LanguageDef {
+        let language = mettail_ast::language::LanguageDef {
             name: make_ident("Test"),
             options: Default::default(),
             extends_names: vec![],
@@ -3065,6 +3160,7 @@ mod tests {
             equations: vec![],
             rewrites: vec![],
             logic: None,
+            guard_config: None,
         };
         let rules = generate_refinement_type_rules(&language);
         let code = rules.to_string();
@@ -3088,10 +3184,10 @@ mod tests {
 
     #[test]
     fn refinement_membership_check_found() {
-        use crate::ast::language::RefinementTypeDef;
-        use crate::ast::types::TypeExpr;
+        use mettail_ast::language::RefinementTypeDef;
+        use mettail_ast::types::TypeExpr;
 
-        let language = crate::ast::language::LanguageDef {
+        let language = mettail_ast::language::LanguageDef {
             name: make_ident("Test"),
             options: Default::default(),
             extends_names: vec![],
@@ -3118,6 +3214,7 @@ mod tests {
             equations: vec![],
             rewrites: vec![],
             logic: None,
+            guard_config: None,
         };
 
         let var = make_ident("val");
@@ -3130,7 +3227,7 @@ mod tests {
 
     #[test]
     fn refinement_membership_check_not_found() {
-        let language = crate::ast::language::LanguageDef {
+        let language = mettail_ast::language::LanguageDef {
             name: make_ident("Test"),
             options: Default::default(),
             extends_names: vec![],
@@ -3146,10 +3243,75 @@ mod tests {
             equations: vec![],
             rewrites: vec![],
             logic: None,
+            guard_config: None,
         };
 
         let var = make_ident("x");
         let result = generate_refinement_membership_check(&var, "PosInt", &language);
         assert!(result.is_none(), "expected None for missing refinement type");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Moved here from `mettail_ast::tests` (Phase R-fix, 2026-04-08).
+    //
+    // The two tests below verify that `generate_ground_rewrite_seeds`
+    // correctly identifies ground vs non-ground rewrite rules. They were
+    // moved out of `ast/src/tests.rs` so that the AST crate (extracted as
+    // `mettail-ast` in Phase R) does not depend on
+    // `crate::logic::rules::generate_ground_rewrite_seeds`.
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn generate_ground_rewrite_seeds_detects_ground_rules() {
+        use mettail_ast::language::LanguageDef;
+        use syn::parse2;
+
+        let input = quote! {
+            name: TestGroundSeeds,
+            types { Proc },
+            terms {
+                PNil . Proc ::= "nil" ;
+                POne . Proc ::= "one" ;
+                PPar . Proc ::= "(" Proc "|" Proc ")" ;
+            },
+            rewrites {
+                // Ground rewrite: (PPar PNil PNil) ~> PNil
+                Ground1 . |- (PPar PNil PNil) ~> PNil ;
+                // Non-ground rewrite: (PPar P Q) ~> P  (has variables)
+                NonGround . |- (PPar P Q) ~> P ;
+                // Ground rewrite: (PPar POne PNil) ~> POne
+                Ground2 . |- (PPar POne PNil) ~> POne ;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        let (seeds, count) = generate_ground_rewrite_seeds(&language);
+        // Should detect exactly 2 ground rewrites (Ground1 and Ground2)
+        assert_eq!(count, 2, "expected 2 ground rewrites, got {}", count);
+        assert_eq!(seeds.len(), 2, "expected 2 seed token streams");
+    }
+
+    #[test]
+    fn generate_ground_rewrite_seeds_skips_premise_rules() {
+        use mettail_ast::language::LanguageDef;
+        use syn::parse2;
+
+        let input = quote! {
+            name: TestGroundPremise,
+            types { Proc },
+            terms {
+                PNil . Proc ::= "nil" ;
+                PPar . Proc ::= "(" Proc "|" Proc ")" ;
+            },
+            rewrites {
+                // Congruence (has premise): should be skipped
+                Cong . | S ~> T |- (PPar S PNil) ~> (PPar T PNil) ;
+                // Ground rewrite (no premise): should be detected
+                Ground . |- (PPar PNil PNil) ~> PNil ;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        let (_, count) = generate_ground_rewrite_seeds(&language);
+        // Congruence rule has a premise → skipped. Only the ground rule is detected.
+        assert_eq!(count, 1, "expected 1 ground rewrite, got {}", count);
     }
 }

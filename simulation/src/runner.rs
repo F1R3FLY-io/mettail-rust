@@ -1,0 +1,1034 @@
+//! Simulation runner for property-based testing of MeTTaIL languages.
+//!
+//! The `SimulationRunner` wraps proptest's `TestRunner` to orchestrate
+//! simulation campaigns: generating random terms via strategies, running
+//! them through a language's parse/rewrite pipeline, checking invariants,
+//! tracking morphology, and collecting results.
+//!
+//! ## Key Design Decisions
+//!
+//! - **Fail-slow**: campaigns collect ALL failures rather than stopping at
+//!   the first. This is essential for understanding the failure landscape.
+//! - **Deterministic**: seeds are recorded per test case so failures can
+//!   be reproduced exactly.
+//! - **Trampoline-style**: the rewrite loop uses iterative BFS over the
+//!   Ascent results graph rather than recursion.
+
+use crate::invariant::{Invariant, InvariantState};
+use crate::morphology::{MorphologyTracker, TermMetrics};
+use crate::results::{CampaignResults, RuleCoverage, SimulationFailure};
+use crate::step::SimOperation;
+use crate::trace::{ExecutionTrace, TraceEntry, TraceOutcome};
+
+use mettail_runtime::Language;
+use proptest::strategy::{Strategy, ValueTree};
+use proptest::test_runner::TestRunner;
+use std::io::{BufRead, Write};
+use std::path::{Path, PathBuf};
+
+/// Output format for traces during a simulation run.
+#[derive(Debug, Clone)]
+pub enum TraceOutputFormat {
+    /// No trace output.
+    None,
+    /// Write JSONL traces to the specified path (one file per case, or appended).
+    Jsonl { path: PathBuf },
+    /// Collect structured traces in memory (available via results).
+    Structured,
+}
+
+/// Configuration for a simulation run.
+pub struct SimulationConfig {
+    /// Maximum number of rewrite steps before declaring non-termination.
+    pub max_steps: usize,
+    /// Maximum allowed term depth (used by morphology tracking).
+    pub max_term_depth: u32,
+    /// Number of proptest cases to generate per campaign.
+    pub proptest_cases: u32,
+    /// Optional fixed seed for reproducibility (32 bytes).
+    pub seed: Option<[u8; 32]>,
+    /// Invariants to check at each step.
+    pub invariants: Vec<Box<dyn Invariant>>,
+    /// LTL property formulas to check (reserved for future integration).
+    pub ltl_properties: Vec<String>,
+    /// Whether to track term morphology metrics.
+    pub track_morphology: bool,
+    /// Trace output configuration.
+    pub trace_output: TraceOutputFormat,
+    /// Path to a `.regressions` file for seed persistence.
+    ///
+    /// When set, `run_campaign` will:
+    /// 1. Load previously-failing seeds and re-run them first.
+    /// 2. Remove seeds from the file if they now pass (bug fixed).
+    /// 3. Append newly-discovered failing seeds.
+    pub regression_path: Option<PathBuf>,
+    /// Print one summary line per test case to stderr.
+    ///
+    /// Mirrors the `--verbose` (`-v`) flag on the generated
+    /// `simulate_<lang>` binaries. Output format is one line per
+    /// case: `[case_NNNN] pass/fail/panic  steps=N  input="..."  [error/msg]`.
+    /// The input string is truncated to 120 chars so pathologically
+    /// long generated terms don't flood the terminal.
+    pub verbose: bool,
+}
+
+impl Default for SimulationConfig {
+    fn default() -> Self {
+        Self {
+            max_steps: 1000,
+            max_term_depth: 50,
+            proptest_cases: 100,
+            seed: None,
+            invariants: Vec::new(),
+            ltl_properties: Vec::new(),
+            track_morphology: true,
+            trace_output: TraceOutputFormat::None,
+            regression_path: None,
+            verbose: false,
+        }
+    }
+}
+
+// =============================================================================
+// Regression seed persistence
+// =============================================================================
+
+/// Load regression seeds from a `.regressions` file.
+///
+/// Each line in the file is a hex-encoded 32-byte seed (64 hex characters).
+/// Blank lines and lines starting with `#` are ignored.
+/// Returns an empty vector if the file does not exist.
+pub fn load_regression_seeds(path: &Path) -> Vec<[u8; 32]> {
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return Vec::new(),
+    };
+    let reader = std::io::BufReader::new(file);
+    let mut seeds = Vec::new();
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(seed) = hex_to_seed(trimmed) {
+            seeds.push(seed);
+        }
+    }
+    seeds
+}
+
+/// Append a regression seed to a `.regressions` file.
+///
+/// Creates the file if it does not exist. Does not add duplicates.
+pub fn save_regression_seed(path: &Path, seed: &[u8; 32]) {
+    // Check if seed already exists in the file to avoid duplicates.
+    let existing = load_regression_seeds(path);
+    if existing.contains(seed) {
+        return;
+    }
+
+    let mut file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!(
+                "Warning: failed to save regression seed to {}: {}",
+                path.display(),
+                e
+            );
+            return;
+        }
+    };
+
+    let hex = seed_to_hex(seed);
+    if let Err(e) = writeln!(file, "{}", hex) {
+        eprintln!(
+            "Warning: failed to write regression seed to {}: {}",
+            path.display(),
+            e
+        );
+    }
+}
+
+/// Remove a passing regression seed from a `.regressions` file.
+///
+/// Rewrites the file without the specified seed. If the seed is not found,
+/// the file is left unchanged. If the file becomes empty, it is removed.
+pub fn remove_regression_seed(path: &Path, seed: &[u8; 32]) {
+    let existing = load_regression_seeds(path);
+    let filtered: Vec<[u8; 32]> = existing.into_iter().filter(|s| s != seed).collect();
+
+    if filtered.is_empty() {
+        // Remove the file if no seeds remain.
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+
+    let mut file = match std::fs::File::create(path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!(
+                "Warning: failed to rewrite regression file {}: {}",
+                path.display(),
+                e
+            );
+            return;
+        }
+    };
+
+    for s in &filtered {
+        let hex = seed_to_hex(s);
+        if let Err(e) = writeln!(file, "{}", hex) {
+            eprintln!(
+                "Warning: failed to write seed to {}: {}",
+                path.display(),
+                e
+            );
+            return;
+        }
+    }
+}
+
+/// Convert a 32-byte seed to a 64-character hex string.
+pub fn seed_to_hex(seed: &[u8; 32]) -> String {
+    let mut hex = String::with_capacity(64);
+    for byte in seed {
+        hex.push_str(&format!("{:02x}", byte));
+    }
+    hex
+}
+
+/// Parse a 64-character hex string into a 32-byte seed.
+/// Returns `None` if the string is not valid hex or wrong length.
+fn hex_to_seed(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut seed = [0u8; 32];
+    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+        let high = hex_digit(chunk[0])?;
+        let low = hex_digit(chunk[1])?;
+        seed[i] = (high << 4) | low;
+    }
+    Some(seed)
+}
+
+/// Convert a single ASCII hex digit to its 4-bit value.
+fn hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Extract a human-readable message from a panic payload.
+fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
+/// The simulation runner: orchestrates parse/rewrite/check cycles.
+pub struct SimulationRunner<'a> {
+    language: &'a dyn Language,
+    config: SimulationConfig,
+}
+
+impl<'a> SimulationRunner<'a> {
+    /// Create a new simulation runner for the given language and configuration.
+    pub fn new(language: &'a dyn Language, config: SimulationConfig) -> Self {
+        Self { language, config }
+    }
+
+    /// Run a single simulation: parse a term, rewrite to normal form, check invariants.
+    ///
+    /// Returns an `ExecutionTrace` on success, or a `SimulationFailure` on error.
+    pub fn run_to_normal_form(&self, input: &str) -> Result<ExecutionTrace, SimulationFailure> {
+        let seed_str = "deterministic".to_string();
+        let language_name = self.language.name().to_string();
+
+        let mut steps: Vec<TraceEntry> = Vec::new();
+        let mut morphology_tracker = if self.config.track_morphology {
+            Some(MorphologyTracker::new())
+        } else {
+            None
+        };
+        let mut coverage = RuleCoverage::new();
+        let mut step_index: usize = 0;
+
+        // Step 1: Parse.
+        mettail_runtime::clear_var_cache();
+        let term = match self.language.parse_term(input) {
+            Ok(t) => t,
+            Err(e) => {
+                let trace = ExecutionTrace {
+                    seed: seed_str.clone(),
+                    language: language_name.clone(),
+                    steps,
+                    outcome: TraceOutcome::Error {
+                        message: format!("Parse error: {}", e),
+                    },
+                    morphology: morphology_tracker.as_ref().map(|t| t.summary()),
+                };
+                return Err(SimulationFailure {
+                    seed: seed_str,
+                    input: input.to_string(),
+                    trace,
+                    error: format!("Parse error: {}", e),
+                });
+            }
+        };
+
+        let term_display = format!("{}", term);
+        let metrics = TermMetrics::from_display(&term_display);
+        if let Some(ref mut tracker) = morphology_tracker {
+            tracker.record(metrics.clone());
+        }
+
+        steps.push(TraceEntry {
+            step_index,
+            term_display: term_display.clone(),
+            operation: SimOperation::Parse {
+                input: input.to_string(),
+            }
+            .label(),
+            metrics: Some(metrics.clone()),
+        });
+
+        // Check invariants after parse.
+        if let Err(failure) = self.check_invariants_at_step(
+            &term_display,
+            step_index,
+            &metrics,
+            &seed_str,
+            input,
+            &steps,
+            &morphology_tracker,
+        ) {
+            return Err(failure);
+        }
+
+        step_index += 1;
+
+        // Step 2: Run Ascent (rewrite to saturation).
+        mettail_runtime::clear_var_cache();
+        let results = match self.language.run_ascent(term.as_ref()) {
+            Ok(r) => r,
+            Err(e) => {
+                let trace = ExecutionTrace {
+                    seed: seed_str.clone(),
+                    language: language_name.clone(),
+                    steps,
+                    outcome: TraceOutcome::Error {
+                        message: format!("Ascent error: {}", e),
+                    },
+                    morphology: morphology_tracker.as_ref().map(|t| t.summary()),
+                };
+                return Err(SimulationFailure {
+                    seed: seed_str,
+                    input: input.to_string(),
+                    trace,
+                    error: format!("Ascent error: {}", e),
+                });
+            }
+        };
+
+        // Step 3: Walk the rewrite graph iteratively (trampoline-style BFS)
+        // to build the trace from initial term to normal form.
+        // Record rewrites along the path.
+        let initial_id = term.term_id();
+
+        // Build rewrite trace by following the path from initial term to normal form.
+        // Use iterative BFS to avoid stack overflow on deep rewrite chains.
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        // Track the path: (term_id, path_to_here)
+        queue.push_back((initial_id, Vec::<u64>::new()));
+        visited.insert(initial_id);
+
+        let mut path_to_normal_form: Option<Vec<u64>> = None;
+        let mut normal_form_id: Option<u64> = None;
+
+        // BFS to find shortest path to a normal form.
+        while let Some((current_id, path)) = queue.pop_front() {
+            if let Some(info) = results.all_terms.iter().find(|t| t.term_id == current_id) {
+                if info.is_normal_form {
+                    let mut full_path = path;
+                    full_path.push(current_id);
+                    path_to_normal_form = Some(full_path);
+                    normal_form_id = Some(current_id);
+                    break;
+                }
+            }
+
+            // Bound the search.
+            if path.len() >= self.config.max_steps {
+                continue;
+            }
+
+            for rw in results.rewrites_from(current_id) {
+                if visited.insert(rw.to_id) {
+                    let mut new_path = path.clone();
+                    new_path.push(current_id);
+                    queue.push_back((rw.to_id, new_path));
+
+                    // Record rule coverage.
+                    if let Some(ref name) = rw.rule_name {
+                        coverage.record_rule(name);
+                    }
+                }
+            }
+        }
+
+        // Record all rewrites for coverage, even those not on the optimal path.
+        for rw in &results.rewrites {
+            if let Some(ref name) = rw.rule_name {
+                coverage.record_rule(name);
+            }
+        }
+
+        // Build trace entries for the path.
+        if let Some(ref path) = path_to_normal_form {
+            // Skip the first element (already recorded as parse step).
+            for (i, &tid) in path.iter().enumerate().skip(1) {
+                if let Some(info) = results.all_terms.iter().find(|t| t.term_id == tid) {
+                    // Find the rewrite that brought us here.
+                    let prev_id = path[i - 1];
+                    let rule_name = results
+                        .rewrites
+                        .iter()
+                        .find(|r| r.from_id == prev_id && r.to_id == tid)
+                        .and_then(|r| r.rule_name.clone());
+
+                    let metrics = TermMetrics::from_display(&info.display);
+                    if let Some(ref mut tracker) = morphology_tracker {
+                        tracker.record(metrics.clone());
+                    }
+
+                    let operation = SimOperation::Rewrite { rule_name };
+
+                    // Check invariants.
+                    if let Err(failure) = self.check_invariants_at_step(
+                        &info.display,
+                        step_index,
+                        &metrics,
+                        &seed_str,
+                        input,
+                        &steps,
+                        &morphology_tracker,
+                    ) {
+                        return Err(failure);
+                    }
+
+                    steps.push(TraceEntry {
+                        step_index,
+                        term_display: info.display.clone(),
+                        operation: operation.label(),
+                        metrics: Some(metrics),
+                    });
+                    step_index += 1;
+                }
+            }
+        }
+
+        // Determine outcome.
+        let outcome = if let Some(nf_id) = normal_form_id {
+            let nf_display = results
+                .all_terms
+                .iter()
+                .find(|t| t.term_id == nf_id)
+                .map(|t| t.display.clone())
+                .unwrap_or_else(|| "?".to_string());
+            TraceOutcome::NormalForm {
+                term: nf_display,
+                steps: step_index,
+            }
+        } else if results.all_terms.len() > self.config.max_steps {
+            let last_display = steps
+                .last()
+                .map(|s| s.term_display.clone())
+                .unwrap_or_default();
+            TraceOutcome::StepLimitReached {
+                final_term: last_display,
+            }
+        } else {
+            // No normal form found but didn't hit step limit.
+            // Check if there are any normal forms at all.
+            let nfs = results.normal_forms();
+            if nfs.is_empty() && !results.all_terms.is_empty() {
+                TraceOutcome::StepLimitReached {
+                    final_term: steps
+                        .last()
+                        .map(|s| s.term_display.clone())
+                        .unwrap_or_default(),
+                }
+            } else if let Some(nf) = nfs.first() {
+                // There is a normal form but we couldn't find a path to it.
+                TraceOutcome::NormalForm {
+                    term: nf.display.clone(),
+                    steps: step_index,
+                }
+            } else {
+                // Truly empty results (identity term?).
+                TraceOutcome::NormalForm {
+                    term: term_display,
+                    steps: step_index,
+                }
+            }
+        };
+
+        // Check NormalFormReachable invariants by convention:
+        // Any invariant named "NormalFormReachable" is checked at completion
+        // by verifying whether a normal form was reached within the step limit.
+        let reached_nf = matches!(outcome, TraceOutcome::NormalForm { .. });
+        if !reached_nf {
+            for inv in &self.config.invariants {
+                if inv.name() == "NormalFormReachable" {
+                    let msg = format!(
+                        "Normal form not reached after {} steps (max_steps: {})",
+                        step_index, self.config.max_steps,
+                    );
+                    let trace = ExecutionTrace {
+                        seed: seed_str.clone(),
+                        language: language_name.clone(),
+                        steps: steps.clone(),
+                        outcome: TraceOutcome::InvariantViolation {
+                            step: step_index,
+                            invariant: "NormalFormReachable".to_string(),
+                            message: msg.clone(),
+                        },
+                        morphology: morphology_tracker.as_ref().map(|t| t.summary()),
+                    };
+                    return Err(SimulationFailure {
+                        seed: seed_str,
+                        input: input.to_string(),
+                        trace,
+                        error: msg,
+                    });
+                }
+            }
+        }
+
+        let morphology_summary = morphology_tracker.as_ref().map(|t| t.summary());
+
+        let trace = ExecutionTrace {
+            seed: seed_str,
+            language: language_name,
+            steps,
+            outcome,
+            morphology: morphology_summary,
+        };
+
+        // Write JSONL if configured.
+        if let TraceOutputFormat::Jsonl { ref path } = self.config.trace_output {
+            if let Err(e) = crate::trace::write_trace_jsonl(&trace, path) {
+                eprintln!("Warning: failed to write JSONL trace: {}", e);
+            }
+        }
+
+        Ok(trace)
+    }
+
+    /// Run a campaign: generate random terms via a strategy, simulate each,
+    /// collect ALL results (does not stop at first failure).
+    ///
+    /// Uses proptest's `TestRunner` for generation and shrinking. Each generated
+    /// input string is run through `run_to_normal_form`. Failures are collected
+    /// with their minimal reproducers.
+    ///
+    /// When `config.regression_path` is set, the campaign will:
+    /// 1. Load previously-failing seeds from the regression file and re-run them.
+    /// 2. Remove seeds that now pass (the bug was fixed).
+    /// 3. Keep seeds that still fail and include them in the results.
+    /// 4. After random exploration, append newly-discovered failing seeds.
+    pub fn run_campaign<S: Strategy<Value = String>>(
+        &mut self,
+        input_strategy: S,
+    ) -> CampaignResults {
+        let mut results = CampaignResults::new();
+        let mut aggregate_tracker = if self.config.track_morphology {
+            Some(MorphologyTracker::new())
+        } else {
+            None
+        };
+
+        // Phase 0: Regression seed replay.
+        // Load previously-failing seeds, re-run them deterministically,
+        // and update the regression file.
+        if let Some(ref regression_path) = self.config.regression_path.clone() {
+            let regression_seeds = load_regression_seeds(regression_path);
+            if !regression_seeds.is_empty() {
+                eprintln!(
+                    "  Replaying {} regression seed(s) from {}",
+                    regression_seeds.len(),
+                    regression_path.display()
+                );
+            }
+            for reg_seed in &regression_seeds {
+                // Build a deterministic runner with this seed.
+                let reg_config = proptest::test_runner::Config {
+                    cases: 1,
+                    ..Default::default()
+                };
+                let mut reg_runner = TestRunner::new_with_rng(
+                    reg_config,
+                    proptest::test_runner::TestRng::from_seed(
+                        proptest::test_runner::RngAlgorithm::ChaCha,
+                        reg_seed,
+                    ),
+                );
+
+                // Generate a single value from the strategy with this seed.
+                let value_tree = match input_strategy.new_tree(&mut reg_runner) {
+                    Ok(tree) => tree,
+                    Err(_) => {
+                        // If we can't generate, the seed is stale; remove it.
+                        remove_regression_seed(regression_path, reg_seed);
+                        continue;
+                    }
+                };
+                let input = value_tree.current();
+                let seed_hex = seed_to_hex(reg_seed);
+
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.run_to_normal_form(&input)
+                })) {
+                    Ok(Ok(_trace)) => {
+                        // Bug fixed: this regression seed now passes.
+                        remove_regression_seed(regression_path, reg_seed);
+                        results.record_pass();
+                        eprintln!(
+                            "    Regression seed {} now passes (removed from file)",
+                            &seed_hex[..16]
+                        );
+                    }
+                    Ok(Err(failure)) => {
+                        // Still fails: keep in file, add to results.
+                        results.record_failure(failure);
+                        eprintln!(
+                            "    Regression seed {} still fails",
+                            &seed_hex[..16]
+                        );
+                    }
+                    Err(panic_payload) => {
+                        // Evaluation panicked (e.g., arithmetic overflow).
+                        // Record as failure, keep in regression file.
+                        let msg = panic_payload_to_string(panic_payload);
+                        results.record_failure(crate::results::SimulationFailure {
+                            seed: seed_hex.clone(),
+                            input: input.clone(),
+                            trace: crate::trace::ExecutionTrace {
+                                seed: seed_hex.clone(),
+                                language: self.language.name().to_string(),
+                                steps: vec![],
+                                outcome: crate::trace::TraceOutcome::Error {
+                                    message: format!("evaluation panicked: {}", msg),
+                                },
+                                morphology: None,
+                            },
+                            error: format!("panic during evaluation: {}", msg),
+                        });
+                        eprintln!(
+                            "    Regression seed {} panicked: {}",
+                            &seed_hex[..16], msg
+                        );
+                    }
+                }
+            }
+        }
+
+        // Phase 1: Random exploration.
+        // Build proptest config.
+        let proptest_config = proptest::test_runner::Config {
+            cases: self.config.proptest_cases,
+            ..Default::default()
+        };
+
+        let mut runner = if let Some(seed) = self.config.seed {
+            TestRunner::new_with_rng(
+                proptest_config,
+                proptest::test_runner::TestRng::from_seed(
+                    proptest::test_runner::RngAlgorithm::ChaCha,
+                    &seed,
+                ),
+            )
+        } else {
+            TestRunner::new(proptest_config)
+        };
+
+        // Run each test case. We iterate manually rather than using
+        // runner.run() because we want to continue on failure.
+        let mut case_index: u32 = 0;
+        while case_index < self.config.proptest_cases {
+            // Generate a value tree from the strategy.
+            let value_tree = match input_strategy.new_tree(&mut runner) {
+                Ok(tree) => tree,
+                Err(_) => {
+                    // Strategy exhausted or generation failure; skip.
+                    case_index += 1;
+                    continue;
+                }
+            };
+
+            let input = value_tree.current();
+            let seed_str = format!("case_{}", case_index);
+
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.run_to_normal_form(&input)
+            })) {
+                Ok(Ok(trace)) => {
+                    // Record morphology from successful run. Fingerprint
+                    // the final-step term shape (fallback: input string)
+                    // so the aggregate stagnation detector operates on
+                    // real per-case structural identity, not a placeholder.
+                    if let Some(ref mut agg) = aggregate_tracker {
+                        if let Some(ref morph) = trace.morphology {
+                            let final_display = trace
+                                .steps
+                                .last()
+                                .map(|s| s.term_display.as_str())
+                                .unwrap_or(input.as_str());
+                            agg.record(TermMetrics {
+                                node_count: morph.max_nodes,
+                                depth: morph.max_depth,
+                                structural_fingerprint:
+                                    crate::morphology::fingerprint_of(final_display),
+                            });
+                        }
+                    }
+
+                    // Record rule coverage from trace.
+                    for entry in &trace.steps {
+                        if entry.operation.starts_with("rewrite:") {
+                            let rule = entry.operation.strip_prefix("rewrite:").unwrap_or(&entry.operation);
+                            results.coverage.record_rule(rule);
+                        } else if entry.operation == "rewrite" {
+                            results.coverage.record_rule("(unnamed)");
+                        }
+                    }
+
+                    if self.config.verbose {
+                        eprintln!(
+                            "  [{}] pass   steps={} input={:?}",
+                            seed_str,
+                            trace.steps.len(),
+                            input,
+                        );
+                    }
+
+                    results.record_pass();
+                }
+                Ok(Err(failure)) => {
+                    // Also fingerprint into the aggregate tracker on
+                    // failure — failing shapes are still part of the
+                    // coverage-diversity signal.
+                    if let Some(ref mut agg) = aggregate_tracker {
+                        if let Some(ref morph) = failure.trace.morphology {
+                            let final_display = failure
+                                .trace
+                                .steps
+                                .last()
+                                .map(|s| s.term_display.as_str())
+                                .unwrap_or(failure.input.as_str());
+                            agg.record(TermMetrics {
+                                node_count: morph.max_nodes,
+                                depth: morph.max_depth,
+                                structural_fingerprint:
+                                    crate::morphology::fingerprint_of(final_display),
+                            });
+                        }
+                    }
+
+                    // Attempt shrinking: try to find a simpler failing input.
+                    let shrunk_failure = self.try_shrink(value_tree, failure, &seed_str);
+
+                    // Save the failing seed to the regression file.
+                    if let Some(ref regression_path) = self.config.regression_path {
+                        if let Some(seed) = self.config.seed {
+                            save_regression_seed(regression_path, &seed);
+                        } else {
+                            let mut derived_seed = [0u8; 32];
+                            let idx_bytes = case_index.to_le_bytes();
+                            derived_seed[..4].copy_from_slice(&idx_bytes);
+                            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                            std::hash::Hash::hash(&shrunk_failure.input, &mut hasher);
+                            let hash_bytes = std::hash::Hasher::finish(&hasher).to_le_bytes();
+                            derived_seed[4..12].copy_from_slice(&hash_bytes);
+                            save_regression_seed(regression_path, &derived_seed);
+                        }
+                    }
+
+                    if self.config.verbose {
+                        eprintln!(
+                            "  [{}] fail   steps={} input={:?} error={}",
+                            seed_str,
+                            shrunk_failure.trace.steps.len(),
+                            shrunk_failure.input,
+                            shrunk_failure.error,
+                        );
+                    }
+
+                    results.record_failure(shrunk_failure);
+                }
+                Err(panic_payload) => {
+                    // Evaluation panicked (e.g., arithmetic overflow).
+                    let msg = panic_payload_to_string(panic_payload);
+                    let failure = crate::results::SimulationFailure {
+                        seed: seed_str.clone(),
+                        input: input.clone(),
+                        trace: crate::trace::ExecutionTrace {
+                            seed: seed_str.clone(),
+                            language: self.language.name().to_string(),
+                            steps: vec![],
+                            outcome: crate::trace::TraceOutcome::Error {
+                                message: format!("evaluation panicked: {}", msg),
+                            },
+                            morphology: None,
+                        },
+                        error: format!("panic during evaluation: {}", msg),
+                    };
+                    if let Some(ref regression_path) = self.config.regression_path {
+                        let mut derived_seed = [0u8; 32];
+                        let idx_bytes = case_index.to_le_bytes();
+                        derived_seed[..4].copy_from_slice(&idx_bytes);
+                        save_regression_seed(regression_path, &derived_seed);
+                    }
+
+                    if self.config.verbose {
+                        eprintln!(
+                            "  [{}] panic  input={:?} msg={}",
+                            seed_str, input, msg,
+                        );
+                    }
+
+                    results.record_failure(failure);
+                }
+            }
+
+            case_index += 1;
+        }
+
+        // Finalize coverage.
+        let total_rules = self.language.metadata().rewrites().len();
+        results.coverage.finalize(total_rules);
+
+        // Finalize aggregate morphology.
+        results.aggregate_morphology = aggregate_tracker.as_ref().map(|t| t.summary());
+
+        results
+    }
+
+    /// Attempt to shrink a failing input using proptest's value tree.
+    ///
+    /// Iteratively simplifies the input while it still triggers a failure.
+    /// Returns the failure with the smallest reproducing input found.
+    fn try_shrink<VT: ValueTree<Value = String>>(
+        &self,
+        mut value_tree: VT,
+        initial_failure: SimulationFailure,
+        seed_str: &str,
+    ) -> SimulationFailure {
+        let mut best_failure = initial_failure;
+        let max_shrink_steps = 128;
+        let mut shrink_steps = 0;
+
+        // Trampoline-style iterative shrinking.
+        loop {
+            if shrink_steps >= max_shrink_steps {
+                break;
+            }
+            shrink_steps += 1;
+
+            if !value_tree.simplify() {
+                // Try to complicate; if that fails too, we're done.
+                if !value_tree.complicate() {
+                    break;
+                }
+            }
+
+            let shrunk_input = value_tree.current();
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.run_to_normal_form(&shrunk_input)
+            })) {
+                Ok(Ok(_)) => {
+                    // Shrunk input passes; try complicating.
+                    if !value_tree.complicate() {
+                        break;
+                    }
+                }
+                Ok(Err(failure)) => {
+                    // Still fails; record and try shrinking more.
+                    best_failure = SimulationFailure {
+                        seed: seed_str.to_string(),
+                        input: shrunk_input,
+                        trace: failure.trace,
+                        error: failure.error,
+                    };
+                }
+                Err(panic_payload) => {
+                    // Panicked during shrinking — still a failure.
+                    let msg = panic_payload_to_string(panic_payload);
+                    best_failure = SimulationFailure {
+                        seed: seed_str.to_string(),
+                        input: shrunk_input,
+                        trace: crate::trace::ExecutionTrace {
+                            seed: seed_str.to_string(),
+                            language: self.language.name().to_string(),
+                            steps: vec![],
+                            outcome: crate::trace::TraceOutcome::Error {
+                                message: format!("evaluation panicked during shrinking: {}", msg),
+                            },
+                            morphology: None,
+                        },
+                        error: format!("panic during shrinking: {}", msg),
+                    };
+                }
+            }
+        }
+
+        best_failure
+    }
+
+    /// Check all invariants at a given step. Returns Ok(()) or a SimulationFailure.
+    fn check_invariants_at_step(
+        &self,
+        term_display: &str,
+        step_index: usize,
+        metrics: &TermMetrics,
+        seed_str: &str,
+        input: &str,
+        steps_so_far: &[TraceEntry],
+        morphology_tracker: &Option<MorphologyTracker>,
+    ) -> Result<(), SimulationFailure> {
+        let state = InvariantState {
+            current_term_display: term_display,
+            step_index,
+            term_size: metrics.node_count,
+            term_depth: metrics.depth,
+            language: self.language,
+        };
+
+        for invariant in &self.config.invariants {
+            if let Err(msg) = invariant.check(&state) {
+                let trace = ExecutionTrace {
+                    seed: seed_str.to_string(),
+                    language: self.language.name().to_string(),
+                    steps: steps_so_far.to_vec(),
+                    outcome: TraceOutcome::InvariantViolation {
+                        step: step_index,
+                        invariant: invariant.name().to_string(),
+                        message: msg.clone(),
+                    },
+                    morphology: morphology_tracker.as_ref().map(|t| t.summary()),
+                };
+                return Err(SimulationFailure {
+                    seed: seed_str.to_string(),
+                    input: input.to_string(),
+                    trace,
+                    error: format!("Invariant '{}' violated: {}", invariant.name(), msg),
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simulation_config_default() {
+        let config = SimulationConfig::default();
+        assert_eq!(config.max_steps, 1000);
+        assert_eq!(config.proptest_cases, 100);
+        assert!(config.track_morphology);
+        assert!(config.invariants.is_empty());
+        assert!(config.regression_path.is_none());
+    }
+
+    #[test]
+    fn test_seed_to_hex_roundtrip() {
+        let seed: [u8; 32] = [
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+            0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10,
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+            0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        ];
+        let hex = seed_to_hex(&seed);
+        assert_eq!(hex.len(), 64);
+        let recovered = hex_to_seed(&hex).expect("should parse valid hex");
+        assert_eq!(recovered, seed);
+    }
+
+    #[test]
+    fn test_hex_to_seed_invalid() {
+        assert!(hex_to_seed("too_short").is_none());
+        assert!(hex_to_seed(&"zz".repeat(32)).is_none());
+        // Wrong length (63 chars).
+        assert!(hex_to_seed(&"a".repeat(63)).is_none());
+    }
+
+    #[test]
+    fn test_regression_file_roundtrip() {
+        let dir = std::env::temp_dir().join("mettail_regression_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test.regressions");
+
+        // Clean up from any previous run.
+        let _ = std::fs::remove_file(&path);
+
+        let seed1: [u8; 32] = [1u8; 32];
+        let seed2: [u8; 32] = [2u8; 32];
+        let seed3: [u8; 32] = [3u8; 32];
+
+        // Initially empty.
+        assert!(load_regression_seeds(&path).is_empty());
+
+        // Save seeds.
+        save_regression_seed(&path, &seed1);
+        save_regression_seed(&path, &seed2);
+        save_regression_seed(&path, &seed3);
+
+        // Saving duplicate should not add a second entry.
+        save_regression_seed(&path, &seed1);
+
+        let loaded = load_regression_seeds(&path);
+        assert_eq!(loaded.len(), 3);
+        assert!(loaded.contains(&seed1));
+        assert!(loaded.contains(&seed2));
+        assert!(loaded.contains(&seed3));
+
+        // Remove seed2.
+        remove_regression_seed(&path, &seed2);
+        let loaded = load_regression_seeds(&path);
+        assert_eq!(loaded.len(), 2);
+        assert!(loaded.contains(&seed1));
+        assert!(!loaded.contains(&seed2));
+        assert!(loaded.contains(&seed3));
+
+        // Remove all remaining.
+        remove_regression_seed(&path, &seed1);
+        remove_regression_seed(&path, &seed3);
+        // File should be removed when empty.
+        assert!(!path.exists());
+        assert!(load_regression_seeds(&path).is_empty());
+
+        // Clean up.
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

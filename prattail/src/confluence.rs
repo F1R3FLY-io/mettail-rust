@@ -1074,6 +1074,9 @@ pub fn syntax_to_rewrite_rules(
                     Term::var(format!("{}_{}", param_name, idx))
                 }
                 crate::SyntaxItemSpec::Optional { .. } => Term::var(format!("opt_{}", idx)),
+                crate::SyntaxItemSpec::GuardExpression { param_name } => {
+                    Term::var(format!("{}_{}", param_name, idx))
+                }
             })
             .collect();
 

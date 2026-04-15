@@ -1,10 +1,10 @@
 #![allow(clippy::cmp_owned)]
 
-use crate::ast::language::LanguageDef;
+use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::ast::{
+use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, TermParam},
     types::{CollectionType, TypeExpr},
 };
@@ -278,7 +278,13 @@ fn generate_var_inference_arm(
         return None;
     }
 
-    // Get field info from term_context or bindings
+    // Get field info from term_context or bindings.
+    //
+    // Phase 3A-C4 (predicated types): variable bind names use the
+    // destructure position (not the term_context index) so they
+    // match the variant's actual field layout. Predicate slots are
+    // skipped from the field list but tracked separately so the
+    // destructure pattern can use `_` placeholders at their positions.
     let fields: Vec<(syn::Ident, syn::Ident, InferFieldKind)> = if let Some(ctx) =
         &rule.term_context
     {
@@ -347,7 +353,7 @@ fn generate_var_inference_arm(
                 let field_name =
                     syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
                 match item {
-                    GrammarItem::NonTerminal(nt) => {
+                    GrammarItem::NonTerminal { ident: nt, .. } => {
                         if all_cats.iter().any(|c| c.to_string() == nt.to_string()) {
                             Some((field_name, nt.clone(), InferFieldKind::Simple))
                         } else {
@@ -403,13 +409,48 @@ fn generate_var_inference_arm(
         });
     }
 
-    // Generate pattern and recursive calls
-    let field_patterns: Vec<TokenStream> = fields
-        .iter()
-        .map(|(name, _, _)| {
-            quote! { ref #name }
-        })
-        .collect();
+    // Generate pattern and recursive calls.
+    //
+    // Phase 3A-C4: only the new (term_context) path can have
+    // GuardBody slots. For new-syntax rules with predicate slots,
+    // emit `_` placeholders interleaved with bound names so the
+    // destructure positions match the actual variant layout. For
+    // old-syntax rules and new-syntax rules without predicates,
+    // use the original pattern (one bound pattern per kept field).
+    let has_guard_slot = rule
+        .term_context
+        .as_ref()
+        .map(|ctx| ctx.iter().any(|p| matches!(p, TermParam::GuardBody { .. })))
+        .unwrap_or(false);
+
+    let field_patterns: Vec<TokenStream> = if has_guard_slot {
+        // New syntax with predicate slots: use positional binding.
+        let bound_indices: std::collections::HashSet<usize> = fields
+            .iter()
+            .filter_map(|(name, _, _)| {
+                let s = name.to_string();
+                s.strip_prefix('f').and_then(|n| n.parse::<usize>().ok())
+            })
+            .collect();
+        let total = rule.term_context.as_ref().map(|c| c.len()).unwrap_or(0);
+        (0..total)
+            .map(|i| {
+                if bound_indices.contains(&i) {
+                    let name = syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
+                    quote! { ref #name }
+                } else {
+                    quote! { _ }
+                }
+            })
+            .collect()
+    } else {
+        // Old syntax or no predicate slots: positional patterns
+        // bind by position, with the field names being arbitrary.
+        fields
+            .iter()
+            .map(|(name, _, _)| quote! { ref #name })
+            .collect()
+    };
 
     let recursive_calls: Vec<TokenStream> = fields
         .iter()
@@ -462,12 +503,20 @@ fn generate_var_inference_arm(
         })
         .collect();
 
-    Some(quote! {
-        #category::#label(#(#field_patterns),*) => {
-            #(#recursive_calls)*
-            None
-        }
-    })
+    if field_patterns.is_empty() {
+        Some(quote! {
+            #category::#label(..) => {
+                None
+            }
+        })
+    } else {
+        Some(quote! {
+            #category::#label(#(#field_patterns),*) => {
+                #(#recursive_calls)*
+                None
+            }
+        })
+    }
 }
 
 /// Generate a match arm for full type inference in a constructor
@@ -553,7 +602,7 @@ fn generate_var_type_inference_arm(
                 let field_name =
                     syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
                 match item {
-                    GrammarItem::NonTerminal(nt) => {
+                    GrammarItem::NonTerminal { ident: nt, .. } => {
                         if all_cats.iter().any(|c| c.to_string() == nt.to_string()) {
                             Some((field_name, nt.clone(), InferFieldKind::Simple))
                         } else {
@@ -609,13 +658,41 @@ fn generate_var_type_inference_arm(
         });
     }
 
-    // Generate pattern and recursive calls
-    let field_patterns: Vec<TokenStream> = fields
-        .iter()
-        .map(|(name, _, _)| {
-            quote! { ref #name }
-        })
-        .collect();
+    // Generate pattern and recursive calls.
+    //
+    // Phase 3A-C4: positional `_` placeholders for predicate slots
+    // (see `infer_var_category` for the rationale).
+    let has_guard_slot = rule
+        .term_context
+        .as_ref()
+        .map(|ctx| ctx.iter().any(|p| matches!(p, TermParam::GuardBody { .. })))
+        .unwrap_or(false);
+
+    let field_patterns: Vec<TokenStream> = if has_guard_slot {
+        let bound_indices: std::collections::HashSet<usize> = fields
+            .iter()
+            .filter_map(|(name, _, _)| {
+                let s = name.to_string();
+                s.strip_prefix('f').and_then(|n| n.parse::<usize>().ok())
+            })
+            .collect();
+        let total = rule.term_context.as_ref().map(|c| c.len()).unwrap_or(0);
+        (0..total)
+            .map(|i| {
+                if bound_indices.contains(&i) {
+                    let name = syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
+                    quote! { ref #name }
+                } else {
+                    quote! { _ }
+                }
+            })
+            .collect()
+    } else {
+        fields
+            .iter()
+            .map(|(name, _, _)| quote! { ref #name })
+            .collect()
+    };
 
     let recursive_calls: Vec<TokenStream> = fields
         .iter()
@@ -662,12 +739,20 @@ fn generate_var_type_inference_arm(
         })
         .collect();
 
-    Some(quote! {
-        #category::#label(#(#field_patterns),*) => {
-            #(#recursive_calls)*
-            None
-        }
-    })
+    if field_patterns.is_empty() {
+        Some(quote! {
+            #category::#label(..) => {
+                None
+            }
+        })
+    } else {
+        Some(quote! {
+            #category::#label(#(#field_patterns),*) => {
+                #(#recursive_calls)*
+                None
+            }
+        })
+    }
 }
 
 /// Extract the base category from a type expression

@@ -50,6 +50,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use crate::binding_power::Associativity;
+use crate::lint::DiagnosticId;
 use crate::{
     BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpecInput, SyntaxItemSpec,
 };
@@ -347,7 +348,8 @@ fn validate_category_refs(
         match item {
             SyntaxItemSpec::Terminal(_)
             | SyntaxItemSpec::IdentCapture { .. }
-            | SyntaxItemSpec::BinderCollection { .. } => {},
+            | SyntaxItemSpec::BinderCollection { .. }
+            | SyntaxItemSpec::GuardExpression { .. } => {},
 
             SyntaxItemSpec::NonTerminal { category, .. } => {
                 if !valid_categories.contains(category) {
@@ -624,6 +626,7 @@ pub fn compose_many(specs: &[&LanguageSpec]) -> Result<LanguageSpec, Vec<Composi
             sync: None,
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
         });
     }
 
@@ -764,7 +767,7 @@ pub fn compose_with_wfst(
             if !result.holds {
                 for violation in &result.violations {
                     crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
-                        id: "X06",
+                        id: DiagnosticId::X06,
                         name: "composition-verification-violation",
                         severity: crate::lint::LintSeverity::Warning,
                         category: None,
@@ -809,7 +812,7 @@ pub fn compose_with_wfst(
                 let report = crate::decision_tree::composition_trie_analysis(tree_a, tree_b);
                 if report.common_rules > 0 {
                     crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
-                        id: "X06",
+                        id: DiagnosticId::X06,
                         name: "common-sublanguage",
                         severity: crate::lint::LintSeverity::Note,
                         category: Some(cat.to_string()),
@@ -825,7 +828,7 @@ pub fn compose_with_wfst(
                 }
                 if report.new_ambiguities > 0 {
                     crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
-                        id: "X07",
+                        id: DiagnosticId::X07,
                         name: "composition-introduced-ambiguity",
                         severity: crate::lint::LintSeverity::Warning,
                         category: Some(cat.to_string()),
@@ -1137,6 +1140,7 @@ mod tests {
             sync: None,
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
         }
     }
 
@@ -1268,6 +1272,7 @@ mod tests {
             sync: None,
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
         };
 
         let err = compose_languages(&spec_a, &spec_b).expect_err("should fail");
@@ -1515,6 +1520,7 @@ mod tests {
             sync: None,
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
         };
 
         let merged = compose_languages(&spec_a, &spec_b).expect("composition should succeed");
@@ -1601,6 +1607,7 @@ mod tests {
                 sync: None,
                 tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
             };
             // Manually set prefix_precedence to simulate user override
             spec.rules[0].prefix_precedence = Some(10);
@@ -1641,6 +1648,7 @@ mod tests {
                 sync: None,
                 tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
             };
             spec.rules[0].prefix_precedence = Some(20);
             spec
@@ -1694,6 +1702,7 @@ mod tests {
                 sync: None,
                 tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec
@@ -1732,6 +1741,7 @@ mod tests {
                 sync: None,
                 tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
+            guard_config: None,
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec

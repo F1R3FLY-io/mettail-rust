@@ -19,7 +19,7 @@ mod builder;
 mod colors;
 mod writer;
 
-use crate::ast::language::LanguageDef;
+use mettail_ast::language::LanguageDef;
 use std::collections::HashMap;
 
 pub use writer::{write_blockly_blocks, write_blockly_categories};

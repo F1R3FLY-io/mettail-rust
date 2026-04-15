@@ -9,3 +9,4 @@ pub mod environment;
 pub mod guard_codegen;
 pub mod language;
 pub mod metadata;
+pub mod predicate_lower;
