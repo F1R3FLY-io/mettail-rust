@@ -3,29 +3,24 @@
 # Install: git config core.hooksPath hooks/
 set -e
 
-# Verify the configured linker is available before running cargo commands.
-# .cargo/config.toml requires lld on macOS and mold on Linux.
-check_linker() {
-    case "$(uname -s)" in
-        Darwin)
-            if ! command -v lld >/dev/null 2>&1; then
-                echo "WARNING: lld not found. Install: brew install llvm"
-                echo "  Then add to PATH: export PATH=\"/opt/homebrew/opt/llvm/bin:\$PATH\""
-                echo "  Skipping pre-commit checks (cargo cannot link without lld)."
-                exit 0
-            fi
-            ;;
-        Linux)
-            if ! command -v mold >/dev/null 2>&1; then
-                echo "WARNING: mold not found. Install: sudo apt install mold"
-                echo "  Skipping pre-commit checks (cargo cannot link without mold)."
-                exit 0
-            fi
-            ;;
-    esac
-}
-
-check_linker
+# Require the configured linker (.cargo/config.toml).
+case "$(uname -s)" in
+    Darwin)
+        if ! command -v lld >/dev/null 2>&1; then
+            echo "ERROR: lld not found. Required by .cargo/config.toml"
+            echo "  brew install llvm"
+            echo "  export PATH=\"/opt/homebrew/opt/llvm/bin:\$PATH\""
+            exit 1
+        fi
+        ;;
+    Linux)
+        if ! command -v mold >/dev/null 2>&1; then
+            echo "ERROR: mold not found. Required by .cargo/config.toml"
+            echo "  sudo apt install mold"
+            exit 1
+        fi
+        ;;
+esac
 
 echo "=== pre-commit: cargo fmt ==="
 cargo fmt --all -- --check
