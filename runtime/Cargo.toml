@@ -1,15 +1,16 @@
 [package]
 name = "mettail-runtime"
-version = "0.1.0"
-edition = "2021"
-authors = ["MeTTaIL Contributors"]
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Runtime support library for MeTTaIL - provides variable binding and substitution utilities"
-repository = "https://github.com/your-username/mettail-rust"
-homepage = "https://github.com/your-username/mettail-rust"
 keywords = ["language", "runtime", "binding", "substitution"]
 categories = ["development-tools"]
 readme = "../README.md"
+publish = false
 
 [dependencies]
 moniker = { workspace = true }

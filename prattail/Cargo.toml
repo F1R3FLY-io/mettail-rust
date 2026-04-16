@@ -4,7 +4,10 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "PraTTaIL: Pratt + Recursive Descent parser generator with automata-optimized lexing for MeTTaIL"
+publish = false
 
 [features]
 ## WFST-based prediction, lattice, recovery, and composition modules.
