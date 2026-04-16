@@ -123,6 +123,56 @@ Applied rewrite →
 
 ---
 
+## Development Setup
+
+### Prerequisites
+
+- **Rust nightly** toolchain (for Cranelift codegen backend)
+- **Fast linker** (optional but configured by default in `.cargo/config.toml`):
+
+  **macOS:**
+  ```sh
+  brew install llvm
+  # Apple Silicon:
+  export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
+  # Intel Mac:
+  export PATH="/usr/local/opt/llvm/bin:$PATH"
+  ```
+
+  **Linux:**
+  ```sh
+  # Debian/Ubuntu
+  sudo apt install mold
+  # Arch
+  sudo pacman -S mold
+  # Fedora
+  sudo dnf install mold
+  ```
+
+  If you don't want to install a fast linker, comment out the `linker` and `rustflags` lines for your platform in `.cargo/config.toml`.
+
+### Building and Testing
+
+```sh
+cargo build                              # dev build (Cranelift backend)
+cargo build --release                    # release build (LLVM backend)
+cargo test --all-features --workspace    # full test suite
+cargo run                                # launch the REPL
+```
+
+### Git Hooks
+
+The repository includes pre-commit and pre-push hooks that run formatting, linting, and tests. To enable them:
+
+```sh
+git config core.hooksPath hooks/
+```
+
+**Pre-commit** runs `cargo fmt --check`, `cargo clippy`, and `cargo test`.
+**Pre-push** runs the test suite and verifies a release build compiles. It includes a race guard that skips checks when the remote is already up to date.
+
+---
+
 ## 🙏 Credits
 
 **Core Technologies:**
