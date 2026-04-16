@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  schedule:
+    # Nightly at 06:00 UTC. No-op if workspace version has not changed.
+    - cron: '0 6 * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag and publish GitHub Release
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      released: ${{ steps.gate.outputs.released }}
+      version: ${{ steps.gate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read workspace version
+        id: version
+        run: |
+          v=$(awk '
+            /^\[workspace\.package\]/ { in_block=1; next }
+            in_block && /^\[/         { in_block=0 }
+            in_block && /^version[[:space:]]*=/ {
+                match($0, /"[^"]+"/)
+                if (RSTART > 0) { print substr($0, RSTART+1, RLENGTH-2); exit }
+            }
+          ' Cargo.toml)
+          if [ -z "$v" ]; then
+            echo "::error::Could not read workspace.package.version from Cargo.toml"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Workspace version: $v"
+
+      - name: Check if tag already exists
+        id: gate
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tag="v$VERSION"
+          if git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists; no release needed."
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "No tag for $VERSION yet; will cut release."
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract release notes from CHANGELOG.md
+        if: steps.gate.outputs.released == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v v="$VERSION" '
+            /^## \[/ {
+              if (section) exit
+              if ($0 ~ "^## \\[" v "\\]") { section=1; next }
+              next
+            }
+            section { print }
+          ' CHANGELOG.md > .release-notes.md
+          if [ ! -s .release-notes.md ]; then
+            echo "::warning::No CHANGELOG section found for [$VERSION]; falling back to placeholder"
+            echo "Release v$VERSION" > .release-notes.md
+          fi
+          echo "--- release notes ---"
+          cat .release-notes.md
+
+      - name: Create git tag
+        if: steps.gate.outputs.released == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
+
+      - name: Create GitHub Release
+        if: steps.gate.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --notes-file .release-notes.md
+
+  publish-crates:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/v${{ needs.release.outputs.version }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Strip nightly-only cargo config for stable build
+        run: |
+          sed -i.bak '/codegen-backend/d' Cargo.toml
+          if [ -f .cargo/config.toml ]; then
+            sed -i.bak '/codegen-backend/d' .cargo/config.toml
+          fi
+
+      - name: Publish publishable crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: bash AItools/scripts/publish-crates.sh

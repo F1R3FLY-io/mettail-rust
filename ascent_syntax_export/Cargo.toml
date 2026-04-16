@@ -1,8 +1,13 @@
 [package]
 name = "ascent_syntax_export"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Non-proc-macro wrapper to export Ascent's parser types for external use"
+publish = false
 
 [dependencies]
 syn = { version = "2.0.57", features = ["derive", "full", "extra-traits", "visit-mut", "parsing"] }
