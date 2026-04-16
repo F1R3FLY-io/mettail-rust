@@ -145,6 +145,7 @@ pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
 }
 
 /// Format Ascent source for display and file output
+#[allow(clippy::too_many_arguments)]
 fn format_ascent_source(
     theory_name: &str,
     source_name: &Ident,

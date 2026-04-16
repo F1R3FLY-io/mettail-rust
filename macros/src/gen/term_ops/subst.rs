@@ -1425,7 +1425,7 @@ fn generate_subst_impl(
                     && fields[0].category.to_string() == "List" =>
             {
                 Some(label.clone())
-            }
+            },
             _ => None,
         })
     } else {
@@ -1439,7 +1439,7 @@ fn generate_subst_impl(
                     && fields[0].category.to_string() == "Bag" =>
             {
                 Some(label.clone())
-            }
+            },
             _ => None,
         })
     } else {
@@ -1453,7 +1453,7 @@ fn generate_subst_impl(
                     && fields[0].category.to_string() == "Map" =>
             {
                 Some(label.clone())
-            }
+            },
             _ => None,
         })
     } else {

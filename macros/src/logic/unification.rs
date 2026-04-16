@@ -15,7 +15,10 @@ use super::common::{in_cat_filter, relation_names, CategoryFilter};
 /// Current phase implements:
 /// - eq-lifted matching: `eq_cat(p, v) => unifies_cat(p, v)`
 /// - wildcard pattern variable: `Cat::VarLabel(_)` on pattern side matches any value
-pub fn generate_unification_rules(language: &LanguageDef, cat_filter: CategoryFilter) -> TokenStream {
+pub fn generate_unification_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> TokenStream {
     let mut rules = Vec::new();
 
     for lang_type in &language.types {
@@ -51,4 +54,3 @@ pub fn generate_unification_rules(language: &LanguageDef, cat_filter: CategoryFi
 
     quote! { #(#rules)* }
 }
-

@@ -90,12 +90,7 @@ fn assert_no_rewrites(input: &str) {
 fn assert_never_produces(input: &str, forbidden: &str) {
     let results = run(input);
     let found = results.all_terms.iter().any(|t| t.display == forbidden);
-    assert!(
-        !found,
-        "`{}` unexpectedly produced `{}`",
-        input,
-        forbidden
-    );
+    assert!(!found, "`{}` unexpectedly produced `{}`", input, forbidden);
 }
 
 /// Assert that `input` has a rewrite from the initial term (not stuck).
@@ -255,7 +250,6 @@ mod comm {
         let val = parse("map(1:2, 3:5)");
         assert!(!pat.pattern_matches(&val));
     }
-
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
