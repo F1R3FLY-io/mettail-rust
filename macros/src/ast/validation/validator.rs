@@ -179,6 +179,12 @@ fn validate_pattern_term(pt: &PatternTerm, language: &LanguageDef) -> Result<(),
             }
             Ok(())
         },
+        PatternTerm::ApplyPattern { pattern, value, body } => {
+            validate_pattern(pattern, language)?;
+            validate_pattern(value, language)?;
+            validate_pattern(body, language)?;
+            Ok(())
+        },
     }
 }
 
@@ -236,6 +242,23 @@ fn validate_premise(
             validate_premise(body, pattern_vars, &inner_bound)?;
         },
         Premise::Congruence { .. } | Premise::RelationQuery { .. } => {},
+        Premise::Unification { pattern, value } => {
+            let pat = pattern.to_string();
+            let val = value.to_string();
+            let in_scope = |name: &str| pattern_vars.contains(name) || bound_vars.contains(name);
+            if !in_scope(&pat) {
+                return Err(ValidationError::FreshnessVariableNotInEquation {
+                    var: pat,
+                    span: pattern.span(),
+                });
+            }
+            if !in_scope(&val) {
+                return Err(ValidationError::FreshnessVariableNotInEquation {
+                    var: val,
+                    span: value.span(),
+                });
+            }
+        },
     }
     Ok(())
 }
@@ -340,6 +363,11 @@ fn collect_pattern_term_vars(pt: &PatternTerm, vars: &mut HashSet<String>) {
             for repl in replacements {
                 collect_pattern_vars(repl, vars);
             }
+        },
+        PatternTerm::ApplyPattern { pattern, value, body } => {
+            collect_pattern_vars(pattern, vars);
+            collect_pattern_vars(value, vars);
+            collect_pattern_vars(body, vars);
         },
     }
 }

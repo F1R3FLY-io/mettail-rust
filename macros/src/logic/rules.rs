@@ -232,6 +232,27 @@ fn generate_condition_clauses(
                     },
                 );
             },
+            Condition::Unification { pattern, value } => {
+                let pat_name = pattern.to_string();
+                let val_name = value.to_string();
+                let pat_binding = lhs_clauses.bindings.get(&pat_name).unwrap_or_else(|| {
+                    panic!("Unification pattern variable '{}' not found", pat_name)
+                });
+                let val_binding = lhs_clauses.bindings.get(&val_name).unwrap_or_else(|| {
+                    panic!("Unification value variable '{}' not found", val_name)
+                });
+                if pat_binding.lang_type != val_binding.lang_type {
+                    panic!(
+                        "Unification requires same category on both sides: {}:{} vs {}:{}",
+                        pat_name, pat_binding.lang_type, val_name, val_binding.lang_type
+                    );
+                }
+                let rel_name =
+                    format_ident!("unifies_{}", pat_binding.lang_type.to_string().to_lowercase());
+                let pat_expr = &pat_binding.expression;
+                let val_expr = &val_binding.expression;
+                clauses.push(quote! { #rel_name(#pat_expr, #val_expr) });
+            },
         }
     }
 
@@ -318,6 +339,12 @@ fn premise_to_condition(premise: &crate::ast::language::Premise) -> Option<Condi
             Some(Condition::EnvQuery {
                 relation: relation.clone(),
                 args: args.clone(),
+            })
+        },
+        crate::ast::language::Premise::Unification { pattern, value } => {
+            Some(Condition::Unification {
+                pattern: pattern.clone(),
+                value: value.clone(),
             })
         },
         crate::ast::language::Premise::Congruence { .. } => None, // Handled separately

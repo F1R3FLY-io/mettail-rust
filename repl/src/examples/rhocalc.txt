@@ -1,30 +1,30 @@
 // examples
-add = { a!(2) | b!(3) | (a?x,b?y).{ *(x) + *(y) } }
-comm = { a!(0) | (a?x).{*(x)}}
-multi_comm = {a!(p) | b!(q) | c!(r) | (a?x, b?y, c?z).{{*(x) | *(y) | *(z)}}}
+add = { a!(2) | b!(3) | (x<-a,y<-b){ *(x) + *(y) } }
+comm = { a!(0) | (x<-a){*(x)}}
+multi_comm = {a!(p) | b!(q) | c!(r) | (x<-a, y<-b, z<-c){{*(x) | *(y) | *(z)}}}
 
-new_test = {a!(0) | new (x) in { (a?z).{*(z)}} }
+new_test = {a!(0) | new (x) in { (z<-a){*(z)}} }
 
 // duplication and replication
-dup = ^l.{(l?x).{{*(x)|l!(*(x))}}}
-rep = ^n.{^a.{^cont.{{$name(dup,n)|n!((a?y).{{$name(cont,y)|$name(dup,n)}})}}}}
+dup = ^l.{(x <- l){{*(x)|l!(*(x))}}}
+rep = ^n.{^a.{^cont.{{$name(dup,n)|n!((y <- a){{$name(cont,y)|$name(dup,n)}})}}}}
 
 rep_serv = $proc($name($name(rep, loc), serv), id)
 
 // some combinators
 id = ^z.{*(z)}
-fwd = ^src.{^dst.{(src?x).{dst!(*(x))}}}
-const = ^val.{^n.{(n?x).{*(val)}}}
+fwd = ^src.{^dst.{(x <- src){dst!(*(x))}}}
+const = ^val.{^n.{(x <- n){*(val)}}}
 
 // a data structure
 cell = ^loc.{^init.{loc!(init)}}
-read = ^loc.{^ret.{(loc?x).{{loc!(*(x)) | ret!(*(x))}}}}
-write = ^loc.{^val.{(loc?x).{loc!(val)}}}
+read = ^loc.{^ret.{(x <- loc){{loc!(*(x)) | ret!(*(x))}}}}
+write = ^loc.{^val.{(x <- loc){loc!(val)}}}
 
 // List and Bag (communication then operation, like add)
-list_concat_comm = { a!( [ 1, 2 ] ) | b!( [ 3, 4 ] ) | (a?x, b?y).{ concat(*(x), *(y)) } }
-list_len_comm = { a!( [ 1, 2, 3 ] ) | (a?x).{ len(*(x)) } }
-list_at_comm = { a!( [ 1, 2, 3 ] ) | b!( 1 ) | (a?lst, b?i).{ at(*(lst), *(i)) } }
-bag_union_comm = { a!( #{ 1 | 2 }# ) | b!( #{ 2 | 3 }# ) | (a?x, b?y).{ union(*(x), *(y)) } }
-bag_count_comm = { a!( #{ 1 | 2 | 2 }# ) | c!( 2 ) | (a?b, c?e).{ count(*(b), *(e)) } }
-bag_remove_comm = { a!( #{ 1 | 2 | 2 }# ) | c!( 2 ) | (a?b, c?e).{ remove(*(b), *(e)) } }
+list_concat_comm = { a!( [ 1, 2 ] ) | b!( [ 3, 4 ] ) | (x <- a, y <- b){ concat(*(x), *(y)) } }
+list_len_comm = { a!( [ 1, 2, 3 ] ) | (x <- a){ len(*(x)) } }
+list_at_comm = { a!( [ 1, 2, 3 ] ) | b!( 1 ) | (lst <- a, i <- b){ at(*(lst), *(i)) } }
+bag_union_comm = { a!( #{ 1 | 2 }# ) | b!( #{ 2 | 3 }# ) | (x <- a, y <- b){ union(*(x), *(y)) } }
+bag_count_comm = { a!( #{ 1 | 2 | 2 }# ) | c!( 2 ) | (b <- a, e <- c){ count(*(b), *(e)) } }
+bag_remove_comm = { a!( #{ 1 | 2 | 2 }# ) | c!( 2 ) | (b <- a, e <- c){ remove(*(b), *(e)) } }

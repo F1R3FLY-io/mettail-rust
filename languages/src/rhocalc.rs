@@ -73,8 +73,12 @@ language! {
         POutput . n:Name, q:Proc
         |- n "!" "(" q ")" : Proc ;
 
+        // Pattern-based single-input receive used by guarded COMM.
+        PFor . pat:Proc, n:Name, body:Proc
+        |- "for" "(" pat "<-" n ")" "{" body "}" : Proc;
+
         PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
-        |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
+        |- "(" *zip(xs,ns).*map(|x,n| x "<-" n).*sep(",") ")" "{" p "}" : Proc ;
 
         NQuote . p:Proc
         |- "@" "(" p ")" : Name ;
@@ -817,6 +821,10 @@ language! {
     },
 
     rewrites {
+
+        // Pattern-based communication (single channel): if payload matches pattern, apply substitution into body.
+        CommPattern . | unifies(pat, q) |- (PPar {(PFor pat n body), (POutput n q), ...rest})
+            ~> (PPar {(apply_pattern pat q body), ...rest});
 
         // communication:
         // (n1 ? x1 , ... , nk ? xk).{ p } | n1!(q1) | ... | nk!(qk) ~> p(@q1,...,@qk)

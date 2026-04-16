@@ -48,6 +48,13 @@ pub enum PatternTerm {
         scope: Box<Pattern>,
         replacements: Vec<Pattern>,
     },
+
+    /// Apply pattern bindings from `pattern` and `value` into `body`.
+    ApplyPattern {
+        pattern: Box<Pattern>,
+        value: Box<Pattern>,
+        body: Box<Pattern>,
+    },
 }
 
 /// Pattern for rule specification (both LHS and RHS).
@@ -149,6 +156,12 @@ impl PatternTerm {
                 for repl in replacements {
                     vars.extend(repl.free_vars());
                 }
+                vars
+            },
+            PatternTerm::ApplyPattern { pattern, value, body } => {
+                let mut vars = pattern.free_vars();
+                vars.extend(value.free_vars());
+                vars.extend(body.free_vars());
                 vars
             },
         }
@@ -287,6 +300,7 @@ impl PatternTerm {
             PatternTerm::MultiLambda { body, .. } => body.category(language),
             PatternTerm::Subst { term, .. } => term.category(language),
             PatternTerm::MultiSubst { scope, .. } => scope.category(language),
+            PatternTerm::ApplyPattern { body, .. } => body.category(language),
         }
     }
 
@@ -329,6 +343,11 @@ impl PatternTerm {
                 for repl in replacements {
                     repl.collect_var_occurrences(counts);
                 }
+            },
+            PatternTerm::ApplyPattern { pattern, value, body } => {
+                pattern.collect_var_occurrences(counts);
+                value.collect_var_occurrences(counts);
+                body.collect_var_occurrences(counts);
             },
         }
     }
@@ -1301,6 +1320,9 @@ impl PatternTerm {
             PatternTerm::MultiSubst { .. } => {
                 unimplemented!("MultiSubst in LHS patterns not supported")
             },
+            PatternTerm::ApplyPattern { .. } => {
+                unimplemented!("ApplyPattern in LHS patterns not supported")
+            },
         }
     }
 }
@@ -2126,6 +2148,16 @@ impl PatternTerm {
                             (*__body).#subst_method(&__vars, &__repls)
                         }
                     }
+                }
+            },
+            PatternTerm::ApplyPattern { pattern, value, body } => {
+                let pattern_expr = pattern.to_ascent_rhs(bindings, language);
+                let value_expr = value.to_ascent_rhs(bindings, language);
+                let body_expr = body.to_ascent_rhs(bindings, language);
+                quote! {
+                    (#body_expr)
+                        .apply_pattern(&(#pattern_expr), &(#value_expr))
+                        .unwrap_or_else(|| (#body_expr).clone())
                 }
             },
         }

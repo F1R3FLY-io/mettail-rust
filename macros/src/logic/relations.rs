@@ -54,6 +54,17 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
         });
     }
 
+    // Unification/matching: unifies_proc(Proc, Proc), ...
+    for lang_type in &language.types {
+        let cat = &lang_type.name;
+        let unifies_rel = format_ident!("unifies_{}", cat.to_string().to_lowercase());
+        let ty = cat.to_string();
+        out.push(RelationForExtraction {
+            name: unifies_rel,
+            param_types: vec![ty.clone(), ty],
+        });
+    }
+
     // Fold relations (for categories that have fold rules or appear as fold-rule params)
     for lang_type in &language.types {
         let cat = &lang_type.name;
@@ -153,6 +164,12 @@ pub fn generate_relations(language: &LanguageDef) -> TokenStream {
         // Rewrite relation (typed)
         relations.push(quote! {
             relation #rw_rel(#cat, #cat);
+        });
+
+        // Unification/matching relation (typed)
+        let unifies_rel = format_ident!("unifies_{}", cat.to_string().to_lowercase());
+        relations.push(quote! {
+            relation #unifies_rel(#cat, #cat);
         });
 
         // Fold (big-step eval) relation when (1) this category has fold-mode constructors, or

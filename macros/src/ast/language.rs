@@ -87,6 +87,9 @@ pub enum Premise {
     /// Currently used for env_var(x, v), extensible to arbitrary relations
     RelationQuery { relation: Ident, args: Vec<Ident> },
 
+    /// Directional unification/matching: unifies(pattern, value)
+    Unification { pattern: Ident, value: Ident },
+
     /// Universal quantification over a collection: xs.*map(|x| premise)
     /// Means "for all x in xs, premise holds"
     ForAll {
@@ -147,6 +150,8 @@ pub enum Condition {
         /// Arguments to the relation (e.g., ["x", "v"])
         args: Vec<Ident>,
     },
+    /// Directional unification guard: unifies(pattern, value)
+    Unification { pattern: Ident, value: Ident },
     /// Universal quantification: for all x in collection, body holds
     ForAll {
         collection: Ident,
@@ -885,7 +890,7 @@ fn parse_premise(input: ParseStream) -> SynResult<Premise> {
         let target = input.parse::<Ident>()?;
         Ok(Premise::Congruence { source: first, target })
     } else if input.peek(syn::token::Paren) {
-        // Relation query: rel(args)
+        // Relation query or reserved unification: ident(args)
         let args_content;
         syn::parenthesized!(args_content in input);
         let mut args = Vec::new();
@@ -895,7 +900,20 @@ fn parse_premise(input: ParseStream) -> SynResult<Premise> {
                 let _ = args_content.parse::<Token![,]>()?;
             }
         }
-        Ok(Premise::RelationQuery { relation: first, args })
+        if first == "unifies" {
+            if args.len() != 2 {
+                return Err(syn::Error::new(
+                    first.span(),
+                    "unifies(...) requires exactly 2 identifiers: unifies(pattern, value)",
+                ));
+            }
+            Ok(Premise::Unification {
+                pattern: args[0].clone(),
+                value: args[1].clone(),
+            })
+        } else {
+            Ok(Premise::RelationQuery { relation: first, args })
+        }
     } else if input.peek(Token![.]) {
         // ForAll: xs.*map(|x| premise)
         let _ = input.parse::<Token![.]>()?;
@@ -921,7 +939,7 @@ fn parse_premise(input: ParseStream) -> SynResult<Premise> {
     } else {
         Err(syn::Error::new(
             first.span(),
-            "expected premise: 'x # term', 'S ~> T', 'rel(args)', or 'xs.*map(|x| ...)'",
+            "expected premise: 'x # term', 'S ~> T', 'unifies(pat, val)', 'rel(args)', or 'xs.*map(|x| ...)'",
         ))
     }
 }
@@ -1148,6 +1166,23 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
                     replacement: Box::new(replacement),
                 }));
             }
+        }
+
+        if constructor == "apply_pattern" {
+            let pattern = parse_pattern(&content)?;
+            let value = parse_pattern(&content)?;
+            let body = parse_pattern(&content)?;
+            if !content.is_empty() {
+                return Err(syn::Error::new(
+                    constructor.span(),
+                    "apply_pattern takes exactly 3 arguments: (apply_pattern pattern value body)",
+                ));
+            }
+            return Ok(Pattern::Term(PatternTerm::ApplyPattern {
+                pattern: Box::new(pattern),
+                value: Box::new(value),
+                body: Box::new(body),
+            }));
         }
 
         // Parse arguments as nested patterns
