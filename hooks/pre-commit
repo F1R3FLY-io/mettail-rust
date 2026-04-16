@@ -1,0 +1,13 @@
+#!/bin/sh
+# MeTTaIL pre-commit hook
+# Install: git config core.hooksPath hooks/
+set -e
+
+echo "=== pre-commit: cargo fmt ==="
+cargo fmt --all -- --check
+
+echo "=== pre-commit: cargo clippy ==="
+cargo clippy --all-targets --all-features -- -D warnings
+
+echo "=== pre-commit: cargo test ==="
+cargo test --all-features --workspace --quiet
