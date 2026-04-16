@@ -76,7 +76,11 @@ PY
 ) <<<"$metadata"
 }
 
-mapfile -t TO_PUBLISH < <(ordered_members)
+members_output=$(ordered_members) || { echo "::error::Failed to determine publish order"; exit 1; }
+mapfile -t TO_PUBLISH <<< "$members_output"
+if [[ ${#TO_PUBLISH[@]} -eq 1 && -z "${TO_PUBLISH[0]}" ]]; then
+    TO_PUBLISH=()
+fi
 
 if [[ ${#TO_PUBLISH[@]} -eq 0 ]]; then
     echo "[publish-crates] No publishable crates (all members have publish = false). Skipping."
@@ -90,7 +94,7 @@ done
 
 for n in "${TO_PUBLISH[@]}"; do
     echo "[publish-crates] cargo publish -p $n"
-    cargo publish -p "$n" --token "$CARGO_REGISTRY_TOKEN"
+    cargo publish -p "$n"
     # Give the index time to propagate before the next dependent publishes.
     sleep 15
 done
