@@ -43,6 +43,10 @@ jobs:
             echo "::error::Could not read workspace.package.version from Cargo.toml"
             exit 1
           fi
+          if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Parsed version '$v' is not valid SemVer"
+            exit 1
+          fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "Workspace version: $v"
 
