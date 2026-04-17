@@ -1,6 +1,6 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-use crate::ast::grammar::{GrammarItem, TermParam};
+use crate::ast::grammar::{EvalMode, GrammarItem, TermParam};
 use crate::ast::language::LanguageDef;
 use crate::gen::{generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
@@ -33,6 +33,17 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
             .any(|item| matches!(item, GrammarItem::Collection { .. }));
 
         if !has_collection {
+            continue;
+        }
+
+        // Skip mixed constructors (Collection + other NonTerminal fields).
+        // The flatten helper only makes sense for pure-collection constructors like PPar(HashBag).
+        let total_non_terminal_fields = rule
+            .items
+            .iter()
+            .filter(|i| matches!(i, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }))
+            .count();
+        if total_non_terminal_fields > 1 {
             continue;
         }
 
@@ -223,6 +234,20 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
             .filter_map(|rule| {
                 let label = &rule.label;
 
+                // User-facing `for` (RhoCalc `PForUser`): fold only runs in Ascent; `normalize()` should
+                // desugar so COMM rules (which match `PFor` / `PForJoin`) see the internal receive form.
+                if rule.eval_mode == Some(EvalMode::Fold)
+                    && rule.category == *category
+                    && label == "PForUser"
+                {
+                    return Some(quote! {
+                        #category::#label(ref rows, ref body) => {
+                            let body = body.as_ref().normalize();
+                            crate::for_clause::desugar_for_rows(rows.clone(), &body).normalize()
+                        }
+                    });
+                }
+
                 // Check if this rule uses term_context with multi-binder
                 let has_multi_binder = rule.term_context.as_ref().is_some_and(|ctx| {
                     ctx.iter()
@@ -235,7 +260,18 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                     .iter()
                     .filter(|item| matches!(item, GrammarItem::Collection { .. }))
                     .count();
-                let is_single_collection = !has_multi_binder && collection_count == 1;
+                let total_non_terminal_fields = rule
+                    .items
+                    .iter()
+                    .filter(|i| {
+                        matches!(i, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. })
+                    })
+                    .count();
+                // A "simple collection" constructor has exactly one field and it's a collection
+                // (e.g. PPar(HashBag<Proc>)). Mixed constructors like ForRowNoWhere(Box<InputBind>,
+                // Vec<InputBind>) are handled by the multi-field branch below.
+                let is_single_collection =
+                    !has_multi_binder && collection_count == 1 && total_non_terminal_fields == 1;
 
                 if is_single_collection {
                     let helper_name =

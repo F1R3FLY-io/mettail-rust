@@ -35,7 +35,14 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
             name: t.name.to_string(),
             native_type: t.native_type.as_ref().map(native_type_to_string),
             is_primary: idx == 0,
-            has_var: true,
+            // Synthetic per-category `*Var` rules are emitted for every type (below). For most
+            // categories bare identifiers are meaningful (Proc, Name, native numerics, …).
+            //
+            // `ForRow` is different: rows always begin with an `InputBind`, and rules like
+            // `|- b : ForRow` are also classified as casts from `InputBind`. If `has_var` is true,
+            // the trampolined `Ident` arm runs *before* cast arms and turns `x` in `x <- c` into a
+            // `ForRowVar`, leaving `<-` as trailing input — breaking `for (x <- c) { … }`.
+            has_var: t.collection_kind.is_some() || t.name != "ForRow",
         })
         .collect();
 

@@ -1269,99 +1269,150 @@ fn generate_fold_big_step_rules(
                     quote! {}
                 };
 
+                // Helper: given a TermParam, produce a TokenStream that extracts the field
+                // and binds it to the given variable name.
+                // - Collection fields (Vec<T>) are stored unboxed in the enum; we just clone them.
+                // - Base-typed fields are stored as Box<T>; we call the appropriate fold relation.
+                let extract_field = |param: Option<&TermParam>,
+                                     field_var: TokenStream,
+                                     out_var: TokenStream,
+                                     default_rel: &TokenStream|
+                 -> TokenStream {
+                    match param {
+                        Some(TermParam::Simple { ty: TypeExpr::Collection { .. }, .. }) => {
+                            quote! { let #out_var = #field_var.clone(), }
+                        },
+                        Some(TermParam::Simple { ty: TypeExpr::Base(ident), .. }) => {
+                            let rn = relation_names(ident);
+                            let rel = &rn.fold_rel;
+                            quote! { #rel(#field_var.as_ref().clone(), #out_var), }
+                        },
+                        _ => {
+                            quote! { #default_rel(#field_var.as_ref().clone(), #out_var), }
+                        },
+                    }
+                };
+
+                let ctx_params: Vec<Option<&TermParam>> = if let Some(ref ctx) = rule.term_context {
+                    ctx.iter().map(Some).collect()
+                } else {
+                    vec![]
+                };
+
+                // Helper: determine if a param is a Collection type (bound before the inner join,
+                // so it must be cloned inside the FnMut loop body to avoid a move error).
+                let is_collection_param = |param: Option<&TermParam>| -> bool {
+                    matches!(param, Some(TermParam::Simple { ty: TypeExpr::Collection { .. }, .. }))
+                };
+
+                let fold_rel_ts = quote! { #fold_rel };
                 if param_names.len() == 3 {
                     let p0 = &param_names[0];
                     let p1 = &param_names[1];
                     let p2 = &param_names[2];
-                    let (left_fold_rel, mid_fold_rel, right_fold_rel) =
-                        if let Some(ref ctx) = rule.term_context {
-                            let types: Vec<_> = ctx
-                                .iter()
-                                .filter_map(|p| match p {
-                                    TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
-                                        Some(ident.clone())
-                                    },
-                                    _ => None,
-                                })
-                                .collect();
-                            if types.len() == 3 {
-                                let left_rn = relation_names(&types[0]);
-                                let mid_rn = relation_names(&types[1]);
-                                let right_rn = relation_names(&types[2]);
-                                (left_rn.fold_rel, mid_rn.fold_rel, right_rn.fold_rel)
-                            } else {
-                                (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
-                            }
-                        } else {
-                            (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
-                        };
+                    let ext_left = extract_field(
+                        ctx_params.first().copied().flatten(),
+                        quote! { left },
+                        quote! { lv },
+                        &fold_rel_ts,
+                    );
+                    let ext_mid = extract_field(
+                        ctx_params.get(1).copied().flatten(),
+                        quote! { mid },
+                        quote! { mv },
+                        &fold_rel_ts,
+                    );
+                    let ext_right = extract_field(
+                        ctx_params.get(2).copied().flatten(),
+                        quote! { right },
+                        quote! { rv },
+                        &fold_rel_ts,
+                    );
+                    // Collection params need .clone() inside the FnMut loop body.
+                    let bind_p0 = if is_collection_param(ctx_params.first().copied().flatten()) {
+                        quote! { let #p0 = lv.clone(), }
+                    } else {
+                        quote! { let #p0 = lv, }
+                    };
+                    let bind_p1 = if is_collection_param(ctx_params.get(1).copied().flatten()) {
+                        quote! { let #p1 = mv.clone(), }
+                    } else {
+                        quote! { let #p1 = mv, }
+                    };
+                    let bind_p2 = if is_collection_param(ctx_params.get(2).copied().flatten()) {
+                        quote! { let #p2 = rv.clone(), }
+                    } else {
+                        quote! { let #p2 = rv, }
+                    };
                     rules.push(quote! {
                         #fold_rel(s.clone(), res) <--
                             #cat_rel(s),
                             if let #category::#label(left, mid, right) = s,
-                            #left_fold_rel(left.as_ref().clone(), lv),
-                            #mid_fold_rel(mid.as_ref().clone(), mv),
-                            #right_fold_rel(right.as_ref().clone(), rv),
-                            let #p0 = lv,
-                            let #p1 = mv,
-                            let #p2 = rv,
+                            #ext_left
+                            #ext_mid
+                            #ext_right
+                            #bind_p0
+                            #bind_p1
+                            #bind_p2
                             let res = (#rust_code)
                             #filter_err;
                     });
                 } else if param_names.len() == 2 {
                     let p0 = &param_names[0];
                     let p1 = &param_names[1];
-                    // Use per-param fold relation when term_context has different param types (e.g. DeleteList List,Int)
-                    let (left_fold_rel, right_fold_rel) = if let Some(ref ctx) = rule.term_context {
-                        let types: Vec<_> = ctx
-                            .iter()
-                            .filter_map(|p| match p {
-                                TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
-                                    Some(ident.clone())
-                                },
-                                _ => None,
-                            })
-                            .collect();
-                        if types.len() == 2 {
-                            let left_rn = relation_names(&types[0]);
-                            let right_rn = relation_names(&types[1]);
-                            (left_rn.fold_rel, right_rn.fold_rel)
-                        } else {
-                            (fold_rel.clone(), fold_rel.clone())
-                        }
+                    let ext_left = extract_field(
+                        ctx_params.first().copied().flatten(),
+                        quote! { left },
+                        quote! { lv },
+                        &fold_rel_ts,
+                    );
+                    let ext_right = extract_field(
+                        ctx_params.get(1).copied().flatten(),
+                        quote! { right },
+                        quote! { rv },
+                        &fold_rel_ts,
+                    );
+                    // Collection params need .clone() inside the FnMut loop body.
+                    let bind_p0 = if is_collection_param(ctx_params.first().copied().flatten()) {
+                        quote! { let #p0 = lv.clone(), }
                     } else {
-                        (fold_rel.clone(), fold_rel.clone())
+                        quote! { let #p0 = lv, }
+                    };
+                    let bind_p1 = if is_collection_param(ctx_params.get(1).copied().flatten()) {
+                        quote! { let #p1 = rv.clone(), }
+                    } else {
+                        quote! { let #p1 = rv, }
                     };
                     rules.push(quote! {
                         #fold_rel(s.clone(), res) <--
                             #cat_rel(s),
                             if let #category::#label(left, right) = s,
-                            #left_fold_rel(left.as_ref().clone(), lv),
-                            #right_fold_rel(right.as_ref().clone(), rv),
-                            let #p0 = lv,
-                            let #p1 = rv,
+                            #ext_left
+                            #ext_right
+                            #bind_p0
+                            #bind_p1
                             let res = (#rust_code)
                             #filter_err;
                     });
                 } else if param_names.len() == 1 {
                     let p0 = &param_names[0];
-                    let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
-                        if let Some(TermParam::Simple { ty: TypeExpr::Base(ident), .. }) =
-                            ctx.first()
-                        {
-                            relation_names(ident).fold_rel
-                        } else {
-                            fold_rel.clone()
-                        }
+                    let ext_inner = extract_field(
+                        ctx_params.first().copied().flatten(),
+                        quote! { inner },
+                        quote! { lv },
+                        &fold_rel_ts,
+                    );
+                    let bind_p0 = if is_collection_param(ctx_params.first().copied().flatten()) {
+                        quote! { let #p0 = lv.clone(), }
                     } else {
-                        fold_rel.clone()
+                        quote! { let #p0 = lv, }
                     };
                     rules.push(quote! {
                         #fold_rel(s.clone(), res) <--
                             #cat_rel(s),
                             if let #category::#label(inner) = s,
-                            #inner_fold_rel(inner.as_ref().clone(), lv),
-                            let #p0 = lv,
+                            #ext_inner
+                            #bind_p0
                             let res = (#rust_code)
                             #filter_err;
                     });

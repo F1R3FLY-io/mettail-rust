@@ -13,6 +13,7 @@ use super::common::{
     relation_names, CategoryFilter,
 };
 use crate::ast::grammar::TermParam;
+use crate::ast::types::TypeExpr;
 use crate::ast::{
     grammar::{GrammarItem, GrammarRule},
     language::LanguageDef,
@@ -250,19 +251,61 @@ fn generate_collection_projection_population(
                 let rel_name =
                     format_ident!("{}_contains", constructor_label.to_string().to_lowercase());
 
-                let (binding, iter_clause) = match coll_type {
+                let iter_clause = match coll_type {
                     crate::ast::types::CollectionType::HashMap => {
                         // Map-as-collection fields are not supported in Phase 1.
                         continue;
                     },
                     crate::ast::types::CollectionType::Vec => {
-                        (quote! { ref coll_field }, quote! { for elem in coll_field.iter(); })
+                        quote! { for elem in coll_field.iter(); }
                     },
                     crate::ast::types::CollectionType::HashBag
-                    | crate::ast::types::CollectionType::HashSet => (
-                        quote! { ref coll_field },
-                        quote! { for (elem, _count) in coll_field.iter(); },
-                    ),
+                    | crate::ast::types::CollectionType::HashSet => {
+                        quote! { for (elem, _count) in coll_field.iter(); }
+                    },
+                };
+
+                // Determine the position of this collection field and the total field count
+                // so that multi-field variants get the correct match pattern.
+                let (coll_idx, total_fields) = if let Some(ref ctx) = constructor.term_context {
+                    let total = ctx.len();
+                    let pos = ctx.iter().position(|p| {
+                        matches!(p, TermParam::Simple { ty: TypeExpr::Collection { .. }, .. })
+                    });
+                    (pos.unwrap_or(0), total)
+                } else {
+                    // Old-style: scan grammar items for NonTerminal / Collection fields.
+                    let mut field_idx = 0usize;
+                    let mut coll_pos = None;
+                    for gi in &constructor.items {
+                        match gi {
+                            GrammarItem::NonTerminal(_) => field_idx += 1,
+                            GrammarItem::Collection { .. } => {
+                                if coll_pos.is_none() {
+                                    coll_pos = Some(field_idx);
+                                }
+                                field_idx += 1;
+                            },
+                            _ => {},
+                        }
+                    }
+                    (coll_pos.unwrap_or(0), field_idx)
+                };
+
+                // Build pattern: `ref coll_field` at coll_idx, `_` elsewhere.
+                let binding = if total_fields <= 1 {
+                    quote! { ref coll_field }
+                } else {
+                    let pats: Vec<TokenStream> = (0..total_fields)
+                        .map(|i| {
+                            if i == coll_idx {
+                                quote! { ref coll_field }
+                            } else {
+                                quote! { _ }
+                            }
+                        })
+                        .collect();
+                    quote! { #(#pats),* }
                 };
 
                 rules.push(quote! {

@@ -324,15 +324,32 @@ fn generate_user_constructor_pool_arm(
 }
 
 /// When category has injection variants (e.g. ProcList, ProcBag), push the wrapped term so pool type stays correct.
+///
+/// Only fires for single-field NonTerminal variants (not mixed constructors with Collection fields).
 fn generate_injection_wrapper_pool_arm(rule: &GrammarRule, src: &Ident) -> Option<PoolArm> {
-    let fields = collect_nonterminal_fields(rule);
-    if fields.len() != 1 {
+    // Compute the total number of actual variant fields (NonTerminal + Collection)
+    let total_fields = rule
+        .items
+        .iter()
+        .filter(|i| matches!(i, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }))
+        .count();
+
+    // Only generate for single-field variants (not mixed constructors)
+    if total_fields != 1 {
         return None;
     }
-    let (_, field_type) = &fields[0];
+
+    // Ensure the single field is a NonTerminal, not a Collection
+    let nt_fields = collect_nonterminal_fields(rule);
+    if nt_fields.len() != 1 {
+        return None; // The sole field is a Collection — skip
+    }
+
+    let (_, field_type) = &nt_fields[0];
     if **field_type == *src {
         return None; // same-type field already handled by regular arm
     }
+
     let label = &rule.label;
     let name = format_ident!("f0");
     Some(PoolArm {
@@ -344,38 +361,55 @@ fn generate_injection_wrapper_pool_arm(rule: &GrammarRule, src: &Ident) -> Optio
 /// Generate a PoolArm for a regular (non-binding, non-collection) constructor.
 ///
 /// Extracts all fields whose type matches `tgt`, skipping Var and Integer fields.
+/// Correctly handles mixed constructors that have both NonTerminal and Collection fields
+/// by computing the full field count from all non-terminal-like grammar items.
 fn generate_regular_constructor_pool_arm(
     rule: &GrammarRule,
     src: &Ident,
     tgt: &Ident,
 ) -> Option<PoolArm> {
     let label = &rule.label;
-    let fields = collect_nonterminal_fields(rule);
 
-    if fields.is_empty() {
-        return None; // No fields to extract (nullary constructor)
-    }
-
-    // Find indices of fields matching the target category
-    let matching_indices: Vec<usize> = fields
+    // Build the full field list: Some(ident) for NonTerminal, None for Collection.
+    // This correctly represents all positions in the enum variant tuple.
+    let all_fields: Vec<Option<&Ident>> = rule
+        .items
         .iter()
-        .enumerate()
-        .filter(|(_, (_, field_type))| {
-            let ft_str = field_type.to_string();
-            // Skip Var and Integer — they are built-in types, not exported categories
-            ft_str != "Var" && ft_str != "Integer" && **field_type == *tgt
+        .filter_map(|item| match item {
+            GrammarItem::NonTerminal(id) => Some(Some(id)),
+            GrammarItem::Collection { .. } => Some(None), // collection slot, no specific category
+            _ => None,
         })
-        .map(|(i, _)| i)
         .collect();
 
-    if matching_indices.is_empty() {
+    let total = all_fields.len();
+
+    if total == 0 {
+        return None; // Nullary constructor
+    }
+
+    // Find positions of NonTerminal fields matching the target category
+    let matching_positions: Vec<usize> = all_fields
+        .iter()
+        .enumerate()
+        .filter_map(|(i, opt_id)| {
+            if let Some(id) = opt_id {
+                let ft_str = id.to_string();
+                if ft_str != "Var" && ft_str != "Integer" && **id == *tgt {
+                    return Some(i);
+                }
+            }
+            None
+        })
+        .collect();
+
+    if matching_positions.is_empty() {
         return None;
     }
 
-    let total = fields.len();
     let field_bindings: Vec<TokenStream> = (0..total)
         .map(|i| {
-            if matching_indices.contains(&i) {
+            if matching_positions.contains(&i) {
                 let name = format_ident!("f{}", i);
                 quote! { #name }
             } else {
@@ -384,7 +418,7 @@ fn generate_regular_constructor_pool_arm(
         })
         .collect();
 
-    let pushes: Vec<TokenStream> = matching_indices
+    let pushes: Vec<TokenStream> = matching_positions
         .iter()
         .map(|&i| {
             let name = format_ident!("f{}", i);

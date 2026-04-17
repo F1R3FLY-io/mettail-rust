@@ -8,7 +8,7 @@
 use crate::ast::{
     grammar::{GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam},
     language::LanguageDef,
-    types::TypeExpr,
+    types::{CollectionType, TypeExpr},
 };
 use crate::gen::native::{has_native_type, native_type_to_string};
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
@@ -459,6 +459,7 @@ fn generate_syntax_pattern_display_arm(
                     &abstraction_binder,
                     &abstraction_body,
                     &param_index,
+                    term_context,
                 );
                 format_parts.push(op_code);
             },
@@ -540,6 +541,7 @@ fn generate_pattern_op_display(
     _abstraction_binder: &Option<String>,
     _abstraction_body: &Option<String>,
     param_index: &std::collections::HashMap<String, usize>,
+    term_context: &[TermParam],
 ) -> TokenStream {
     match op {
         PatternOp::Sep { collection, separator, source } => {
@@ -571,14 +573,41 @@ fn generate_pattern_op_display(
                     }
                 }
             } else {
-                quote! {
-                    {
-                        let mut first = true;
-                        for (item, count) in #coll_ident.iter() {
-                            for _ in 0..count {
+                // Determine collection type from term_context so we use the correct iteration.
+                // Vec uses `for item in iter()`, HashBag/HashSet uses `for (item, count) in iter()`.
+                let is_vec = term_context.iter().any(|p| {
+                    if let TermParam::Simple { name, ty } = p {
+                        if name.to_string() == coll_name {
+                            return matches!(
+                                ty,
+                                TypeExpr::Collection { coll_type: CollectionType::Vec, .. }
+                            );
+                        }
+                    }
+                    false
+                });
+
+                if is_vec {
+                    quote! {
+                        {
+                            let mut first = true;
+                            for item in #coll_ident.iter() {
                                 if !first { write!(f, #sep_with_spaces)?; }
                                 first = false;
                                 write!(f, "{}", item)?;
+                            }
+                        }
+                    }
+                } else {
+                    quote! {
+                        {
+                            let mut first = true;
+                            for (item, count) in #coll_ident.iter() {
+                                for _ in 0..count {
+                                    if !first { write!(f, #sep_with_spaces)?; }
+                                    first = false;
+                                    write!(f, "{}", item)?;
+                                }
                             }
                         }
                     }
@@ -608,7 +637,7 @@ fn generate_pattern_op_display(
                         quote! { write!(f, "{}", #ident)?; }
                     },
                     SyntaxExpr::Op(op) => {
-                        generate_pattern_op_display(op, &None, &None, param_index)
+                        generate_pattern_op_display(op, &None, &None, param_index, &[])
                     },
                 })
                 .collect();

@@ -185,6 +185,22 @@ fn validate_pattern_term(pt: &PatternTerm, language: &LanguageDef) -> Result<(),
             validate_pattern(body, language)?;
             Ok(())
         },
+        PatternTerm::CommJoin {
+            first_bind,
+            rest_binds,
+            channel_names,
+            payloads,
+            cond,
+            body,
+        } => {
+            validate_pattern(first_bind, language)?;
+            validate_pattern(rest_binds, language)?;
+            validate_pattern(channel_names, language)?;
+            validate_pattern(payloads, language)?;
+            validate_pattern(cond, language)?;
+            validate_pattern(body, language)?;
+            Ok(())
+        },
     }
 }
 
@@ -367,6 +383,21 @@ fn collect_pattern_term_vars(pt: &PatternTerm, vars: &mut HashSet<String>) {
         PatternTerm::ApplyPattern { pattern, value, body } => {
             collect_pattern_vars(pattern, vars);
             collect_pattern_vars(value, vars);
+            collect_pattern_vars(body, vars);
+        },
+        PatternTerm::CommJoin {
+            first_bind,
+            rest_binds,
+            channel_names,
+            payloads,
+            cond,
+            body,
+        } => {
+            collect_pattern_vars(first_bind, vars);
+            collect_pattern_vars(rest_binds, vars);
+            collect_pattern_vars(channel_names, vars);
+            collect_pattern_vars(payloads, vars);
+            collect_pattern_vars(cond, vars);
             collect_pattern_vars(body, vars);
         },
     }

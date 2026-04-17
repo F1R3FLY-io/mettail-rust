@@ -11,6 +11,7 @@
 
 pub mod ambient;
 pub mod calculator;
+pub(crate) mod for_clause;
 pub mod lambda;
 pub mod rhocalc;
 

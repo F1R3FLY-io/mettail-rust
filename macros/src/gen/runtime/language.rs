@@ -1740,6 +1740,8 @@ fn generate_language_struct_multi(
     // Optionally emit the core struct definition
     let core_struct_output = core_struct_def.unwrap_or_default();
 
+    let primary_seed_variant = format_ident!("{}", primary_type.to_string());
+
     quote! {
         ascent::ascent! {
             struct #prog_struct_name;
@@ -1774,7 +1776,16 @@ fn generate_language_struct_multi(
                 #(#parse_tries)*
                 match successes.len() {
                     0 => Err(first_err.unwrap_or_else(|| "Parse error".to_string())),
-                    1 => Ok(#term_name(successes.into_iter().next().expect("checked len == 1"))),
+                    1 => {
+                        let inner = successes.into_iter().next().expect("checked len == 1");
+                        let inner = match &inner {
+                            #inner_enum_name::#primary_seed_variant(p) => {
+                                #inner_enum_name::#primary_seed_variant(p.normalize())
+                            },
+                            _ => inner,
+                        };
+                        Ok(#term_name(inner))
+                    },
                     _ => Ok(#term_name(#inner_enum_name::from_alternatives(successes))),
                 }
             }

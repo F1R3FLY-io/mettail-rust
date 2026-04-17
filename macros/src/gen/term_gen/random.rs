@@ -277,9 +277,11 @@ fn generate_random_depth_d(
             .any(|item| matches!(item, GrammarItem::Collection { .. }));
 
         if has_collections {
-            // Handle collection constructors
-            constructor_cases
-                .push(generate_random_collection_constructor(cat_name, rule, language));
+            // Handle collection constructors (skip mixed constructors that return empty)
+            let case = generate_random_collection_constructor(cat_name, rule, language);
+            if !case.is_empty() {
+                constructor_cases.push(case);
+            }
             continue;
         }
 
@@ -651,6 +653,17 @@ fn generate_random_collection_constructor(
     use crate::ast::language::CollectionCategory;
 
     let label = &rule.label;
+
+    // Skip mixed constructors (collection + other NonTerminal fields).
+    // Only generate random terms for pure-collection constructors like PPar(HashBag<Proc>).
+    let total_non_terminal_fields = rule
+        .items
+        .iter()
+        .filter(|i| matches!(i, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }))
+        .count();
+    if total_non_terminal_fields > 1 {
+        return quote! {};
+    }
 
     // Find the collection field and its type
     let (element_cat, _coll_type) = rule

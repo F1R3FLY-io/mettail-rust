@@ -1,0 +1,213 @@
+use crate::rhocalc::{Bool, ForRow, InputBind, List, Name, Proc};
+use mettail_runtime::{FreeVar, HashBag, OrdVar, Var};
+use std::collections::HashMap;
+
+pub fn guard_then(cond: &Proc, body: &Proc) -> Proc {
+    match cond {
+        Proc::CastBool(b) => match b.as_ref() {
+            Bool::BoolLit(true) => body.clone(),
+            Bool::BoolLit(false) => Proc::PZero,
+            _ => Proc::PZero,
+        },
+        _ => Proc::PZero,
+    }
+}
+
+fn collect_pattern_bindings(
+    pattern: &Proc,
+    value: &Proc,
+    env: &mut HashMap<FreeVar<String>, Proc>,
+) -> bool {
+    match (pattern, value) {
+        (Proc::PVar(OrdVar(Var::Free(fv))), v) => {
+            if let Some(bound) = env.get(fv) {
+                bound == v
+            } else {
+                env.insert(fv.clone(), v.clone());
+                true
+            }
+        },
+        (Proc::CastList(p), Proc::CastList(v)) => match (p.as_ref(), v.as_ref()) {
+            (List::ListLit(ps), List::ListLit(vs)) => {
+                ps.len() == vs.len()
+                    && ps
+                        .iter()
+                        .zip(vs.iter())
+                        .all(|(pp, vv)| collect_pattern_bindings(pp, vv, env))
+            },
+            _ => pattern == value,
+        },
+        (Proc::CastBag(p), Proc::CastBag(v)) => match (p.as_ref(), v.as_ref()) {
+            (crate::rhocalc::Bag::BagLit(pb), crate::rhocalc::Bag::BagLit(vb)) => {
+                match_bag_pattern(pb, vb, env)
+            },
+            _ => pattern == value,
+        },
+        (Proc::CastMap(p), Proc::CastMap(v)) => match (p.as_ref(), v.as_ref()) {
+            (crate::rhocalc::Map::MapLit(pm), crate::rhocalc::Map::MapLit(vm)) => {
+                pm.len() == vm.len()
+                    && pm.iter().all(|(k, pv)| {
+                        vm.get(k)
+                            .map(|vv| collect_pattern_bindings(pv, vv, env))
+                            .unwrap_or(false)
+                    })
+            },
+            _ => pattern == value,
+        },
+        _ => pattern == value,
+    }
+}
+
+fn match_bag_pattern(
+    pat: &HashBag<Proc>,
+    val: &HashBag<Proc>,
+    env: &mut HashMap<FreeVar<String>, Proc>,
+) -> bool {
+    let pats: Vec<Proc> = pat
+        .iter()
+        .flat_map(|(p, c)| std::iter::repeat_n(p.clone(), c))
+        .collect();
+    let vals: Vec<Proc> = val
+        .iter()
+        .flat_map(|(v, c)| std::iter::repeat_n(v.clone(), c))
+        .collect();
+    if pats.len() != vals.len() {
+        return false;
+    }
+
+    fn bt(
+        idx: usize,
+        pats: &[Proc],
+        vals: &[Proc],
+        used: &mut [bool],
+        env: &mut HashMap<FreeVar<String>, Proc>,
+    ) -> bool {
+        if idx == pats.len() {
+            return true;
+        }
+        for j in 0..vals.len() {
+            if used[j] {
+                continue;
+            }
+            let mut env_try = env.clone();
+            if collect_pattern_bindings(&pats[idx], &vals[j], &mut env_try) {
+                used[j] = true;
+                if bt(idx + 1, pats, vals, used, &mut env_try) {
+                    *env = env_try;
+                    return true;
+                }
+                used[j] = false;
+            }
+        }
+        false
+    }
+
+    let mut used = vec![false; vals.len()];
+    bt(0, &pats, &vals, &mut used, env)
+}
+
+pub(crate) fn receive_apply(pattern: &Proc, value: &Proc, body: &Proc) -> Option<Proc> {
+    let mut env: HashMap<FreeVar<String>, Proc> = HashMap::new();
+    if !collect_pattern_bindings(pattern, value, &mut env) {
+        return None;
+    }
+
+    let vars_owned: Vec<FreeVar<String>> = env.keys().cloned().collect();
+    let vars_refs: Vec<&FreeVar<String>> = vars_owned.iter().collect();
+    let proc_repls: Vec<Proc> = vars_owned
+        .iter()
+        .map(|v| env.get(v).cloned().expect("binding exists"))
+        .collect();
+    let name_repls: Vec<Name> = proc_repls
+        .iter()
+        .map(|p| Name::NQuote(Box::new(p.clone())))
+        .collect();
+
+    let proc_substituted = body.subst(&vars_refs, &proc_repls);
+    Some(proc_substituted.subst_name(&vars_refs, &name_repls))
+}
+
+fn apply_row(row: ForRow, inner: Proc) -> Proc {
+    match row {
+        ForRow::ForRowSingleNoWhere(b) => match *b {
+            InputBind::InputBind(pat, n) => Proc::PFor(pat, n, Box::new(inner)),
+            _ => Proc::Err,
+        },
+        ForRow::ForRowSingleWhere(b, cond) => match *b {
+            InputBind::InputBind(pat, n) => Proc::PForWhere(pat, n, cond, Box::new(inner)),
+            _ => Proc::Err,
+        },
+        ForRow::ForRowNoWhere(b, bs) => {
+            let true_cond = Box::new(Proc::CastBool(Box::new(Bool::BoolLit(true))));
+            Proc::PForJoin(b, bs, true_cond, Box::new(inner))
+        },
+        ForRow::ForRowWhere(b, bs, cond) => Proc::PForJoin(b, bs, cond, Box::new(inner)),
+        _ => Proc::Err,
+    }
+}
+
+/// Desugar a list of ForRows into nested `for` calls (right-to-left folding so
+/// the first row becomes the outermost receive).
+///
+/// The `body` parameter is taken by reference because Ascent binds fold-relation
+/// results as references in its generated rule code.
+pub fn desugar_for_rows(rows: Vec<ForRow>, body: &Proc) -> Proc {
+    rows.into_iter()
+        .rev()
+        .fold((*body).clone(), |inner, row| apply_row(row, inner))
+}
+
+pub(crate) fn channel_names_from_row(b: &InputBind, bs: &[InputBind]) -> Option<Vec<Name>> {
+    let mut out = Vec::with_capacity(1 + bs.len());
+    match b {
+        InputBind::InputBind(_, n) => out.push(n.as_ref().clone()),
+        _ => return None,
+    }
+    for x in bs {
+        match x {
+            InputBind::InputBind(_, n) => out.push(n.as_ref().clone()),
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// Multi-channel COMM reduction for `PForJoin` (replaces old `PInputs` + `eval` on scopes).
+///
+/// `ns` / `qs` come from the same `zip` as the `POutput` premises; we require they align with
+/// the channel names in `b` / `bs`. Applies each `(pattern, payload)` like `CommPatternWhere`.
+pub fn comm_pforjoin_subst(
+    b: &InputBind,
+    bs: &[InputBind],
+    ns: &[Name],
+    qs: &[Proc],
+    cond: &Proc,
+    body: &Proc,
+) -> Proc {
+    let Some(expected_ns) = channel_names_from_row(b, bs) else {
+        return Proc::Err;
+    };
+    if expected_ns.len() != ns.len() || expected_ns.len() != qs.len() {
+        return Proc::Err;
+    }
+    if !expected_ns.iter().zip(ns.iter()).all(|(a, b)| a == b) {
+        return Proc::Err;
+    }
+    let binds: Vec<&InputBind> = std::iter::once(b).chain(bs.iter()).collect();
+    let mut acc_body = body.clone();
+    let mut acc_cond = cond.clone();
+    for (ib, q) in binds.iter().zip(qs.iter()) {
+        let InputBind::InputBind(pat, _) = ib else {
+            return Proc::Err;
+        };
+        let Some(nb) = receive_apply(pat.as_ref(), q, &acc_body) else {
+            return Proc::Err;
+        };
+        acc_body = nb;
+        let Some(nc) = receive_apply(pat.as_ref(), q, &acc_cond) else {
+            return Proc::Err;
+        };
+        acc_cond = nc;
+    }
+    Proc::GuardThen(Box::new(acc_cond), Box::new(acc_body))
+}

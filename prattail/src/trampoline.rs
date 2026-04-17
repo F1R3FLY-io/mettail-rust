@@ -42,12 +42,25 @@ use crate::recursive::{CollectionKind, RDRuleInfo, RDSyntaxItem};
 ///
 /// Complex collections (ZipMapSep rules with binders like PInputs) are handled
 /// by standalone parse functions and should NOT have CollectionElem frames generated.
+///
+/// "Mixed" constructors that have both a collection field AND other non-terminal fields
+/// (e.g., `PForJoin(b:InputBind, bs:Vec(InputBind), cond:Proc, body:Proc)`) are also
+/// excluded because they cannot be initialized with just the collection field.
 fn is_simple_collection(rule: &RDRuleInfo) -> bool {
-    rule.is_collection
-        && rule.collection_type != Some(CollectionKind::HashMap)
-        && !rule.has_binder
-        && !rule.has_multi_binder
-        && !has_zipmapsep(rule)
+    if !rule.is_collection
+        || rule.collection_type == Some(CollectionKind::HashMap)
+        || rule.has_binder
+        || rule.has_multi_binder
+        || has_zipmapsep(rule)
+    {
+        return false;
+    }
+    // Exclude mixed constructors: those with NonTerminal fields in addition to the Collection.
+    // Pure collection constructors have only a Collection item (plus terminals).
+    let has_extra_nonterminals = rule.items.iter().any(|item| {
+        matches!(item, RDSyntaxItem::NonTerminal { .. } | RDSyntaxItem::IdentCapture { .. })
+    });
+    !has_extra_nonterminals
 }
 
 /// Check if a rule has any ZipMapSep syntax items.
@@ -67,10 +80,13 @@ fn has_zipmapsep(rule: &RDRuleInfo) -> bool {
 /// be trampolined. This includes:
 /// - Rules with ZipMapSep items (complex parsing logic)
 /// - Rules with multi-binder items (complex binder handling)
+/// - `PForUser` (`for (…) { … }`): the trampoline split treats `(` after `for` like a
+///   generic grouping parse and fails at `<-`; the hand-written rule body must run.
 fn should_use_standalone_fn(rule: &RDRuleInfo) -> bool {
     has_zipmapsep(rule)
         || rule.has_multi_binder
         || rule.collection_type == Some(CollectionKind::HashMap)
+        || rule.label == "PForUser"
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -961,10 +977,10 @@ fn write_prefix_match_arms(
                     match capture {
                         SegmentCapture::Ident { name }
                         | SegmentCapture::Binder { name }
-                        | SegmentCapture::NonTerminal { name, .. } => {
+                        | SegmentCapture::NonTerminal { name, .. }
+                        | SegmentCapture::Collection { name, .. } => {
                             write!(buf, "{},", name).unwrap();
                         },
-                        _ => {},
                     }
                 }
                 buf.push_str("});");
@@ -1353,20 +1369,71 @@ fn write_prefix_match_arms(
             let cast_rule = rules[0];
             let mut arm = String::new();
             crate::pratt::write_token_pattern_pub(&mut arm, &token);
-            write!(
-                arm,
-                " => {{ \
-                    let val = parse_{}(tokens, pos, 0)?; \
-                    break 'prefix {}::{}(Box::new(val)); \
+            // `ForRowSingleNoWhere` is classified as a cast `InputBind -> ForRow` (single NT).
+            // The emitted cast prefix arm runs before longer `ForRow*` RD rules, so tokens that
+            // can start an `InputBind` would otherwise steal `x <- c1`, `0 <- c`, `[0] <- c`,
+            // etc. from `for(...)`. Try longer `ForRow*` parsers first, then fall back to
+            // `parse_inputbind` + the cast ctor.
+            if cat == "ForRow" && cast_rule.source_category == "InputBind" {
+                let tries: Vec<String> = rd_rules
+                    .iter()
+                    .filter(|r| r.category == *cat && r.label != "ForRowSingleNoWhere")
+                    .map(|r| format!("parse_{}", r.label.to_lowercase()))
+                    .collect();
+                write!(arm, " => {{ let __cast_saved = *pos;").unwrap();
+                for f in &tries {
+                    arm.push_str("*pos = __cast_saved;");
+                    write!(arm, "if let Ok(v) = {}(tokens, pos) {{ break 'prefix v; }} ", f)
+                        .unwrap();
+                }
+                arm.push_str("*pos = __cast_saved;");
+                write!(
+                    arm,
+                    "let val = parse_{}(tokens, pos, 0)?; \
+                     break 'prefix {}::{}(Box::new(val)); \
                 }},",
-                cast_rule.source_category, cat, cast_rule.label,
-            )
-            .unwrap();
+                    cast_rule.source_category, cat, cast_rule.label,
+                )
+                .unwrap();
+            } else {
+                write!(
+                    arm,
+                    " => {{ \
+                        let val = parse_{}(tokens, pos, 0)?; \
+                        break 'prefix {}::{}(Box::new(val)); \
+                    }},",
+                    cast_rule.source_category, cat, cast_rule.label,
+                )
+                .unwrap();
+            }
             buf.push_str(&arm);
         } else {
             let mut arm = String::new();
             crate::pratt::write_token_pattern_pub(&mut arm, &token);
             arm.push_str(" => { let __cast_saved = *pos;");
+            // Same as the single-cast branch: when several `InputBind -> ForRow` casts share a token
+            // (e.g. Integer, LBracket, bag-open `#`), greedy `parse_inputbind` must not run before
+            // longer `ForRow*` rows (`for(#{…}# <- c)`, `for([…] <- c)`, …).
+            let forrow_try_longer_first = cat == "ForRow"
+                && rules
+                    .iter()
+                    .any(|r| r.source_category == "InputBind");
+            if forrow_try_longer_first {
+                let tries: Vec<String> = rd_rules
+                    .iter()
+                    .filter(|r| r.category == *cat && r.label != "ForRowSingleNoWhere")
+                    .map(|r| format!("parse_{}", r.label.to_lowercase()))
+                    .collect();
+                for f in &tries {
+                    arm.push_str("*pos = __cast_saved;");
+                    write!(
+                        arm,
+                        "if let Ok(v) = {}(tokens, pos) {{ break 'prefix v; }} ",
+                        f
+                    )
+                    .unwrap();
+                }
+            }
             for cast_rule in rules {
                 arm.push_str("*pos = __cast_saved;");
                 write!(
@@ -1507,10 +1574,10 @@ fn write_nfa_merged_prefix_arm(
                 match capture {
                     SegmentCapture::Ident { name }
                     | SegmentCapture::Binder { name }
-                    | SegmentCapture::NonTerminal { name, .. } => {
+                    | SegmentCapture::NonTerminal { name, .. }
+                    | SegmentCapture::Collection { name, .. } => {
                         write!(buf, "{},", name).unwrap();
                     },
-                    _ => {},
                 }
             }
             buf.push_str("});");
@@ -1595,10 +1662,10 @@ fn write_nfa_merged_prefix_arm(
                     match capture {
                         SegmentCapture::Ident { name }
                         | SegmentCapture::Binder { name }
-                        | SegmentCapture::NonTerminal { name, .. } => {
+                        | SegmentCapture::NonTerminal { name, .. }
+                        | SegmentCapture::Collection { name, .. } => {
                             write!(buf, "{},", name).unwrap();
                         },
-                        _ => {},
                     }
                 }
                 buf.push_str("});");
@@ -1769,9 +1836,111 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                 )
                 .unwrap();
             },
-            _ => {
-                // Collection, ZipMapSep, Optional — kept as inline but not yet handled
-                // (these are complex items that need special treatment)
+            RDSyntaxItem::Collection {
+                param_name,
+                element_category,
+                separator,
+                kind,
+                key_val_separator,
+            } => {
+                let sep_variant = terminal_to_variant_name(separator);
+                let init = match kind {
+                    CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
+                    CollectionKind::HashSet => "std::collections::HashSet::new()",
+                    CollectionKind::Vec => "Vec::new()",
+                    CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
+                };
+                let method = match kind {
+                    CollectionKind::HashBag | CollectionKind::HashSet => "insert",
+                    CollectionKind::Vec => "push",
+                    CollectionKind::HashMap => "insert",
+                };
+                if *kind == CollectionKind::HashMap {
+                    let kv = key_val_separator
+                        .as_ref()
+                        .expect("HashMap collections require key_val_separator");
+                    let kv_variant = terminal_to_variant_name(kv);
+                    write!(
+                        buf,
+                        "let mut {param_name} = {init}; \
+                        loop {{ \
+                            match parse_{element_category}(tokens, pos, 0) {{ \
+                                Ok(key) => {{ \
+                                    expect_token(tokens, pos, |t| matches!(t, Token::{kv_variant}), \"{}\")?; \
+                                    let value = parse_{element_category}(tokens, pos, 0)?; \
+                                    {param_name}.{method}(key, value); \
+                                    if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+                                        *pos += 1; \
+                                    }} else {{ \
+                                        break; \
+                                    }} \
+                                }} \
+                                Err(_) => break, \
+                            }} \
+                        }}",
+                        kv,
+                    )
+                    .unwrap();
+                } else {
+                    write!(
+                        buf,
+                        "let mut {param_name} = {init}; \
+                        loop {{ \
+                            match parse_{element_category}(tokens, pos, 0) {{ \
+                                Ok(elem) => {{ \
+                                    {param_name}.{method}(elem); \
+                                    if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+                                        *pos += 1; \
+                                    }} else {{ \
+                                        break; \
+                                    }} \
+                                }} \
+                                Err(_) => break, \
+                            }} \
+                        }}",
+                    )
+                    .unwrap();
+                }
+            },
+            RDSyntaxItem::SepList {
+                collection_name,
+                element_category,
+                separator,
+                kind,
+            } => {
+                let sep_variant = terminal_to_variant_name(separator);
+                let init = match kind {
+                    CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
+                    CollectionKind::HashSet => "std::collections::HashSet::new()",
+                    CollectionKind::Vec => "Vec::new()",
+                    CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
+                };
+                let method = match kind {
+                    CollectionKind::HashBag | CollectionKind::HashSet => "insert",
+                    CollectionKind::Vec => "push",
+                    CollectionKind::HashMap => "insert",
+                };
+                write!(
+                    buf,
+                    "let mut {collection_name} = {init}; \
+                    loop {{ \
+                        match parse_{element_category}(tokens, pos, 0) {{ \
+                            Ok(elem) => {{ \
+                                {collection_name}.{method}(elem); \
+                                if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+                                    *pos += 1; \
+                                }} else {{ \
+                                    break; \
+                                }} \
+                            }} \
+                            Err(_) => break, \
+                        }} \
+                    }}",
+                )
+                .unwrap();
+            },
+            RDSyntaxItem::ZipMapSep { .. } | RDSyntaxItem::Optional { .. } => {
+                // Kept for parity with recursive.rs: complex items use standalone parse fns.
             },
         }
     }
