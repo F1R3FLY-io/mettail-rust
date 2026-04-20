@@ -920,6 +920,18 @@ fn write_prefix_match_arms(
     expected_escaped: &str,
 ) {
     let cat = &config.category;
+    let nonterminal_fallback_fns: Vec<String> = rd_rules
+        .iter()
+        .filter(|r| r.category == *cat)
+        .filter(|r| !is_simple_collection(r) && r.prefix_bp.is_none())
+        .filter(|r| {
+            matches!(
+                r.items.first(),
+                Some(RDSyntaxItem::NonTerminal { .. }) | Some(RDSyntaxItem::IdentCapture { .. })
+            )
+        })
+        .map(|r| format!("parse_{}", r.label.to_lowercase()))
+        .collect();
 
     // Collect handlers with ident_lookahead (nonterminal-first rules)
     let lookahead_handlers: Vec<&PrefixHandler> = prefix_handlers
@@ -1375,6 +1387,7 @@ fn write_prefix_match_arms(
             // etc. from `for(...)`. Try longer `ForRow*` parsers first, then fall back to
             // `parse_inputbind` + the cast ctor.
             if cat == "ForRow" && cast_rule.source_category == "InputBind" {
+                let cast_parse_fn = format!("parse_{}", cast_rule.label.to_lowercase());
                 let tries: Vec<String> = rd_rules
                     .iter()
                     .filter(|r| r.category == *cat && r.label != "ForRowSingleNoWhere")
@@ -1389,10 +1402,10 @@ fn write_prefix_match_arms(
                 arm.push_str("*pos = __cast_saved;");
                 write!(
                     arm,
-                    "let val = parse_{}(tokens, pos, 0)?; \
-                     break 'prefix {}::{}(Box::new(val)); \
+                    "let val = {}(tokens, pos)?; \
+                     break 'prefix val; \
                 }},",
-                    cast_rule.source_category, cat, cast_rule.label,
+                    cast_parse_fn,
                 )
                 .unwrap();
             } else {
@@ -1436,12 +1449,22 @@ fn write_prefix_match_arms(
             }
             for cast_rule in rules {
                 arm.push_str("*pos = __cast_saved;");
-                write!(
-                    arm,
-                    "if let Ok(v) = parse_{}(tokens, pos, 0) {{ break 'prefix {}::{}(Box::new(v)); }} ",
-                    cast_rule.source_category, cat, cast_rule.label,
-                )
-                .unwrap();
+                if cat == "ForRow" && cast_rule.source_category == "InputBind" {
+                    let cast_parse_fn = format!("parse_{}", cast_rule.label.to_lowercase());
+                    write!(
+                        arm,
+                        "if let Ok(v) = {}(tokens, pos) {{ break 'prefix v; }} ",
+                        cast_parse_fn,
+                    )
+                    .unwrap();
+                } else {
+                    write!(
+                        arm,
+                        "if let Ok(v) = parse_{}(tokens, pos, 0) {{ break 'prefix {}::{}(Box::new(v)); }} ",
+                        cast_rule.source_category, cat, cast_rule.label,
+                    )
+                    .unwrap();
+                }
             }
             write!(
                 arm,
@@ -1457,6 +1480,20 @@ fn write_prefix_match_arms(
         }
     }
 
+    // For `ForRow`, some `InputBind`-start tokens may not appear in FIRST-set driven cast arms
+    // (e.g. literals/constructors), which causes `for(<pattern> <- c)` to fail at the first token.
+    // Add a token-agnostic fallback that mirrors the cast behavior:
+    // try longer `ForRow*` handlers first, then `InputBind -> ForRow` cast.
+    let forrow_inputbind_cast = if cat == "ForRow" {
+        config
+            .cast_rules
+            .iter()
+            .find(|r| r.source_category == "InputBind")
+            .map(|r| r.label.clone())
+    } else {
+        None
+    };
+
     // ── Lambda handlers (if primary + has_binders) ──
     if config.has_binders && config.is_primary {
         write_lambda_prefix_arm(buf, config, frame_info);
@@ -1464,25 +1501,77 @@ fn write_prefix_match_arms(
     }
 
     // ── Error fallback ──
+    if let Some(cast_label) = forrow_inputbind_cast {
+        let cast_parse_fn = format!("parse_{}", cast_label.to_lowercase());
+        let tries: Vec<String> = rd_rules
+            .iter()
+            .filter(|r| r.category == *cat && r.label != cast_label)
+            .map(|r| format!("parse_{}", r.label.to_lowercase()))
+            .collect();
+        write!(buf, "other => {{ let __cast_saved = *pos;").unwrap();
+        for f in &tries {
+            arm_try_fn(buf, f);
+        }
+        for f in &nonterminal_fallback_fns {
+            arm_try_fn(buf, f);
+        }
+        write!(
+            buf,
+            "*pos = __cast_saved; \
+             if let Ok(v) = {cast_parse_fn}(tokens, pos) {{ \
+                 break 'prefix v; \
+             }} \
+             *pos = __cast_saved; \
+             let err = Err(ParseError::UnexpectedToken {{ \
+                 expected: \"{expected_escaped}\", \
+                 found: format!(\"{{:?}}\", other), \
+                 range: tokens[*pos].1, \
+             }}); \
+             match stack.pop() {{ \
+                 None => return err.map(|_: {cat}| unreachable!()),",
+        )
+        .unwrap();
+        write_collection_error_catch_inline(buf, config, rd_rules, frame_info);
+        write!(
+            buf,
+            "Some(_) => return err.map(|_: {cat}| unreachable!()), \
+             }} \
+             }},",
+        )
+        .unwrap();
+    } else {
+        write!(buf, "other => {{ let __cast_saved = *pos;").unwrap();
+        for f in &nonterminal_fallback_fns {
+            arm_try_fn(buf, f);
+        }
+        write!(
+            buf,
+            "*pos = __cast_saved; \
+             let err = Err(ParseError::UnexpectedToken {{ \
+                 expected: \"{expected_escaped}\", \
+                 found: format!(\"{{:?}}\", other), \
+                 range: tokens[*pos].1, \
+             }}); \
+             match stack.pop() {{ \
+                 None => return err.map(|_: {cat}| unreachable!()),",
+        )
+        .unwrap();
+        // Collection catch on prefix error
+        write_collection_error_catch_inline(buf, config, rd_rules, frame_info);
+        write!(
+            buf,
+            "Some(_) => return err.map(|_: {cat}| unreachable!()), \
+            }} \
+            }},",
+        )
+        .unwrap();
+    }
+}
+
+fn arm_try_fn(buf: &mut String, fn_name: &str) {
     write!(
         buf,
-        "other => {{ \
-            let err = Err(ParseError::UnexpectedToken {{ \
-                expected: \"{expected_escaped}\", \
-                found: format!(\"{{:?}}\", other), \
-                range: tokens[*pos].1, \
-            }}); \
-            match stack.pop() {{ \
-                None => return err.map(|_: {cat}| unreachable!()),",
-    )
-    .unwrap();
-    // Collection catch on prefix error
-    write_collection_error_catch_inline(buf, config, rd_rules, frame_info);
-    write!(
-        buf,
-        "Some(_) => return err.map(|_: {cat}| unreachable!()), \
-        }} \
-        }},",
+        "*pos = __cast_saved; if let Ok(v) = {fn_name}(tokens, pos) {{ break 'prefix v; }} "
     )
     .unwrap();
 }

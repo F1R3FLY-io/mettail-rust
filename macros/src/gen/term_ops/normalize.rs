@@ -1,7 +1,6 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
 use crate::ast::grammar::{GrammarItem, TermParam};
-use crate::ast::types::EvalMode;
 use crate::ast::language::LanguageDef;
 use crate::gen::{generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
@@ -234,20 +233,6 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
             .iter()
             .filter_map(|rule| {
                 let label = &rule.label;
-
-                // User-facing `for` (RhoCalc `PForUser`): fold only runs in Ascent; `normalize()` should
-                // desugar so COMM rules (which match `PFor` / `PForJoin`) see the internal receive form.
-                if rule.eval_mode == Some(EvalMode::Fold)
-                    && rule.category == *category
-                    && label == "PForUser"
-                {
-                    return Some(quote! {
-                        #category::#label(ref rows, ref body) => {
-                            let body = body.as_ref().normalize();
-                            crate::for_clause::desugar_for_rows(rows.clone(), &body).normalize()
-                        }
-                    });
-                }
 
                 // Check if this rule uses term_context with multi-binder
                 let has_multi_binder = rule.term_context.as_ref().is_some_and(|ctx| {
