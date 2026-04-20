@@ -1000,6 +1000,13 @@ language! {
             if let Name::NQuote(ref p) = n.as_ref(),
             let res = p.as_ref().clone();
 
+        // Desugar user-facing `for (...) { ... }` into internal receive forms so
+        // COMM/Extrusion rewrites (which match `PFor` / `PForJoin`) can fire.
+        fold_proc(s.clone(), res) <--
+            proc(s),
+            if let Proc::PForUser(ref rows, ref body) = s,
+            let res = crate::for_clause::desugar_for_rows(rows.clone(), body.as_ref());
+
         // many-step to a result
         relation path(Proc, Proc);
         path(p0, p1) <-- rw_proc(p0, p1);
