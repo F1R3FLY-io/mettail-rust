@@ -184,28 +184,32 @@ pub fn comm_pforjoin_subst(
     cond: &Proc,
     body: &Proc,
 ) -> Proc {
+    // Join receive mismatch should behave like a blocked communication, not a hard runtime error.
+    // Returning PZero here matches the existing GuardThen(false, ..) outcome for failed where-guards.
+    let blocked = || Proc::PZero;
+
     let Some(expected_ns) = channel_names_from_row(b, bs) else {
-        return Proc::Err;
+        return blocked();
     };
     if expected_ns.len() != ns.len() || expected_ns.len() != qs.len() {
-        return Proc::Err;
+        return blocked();
     }
     if !expected_ns.iter().zip(ns.iter()).all(|(a, b)| a == b) {
-        return Proc::Err;
+        return blocked();
     }
     let binds: Vec<&InputBind> = std::iter::once(b).chain(bs.iter()).collect();
     let mut acc_body = body.clone();
     let mut acc_cond = cond.clone();
     for (ib, q) in binds.iter().zip(qs.iter()) {
         let InputBind::InputBind(pat, _) = ib else {
-            return Proc::Err;
+            return blocked();
         };
         let Some(nb) = receive_apply(pat.as_ref(), q, &acc_body) else {
-            return Proc::Err;
+            return blocked();
         };
         acc_body = nb;
         let Some(nc) = receive_apply(pat.as_ref(), q, &acc_cond) else {
-            return Proc::Err;
+            return blocked();
         };
         acc_cond = nc;
     }
