@@ -1,6 +1,7 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-use crate::ast::grammar::{EvalMode, GrammarItem, TermParam};
+use crate::ast::grammar::{GrammarItem, TermParam};
+use crate::ast::types::EvalMode;
 use crate::ast::language::LanguageDef;
 use crate::gen::{generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
