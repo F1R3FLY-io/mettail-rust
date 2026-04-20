@@ -90,6 +90,14 @@ language! {
             crate::for_clause::guard_then(&cond, &body)
         }] fold;
 
+        // Internal helper for where-guarded communication.
+        // Produces reduced body when match+guard succeed; otherwise returns the original
+        // receive/send pair unchanged (blocked communication, identity).
+        CommWhere . pat:Proc, n:Name, q:Proc, cond:Proc, body:Proc
+        |- "__comm_where" "(" pat "<-" n "," q "," cond "," body ")" : Proc ![{
+            crate::for_clause::comm_pforwhere_subst(&pat, &n, &q, &cond, &body)
+        }] fold;
+
         // Single pattern/channel binding: `pat <- chan`.
         InputBind . pat:Proc, n:Name
         |- pat "<-" n : InputBind;
@@ -868,13 +876,11 @@ language! {
             ~> (PPar {(apply_pattern pat q body), ...rest});
 
         // Pattern communication with optional where-guard:
-        // for(pat <- n where cond){body} | n!(q) ~> body' if cond' is true.
-        CommPatternWhere . | unifies(pat, q) |- (PPar {(PForWhere pat n cond body), (POutput n q), ...rest})
-            ~> (PPar {(
-                GuardThen
-                    (apply_pattern pat q cond)
-                    (apply_pattern pat q body)
-            ), ...rest});
+        // reduce only when pattern unifies and substituted guard is true;
+        // otherwise keep the receive/send pair unchanged (blocked communication).
+        CommPatternWhere . | unifies(pat, q)
+            |- (PPar {(PForWhere pat n cond body), (POutput n q), ...rest})
+            ~> (PPar {(CommWhere pat n q cond body), ...rest});
 
         // Zip+Map codegen derives `ns` from `b`/`bs` (see `pattern.rs` + `for_clause::channel_names_from_row`).
         Comm . |- (PPar {(PForJoin b bs cond body), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest})
@@ -1000,6 +1006,21 @@ language! {
             if let Name::NQuote(ref p) = n.as_ref(),
             let res = p.as_ref().clone();
 
+        // Evaluate guarded communication helper introduced by CommPatternWhere.
+        // This bridges rewrite-time construction (`CommWhere ...`) to runtime semantics:
+        // - successful match + true guard => reduced body
+        // - mismatch / false guard => original receive+send pair (identity)
+        fold_proc(s.clone(), res) <--
+            proc(s),
+            if let Proc::CommWhere(ref pat, ref n, ref q, ref cond, ref body) = s,
+            let res = crate::for_clause::comm_pforwhere_subst(
+                pat.as_ref(),
+                n.as_ref(),
+                q.as_ref(),
+                cond.as_ref(),
+                body.as_ref(),
+            );
+
         // Desugar user-facing `for (...) { ... }` into internal receive forms so
         // COMM/Extrusion rewrites (which match `PFor` / `PForJoin`) can fire.
         fold_proc(s.clone(), res) <--
@@ -1016,6 +1037,7 @@ language! {
         relation path_vec(Vec<Proc>);
         path_vec(xs) <--
             proc(x0), rw_proc(x0,x1),
+            if x0 != x1,
             let xs = vec![x0.clone(), x1.clone()];
         path_vec(zs) <--
             path_vec(xs), path_vec(ys),

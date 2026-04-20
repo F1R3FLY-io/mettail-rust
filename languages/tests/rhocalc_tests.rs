@@ -206,6 +206,33 @@ mod comm {
     }
 
     #[test]
+    fn where_guard_false_is_noop_for_receive_pair() {
+        assert_reduces_to(
+            "{for(x <- c where false){x} | c!(p)}",
+            "{__comm_where(x <- c , p , false , x)}",
+        );
+        assert_never_produces("{for(x <- c where false){x} | c!(p)}", "{p}");
+    }
+
+    #[test]
+    fn where_guard_expression_false_is_noop_for_receive_pair() {
+        assert_reduces_to(
+            "{for(x <- c where x > 3){x} | c!(2)}",
+            "{__comm_where(x <- c , 2 , x > 3 , x)}",
+        );
+        assert_never_produces("{for(x <- c where x > 3){x} | c!(2)}", "{2}");
+    }
+
+    #[test]
+    fn join_pattern_mismatch_is_noop_for_receive_group() {
+        assert_reduces_to(
+            "{for([1,2,4] <- c){7} | c!([1,2,3])}",
+            "{__for([1,2,4] <- c){7} | c!([1,2,3])}",
+        );
+        assert_never_produces("{for([1,2,4] <- c){7} | c!([1,2,3])}", "{7}");
+    }
+
+    #[test]
     fn pattern_comm_ground_pattern_matches_equal_payload() {
         assert_reduces_to("{for(0 <- c){1} | c!(0)}", "1");
     }
@@ -250,6 +277,62 @@ mod comm {
     #[test]
     fn pattern_comm_map_literal_pattern_blocks_mismatch() {
         assert_never_produces("{for(map(1:2, 3:4) <- c){9} | c!(map(1:2, 3:5))}", "{9}");
+    }
+
+    #[test]
+    fn complex_join_map_and_list_literal_pattern_matches() {
+        assert_reduces_to(
+            "{for(map(1:x, 3:4) <- c & [1,2,3] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "2",
+        );
+    }
+
+    #[test]
+    fn complex_join_map_and_list_literal_pattern_blocks_mismatch() {
+        assert_never_produces(
+            "{for(map(1:x, 3:4) <- c & [1,2,4] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "{2}",
+        );
+    }
+
+    #[test]
+    fn complex_join_map_and_list_var_pattern_matches() {
+        assert_reduces_to(
+            "{for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "2",
+        );
+    }
+
+    #[test]
+    fn complex_join_map_and_list_var_pattern_with_guard_matches() {
+        assert_reduces_to(
+            "{for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "2",
+        );
+    }
+
+    #[test]
+    fn complex_join_map_and_list_var_pattern_with_guard_blocks() {
+        assert_never_produces(
+            "{for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>3){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "{2}",
+        );
+    }
+
+    #[test]
+    fn complex_multi_row_join_and_followup_row_matches() {
+        assert_reduces_to(
+            "{for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>1; z <- c3 ){[x,z]} | c!(map(3:4, 1:2)) | c2!([1,2,3]) | c3!(11111111)}",
+            "[2, 11111111]",
+        );
+    }
+
+    #[test]
+    fn complex_multi_row_join_and_followup_row_guard_blocks() {
+        assert_never_produces(
+            "{for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>1; z <- c3 where z > 1111111111111111 ){[x,z]} | c!(map(3:4, 1:2)) | c2!([1,2,3]) | c3!(11111111)}",
+            "{[2, 11111111]}",
+        );
     }
 
     #[test]

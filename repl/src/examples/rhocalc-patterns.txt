@@ -1,0 +1,84 @@
+// RhoCalc receive/pattern regression examples
+//
+// Usage:
+//   lang rhocalc
+//   exec { ... }
+//
+// Focus:
+// - single and multi-input `for(...)`
+// - list / bag / map / constructor / ground patterns
+// - where-guards (true/false and variable-dependent)
+// - extrusion + communication interactions
+
+// =============================================================================
+// Basic communication
+// =============================================================================
+exec {for(x <- c){*(x)} | c!(p)}
+exec {for(x <- c){*(x)} | c!(p) | q}
+exec {for(x <- c){x!(0)} | c!(p)}
+exec {for(x <- c){x} | c!(p)}
+
+// =============================================================================
+// Multi-input joins
+// =============================================================================
+exec {for(x <- c1 & y <- c2){*(x)} | c1!(p) | c2!(q)}
+exec {for(x <- c1 & y <- c2){{*(x) | *(y)}} | c1!(p) | c2!(q)}
+exec {for(x <- a & y <- b & z <- c){{*(x) | *(y) | *(z)}} | a!(p) | b!(q) | c!(r)}
+exec {for(x <- c & y <- c){{*(x) | *(y)}} | c!(a) | c!(b)}
+
+// =============================================================================
+// Semicolon rows (nested receives)
+// =============================================================================
+exec {for(x <- c1; y <- c2){x} | c1!(p) | c2!(q)}
+exec {for(x <- c1; y <- c2; z <- c3){x} | c1!(p) | c2!(q) | c3!(r)}
+
+// =============================================================================
+// Ground / constructor / literal patterns
+// =============================================================================
+exec {for(0 <- c){1} | c!(0)}
+exec {for(0 <- c){1} | c!(p)}
+exec {for(*(@(0)) <- c){1} | c!(*(@(0)))}
+exec {for([0, 1] <- c){42} | c!([0, 1])}
+exec {for([0, 1] <- c){42} | c!([0, 1, 2])}
+exec {for(#{1|2}# <- c){7} | c!(#{2|1}#)}
+exec {for(#{1|2}# <- c){7} | c!(#{1|1}#)}
+exec {for(map(1:2, 3:4) <- c){9} | c!(map(3:4, 1:2))}
+exec {for(map(1:2, 3:4) <- c){9} | c!(map(1:2, 3:5))}
+
+// =============================================================================
+// Where guards
+// =============================================================================
+exec {for(x <- c where true){x} | c!(p)}
+exec {for(x <- c where false){x} | c!(p)}
+exec {for(x <- c where 1 < 2){x} | c!(p)}
+exec {for(x <- c where 2 < 1){x} | c!(p)}
+exec {for(x <- c & y <- d where true){x} | c!(p) | d!(q)}
+exec {for(x <- c & y <- d where false){x} | c!(p) | d!(q)}
+exec {for(map(1:x, 3:4) <- c where x>1){x} | c!(map(3:4, 1:2))}
+exec {for(map(1:x, 3:4) <- c where x>2){x} | c!(map(3:4, 1:2))}
+exec {for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>2){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}
+exec {for(map(1:x, 3:4) <- c & [1,2,4] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}
+exec {for(map(1:x, 3:4) <- c & [1,2,3] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}
+exec {for(map(1:x, 3:4) <- c & [1,2,4] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}
+exec {for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}
+exec {for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}
+exec {for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>3){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}
+exec {for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>1; z <- c3 ){[x,z]} | c!(map(3:4, 1:2)) | c2!([1,2,3]) | c3!(11111111)}
+exec {for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>1; z <- c3 where z > 1111111111111111 ){[x,z]} | c!(map(3:4, 1:2)) | c2!([1,2,3]) | c3!(11111111)}
+
+// =============================================================================
+// New + extrusion interactions
+// =============================================================================
+exec {new(x) in { for(z <- a){*(z)} } | a!(0)}
+exec {new(a) in { for(z <- a){*(z)} } | a!(0)}
+exec {new(x) in { {for(z <- a){*(z)} | a!(0)} }}
+
+// =============================================================================
+// REPL env compatibility samples (legacy examples adapted to for-syntax)
+// =============================================================================
+exec { a!(2) | b!(3) | for(x <- a & y <- b){ *(x) + *(y) } }
+exec { a!(0) | for(x <- a){*(x)}}
+exec {a!(p) | b!(q) | c!(r) | for(x <- a & y <- b & z <- c){{*(x) | *(y) | *(z)}}}
+exec {a!(0) | new (x) in { for(z <- a){*(z)}} }
+exec { a!( [ 1, 2 ] ) | b!( [ 3, 4 ] ) | for(x <- a & y <- b){ concat(*(x), *(y)) } }
+exec { a!( #{ 1 | 2 }# ) | b!( #{ 2 | 3 }# ) | for(x <- a & y <- b){ union(*(x), *(y)) } }
