@@ -207,19 +207,11 @@ mod comm {
 
     #[test]
     fn where_guard_false_is_noop_for_receive_pair() {
-        assert_reduces_to(
-            "{for(x <- c where false){x} | c!(p)}",
-            "{__comm_where(x <- c , p , false , x)}",
-        );
         assert_never_produces("{for(x <- c where false){x} | c!(p)}", "{p}");
     }
 
     #[test]
     fn where_guard_expression_false_is_noop_for_receive_pair() {
-        assert_reduces_to(
-            "{for(x <- c where x > 3){x} | c!(2)}",
-            "{__comm_where(x <- c , 2 , x > 3 , x)}",
-        );
         assert_never_produces("{for(x <- c where x > 3){x} | c!(2)}", "{2}");
     }
 

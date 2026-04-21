@@ -54,12 +54,7 @@ ascent_syntax_export = { path = "ascent_syntax_export" }
 query = { path = "query" }
 
 [profile.dev]
-# LLVM is the stable codegen path. Cranelift (`rustc-codegen-cranelift-preview`) has been
-# observed to abort while compiling very large proc-macro outputs (e.g. `mettail-languages`
-# `language! { ... }`) with: "fatal runtime error: Rust cannot catch foreign exceptions".
-# Dev/test use LLVM; release already uses LLVM. For faster local iteration when Cranelift
-# is acceptable, set `codegen-backend = "cranelift"` here again.
-codegen-backend = "llvm"
+codegen-backend = "cranelift" # Fast compile, slower runtime (~2.7x vs LLVM)
 debug = "line-tables-only"    # Saves debuginfo generation time
 
 [profile.release]
