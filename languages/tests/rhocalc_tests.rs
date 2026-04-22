@@ -774,6 +774,36 @@ mod native_ops {
         fn u32_eq() {
             assert_reduces_to("{3u32 == 3u32}", "true");
         }
+
+        #[test]
+        fn str_eq() {
+            assert_reduces_to(r#"{"abc" == "abc"}"#, "true");
+        }
+
+        #[test]
+        fn str_ne() {
+            assert_reduces_to(r#"{"abc" != "abd"}"#, "true");
+        }
+
+        #[test]
+        fn str_gt_lexicographic() {
+            assert_reduces_to(r#"{"b" > "a"}"#, "true");
+        }
+
+        #[test]
+        fn str_lt_lexicographic() {
+            assert_reduces_to(r#"{"apple" < "banana"}"#, "true");
+        }
+
+        #[test]
+        fn str_gte() {
+            assert_reduces_to(r#"{"abc" >= "abc"}"#, "true");
+        }
+
+        #[test]
+        fn str_lte() {
+            assert_reduces_to(r#"{"abc" <= "abc"}"#, "true");
+        }
     }
 
     mod boolean {
