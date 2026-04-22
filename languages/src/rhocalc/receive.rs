@@ -1,5 +1,6 @@
 use super::{
-    Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Proc, Str, UInt32,
+    Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Proc, Str,
+    UInt32,
 };
 use mettail_runtime::{FreeVar, HashBag, OrdVar, Var};
 use std::cmp::Ordering;
