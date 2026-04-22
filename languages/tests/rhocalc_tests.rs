@@ -328,6 +328,22 @@ mod comm {
     }
 
     #[test]
+    fn join_where_guard_string_eq_matches() {
+        assert_reduces_to(
+            r#"{for(qty <- stock & item <- shop where (qty > 1) and (item == "lemon")){[item, qty]} | stock!(2) | shop!("lemon")}"#,
+            r#"["lemon", 2]"#,
+        );
+    }
+
+    #[test]
+    fn join_where_guard_string_eq_blocks() {
+        assert_never_produces(
+            r#"{for(qty <- stock & item <- shop where (qty > 1) and (item == "lemon")){[item, qty]} | stock!(2) | shop!("lime")}"#,
+            r#"["lime", 2]"#,
+        );
+    }
+
+    #[test]
     fn proc_pattern_matches_list_is_strict() {
         let pat = parse("[0, 1]");
         let val = parse("[0, 1, 2]");

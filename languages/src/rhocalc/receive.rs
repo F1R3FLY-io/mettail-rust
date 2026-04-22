@@ -1,5 +1,5 @@
 use super::{
-    Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Proc, UInt32,
+    Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Proc, Str, UInt32,
 };
 use mettail_runtime::{FreeVar, HashBag, OrdVar, Var};
 use std::cmp::Ordering;
@@ -40,6 +40,10 @@ fn eval_cmp_order(lhs: &Proc, rhs: &Proc) -> Option<Ordering> {
         },
         (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref(), b.as_ref()) {
             (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Some(x.cmp(y)),
+            _ => None,
+        },
+        (Proc::CastStr(a), Proc::CastStr(b)) => match (a.as_ref(), b.as_ref()) {
+            (Str::StringLit(x), Str::StringLit(y)) => Some(x.cmp(y)),
             _ => None,
         },
         _ => None,
