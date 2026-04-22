@@ -1,5 +1,5 @@
-use crate::rhocalc::{
-    BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Name, Proc, UInt32,
+use super::{
+    Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Proc, UInt32,
 };
 use mettail_runtime::{FreeVar, HashBag, OrdVar, Var};
 use std::cmp::Ordering;
@@ -96,13 +96,11 @@ fn collect_pattern_bindings(
             _ => pattern == value,
         },
         (Proc::CastBag(p), Proc::CastBag(v)) => match (p.as_ref(), v.as_ref()) {
-            (crate::rhocalc::Bag::BagLit(pb), crate::rhocalc::Bag::BagLit(vb)) => {
-                match_bag_pattern(pb, vb, env)
-            },
+            (Bag::BagLit(pb), Bag::BagLit(vb)) => match_bag_pattern(pb, vb, env),
             _ => pattern == value,
         },
         (Proc::CastMap(p), Proc::CastMap(v)) => match (p.as_ref(), v.as_ref()) {
-            (crate::rhocalc::Map::MapLit(pm), crate::rhocalc::Map::MapLit(vm)) => {
+            (Map::MapLit(pm), Map::MapLit(vm)) => {
                 pm.len() == vm.len()
                     && pm.iter().all(|(k, pv)| {
                         vm.get(k)

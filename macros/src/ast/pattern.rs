@@ -57,7 +57,7 @@ pub enum PatternTerm {
     },
 
     /// RHS-only: multi-channel COMM reduction for `PForJoin` (replaces old `PInputs` + `eval`).
-    /// `(comm_join b bs ns qs cond body)` — see `crate::for_clause::comm_pforjoin_subst`.
+    /// `(comm_join b bs ns qs cond body)` — see `crate::rhocalc::receive::comm_pforjoin_subst`.
     CommJoin {
         first_bind: Box<Pattern>,
         rest_binds: Box<Pattern>,
@@ -644,7 +644,7 @@ impl Pattern {
                     // `first` is usually bound earlier in the same collection (e.g. a matched list).
                     // RhoCalc `Comm` uses `#zip(ns, qs)` where `ns` is the channel-name list implied
                     // by `PForJoin b bs` — match `b` / `bs` first, then derive `ns` for correlated
-                    // `POutput` search (see `languages/src/for_clause.rs`).
+                    // `POutput` search (see `languages/src/rhocalc/receive.rs`).
                     let first_binding_expr: TokenStream = match result.bindings.get(&first_var_name)
                     {
                         Some(b) => b.expression.clone(),
@@ -656,7 +656,7 @@ impl Pattern {
                                 let b_e = &result.bindings["b"].expression;
                                 let bs_e = &result.bindings["bs"].expression;
                                 quote! {
-                                    crate::for_clause::channel_names_from_row(
+                                    crate::rhocalc::receive::channel_names_from_row(
                                         &#b_e,
                                         #bs_e.as_slice(),
                                     )
@@ -2261,7 +2261,7 @@ impl PatternTerm {
                         let __comm_qs = #qs_e;
                         let __comm_cond = #cond_e;
                         let __comm_body = #body_e;
-                        crate::for_clause::comm_pforjoin_subst(
+                        crate::rhocalc::receive::comm_pforjoin_subst(
                             &__comm_b,
                             __comm_bs.as_slice(),
                             __comm_ns.as_slice(),
