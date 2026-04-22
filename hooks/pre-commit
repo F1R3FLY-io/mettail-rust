@@ -1,0 +1,32 @@
+#!/bin/sh
+# MeTTaIL pre-commit hook
+# Install: git config core.hooksPath hooks/
+set -e
+
+# Require the configured linker (.cargo/config.toml).
+case "$(uname -s)" in
+    Darwin)
+        if ! command -v lld >/dev/null 2>&1; then
+            echo "ERROR: lld not found. Required by .cargo/config.toml"
+            echo "  brew install llvm"
+            echo "  export PATH=\"/opt/homebrew/opt/llvm/bin:\$PATH\""
+            exit 1
+        fi
+        ;;
+    Linux)
+        if ! command -v mold >/dev/null 2>&1; then
+            echo "ERROR: mold not found. Required by .cargo/config.toml"
+            echo "  sudo apt install mold"
+            exit 1
+        fi
+        ;;
+esac
+
+echo "=== pre-commit: cargo fmt ==="
+cargo fmt --all -- --check
+
+echo "=== pre-commit: cargo clippy ==="
+cargo clippy --all-targets --all-features -- -D warnings
+
+echo "=== pre-commit: cargo test ==="
+cargo test --all-features --workspace --quiet
