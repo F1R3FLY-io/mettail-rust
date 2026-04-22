@@ -1272,14 +1272,12 @@ fn collect_rhocalc_var_types(
         },
         Proc::PForJoin(b, bs, cond, body) => {
             let mut names = Vec::new();
-            match b.as_ref() {
-                InputBind::InputBind(pat, _) => infer_receive_pattern_names(pat, &mut names),
-                _ => {},
+            if let InputBind::InputBind(pat, _) = b.as_ref() {
+                infer_receive_pattern_names(pat, &mut names)
             }
             for bind in bs {
-                match bind {
-                    InputBind::InputBind(pat, _) => infer_receive_pattern_names(pat, &mut names),
-                    _ => {},
+                if let InputBind::InputBind(pat, _) = bind {
+                    infer_receive_pattern_names(pat, &mut names)
                 }
             }
             for name in names {
@@ -1354,18 +1352,12 @@ impl RhoCalcLanguage {
                 },
                 Proc::PForJoin(b, bs, cond, body) => {
                     let mut names = Vec::new();
-                    match b.as_ref() {
-                        InputBind::InputBind(pat, _) => {
-                            infer_receive_pattern_names(pat, &mut names)
-                        },
-                        _ => {},
+                    if let InputBind::InputBind(pat, _) = b.as_ref() {
+                        infer_receive_pattern_names(pat, &mut names)
                     }
                     for bind in bs {
-                        match bind {
-                            InputBind::InputBind(pat, _) => {
-                                infer_receive_pattern_names(pat, &mut names)
-                            },
-                            _ => {},
+                        if let InputBind::InputBind(pat, _) = bind {
+                            infer_receive_pattern_names(pat, &mut names)
                         }
                     }
                     if names.iter().any(|n| n == var_name) {

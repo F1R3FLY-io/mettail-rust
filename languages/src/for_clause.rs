@@ -27,7 +27,7 @@ fn eval_cmp_order(lhs: &Proc, rhs: &Proc) -> Option<Ordering> {
             _ => None,
         },
         (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref(), b.as_ref()) {
-            (BigInt::NumLit(x), BigInt::NumLit(y)) => Some(x.get().cmp(&y.get())),
+            (BigInt::NumLit(x), BigInt::NumLit(y)) => Some(x.get().cmp(y.get())),
             _ => None,
         },
         (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref(), b.as_ref()) {
