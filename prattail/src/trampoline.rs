@@ -1427,10 +1427,8 @@ fn write_prefix_match_arms(
             // Same as the single-cast branch: when several `InputBind -> ForRow` casts share a token
             // (e.g. Integer, LBracket, bag-open `#`), greedy `parse_inputbind` must not run before
             // longer `ForRow*` rows (`for(#{…}# <- c)`, `for([…] <- c)`, …).
-            let forrow_try_longer_first = cat == "ForRow"
-                && rules
-                    .iter()
-                    .any(|r| r.source_category == "InputBind");
+            let forrow_try_longer_first =
+                cat == "ForRow" && rules.iter().any(|r| r.source_category == "InputBind");
             if forrow_try_longer_first {
                 let tries: Vec<String> = rd_rules
                     .iter()
@@ -1439,12 +1437,8 @@ fn write_prefix_match_arms(
                     .collect();
                 for f in &tries {
                     arm.push_str("*pos = __cast_saved;");
-                    write!(
-                        arm,
-                        "if let Ok(v) = {}(tokens, pos) {{ break 'prefix v; }} ",
-                        f
-                    )
-                    .unwrap();
+                    write!(arm, "if let Ok(v) = {}(tokens, pos) {{ break 'prefix v; }} ", f)
+                        .unwrap();
                 }
             }
             for cast_rule in rules {

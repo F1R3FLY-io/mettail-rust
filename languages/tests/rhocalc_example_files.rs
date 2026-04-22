@@ -76,10 +76,10 @@ fn check_env_file(path: &Path, lang: &dyn Language, label: &str) {
 
     for (name, _, _) in lang.list_env(env.as_ref()) {
         let Some(term) = lang.get_env_term(env.as_ref(), &name) else {
-            failures.push(format!(
-                "{label} {}: missing env term for binding '{name}'",
-                path.display(),
-            ));
+            failures
+                .push(
+                    format!("{label} {}: missing env term for binding '{name}'", path.display(),),
+                );
             continue;
         };
         if let Err(e) = lang.run_ascent(term.as_ref()) {

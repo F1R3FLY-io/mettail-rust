@@ -2,8 +2,8 @@
 #
 # Uses two optimizations:
 #   1. Fast linker (mold on Linux, lld on macOS) — speeds up binary/test linking
-#   2. Codegen backend — workspace `[profile.dev]` uses LLVM by default for stability
-#      (Cranelift can abort on very large proc-macro crates). Release uses LLVM.
+#   2. Cranelift codegen backend — replaces LLVM codegen (~59s savings) with a
+#      faster alternative. Trade-off: debug/test binaries run ~2.7x slower than LLVM.
 #
 # Codegen backend selection (per-profile, via Cargo.toml):
 #   - dev/test profiles: Cranelift (fast compile, slower runtime)

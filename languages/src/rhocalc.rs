@@ -1331,7 +1331,9 @@ impl RhoCalcLanguage {
         };
         if let RhoCalcTermInner::Proc(proc) = &typed_term.0 {
             let desugared = match proc {
-                Proc::PForUser(rows, body) => Some(crate::for_clause::desugar_for_rows(rows.clone(), body)),
+                Proc::PForUser(rows, body) => {
+                    Some(crate::for_clause::desugar_for_rows(rows.clone(), body))
+                },
                 _ => None,
             };
             let proc = desugared.as_ref().unwrap_or(proc);
@@ -1353,7 +1355,9 @@ impl RhoCalcLanguage {
                 Proc::PForJoin(b, bs, cond, body) => {
                     let mut names = Vec::new();
                     match b.as_ref() {
-                        InputBind::InputBind(pat, _) => infer_receive_pattern_names(pat, &mut names),
+                        InputBind::InputBind(pat, _) => {
+                            infer_receive_pattern_names(pat, &mut names)
+                        },
                         _ => {},
                     }
                     for bind in bs {
@@ -1376,7 +1380,10 @@ impl RhoCalcLanguage {
             let mut result = Vec::new();
             let mut seen = std::collections::HashSet::new();
             RhoCalcLanguage::collect_all_proc_vars(proc, proc, &mut result, &mut seen);
-            return result.into_iter().find(|v| v.name == var_name).map(|v| v.ty);
+            return result
+                .into_iter()
+                .find(|v| v.name == var_name)
+                .map(|v| v.ty);
         }
         <RhoCalcLanguage as Language>::infer_var_type(self, term, var_name)
     }

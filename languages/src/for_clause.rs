@@ -1,7 +1,9 @@
-use crate::rhocalc::{BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Name, Proc, UInt32};
+use crate::rhocalc::{
+    BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Name, Proc, UInt32,
+};
 use mettail_runtime::{FreeVar, HashBag, OrdVar, Var};
-use std::collections::HashMap;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 pub fn guard_then(cond: &Proc, body: &Proc) -> Proc {
     match cond {
@@ -183,13 +185,7 @@ pub(crate) fn receive_apply(pattern: &Proc, value: &Proc, body: &Proc) -> Option
     Some(proc_substituted.subst_name(&vars_refs, &name_repls))
 }
 
-pub fn comm_pforwhere_subst(
-    pat: &Proc,
-    n: &Name,
-    q: &Proc,
-    cond: &Proc,
-    body: &Proc,
-) -> Proc {
+pub fn comm_pforwhere_subst(pat: &Proc, n: &Name, q: &Proc, cond: &Proc, body: &Proc) -> Proc {
     let blocked = || {
         Proc::CommWhere(
             Box::new(pat.clone()),
