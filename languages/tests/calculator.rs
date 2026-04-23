@@ -310,6 +310,43 @@ fn test_float_add() {
 }
 
 #[test]
+fn test_complex_constructor_and_display() {
+    calc_normal_form("complex(1.0, 2.0)", "1.0+2.0i");
+    calc_normal_form("complex(1.0, -2.0)", "1.0-2.0i");
+}
+
+#[test]
+fn test_complex_arithmetic() {
+    calc_normal_form("complex(1.0, 2.0) + complex(3.0, -1.0)", "4.0+1.0i");
+    calc_normal_form("complex(1.0, 2.0) - complex(3.0, -1.0)", "-2.0+3.0i");
+    calc_normal_form("complex(1.0, 2.0) * complex(3.0, -1.0)", "5.0+5.0i");
+}
+
+#[test]
+fn test_complex_comparison() {
+    calc_normal_form("complex(1.0, 2.0) == complex(1.0, 2.0)", "true");
+    calc_normal_form("complex(1.0, 2.0) != complex(1.0, -2.0)", "true");
+}
+
+#[test]
+fn test_complex_divide_by_zero_is_error() {
+    calc_normal_form("complex(1.0, 2.0) / complex(0.0, 0.0)", "error");
+}
+
+#[test]
+fn test_complex_proc_conversions() {
+    calc_normal_form("bool(complex(0.0, 0.0))", "false");
+    calc_normal_form("bool(complex(0.0, 1.0))", "true");
+    calc_normal_form("str(complex(1.0, -2.0))", "\"1.0-2.0i\"");
+}
+
+#[test]
+fn test_complex_and_float_no_implicit_promotion() {
+    mettail_runtime::clear_var_cache();
+    assert!(calc::CalculatorLanguage::parse("complex(1.0, 2.0) + 1.0").is_err());
+}
+
+#[test]
 fn test_float_scientific() {
     calc_normal_form("1.0E2", "100.0");
     calc_normal_form("2.5E-1", "0.25");

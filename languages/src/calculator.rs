@@ -6,6 +6,47 @@
 
 use mettail_macros::language;
 
+// `language!` sometimes binds native values by-ref depending on category; keep complex ctor
+// robust by accepting either `f64` or `CanonicalFloat64` by value or reference.
+use mettail_runtime::CanonicalFloat64;
+
+trait IntoCanonicalFloat64 {
+    fn into_canonical(self) -> CanonicalFloat64;
+}
+
+impl IntoCanonicalFloat64 for CanonicalFloat64 {
+    #[inline]
+    fn into_canonical(self) -> CanonicalFloat64 {
+        self
+    }
+}
+
+impl IntoCanonicalFloat64 for f64 {
+    #[inline]
+    fn into_canonical(self) -> CanonicalFloat64 {
+        CanonicalFloat64::from(self)
+    }
+}
+
+impl IntoCanonicalFloat64 for &f64 {
+    #[inline]
+    fn into_canonical(self) -> CanonicalFloat64 {
+        CanonicalFloat64::from(*self)
+    }
+}
+
+impl IntoCanonicalFloat64 for &CanonicalFloat64 {
+    #[inline]
+    fn into_canonical(self) -> CanonicalFloat64 {
+        *self
+    }
+}
+
+#[inline]
+fn to_canonical_f64<T: IntoCanonicalFloat64>(x: T) -> CanonicalFloat64 {
+    x.into_canonical()
+}
+
 language! {
     name: Calculator,
     types {
@@ -16,6 +57,7 @@ language! {
         ![mettail_runtime::CanonicalBigRat] as BigRat
         ![mettail_runtime::CanonicalFixedPoint] as Fixed
         ![f64] as Float
+        ![mettail_runtime::CanonicalComplex64] as Complex
         ![bool] as Bool
         ![str] as Str
         ![Vec<Proc>] as List
@@ -100,6 +142,7 @@ language! {
         ProcBigInt . n:BigInt |- n : Proc ;
         ProcBigRat . r:BigRat |- r : Proc ;
         ProcFixed . f:Fixed |- f : Proc ;
+        ProcComplex . c:Complex |- c : Proc ;
         // BigRat error normal form: concrete syntax `error`, not a CanonicalBigRat. Step rules
         // reduce invalid rationals (e.g. fraction with zero denominator) here instead of panicking.
         // The procedural macro keys off the zero-ary `Err` name on BigRat when lowering Fraction.
@@ -198,6 +241,22 @@ language! {
         CosFloat . a:Float |- "cos" "(" a ")" : Float ![a.cos()] step;
         ExpFloat . a:Float |- "exp" "(" a ")" : Float ![a.exp()] step;
         LnFloat . a:Float |- "ln" "(" a ")" : Float ![a.ln()] step;
+        ComplexCtor . re:Float, im:Float |- "complex" "(" re "," im ")" : Complex ![
+            mettail_runtime::CanonicalComplex64::from_parts(to_canonical_f64(re), to_canonical_f64(im))
+        ] fold;
+        AddComplex . a:Complex, b:Complex |- a "+" b : Complex ![a + b] fold;
+        SubComplex . a:Complex, b:Complex |- a "-" b : Complex ![a - b] fold;
+        MulComplex . a:Complex, b:Complex |- a "*" b : Complex ![a * b] fold;
+        // Preserve payload typing in generated code; explicit error is represented by NaN+NaNi sentinel.
+        // A dedicated Proc-level error path can be added if Complex-level Err lowering is generalized.
+        DivComplex . a:Complex, b:Complex |- a "/" b : Complex ![{
+            a.checked_div(b).unwrap_or_else(|| {
+                mettail_runtime::CanonicalComplex64::new(f64::NAN, f64::NAN)
+            })
+        }] fold;
+        NegComplex . a:Complex |- "-" a : Complex ![(-a)] fold;
+        EqComplex . a:Complex, b:Complex |- a "==" b : Bool ![a == b] step;
+        NeComplex . a:Complex, b:Complex |- a "!=" b : Bool ![a != b] step;
         AddFixed . a:Fixed, b:Fixed |- a "+" b : Fixed ![a + b] fold;
         SubFixed . a:Fixed, b:Fixed |- a "-" b : Fixed ![a - b] fold;
         MulFixed . a:Fixed, b:Fixed |- a "*" b : Fixed ![a * b] fold;
@@ -216,6 +275,7 @@ language! {
                 Proc::ProcBigRat(r) => !num_traits::Zero::is_zero(r.as_ref().eval().get()),
                 Proc::ProcFloat(f) => f.as_ref().eval().get() != 0.0,
                 Proc::ProcFixed(x) => !num_traits::Zero::is_zero(x.as_ref().eval().unscaled()),
+                Proc::ProcComplex(z) => !z.as_ref().eval().is_zero(),
                 Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(false),
                 Proc::ElemList(list, index) => {
                     let idx = match index.as_ref() { Int::NumLit(n) => *n as usize, _ => panic!("ElemList: expected Int literal") };
@@ -228,6 +288,7 @@ language! {
                         Proc::ProcBigRat(r) => !num_traits::Zero::is_zero(r.as_ref().eval().get()),
                         Proc::ProcFloat(f) => f.as_ref().eval().get() != 0.0,
                         Proc::ProcFixed(x) => !num_traits::Zero::is_zero(x.as_ref().eval().unscaled()),
+                        Proc::ProcComplex(z) => !z.as_ref().eval().is_zero(),
                         Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(false),
                         other => panic!("bool(): cannot convert list element to Bool: {:?}", other),
                     }
@@ -244,6 +305,7 @@ language! {
                 Proc::ProcBigRat(r) => r.as_ref().eval().to_string(),
                 Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
                 Proc::ProcFixed(x) => x.as_ref().eval().to_string(),
+                Proc::ProcComplex(z) => z.as_ref().eval().to_string(),
                 Proc::ProcBool(b) => b.as_ref().eval().to_string(),
                 Proc::ElemList(list, index) => {
                     let idx = match index.as_ref() { Int::NumLit(n) => *n as usize, _ => panic!("ElemList: expected Int literal") };
@@ -256,6 +318,7 @@ language! {
                         Proc::ProcBigRat(r) => r.as_ref().eval().to_string(),
                         Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
                         Proc::ProcFixed(x) => x.as_ref().eval().to_string(),
+                        Proc::ProcComplex(z) => z.as_ref().eval().to_string(),
                         Proc::ProcBool(b) => b.as_ref().eval().to_string(),
                         other => panic!("str(): cannot convert list element to Str: {:?}", other),
                     }
@@ -438,6 +501,21 @@ language! {
         CosFloatCong . | S ~> T |- (CosFloat S) ~> (CosFloat T);
         ExpFloatCong . | S ~> T |- (ExpFloat S) ~> (ExpFloat T);
         LnFloatCong . | S ~> T |- (LnFloat S) ~> (LnFloat T);
+        ComplexCtorCongRe . | S ~> T |- (ComplexCtor S R) ~> (ComplexCtor T R);
+        ComplexCtorCongIm . | S ~> T |- (ComplexCtor L S) ~> (ComplexCtor L T);
+        AddComplexCongL . | S ~> T |- (AddComplex S R) ~> (AddComplex T R);
+        AddComplexCongR . | S ~> T |- (AddComplex L S) ~> (AddComplex L T);
+        SubComplexCongL . | S ~> T |- (SubComplex S R) ~> (SubComplex T R);
+        SubComplexCongR . | S ~> T |- (SubComplex L S) ~> (SubComplex L T);
+        MulComplexCongL . | S ~> T |- (MulComplex S R) ~> (MulComplex T R);
+        MulComplexCongR . | S ~> T |- (MulComplex L S) ~> (MulComplex L T);
+        DivComplexCongL . | S ~> T |- (DivComplex S R) ~> (DivComplex T R);
+        DivComplexCongR . | S ~> T |- (DivComplex L S) ~> (DivComplex L T);
+        NegComplexCong . | S ~> T |- (NegComplex S) ~> (NegComplex T);
+        EqComplexCongL . | S ~> T |- (EqComplex S R) ~> (EqComplex T R);
+        EqComplexCongR . | S ~> T |- (EqComplex L S) ~> (EqComplex L T);
+        NeComplexCongL . | S ~> T |- (NeComplex S R) ~> (NeComplex T R);
+        NeComplexCongR . | S ~> T |- (NeComplex L S) ~> (NeComplex L T);
         AddFixedCongL . | S ~> T |- (AddFixed S R) ~> (AddFixed T R);
         AddFixedCongR . | S ~> T |- (AddFixed L S) ~> (AddFixed L T);
         SubFixedCongL . | S ~> T |- (SubFixed S R) ~> (SubFixed T R);
@@ -516,6 +594,7 @@ language! {
         BitNotBigIntCong . | S ~> T |- (BitNotBigInt S) ~> (BitNotBigInt T);
         ProcBigRatCong . | S ~> T |- (ProcBigRat S) ~> (ProcBigRat T);
         ProcFixedCong . | S ~> T |- (ProcFixed S) ~> (ProcFixed T);
+        ProcComplexCong . | S ~> T |- (ProcComplex S) ~> (ProcComplex T);
         FractionCongN . | S ~> T |- (Fraction S R) ~> (Fraction T R);
         FractionCongD . | S ~> T |- (Fraction L S) ~> (Fraction L T);
         AddBigRatCongL . | S ~> T |- (AddBigRat S R) ~> (AddBigRat T R);
@@ -531,4 +610,19 @@ language! {
         DivBigRatCongR . | S ~> T |- (DivBigRat L S) ~> (DivBigRat L T);
         NegBigRatCong . | S ~> T |- (NegBigRat S) ~> (NegBigRat T);
     },
+}
+
+// Implement conversion for the generated Float term type (non-Copy).
+impl IntoCanonicalFloat64 for &Float {
+    #[inline]
+    fn into_canonical(self) -> CanonicalFloat64 {
+        to_canonical_f64(self.eval())
+    }
+}
+
+impl IntoCanonicalFloat64 for Float {
+    #[inline]
+    fn into_canonical(self) -> CanonicalFloat64 {
+        to_canonical_f64(self.eval())
+    }
 }

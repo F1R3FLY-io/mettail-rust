@@ -48,9 +48,13 @@ fn assert_reduces_to(input: &str, expected: &str) {
     let nfs = normal_form_displays(&results);
 
     // Parse expected in a fresh var context so variable IDs don't collide.
+    // Some native-value displays (e.g. Complex `a+bi`) are not currently round-trippable by the parser;
+    // fall back to direct string comparison for those cases.
     fresh();
-    let expected_proc = parse(expected);
-    let expected_display = expected_proc.to_string();
+    let expected_display = match Proc::parse(expected) {
+        Ok(p) => p.to_string(),
+        Err(_) => expected.to_string(),
+    };
 
     let found = nfs
         .iter()
@@ -422,6 +426,35 @@ mod native_ops {
         }
 
         #[test]
+        fn complex_constructor_and_display() {
+            assert_reduces_to("{complex(1.0, 2.0)}", "1.0+2.0i");
+            assert_reduces_to("{complex(1.0, -2.0)}", "1.0-2.0i");
+        }
+
+        #[test]
+        fn complex_arithmetic() {
+            assert_reduces_to("{complex(1.0, 2.0) + complex(3.0, -1.0)}", "4.0+1.0i");
+            assert_reduces_to("{complex(1.0, 2.0) - complex(3.0, -1.0)}", "-2.0+3.0i");
+            assert_reduces_to("{complex(1.0, 2.0) * complex(3.0, -1.0)}", "5.0+5.0i");
+        }
+
+        #[test]
+        fn complex_divide_by_zero_is_error() {
+            assert_reduces_to("{complex(1.0, 2.0) / complex(0.0, 0.0)}", "error");
+        }
+
+        #[test]
+        fn complex_mismatch_is_error() {
+            assert_reduces_to("{complex(1.0, 2.0) + 1.0}", "error");
+        }
+
+        #[test]
+        fn complex_eq_ne() {
+            assert_reduces_to("{complex(1.0, 2.0) == complex(1.0, 2.0)}", "true");
+            assert_reduces_to("{complex(1.0, 2.0) != complex(1.0, -2.0)}", "true");
+        }
+
+        #[test]
         fn float_literal_f64_suffix_tokens() {
             let results = run("{1.0f64 + 0.5f64}");
             let nfs = normal_form_displays(&results);
@@ -495,6 +528,13 @@ mod native_ops {
             assert_reduces_to("{bool(0p0)}", "false");
             assert_reduces_to("{bool(1p0)}", "true");
             assert_reduces_to(r#"{str(1.5p1)}"#, r#""1.5p1""#);
+        }
+
+        #[test]
+        fn cast_to_bool_str_from_complex() {
+            assert_reduces_to("{bool(complex(0.0, 0.0))}", "false");
+            assert_reduces_to("{bool(complex(0.0, 1.0))}", "true");
+            assert_reduces_to(r#"{str(complex(1.0, -2.0))}"#, r#""1.0-2.0i""#);
         }
 
         #[test]

@@ -5,8 +5,47 @@
 )]
 
 use mettail_macros::language;
+use mettail_runtime::CanonicalFloat64;
 use num_traits::Zero;
 use std::ops::Neg;
+
+// `language!` may bind category payloads by-value or by-ref; make complex ctor accept either.
+trait IntoCanonicalFloat64 {
+    fn into_canonical(self) -> CanonicalFloat64;
+}
+
+impl IntoCanonicalFloat64 for CanonicalFloat64 {
+    #[inline]
+    fn into_canonical(self) -> CanonicalFloat64 {
+        self
+    }
+}
+
+impl IntoCanonicalFloat64 for f64 {
+    #[inline]
+    fn into_canonical(self) -> CanonicalFloat64 {
+        CanonicalFloat64::from(self)
+    }
+}
+
+impl IntoCanonicalFloat64 for &f64 {
+    #[inline]
+    fn into_canonical(self) -> CanonicalFloat64 {
+        CanonicalFloat64::from(*self)
+    }
+}
+
+impl IntoCanonicalFloat64 for &CanonicalFloat64 {
+    #[inline]
+    fn into_canonical(self) -> CanonicalFloat64 {
+        *self
+    }
+}
+
+#[inline]
+fn to_canonical_f64<T: IntoCanonicalFloat64>(x: T) -> CanonicalFloat64 {
+    x.into_canonical()
+}
 
 language! {
     name: RhoCalc,
@@ -20,6 +59,7 @@ language! {
         ![mettail_runtime::CanonicalBigRat] as BigRat
         ![mettail_runtime::CanonicalFixedPoint] as Fixed
         ![f64] as Float
+        ![mettail_runtime::CanonicalComplex64] as Complex
         ![bool] as Bool
         ![str] as Str
         ![Vec<Proc>] as List ["[", "]", ","]
@@ -95,6 +135,7 @@ language! {
         // so tokens like `1n` / `1u32` are not rejected by the Int prefix arm.
         CastBigRat . r:BigRat |- r : Proc;
         CastFixed . x:Fixed |- x : Proc;
+        CastComplex . z:Complex |- z : Proc;
         CastFloat . k:Float |- k : Proc;
         CastBigInt . n:BigInt |- n : Proc;
         CastUInt32 . u:UInt32 |- u : Proc;
@@ -123,6 +164,21 @@ language! {
         }] fold;
         BigratCastProc . a:Proc |- "bigrat" "(" a ")" : Proc ![{
             crate::numeric_dispatch::rho_proc_bigrat_unary(&a)
+        }] fold;
+        ComplexCtor . re:Float, im:Float |- "complex" "(" re "," im ")" : Complex ![
+            mettail_runtime::CanonicalComplex64::from_parts(to_canonical_f64(re), to_canonical_f64(im))
+        ] fold;
+        // Parse the Display form for complex numbers so normal forms are round-trippable in tests:
+        // `<re>+<im>i` / `<re>-<im>i` (no spaces).
+        ComplexLitPlus . re:Float, im:Float |- re "+" im "i" : Complex ![
+            mettail_runtime::CanonicalComplex64::from_parts(to_canonical_f64(re), to_canonical_f64(im))
+        ] fold;
+        ComplexLitMinus . re:Float, im:Float |- re "-" im "i" : Complex ![{
+            let im = to_canonical_f64(im);
+            mettail_runtime::CanonicalComplex64::from_parts(
+                to_canonical_f64(re),
+                CanonicalFloat64::from(-im.get()),
+            )
         }] fold;
 
         // Unary minus on Int (width args like `int(x, -7)`) and on Proc (`-7`, `-3r/2r`, …).
@@ -271,6 +327,9 @@ language! {
                     (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x == y))),
                     _ => Proc::Err,
                 },
+                (Proc::CastComplex(a), Proc::CastComplex(b)) => {
+                    Proc::CastBool(Box::new(Bool::BoolLit(a.as_ref().eval() == b.as_ref().eval())))
+                },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x == y))),
                     _ => Proc::Err,
@@ -300,6 +359,9 @@ language! {
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
                     (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))),
                     _ => Proc::Err,
+                },
+                (Proc::CastComplex(a), Proc::CastComplex(b)) => {
+                    Proc::CastBool(Box::new(Bool::BoolLit(a.as_ref().eval() != b.as_ref().eval())))
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))),
@@ -446,6 +508,14 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() + *b.clone())),
+                (Proc::CastComplex(a), Proc::CastComplex(b)) => {
+                    let z = a.as_ref().eval() + b.as_ref().eval();
+                    let src = format!("complex({}, {})", z.re(), z.im());
+                    match Complex::parse(&src) {
+                        Ok(c) => Proc::CastComplex(Box::new(c)),
+                        Err(_) => Proc::Err,
+                    }
+                },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x + *y))),
                     _ => Proc::Err,
@@ -474,6 +544,14 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() - *b.clone())),
+                (Proc::CastComplex(a), Proc::CastComplex(b)) => {
+                    let z = a.as_ref().eval() - b.as_ref().eval();
+                    let src = format!("complex({}, {})", z.re(), z.im());
+                    match Complex::parse(&src) {
+                        Ok(c) => Proc::CastComplex(Box::new(c)),
+                        Err(_) => Proc::Err,
+                    }
+                },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x - *y))),
                     _ => Proc::Err,
@@ -498,6 +576,14 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() * *b.clone())),
+                (Proc::CastComplex(a), Proc::CastComplex(b)) => {
+                    let z = a.as_ref().eval() * b.as_ref().eval();
+                    let src = format!("complex({}, {})", z.re(), z.im());
+                    match Complex::parse(&src) {
+                        Ok(c) => Proc::CastComplex(Box::new(c)),
+                        Err(_) => Proc::Err,
+                    }
+                },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x * *y))),
                     _ => Proc::Err,
@@ -528,6 +614,18 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() / *b.clone())),
+                (Proc::CastComplex(a), Proc::CastComplex(b)) => {
+                    match a.as_ref().eval().checked_div(b.as_ref().eval()) {
+                        Some(z) => {
+                            let src = format!("complex({}, {})", z.re(), z.im());
+                            match Complex::parse(&src) {
+                                Ok(c) => Proc::CastComplex(Box::new(c)),
+                                Err(_) => Proc::Err,
+                            }
+                        }
+                        None => Proc::Err,
+                    }
+                },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => {
                         match x.checked_div(*y) {
@@ -590,6 +688,14 @@ language! {
                 Proc::CastFloat(x) => match &**x {
                     Float::FloatLit(f) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(-f.get())))),
                     _ => Proc::Err,
+                },
+                Proc::CastComplex(x) => {
+                    let z = -x.as_ref().eval();
+                    let src = format!("complex({}, {})", z.re(), z.im());
+                    match Complex::parse(&src) {
+                        Ok(c) => Proc::CastComplex(Box::new(c)),
+                        Err(_) => Proc::Err,
+                    }
                 },
                 Proc::CastFixed(x) => match &**x {
                     Fixed::FixedLit(fp) => Proc::CastFixed(Box::new(Fixed::FixedLit(fp.clone().neg()))),
@@ -784,6 +890,7 @@ language! {
                     Float::FloatLit(f) => Proc::CastBool(Box::new(Bool::BoolLit(f.get() != 0.0))),
                     _ => Proc::Err,
                 },
+                Proc::CastComplex(x) => Proc::CastBool(Box::new(Bool::BoolLit(!x.as_ref().eval().is_zero()))),
                 Proc::CastFixed(x) => match &**x {
                     Fixed::FixedLit(fp) => Proc::CastBool(Box::new(Bool::BoolLit(!Zero::is_zero(fp.unscaled())))),
                     _ => Proc::Err,
@@ -804,6 +911,7 @@ language! {
                 Proc::CastBigInt(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
                 Proc::CastBigRat(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
                 Proc::CastFloat(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastComplex(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
                 Proc::CastFixed(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
                 Proc::CastBool(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
                 _ => Proc::Err,
@@ -927,6 +1035,9 @@ language! {
         CastBigIntCong . | S ~> T |- (CastBigInt S) ~> (CastBigInt T);
         CastBigRatCong . | S ~> T |- (CastBigRat S) ~> (CastBigRat T);
         CastFixedCong . | S ~> T |- (CastFixed S) ~> (CastFixed T);
+        CastComplexCong . | S ~> T |- (CastComplex S) ~> (CastComplex T);
+        ComplexCtorCongRe . | S ~> T |- (ComplexCtor S R) ~> (ComplexCtor T R);
+        ComplexCtorCongIm . | S ~> T |- (ComplexCtor L S) ~> (ComplexCtor L T);
         FractionProcCongL . | S ~> T |- (FractionProc S X) ~> (FractionProc T X);
         FractionProcCongR . | S ~> T |- (FractionProc X S) ~> (FractionProc X T);
         IntBinProcCongL . | S ~> T |- (IntBinProc S R) ~> (IntBinProc T R);
@@ -1011,4 +1122,19 @@ language! {
         //     proc(p),name(n),
         //     !(proc(k), trans(p,k,q), can_comm(q,n));
     },
+}
+
+// Implement conversion for the generated Float term type (non-Copy).
+impl IntoCanonicalFloat64 for &Float {
+    #[inline]
+    fn into_canonical(self) -> CanonicalFloat64 {
+        to_canonical_f64(self.eval())
+    }
+}
+
+impl IntoCanonicalFloat64 for Float {
+    #[inline]
+    fn into_canonical(self) -> CanonicalFloat64 {
+        to_canonical_f64(self.eval())
+    }
 }

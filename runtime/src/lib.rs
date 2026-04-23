@@ -14,6 +14,8 @@ pub use binding::*;
 // Canonical float types for Float category (Eq/Hash/Ord)
 mod canonical_float;
 pub use canonical_float::{CanonicalFloat32, CanonicalFloat64};
+mod canonical_complex;
+pub use canonical_complex::{CanonicalComplex32, CanonicalComplex64};
 mod canonical_bigint;
 pub use canonical_bigint::CanonicalBigInt;
 mod canonical_bigrat;
