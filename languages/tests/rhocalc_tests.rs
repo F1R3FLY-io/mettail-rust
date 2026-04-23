@@ -196,6 +196,11 @@ mod comm {
     }
 
     #[test]
+    fn quoted_name_binder_form_is_equivalent() {
+        assert_reduces_to("{for(@x <- c1 & @y <- c2){x} | c1!(p) | c2!(q)}", "p");
+    }
+
+    #[test]
     fn compact_for_rows_with_semicolon_are_nested() {
         assert_reduces_to("{for(x <- c1; y <- c2){*x} | c1!(p) | c2!(q)}", "p");
     }
@@ -218,63 +223,63 @@ mod comm {
     #[test]
     fn join_pattern_mismatch_is_noop_for_receive_group() {
         assert_reduces_to(
-            "{for([1,2,4] <- c){7} | c!([1,2,3])}",
+            "{for(@[1,2,4] <- c){7} | c!([1,2,3])}",
             "{__for([1,2,4] <- c){7} | c!([1,2,3])}",
         );
-        assert_never_produces("{for([1,2,4] <- c){7} | c!([1,2,3])}", "{7}");
+        assert_never_produces("{for(@[1,2,4] <- c){7} | c!([1,2,3])}", "{7}");
     }
 
     #[test]
     fn pattern_comm_ground_pattern_matches_equal_payload() {
-        assert_reduces_to("{for(0 <- c){1} | c!(0)}", "1");
+        assert_reduces_to("{for(@0 <- c){1} | c!(0)}", "1");
     }
 
     #[test]
     fn pattern_comm_exact_constructor_pattern_matches() {
-        assert_reduces_to("{for(*(@(0)) <- c){1} | c!(*(@(0)))}", "1");
+        assert_reduces_to("{for(@*(@(0)) <- c){1} | c!(*(@(0)))}", "1");
     }
 
     #[test]
     fn pattern_comm_ground_pattern_blocks_mismatch() {
         // Pattern 0 does not match payload p, so COMM must not produce {0}.
         // (Other non-COMM rewrites may exist due HOL/native rules.)
-        assert_never_produces("{for(0 <- c){0} | c!(p)}", "{0}");
+        assert_never_produces("{for(@0 <- c){0} | c!(p)}", "{0}");
     }
 
     #[test]
     fn pattern_comm_list_literal_pattern_matches() {
-        assert_reduces_to("{for([0, 1] <- c){42} | c!([0, 1])}", "42");
+        assert_reduces_to("{for(@[0, 1] <- c){42} | c!([0, 1])}", "42");
     }
 
     #[test]
     fn pattern_comm_list_literal_pattern_blocks_mismatch() {
-        assert_never_produces("{for([0, 1] <- c){42} | c!([0, 1, 2])}", "{42}");
+        assert_never_produces("{for(@[0, 1] <- c){42} | c!([0, 1, 2])}", "{42}");
     }
 
     #[test]
     fn pattern_comm_bag_literal_pattern_matches() {
-        assert_reduces_to("{for(#{1|2}# <- c){7} | c!(#{2|1}#)}", "7");
+        assert_reduces_to("{for(@#{1|2}# <- c){7} | c!(#{2|1}#)}", "7");
     }
 
     #[test]
     fn pattern_comm_bag_literal_pattern_blocks_mismatch() {
-        assert_never_produces("{for(#{1|2}# <- c){7} | c!(#{1|1}#)}", "{7}");
+        assert_never_produces("{for(@#{1|2}# <- c){7} | c!(#{1|1}#)}", "{7}");
     }
 
     #[test]
     fn pattern_comm_map_literal_pattern_matches() {
-        assert_reduces_to("{for(map(1:2, 3:4) <- c){9} | c!(map(3:4, 1:2))}", "9");
+        assert_reduces_to("{for(@map(1:2, 3:4) <- c){9} | c!(map(3:4, 1:2))}", "9");
     }
 
     #[test]
     fn pattern_comm_map_literal_pattern_blocks_mismatch() {
-        assert_never_produces("{for(map(1:2, 3:4) <- c){9} | c!(map(1:2, 3:5))}", "{9}");
+        assert_never_produces("{for(@map(1:2, 3:4) <- c){9} | c!(map(1:2, 3:5))}", "{9}");
     }
 
     #[test]
     fn complex_join_map_and_list_literal_pattern_matches() {
         assert_reduces_to(
-            "{for(map(1:x, 3:4) <- c & [1,2,3] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "{for(@map(1:x, 3:4) <- c & @[1,2,3] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
             "2",
         );
     }
@@ -282,7 +287,7 @@ mod comm {
     #[test]
     fn complex_join_map_and_list_literal_pattern_blocks_mismatch() {
         assert_never_produces(
-            "{for(map(1:x, 3:4) <- c & [1,2,4] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "{for(@map(1:x, 3:4) <- c & @[1,2,4] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
             "{2}",
         );
     }
@@ -290,7 +295,7 @@ mod comm {
     #[test]
     fn complex_join_map_and_list_var_pattern_matches() {
         assert_reduces_to(
-            "{for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
             "2",
         );
     }
@@ -298,7 +303,7 @@ mod comm {
     #[test]
     fn complex_join_map_and_list_var_pattern_with_guard_matches() {
         assert_reduces_to(
-            "{for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1 and y>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
             "2",
         );
     }
@@ -306,7 +311,7 @@ mod comm {
     #[test]
     fn complex_join_map_and_list_var_pattern_with_guard_blocks() {
         assert_never_produces(
-            "{for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>3){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1 and y>3){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
             "{2}",
         );
     }
@@ -314,7 +319,7 @@ mod comm {
     #[test]
     fn complex_multi_row_join_and_followup_row_matches() {
         assert_reduces_to(
-            "{for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>1; z <- c3 ){[x,z]} | c!(map(3:4, 1:2)) | c2!([1,2,3]) | c3!(11111111)}",
+            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1 and y>1; z <- c3 ){[x,z]} | c!(map(3:4, 1:2)) | c2!([1,2,3]) | c3!(11111111)}",
             "[2, 11111111]",
         );
     }
@@ -322,7 +327,7 @@ mod comm {
     #[test]
     fn complex_multi_row_join_and_followup_row_guard_blocks() {
         assert_never_produces(
-            "{for(map(1:x, 3:4) <- c & [1,2,y] <- c2 where x>1 and y>1; z <- c3 where z > 1111111111111111 ){[x,z]} | c!(map(3:4, 1:2)) | c2!([1,2,3]) | c3!(11111111)}",
+            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1 and y>1; z <- c3 where z > 1111111111111111 ){[x,z]} | c!(map(3:4, 1:2)) | c2!([1,2,3]) | c3!(11111111)}",
             "{[2, 11111111]}",
         );
     }
@@ -995,6 +1000,10 @@ mod parsing {
         let _ = run("@(0)");
     }
     #[test]
+    fn quote_bare_name() {
+        let _ = run("{@x!(0) | x!(1)}");
+    }
+    #[test]
     fn drop() {
         let _ = run("*(@(0))");
     }
@@ -1020,6 +1029,12 @@ mod parsing {
         let lang = RhoCalcLanguage;
         assert!(lang.parse_term("(c?x).{x!(0)}").is_err());
         assert!(lang.parse_term("(c1?x, c2?y).{*(x)}").is_err());
+    }
+
+    #[test]
+    fn for_structural_pattern_requires_quote() {
+        let lang = RhoCalcLanguage;
+        assert!(lang.parse_term("for([1,2,4] <- c){7}").is_err());
     }
     #[test]
     fn new_single() {

@@ -77,6 +77,10 @@ language! {
 
         POutput . n:Name, q:Proc
         |- n "!" "(" q ")" : Proc ;
+        POutputQuoted . n:Name, q:Proc
+        |- "@" n "!" "(" q ")" : Proc ![{
+            Proc::POutput(Box::new(Name::NQuote(Box::new(crate::rhocalc::receive::name_pattern_to_proc(&n)))), Box::new(q.clone()))
+        }] fold;
 
         // Internal constructor for single-input receive with optional where-guard.
         PForWhere . pat:Proc, n:Name, cond:Proc, body:Proc
@@ -100,9 +104,21 @@ language! {
             crate::rhocalc::receive::comm_pforwhere_subst(&pat, &n, &q, &cond, &body)
         }] fold;
 
-        // Single pattern/channel binding: `pat <- chan`.
-        InputBind . pat:Proc, n:Name
-        |- pat "<-" n : InputBind;
+        // Single pattern/channel binding.
+        InputBind . lhs:Name, n:Name
+        |- lhs "<-" n : InputBind ![{
+            InputBind::InputBind(
+                Box::new(lhs.clone()),
+                Box::new(n.clone()),
+            )
+        }] fold;
+        InputBindQuoted . pat:Proc, n:Name
+        |- "@" pat "<-" n : InputBind ![{
+            InputBind::InputBindQuoted(
+                Box::new(pat.clone()),
+                Box::new(n.clone()),
+            )
+        }] fold;
 
         // A ForRow is one row of a multi-row for: one or more & binds with an optional where guard.
         // More-specific variants (with & or where) come first so the parser tries them before the fallback.
@@ -134,8 +150,7 @@ language! {
         NQuote . p:Proc
         |- "@" "(" p ")" : Name ;
 
-        // Compatibility shim: allow parenthesized names in `*` position (`*(x)`),
-        // while keeping `*x` as the canonical/primary syntax.
+        // Parenthesized Name grouping used by `*(x)` compatibility.
         NParen . n:Name
         |- "(" n ")" : Name ![{ n.clone() }] fold;
 
@@ -918,8 +933,6 @@ language! {
             ~> (PPar {(comm_join b bs ns qs cond body), ...rest});
 
         Exec . |- (PDrop (NQuote P)) ~> P;
-        // Parenthesized dereference on quoted process: *( @(P) ) -> P.
-        // Keep this narrow to avoid broad unwrapping rewrites that can inflate search space.
         ExecParenQuote . |- (PDrop (NParen (NQuote P))) ~> P;
 
         ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});

@@ -50,7 +50,11 @@ fn name_uses_var(name: &Name, var_name: &str) -> bool {
 
 fn input_bind_uses_name_var(bind: &InputBind, var_name: &str) -> bool {
     match bind {
-        InputBind::InputBind(pat, n) => {
+        InputBind::InputBind(lhs, n) => {
+            let pat = receive::name_pattern_to_proc(lhs.as_ref());
+            proc_uses_name_var(&pat, var_name) || name_uses_var(n, var_name)
+        },
+        InputBind::InputBindQuoted(pat, n) => {
             proc_uses_name_var(pat, var_name) || name_uses_var(n, var_name)
         },
         _ => false,
@@ -59,7 +63,11 @@ fn input_bind_uses_name_var(bind: &InputBind, var_name: &str) -> bool {
 
 fn input_bind_uses_proc_var(bind: &InputBind, var_name: &str) -> bool {
     match bind {
-        InputBind::InputBind(pat, n) => {
+        InputBind::InputBind(lhs, n) => {
+            let pat = receive::name_pattern_to_proc(lhs.as_ref());
+            proc_uses_proc_var(&pat, var_name) || name_uses_var(n, var_name)
+        },
+        InputBind::InputBindQuoted(pat, n) => {
             proc_uses_proc_var(pat, var_name) || name_uses_var(n, var_name)
         },
         _ => false,
@@ -185,11 +193,17 @@ fn collect_rhocalc_var_types(
         },
         Proc::PForJoin(b, bs, cond, body) => {
             let mut names = Vec::new();
-            if let InputBind::InputBind(pat, _) = b.as_ref() {
+            if let InputBind::InputBind(lhs, _) = b.as_ref() {
+                let pat = receive::name_pattern_to_proc(lhs.as_ref());
+                infer_receive_pattern_names(&pat, &mut names)
+            } else if let InputBind::InputBindQuoted(pat, _) = b.as_ref() {
                 infer_receive_pattern_names(pat, &mut names)
             }
             for bind in bs {
-                if let InputBind::InputBind(pat, _) = bind {
+                if let InputBind::InputBind(lhs, _) = bind {
+                    let pat = receive::name_pattern_to_proc(lhs.as_ref());
+                    infer_receive_pattern_names(&pat, &mut names)
+                } else if let InputBind::InputBindQuoted(pat, _) = bind {
                     infer_receive_pattern_names(pat, &mut names)
                 }
             }
@@ -263,11 +277,17 @@ impl RhoCalcLanguage {
                 },
                 Proc::PForJoin(b, bs, cond, body) => {
                     let mut names = Vec::new();
-                    if let InputBind::InputBind(pat, _) = b.as_ref() {
+                    if let InputBind::InputBind(lhs, _) = b.as_ref() {
+                        let pat = receive::name_pattern_to_proc(lhs.as_ref());
+                        infer_receive_pattern_names(&pat, &mut names)
+                    } else if let InputBind::InputBindQuoted(pat, _) = b.as_ref() {
                         infer_receive_pattern_names(pat, &mut names)
                     }
                     for bind in bs {
-                        if let InputBind::InputBind(pat, _) = bind {
+                        if let InputBind::InputBind(lhs, _) = bind {
+                            let pat = receive::name_pattern_to_proc(lhs.as_ref());
+                            infer_receive_pattern_names(&pat, &mut names)
+                        } else if let InputBind::InputBindQuoted(pat, _) = bind {
                             infer_receive_pattern_names(pat, &mut names)
                         }
                     }

@@ -6,6 +6,30 @@ use mettail_runtime::{FreeVar, HashBag, OrdVar, Var};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
+pub(crate) fn name_pattern_to_proc(name_pat: &Name) -> Proc {
+    match name_pat {
+        Name::NVar(v) => Proc::PVar(v.clone()),
+        Name::NQuote(p) => p.as_ref().clone(),
+        _ => Proc::Err,
+    }
+}
+
+fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
+    match bind {
+        InputBind::InputBind(lhs, _) => Some(name_pattern_to_proc(lhs.as_ref())),
+        InputBind::InputBindQuoted(pat, _) => Some(pat.as_ref().clone()),
+        _ => None,
+    }
+}
+
+fn bind_channel_name(bind: &InputBind) -> Option<&Name> {
+    match bind {
+        InputBind::InputBind(_, n) => Some(n.as_ref()),
+        InputBind::InputBindQuoted(_, n) => Some(n.as_ref()),
+        _ => None,
+    }
+}
+
 pub fn guard_then(cond: &Proc, body: &Proc) -> Proc {
     match cond {
         Proc::CastBool(b) => match b.as_ref() {
@@ -215,11 +239,20 @@ pub fn comm_pforwhere_subst(pat: &Proc, n: &Name, q: &Proc, cond: &Proc, body: &
 fn apply_row(row: ForRow, inner: Proc) -> Proc {
     match row {
         ForRow::ForRowSingleNoWhere(b) => match *b {
-            InputBind::InputBind(pat, n) => Proc::PFor(pat, n, Box::new(inner)),
+            InputBind::InputBind(lhs, n) => {
+                Proc::PFor(Box::new(name_pattern_to_proc(lhs.as_ref())), n, Box::new(inner))
+            },
+            InputBind::InputBindQuoted(pat, n) => Proc::PFor(pat, n, Box::new(inner)),
             _ => Proc::Err,
         },
         ForRow::ForRowSingleWhere(b, cond) => match *b {
-            InputBind::InputBind(pat, n) => Proc::PForWhere(pat, n, cond, Box::new(inner)),
+            InputBind::InputBind(lhs, n) => Proc::PForWhere(
+                Box::new(name_pattern_to_proc(lhs.as_ref())),
+                n,
+                cond,
+                Box::new(inner),
+            ),
+            InputBind::InputBindQuoted(pat, n) => Proc::PForWhere(pat, n, cond, Box::new(inner)),
             _ => Proc::Err,
         },
         ForRow::ForRowNoWhere(b, bs) => {
@@ -244,15 +277,9 @@ pub fn desugar_for_rows(rows: Vec<ForRow>, body: &Proc) -> Proc {
 
 pub(crate) fn channel_names_from_row(b: &InputBind, bs: &[InputBind]) -> Option<Vec<Name>> {
     let mut out = Vec::with_capacity(1 + bs.len());
-    match b {
-        InputBind::InputBind(_, n) => out.push(n.as_ref().clone()),
-        _ => return None,
-    }
+    out.push(bind_channel_name(b)?.clone());
     for x in bs {
-        match x {
-            InputBind::InputBind(_, n) => out.push(n.as_ref().clone()),
-            _ => return None,
-        }
+        out.push(bind_channel_name(x)?.clone());
     }
     Some(out)
 }
@@ -316,14 +343,14 @@ pub fn comm_pforjoin_subst(
     let mut acc_body = body.clone();
     let mut acc_cond = cond.clone();
     for (ib, q) in binds.iter().zip(aligned_qs.iter()) {
-        let InputBind::InputBind(pat, _) = ib else {
+        let Some(pat) = bind_pattern_proc(ib) else {
             return blocked();
         };
-        let Some(nb) = receive_apply(pat.as_ref(), q, &acc_body) else {
+        let Some(nb) = receive_apply(&pat, q, &acc_body) else {
             return blocked();
         };
         acc_body = nb;
-        let Some(nc) = receive_apply(pat.as_ref(), q, &acc_cond) else {
+        let Some(nc) = receive_apply(&pat, q, &acc_cond) else {
             return blocked();
         };
         acc_cond = nc;
