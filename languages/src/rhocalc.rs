@@ -71,7 +71,7 @@ language! {
         PZero .
         |- "{}" : Proc;
 
-        PDrop . n:Name  |- "*" "(" n ")" : Proc ;
+        PDrop . n:Name  |- "*" n : Proc ;
 
         PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
 
@@ -133,6 +133,11 @@ language! {
 
         NQuote . p:Proc
         |- "@" "(" p ")" : Name ;
+
+        // Compatibility shim: allow parenthesized names in `*` position (`*(x)`),
+        // while keeping `*x` as the canonical/primary syntax.
+        NParen . n:Name
+        |- "(" n ")" : Name ![{ n.clone() }] fold;
 
         PNew . ^[xs].p:[Name* -> Proc]
         |- "new" "(" xs.*sep(",") ")" "in" "{" p "}" : Proc;
@@ -913,6 +918,9 @@ language! {
             ~> (PPar {(comm_join b bs ns qs cond body), ...rest});
 
         Exec . |- (PDrop (NQuote P)) ~> P;
+        // Parenthesized dereference on quoted process: *( @(P) ) -> P.
+        // Keep this narrow to avoid broad unwrapping rewrites that can inflate search space.
+        ExecParenQuote . |- (PDrop (NParen (NQuote P))) ~> P;
 
         ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
 

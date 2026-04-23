@@ -187,32 +187,32 @@ mod comm {
 
     #[test]
     fn pattern_comm_var_matches_payload() {
-        assert_reduces_to("{for(x <- c){x} | c!(p)}", "p");
+        assert_reduces_to("{for(x <- c){*x} | c!(p)}", "p");
     }
 
     #[test]
     fn compact_for_row_with_ampersand_desugars_to_join() {
-        assert_reduces_to("{for(x <- c1 & y <- c2){x} | c1!(p) | c2!(q)}", "p");
+        assert_reduces_to("{for(x <- c1 & y <- c2){*x} | c1!(p) | c2!(q)}", "p");
     }
 
     #[test]
     fn compact_for_rows_with_semicolon_are_nested() {
-        assert_reduces_to("{for(x <- c1; y <- c2){x} | c1!(p) | c2!(q)}", "p");
+        assert_reduces_to("{for(x <- c1; y <- c2){*x} | c1!(p) | c2!(q)}", "p");
     }
 
     #[test]
     fn compact_for_row_where_guard_blocks_when_false() {
-        assert_never_produces("{for(x <- c1 & y <- c2 where false){x} | c1!(p) | c2!(q)}", "{p}");
+        assert_never_produces("{for(x <- c1 & y <- c2 where false){*x} | c1!(p) | c2!(q)}", "{p}");
     }
 
     #[test]
     fn where_guard_false_is_noop_for_receive_pair() {
-        assert_never_produces("{for(x <- c where false){x} | c!(p)}", "{p}");
+        assert_never_produces("{for(x <- c where false){*x} | c!(p)}", "{p}");
     }
 
     #[test]
     fn where_guard_expression_false_is_noop_for_receive_pair() {
-        assert_never_produces("{for(x <- c where x > 3){x} | c!(2)}", "{2}");
+        assert_never_produces("{for(x <- c where x > 3){*x} | c!(2)}", "{2}");
     }
 
     #[test]
@@ -997,6 +997,10 @@ mod parsing {
     #[test]
     fn drop() {
         let _ = run("*(@(0))");
+    }
+    #[test]
+    fn drop_bare_name() {
+        let _ = run("*x");
     }
     #[test]
     fn send() {
