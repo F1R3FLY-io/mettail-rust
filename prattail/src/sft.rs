@@ -601,7 +601,7 @@ where
             for t2 in &other.transitions {
                 if t2.from == q2_current && other.input_algebra.evaluate(&t2.guard, val) {
                     match &t2.output {
-                        OutputFunction::Epsilon => {}
+                        OutputFunction::Epsilon => {} // produce nothing
                         OutputFunction::Constant(c) => all_outputs.extend(c.iter().cloned()),
                         OutputFunction::Identity => all_outputs.push(val.clone().into()),
                         OutputFunction::Map(f) => all_outputs.push(f(val)),
@@ -985,7 +985,7 @@ where
         let mut c_vals = Vec::new();
         for b_val in &b_vals {
             match &second {
-                OutputFunction::Epsilon => {}
+                OutputFunction::Epsilon => {} // produce nothing for this b_val
                 OutputFunction::Constant(v) => c_vals.extend(v.iter().cloned()),
                 OutputFunction::Identity => c_vals.push(b_val.clone().into()),
                 OutputFunction::Map(f) => c_vals.push(f(b_val)),
@@ -1923,6 +1923,7 @@ mod tests {
             name: "Expr".to_string(),
             native_type: None,
             is_primary: true,
+            has_var: true,
         }];
         let analysis = analyze_from_bundle(&[], &categories);
         assert_eq!(analysis.num_transducers, 1);

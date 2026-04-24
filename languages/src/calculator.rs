@@ -9,12 +9,131 @@ use mettail_macros::language;
 language! {
     name: Calculator,
     types {
+        Proc
         ![i32] as Int
+        ![u32] as UInt32
+        ![mettail_runtime::CanonicalBigInt] as BigInt
+        ![mettail_runtime::CanonicalBigRat] as BigRat
+        ![mettail_runtime::CanonicalFixedPoint] as Fixed
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
+        ![Vec<Proc>] as List
+        ![mettail_runtime::HashBag<Proc>] as Bag
+        ![HashMap<Proc, Proc>] as Map
+    },
+    literals {
+        UInt32 {
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)u32";
+            eval: ![ {
+                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+            } ]
+        }
+        Int {
+            // Int (i32) literals; unsuffixed defaults to i32. Leading `-?`
+            // preserves atomic negative lexing (`-3` is one token, not Minus+Int) —
+            // efficiency: no runtime negation.
+            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32)?";
+            eval: ![ {
+                mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::I32)).map_err(|_| ())
+            } ]
+        }
+        BigInt {
+            // Optional `n` suffix. Leading `-?` for atomic negative lexing.
+            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n?";
+            eval: ![ {
+                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+            } ]
+        }
+        // BigRat sugar: `<int>r` (whole) or `<int>r/<int>r` (composite).
+        // Optional `r` suffix; leading `-?` supports negative rationals atomically.
+        BigRat {
+            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r?";
+            eval: ![ {
+                mettail_prattail::parse_rational_lit(text).map_err(|_| ())
+            } ]
+        }
+        // Before Float: float pattern allows digit runs without `.`/`e`, which would steal `10` from `10p1`.
+        Fixed {
+            // Scale after `p` is one or more digits: `p1`, `p12`, `p1_0` — not `p` + two-digit-only tail.
+            pattern: r"-?([0-9](_?[0-9])*(\.[0-9](_?[0-9])*)?|\.[0-9](_?[0-9])*)p[0-9](_?[0-9])*";
+            eval: ![ { mettail_runtime::parse_fixed_lit(text).map_err(|_| ()) } ]
+        }
+        Float {
+            // Decimal or exponent; optional explicit f64 suffix; leading `-` in the token (unary is not split).
+            pattern: r"-?([0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)(f64)?|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?(f64)?)";
+            eval: ![ { mettail_runtime::parse_float_lit(text).map_err(|_| ()) } ]
+        }
+        Bool {
+            pattern: r"yeap|nope|true|false";
+            eval: ![ {
+                match text {
+                    "yeap" => Ok(true),
+                    "nope" => Ok(false),
+                    "true" => Ok(true),
+                    "false" => Ok(false),
+                    _ => Err(()),
+                }
+            } ]
+        }
+        Str {
+            pattern: r#""([^"\\]|\\.)*""#;
+            eval: ![ {
+                if text.len() < 2 {
+                    Err(())
+                } else {
+                    let inner = &text[1..text.len()-1];
+                    let unescaped = inner
+                        .replace("\\\"", "\"")
+                        .replace("\\\\", "\\");
+                    Ok(unescaped.to_string())
+                }
+            } ]
+        }
     },
     terms {
+        // Injection into Proc (unified variant) so List/Bag elements are Proc
+        ProcInt . i:Int |- i : Proc ;
+        ProcFloat . f:Float |- f : Proc ;
+        ProcBool . b:Bool |- b : Proc ;
+        ProcStr . s:Str |- s : Proc ;
+        ProcList . l:List |- l : Proc ;
+        ProcBag . b:Bag |- b : Proc ;
+        ProcMap . m:Map |- m : Proc ;
+        ProcUInt32 . u:UInt32 |- u : Proc ;
+        ProcBigInt . n:BigInt |- n : Proc ;
+        ProcBigRat . r:BigRat |- r : Proc ;
+        ProcFixed . f:Fixed |- f : Proc ;
+        // BigRat error normal form: concrete syntax `error`, not a CanonicalBigRat. Step rules
+        // reduce invalid rationals (e.g. fraction with zero denominator) here instead of panicking.
+        // The procedural macro keys off the zero-ary `Err` name on BigRat when lowering Fraction.
+        Err . |- "error" : BigRat ;
+        // Generic arithmetic-error variant for Int (e.g. factorial of negative).
+        // The procedural macro routes `None` results from step-rule eval code to
+        // this zero-ary `Err` variant — see `macros/src/logic/mod.rs` step emitter.
+        Err . |- "error" : Int ;
+        CastErrInt . |- "cast_error_int" : Int ;
+        CastErrUInt32 . |- "cast_error_uint" : UInt32 ;
+        CastErrFixed . |- "cast_error_fixed" : Fixed ;
+        CastErrFloat . |- "cast_error_float" : Float ;
+        CastErrBigInt . |- "cast_error_bigint" : BigInt ;
+        // Int→BigInt / Int→BigRat injection (no body = AST wrapper like ProcInt).
+        // Lets bare digits (no `n`/`r` suffix) parse as BigInt / BigRat via
+        // cross-cat dispatch, preserving display→parse roundtrip when display
+        // is bare.
+        IntToBigInt . i:Int |- i : BigInt ;
+        IntToBigRat . i:Int |- i : BigRat ;
+        // try_from_nd is None when the denominator is zero; the step rule maps that to `Err`.
+        Fraction . a:BigInt, b:BigInt |- "fraction" "(" a "," b ")" : BigRat ![{
+            mettail_runtime::CanonicalBigRat::try_from_nd(a.get().clone(), b.get().clone())
+        }] step;
+        AddBigRat . a:BigRat, b:BigRat |- a "+" b : BigRat ![a + b] fold;
+        MulBigRat . a:BigRat, b:BigRat |- a "*" b : BigRat ![a * b] fold;
+        DivBigRat . a:BigRat, b:BigRat |- a "/" b : BigRat ![a / b] fold;
+        NegBigRat . a:BigRat |- "-" a : BigRat ![(-a)] fold;
+        BitAndBigRat . a:BigRat, b:BigRat |- a "bitand" b : BigRat ![a.bitand_aligned(b)] fold;
+        BitOrBigRat . a:BigRat, b:BigRat |- a "bitor" b : BigRat ![a.bitor_aligned(b)] fold;
+        BitNotBigRat . a:BigRat |- "bitnot" a : BigRat ![a.bitnot()] fold;
         // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
         // Comparison operations
@@ -42,6 +161,12 @@ language! {
         NeFloat . a:Float, b:Float |- a "!=" b : Bool ![a != b] step;
         NeBool . a:Bool, b:Bool |- a "!=" b : Bool ![a != b] step;
         NeStr . a:Str, b:Str |- a "!=" b : Bool ![a != b] step;
+        EqFixed . a:Fixed, b:Fixed |- a "==" b : Bool ![a == b] step;
+        GtFixed . a:Fixed, b:Fixed |- a ">" b : Bool ![a > b] step;
+        LtFixed . a:Fixed, b:Fixed |- a "<" b : Bool ![a < b] step;
+        LtEqFixed . a:Fixed, b:Fixed |- a "<=" b : Bool ![a <= b] step;
+        GtEqFixed . a:Fixed, b:Fixed |- a ">=" b : Bool ![a >= b] step;
+        NeFixed . a:Fixed, b:Fixed |- a "!=" b : Bool ![a != b] step;
         // Boolean operations
         Not . a:Bool |- "not" a : Bool ![{match a {
             true => false,
@@ -54,27 +179,50 @@ language! {
         Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step;
         Concat . a:Str, b:Str |- a "++" b : Str ![[a, b].concat()] step;
         AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
+        //
+        AddUInt32 . a:UInt32, b:UInt32 |- a "+" b : UInt32 ![a + b] fold;
+        BitAndUInt32 . a:UInt32, b:UInt32 |- a "bitand" b : UInt32 ![a & b] fold;
+        BitOrUInt32 . a:UInt32, b:UInt32 |- a "bitor" b : UInt32 ![a | b] fold;
+        BitNotUInt32 . a:UInt32 |- "bitnot" a : UInt32 ![!a] fold;
+        AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ![a + b] fold;
+        SubBigInt . a:BigInt, b:BigInt |- a "-" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() - b.get())] fold;
+        NegBigInt . a:BigInt |- "-" a : BigInt ![mettail_runtime::CanonicalBigInt::from(-a.get())] fold;
+        BitAndBigInt . a:BigInt, b:BigInt |- a "bitand" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() & b.get())] fold;
+        BitOrBigInt . a:BigInt, b:BigInt |- a "bitor" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() | b.get())] fold;
+        BitNotBigInt . a:BigInt |- "bitnot" a : BigInt ![mettail_runtime::CanonicalBigInt::from(!a.get())] fold;
         // Int operations
-        AddInt . a:Int, b:Int |- a "+" b : Int ![{ a.checked_add(b).unwrap_or(0) }] fold;
-        SubInt . a:Int, b:Int |- a "-" b : Int ![{ a.checked_sub(b).unwrap_or(0) }] fold;
-        MulInt . a:Int, b:Int |- a "*" b : Int ![{ a.checked_mul(b).unwrap_or(0) }] fold;
-        DivInt . a:Int, b:Int |- a "/" b : Int ![{ if b == 0 { 0 } else { a.checked_div(b).unwrap_or(0) } }] fold;
-        ModInt . a:Int, b:Int |- a "%" b : Int ![{ if b == 0 { 0 } else { a.checked_rem(b).unwrap_or(0) } }] fold;
-        PowInt . a:Int, b:Int |- a "^" b : Int ![{ a.checked_pow(b.max(0) as u32).unwrap_or(0) }] step right;
-        Neg . a:Int |- "-" a : Int ![{ a.checked_neg().unwrap_or(0) }] fold;
-        Fact . a:Int |- a "!" : Int ![{ (1..=a.max(0)).try_fold(1i32, |acc, x| acc.checked_mul(x)).unwrap_or(0) }] step;
-        NegFloat . a:Float |- "-" a : Float ![{ mettail_runtime::CanonicalFloat64::from(-a.get()) }] fold;
+        // Int arithmetic: simple forms — the `language!` macro's `safeify`
+        // pass (macros/src/gen/native/rust_code_rewrite.rs) automatically
+        // rewrites `+`/`-`/`*`/`/`/`%`/`^`/`.pow()`/`.product()`/unary `-`
+        // into `SafeArith`/`SafeFloat` calls that return `None` on overflow
+        // or NaN, so we do not need manual `checked_*` invocations here.
+        AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+        SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
+        MulInt . a:Int, b:Int |- a "*" b : Int ![a * b] fold;
+        DivInt . a:Int, b:Int |- a "/" b : Int ![a / b] fold;
+        ModInt . a:Int, b:Int |- a "%" b : Int ![a % b] fold;
+        PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] step right;
+        BitAndInt . a:Int, b:Int |- a "bitand" b : Int ![a & b] fold;
+        BitOrInt . a:Int, b:Int |- a "bitor" b : Int ![a | b] fold;
+        BitNotInt . a:Int |- "bitnot" a : Int ![!a] fold;
+        Neg . a:Int |- "-" a : Int ![(-a)] fold;
+        Fact . a:Int |- a "!" : Int ![{
+            // Factorial is undefined for negative integers. Returning `None`
+            // here routes the rewrite to `Int::Err` via the HOL step emitter.
+            if a < 0 { None } else { Some((1..=a).product::<i32>()) }
+        }] step;
         // Float operations
         AddFloat . a:Float, b:Float |- a "+" b : Float ![a + b] fold;
         SubFloat . a:Float, b:Float |- a "-" b : Float ![a - b] fold;
         MulFloat . a:Float, b:Float |- a "*" b : Float ![a * b] fold;
         DivFloat . a:Float, b:Float |- a "/" b : Float ![a / b] fold;
         PowFloat . a:Float, b:Float |- a "^" b : Float ![a.powf(b)] step right;
+        NegFloat . a:Float |- "-" a : Float ![{ mettail_runtime::CanonicalFloat64::from(-a.get()) }] fold;
         SinFloat . a:Float |- "sin" "(" a ")" : Float ![a.sin()] step;
         CosFloat . a:Float |- "cos" "(" a ")" : Float ![a.cos()] step;
         ExpFloat . a:Float |- "exp" "(" a ")" : Float ![a.exp()] step;
         LnFloat . a:Float |- "ln" "(" a ")" : Float ![a.ln()] step;
-        // Type casts
+        // Type casts (feature-branch set — simple single-arg forms)
         IntToFloat . a:Int |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a as f64)] step;
         BoolToFloat . a:Bool |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(if a { 1.0 } else { 0.0 })] step;
         StrToFloat . a:Str |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a.parse().unwrap_or(0.0))] step;
@@ -92,7 +240,146 @@ language! {
         BoolId . a:Bool |- "bool" "(" a ")" : Bool ![a] step;
         StrId . a:Str |- "str" "(" a ")" : Str ![a] step;
         // Custom operation (PraTTaIL test feature)
-        CustomOp . a:Int, b:Int |- a "~" b : Int ![{ 2i32.checked_mul(a).and_then(|x| 3i32.checked_mul(b).and_then(|y| x.checked_add(y))).unwrap_or(0) }] fold;
+        CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
+
+        // Fixed-point arithmetic (from main)
+        AddFixed . a:Fixed, b:Fixed |- a "+" b : Fixed ![a + b] fold;
+        SubFixed . a:Fixed, b:Fixed |- a "-" b : Fixed ![a - b] fold;
+        MulFixed . a:Fixed, b:Fixed |- a "*" b : Fixed ![a * b] fold;
+        DivFixed . a:Fixed, b:Fixed |- a "/" b : Fixed ![a / b] fold;
+        ModFixed . a:Fixed, b:Fixed |- a "%" b : Fixed ![a % b] fold;
+        NegFixed . a:Fixed |- "-" a : Fixed ![(-a)] fold;
+        BitAndFixed . a:Fixed, b:Fixed |- a "bitand" b : Fixed ![a & b] fold;
+        BitOrFixed . a:Fixed, b:Fixed |- a "bitor" b : Fixed ![a | b] fold;
+        BitNotFixed . a:Fixed |- "bitnot" a : Fixed ![mettail_runtime::CanonicalFixedPoint::new(!a.unscaled().clone(), a.places())] fold;
+    ProcToBool . a:Proc |- "bool" "(" a ")" : Bool ![{
+            match a {
+                Proc::ProcBool(b) => b.as_ref().eval(),
+                Proc::ProcInt(i) => i.as_ref().eval() != 0,
+                Proc::ProcUInt32(u) => u.as_ref().eval() != 0,
+                Proc::ProcBigInt(n) => !num_traits::Zero::is_zero(n.as_ref().eval().get()),
+                Proc::ProcBigRat(r) => !num_traits::Zero::is_zero(r.as_ref().eval().get()),
+                Proc::ProcFloat(f) => f.as_ref().eval().get() != 0.0,
+                Proc::ProcFixed(x) => !num_traits::Zero::is_zero(x.as_ref().eval().unscaled()),
+                Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(false),
+                Proc::ElemList(list, index) => {
+                    let idx_opt = match index.as_ref() { Int::NumLit(n) => Some(*n as usize), _ => None };
+                    let list_opt = match list.as_ref() { List::ListLit(v) => Some(v), _ => None };
+                    let elem_opt = idx_opt.and_then(|idx| list_opt.and_then(|v| v.get(idx).cloned()));
+                    if let Some(elem) = elem_opt {
+                        match &elem {
+                            Proc::ProcBool(b) => b.as_ref().eval(),
+                            Proc::ProcInt(i) => i.as_ref().eval() != 0,
+                            Proc::ProcUInt32(u) => u.as_ref().eval() != 0,
+                            Proc::ProcBigInt(n) => !num_traits::Zero::is_zero(n.as_ref().eval().get()),
+                            Proc::ProcBigRat(r) => !num_traits::Zero::is_zero(r.as_ref().eval().get()),
+                            Proc::ProcFloat(f) => f.as_ref().eval().get() != 0.0,
+                            Proc::ProcFixed(x) => !num_traits::Zero::is_zero(x.as_ref().eval().unscaled()),
+                            Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(false),
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            }
+        }] fold;
+        ProcToStr . a:Proc |- "str" "(" a ")" : Str ![{
+            match a {
+                Proc::ProcStr(s) => s.as_ref().eval(),
+                Proc::ProcInt(i) => i.as_ref().eval().to_string(),
+                Proc::ProcUInt32(u) => u.as_ref().eval().to_string(),
+                Proc::ProcBigInt(n) => n.as_ref().eval().to_string(),
+                Proc::ProcBigRat(r) => r.as_ref().eval().to_string(),
+                Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
+                Proc::ProcFixed(x) => x.as_ref().eval().to_string(),
+                Proc::ProcBool(b) => b.as_ref().eval().to_string(),
+                Proc::ElemList(list, index) => {
+                    let idx_opt = match index.as_ref() { Int::NumLit(n) => Some(*n as usize), _ => None };
+                    let list_opt = match list.as_ref() { List::ListLit(v) => Some(v), _ => None };
+                    let elem_opt = idx_opt.and_then(|idx| list_opt.and_then(|v| v.get(idx).cloned()));
+                    if let Some(elem) = elem_opt {
+                        match &elem {
+                            Proc::ProcStr(s) => s.as_ref().eval(),
+                            Proc::ProcInt(i) => i.as_ref().eval().to_string(),
+                            Proc::ProcUInt32(u) => u.as_ref().eval().to_string(),
+                            Proc::ProcBigInt(n) => n.as_ref().eval().to_string(),
+                            Proc::ProcBigRat(r) => r.as_ref().eval().to_string(),
+                            Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
+                            Proc::ProcFixed(x) => x.as_ref().eval().to_string(),
+                            Proc::ProcBool(b) => b.as_ref().eval().to_string(),
+                            _ => String::new(),
+                        }
+                    } else {
+                        String::new()
+                    }
+                }
+                _ => String::new(),
+            }
+        }] fold;
+        // Explicit numeric casts (see `docs/design/made/native-types/numeric-casting.md`): binary width required.
+        IntBin . a:Proc, w:Int |- "int" "(" a "," w ")" : Int ![{
+            crate::numeric_dispatch::calc_try_int_bin(&a, w)
+        }] fold;
+        UIntBin . a:Proc, w:Int |- "uint" "(" a "," w ")" : UInt32 ![{
+            crate::numeric_dispatch::calc_try_uint_bin(&a, w)
+        }] fold;
+        FloatBin . a:Proc, w:Int |- "float" "(" a "," w ")" : Float ![{
+            crate::numeric_dispatch::calc_try_float_bin(&a, w)
+        }] fold;
+        FixedBin . a:Proc, w:Int |- "fixed" "(" a "," w ")" : Fixed ![{
+            crate::numeric_dispatch::calc_try_fixed_bin(&a, w)
+        }] fold;
+        BigintCast . a:Proc |- "bigint" "(" a ")" : BigInt ![{
+            crate::numeric_dispatch::calc_try_bigint_unary(&a)
+        }] fold;
+        BigratCast . a:Proc |- "bigrat" "(" a ")" : BigRat ![{
+            crate::numeric_dispatch::calc_try_bigrat_unary(&a)
+        }] fold;
+        // List operations (List = Vec<Proc>). Fold/step pass payloads; rust_code returns payload.
+        ConcatList . a:List, b:List |- "concat" "(" a "," b ")" : List ![
+            { let mut o = a.clone(); o.extend(b.iter().cloned()); o }
+        ] fold;
+        LenList . a:List |- "length" "(" a ")" : Int ![
+            a.len() as i32
+        ] fold;
+        ElemList . a:List, i:Int |- "at" "(" a "," i ")" : Proc ![
+            { let idx_opt: Option<usize> = match &i { Int::NumLit(n) if *n >= 0 => Some(*n as usize), _ => None }; idx_opt.and_then(|idx| a.get(idx).cloned()).expect("ElemList: invalid index") }
+        ] fold;
+        DeleteList . a:List, i:Int |- "delete" "(" a "," i ")" : List ![
+            { let idx_opt: Option<usize> = match &i { Int::NumLit(n) if *n >= 0 => Some(*n as usize), _ => None }; let mut v = a.clone(); match idx_opt { Some(idx) if idx < v.len() => { v.remove(idx); Some(v) }, _ => None }.expect("DeleteList: invalid index") }
+        ] fold;
+        // Bag operations (Bag = HashBag<Proc>). Fold passes payloads; rust_code returns payload.
+        UnionBag . a:Bag, b:Bag |- "union" "(" a "," b ")" : Bag ![a.union(&b)] fold;
+        RemoveBag . a:Bag, e:Proc |- "remove" "(" a "," e ")" : Bag ![a.remove_one(&e)] fold;
+        DiffBag . a:Bag, b:Bag |- "diff" "(" a "," b ")" : Bag ![a.diff(&b)] fold;
+        CountBag . b:Bag, e:Proc |- "count" "(" b "," e ")" : Int ![{ mettail_runtime::HashBag::count(&b, &e) as i32 }] fold;
+        // Map operations (Map = HashMapLit<Proc, Proc>). Use "maplength" to avoid ambiguous dispatch with length(List).
+        LenMap . a:Map |- "maplength" "(" a ")" : Int ![
+            a.len() as i32
+        ] fold;
+        GetMap . m:Map, k:Proc |- "get" "(" m "," k ")" : Proc ![
+            m.get(&k).cloned().expect("get: key not found")
+        ] fold;
+        PutMap . m:Map, k:Proc, v:Proc |- "put" "(" m "," k "," v ")" : Map ![
+            { let mut m = m.clone(); m.insert(k.clone(), v.clone()); m }
+        ] fold;
+        DeleteMap . m:Map, k:Proc |- "delete" "(" m "," k ")" : Map ![
+            { let mut m = m.clone(); m.remove(&k); m }
+        ] fold;
+        MergeMap . a:Map, b:Map |- "merge" "(" a "," b ")" : Map ![
+            { let mut m = a.clone(); for (k, v) in b.iter() { m.insert(k.clone(), v.clone()); } m }
+        ] fold;
+        HasMap . m:Map, k:Proc |- "has" "(" m "," k ")" : Bool ![
+            m.get(&k).is_some()
+        ] fold;
+        KeysMap . m:Map |- "keys" "(" m ")" : List ![
+            m.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()
+        ] fold;
+        ValuesMap . m:Map |- "values" "(" m ")" : List ![
+            m.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()
+        ] fold;
     },
     equations {
     },
@@ -146,6 +433,18 @@ language! {
         NeBoolCongR . | S ~> T |- (NeBool L S) ~> (NeBool L T);
         NeStrCongL . | S ~> T |- (NeStr S R) ~> (NeStr T R);
         NeStrCongR . | S ~> T |- (NeStr L S) ~> (NeStr L T);
+        EqFixedCongL . | S ~> T |- (EqFixed S R) ~> (EqFixed T R);
+        EqFixedCongR . | S ~> T |- (EqFixed L S) ~> (EqFixed L T);
+        GtFixedCongL . | S ~> T |- (GtFixed S R) ~> (GtFixed T R);
+        GtFixedCongR . | S ~> T |- (GtFixed L S) ~> (GtFixed L T);
+        LtFixedCongL . | S ~> T |- (LtFixed S R) ~> (LtFixed T R);
+        LtFixedCongR . | S ~> T |- (LtFixed L S) ~> (LtFixed L T);
+        LtEqFixedCongL . | S ~> T |- (LtEqFixed S R) ~> (LtEqFixed T R);
+        LtEqFixedCongR . | S ~> T |- (LtEqFixed L S) ~> (LtEqFixed L T);
+        GtEqFixedCongL . | S ~> T |- (GtEqFixed S R) ~> (GtEqFixed T R);
+        GtEqFixedCongR . | S ~> T |- (GtEqFixed L S) ~> (GtEqFixed L T);
+        NeFixedCongL . | S ~> T |- (NeFixed S R) ~> (NeFixed T R);
+        NeFixedCongR . | S ~> T |- (NeFixed L S) ~> (NeFixed L T);
         // Boolean operations
         AndCongL . | S ~> T |- (And S R) ~> (And T R);
         AndCongR . | S ~> T |- (And L S) ~> (And L T);
@@ -175,6 +474,11 @@ language! {
         ModIntCongR . | S ~> T |- (ModInt L S) ~> (ModInt L T);
         PowIntCongL . | S ~> T |- (PowInt S R) ~> (PowInt T R);
         FactCong . | S ~> T |- (Fact S) ~> (Fact T);
+        BitAndIntCongL . | S ~> T |- (BitAndInt S R) ~> (BitAndInt T R);
+        BitAndIntCongR . | S ~> T |- (BitAndInt L S) ~> (BitAndInt L T);
+        BitOrIntCongL . | S ~> T |- (BitOrInt S R) ~> (BitOrInt T R);
+        BitOrIntCongR . | S ~> T |- (BitOrInt L S) ~> (BitOrInt L T);
+        BitNotIntCong . | S ~> T |- (BitNotInt S) ~> (BitNotInt T);
         // Float operations
         AddFloatCongL . | S ~> T |- (AddFloat S R) ~> (AddFloat T R);
         AddFloatCongR . | S ~> T |- (AddFloat L S) ~> (AddFloat L T);
@@ -190,7 +494,102 @@ language! {
         CosFloatCong . | S ~> T |- (CosFloat S) ~> (CosFloat T);
         ExpFloatCong . | S ~> T |- (ExpFloat S) ~> (ExpFloat T);
         LnFloatCong . | S ~> T |- (LnFloat S) ~> (LnFloat T);
-        // Type casts
+        AddFixedCongL . | S ~> T |- (AddFixed S R) ~> (AddFixed T R);
+        AddFixedCongR . | S ~> T |- (AddFixed L S) ~> (AddFixed L T);
+        SubFixedCongL . | S ~> T |- (SubFixed S R) ~> (SubFixed T R);
+        SubFixedCongR . | S ~> T |- (SubFixed L S) ~> (SubFixed L T);
+        MulFixedCongL . | S ~> T |- (MulFixed S R) ~> (MulFixed T R);
+        MulFixedCongR . | S ~> T |- (MulFixed L S) ~> (MulFixed L T);
+        DivFixedCongL . | S ~> T |- (DivFixed S R) ~> (DivFixed T R);
+        DivFixedCongR . | S ~> T |- (DivFixed L S) ~> (DivFixed L T);
+        ModFixedCongL . | S ~> T |- (ModFixed S R) ~> (ModFixed T R);
+        ModFixedCongR . | S ~> T |- (ModFixed L S) ~> (ModFixed L T);
+        NegFixedCong . | S ~> T |- (NegFixed S) ~> (NegFixed T);
+        BitAndFixedCongL . | S ~> T |- (BitAndFixed S R) ~> (BitAndFixed T R);
+        BitAndFixedCongR . | S ~> T |- (BitAndFixed L S) ~> (BitAndFixed L T);
+        BitOrFixedCongL . | S ~> T |- (BitOrFixed S R) ~> (BitOrFixed T R);
+        BitOrFixedCongR . | S ~> T |- (BitOrFixed L S) ~> (BitOrFixed L T);
+        BitNotFixedCong . | S ~> T |- (BitNotFixed S) ~> (BitNotFixed T);
+        // Proc → concrete type projection congruence
+        ProcToBoolCong . | S ~> T |- (ProcToBool S) ~> (ProcToBool T);
+        ProcToStrCong . | S ~> T |- (ProcToStr S) ~> (ProcToStr T);
+        IntBinCongL . | S ~> T |- (IntBin S R) ~> (IntBin T R);
+        IntBinCongR . | S ~> T |- (IntBin L S) ~> (IntBin L T);
+        UIntBinCongL . | S ~> T |- (UIntBin S R) ~> (UIntBin T R);
+        UIntBinCongR . | S ~> T |- (UIntBin L S) ~> (UIntBin L T);
+        FloatBinCongL . | S ~> T |- (FloatBin S R) ~> (FloatBin T R);
+        FloatBinCongR . | S ~> T |- (FloatBin L S) ~> (FloatBin L T);
+        FixedBinCongL . | S ~> T |- (FixedBin S R) ~> (FixedBin T R);
+        FixedBinCongR . | S ~> T |- (FixedBin L S) ~> (FixedBin L T);
+        BigintCastCong . | S ~> T |- (BigintCast S) ~> (BigintCast T);
+        BigratCastCong . | S ~> T |- (BigratCast S) ~> (BigratCast T);
+        // Proc (unified variant) congruence
+        ProcIntCong . | S ~> T |- (ProcInt S) ~> (ProcInt T);
+        ProcFloatCong . | S ~> T |- (ProcFloat S) ~> (ProcFloat T);
+        ProcBoolCong . | S ~> T |- (ProcBool S) ~> (ProcBool T);
+        ProcStrCong . | S ~> T |- (ProcStr S) ~> (ProcStr T);
+        ProcListCong . | S ~> T |- (ProcList S) ~> (ProcList T);
+        ProcBagCong . | S ~> T |- (ProcBag S) ~> (ProcBag T);
+        ProcMapCong . | S ~> T |- (ProcMap S) ~> (ProcMap T);
+        // Map operations
+        LenMapCong . | S ~> T |- (LenMap S) ~> (LenMap T);
+        GetMapCongL . | S ~> T |- (GetMap S R) ~> (GetMap T R);
+        GetMapCongR . | S ~> T |- (GetMap L S) ~> (GetMap L T);
+        PutMapCongL . | S ~> T |- (PutMap S K V) ~> (PutMap T K V);
+        PutMapCongKey . | S ~> T |- (PutMap M S V) ~> (PutMap M T V);
+        PutMapCongVal . | S ~> T |- (PutMap M K S) ~> (PutMap M K T);
+        DeleteMapCongL . | S ~> T |- (DeleteMap S R) ~> (DeleteMap T R);
+        DeleteMapCongR . | S ~> T |- (DeleteMap L S) ~> (DeleteMap L T);
+        MergeMapCongL . | S ~> T |- (MergeMap S R) ~> (MergeMap T R);
+        MergeMapCongR . | S ~> T |- (MergeMap L S) ~> (MergeMap L T);
+        HasMapCongL . | S ~> T |- (HasMap S R) ~> (HasMap T R);
+        HasMapCongR . | S ~> T |- (HasMap L S) ~> (HasMap L T);
+        KeysMapCong . | S ~> T |- (KeysMap S) ~> (KeysMap T);
+        ValuesMapCong . | S ~> T |- (ValuesMap S) ~> (ValuesMap T);
+        // Ternary conditional
+        TernCongC . | S ~> T |- (Tern S R1 R2) ~> (Tern T R1 R2);
+        TernCongT . | S ~> T |- (Tern L S R) ~> (Tern L T R);
+        TernCongE . | S ~> T |- (Tern L R S) ~> (Tern L R T);
+        // No List/Bag congruence: only Proc congruence (e.g. ProcList/ProcBag) is needed.
+        ProcUInt32Cong . | S ~> T |- (ProcUInt32 S) ~> (ProcUInt32 T);
+        AddUInt32CongL . | S ~> T |- (AddUInt32 S R) ~> (AddUInt32 T R);
+        AddUInt32CongR . | S ~> T |- (AddUInt32 L S) ~> (AddUInt32 L T);
+        BitAndUInt32CongL . | S ~> T |- (BitAndUInt32 S R) ~> (BitAndUInt32 T R);
+        BitAndUInt32CongR . | S ~> T |- (BitAndUInt32 L S) ~> (BitAndUInt32 L T);
+        BitOrUInt32CongL . | S ~> T |- (BitOrUInt32 S R) ~> (BitOrUInt32 T R);
+        BitOrUInt32CongR . | S ~> T |- (BitOrUInt32 L S) ~> (BitOrUInt32 L T);
+        BitNotUInt32Cong . | S ~> T |- (BitNotUInt32 S) ~> (BitNotUInt32 T);
+        ProcBigIntCong . | S ~> T |- (ProcBigInt S) ~> (ProcBigInt T);
+        AddBigIntCongL . | S ~> T |- (AddBigInt S R) ~> (AddBigInt T R);
+        AddBigIntCongR . | S ~> T |- (AddBigInt L S) ~> (AddBigInt L T);
+        SubBigIntCongL . | S ~> T |- (SubBigInt S R) ~> (SubBigInt T R);
+        SubBigIntCongR . | S ~> T |- (SubBigInt L S) ~> (SubBigInt L T);
+        NegBigIntCong . | S ~> T |- (NegBigInt S) ~> (NegBigInt T);
+        BitAndBigIntCongL . | S ~> T |- (BitAndBigInt S R) ~> (BitAndBigInt T R);
+        BitAndBigIntCongR . | S ~> T |- (BitAndBigInt L S) ~> (BitAndBigInt L T);
+        BitOrBigIntCongL . | S ~> T |- (BitOrBigInt S R) ~> (BitOrBigInt T R);
+        BitOrBigIntCongR . | S ~> T |- (BitOrBigInt L S) ~> (BitOrBigInt L T);
+        BitNotBigIntCong . | S ~> T |- (BitNotBigInt S) ~> (BitNotBigInt T);
+        ProcBigRatCong . | S ~> T |- (ProcBigRat S) ~> (ProcBigRat T);
+        ProcFixedCong . | S ~> T |- (ProcFixed S) ~> (ProcFixed T);
+        FractionCongN . | S ~> T |- (Fraction S R) ~> (Fraction T R);
+        FractionCongD . | S ~> T |- (Fraction L S) ~> (Fraction L T);
+        AddBigRatCongL . | S ~> T |- (AddBigRat S R) ~> (AddBigRat T R);
+        AddBigRatCongR . | S ~> T |- (AddBigRat L S) ~> (AddBigRat L T);
+        BitAndBigRatCongL . | S ~> T |- (BitAndBigRat S R) ~> (BitAndBigRat T R);
+        BitAndBigRatCongR . | S ~> T |- (BitAndBigRat L S) ~> (BitAndBigRat L T);
+        BitOrBigRatCongL . | S ~> T |- (BitOrBigRat S R) ~> (BitOrBigRat T R);
+        BitOrBigRatCongR . | S ~> T |- (BitOrBigRat L S) ~> (BitOrBigRat L T);
+        BitNotBigRatCong . | S ~> T |- (BitNotBigRat S) ~> (BitNotBigRat T);
+        MulBigRatCongL . | S ~> T |- (MulBigRat S R) ~> (MulBigRat T R);
+        MulBigRatCongR . | S ~> T |- (MulBigRat L S) ~> (MulBigRat L T);
+        DivBigRatCongL . | S ~> T |- (DivBigRat S R) ~> (DivBigRat T R);
+        DivBigRatCongR . | S ~> T |- (DivBigRat L S) ~> (DivBigRat L T);
+        NegBigRatCong . | S ~> T |- (NegBigRat S) ~> (NegBigRat T);
+
+        // Cast-propagation congruences: let `str(2^3)` reduce its inner
+        // operand to a literal before the cast fires. Without these, nested
+        // expressions inside casts reach no normal form.
         IntToFloatCong . | S ~> T |- (IntToFloat S) ~> (IntToFloat T);
         BoolToFloatCong . | S ~> T |- (BoolToFloat S) ~> (BoolToFloat T);
         StrToFloatCong . | S ~> T |- (StrToFloat S) ~> (StrToFloat T);
@@ -207,12 +606,5 @@ language! {
         FloatIdCong . | S ~> T |- (FloatId S) ~> (FloatId T);
         BoolIdCong . | S ~> T |- (BoolId S) ~> (BoolId T);
         StrIdCong . | S ~> T |- (StrId S) ~> (StrId T);
-        // Custom operation
-        CustomOpCongL . | S ~> T |- (CustomOp S R) ~> (CustomOp T R);
-        CustomOpCongR . | S ~> T |- (CustomOp L S) ~> (CustomOp L T);
-        // Ternary conditional
-        TernCongC . | S ~> T |- (Tern S R1 R2) ~> (Tern T R1 R2);
-        TernCongT . | S ~> T |- (Tern L S R) ~> (Tern L T R);
-        TernCongE . | S ~> T |- (Tern L R S) ~> (Tern L R T);
     },
 }

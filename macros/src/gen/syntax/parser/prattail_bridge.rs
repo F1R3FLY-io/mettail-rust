@@ -16,7 +16,7 @@ use mettail_ast::{
     language::{AttributeValue, LanguageDef},
     types::{CollectionType, TypeExpr},
 };
-use crate::gen::native::native_type_to_string;
+use crate::gen::native::{native_type_to_full_string, native_type_to_string};
 use mettail_prattail::{
     binding_power::Associativity, recursive::CollectionKind, BeamWidthConfig, CategorySpec,
     CustomTokenSpec, LanguageSpec, LexerModeSpec, LiteralPatterns, RefinementPredKind,
@@ -35,18 +35,103 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         .enumerate()
         .map(|(idx, t)| CategorySpec {
             name: t.name.to_string(),
-            native_type: t.native_type.as_ref().map(native_type_to_string),
+            // Use full path so downstream codegen can emit unambiguously qualified
+            // type references (e.g. `mettail_runtime::CanonicalBigRat`), not just
+            // the last segment. `native_type_to_string` gave just the last segment,
+            // which broke `literals {}` Token-variant payloads referencing types
+            // outside the caller's `use` scope.
+            native_type: t.native_type.as_ref().map(native_type_to_full_string),
             is_primary: idx == 0,
+            has_var: true
+            // For now, all categories are assumed to have a Var variant.
+            // Future: derive from grammar analysis (categories with no Var rule
+            // should get `has_var: false`, e.g. List/Bag synthetic collection types).
         })
         .collect();
 
     let cat_names: Vec<String> = categories.iter().map(|c| c.name.clone()).collect();
 
-    let inputs: Vec<RuleSpecInput> = language
+    let mut inputs: Vec<RuleSpecInput> = language
         .terms
         .iter()
         .map(|rule| convert_rule(rule, &cat_names))
         .collect();
+
+    // Synthesize collection-literal rules (`ListLit`, `BagLit`, `MapLit`)
+    // for every `![Vec<T>] as Cat` / `![HashBag<T>] as Cat` /
+    // `![HashMap<K,V>] as Cat` declaration. The merge plan B.1 specifies
+    // that `collection_kind` carries the defaults (`list(`, `)`, `,`;
+    // `bag(…)`, `map(k:v, …)`) — without these synthetic rules there is
+    // no surface syntax for constructing collection literals, and any
+    // Display → parse roundtrip of `ListLit(v)` / `BagLit(v)` / `MapLit(v)`
+    // fails. Each synthesized rule parses `open ... close` using PraTTaIL's
+    // existing `Collection` SyntaxItemSpec (same machinery as user-written
+    // `xs.*sep(",")` rules).
+    for lt in &language.types {
+        let Some(ref ck) = lt.collection_kind else {
+            continue;
+        };
+        let (open, close, sep, kv, kind, label) = match ck {
+            mettail_ast::language::CollectionCategory::List(d) => (
+                d.open.clone(), d.close.clone(), d.sep.clone(),
+                d.key_val_sep.clone(),
+                CollectionKind::Vec,
+                "ListLit",
+            ),
+            mettail_ast::language::CollectionCategory::Bag(d) => (
+                d.open.clone(), d.close.clone(), d.sep.clone(),
+                d.key_val_sep.clone(),
+                CollectionKind::HashBag,
+                "BagLit",
+            ),
+            mettail_ast::language::CollectionCategory::Map(d) => (
+                d.open.clone(), d.close.clone(), d.sep.clone(),
+                d.key_val_sep.clone(),
+                CollectionKind::HashMap,
+                "MapLit",
+            ),
+        };
+        // Resolve element category from the collection's payload type.
+        // For Vec<Proc>/HashBag<Proc>, that's Proc; for HashMap<K, V>
+        // the element is the key category — the map's `key_val_separator`
+        // expresses the `:` between key and value in `SyntaxItemSpec::Collection`.
+        let elem_cat = language
+            .collection_element_type_for_category(&lt.name)
+            .map(|i| i.to_string())
+            .unwrap_or_else(|| lt.name.to_string());
+        // Split `open` into its prefix and its terminal paren (if any):
+        //   - Default form `list(` → prefix `list`, synthesized paren `(`.
+        //   - User delimiter `[` → prefix `[`, no synthesized paren.
+        // Without this split, user-declared delimiters (e.g. `List ["[", "]", ","]`)
+        // produced parser rules like `[ ( elems )` instead of `[ elems ]`,
+        // making empty `[]` and non-default delimiters unparseable.
+        let trimmed_open = open.trim_end_matches('(').to_string();
+        let needs_synth_paren = open != trimmed_open;
+        let mut syntax = Vec::with_capacity(4);
+        syntax.push(SyntaxItemSpec::Terminal(trimmed_open));
+        if needs_synth_paren {
+            syntax.push(SyntaxItemSpec::Terminal("(".to_string()));
+        }
+        syntax.push(SyntaxItemSpec::Collection {
+            param_name: "elems".to_string(),
+            element_category: elem_cat,
+            separator: sep,
+            kind,
+            key_val_separator: kv,
+        });
+        syntax.push(SyntaxItemSpec::Terminal(close));
+        inputs.push(RuleSpecInput {
+            label: label.to_string(),
+            category: lt.name.to_string(),
+            syntax,
+            associativity: Associativity::Left,
+            prefix_precedence: None,
+            has_rust_code: false,
+            rust_code: None,
+            eval_mode: None,
+            source_location: None,
+        });
+    }
 
     // Extract beam_width from options (defaults to Disabled if not specified)
     let beam_width = match language.options.get("beam_width") {
@@ -72,34 +157,98 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
     let semantic_dependency_groups = collect_semantic_dependency_groups(language);
 
     // Convert token definitions to CustomTokenSpec
-    let builtin_names: std::collections::HashSet<&str> =
-        ["Integer", "Float", "StringLit", "Ident"].iter().copied().collect();
-
     let mut literal_patterns = LiteralPatterns::default();
+    let mut integer_alternatives: Vec<String> = Vec::new();
     let custom_tokens: Vec<CustomTokenSpec> = language
         .token_defs
         .iter()
         .map(|td| {
             let name = td.name.to_string();
-            let is_builtin = builtin_names.contains(name.as_str());
 
-            // For built-in overrides, update the LiteralPatterns
-            if is_builtin {
-                match name.as_str() {
-                    "Integer" => literal_patterns.integer = td.pattern.clone(),
-                    "Float" => literal_patterns.float = td.pattern.clone(),
-                    "StringLit" => literal_patterns.string = td.pattern.clone(),
-                    "Ident" => literal_patterns.ident = td.pattern.clone(),
-                    _ => {},
+            // Resolve the NativeKind for this token's category so all
+            // dispatch below is typed — no string comparisons on variant
+            // family names.
+            let native_kind = td.category.as_ref().and_then(|cat| {
+                language.types.iter()
+                    .find(|t| t.name == *cat)
+                    .and_then(|t| t.native_type.as_ref())
+                    .map(mettail_ast::language::NativeKind::from_syn_type)
+            });
+
+            // A "builtin" token is one whose NativeKind maps to a
+            // standard Token variant family (Integer, Float, Boolean,
+            // StringLit). Every non-None return from standard_token_variant()
+            // IS a builtin family — no string comparison needed.
+            let is_builtin = native_kind
+                .and_then(|k| k.standard_token_variant())
+                .is_some();
+
+            // Update LiteralPatterns from the resolved NativeKind.
+            // Multiple literals can share a built-in token family (e.g.
+            // Int/UInt32/BigInt all map to Integer). We build a UNION
+            // regex so the single `Token::Integer(i64)` matches any.
+            if let Some(kind) = native_kind {
+                if is_builtin {
+                    if kind.is_integer() {
+                        integer_alternatives.push(td.pattern.clone());
+                    } else {
+                        match kind {
+                            mettail_ast::language::NativeKind::Float32
+                            | mettail_ast::language::NativeKind::Float64 => {
+                                literal_patterns.float = td.pattern.clone();
+                            }
+                            mettail_ast::language::NativeKind::Bool => {
+                                literal_patterns.boolean = Some(td.pattern.clone());
+                            }
+                            mettail_ast::language::NativeKind::Str => {
+                                literal_patterns.string = td.pattern.clone();
+                            }
+                            _ => {}
+                        }
+                    }
+                } else if td.from_literals {
+                    // Non-builtin literal families: Rational, FixedPoint.
+                    // Populate the by_category maps for the NFA builder.
+                    // Key = mapped variant name (not original category).
+                    match kind {
+                        mettail_ast::language::NativeKind::CanonicalBigRat => {
+                            literal_patterns.rational_by_category.insert(name.clone(), td.pattern.clone());
+                        }
+                        mettail_ast::language::NativeKind::CanonicalFixedPoint => {
+                            literal_patterns.fixed_by_category.insert(name.clone(), td.pattern.clone());
+                        }
+                        _ => {}
+                    }
                 }
             }
 
-            // Resolve payload type from the target category's native type
-            let payload_type = td.category.as_ref().and_then(|cat| {
-                categories.iter()
-                    .find(|c| c.name == cat.to_string())
-                    .and_then(|c| c.native_type.clone())
-            });
+            // For built-in overrides, also update LiteralPatterns for
+            // the Ident pattern (no NativeKind — Ident is structural).
+            if !is_builtin && td.from_literals && name == "Ident" {
+                literal_patterns.ident = td.pattern.clone();
+            }
+
+            // Payload type: built-in literals keep the built-in payload
+            // (i64, bool, f64, …); non-builtin literal-block tokens carry
+            // raw `&'a str`; tokens{} entries inherit their category's
+            // native type.
+            let payload_type = if td.from_literals {
+                if is_builtin {
+                    td.category.as_ref().and_then(|cat| {
+                        categories.iter()
+                            .find(|c| c.name == cat.to_string())
+                            .and_then(|c| c.native_type.clone())
+                    })
+                } else {
+                    Some("str".to_string())
+                }
+            } else {
+                td.category.as_ref().and_then(|cat| {
+                    categories.iter()
+                        .find(|c| c.name == cat.to_string())
+                        .and_then(|c| c.native_type.clone())
+                })
+            };
 
             CustomTokenSpec {
                 name,
@@ -116,6 +265,18 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         })
         .collect();
 
+    // Build the union integer pattern from all Integer-mapped literals.
+    // Multiple categories (Int/UInt32/BigInt) each contribute a regex
+    // alternative; the DFA matches the union as a single `Token::Integer`.
+    if !integer_alternatives.is_empty() {
+        let union = integer_alternatives
+            .iter()
+            .map(|p| format!("({})", p))
+            .collect::<Vec<_>>()
+            .join("|");
+        literal_patterns.integer = union;
+    }
+
     // Convert mode definitions
     let modes: Vec<LexerModeSpec> = language
         .mode_defs
@@ -126,11 +287,15 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                 .token_defs
                 .iter()
                 .map(|td| {
-                    let payload_type = td.category.as_ref().and_then(|cat| {
-                        categories.iter()
-                            .find(|c| c.name == cat.to_string())
-                            .and_then(|c| c.native_type.clone())
-                    });
+                    let payload_type = if td.from_literals {
+                        Some("str".to_string())
+                    } else {
+                        td.category.as_ref().and_then(|cat| {
+                            categories.iter()
+                                .find(|c| c.name == cat.to_string())
+                                .and_then(|c| c.native_type.clone())
+                        })
+                    };
                     CustomTokenSpec {
                         name: td.name.to_string(),
                         pattern: td.pattern.clone(),
@@ -548,6 +713,7 @@ fn convert_pattern_op(
                         param_name: coll_name,
                         element_category: elem_cat,
                         separator: separator.clone(),
+                        key_val_separator: None,
                         kind,
                     });
                 }
@@ -684,6 +850,7 @@ fn convert_chained_sep(
                         param_name: "__chain__".to_string(),
                         element_category: "Unknown".to_string(),
                         separator: separator.to_string(),
+                        key_val_separator: None,
                         kind: CollectionKind::Vec,
                     });
                 },
@@ -695,6 +862,7 @@ fn convert_chained_sep(
                 param_name: "__chain__".to_string(),
                 element_category: "Unknown".to_string(),
                 separator: separator.to_string(),
+                key_val_separator: None,
                 kind: CollectionKind::Vec,
             });
         },
@@ -765,7 +933,7 @@ fn convert_grammar_items(
                 delimiters,
             } => {
                 let kind = match coll_type {
-                    CollectionType::HashBag => CollectionKind::HashBag,
+                    CollectionType::HashBag | CollectionType::HashMap => CollectionKind::HashBag,
                     CollectionType::HashSet => CollectionKind::HashSet,
                     CollectionType::Vec => CollectionKind::Vec,
                 };
@@ -777,6 +945,7 @@ fn convert_grammar_items(
                     param_name: element_type.to_string().to_lowercase(),
                     element_category: element_type.to_string(),
                     separator: separator.clone(),
+                    key_val_separator: None,
                     kind,
                 });
                 // Add close delimiter if present
@@ -799,6 +968,7 @@ fn extract_base_category(ty: &TypeExpr) -> String {
         TypeExpr::Arrow { codomain, .. } => extract_base_category(codomain),
         TypeExpr::MultiBinder(inner) => extract_base_category(inner),
         TypeExpr::Refined { base, .. } => extract_base_category(base),
+        TypeExpr::Map { value, .. } => extract_base_category(value),
     }
 }
 
@@ -819,7 +989,7 @@ fn find_collection_info(name: &str, context: &[TermParam]) -> (String, Collectio
                 if let TypeExpr::Collection { coll_type, element, .. } = ty {
                     let elem_cat = extract_base_category(element);
                     let kind = match coll_type {
-                        CollectionType::HashBag => CollectionKind::HashBag,
+                        CollectionType::HashBag | CollectionType::HashMap => CollectionKind::HashBag,
                         CollectionType::HashSet => CollectionKind::HashSet,
                         CollectionType::Vec => CollectionKind::Vec,
                     };

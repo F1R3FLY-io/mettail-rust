@@ -37,9 +37,11 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             generate_variant(rule, language)
         }).collect();
 
-        // Auto-generate literal variant for native types without explicit literal rule
+        // Auto-generate literal variant for native types without explicit literal rule.
+        // Skip for collection categories (List/Bag/Map) — they get ListLit/BagLit/MapLit below instead.
+        let is_collection_category = lang_type.collection_kind.is_some();
         if let Some(native_type) = &lang_type.native_type {
-            if !has_literal_rule {
+            if !has_literal_rule && !is_collection_category {
                 let literal_label = generate_literal_label(native_type);
                 let nt = NativeType::from_syn_type(native_type);
                 // str is unsized; use String. f32/f64 use canonical wrapper for Eq/Hash/Ord.
@@ -55,6 +57,58 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             }
         }
 
+        // Auto-generate ListLit/BagLit/MapLit literal variant for collection categories
+        // whose delimiters are declared in `types { ... }` (List/Bag/Map kinds).
+        // Payload:
+        //   - `![T] as List`  → `T` from native_type
+        //   - bare `List`     → `Vec<Proc>` (Proc is the primary category)
+        //   - similarly for Bag (`HashBag<Proc>`) and Map (`HashMapLit<Proc, Proc>`)
+        {
+            use mettail_ast::language::CollectionCategory;
+            let elem_type = language
+                .types
+                .iter()
+                .find(|t| t.name.to_string() == "Proc")
+                .map(|t| &t.name)
+                .or_else(|| language.types.first().map(|t| &t.name));
+            if let Some(ref collection_kind) = lang_type.collection_kind.as_ref() {
+                let payload_opt: Option<TokenStream> = if let Some(ref native_type) = lang_type.native_type {
+                    // `![HashMap] as Map` (implicit params) parses as a bare `HashMap`;
+                    // use the runtime wrapper so derived Hash/Ord/Eq apply.
+                    let nt = NativeType::from_syn_type(native_type);
+                    if matches!(collection_kind, CollectionCategory::Map(_))
+                        && matches!(nt, NativeType::Other(ref s) if s == "HashMap")
+                    {
+                        elem_type.map(|elem_type| {
+                            quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
+                        })
+                    } else {
+                        Some(quote! { #native_type })
+                    }
+                } else {
+                    elem_type.map(|elem_type| match collection_kind {
+                        CollectionCategory::List(_) => quote! { Vec<#elem_type> },
+                        CollectionCategory::Bag(_) => {
+                            quote! { mettail_runtime::HashBag<#elem_type> }
+                        }
+                        CollectionCategory::Map(_) => {
+                            quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
+                        }
+                    })
+                };
+                if let (Some(payload_type), false) = (payload_opt, has_literal_rule) {
+                    let literal_label = match collection_kind {
+                        CollectionCategory::List(_) => quote::format_ident!("ListLit"),
+                        CollectionCategory::Bag(_) => quote::format_ident!("BagLit"),
+                        CollectionCategory::Map(_) => quote::format_ident!("MapLit"),
+                    };
+                    variants.push(quote! {
+                        #literal_label(#payload_type)
+                    });
+                }
+            }
+        }
+
         // Auto-generate Var variant if no explicit Var rule exists
         if !has_var_rule {
             let var_label = generate_var_label(cat_name);
@@ -63,10 +117,22 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             });
         }
 
-        // Auto-generate lambda variants for every domain category (including native, e.g. Int/Bool/Str)
-        // This creates Lam{Domain} and MLam{Domain} for each domain type
+        // Auto-generate lambda variants for domain categories that this
+        // category uses. Pre-HOL-B: every (cat, domain) pair — O(categories²).
+        // Post-HOL-B: only pairs flagged by `compute_hol_domain_pairs`:
+        // either structurally implied by an `Abstraction` /
+        // `MultiAbstraction` grammar param, or appearing by name in a
+        // `rust_code` body / logic block. This is the primary cut: the
+        // enum definition is what every downstream emitter keys off of.
+        let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
+        let cat_str = cat_name.to_string();
         for domain_lang_type in &language.types {
             let domain_name = &domain_lang_type.name;
+            let domain_str = domain_name.to_string();
+
+            if !hol_pairs.contains(&(cat_str.clone(), domain_str)) {
+                continue;
+            }
 
             // Single-binder lambda: Lam{Domain}
             let lam_variant = syn::Ident::new(
@@ -223,7 +289,9 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
             FieldType::Collection { coll_type, element_type } => {
                 // Single collection field
                 let coll_type_ident = match coll_type {
-                    CollectionType::HashBag => quote! { mettail_runtime::HashBag },
+                    CollectionType::HashBag | CollectionType::HashMap => {
+                        quote! { mettail_runtime::HashBag }
+                    },
                     CollectionType::HashSet => quote! { std::collections::HashSet },
                     CollectionType::Vec => quote! { Vec },
                 };
@@ -243,7 +311,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
                 },
                 FieldType::Collection { coll_type, element_type } => {
                     let coll_type_ident = match coll_type {
-                        CollectionType::HashBag => quote! { mettail_runtime::HashBag },
+                        CollectionType::HashBag | CollectionType::HashMap => quote! { mettail_runtime::HashBag },
                         CollectionType::HashSet => quote! { std::collections::HashSet },
                         CollectionType::Vec => quote! { Vec },
                     };
@@ -370,7 +438,7 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
                 GrammarItem::Collection { coll_type, element_type, .. } => {
                     // Collection becomes a field with the appropriate collection type
                     let coll_type_ident = match coll_type {
-                        CollectionType::HashBag => quote! { mettail_runtime::HashBag },
+                        CollectionType::HashBag | CollectionType::HashMap => quote! { mettail_runtime::HashBag },
                         CollectionType::HashSet => quote! { std::collections::HashSet },
                         CollectionType::Vec => quote! { Vec },
                     };
@@ -428,7 +496,9 @@ fn type_expr_to_field_type(
         TypeExpr::Collection { coll_type, element } => {
             let elem_type = type_expr_to_rust_type(element);
             match coll_type {
-                CollectionType::HashBag => quote! { mettail_runtime::HashBag<#elem_type> },
+                CollectionType::HashBag | CollectionType::HashMap => {
+                    quote! { mettail_runtime::HashBag<#elem_type> }
+                },
                 CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
                 CollectionType::Vec => quote! { Vec<#elem_type> },
             }
@@ -446,6 +516,10 @@ fn type_expr_to_field_type(
             // Refinement type: delegate to the base type
             type_expr_to_field_type(base, language_category)
         },
+        TypeExpr::Map { value, .. } => {
+            // Map type: delegate to the value element type for field purposes
+            type_expr_to_field_type(value, language_category)
+        },
     }
 }
 
@@ -458,7 +532,9 @@ fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
         TypeExpr::Collection { coll_type, element } => {
             let elem_type = type_expr_to_rust_type(element);
             match coll_type {
-                CollectionType::HashBag => quote! { mettail_runtime::HashBag<#elem_type> },
+                CollectionType::HashBag | CollectionType::HashMap => {
+                    quote! { mettail_runtime::HashBag<#elem_type> }
+                },
                 CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
                 CollectionType::Vec => quote! { Vec<#elem_type> },
             }
@@ -475,6 +551,11 @@ fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
         TypeExpr::Refined { base, .. } => {
             // Refinement type: delegate to the base type
             type_expr_to_rust_type(base)
+        },
+        TypeExpr::Map { key, value } => {
+            let k = type_expr_to_rust_type(key);
+            let v = type_expr_to_rust_type(value);
+            quote! { mettail_runtime::HashMapLit<#k, #v> }
         },
     }
 }

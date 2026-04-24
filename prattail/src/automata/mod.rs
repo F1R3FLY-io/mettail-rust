@@ -41,12 +41,20 @@ pub enum TokenKind {
     Ident,
     /// Integer literal
     Integer,
+    /// Integer literal for a specific category (e.g. Int, UInt32).
+    IntegerLit(String),
+    /// Rational literal for a specific category (e.g. BigRat).
+    RationalLit(String),
+    /// Fixed-point literal for a specific category (e.g. Fixed).
+    FixedPointLit(String),
     /// Float literal
     Float,
     /// Boolean literal `true`
     True,
     /// Boolean literal `false`
     False,
+    /// Custom boolean literal (regex match, eval converts text to bool). Used when literal_patterns.boolean is Some.
+    BooleanLit,
     /// String literal
     StringLit,
     /// A fixed terminal symbol (operator, keyword, delimiter).
@@ -67,9 +75,13 @@ impl TokenKind {
         match self {
             TokenKind::Eof => 0,
             TokenKind::Ident => 1,
-            TokenKind::Integer => 2,
+            TokenKind::Integer | TokenKind::IntegerLit(_) | TokenKind::RationalLit(_) => 2,
+            // Fixed-point literals share a prefix with floats (e.g. `3.5` vs `3.5p0`); priority must
+            // be >= float so ties at the same DFA position prefer fixed (maximal munch still picks
+            // the longer match when the DFA can extend with `p…`).
+            TokenKind::FixedPointLit(_) => 4,
             TokenKind::Float => 3,
-            TokenKind::True | TokenKind::False => 10,
+            TokenKind::True | TokenKind::False | TokenKind::BooleanLit => 10,
             TokenKind::StringLit => 2,
             TokenKind::Fixed(_) => 10,
             TokenKind::Dollar => 5,
@@ -77,6 +89,106 @@ impl TokenKind {
             // Default priority for custom tokens; actual priority is set from
             // CustomTokenSpec.priority at the NFA accept-state level.
             TokenKind::Custom(_) => 2,
+        }
+    }
+}
+
+// ─── Token family classification ────────────────────────────────────────────
+//
+// `TokenFamily` provides typed dispatch for token variant names, eliminating
+// string comparisons throughout codegen. Every token variant belongs to exactly
+// one family; families with payloads (Integer, Float, Rational, …) require
+// wildcard patterns (`Token::Name(_)`) in generated match arms.
+
+/// Classification of a Token enum variant into a known family.
+///
+/// Used by codegen sites to determine:
+/// - Whether a variant carries a payload (→ wildcard match pattern)
+/// - The canonical match-arm pattern string for code emission
+/// - Whether it's a built-in lexer family or a user-defined custom token
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TokenFamily {
+    Eof,
+    Ident,
+    Integer,
+    Float,
+    Boolean,
+    StringLit,
+    Rational,
+    FixedPoint,
+    Dollar,
+    DoubleDollar,
+    /// A fixed keyword/punctuation token or a user-defined custom token.
+    /// Custom tokens may carry payloads — checked via `CustomTokenSpec`.
+    Other,
+}
+
+impl TokenFamily {
+    /// Classify a token variant name into its family.
+    ///
+    /// This is the **single** string→enum gateway. All downstream dispatch
+    /// uses the returned `TokenFamily` via pattern matching — no further
+    /// string comparisons.
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "Eof" => Self::Eof,
+            "Ident" => Self::Ident,
+            "Integer" => Self::Integer,
+            "Float" => Self::Float,
+            "Boolean" => Self::Boolean,
+            "StringLit" => Self::StringLit,
+            "Rational" => Self::Rational,
+            "FixedPoint" => Self::FixedPoint,
+            "Dollar" => Self::Dollar,
+            "DoubleDollar" => Self::DoubleDollar,
+            _ => Self::Other,
+        }
+    }
+
+    /// Whether this family's Token variant carries a payload and therefore
+    /// requires a wildcard pattern (`Token::Name(_)`) in match arms.
+    #[inline]
+    pub const fn has_payload(self) -> bool {
+        matches!(
+            self,
+            Self::Ident
+                | Self::Integer
+                | Self::Float
+                | Self::Boolean
+                | Self::StringLit
+                | Self::Rational
+                | Self::FixedPoint
+                | Self::Dollar
+                | Self::DoubleDollar
+        )
+    }
+
+    /// Whether this is a built-in lexer family (driven by `BuiltinNeeds`
+    /// and `LiteralPatterns`) as opposed to a user-defined custom token.
+    #[inline]
+    pub const fn is_builtin(self) -> bool {
+        !matches!(self, Self::Other)
+    }
+
+    /// The canonical match-arm pattern for this family in generated code.
+    ///
+    /// Returns `Some("Token::Name(_)")` for payload families,
+    /// `Some("Token::Eof")` for Eof, `None` for `Other` (caller must
+    /// format `Token::{name}` or `Token::{name}(_)` based on
+    /// `CustomTokenSpec::payload_type`).
+    pub const fn match_pattern(self) -> Option<&'static str> {
+        match self {
+            Self::Eof => Some("Token::Eof"),
+            Self::Ident => Some("Token::Ident(_)"),
+            Self::Integer => Some("Token::Integer(_, _)"),
+            Self::Float => Some("Token::Float(_)"),
+            Self::Boolean => Some("Token::Boolean(_)"),
+            Self::StringLit => Some("Token::StringLit(_)"),
+            Self::Rational => Some("Token::Rational(_)"),
+            Self::FixedPoint => Some("Token::FixedPoint(_)"),
+            Self::Dollar => Some("Token::Dollar(_)"),
+            Self::DoubleDollar => Some("Token::DoubleDollar(_)"),
+            Self::Other => None,
         }
     }
 }
@@ -207,19 +319,30 @@ pub struct DfaState {
     /// `DEAD_STATE` means no transition for that equivalence class.
     pub transitions: Vec<StateId>,
     /// If this is an accepting state, which token kind it produces (primary winner).
+    ///
+    /// This is the highest-priority candidate (lowest tropical weight) among
+    /// all accepting NFA states in the subset. Additional candidates are
+    /// tracked via `accept_alternatives` (feature branch) for ambiguity
+    /// detection and disambiguation.
     pub accept: Option<TokenKind>,
-    /// Tropical weight for this accepting state.
+    /// Tropical weight for the default accepting token kind.
     ///
     /// Inherits from the highest-priority NFA accept state during subset
-    /// construction. Lower weight = higher priority.
-    /// Non-accepting states have `TropicalWeight::zero()` (infinity).
+    /// construction. Lower weight = higher priority. Non-accepting states
+    /// have `TropicalWeight::zero()` (infinity).
     pub weight: TropicalWeight,
-    /// Alternative accept tokens for this DFA state, sorted by weight (ascending).
+    /// All accepting token kinds reachable in this DFA state, sorted by
+    /// weight (ascending = highest priority first).
     ///
-    /// Non-empty only for **ambiguous** states where 2+ distinct `TokenKind`s
-    /// are valid (e.g., a keyword like `error` that also matches the identifier
-    /// pattern). The primary winner is in `accept`/`weight`; this vec contains
-    /// ALL alternatives including the primary, for use by composed dispatch tables.
+    /// Populated when 2+ distinct `TokenKind`s accept at this state — either
+    /// because the patterns overlap semantically (e.g., a keyword like
+    /// `error` that also matches the identifier pattern) or because the
+    /// lexer wants to try multiple candidates in priority order with
+    /// per-candidate `eval` fallback when evaluation fails.
+    ///
+    /// The primary winner is also in `accept`/`weight`; this vec contains
+    /// ALL alternatives including the primary for use by composed dispatch
+    /// tables and fallback-based literal evaluation.
     ///
     /// Empty for unambiguous states (zero overhead).
     pub alt_accepts: Vec<(TokenKind, TropicalWeight)>,
@@ -617,6 +740,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
         let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
         let (dfa, min_dfa, part) = full_pipeline(&nfa);
@@ -725,6 +850,8 @@ mod tests {
                 float: false,
                 string_lit: false,
                 boolean: false,
+                rational: false,
+                fixed_point: false,
             };
             let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
             let (dfa, min_dfa, part) = full_pipeline(&nfa);
@@ -758,6 +885,8 @@ mod tests {
                 float: false,
                 string_lit: false,
                 boolean: false,
+                rational: false,
+                fixed_point: false,
             };
             let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
             let (dfa, min_dfa, part) = full_pipeline(&nfa);
@@ -896,6 +1025,8 @@ mod tests {
                 float: false,
                 string_lit: false,
                 boolean: false,
+                rational: false,
+                fixed_point: false,
             };
             let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
             let part = compute_equivalence_classes(&nfa);

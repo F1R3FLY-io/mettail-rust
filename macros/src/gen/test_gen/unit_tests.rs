@@ -33,9 +33,13 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
         let label = rule.label.to_string();
         let cat = rule.category.to_string();
         let cat_lower = cat.to_lowercase();
+        // Include the category so that shared labels (e.g. `Err` / `CastErrInt`
+        // defined on BigRat, Int, UInt32, ...) don't collide in the generated
+        // test module.
         let test_name = format!(
-            "unit_{}_{}",
+            "unit_{}_{}_{}",
             lang_name_lower,
+            cat_lower,
             label.to_lowercase()
         );
 
@@ -233,8 +237,9 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
             .any(|r| r.category == lang_type.name && is_var_rule(r));
         if !has_explicit_var {
             let test_name = format!(
-                "unit_{}_auto_{}",
+                "unit_{}_auto_{}_{}",
                 lang_name_lower,
+                cat_lower,
                 var_label.to_lowercase()
             );
             out.push_str("#[test]\n");
@@ -281,8 +286,9 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
                 };
 
                 let test_name = format!(
-                    "unit_{}_auto_{}",
+                    "unit_{}_auto_{}_{}",
                     lang_name_lower,
+                    cat_lower,
                     lit_label.to_lowercase()
                 );
                 out.push_str("#[test]\n");
@@ -317,6 +323,12 @@ fn default_value_for_native_type(native_type: &str) -> &str {
         "f64" => "0.0f64",
         "bool" => "false",
         "str" | "String" => "String::new()",
+        "Vec" => "Vec::new()",
+        "HashBag" => "mettail_runtime::HashBag::new()",
+        "HashMapLit" | "HashMap" => "mettail_runtime::HashMapLit::new()",
+        nt if nt.ends_with("BigInt") => "mettail_runtime::CanonicalBigInt::default()",
+        nt if nt.ends_with("BigRat") => "mettail_runtime::CanonicalBigRat::default()",
+        nt if nt.ends_with("FixedPoint") => "mettail_runtime::CanonicalFixedPoint::default()",
         _ => "Default::default()",
     }
 }
@@ -340,7 +352,8 @@ fn construct_leaf_value(field: &FieldInfo, language: &LanguageDef) -> Option<Str
             Some(mettail_ast::types::CollectionType::Vec) => {
                 Some(format!("vec![]"))
             }
-            Some(mettail_ast::types::CollectionType::HashBag) => {
+            Some(mettail_ast::types::CollectionType::HashBag)
+            | Some(mettail_ast::types::CollectionType::HashMap) => {
                 Some(format!("mettail_runtime::HashBag::new()"))
             }
             Some(mettail_ast::types::CollectionType::HashSet) => {

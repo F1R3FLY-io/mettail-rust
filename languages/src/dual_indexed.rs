@@ -965,73 +965,59 @@ impl<'a, T: Clone + Hash + Eq + Sync + Send> ParallelIterator for DualAllPairsPa
 // Adaptor types: ToRelIndex / ToRelIndex0
 // ---------------------------------------------------------------------------
 
-pub struct ToDualInd0<T>(PhantomData<T>);
-impl<T> Default for ToDualInd0<T> {
-    fn default() -> Self {
-        Self(PhantomData)
-    }
+// Option D (source consolidation): the three single-index markers
+// `ToDualInd0` / `ToDualInd1` / `ToDualIndNone` have identical structural
+// impls (`Default` / `Freezable` / `ToRelIndex`) that differ only in the
+// wrapper type they yield (`DualInd0` / `DualInd1` / `DualIndNone`). Ascent
+// requires DISTINCT marker types for trait-coherence dispatch in its BYODS
+// protocol — merging into one generic `ToDualInd<K, T>` would risk
+// breaking that dispatch via blanket-impl coherence conflicts. The safe
+// consolidation is a local macro_rules! that emits the three structs and
+// their trait impls from a single template, keeping the type surface
+// distinct but reducing source duplication. Monomorphization count is
+// unchanged (still N types × T = N*|cats| mono instances); what we save
+// is ~90 lines of mechanical boilerplate that maintainers had to keep
+// in lock-step.
+macro_rules! single_column_marker {
+    ($marker:ident, $wrapper:ident) => {
+        pub struct $marker<T>(PhantomData<T>);
+        impl<T> Default for $marker<T> {
+            fn default() -> Self {
+                Self(PhantomData)
+            }
+        }
+        impl<T> Freezable for $marker<T> {}
+
+        impl<T: Clone + Hash + Eq> ToRelIndex<CDualIndexedRel<T>> for $marker<T> {
+            type RelIndex<'a>
+                = $wrapper<'a, T>
+            where
+                T: 'a;
+
+            fn to_rel_index<'a>(
+                &'a self,
+                rel: &'a CDualIndexedRel<T>,
+            ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndex<'a> {
+                $wrapper(rel)
+            }
+
+            type RelIndexWrite<'a>
+                = $wrapper<'a, T>
+            where
+                T: 'a;
+
+            fn to_rel_index_write<'a>(
+                &'a mut self,
+                rel: &'a mut CDualIndexedRel<T>,
+            ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndexWrite<'a> {
+                $wrapper(rel)
+            }
+        }
+    };
 }
-impl<T> Freezable for ToDualInd0<T> {}
 
-impl<T: Clone + Hash + Eq> ToRelIndex<CDualIndexedRel<T>> for ToDualInd0<T> {
-    type RelIndex<'a>
-        = DualInd0<'a, T>
-    where
-        T: 'a;
-
-    fn to_rel_index<'a>(
-        &'a self,
-        rel: &'a CDualIndexedRel<T>,
-    ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndex<'a> {
-        DualInd0(rel)
-    }
-
-    type RelIndexWrite<'a>
-        = DualInd0<'a, T>
-    where
-        T: 'a;
-
-    fn to_rel_index_write<'a>(
-        &'a mut self,
-        rel: &'a mut CDualIndexedRel<T>,
-    ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndexWrite<'a> {
-        DualInd0(rel)
-    }
-}
-
-pub struct ToDualInd1<T>(PhantomData<T>);
-impl<T> Default for ToDualInd1<T> {
-    fn default() -> Self {
-        Self(PhantomData)
-    }
-}
-impl<T> Freezable for ToDualInd1<T> {}
-
-impl<T: Clone + Hash + Eq> ToRelIndex<CDualIndexedRel<T>> for ToDualInd1<T> {
-    type RelIndex<'a>
-        = DualInd1<'a, T>
-    where
-        T: 'a;
-
-    fn to_rel_index<'a>(
-        &'a self,
-        rel: &'a CDualIndexedRel<T>,
-    ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndex<'a> {
-        DualInd1(rel)
-    }
-
-    type RelIndexWrite<'a>
-        = DualInd1<'a, T>
-    where
-        T: 'a;
-
-    fn to_rel_index_write<'a>(
-        &'a mut self,
-        rel: &'a mut CDualIndexedRel<T>,
-    ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndexWrite<'a> {
-        DualInd1(rel)
-    }
-}
+single_column_marker!(ToDualInd0, DualInd0);
+single_column_marker!(ToDualInd1, DualInd1);
 
 pub struct ToDualInd0_1<T>(PhantomData<T>);
 impl<T> Default for ToDualInd0_1<T> {
@@ -1080,39 +1066,7 @@ impl<T: Clone + Hash + Eq> ToRelIndex0<CDualIndexedRel<T>> for ToDualInd0_1<T> {
     }
 }
 
-pub struct ToDualIndNone<T>(PhantomData<T>);
-impl<T> Default for ToDualIndNone<T> {
-    fn default() -> Self {
-        Self(PhantomData)
-    }
-}
-impl<T> Freezable for ToDualIndNone<T> {}
-
-impl<T: Clone + Hash + Eq> ToRelIndex<CDualIndexedRel<T>> for ToDualIndNone<T> {
-    type RelIndex<'a>
-        = DualIndNone<'a, T>
-    where
-        T: 'a;
-
-    fn to_rel_index<'a>(
-        &'a self,
-        rel: &'a CDualIndexedRel<T>,
-    ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndex<'a> {
-        DualIndNone(rel)
-    }
-
-    type RelIndexWrite<'a>
-        = DualIndNone<'a, T>
-    where
-        T: 'a;
-
-    fn to_rel_index_write<'a>(
-        &'a mut self,
-        rel: &'a mut CDualIndexedRel<T>,
-    ) -> <Self as ToRelIndex<CDualIndexedRel<T>>>::RelIndexWrite<'a> {
-        DualIndNone(rel)
-    }
-}
+single_column_marker!(ToDualIndNone, DualIndNone);
 
 // ---------------------------------------------------------------------------
 // BYODS provider macros

@@ -1133,7 +1133,7 @@ fn write_prefix_arms_unified(
             "i32" => {
                 write!(
                     buf,
-                    "Token::Integer(v) => {{ let val = *v as i32; *pos += 1; \
+                    "Token::Integer(v, _) => {{ let val = *v as i32; *pos += 1; \
                      return ParseStep::ContinueInfix {{ cat: CategoryId::{cat}, \
                      lhs: AnyTerm::{cat}(Box::new({cat}::NumLit(val))), bp }}; }}, ",
                 ).unwrap();

@@ -29,6 +29,10 @@ pub use composition::grammar_import_lang as importedmath;
 pub use led_test as ledtest;
 pub use guarded_rho as guardedrho;
 
+/// Proc → [`mettail_runtime::NumericInput`] adapters; lives beside `src/` on purpose.
+#[path = "../numeric_dispatch.rs"]
+mod numeric_dispatch;
+
 // Re-export eqrel for the generated Ascent code
 // The generated code uses `#[ds(crate::eqrel)]` which expects eqrel at crate root
 pub use ascent_byods_rels::eqrel;

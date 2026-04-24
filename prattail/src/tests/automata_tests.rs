@@ -207,6 +207,8 @@ fn test_rhocalc_terminals() {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         },
     );
 
@@ -253,6 +255,8 @@ fn test_minimization_reduces_states() {
         float: false,
         string_lit: false,
         boolean: false,
+        rational: false,
+        fixed_point: false,
     };
 
     let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
@@ -388,6 +392,8 @@ fn calculator_terminals() -> (Vec<TerminalPattern>, BuiltinNeeds) {
         integer: true,
         float: true,
         boolean: true,
+        rational: false,
+        fixed_point: false,
         string_lit: true,
     };
 

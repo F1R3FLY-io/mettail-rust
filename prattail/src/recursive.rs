@@ -55,6 +55,9 @@ pub enum RDSyntaxItem {
         element_category: String,
         separator: String,
         kind: CollectionKind,
+        /// Map-only separator between key and value (e.g., ":").
+        /// Must be `Some` when `kind == HashMap`, otherwise `None`.
+        key_val_separator: Option<String>,
     },
     /// A separated list using #sep pattern op.
     SepList {
@@ -101,6 +104,7 @@ pub enum CollectionKind {
     HashBag,
     HashSet,
     Vec,
+    HashMap,
 }
 
 /// Generate a recursive descent handler for a single rule.
@@ -249,6 +253,7 @@ fn collection_init_str(kind: &CollectionKind) -> &'static str {
         CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
         CollectionKind::HashSet => "std::collections::HashSet::new()",
         CollectionKind::Vec => "Vec::new()",
+        CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
     }
 }
 
@@ -256,6 +261,7 @@ fn insert_method_str(kind: &CollectionKind) -> &'static str {
     match kind {
         CollectionKind::HashBag | CollectionKind::HashSet => "insert",
         CollectionKind::Vec => "push",
+        CollectionKind::HashMap => "insert",
     }
 }
 
@@ -318,29 +324,57 @@ fn write_parse_items(
                 element_category,
                 separator,
                 kind,
+                key_val_separator,
             } => {
                 let sep_variant = terminal_to_variant_name(separator);
                 let init = collection_init_str(kind);
                 let method = insert_method_str(kind);
 
-                write!(
-                    buf,
-                    "let mut {param_name} = {init}; \
-                    loop {{ \
-                        match parse_{element_category}(tokens, pos, 0) {{ \
-                            Ok(elem) => {{ \
-                                {param_name}.{method}(elem); \
-                                if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
-                                    *pos += 1; \
-                                }} else {{ \
-                                    break; \
+                if *kind == CollectionKind::HashMap {
+                    let kv = key_val_separator
+                        .as_ref()
+                        .expect("HashMap collections require key_val_separator");
+                    let kv_variant = terminal_to_variant_name(kv);
+                    write!(
+                        buf,
+                        "let mut {param_name} = {init}; \
+                        loop {{ \
+                            match parse_{element_category}(tokens, pos, 0) {{ \
+                                Ok(key) => {{ \
+                                    expect_token(tokens, pos, |t| matches!(t, Token::{kv_variant}), \"{kv}\")?; \
+                                    let value = parse_{element_category}(tokens, pos, 0)?; \
+                                    {param_name}.{method}(key, value); \
+                                    if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+                                        *pos += 1; \
+                                    }} else {{ \
+                                        break; \
+                                    }} \
                                 }} \
+                                Err(_) => break, \
                             }} \
-                            Err(_) => break, \
-                        }} \
-                    }}",
-                )
-                .unwrap();
+                        }}",
+                    )
+                    .unwrap();
+                } else {
+                    write!(
+                        buf,
+                        "let mut {param_name} = {init}; \
+                        loop {{ \
+                            match parse_{element_category}(tokens, pos, 0) {{ \
+                                Ok(elem) => {{ \
+                                    {param_name}.{method}(elem); \
+                                    if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+                                        *pos += 1; \
+                                    }} else {{ \
+                                        break; \
+                                    }} \
+                                }} \
+                                Err(_) => break, \
+                            }} \
+                        }}",
+                    )
+                    .unwrap();
+                }
 
                 captures.push(Capture {
                     name: param_name.clone(),
@@ -1015,7 +1049,7 @@ fn write_optional_body(
             let mut pat = String::new();
             match token.as_str() {
                 "Ident" => pat.push_str("Token::Ident(_)"),
-                "Integer" => pat.push_str("Token::Integer(_)"),
+                "Integer" => pat.push_str("Token::Integer(_, _)"),
                 "Float" => pat.push_str("Token::Float(_)"),
                 "Boolean" => pat.push_str("Token::Boolean(_)"),
                 "StringLit" => pat.push_str("Token::StringLit(_)"),

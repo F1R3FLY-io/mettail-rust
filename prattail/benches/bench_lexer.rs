@@ -6,7 +6,7 @@
 //! 3. NFA construction (Thompson's construction)
 //! 4. Alphabet partitioning (equivalence classes)
 //! 5. Subset construction (NFA -> DFA)
-//! 6. DFA minimization (Hopcroft's algorithm)
+//! 6. DFA minimization (Valmari's 2012 algorithm)
 //! 7. Code generation (DFA -> Rust source)
 //! 8. Scaling with synthetic specs
 

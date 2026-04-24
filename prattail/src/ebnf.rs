@@ -416,19 +416,52 @@ fn write_precedence_table(
     let hdr_label = "Label";
     let hdr_kind = "Kind";
 
-    let w_bp = rows.iter().map(|r| r.bp_str.len()).max().unwrap_or(0).max(hdr_bp.len());
-    let w_assoc = rows.iter().map(|r| r.assoc.len()).max().unwrap_or(0).max(hdr_assoc.len());
-    let w_op = rows.iter().map(|r| r.op.len()).max().unwrap_or(0).max(hdr_op.len());
-    let w_label = rows.iter().map(|r| r.label.len()).max().unwrap_or(0).max(hdr_label.len());
-    let w_kind = rows.iter().map(|r| r.kind.len()).max().unwrap_or(0).max(hdr_kind.len());
+    let w_bp = rows
+        .iter()
+        .map(|r| r.bp_str.len())
+        .max()
+        .unwrap_or(0)
+        .max(hdr_bp.len());
+    let w_assoc = rows
+        .iter()
+        .map(|r| r.assoc.len())
+        .max()
+        .unwrap_or(0)
+        .max(hdr_assoc.len());
+    let w_op = rows
+        .iter()
+        .map(|r| r.op.len())
+        .max()
+        .unwrap_or(0)
+        .max(hdr_op.len());
+    let w_label = rows
+        .iter()
+        .map(|r| r.label.len())
+        .max()
+        .unwrap_or(0)
+        .max(hdr_label.len());
+    let w_kind = rows
+        .iter()
+        .map(|r| r.kind.len())
+        .max()
+        .unwrap_or(0)
+        .max(hdr_kind.len());
 
     /* ── Pass 3: emit header, underline, and data rows ── */
     /* Each row: "(*  " + columns + " *)" padded to EBNF_LINE_WIDTH */
     let emit_row = |buf: &mut String, c0: &str, c1: &str, c2: &str, c3: &str, c4: &str| {
         let raw = format!(
             "  {:<w0$} {:<w1$} {:<w2$} {:<w3$} {:<w4$}",
-            c0, c1, c2, c3, c4,
-            w0 = w_bp, w1 = w_assoc, w2 = w_op, w3 = w_label, w4 = w_kind,
+            c0,
+            c1,
+            c2,
+            c3,
+            c4,
+            w0 = w_bp,
+            w1 = w_assoc,
+            w2 = w_op,
+            w3 = w_label,
+            w4 = w_kind,
         );
         writeln!(buf, "(*{:<w$}*)", raw, w = content_w).unwrap();
     };
@@ -464,12 +497,7 @@ fn write_precedence_table(
 /// ```
 ///
 /// Continuation lines are indented to align with the first token.
-fn write_wrapped_ebnf_comment(
-    buf: &mut String,
-    prefix: &str,
-    items: &[String],
-    max_width: usize,
-) {
+fn write_wrapped_ebnf_comment(buf: &mut String, prefix: &str, items: &[String], max_width: usize) {
     if items.is_empty() {
         writeln!(buf, "(* {} {{}} *)", prefix.trim_end()).unwrap();
         return;
@@ -568,6 +596,7 @@ fn write_category(
             "f32" | "f64" => ("<float>", "FloatLit"),
             "bool" => ("<boolean>", "BoolLit"),
             "str" | "String" => ("<string>", "StringLit"),
+            _ if native_type.ends_with("CanonicalFixedPoint") => ("<fixedpoint>", "FixedLit"),
             _ => ("?native?", "Lit"),
         };
         productions.push((token_name.to_string(), format!("(* {} *)", label)));
@@ -816,11 +845,13 @@ fn format_syntax_item(item: &SyntaxItemSpec) -> String {
             element_category,
             separator,
             kind,
+            key_val_separator: _,
         } => {
             let kind_str = match kind {
                 CollectionKind::HashBag => "HashBag",
                 CollectionKind::HashSet => "HashSet",
                 CollectionKind::Vec => "Vec",
+                CollectionKind::HashMap => "HashMap",
             };
             format!("{{ {} / \"{}\" }}  (* {} *)", element_category, separator, kind_str)
         },
@@ -945,6 +976,7 @@ fn format_rule_annotation(
                 CollectionKind::HashBag => "HashBag",
                 CollectionKind::HashSet => "HashSet",
                 CollectionKind::Vec => "Vec",
+                CollectionKind::HashMap => "HashMap",
             })
             .unwrap_or("collection");
         parts.push(kind.to_string());
@@ -1102,7 +1134,9 @@ mod tests {
     use super::*;
     use crate::binding_power::Associativity;
     use crate::pipeline::ParserBundle;
-    use crate::{BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpec, SyntaxItemSpec};
+    use crate::{
+        BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpec, SyntaxItemSpec,
+    };
 
     /// Helper: build a default RuleSpec with the given fields.
     fn make_rule(label: &str, category: &str, syntax: Vec<SyntaxItemSpec>) -> RuleSpec {
@@ -1141,6 +1175,7 @@ mod tests {
                 name: "Int".to_string(),
                 native_type: Some("i32".to_string()),
                 is_primary: true,
+                has_var: true,
             }],
             rules: vec![
                 // NumLit
@@ -1346,6 +1381,7 @@ mod tests {
                 name: t.name.clone(),
                 native_type: t.native_type.clone(),
                 is_primary: i == 0,
+                has_var: t.has_var,
             })
             .collect();
 
@@ -1496,6 +1532,7 @@ mod tests {
                 label: r.label.clone(),
                 source_category: r.cast_source_category.clone().unwrap_or_default(),
                 target_category: r.category.clone(),
+                shares_infix_with_target: false,
             })
             .collect();
 
@@ -1596,10 +1633,12 @@ mod tests {
                 element_category,
                 separator,
                 kind,
+                key_val_separator,
             } => RDSyntaxItem::Collection {
                 param_name: param_name.clone(),
                 element_category: element_category.clone(),
                 separator: separator.clone(),
+                key_val_separator: None,
                 kind: *kind,
             },
             SyntaxItemSpec::Sep { body, separator, kind } => RDSyntaxItem::Sep {
@@ -1701,6 +1740,7 @@ mod tests {
                 name: "Term".to_string(),
                 native_type: None,
                 is_primary: true,
+                has_var: true,
             }],
             rules: vec![
                 {
@@ -1766,11 +1806,13 @@ mod tests {
                     name: "Proc".to_string(),
                     native_type: None,
                     is_primary: true,
+                    has_var: true,
                 },
                 CategorySpec {
                     name: "Name".to_string(),
                     native_type: None,
                     is_primary: false,
+                    has_var: true,
                 },
             ],
             rules: vec![
@@ -1804,6 +1846,7 @@ mod tests {
                                 element_category: "Proc".to_string(),
                                 separator: ",".to_string(),
                                 kind: CollectionKind::Vec,
+                                key_val_separator: None,
                             },
                             SyntaxItemSpec::Terminal("]".to_string()),
                         ],
@@ -1848,6 +1891,7 @@ mod tests {
                 name: "Int".to_string(),
                 native_type: Some("i32".to_string()),
                 is_primary: true,
+                has_var: true,
             }],
             rules: vec![
                 {
@@ -1992,17 +2036,13 @@ mod tests {
         );
 
         /* All comment columns should start at the same position */
-        let comment_positions: Vec<Option<usize>> = token_lines
-            .iter()
-            .map(|line| line.find("(*"))
-            .collect();
+        let comment_positions: Vec<Option<usize>> =
+            token_lines.iter().map(|line| line.find("(*")).collect();
 
-        let first_pos = comment_positions[0]
-            .expect("first lexical line should have a comment");
+        let first_pos = comment_positions[0].expect("first lexical line should have a comment");
         for (i, pos) in comment_positions.iter().enumerate() {
-            let pos = pos.unwrap_or_else(|| {
-                panic!("line {} should have a comment: {}", i, token_lines[i])
-            });
+            let pos = pos
+                .unwrap_or_else(|| panic!("line {} should have a comment: {}", i, token_lines[i]));
             assert_eq!(
                 pos, first_pos,
                 "comment on line {} at column {}, expected column {}: {}",
@@ -2059,11 +2099,7 @@ mod tests {
             .lines()
             .find(|l| l.contains("FIRST(Int)"))
             .expect("should have FIRST(Int) line");
-        assert!(
-            first_line.contains("FIRST(Int)"),
-            "should contain FIRST(Int): {}",
-            first_line
-        );
+        assert!(first_line.contains("FIRST(Int)"), "should contain FIRST(Int): {}", first_line);
     }
 
     // ── Wrapped comment helper unit tests ────────────────────────────────
@@ -2071,11 +2107,8 @@ mod tests {
     #[test]
     fn test_wrapped_comment_single_line() {
         let mut buf = String::new();
-        let items: Vec<String> = vec![
-            "\"a\"".to_string(),
-            "\"b\"".to_string(),
-            "\"c\"".to_string(),
-        ];
+        let items: Vec<String> =
+            vec!["\"a\"".to_string(), "\"b\"".to_string(), "\"c\"".to_string()];
         write_wrapped_ebnf_comment(&mut buf, "FIRST(X) = { ", &items, 80);
 
         assert_eq!(buf.lines().count(), 1, "should fit on one line: {}", buf);
@@ -2087,17 +2120,11 @@ mod tests {
     #[test]
     fn test_wrapped_comment_wraps_long_list() {
         let mut buf = String::new();
-        let items: Vec<String> = (0..20)
-            .map(|i| format!("\"token_{}\"", i))
-            .collect();
+        let items: Vec<String> = (0..20).map(|i| format!("\"token_{}\"", i)).collect();
         write_wrapped_ebnf_comment(&mut buf, "FIRST(Cat) = { ", &items, 60);
 
         let lines: Vec<&str> = buf.lines().collect();
-        assert!(
-            lines.len() > 1,
-            "20 tokens at width 60 should wrap to multiple lines: {}",
-            buf
-        );
+        assert!(lines.len() > 1, "20 tokens at width 60 should wrap to multiple lines: {}", buf);
         for line in &lines {
             assert!(
                 line.len() <= 60,

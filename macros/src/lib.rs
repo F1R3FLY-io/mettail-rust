@@ -23,6 +23,7 @@ use gen::{
     generate_all, generate_blockly_definitions, generate_language_impl, generate_metadata,
     write_blockly_blocks, write_blockly_categories,
 };
+use logic::writer::spill_and_include;
 use logic::{generate_ascent_source, rules::generate_freshness_functions};
 
 #[proc_macro]
@@ -72,12 +73,31 @@ pub fn language(input: TokenStream) -> TokenStream {
         }
     }
 
+    // Stage-instrumentation (gated by `PRATTAIL_MACRO_TRACE=1`): emits a
+    // timestamped `[macro-trace] <lang> <stage>` line before each heavy
+    // phase so the operator can see exactly which stage exceeds the
+    // memory budget when a grammar OOMs. Zero cost when the env var is
+    // unset.
+    let trace = std::env::var("PRATTAIL_MACRO_TRACE").is_ok();
+    macro_rules! stage {
+        ($name:literal) => {
+            if trace {
+                eprintln!("[macro-trace] {} {}", lang_name, $name);
+            }
+        };
+    }
+
+    stage!("generate_all.start");
     // Generate the Rust AST types and operations (also captures WFST pipeline analysis)
     let (ast_code, pipeline_analysis) = generate_all(&language_def);
+    stage!("generate_all.done");
 
+    stage!("generate_freshness_functions.start");
     // Generate freshness functions (needed by Ascent rewrite clauses)
     let freshness_fns = generate_freshness_functions(&language_def);
+    stage!("generate_freshness_functions.done");
 
+    stage!("generate_ascent_source.start");
     // Generate Ascent datalog source (includes rewrites as Ascent clauses)
     // Thread pipeline analysis for WFST-informed optimizations (DCE, rule ordering, etc.)
     let ascent_output = generate_ascent_source(&language_def, Some(&pipeline_analysis));
@@ -86,10 +106,15 @@ pub fn language(input: TokenStream) -> TokenStream {
     let core_raw_ascent_content = ascent_output.core_raw_content;
     let pre_stratum_content = ascent_output.pre_stratum_content;
     let ground_rewrite_seeds = ascent_output.ground_rewrite_seeds;
+    let stratum_contents = ascent_output.stratum_contents;
+    stage!("generate_ascent_source.done");
 
+    stage!("generate_metadata.start");
     // Generate metadata for REPL introspection
     let metadata_code = generate_metadata(&language_def);
+    stage!("generate_metadata.done");
 
+    stage!("generate_language_impl.start");
     // Generate language implementation struct (Term wrapper + Language struct)
     // Pass raw Ascent content for direct inclusion in ascent! { struct Foo; ... }
     // Also pass core content for SCC-split struct (if available)
@@ -101,7 +126,9 @@ pub fn language(input: TokenStream) -> TokenStream {
         core_raw_ascent_content.as_ref(),
         pre_stratum_content.as_ref(),
         &ground_rewrite_seeds,
+        &stratum_contents,
     );
+    stage!("generate_language_impl.done");
 
     // Generate test file for cargo test / cargo nextest integration.
     // Gated by `options { emit_tests: true }` (default: true).
@@ -144,12 +171,26 @@ pub fn language(input: TokenStream) -> TokenStream {
     // Generate public proptest strategies (gated behind `strategies` feature)
     let public_strategies = gen::test_gen::strategies::generate_public_strategies(&language_def);
 
+    // Spill each large emitter to disk and replace with `include!` stubs.
+    // Purpose: the proc-macro → rustc bridge ships TokenStreams by value, so a
+    // multi-MB returned TokenStream costs 2× that in RSS (proc-macro copy +
+    // rustc copy). Writing the content to `target/generated/<lang>/<mod>.rs`
+    // and returning `include!("...")` lets rustc load the source directly
+    // from disk during expansion, keeping the bridge tiny. It also gives
+    // humans readable files to diff and inspect after compilation.
+    let ast_include = spill_and_include(&lang_name, "ast", ast_code);
+    let freshness_include = spill_and_include(&lang_name, "freshness", freshness_fns);
+    let ascent_include = spill_and_include(&lang_name, "ascent", ascent_code);
+    let metadata_include = spill_and_include(&lang_name, "metadata", metadata_code);
+    let language_include = spill_and_include(&lang_name, "language", language_code);
+    let strategies_include = spill_and_include(&lang_name, "strategies", public_strategies);
+
     let combined = quote::quote! {
-        #ast_code
-        #freshness_fns
-        #ascent_code
-        #metadata_code
-        #language_code
+        #ast_include
+        #freshness_include
+        #ascent_include
+        #metadata_include
+        #language_include
 
         /// Public proptest strategies for generating random well-formed terms.
         ///
@@ -161,7 +202,7 @@ pub fn language(input: TokenStream) -> TokenStream {
             use super::*;
             use proptest::prelude::*;
             use proptest::strategy::BoxedStrategy;
-            #public_strategies
+            #strategies_include
         }
     };
 

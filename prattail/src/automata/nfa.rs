@@ -61,18 +61,49 @@ pub fn build_nfa_with_custom(
         fragments.push(frag);
     }
     if needs.integer {
-        let frag = regex::compile_regex(&patterns.integer, &mut nfa, TokenKind::Integer)
-            .expect("integer pattern should be a valid regex");
-        fragments.push(frag);
-    }
-    if needs.float {
-        let frag = regex::compile_regex(&patterns.float, &mut nfa, TokenKind::Float)
-            .expect("float pattern should be a valid regex");
-        fragments.push(frag);
+        if patterns.integer_by_category.is_empty() {
+            let frag = regex::compile_regex(&patterns.integer, &mut nfa, TokenKind::Integer)
+                .expect("integer pattern should be a valid regex");
+            fragments.push(frag);
+        } else {
+            for (cat, pat) in &patterns.integer_by_category {
+                let frag = regex::compile_regex(pat, &mut nfa, TokenKind::IntegerLit(cat.clone()))
+                    .expect("integer-by-category pattern should be a valid regex");
+                fragments.push(frag);
+            }
+        }
     }
     if needs.string_lit {
         let frag = regex::compile_regex(&patterns.string, &mut nfa, TokenKind::StringLit)
             .expect("string pattern should be a valid regex");
+        fragments.push(frag);
+    }
+    if needs.boolean {
+        if let Some(ref boolean_pattern) = patterns.boolean {
+            let frag = regex::compile_regex(boolean_pattern, &mut nfa, TokenKind::BooleanLit)
+                .expect("boolean pattern should be a valid regex");
+            fragments.push(frag);
+        }
+    }
+    if needs.rational {
+        for (cat, pat) in &patterns.rational_by_category {
+            let frag = regex::compile_regex(pat, &mut nfa, TokenKind::RationalLit(cat.clone()))
+                .expect("rational-by-category pattern should be a valid regex");
+            fragments.push(frag);
+        }
+    }
+    if needs.fixed_point {
+        for (cat, pat) in &patterns.fixed_by_category {
+            let frag = regex::compile_regex(pat, &mut nfa, TokenKind::FixedPointLit(cat.clone()))
+                .expect("fixed-point-by-category pattern should be a valid regex");
+            fragments.push(frag);
+        }
+    }
+    // After fixed-point: float patterns share a prefix (`3.5` vs `3.5p0`); building fixed first keeps
+    // NFA fragment order stable; DFA subset + FixedPointLit priority disambiguate.
+    if needs.float {
+        let frag = regex::compile_regex(&patterns.float, &mut nfa, TokenKind::Float)
+            .expect("float pattern should be a valid regex");
         fragments.push(frag);
     }
 
@@ -141,6 +172,10 @@ pub struct BuiltinNeeds {
     pub string_lit: bool,
     /// Whether any type has a native bool type (keywords `true`/`false`).
     pub boolean: bool,
+    /// Whether rational literal regexes are registered (`rational_by_category` non-empty).
+    pub rational: bool,
+    /// Whether fixed-point literal regexes are registered (`fixed_by_category` non-empty).
+    pub fixed_point: bool,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -604,6 +639,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
@@ -883,6 +920,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
@@ -1269,6 +1308,10 @@ mod tests {
         let float = NfaState::accepting(TokenKind::Float);
         assert_eq!(float.weight.value(), 7.0, "Float should have weight 7.0");
 
+        // Fixed-point literal: priority 4 → weight 6.0 (beats Float when both accept at same prefix)
+        let fp = NfaState::accepting(TokenKind::FixedPointLit("Fixed".to_string()));
+        assert_eq!(fp.weight.value(), 6.0, "FixedPointLit should have weight 6.0");
+
         // Boolean: priority 10 → weight 0.0
         let boolean = NfaState::accepting(TokenKind::True);
         assert_eq!(boolean.weight.value(), 0.0, "True should have weight 0.0");
@@ -1292,6 +1335,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
@@ -1394,6 +1439,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
@@ -1417,5 +1464,76 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// RhoCalc-style float + fixed: `3.5p0` must lex as one fixed-point token (maximal munch), not
+    /// `3.5` float + `p0` ident.
+    #[test]
+    fn test_rhocalc_float_fixed_maximal_munch() {
+        use crate::automata::{
+            minimize::minimize_dfa, partition::compute_equivalence_classes,
+            subset::subset_construction,
+        };
+        let mut patterns = crate::LiteralPatterns::default();
+        patterns.float = concat!(
+            r"-?(",
+            r"[0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)(f64)?",
+            r"|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?(f64)?",
+            r")"
+        )
+        .to_string();
+        patterns.fixed_by_category.insert(
+            "Fixed".to_string(),
+            r"-?([0-9](_?[0-9])*(\.[0-9](_?[0-9])*)?|\.[0-9](_?[0-9])*)p[0-9](_?[0-9])*"
+                .to_string(),
+        );
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: true,
+            float: true,
+            string_lit: false,
+            boolean: false,
+            rational: false,
+            fixed_point: true,
+        };
+        let nfa = build_nfa(&[], &needs, &patterns);
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = minimize_dfa(&subset_construction(&nfa, &partition));
+
+        let input = b"3.5p0";
+        let mut pos = 0usize;
+        let mut state = dfa.start;
+        let mut last_accept: Option<(u32, usize)> = None;
+        if dfa.states[state as usize].accept.is_some() {
+            last_accept = Some((state, pos));
+        }
+        while pos < input.len() {
+            let class = partition.classify(input[pos]);
+            let next = dfa.transition(state, class);
+            if next == crate::automata::DEAD_STATE {
+                break;
+            }
+            state = next;
+            pos += 1;
+            if dfa.states[state as usize].accept.is_some() {
+                last_accept = Some((state, pos));
+            }
+        }
+        let (accept_state, end) = last_accept.expect("should have accepted");
+        assert_eq!(
+            end,
+            input.len(),
+            "maximal munch should consume full fixed literal; got end={} accept={:?}",
+            end,
+            dfa.states[accept_state as usize].accept
+        );
+        assert!(
+            matches!(
+                dfa.states[accept_state as usize].accept,
+                Some(TokenKind::FixedPointLit(ref s)) if s == "Fixed"
+            ),
+            "expected FixedPointLit(Fixed), got {:?}",
+            dfa.states[accept_state as usize].accept
+        );
     }
 }

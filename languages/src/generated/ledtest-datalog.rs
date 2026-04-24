@@ -663,7 +663,7 @@ rw_pred(s.clone(), t) <--
     if let Num::NumLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(a == b) }) (),
+    if let Some(__eval_val) = (|| ->::std::option::Option < _ > { #[allow(unused_imports)] use::mettail_runtime::lift::LiftPlain as _;::mettail_runtime::lift::Lift(a == b).lift() }) (),
     let t = Pred::BoolLit(__eval_val);
 
 rw_num(s.clone(), t) <--
@@ -673,7 +673,7 @@ rw_num(s.clone(), t) <--
     if let Num::NumLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_add(a, b) ?) }) (),
+    if let Some(__eval_val) = (|| ->::std::option::Option < _ > { #[allow(unused_imports)] use::mettail_runtime::lift::LiftPlain as _;::mettail_runtime::lift::Lift(< _ as::mettail_runtime::SafeArith >::safe_add(a, b) ?).lift() }) (),
     let t = Num::NumLit(__eval_val);
 
 rw_num(s.clone(), t) <--
@@ -683,7 +683,7 @@ rw_num(s.clone(), t) <--
     if let Num::NumLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_mul(a, b) ?) }) (),
+    if let Some(__eval_val) = (|| ->::std::option::Option < _ > { #[allow(unused_imports)] use::mettail_runtime::lift::LiftPlain as _;::mettail_runtime::lift::Lift(< _ as::mettail_runtime::SafeArith >::safe_mul(a, b) ?).lift() }) (),
     let t = Num::NumLit(__eval_val);
 
 rw_pred(s.clone(), t) <--
@@ -693,7 +693,7 @@ rw_pred(s.clone(), t) <--
     if let Num::NumLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(a != b) }) (),
+    if let Some(__eval_val) = (|| ->::std::option::Option < _ > { #[allow(unused_imports)] use::mettail_runtime::lift::LiftPlain as _;::mettail_runtime::lift::Lift(a != b).lift() }) (),
     let t = Pred::BoolLit(__eval_val);
 
 rw_pred(s.clone(), t) <--
@@ -703,7 +703,7 @@ rw_pred(s.clone(), t) <--
     if let Pred::BoolLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(a && b) }) (),
+    if let Some(__eval_val) = (|| ->::std::option::Option < _ > { #[allow(unused_imports)] use::mettail_runtime::lift::LiftPlain as _;::mettail_runtime::lift::Lift(a && b).lift() }) (),
     let t = Pred::BoolLit(__eval_val);
 
 rw_num(orig.clone(), t) <--
@@ -711,7 +711,7 @@ rw_num(orig.clone(), t) <--
     if let Num::NegNum(inner) = orig,
     if let Num::NumLit(s_ref) = inner.as_ref(),
     let a = s_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some((< _ as::mettail_runtime::SafeArith >::safe_neg(a) ?)) }) (),
+    if let Some(__eval_val) = (|| ->::std::option::Option < _ > { #[allow(unused_imports)] use::mettail_runtime::lift::LiftPlain as _;::mettail_runtime::lift::Lift((< _ as::mettail_runtime::SafeArith >::safe_neg(a) ?)).lift() }) (),
     let t = Num::NumLit(__eval_val);
 
 rw_num(orig.clone(), t) <--
@@ -719,7 +719,7 @@ rw_num(orig.clone(), t) <--
     if let Num::FactNum(inner) = orig,
     if let Num::NumLit(s_ref) = inner.as_ref(),
     let a = s_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some({ < i32 as::mettail_runtime::SafeArith >::safe_product((1 ..= a.max(0))) ? }) }) (),
+    if let Some(__eval_val) = (|| ->::std::option::Option < _ > { #[allow(unused_imports)] use::mettail_runtime::lift::LiftPlain as _;::mettail_runtime::lift::Lift({ < i32 as::mettail_runtime::SafeArith >::safe_product((1 ..= a.max(0))) ? }).lift() }) (),
     let t = Num::NumLit(__eval_val);
 
 rw_expr(lhs.clone(), match (lhs, vi) {

@@ -1966,11 +1966,13 @@ mod tests {
             CategoryInfo {
                 name: "Expr".to_string(),
                 is_primary: true,
+                has_var: true,
                 native_type: None,
             },
             CategoryInfo {
                 name: "Decl".to_string(),
                 is_primary: false,
+                has_var: true,
                 native_type: None,
             },
         ];
@@ -2005,11 +2007,13 @@ mod tests {
             CategoryInfo {
                 name: "Expr".to_string(),
                 is_primary: true,
+                has_var: true,
                 native_type: None,
             },
             CategoryInfo {
                 name: "Stmt".to_string(),
                 is_primary: false,
+                has_var: true,
                 native_type: None,
             },
         ];
@@ -2046,11 +2050,13 @@ mod tests {
             CategoryInfo {
                 name: "Expr".to_string(),
                 is_primary: true,
+                has_var: true,
                 native_type: None,
             },
             CategoryInfo {
                 name: "Pat".to_string(),
                 is_primary: false,
+                has_var: true,
                 native_type: None,
             },
         ];
@@ -2092,11 +2098,13 @@ mod tests {
             CategoryInfo {
                 name: "Expr".to_string(),
                 is_primary: true,
+                has_var: true,
                 native_type: None,
             },
             CategoryInfo {
                 name: "Name".to_string(),
                 is_primary: false,
+                has_var: true,
                 native_type: None,
             },
         ];
@@ -2135,11 +2143,13 @@ mod tests {
             CategoryInfo {
                 name: "Prog".to_string(),
                 is_primary: true,
+                has_var: true,
                 native_type: None,
             },
             CategoryInfo {
                 name: "Stmt".to_string(),
                 is_primary: false,
+                has_var: true,
                 native_type: None,
             },
         ];
@@ -2153,6 +2163,7 @@ mod tests {
                     param_name: "stmts".to_string(),
                     element_category: "Stmt".to_string(),
                     separator: ";".to_string(),
+                    key_val_separator: None,
                     kind: CollectionKind::Vec,
                 }],
             ),
@@ -2178,16 +2189,19 @@ mod tests {
             CategoryInfo {
                 name: "A".to_string(),
                 is_primary: true,
+                has_var: true,
                 native_type: None,
             },
             CategoryInfo {
                 name: "B".to_string(),
                 is_primary: false,
+                has_var: true,
                 native_type: None,
             },
             CategoryInfo {
                 name: "C".to_string(),
                 is_primary: false,
+                has_var: true,
                 native_type: None,
             },
         ];

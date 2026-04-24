@@ -28,7 +28,7 @@ use syn::{Ident, LitStr};
 /// parallel eqrel relations (`CEqRelIndCommon`) return `&&(T, T)`
 /// iterators instead of `&(T, T)`.
 fn generate_ascent_struct(struct_name: &Ident, content: &TokenStream) -> TokenStream {
-    quote! {
+    let tokens = quote! {
         #[cfg(not(feature = "ascent-parallel"))]
         ascent::ascent! {
             struct #struct_name;
@@ -40,7 +40,69 @@ fn generate_ascent_struct(struct_name: &Ident, content: &TokenStream) -> TokenSt
             struct #struct_name;
             #content
         }
+    };
+    spill_ascent_struct(struct_name, tokens)
+}
+
+/// Spill an `ascent!{}` / `ascent_par!{}` invocation to its own file under
+/// `target/generated/<lang>/<struct_snake>_ascent.rs` and return an
+/// `include!` stub. This completes the modularization started by the
+/// top-level `spill_and_include` in `macros/src/lib.rs`: without it, the
+/// potentially multi-MB ascent content stayed inlined in the monolithic
+/// `language.rs` spill (e.g., Ambient's 2,473-line language.rs was 90 %
+/// ascent rules).
+///
+/// The language name is derived from the struct-name prefix: the macro
+/// emits `{Name}AscentProg[Core|PreStratum]`, so stripping `AscentProg*`
+/// and lowercasing yields the same key `spill_and_include` uses.
+fn spill_ascent_struct(struct_name: &Ident, tokens: TokenStream) -> TokenStream {
+    let name = struct_name.to_string();
+    // Strip every suffix variant we emit so per-stratum structs land next to
+    // the main/pre-stratum/core files for the same language:
+    //   `{Lang}AscentProg`                → `<lang>/<lang>_ascent_prog.rs`
+    //   `{Lang}AscentProgPreStratum`      → `<lang>/<lang>_ascent_prog_pre_stratum.rs`
+    //   `{Lang}AscentProgCore`            → `<lang>/<lang>_ascent_prog_core.rs`
+    //   `{Lang}AscentProgStratum{N}`      → `<lang>/<lang>_ascent_prog_stratum{n}.rs`
+    let lang = name
+        .strip_suffix("AscentProgPreStratum")
+        .or_else(|| name.strip_suffix("AscentProgCore"))
+        .or_else(|| {
+            // Numeric per-stratum suffix: `{Lang}AscentProgStratumN` where N is
+            // one or more digits.
+            name.find("AscentProgStratum").and_then(|idx| {
+                let tail = &name[idx + "AscentProgStratum".len()..];
+                if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) {
+                    Some(&name[..idx])
+                } else {
+                    None
+                }
+            })
+        })
+        .or_else(|| name.strip_suffix("AscentProg"))
+        .unwrap_or(&name)
+        .to_string();
+    // Per-struct concern name (e.g., `calculator_ascent_prog`,
+    // `calculator_ascent_prog_core`, `calculator_ascent_prog_pre_stratum`).
+    // Using snake_case of the struct name keeps one file per emitted ascent
+    // invocation — rustc can then follow each include! independently.
+    let concern = to_snake(&name);
+    crate::logic::writer::spill_and_include(&lang, &concern, tokens)
+}
+
+/// Convert a `PascalCase` ident to `snake_case`.
+fn to_snake(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for (i, ch) in s.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
     }
+    out
 }
 
 /// Generate the complete language implementation
@@ -57,7 +119,12 @@ pub fn generate_language_impl(
     core_raw_ascent_content: Option<&TokenStream>,
     pre_stratum_content: Option<&TokenStream>,
     ground_rewrite_seeds: &[TokenStream],
+    stratum_contents: &[crate::logic::StratumContent],
 ) -> TokenStream {
+    // Reset thread-local dedup tracker for `handle_mixfix_{Source}` emission
+    // so state doesn't leak between languages compiled in the same thread.
+    mettail_prattail::reset_handle_mixfix_emitted();
+
     let name = &language.name;
     let name_str = name.to_string();
     let name_lower = name_str.to_lowercase();
@@ -81,6 +148,7 @@ pub fn generate_language_impl(
                 core_raw_ascent_content,
                 pre_stratum_content,
                 ground_rewrite_seeds,
+                stratum_contents,
             ),
             generate_language_trait_impl_multi(name, &name_str, &name_lower, language),
         )
@@ -96,15 +164,35 @@ pub fn generate_language_impl(
                 raw_ascent_content,
                 pre_stratum_content,
                 ground_rewrite_seeds,
+                stratum_contents,
             ),
             generate_language_trait_impl(name, primary_type, &name_str, &name_lower, language),
         )
     };
 
+    // Per-concern spill: each of the three big sub-outputs goes to its own
+    // file under `target/generated/<lang>/`. Ambient's pre-split language.rs
+    // was 1,670 lines even after the ascent!{} invocation was already
+    // extracted — it mixed the Term wrapper enum, the Language struct
+    // definition, the Language trait impl, CEK decompose arms, and type
+    // inference helpers. Splitting gives one file per concern; rustc can
+    // still `include!` each independently during expansion, and humans can
+    // diff per-concern changes without wading through a megafile.
+    let lang_key = name_str.to_lowercase();
+    let term_wrapper_include =
+        crate::logic::writer::spill_and_include(&lang_key, "term_wrapper", term_wrapper);
+    let language_struct_include =
+        crate::logic::writer::spill_and_include(&lang_key, "language_struct", language_struct);
+    let language_trait_impl_include = crate::logic::writer::spill_and_include(
+        &lang_key,
+        "language_trait_impl",
+        language_trait_impl,
+    );
+
     quote! {
-        #term_wrapper
-        #language_struct
-        #language_trait_impl
+        #term_wrapper_include
+        #language_struct_include
+        #language_trait_impl_include
     }
 }
 
@@ -294,16 +382,162 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         })
         .collect();
 
+    // Per-variant arms for iterative Hash/PartialEq/Clone on the wrapper
+    // enum. These delegate to each inner category's already-iterative PDA
+    // impl (from iterative_hash.rs / iterative_cmp.rs / iterative_clone.rs).
+    // For the `Ambiguous(Vec<Self>)` variant, we iterate the alts with an
+    // explicit work stack — no compiler-generated recursion through nested
+    // Ambiguous trees. Per the stack-safety mandate.
+    let wrapper_hash_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let variant = format_ident!("{}", t.name);
+            let idx = i as u8;
+            quote! { #inner_enum_name::#variant(inner) => { state.write_u8(#idx); inner.hash(state); } }
+        })
+        .collect();
+    let ambiguous_disc: u8 = language.types.len() as u8 + 1;
+    let wrapper_eq_arms_same: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let variant = format_ident!("{}", t.name);
+            quote! { (#inner_enum_name::#variant(a), #inner_enum_name::#variant(b)) => a == b }
+        })
+        .collect();
+    // Per-category match arms that write an iterative-cloned inner value
+    // into a result slot (used by the iterative Ambiguous-walk Clone impl).
+    let wrapper_clone_arms_for_pda: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let variant = format_ident!("{}", t.name);
+            quote! {
+                #inner_enum_name::#variant(inner) => {
+                    results[slot] = Some(#inner_enum_name::#variant(inner.clone()));
+                }
+            }
+        })
+        .collect();
+
     quote! {
         /// Inner term enum for multi-category languages (one variant per type in the language).
         /// The `Ambiguous` variant holds multiple parse alternatives that will be resolved
         /// during substitution or Ascent evaluation.
-        #[derive(Clone, PartialEq, Eq, Hash)]
+        ///
+        /// `Clone`, `Hash`, and `PartialEq` are implemented manually (not
+        /// derived) to avoid unbounded CPU-stack recursion through the
+        /// `Ambiguous(Vec<Self>)` variant. Each impl delegates to the
+        /// inner category's already-iterative PDA trait, and walks
+        /// `Ambiguous` alts iteratively via an explicit work stack.
         pub enum #inner_enum_name {
             #(#enum_variants),*,
             /// Multiple parse alternatives (2+, flat — no nested Ambiguous).
             Ambiguous(Vec<#inner_enum_name>),
         }
+
+        impl Clone for #inner_enum_name {
+            fn clone(&self) -> Self {
+                // Iterative Ambiguous-chain walk. For deeply nested
+                // Ambiguous (Ambiguous(vec![Ambiguous(vec![...])])), an
+                // explicit slot-buffer PDA handles the traversal without
+                // CPU-stack recursion. Non-Ambiguous variants delegate
+                // directly to the inner category's iterative Clone PDA.
+                enum Task<'a> {
+                    Visit { src: &'a #inner_enum_name, slot: usize },
+                    AssembleAmbig { slot: usize, start: usize, count: usize },
+                }
+                let mut stack: Vec<Task<'_>> = Vec::new();
+                let mut results: Vec<Option<#inner_enum_name>> = vec![None];
+                stack.push(Task::Visit { src: self, slot: 0 });
+                while let Some(t) = stack.pop() {
+                    match t {
+                        Task::Visit { src, slot } => match src {
+                            #(#wrapper_clone_arms_for_pda)*
+                            #inner_enum_name::Ambiguous(alts) => {
+                                let start = results.len();
+                                for _ in 0..alts.len() {
+                                    results.push(None);
+                                }
+                                let count = alts.len();
+                                stack.push(Task::AssembleAmbig { slot, start, count });
+                                for (i, alt) in alts.iter().enumerate().rev() {
+                                    stack.push(Task::Visit { src: alt, slot: start + i });
+                                }
+                            }
+                        },
+                        Task::AssembleAmbig { slot, start, count } => {
+                            let mut vec: Vec<#inner_enum_name> = Vec::with_capacity(count);
+                            for i in 0..count {
+                                vec.push(
+                                    results[start + i]
+                                        .take()
+                                        .expect("iterative TermInner clone: missing Ambiguous alt"),
+                                );
+                            }
+                            results[slot] = Some(#inner_enum_name::Ambiguous(vec));
+                        }
+                    }
+                }
+                results[0].take().expect("iterative TermInner clone: root slot empty")
+            }
+        }
+
+        impl std::hash::Hash for #inner_enum_name {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                // Iterative walk: for Ambiguous, push alts onto a work
+                // stack rather than calling hash() recursively via derive.
+                // Same-cat variants delegate to the iterative Hash PDA.
+                let mut stack: Vec<&#inner_enum_name> = Vec::new();
+                stack.push(self);
+                while let Some(cur) = stack.pop() {
+                    match cur {
+                        #(#wrapper_hash_arms)*
+                        #inner_enum_name::Ambiguous(alts) => {
+                            state.write_u8(#ambiguous_disc);
+                            state.write_usize(alts.len());
+                            // Push in reverse so first alt is hashed first.
+                            for alt in alts.iter().rev() {
+                                stack.push(alt);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        impl PartialEq for #inner_enum_name {
+            fn eq(&self, other: &Self) -> bool {
+                // Iterative deep-equality. For Ambiguous-vs-Ambiguous, walks
+                // alt pairs on an explicit stack. Mismatched variants are
+                // unequal (early-exit). Inner category equality goes through
+                // the iterative Eq PDA.
+                let mut stack: Vec<(&#inner_enum_name, &#inner_enum_name)> = Vec::new();
+                stack.push((self, other));
+                while let Some((a, b)) = stack.pop() {
+                    let equal = match (a, b) {
+                        #(#wrapper_eq_arms_same,)*
+                        (#inner_enum_name::Ambiguous(la), #inner_enum_name::Ambiguous(lb)) => {
+                            if la.len() != lb.len() {
+                                false
+                            } else {
+                                for (x, y) in la.iter().zip(lb.iter()) {
+                                    stack.push((x, y));
+                                }
+                                true
+                            }
+                        }
+                        _ => false,
+                    };
+                    if !equal { return false; }
+                }
+                true
+            }
+        }
+
+        impl Eq for #inner_enum_name {}
 
         impl #inner_enum_name {
             /// Check if this alternative is "accepting" — i.e., fully resolved to a
@@ -362,48 +596,19 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                                 }
                                 accepting[0].1.clone()
                             }
-                            n if n > 1 => {
-                                /* Multiple accepting alternatives — use WFST weights as
-                                   tiebreaker. Lowest tropical weight = most likely.
-                                   Only valid when weights are parallel to flat (no nested
-                                   Ambiguous flattening changed the length). */
-                                let weights = AMBIGUOUS_WEIGHTS.with(|cell| cell.take());
-                                if weights.len() == n_alts && flat.len() == n_alts {
-                                    let best_idx = accepting.iter()
-                                        .min_by(|(i, _), (j, _)| {
-                                            weights[*i].partial_cmp(&weights[*j])
-                                                .unwrap_or(std::cmp::Ordering::Equal)
-                                        })
-                                        .map(|(i, _)| *i)
-                                        .expect("accepting non-empty");
-
-                                    /* C1: Record correction if weight-best overall was NOT the
-                                       weight-best among accepting alternatives. */
-                                    let overall_primary_idx = weights.iter()
-                                        .enumerate()
-                                        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                                        .map(|(i, _)| i)
-                                        .unwrap_or(0);
-                                    if best_idx != overall_primary_idx {
-                                        WEIGHT_CORRECTIONS.with(|cell| {
-                                            let mut corrections = cell.take();
-                                            corrections.push(mettail_prattail::wfst::WeightCorrection {
-                                                category: #name_str_lit,
-                                                primary_weight: weights[overall_primary_idx],
-                                                selected_weight: weights[best_idx],
-                                                alternatives_considered: n_alts,
-                                            });
-                                            cell.set(corrections);
-                                        });
-                                    }
-
-                                    flat.into_iter().nth(best_idx).expect("valid index")
-                                } else {
-                                    /* Weights unavailable or length mismatch — return first accepting */
-                                    accepting[0].1.clone()
-                                }
+                            _ => {
+                                /* Multiple accepting alternatives: preserve them as
+                                   Ambiguous so downstream code (tests, env
+                                   substitution, cross-category resolution) can see
+                                   every distinct interpretation. Prior behavior
+                                   picked a weight-best alt and discarded the others,
+                                   which masked semantically-distinct parses (e.g.
+                                   `42` as direct `Int(NumLit)` vs
+                                   `Proc(ProcInt(Int(NumLit)))`). Callers that want
+                                   a single value can inspect `alts[0]` or rely on
+                                   `run_ascent` to collapse to a normal form. */
+                                Self::Ambiguous(flat)
                             }
-                            _ => Self::Ambiguous(flat),
                         }
                     }
                 }
@@ -675,7 +880,9 @@ fn generate_language_struct(
     raw_ascent_content: &TokenStream,
     pre_stratum_content: Option<&TokenStream>,
     ground_rewrite_seeds: &[TokenStream],
+    stratum_contents: &[crate::logic::StratumContent],
 ) -> TokenStream {
+    let _ = stratum_contents; // Single-category: multi-stratum split does not apply (no cross-cat partitioning).
     let language_name = format_ident!("{}Language", name);
     let term_name = format_ident!("{}Term", name);
     let _metadata_name = format_ident!("{}Metadata", name);
@@ -1052,10 +1259,19 @@ fn generate_var_collection_impl(
 ) -> TokenStream {
     let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
 
+    // Post-HOL-B: only emit Lam{D} / MLam{D} match arms on the primary
+    // type for domains D where the HOL variants actually exist (see
+    // `macros/src/logic/common.rs::compute_hol_domain_pairs`).
+    let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
+    let primary_str = primary_type.to_string();
+
     // Generate lambda handling arms
     let mut lambda_arms: Vec<TokenStream> = Vec::new();
 
     for domain in &categories {
+        if !hol_pairs.contains(&(primary_str.clone(), domain.to_string())) {
+            continue;
+        }
         let domain_lit = LitStr::new(&domain.to_string(), domain.span());
         let lam_variant = format_ident!("Lam{}", domain);
         let mlam_variant = format_ident!("MLam{}", domain);
@@ -1437,6 +1653,7 @@ fn generate_language_struct_multi(
     core_raw_ascent_content: Option<&TokenStream>,
     pre_stratum_content: Option<&TokenStream>,
     ground_rewrite_seeds: &[TokenStream],
+    stratum_contents: &[crate::logic::StratumContent],
 ) -> TokenStream {
     let language_name = format_ident!("{}Language", name);
     let term_name = format_ident!("{}Term", name);
@@ -1462,6 +1679,53 @@ fn generate_language_struct_multi(
         .filter(|t| t.native_type.is_some())
         .map(|t| t.name.to_string())
         .collect();
+
+    // Categories whose first-syntax-item is a foreign non-terminal may have FIRST
+    // sets that include Ident (via the foreign category's own FIRST). Preserve
+    // these from the Ident-skip optimization so that e.g. `x == 1` can be parsed
+    // as Bool via its cross-cat dispatch (EqInt / Eq etc.).
+    let cats_with_foreign_nt_first: std::collections::HashSet<String> = {
+        use mettail_ast::grammar::{GrammarItem, SyntaxExpr, TermParam};
+        use mettail_ast::types::TypeExpr;
+        let mut set = std::collections::HashSet::new();
+        for rule in &language.terms {
+            let cat_name = rule.category.to_string();
+            // New-style rules: syntax_pattern + term_context.
+            if let Some(pat) = &rule.syntax_pattern {
+                if let Some(SyntaxExpr::Param(ident)) = pat.first() {
+                    if let Some(term_ctx) = &rule.term_context {
+                        let ty = term_ctx.iter().find_map(|tp| match tp {
+                            TermParam::Simple { name, ty } if name == ident => Some(ty),
+                            TermParam::Abstraction { body, ty, .. } if body == ident => Some(ty),
+                            TermParam::MultiAbstraction { body, ty, .. } if body == ident => Some(ty),
+                            _ => None,
+                        });
+                        if let Some(TypeExpr::Base(type_ident)) = ty {
+                            if type_ident != &rule.category {
+                                set.insert(cat_name.clone());
+                            }
+                        }
+                    }
+                }
+            } else if let Some(GrammarItem::NonTerminal { ident, .. }) = rule.items.first() {
+                // Old-style rules: direct GrammarItem::NonTerminal check.
+                if ident != &rule.category {
+                    set.insert(cat_name.clone());
+                }
+            }
+        }
+        // Tension 3 (P3-C): every native-type category gets an auto-generated
+        // Var variant (e.g., Int::IVar, Float::FVar, Bool::BVar, ...) whose
+        // parser prefix arm accepts `Token::Ident`. Such categories MUST be
+        // tried even when the top-level first token is Ident — otherwise
+        // bare `a + b` fails to parse across ambiguous numeric types.
+        for t in &language.types {
+            if t.native_type.is_some() {
+                set.insert(t.name.to_string());
+            }
+        }
+        set
+    };
 
     let parse_tries: Vec<TokenStream> = parse_order
         .iter()
@@ -1536,8 +1800,16 @@ fn generate_language_struct_multi(
                     },
                 }
             };
-            // Guard native categories behind an Ident check when non-native categories exist
-            if has_non_native && native_cat_names.contains(&cat.to_string()) {
+            // Guard native categories behind an Ident check when non-native categories exist.
+            // EXCEPT: if the category has any rule whose first syntax item is a foreign
+            // non-terminal, its FIRST set may include Ident (via the foreign cat's own FIRST
+            // or cross-cat dispatch), so it must be tried even when first_tok is Ident.
+            // Example: `x == 1` must parse as Bool via EqInt (Int == Int → Bool).
+            let cat_name = cat.to_string();
+            if has_non_native
+                && native_cat_names.contains(&cat_name)
+                && !cats_with_foreign_nt_first.contains(&cat_name)
+            {
                 quote! {
                     if !matches!(first_tok, Some(Token::Ident(_))) {
                         #try_block
@@ -1769,9 +2041,13 @@ fn generate_language_struct_multi(
             })
             .collect();
 
+        // Note: this block assumes the enclosing scope defines `term_ref:
+        // &#inner_enum_name` pointing at the RESOLVED (non-Ambiguous) term.
+        // The run_ascent_typed emitter establishes this variable via an
+        // iterative Ambiguous-peel loop before splicing this block in.
         let block = quote! {
             let mut pre = #pre_stratum_struct_name::default();
-            match &term.0 {
+            match term_ref {
                 #(#pre_seed_arms)*
                 #inner_enum_name::Ambiguous(_) => {},
             }
@@ -1800,6 +2076,137 @@ fn generate_language_struct_multi(
         (block, seed)
     } else {
         (quote! {}, quote! {})
+    };
+
+    // Sprint 6g/6h: Per-stratum Ascent struct definitions + chaining.
+    //
+    // When the grammar is large enough that a single `AscentProg::run()` would
+    // overflow the default thread stack, `generate_stratified_content` peels
+    // dense dependency groups out into dedicated Ascent structs. Here we emit
+    // one named `ascent!` struct per stratum (`{Name}AscentProgStratum{i}`)
+    // and chain their runs between pre-stratum and main:
+    //
+    //     pre.run()     → stratum_0.run() → … → stratum_N.run() → prog.run()
+    //
+    // Each step seeds the next struct's relations from all prior results so
+    // downstream rules see the full set of derived facts. Datalog monotonicity
+    // guarantees the sequence computes the same least fixpoint the monolithic
+    // run would have produced.
+    let stratum_struct_names: Vec<syn::Ident> = (0..stratum_contents.len())
+        .map(|i| format_ident!("{}AscentProgStratum{}", name, i))
+        .collect();
+
+    let stratum_struct_defs: Vec<TokenStream> = stratum_contents
+        .iter()
+        .zip(stratum_struct_names.iter())
+        .map(|(stratum, struct_name)| generate_ascent_struct(struct_name, &stratum.raw_content))
+        .collect();
+
+    // Emit a helper to copy category / eq_cat / rw_cat / fold_cat / step_term
+    // relations from a source Ascent struct into a target one. Relation names
+    // and arities are shared across strata (Ascent requires matching schemas),
+    // so the same loop body works for every pair. Copying `eq_` + `rw_`
+    // + `fold_` prevents main-stage rules whose bodies join on those relations
+    // from missing sub-stratum outputs; copying `step_term` keeps HOL step
+    // rules firing in sub-strata that target non-primary categories.
+    let copy_all_relations_from_src = |src: TokenStream, dst: TokenStream| -> TokenStream {
+        let per_cat: Vec<TokenStream> = language
+            .types
+            .iter()
+            .map(|t| {
+                let cat = &t.name;
+                let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
+                let eq_rel = format_ident!("eq_{}", cat.to_string().to_lowercase());
+                let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
+                let fold_rel = format_ident!("fold_{}", cat.to_string().to_lowercase());
+                // fold_<cat> is only declared when the category has fold-mode
+                // rules — mirror the relation-emission gate from logic/relations.rs:204-217.
+                let has_fold_as_result = language.terms.iter().any(|r| {
+                    r.category == *cat && r.eval_mode == Some(mettail_ast::types::EvalMode::Fold)
+                });
+                let has_fold_as_param = language.terms.iter().any(|r| {
+                    r.eval_mode == Some(mettail_ast::types::EvalMode::Fold)
+                        && r.term_context.as_ref().is_some_and(|ctx| {
+                            ctx.iter().any(|p| match p {
+                                mettail_ast::grammar::TermParam::Simple {
+                                    ty: mettail_ast::types::TypeExpr::Base(ref id), ..
+                                } => id == cat,
+                                _ => false,
+                            })
+                        })
+                });
+                let has_fold = has_fold_as_result || has_fold_as_param;
+                let fold_copy = if has_fold {
+                    quote! {
+                        for (a, b) in #src.#fold_rel.iter() {
+                            #dst.#fold_rel.push((a.clone(), b.clone()));
+                        }
+                    }
+                } else {
+                    quote! {}
+                };
+                quote! {
+                    for (t,) in #src.#cat_lower.iter() {
+                        #dst.#cat_lower.push((t.clone(),));
+                    }
+                    for (a, b) in #src.#eq_rel.iter() {
+                        #dst.#eq_rel.push((a.clone(), b.clone()));
+                    }
+                    for (s, t) in #src.#rw_rel.iter() {
+                        #dst.#rw_rel.push((s.clone(), t.clone()));
+                    }
+                    #fold_copy
+                }
+            })
+            .collect();
+        // step_term is declared only for the primary category but is global to
+        // the struct; both source and target have it (matching schemas).
+        let step_term_copy = quote! {
+            for (t,) in #src.step_term.iter() {
+                #dst.step_term.push((t.clone(),));
+            }
+        };
+        quote! { #(#per_cat)* #step_term_copy }
+    };
+
+    // Run all sub-strata in sequence, seeding each from pre + prior strata.
+    // Emits: `let mut s{i} = {Name}StratumI::default(); <seed from pre>; <seed from s0..s{i-1}>; s{i}.run();`
+    let stratum_run_block: TokenStream = {
+        let mut per_stratum = Vec::new();
+        for (i, struct_name) in stratum_struct_names.iter().enumerate() {
+            let s_ident = format_ident!("s{}", i);
+            let seed_from_pre = if pre_stratum_content.is_some() {
+                copy_all_relations_from_src(quote! { pre }, quote! { #s_ident })
+            } else {
+                quote! {}
+            };
+            let seed_from_priors: Vec<TokenStream> = (0..i)
+                .map(|j| {
+                    let prior = format_ident!("s{}", j);
+                    copy_all_relations_from_src(quote! { #prior }, quote! { #s_ident })
+                })
+                .collect();
+            per_stratum.push(quote! {
+                let mut #s_ident = #struct_name::default();
+                #seed_from_pre
+                #(#seed_from_priors)*
+                #s_ident.run();
+            });
+        }
+        quote! { #(#per_stratum)* }
+    };
+
+    // Additional seeding of the main `prog` from each sub-stratum.
+    let seed_main_from_strata: TokenStream = {
+        let per_stratum: Vec<TokenStream> = stratum_struct_names
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let s_ident = format_ident!("s{}", i);
+                copy_all_relations_from_src(quote! { #s_ident }, quote! { prog })
+            })
+            .collect();
+        quote! { #(#per_stratum)* }
     };
 
     // B-CG04: Ground rewrite seed block for multi-category struct
@@ -1965,26 +2372,45 @@ fn generate_language_struct_multi(
             .collect();
 
         quote! {
-            match &term.0 {
-                #inner_enum_name::Ambiguous(alts) => {
-                    let first = alts.first().expect("Ambiguous must have 2+ alternatives");
-                    let sub_term = #term_name(first.clone());
-                    Self::run_ascent_typed(&sub_term)
+            // Stack-safe Ambiguous peel: iteratively walk the nested
+            // Ambiguous chain via a borrowed cursor. Zero recursion, zero
+            // per-layer clones — the final resolved alternative is cloned
+            // exactly once when the loop exits.
+            let resolved: #inner_enum_name = {
+                let mut cur: &#inner_enum_name = &term.0;
+                loop {
+                    match cur {
+                        #inner_enum_name::Ambiguous(alts) => {
+                            cur = alts.first()
+                                .expect("Ambiguous must have 2+ alternatives");
+                        }
+                        _ => break,
+                    }
                 }
+                cur.clone()
+            };
+            let term_ref = &resolved;
+            match term_ref {
+                // Unreachable — we peeled every Ambiguous above.
+                #inner_enum_name::Ambiguous(_) => unreachable!(
+                    "run_ascent_typed: Ambiguous survived the peel loop"
+                ),
                 // Core categories: use the smaller core struct (fewer SCC rules)
                 #(#core_variant_patterns)|* => {
                     #pre_stratum_block
+                    #stratum_run_block
                     let mut prog = #core_prog_name::default();
-                    match &term.0 {
+                    match term_ref {
                         #(#core_seed_arms)*
                         _ => unreachable!(),
                     }
                     #seed_from_pre_stratum
+                    #seed_main_from_strata
                     #ground_seed_block_multi
                     prog.run();
                     // A-RT05: Post-fixpoint depth check
                     #depth_check_block
-                    match &term.0 {
+                    match term_ref {
                         #(#core_extract_arms)*
                         _ => unreachable!(),
                     }
@@ -1992,17 +2418,19 @@ fn generate_language_struct_multi(
                 // Non-core categories: use the full struct (all rules)
                 _ => {
                     #pre_stratum_block
+                    #stratum_run_block
                     let mut prog = #prog_struct_name::default();
-                    match &term.0 {
+                    match term_ref {
                         #(#seed_arms)*
                         #inner_enum_name::Ambiguous(_) => unreachable!(),
                     }
                     #seed_from_pre_stratum
+                    #seed_main_from_strata
                     #ground_seed_block_multi
                     prog.run();
                     // A-RT05: Post-fixpoint depth check
                     #depth_check_block
-                    match &term.0 {
+                    match term_ref {
                         #(#extract_arms)*
                         #inner_enum_name::Ambiguous(_) => unreachable!(),
                     }
@@ -2012,25 +2440,40 @@ fn generate_language_struct_multi(
     } else {
         // Single struct (no SCC splitting) — original behavior
         quote! {
-            match &term.0 {
-                #inner_enum_name::Ambiguous(alts) => {
-                    let first = alts.first().expect("Ambiguous must have 2+ alternatives");
-                    let sub_term = #term_name(first.clone());
-                    Self::run_ascent_typed(&sub_term)
+            // Stack-safe Ambiguous peel (iterative).
+            let resolved: #inner_enum_name = {
+                let mut cur: &#inner_enum_name = &term.0;
+                loop {
+                    match cur {
+                        #inner_enum_name::Ambiguous(alts) => {
+                            cur = alts.first()
+                                .expect("Ambiguous must have 2+ alternatives");
+                        }
+                        _ => break,
+                    }
                 }
+                cur.clone()
+            };
+            let term_ref = &resolved;
+            match term_ref {
+                #inner_enum_name::Ambiguous(_) => unreachable!(
+                    "run_ascent_typed: Ambiguous survived the peel loop"
+                ),
                 _ => {
                     #pre_stratum_block
+                    #stratum_run_block
                     let mut prog = #prog_struct_name::default();
-                    match &term.0 {
+                    match term_ref {
                         #(#seed_arms)*
                         #inner_enum_name::Ambiguous(_) => unreachable!(),
                     }
                     #seed_from_pre_stratum
+                    #seed_main_from_strata
                     #ground_seed_block_multi
                     prog.run();
                     // A-RT05: Post-fixpoint depth check
                     #depth_check_block
-                    match &term.0 {
+                    match term_ref {
                         #(#extract_arms)*
                         #inner_enum_name::Ambiguous(_) => unreachable!(),
                     }
@@ -2043,6 +2486,8 @@ fn generate_language_struct_multi(
     let core_struct_output = core_struct_def.unwrap_or_default();
     // Optionally emit the pre-stratum struct definition (Sprint 5)
     let pre_stratum_struct_output = pre_stratum_struct_def.unwrap_or_default();
+    // Sprint 6g/6h: Per-stratum struct defs (zero or more).
+    let stratum_struct_output: TokenStream = quote! { #(#stratum_struct_defs)* };
 
     // F2: Generate cfg-gated ascent struct (ascent! vs ascent_par!)
     let prog_struct_def = generate_ascent_struct(&prog_struct_name, raw_ascent_content);
@@ -2053,6 +2498,8 @@ fn generate_language_struct_multi(
         #core_struct_output
 
         #pre_stratum_struct_output
+
+        #stratum_struct_output
 
         /// Language implementation struct (multi-category: one parser/relation per type).
         pub struct #language_name;
@@ -2352,7 +2799,9 @@ fn generate_language_trait_impl(
                     .ok_or_else(|| "Invalid environment type".to_string())?;
 
                 // Try to remove from all type environments
-                let removed = #(#remove_checks)||*;
+                // Non-short-circuit `|` so ALL categories are checked — names
+                // added via Ambiguous populate multiple per-category envs.
+                let removed = #(#remove_checks)|*;
                 Ok(removed)
             }
 
@@ -2397,6 +2846,12 @@ fn generate_language_trait_impl(
                 let mut result = Vec::new();
                 // Iterate in insertion order (IndexMap preserves order)
                 #(#list_iterations)*
+                // Dedup by name: Ambiguous terms populate multiple per-category
+                // envs via `add_to_env`, producing duplicate (name, display) entries.
+                // The multi-category storage is still used internally for cross-category
+                // variable resolution; users only see one binding per name.
+                let mut seen = std::collections::HashSet::new();
+                result.retain(|(name, _, _)| seen.insert(name.clone()));
                 result
             }
 
@@ -2717,7 +3172,9 @@ fn generate_language_trait_impl_multi(
                 let typed_env = env
                     .downcast_mut::<#env_name>()
                     .ok_or_else(|| "Invalid environment type".to_string())?;
-                let removed = #(#remove_checks)||*;
+                // Non-short-circuit `|` so ALL categories are checked — names
+                // added via Ambiguous populate multiple per-category envs.
+                let removed = #(#remove_checks)|*;
                 Ok(removed)
             }
 
@@ -2758,6 +3215,11 @@ fn generate_language_trait_impl_multi(
                 };
                 let mut result = Vec::new();
                 #(#list_iterations)*
+                // Ambiguous terms populate multiple per-category envs via
+                // `add_to_env`; report one binding per name (multi-category
+                // storage remains for cross-category variable resolution).
+                let mut seen = std::collections::HashSet::new();
+                result.retain(|(name, _, _)| seen.insert(name.clone()));
                 result
             }
 
@@ -3014,7 +3476,6 @@ fn rule_field_count(rule: &GrammarRule) -> usize {
             })
             .map(|p| match p {
                 mettail_ast::grammar::TermParam::Simple { .. } => 1,
-                mettail_ast::grammar::TermParam::Abstraction { .. } => 1, // Scope is one field
                 mettail_ast::grammar::TermParam::MultiAbstraction { .. } => 1,
                 _ => 0,
             })
@@ -3298,10 +3759,18 @@ fn generate_type_inference_helpers(
     // Get all categories for lambda variant detection (including native, e.g. Int/Bool/Str)
     let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
 
+    // Post-HOL-B: only emit Lam{D} / MLam{D} match arms on the primary
+    // type for domains D where the HOL variants actually exist.
+    let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
+    let primary_str = primary_type.to_string();
+
     // Generate match arms for lambda variants
     let mut lambda_arms: Vec<TokenStream> = Vec::new();
 
     for domain in &categories {
+        if !hol_pairs.contains(&(primary_str.clone(), domain.to_string())) {
+            continue;
+        }
         let domain_lit = LitStr::new(&domain.to_string(), domain.span());
         let lam_variant = format_ident!("Lam{}", domain);
         let mlam_variant = format_ident!("MLam{}", domain);

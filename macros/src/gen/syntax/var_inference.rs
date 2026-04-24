@@ -99,10 +99,18 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
             }
         });
 
-        // Generate arms for Apply/Lam variants for all domains (including native, e.g. Int/Bool/Str)
+        // Generate arms for Apply/Lam variants for domains that actually have
+        // HOL variants auto-gen'd on this category. Post-HOL-B: matches only
+        // pairs flagged by `compute_hol_domain_pairs`; emitting an arm
+        // referencing a non-existent variant would be a compile error.
+        let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
+        let cat_str_inf = cat_name.to_string();
         let domain_cats: Vec<_> = cat_names
             .iter()
-            .filter(|c| language.types.iter().any(|t| t.name.to_string() == c.to_string()))
+            .filter(|c| {
+                language.types.iter().any(|t| t.name.to_string() == c.to_string())
+                    && hol_pairs.contains(&(cat_str_inf.clone(), c.to_string()))
+            })
             .collect();
         for domain in &domain_cats {
             let apply_variant = syn::Ident::new(&format!("Apply{}", domain), proc_macro2::Span::call_site());
@@ -366,7 +374,7 @@ fn generate_var_inference_arm(
                             .any(|c| c.to_string() == element_type.to_string())
                         {
                             let kind = match coll_type {
-                                CollectionType::HashBag => InferFieldKind::HashBag,
+                                CollectionType::HashBag | CollectionType::HashMap => InferFieldKind::HashBag,
                                 CollectionType::Vec => InferFieldKind::Vec,
                                 CollectionType::HashSet => InferFieldKind::Vec,
                             };
@@ -615,7 +623,7 @@ fn generate_var_type_inference_arm(
                             .any(|c| c.to_string() == element_type.to_string())
                         {
                             let kind = match coll_type {
-                                CollectionType::HashBag => InferFieldKind::HashBag,
+                                CollectionType::HashBag | CollectionType::HashMap => InferFieldKind::HashBag,
                                 CollectionType::Vec => InferFieldKind::Vec,
                                 CollectionType::HashSet => InferFieldKind::Vec,
                             };
@@ -763,5 +771,6 @@ fn extract_base_cat(ty: &TypeExpr) -> syn::Ident {
         TypeExpr::Arrow { codomain, .. } => extract_base_cat(codomain),
         TypeExpr::MultiBinder(inner) => extract_base_cat(inner),
         TypeExpr::Refined { base, .. } => extract_base_cat(base),
+        TypeExpr::Map { value, .. } => extract_base_cat(value),
     }
 }

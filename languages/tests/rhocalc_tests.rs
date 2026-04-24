@@ -127,6 +127,12 @@ fn multiset_eq(a: &str, b: &str) -> bool {
 mod comm {
     use super::*;
 
+    /// Reproduces REPL load_env parse error: PPar with a!(n) must not reduce "a" to variable.
+    #[test]
+    fn par_with_output_literal() {
+        let _ = parse("{ a!(2) | b!(3) }");
+    }
+
     #[test]
     fn single_channel() {
         assert_reduces_to("{(c?x).{*(x)} | c!(p)}", "p");
@@ -343,6 +349,82 @@ mod native_ops {
         }
 
         #[test]
+        fn float_literal_f64_suffix_tokens() {
+            let results = run("{1.0f64 + 0.5f64}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf.contains("1.5")),
+                "expected 1.5 in a normal form, got: {:?}",
+                nfs
+            );
+        }
+
+        #[test]
+        fn fixed_div_and_mod() {
+            assert_reduces_to("{10p1 / 3p1}", "3.3p1");
+            assert_reduces_to("{10p1 % 3p1}", "0.1p1");
+        }
+
+        #[test]
+        fn fixed_bitand() {
+            assert_reduces_to("{5p0 bitand 3p0}", "1p0");
+        }
+
+        #[test]
+        fn fixed_bitor() {
+            assert_reduces_to("{5p0 bitor 3p0}", "7p0");
+        }
+
+        #[test]
+        fn fixed_comparisons() {
+            assert_reduces_to("{10p1 == 10.0p1}", "true");
+            assert_reduces_to("{1p0 == 1.0p1}", "true");
+            assert_reduces_to("{10p1 != 9p1}", "true");
+            assert_reduces_to("{10p1 < 11p1}", "true");
+            assert_reduces_to("{10p1 > 9p1}", "true");
+            assert_reduces_to("{10p1 <= 10.0p1}", "true");
+            assert_reduces_to("{10p1 >= 10.0p1}", "true");
+        }
+
+        #[test]
+        fn fixed_arithmetic_add_sub_mul() {
+            assert_reduces_to("{1p0 + 0.5p1}", "1.5p1");
+            assert_reduces_to("{2.0p1 - 0.5p1}", "1.5p1");
+            assert_reduces_to("{3p0 * 2p0}", "6p0");
+            assert_reduces_to("{-10p1}", "-10.0p1");
+        }
+
+        #[test]
+        fn fixed_div_by_zero_is_error() {
+            assert_reduces_to("{10p1 / 0p0}", "error");
+        }
+
+        #[test]
+        fn fixed_mod_by_zero_is_error() {
+            assert_reduces_to("{10p1 % 0p0}", "error");
+        }
+
+        #[test]
+        fn float_more_f64_suffix() {
+            let results = run("{1e2f64 + 1.0f64}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf.contains("101")),
+                "expected 101 in a normal form, got: {:?}",
+                nfs
+            );
+        }
+
+        #[test]
+        fn cast_to_int_float_bool_str_from_fixed() {
+            assert_reduces_to("{int(10p1, 64)}", "10");
+            assert_reduces_to("{float(10p1, 64)}", "10.0");
+            assert_reduces_to("{bool(0p0)}", "false");
+            assert_reduces_to("{bool(1p0)}", "true");
+            assert_reduces_to(r#"{str(1.5p1)}"#, r#""1.5p1""#);
+        }
+
+        #[test]
         fn chained_add() {
             // fold evaluates full expression trees
             assert_reduces_to("{1 + 2 + 3}", "6");
@@ -358,6 +440,128 @@ mod native_ops {
                 nfs
             );
         }
+
+        #[test]
+        fn bigint_add() {
+            assert_reduces_to("{1n + 2n}", "3n");
+        }
+
+        #[test]
+        fn u32_add() {
+            assert_reduces_to("{1u32 + 2u32}", "3u32");
+        }
+
+        /// C analogy: `unsigned x = 0; x = x - 1` → `UINT_MAX`. Rust `u32` wraps in release; debug may panic.
+        #[cfg(not(debug_assertions))]
+        #[test]
+        fn u32_sub_underflow_wraps_to_uint_max_in_release() {
+            assert_reduces_to("{0u32 - 1u32}", "4294967295u32");
+        }
+
+        #[test]
+        fn bigrat_add_normalized() {
+            assert_reduces_to("{3r/4r + 1r/4r}", "1r");
+        }
+
+        #[test]
+        fn int_literal_optional_i64_suffix() {
+            assert_reduces_to("{7i64 + 1}", "8");
+        }
+
+        #[test]
+        fn fraction_builds_rational() {
+            assert_reduces_to("{fraction(1n, 2n) + 1r/2r}", "1r");
+        }
+
+        /// Regression: `fraction` must use `fold` on Proc (not `step`), or Ascent never emits rw_proc.
+        #[test]
+        fn fraction_at_top_level_reduces() {
+            assert_reduces_to("fraction(2n, 3n)", "2r/3r");
+            assert_reduces_to("fraction(2n, 3n) + fraction(1n, 2n)", "7r/6r");
+        }
+
+        #[test]
+        fn bigint_div_by_zero_is_error() {
+            assert_reduces_to("{1n / 0n}", "error");
+        }
+    }
+
+    mod bitwise {
+        use super::*;
+
+        #[test]
+        fn int_and_or_not() {
+            assert_reduces_to("{5 bitand 3}", "1");
+            assert_reduces_to("{5 bitor 3}", "7");
+            let results = run("{bitnot 0}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf == "-1"),
+                "expected `-1` in normal forms, got: {:?}",
+                nfs
+            );
+        }
+
+        #[test]
+        fn u32_and_or_not() {
+            assert_reduces_to("{5u32 bitand 3u32}", "1u32");
+            assert_reduces_to("{5u32 bitor 3u32}", "7u32");
+            assert_reduces_to("{bitnot 0u32}", "4294967295u32");
+        }
+
+        #[test]
+        fn bigint_and_or_not() {
+            assert_reduces_to("{3n bitand 1n}", "1n");
+            assert_reduces_to("{3n bitor 1n}", "3n");
+            let results = run("{bitnot 0n}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf == "-1n" || nf == "-1"),
+                "expected `-1n` or `-1` in normal forms, got: {:?}",
+                nfs
+            );
+        }
+
+        #[test]
+        fn bigrat_and_or_not() {
+            assert_reduces_to("{3r/4r bitand 1r/4r}", "1r/4r");
+            assert_reduces_to("{1r/2r bitand 1r/3r}", "1r/3r");
+            let results = run("{bitnot 0r}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf == "-1r" || nf == "-1"),
+                "expected `-1r` (or `-1`) in normal forms, got: {:?}",
+                nfs
+            );
+        }
+
+        #[test]
+        fn fixed_and_or_not() {
+            assert_reduces_to("{bitnot 0p0}", "-1p0");
+            assert_reduces_to("{15p0 bitand 14p1}", "13.2p1");
+        }
+
+        #[test]
+        fn type_mismatch_bitand_is_error() {
+            assert_reduces_to("{1 bitand 1.0}", "error");
+            assert_reduces_to("{1 bitand true}", "error");
+        }
+
+        #[test]
+        fn type_mismatch_bitnot_is_error() {
+            assert_reduces_to("{bitnot true}", "error");
+        }
+
+        #[test]
+        fn bitnot_under_congruence_smoke() {
+            let results = run("{bitnot *(@(0))}");
+            let nfs = normal_form_displays(&results);
+            assert!(
+                nfs.iter().any(|nf| nf == "-1"),
+                "expected `-1` in normal forms, got: {:?}",
+                nfs
+            );
+        }
     }
 
     mod comparison {
@@ -366,6 +570,12 @@ mod native_ops {
         #[test]
         fn eq_true() {
             assert_reduces_to("{1 == 1}", "true");
+        }
+
+        #[test]
+        fn eq_rational_slash_binds_tighter_than_eq() {
+            // Regression: `==` must not bind tighter than `/` (would parse as `15/(6==30)/12`).
+            assert_reduces_to("{15r/6r == 30r/12r}", "true");
         }
         #[test]
         fn eq_false() {
@@ -390,6 +600,16 @@ mod native_ops {
         #[test]
         fn lte() {
             assert_reduces_to("{2 <= 3}", "true");
+        }
+
+        #[test]
+        fn bigint_gt() {
+            assert_reduces_to("{2n > 1n}", "true");
+        }
+
+        #[test]
+        fn u32_eq() {
+            assert_reduces_to("{3u32 == 3u32}", "true");
         }
     }
 
@@ -436,24 +656,104 @@ mod native_ops {
         }
     }
 
+    mod bag {
+        use super::*;
+
+        /// remove(*(bag), *(elem)) after comm: removes one occurrence of elem from bag
+        #[test]
+        fn remove_comm() {
+            assert_reduces_to(
+                "{a!(#{1|2|2}#) | c!(2) | (a?b, c?e).{remove(*(b), *(e))}}",
+                "#{1|2}#",
+            );
+        }
+
+        /// count(*(bag), *(elem)) after comm: counts occurrences of elem in bag
+        #[test]
+        fn count_comm() {
+            assert_reduces_to("{a!(#{1|2|2}#) | c!(2) | (a?b, c?e).{count(*(b), *(e))}}", "2");
+        }
+    }
+
+    mod map {
+        use super::*;
+
+        #[test]
+        fn map_len_empty() {
+            assert_reduces_to("{len(map())}", "0");
+        }
+
+        #[test]
+        fn map_len_one() {
+            assert_reduces_to("{len(map(1:2))}", "1");
+        }
+
+        #[test]
+        fn map_get() {
+            assert_reduces_to("{get(map(1:10), 1)}", "10");
+        }
+
+        #[test]
+        fn map_put() {
+            assert_reduces_to("{get(put(map(), 1, 10), 1)}", "10");
+        }
+
+        #[test]
+        fn map_merge() {
+            assert_reduces_to("{get(merge(map(1:10), map(2:20)), 2)}", "20");
+        }
+
+        #[test]
+        fn map_has() {
+            assert_reduces_to("{has(map(1:2), 1)}", "true");
+            assert_reduces_to("{has(map(1:2), 3)}", "false");
+        }
+
+        #[test]
+        fn map_keys() {
+            assert_reduces_to("{len(keys(map(1:10, 2:20)))}", "2");
+        }
+
+        #[test]
+        fn map_values() {
+            assert_reduces_to("{at(values(map(1:10, 2:20)), 1)}", "20");
+        }
+
+        #[test]
+        fn map_mapdelete() {
+            assert_reduces_to("{len(mapdelete(map(1:10, 2:20), 1))}", "1");
+            assert_reduces_to("{get(mapdelete(map(1:10, 2:20), 1), 2)}", "20");
+        }
+    }
+
     mod type_conversion {
         use super::*;
 
         #[test]
         fn int_to_float() {
-            assert_reduces_to("{float(3)}", "3");
+            assert_reduces_to("{float(3, 64)}", "3");
         }
         #[test]
         fn bool_to_int_true() {
-            assert_reduces_to("{int(true)}", "1");
+            assert_reduces_to("{int(true, 64)}", "1");
         }
         #[test]
         fn bool_to_int_false() {
-            assert_reduces_to("{int(false)}", "0");
+            assert_reduces_to("{int(false, 64)}", "0");
         }
         #[test]
         fn int_to_str() {
             assert_reduces_to(r#"{str(42)}"#, r#""42""#);
+        }
+
+        #[test]
+        fn int_from_bigint_fits_i64() {
+            assert_reduces_to("{int(99n, 64)}", "99");
+        }
+
+        #[test]
+        fn str_from_bigint() {
+            assert_reduces_to(r#"{str(10n)}"#, r#""10""#);
         }
     }
 }
@@ -464,6 +764,11 @@ mod native_ops {
 
 mod parsing {
     use super::*;
+
+    #[test]
+    fn fraction_zero_denominator_is_error() {
+        assert_reduces_to("{fraction(1n, 0n)}", "error");
+    }
 
     #[test]
     fn zero() {
@@ -545,6 +850,152 @@ mod beta {
         let normalized = lang.normalize_term(term.as_ref());
         assert_eq!(format!("{}", normalized), "n!(init)");
     }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Numeric casts (`int`, `uint`, … on Proc)
+// ════════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn rhocalc_cast_int_float_floor() {
+    let results = run("{int(-3.5, 8)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|nf| nf == "-4" || nf.contains("-4")),
+        "expected -4, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_int_invalid_width_error() {
+    let results = run("{int(1, 7)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|d| d == "error" || d.contains("error")),
+        "expected error NF, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_int_nonfinite_float_is_error() {
+    let results = run("{int(0.0 / 0.0, 8)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|d| d == "error" || d.contains("error")),
+        "expected error for NaN source, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_uint_float_clamp() {
+    let results = run("{uint(-3.5, 8)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|nf| nf == "0u32" || nf == "0"),
+        "expected 0 / 0u32, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_uint_modular_u32_literal() {
+    let results = run("{uint(257u32, 8)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|nf| nf == "1u32" || nf == "1"),
+        "expected modular 257 -> 1 in 8 bits, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_float_overflow_to_inf() {
+    let results = run("{float(1e50, 32)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|nf| nf.to_ascii_lowercase().contains("inf")),
+        "expected +Inf in a normal form, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_float_from_rational_string() {
+    let results = run(r#"{float("1r/2r", 32)}"#);
+    let nfs = normal_form_displays(&results);
+    assert!(nfs.iter().any(|nf| nf == "0.5"), "expected 0.5 in a normal form, got {:?}", nfs);
+}
+
+#[test]
+fn rhocalc_cast_float_from_bigint_n_string() {
+    assert_reduces_to(r#"{float("1000n", 64)}"#, "1000");
+}
+
+#[test]
+fn rhocalc_cast_float_from_fixed_p_string() {
+    assert_reduces_to(r#"{float("1000.1p1", 64)}"#, "1000.1");
+}
+
+#[test]
+fn rhocalc_casts_from_numeric_strings() {
+    assert_reduces_to(r#"{int("2r/3r", 32)}"#, "0");
+    assert_reduces_to(r#"{int("123n", 64)}"#, "123");
+    assert_reduces_to(r#"{int("123i64", 64)}"#, "123");
+    assert_reduces_to(r#"{int("10i32", 32)}"#, "10");
+    assert_reduces_to(r#"{int("false", 32)}"#, "0");
+    assert_reduces_to(r#"{int("true", 32)}"#, "1");
+    assert_reduces_to(r#"{bigint("123n")}"#, "123");
+    assert_reduces_to(r#"{bigrat("1r/2r")}"#, "1/2");
+}
+
+#[test]
+fn rhocalc_str_from_rational_literal() {
+    assert_reduces_to(r#"{str(23r)}"#, r#""23""#);
+}
+
+#[test]
+fn rhocalc_bigint_unary_from_float() {
+    let results = run("{bigint(-3.5)}");
+    let nfs = normal_form_displays(&results);
+    assert!(nfs.iter().any(|nf| nf.contains("-4")), "expected -4n or similar, got {:?}", nfs);
+}
+
+#[test]
+fn rhocalc_cast_fixed_floor() {
+    let results = run("{fixed(3.49p2, 1)}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter()
+            .any(|nf| nf.contains("3.4p1") || nf.contains("3.4")),
+        "expected 3.4p1, got {:?}",
+        nfs
+    );
+}
+
+#[test]
+fn rhocalc_cast_int_congruence_through_add() {
+    assert_reduces_to("{int({1 + 2}, 8)}", "3");
+}
+
+#[test]
+fn rhocalc_cast_uint_signed_int_twos_complement() {
+    // `bitnot 0` → −1 (`CastInt`). Nesting `bitnot` inside an inner `{…}` PPar can block cast folds;
+    // use it directly as the first operand of `uint`.
+    assert_reduces_to("{uint(bitnot 0, 8)}", "255");
+}
+
+#[test]
+fn rhocalc_cast_under_send_reduces_via_comm() {
+    let results = run("{(c?x).{*(x)} | c!({int(-3.5, 8)})}");
+    let nfs = normal_form_displays(&results);
+    assert!(
+        nfs.iter().any(|nf| nf == "-4" || nf.contains("-4")),
+        "expected `-4` after comm + cast in send, got {:?}",
+        nfs
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

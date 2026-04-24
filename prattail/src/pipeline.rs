@@ -899,6 +899,8 @@ pub struct CategoryInfo {
     pub native_type: Option<String>,
     /// Whether this is the primary (first-declared) category.
     pub is_primary: bool,
+    /// Whether this category has a variable variant (e.g. IVar). False for List/Bag.
+    pub has_var: bool,
 }
 
 /// All data needed by the parser pipeline. Send+Sync.
@@ -1037,11 +1039,18 @@ pub fn run_pipeline(spec: &LanguageSpec) -> TokenStream {
 /// computed. This function captures that data before it would otherwise
 /// be discarded.
 pub fn run_pipeline_with_analysis(spec: &LanguageSpec) -> (TokenStream, crate::PipelineAnalysis) {
-    let (lexer_bundle, parser_bundle) = extract_from_spec(spec);
+    let trace = std::env::var("PRATTAIL_MACRO_TRACE").is_ok();
+    macro_rules! stage {
+        ($name:literal) => {
+            if trace {
+                eprintln!("[macro-trace] {} pipeline:{}", spec.name, $name);
+            }
+        };
+    }
 
-    // NOTE: Grammar warnings (G01-G03) and WFST warnings (W01, W02) are now handled
-    // by the unified lint layer inside generate_parser_code(). The early
-    // detect_grammar_warnings() call has been migrated to lint::run_lints().
+    stage!("extract_from_spec.start");
+    let (lexer_bundle, parser_bundle) = extract_from_spec(spec);
+    stage!("extract_from_spec.done");
 
     // EBNF debug dump (opt-in via environment variable)
     if let Ok(dump_target) = std::env::var("PRATTAIL_DUMP_EBNF") {
@@ -1049,25 +1058,30 @@ pub fn run_pipeline_with_analysis(spec: &LanguageSpec) -> (TokenStream, crate::P
         crate::ebnf::write_ebnf_output(&ebnf, &spec.name, &dump_target);
     }
 
-    // Run lexer codegen
-    // AL02: hybrid_lexer defaults to true; optimization gate will be checked
-    // inside codegen (only activates for DFAs > 30 states)
+    stage!("generate_lexer_code.start");
     let (lexer_code, variant_map, ambiguity_info) =
         generate_lexer_code_with_map(&lexer_bundle, true);
+    stage!("generate_lexer_code.done");
 
-    // Run parser codegen with analysis capture
+    stage!("generate_parser_code.start");
     let (parser_code, analysis) = generate_parser_code_with_analysis(
         &parser_bundle,
         &variant_map,
         &ambiguity_info,
     );
+    stage!("generate_parser_code.done");
 
     // Finalize: concatenate and parse into TokenStream
+    stage!("concat.start");
     let mut combined = lexer_code;
     combined.push_str(&parser_code);
+    stage!("concat.done");
+
+    stage!("parse_to_tokenstream.start");
     let ts = combined
         .parse::<TokenStream>()
         .expect("PraTTaIL pipeline: generated code failed to parse as TokenStream");
+    stage!("parse_to_tokenstream.done");
 
     (ts, analysis)
 }
@@ -1130,6 +1144,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
             name: t.name.clone(),
             native_type: t.native_type.clone(),
             is_primary: i == 0,
+            has_var: t.has_var,
         })
         .collect();
 
@@ -1286,15 +1301,39 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         })
         .collect();
 
+    // Build per-category infix terminal sets for cast-rule infix-sharing detection.
+    // When a cast rule's source and target share an infix operator terminal
+    // (e.g., `+` shared by Int and BigInt via IntToBigInt injection), the
+    // cast-arm emission must pass `u8::MAX` as min_bp so the operator binds
+    // to the target's rule, not the source's.
+    let infix_terminals_by_cat: HashMap<String, HashSet<String>> = {
+        let mut map: HashMap<String, HashSet<String>> = HashMap::new();
+        for ir in &infix_rules {
+            if !ir.terminal.is_empty() {
+                map.entry(ir.category.clone()).or_default().insert(ir.terminal.clone());
+            }
+        }
+        map
+    };
+
     // Extract cast rules
     let cast_rules: Vec<CastRule> = spec
         .rules
         .iter()
         .filter(|r| r.is_cast)
-        .map(|r| CastRule {
-            label: r.label.clone(),
-            source_category: r.cast_source_category.clone().unwrap_or_default(),
-            target_category: r.category.clone(),
+        .map(|r| {
+            let source_cat = r.cast_source_category.clone().unwrap_or_default();
+            let target_cat = r.category.clone();
+            let empty = HashSet::new();
+            let src_ops = infix_terminals_by_cat.get(&source_cat).unwrap_or(&empty);
+            let tgt_ops = infix_terminals_by_cat.get(&target_cat).unwrap_or(&empty);
+            let shares_infix_with_target = src_ops.iter().any(|t| tgt_ops.contains(t));
+            CastRule {
+                label: r.label.clone(),
+                source_category: source_cat,
+                target_category: target_cat,
+                shares_infix_with_target,
+            }
         })
         .collect();
 
@@ -1357,6 +1396,26 @@ fn generate_lexer_code_with_map(
         &bundle.category_names,
     );
     lexer_input.literal_patterns = bundle.literal_patterns.clone();
+    // Enable rational / fixed-point literal handling in the lexer when the
+    // corresponding `literal_patterns` maps are populated. Without this, the
+    // lexer would skip emission of the rational/fixed-point token arms even
+    // though the grammar declares them.
+    if !lexer_input.literal_patterns.rational_by_category.is_empty() {
+        lexer_input.needs.rational = true;
+    }
+    if !lexer_input.literal_patterns.fixed_by_category.is_empty() {
+        lexer_input.needs.fixed_point = true;
+    }
+    // If a boolean literal pattern is registered, remove the built-in
+    // `True`/`False` keyword terminals so the custom pattern drives matching.
+    if bundle.literal_patterns.boolean.is_some() {
+        lexer_input.terminals.retain(|t| {
+            !matches!(
+                t.kind,
+                crate::automata::TokenKind::True | crate::automata::TokenKind::False
+            )
+        });
+    }
     lexer_input.custom_tokens = bundle.custom_tokens.clone();
     lexer_input.modes = bundle.modes.iter().map(|m| crate::lexer::LexerModeInput {
         name: m.name.clone(),
@@ -2146,6 +2205,23 @@ fn generate_parser_code(
                     "str" | "String" => {
                         first_set.insert("StringLit");
                     },
+                    // BigRat/Fixed/BigInt literal Tokens are category-named
+                    // (e.g. `Token::BigRat`, `Token::Fixed`, `Token::BigInt`) —
+                    // the lexer emits them ONLY when the source matches the
+                    // category-specific regex (`…r`, `…p…`, `…n`). FIRST
+                    // sets reflect the category-named variant so the parser
+                    // dispatches on the correct variant; a bare integer like
+                    // `1` does NOT dispatch to BigInt — it dispatches to
+                    // Int (built-in `Token::Integer`).
+                    _ if native_type.ends_with("CanonicalBigRat") => {
+                        first_set.insert(&cat.name);
+                    },
+                    _ if native_type.ends_with("CanonicalFixedPoint") => {
+                        first_set.insert(&cat.name);
+                    },
+                    _ if native_type.ends_with("CanonicalBigInt") => {
+                        first_set.insert(&cat.name);
+                    },
                     _ => {},
                 }
             }
@@ -2546,7 +2622,36 @@ fn generate_parser_code(
     };
 
     // Emit token_to_id helper for Tier 3 simulation (Token → u16 TokenId).
-    emit_token_to_id_fn(&mut buf, &token_id_map, &grammar_token_variants);
+    // Build a set of token names that carry a payload (tuple-variant patterns
+    // must use a wildcard, e.g. `Token::BigRat(_)` not `Token::BigRat`).
+    //
+    // Also seed the thread-local used by `dispatch::write_token_pattern` so
+    // every downstream pattern emitter uses the correct wildcard form for
+    // custom payload-bearing variants during this codegen pass.
+    let payload_variants: std::collections::HashSet<String> = {
+        let mut set = std::collections::HashSet::new();
+        for spec in &bundle.custom_tokens {
+            if spec.payload_type.is_some() {
+                set.insert(spec.name.clone());
+            }
+        }
+        set
+    };
+    crate::dispatch::set_payload_variants(payload_variants.iter().cloned());
+
+    // W4b: Install category → native-type map so dispatch codegen can emit
+    // suffix-guarded `Token::Integer(_, suffix) if suffix.matches_<T>()`
+    // arms when routing to an integer-category parser. Without this the
+    // blanket `Token::Integer(_, _)` arm sends `0u32` to `parse_Int` and
+    // fails on the suffix mismatch.
+    let category_native_types: std::collections::HashMap<String, String> = bundle
+        .categories
+        .iter()
+        .filter_map(|c| c.native_type.as_ref().map(|nt| (c.name.clone(), nt.clone())))
+        .collect();
+    crate::dispatch::set_category_native_types(category_native_types);
+
+    emit_token_to_id_fn(&mut buf, &token_id_map, &grammar_token_variants, &payload_variants);
 
     // Generate RD handlers
     //
@@ -3671,7 +3776,7 @@ fn generate_parser_code(
                 || mixfix_count >= crate::pratt::BP_TABLE_LOOKUP_THRESHOLD
         });
         if bp03_needed {
-            crate::automata::codegen::write_token_variant_id(&mut buf, variant_map);
+            crate::automata::codegen::write_token_variant_id(&mut buf, variant_map, &bundle.custom_tokens);
         }
     }
 
@@ -3772,15 +3877,22 @@ fn generate_parser_code(
                 }
             });
 
+        let payload_carrying_variants: Vec<String> = bundle.custom_tokens.iter()
+            .filter(|s| s.payload_type.is_some())
+            .map(|s| s.name.clone())
+            .collect();
+
         let tramp_config = TrampolineConfig {
             category: cat.name.clone(),
             is_primary: cat.is_primary,
+            has_var: cat.has_var,
             has_infix,
             has_postfix,
             has_mixfix,
             all_categories: category_names.clone(),
             needs_dispatch,
             native_type: cat.native_type.clone(),
+            payload_carrying_variants,
             cast_rules: cat_cast_rules,
             own_first_set: own_first,
             all_first_sets: first_sets.clone(),
@@ -3831,6 +3943,7 @@ fn generate_parser_code(
                     &optimization_gates,
                     &dead_rules,
                     &bundle.rd_rules,
+                    &category_names,
                 )
             } else {
                 Vec::new()
@@ -3997,6 +4110,7 @@ fn generate_parser_code(
         let tramp_config = TrampolineConfig {
             category: cat.name.clone(),
             is_primary: cat.is_primary,
+            has_var: cat.has_var,
             has_infix: !bundle.bp_table.operators_for_category(&cat.name).is_empty(),
             has_postfix: !bundle
                 .bp_table
@@ -4009,6 +4123,10 @@ fn generate_parser_code(
             all_categories: category_names.clone(),
             needs_dispatch,
             native_type: cat.native_type.clone(),
+            payload_carrying_variants: bundle.custom_tokens.iter()
+                .filter(|s| s.payload_type.is_some())
+                .map(|s| s.name.clone())
+                .collect(),
             cast_rules: bundle
                 .cast_rules
                 .iter()
@@ -4201,12 +4319,17 @@ fn generate_parser_code(
             let tc = crate::trampoline::TrampolineConfig {
                 category: cat.name.clone(),
                 is_primary: cat.is_primary,
+                has_var: cat.has_var,
                 has_infix: !bundle.bp_table.operators_for_category(&cat.name).is_empty(),
                 has_postfix: !bundle.bp_table.postfix_operators_for_category(&cat.name).is_empty(),
                 has_mixfix: !bundle.bp_table.mixfix_operators_for_category(&cat.name).is_empty(),
                 all_categories: category_names.clone(),
                 needs_dispatch,
                 native_type: cat.native_type.clone(),
+                payload_carrying_variants: bundle.custom_tokens.iter()
+                    .filter(|s| s.payload_type.is_some())
+                    .map(|s| s.name.clone())
+                    .collect(),
                 cast_rules: bundle.cast_rules.iter().filter(|r| r.target_category == cat.name).cloned().collect(),
                 own_first_set: first_sets.get(&cat.name).cloned().unwrap_or_default(),
                 all_first_sets: first_sets.clone(),
@@ -4884,16 +5007,29 @@ fn detect_projection_rules(
             continue;
         }
 
-        // Check if the rule has exactly one NonTerminal parameter of the sum-type category
-        let sum_type_params: Vec<&crate::recursive::RDSyntaxItem> = rd_rule.items.iter()
+        // A valid projection rule has EXACTLY ONE NonTerminal parameter total,
+        // and that one parameter must be of the sum-type category. Multi-param
+        // rules like `IntBin . a:Proc, w:Int` are NOT projections — they are
+        // cast operations requiring additional arguments — and attempting to
+        // construct them with a single `Box::new(lhs.clone())` argument is a
+        // compile error.
+        let all_nt_params: Vec<&crate::recursive::RDSyntaxItem> = rd_rule.items.iter()
             .filter(|item| matches!(
                 item,
-                crate::recursive::RDSyntaxItem::NonTerminal { category, .. }
-                    if category == cat_name
+                crate::recursive::RDSyntaxItem::NonTerminal { .. }
             ))
             .collect();
 
-        if sum_type_params.len() != 1 {
+        if all_nt_params.len() != 1 {
+            continue;
+        }
+
+        let is_sum_param = matches!(
+            all_nt_params[0],
+            crate::recursive::RDSyntaxItem::NonTerminal { category, .. }
+                if category == cat_name
+        );
+        if !is_sum_param {
             continue;
         }
 
@@ -4917,8 +5053,13 @@ fn collect_terminals_recursive(items: &[SyntaxItemSpec]) -> Vec<String> {
     for item in items {
         match item {
             SyntaxItemSpec::Terminal(t) => terminals.push(t.clone()),
-            SyntaxItemSpec::Collection { separator, .. }
-            | SyntaxItemSpec::BinderCollection { separator, .. } => {
+            SyntaxItemSpec::Collection { separator, key_val_separator, .. } => {
+                terminals.push(separator.clone());
+                if let Some(kv) = key_val_separator {
+                    terminals.push(kv.clone());
+                }
+            },
+            SyntaxItemSpec::BinderCollection { separator, .. } => {
                 terminals.push(separator.clone());
             },
             SyntaxItemSpec::Sep { body, separator, .. } => {
@@ -5030,10 +5171,12 @@ pub(crate) fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
             element_category,
             separator,
             kind,
+            key_val_separator,
         } => RDSyntaxItem::Collection {
             param_name: param_name.clone(),
             element_category: element_category.clone(),
             separator: separator.clone(),
+            key_val_separator: key_val_separator.clone(),
             kind: *kind,
         },
         SyntaxItemSpec::Sep { body, separator, kind } => RDSyntaxItem::Sep {
@@ -5390,6 +5533,7 @@ fn emit_token_to_id_fn(
     buf: &mut String,
     token_id_map: &crate::token_id::TokenIdMap,
     valid_variants: &std::collections::HashSet<String>,
+    payload_variants: &std::collections::HashSet<String>,
 ) {
     use std::fmt::Write;
 
@@ -5401,15 +5545,17 @@ fn emit_token_to_id_fn(
             continue;
         }
 
-        // Tokens with payloads need wildcard patterns
-        let pattern = match name {
-            "Ident" => "Token::Ident(_)".to_string(),
-            "Integer" => "Token::Integer(_)".to_string(),
-            "Float" => "Token::Float(_)".to_string(),
-            "Boolean" => "Token::Boolean(_)".to_string(),
-            "StringLit" => "Token::StringLit(_)".to_string(),
-            "Eof" => "Token::Eof".to_string(),
-            other => format!("Token::{}", other),
+        // Tokens with payloads need wildcard patterns. First check the
+        // built-in family via `TokenFamily`; for Other-family variants
+        // (custom / category-named tokens like `BigRat`, `Fixed`) consult
+        // the `payload_variants` set derived from `CustomTokenSpec`.
+        let family = crate::automata::TokenFamily::from_name(name);
+        let pattern = if let Some(p) = family.match_pattern() {
+            p.to_string()
+        } else if payload_variants.contains(name) {
+            format!("Token::{}(_)", name)
+        } else {
+            format!("Token::{}", name)
         };
         write!(buf, "{} => {}_u16,", pattern, id).unwrap();
     }
@@ -5457,14 +5603,10 @@ fn generate_wfst_recovery_fn(
         .sync_tokens()
         .iter()
         .filter_map(|&id| recovery_wfst.token_name(id))
-        .map(|name| match name {
-            "Ident" => "Token::Ident(_)".to_string(),
-            "Integer" => "Token::Integer(_)".to_string(),
-            "Float" => "Token::Float(_)".to_string(),
-            "Boolean" => "Token::Boolean(_)".to_string(),
-            "StringLit" => "Token::StringLit(_)".to_string(),
-            "Eof" => "Token::Eof".to_string(),
-            other => format!("Token::{}", other),
+        .map(|name| {
+            crate::automata::TokenFamily::from_name(name).match_pattern()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("Token::{}", name))
         })
         .collect();
 
@@ -5774,11 +5916,6 @@ fn write_trampolined_parser_recovering_wfst(
                         let scan_to = if *pos < tokens.len() {{ *pos }} else {{ tokens.len() }}; \
                         for i in last..scan_to {{ \
                             match &tokens[i].0 {{ \
-                                Token::LParen => op = op.saturating_add(1), \
-                                Token::RParen => op = op.saturating_sub(1), \
-                                Token::LBrace => ob = ob.saturating_add(1), \
-                                Token::RBrace => ob = ob.saturating_sub(1), \
-                                Token::LBracket => ok = ok.saturating_add(1), \
                                 Token::RBracket => ok = ok.saturating_sub(1), \
                                 _ => {{}} \
                             }} \
@@ -6102,6 +6239,7 @@ pub fn analyze_green_thread_safety(
                 .map(|ch| CategoryInfo {
                     name: ch.name.clone(),
                     is_primary: false,
+                    has_var: false,
                     native_type: ch.element_type.clone(),
                 })
                 .collect();
@@ -6625,6 +6763,7 @@ mod tests {
             name: name.to_string(),
             native_type: None,
             is_primary,
+            has_var: true,
         }
     }
 
@@ -7004,6 +7143,7 @@ mod tests {
                     param_name: "args".to_string(),
                     element_category: "Arg".to_string(),
                     separator: ",".to_string(),
+                    key_val_separator: None,
                     kind: crate::recursive::CollectionKind::Vec,
                 },
                 SyntaxItemSpec::Terminal(")".to_string()),
@@ -8387,6 +8527,7 @@ mod proptest_tests {
             name: name.to_string(),
             native_type: None,
             is_primary,
+            has_var: true,
         }
     }
 

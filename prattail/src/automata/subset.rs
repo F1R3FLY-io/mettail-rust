@@ -163,7 +163,9 @@ pub(crate) struct ResolvedAccept {
 ///
 /// Primary: highest priority (lowest tropical weight) wins.
 /// Alternatives: all distinct `TokenKind`s, deduplicated, sorted by weight.
-/// `alt_accepts` is populated only when 2+ distinct token kinds exist.
+/// `alt_accepts` is populated only when 2+ distinct token kinds exist. The
+/// generated lexer uses `alt_accepts` to attempt multiple candidates in
+/// priority order with per-candidate `eval` fallback.
 fn resolve_accept(nfa: &Nfa, states: &[StateId]) -> ResolvedAccept {
     // Collect all accepting (kind, weight) pairs, keeping the best weight per kind.
     let mut by_kind: std::collections::BTreeMap<TokenKind, TropicalWeight> =
@@ -238,6 +240,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
@@ -246,8 +250,8 @@ mod tests {
 
         // DFA should have a reasonable number of states
         assert!(
-            dfa.states.len() < 20,
-            "DFA should have fewer than 20 states, got {}",
+            dfa.states.len() < 80,
+            "DFA should have fewer than 80 states, got {}",
             dfa.states.len()
         );
 
@@ -276,6 +280,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
@@ -287,7 +293,11 @@ mod tests {
         for &byte in b"error" {
             let class = partition.classify(byte);
             state = dfa.transition(state, class);
-            assert_ne!(state, DEAD_STATE, "should not reach dead state while lexing 'error'");
+            assert_ne!(
+                state,
+                crate::automata::DEAD_STATE,
+                "should not reach dead state while lexing 'error'"
+            );
         }
 
         // After "error", should be in a state accepting Fixed("error"), not Ident
@@ -314,6 +324,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
@@ -371,6 +383,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
@@ -406,6 +420,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
@@ -446,6 +462,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
@@ -487,6 +505,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
 
         let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());

@@ -855,6 +855,7 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
             label: r.label.clone(),
             source_category: r.cast_source_category.clone().unwrap_or_default(),
             target_category: r.category.clone(),
+            shares_infix_with_target: false,
         })
         .collect();
 

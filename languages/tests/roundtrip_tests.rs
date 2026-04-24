@@ -63,9 +63,14 @@ fn arb_int_term(max_depth: u32) -> impl Strategy<Value = Int> {
                 // Tern: cond ? then : else
                 (inner.clone(), inner.clone(), inner.clone())
                     .prop_map(|(c, t, e)| { Int::Tern(Box::new(c), Box::new(t), Box::new(e)) }),
-                // CustomOp: a ~ b
+                // BitAndInt: a & b
                 (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::CustomOp(Box::new(a), Box::new(b)) }),
+                    .prop_map(|(a, b)| { Int::BitAndInt(Box::new(a), Box::new(b)) }),
+                // BitOrInt: a | b
+                (inner.clone(), inner.clone())
+                    .prop_map(|(a, b)| { Int::BitOrInt(Box::new(a), Box::new(b)) }),
+                // BitNotInt: ~a
+                inner.clone().prop_map(|a| { Int::BitNotInt(Box::new(a)) }),
             ]
         },
     )
@@ -145,7 +150,8 @@ fn roundtrip_simple_binary_ops() {
         ("/", |a, b| Int::DivInt(a, b)),
         ("%", |a, b| Int::ModInt(a, b)),
         ("^", |a, b| Int::PowInt(a, b)),
-        ("~", |a, b| Int::CustomOp(a, b)),
+        ("&", |a, b| Int::BitAndInt(a, b)),
+        ("|", |a, b| Int::BitOrInt(a, b)),
     ];
 
     for (op_name, constructor) in &ops {
@@ -188,6 +194,19 @@ fn roundtrip_unary_ops() {
     assert!(
         parsed.is_ok(),
         "Fact should round-trip. Displayed: '{}', Error: {:?}",
+        displayed,
+        parsed.err()
+    );
+
+    // BitNotInt: ~operand
+    mettail_runtime::clear_var_cache();
+    let term = Int::BitNotInt(Box::new(Int::NumLit(5)));
+    let displayed = format!("{}", term);
+    mettail_runtime::clear_var_cache();
+    let parsed = Int::parse(&displayed);
+    assert!(
+        parsed.is_ok(),
+        "BitNotInt should round-trip. Displayed: '{}', Error: {:?}",
         displayed,
         parsed.err()
     );

@@ -41,11 +41,20 @@ pub fn relation_names(category: &Ident) -> RelationNames {
     }
 }
 
-/// Find the literal label for a category (e.g., `NumLit` for `Int`, `BoolLit` for `Bool`).
+/// Find the literal label for a category (e.g., `NumLit` for `Int`, `ListLit` for `List`).
 ///
 /// Returns `None` if the category has no native type or no literal rule.
+/// For collection categories (List/Bag/Map), returns ListLit/BagLit/MapLit to match the enum variant.
 pub fn literal_label_for(language: &LanguageDef, category: &Ident) -> Option<Ident> {
     let lang_type = language.types.iter().find(|t| t.name == *category)?;
+    if let Some(ref ck) = lang_type.collection_kind {
+        let label = match ck {
+            mettail_ast::language::CollectionCategory::List(_) => quote::format_ident!("ListLit"),
+            mettail_ast::language::CollectionCategory::Bag(_) => quote::format_ident!("BagLit"),
+            mettail_ast::language::CollectionCategory::Map(_) => quote::format_ident!("MapLit"),
+        };
+        return Some(label);
+    }
     let native_type = lang_type.native_type.as_ref()?;
     let label = language
         .terms
@@ -121,6 +130,16 @@ pub fn native_type_for<'a>(language: &'a LanguageDef, category: &Ident) -> Optio
         .iter()
         .find(|t| t.name == *category)
         .and_then(|t| t.native_type.as_ref())
+}
+
+/// True if the category is a collection (List or Bag). Step/fold rust_code receives the enum, not the payload.
+pub fn is_collection_category(language: &LanguageDef, category: &Ident) -> bool {
+    language
+        .types
+        .iter()
+        .find(|t| t.name == *category)
+        .and_then(|t| t.collection_kind.as_ref())
+        .is_some()
 }
 
 /// Collect non-terminal fields from a grammar rule's items.
@@ -317,6 +336,10 @@ fn collect_type_refs(
         TypeExpr::Collection { element, .. } => {
             collect_type_refs(src, element, categories, edges);
         },
+        TypeExpr::Map { key, value } => {
+            collect_type_refs(src, key, categories, edges);
+            collect_type_refs(src, value, categories, edges);
+        },
         TypeExpr::Arrow { domain, codomain } => {
             collect_type_refs(src, domain, categories, edges);
             collect_type_refs(src, codomain, categories, edges);
@@ -455,6 +478,113 @@ pub fn filter_reachable_by_demand(
         })
         .cloned()
         .collect()
+}
+
+/// Compute which `(category, domain)` pairs should get auto-generated
+/// higher-order-logic variants `Lam{Domain}` / `MLam{Domain}` /
+/// `Apply{Domain}` / `MApply{Domain}`.
+///
+/// Returns the full cross-product of (category × domain) over all
+/// declared language types. Every category gets HOL variants for every
+/// domain.
+///
+/// ## Why not gate by usage?
+///
+/// An earlier "HOL-B" gating attempted to narrow the set by (a)
+/// structural analysis of Abstraction / MultiAbstraction grammar
+/// params and (b) a name scan of user-supplied `rust_code` / logic
+/// blocks for `(Lam|MLam|Apply|MApply)<TypeName>` idents. This was
+/// **incorrect**: downstream emitters (`prattail/src/trampoline.rs`
+/// beta-reduction arms, subst/normalize codegen, etc.) emit
+/// references to these variants *unconditionally* for every (cat,
+/// domain) pair. Gating the enum emission against the user-side scan
+/// produced dangling references to nonexistent variants — 96+ compile
+/// errors across rhocalc/guardedrho on the merge.
+///
+/// The memory reduction this gating provided was a real constant
+/// factor savings, but it came at the cost of correctness. If we want
+/// to reduce HOL variant surface, the fix must be systemic: teach
+/// every emitter to use the same gated set, or rewrite the beta/eta
+/// codegen so it doesn't need per-(cat, domain) variants at all. Until
+/// then, we emit the full cross-product.
+pub fn compute_hol_domain_pairs(language: &LanguageDef) -> BTreeSet<(String, String)> {
+    let all_types: Vec<String> = language.types.iter().map(|t| t.name.to_string()).collect();
+    let mut pairs: BTreeSet<(String, String)> = BTreeSet::new();
+    for cat in &all_types {
+        for domain in &all_types {
+            pairs.insert((cat.clone(), domain.clone()));
+        }
+    }
+    pairs
+}
+
+/// Extract the `(domain, codomain)` as `Ident` names from a `TypeExpr::Arrow`.
+/// Returns `(None, None)` for non-arrow types. For a multi-binder
+/// domain like `Name*` the inner binder name is returned.
+///
+/// Currently unused after HOL-B gating was reverted — kept for a
+/// future re-enablement (which must also teach downstream emitters
+/// to respect the gated set).
+#[allow(dead_code)]
+fn extract_arrow_types(ty: &TypeExpr) -> (Option<String>, Option<String>) {
+    match ty {
+        TypeExpr::Arrow { domain, codomain } => {
+            let dom = match &**domain {
+                TypeExpr::Base(id) => Some(id.to_string()),
+                TypeExpr::MultiBinder(inner) => match &**inner {
+                    TypeExpr::Base(id) => Some(id.to_string()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let cod = match &**codomain {
+                TypeExpr::Base(id) => Some(id.to_string()),
+                _ => None,
+            };
+            (dom, cod)
+        },
+        _ => (None, None),
+    }
+}
+
+/// Walk a TokenStream collecting identifiers matching
+/// `(Lam|MLam|Apply|MApply)<Suffix>` where `Suffix` is an exact
+/// language-type name. Inserts each matched `Suffix` into `out`.
+///
+/// Non-recursive at token level — but does recurse into groups
+/// `( ... )`, `{ ... }`, `[ ... ]` because the `rust_code` body may
+/// nest arbitrarily.
+///
+/// Currently unused after HOL-B gating was reverted — kept for a
+/// future re-enablement.
+#[allow(dead_code)]
+fn scan_tokens_for_hol_refs(
+    stream: &proc_macro2::TokenStream,
+    type_names: &BTreeSet<&str>,
+    out: &mut BTreeSet<String>,
+) {
+    use proc_macro2::TokenTree;
+    for tt in stream.clone() {
+        match tt {
+            TokenTree::Ident(id) => {
+                let name = id.to_string();
+                if let Some(suffix) = name
+                    .strip_prefix("MLam")
+                    .or_else(|| name.strip_prefix("MApply"))
+                    .or_else(|| name.strip_prefix("Lam"))
+                    .or_else(|| name.strip_prefix("Apply"))
+                {
+                    if !suffix.is_empty() && type_names.contains(suffix) {
+                        out.insert(suffix.to_string());
+                    }
+                }
+            },
+            TokenTree::Group(g) => {
+                scan_tokens_for_hol_refs(&g.stream(), type_names, out);
+            },
+            _ => {},
+        }
+    }
 }
 
 /// Recursively collect all category names referenced in a pattern.
@@ -596,6 +726,10 @@ fn collect_type_expr_categories(
         TypeExpr::Collection { element, .. } => {
             collect_type_expr_categories(element, all_categories, demanded);
         },
+        TypeExpr::Map { key, value } => {
+            collect_type_expr_categories(key, all_categories, demanded);
+            collect_type_expr_categories(value, all_categories, demanded);
+        },
         TypeExpr::Arrow { domain, codomain } => {
             collect_type_expr_categories(domain, all_categories, demanded);
             collect_type_expr_categories(codomain, all_categories, demanded);
@@ -657,6 +791,13 @@ pub fn in_cat_filter(cat: &Ident, filter: CategoryFilter) -> bool {
 /// Returns `None` if:
 /// - The language has ≤ 1 type (no splitting benefit)
 /// - All categories are core (core == full, no splitting benefit)
+/// - Post-HOL-B Option C size gate: `core.len() >= all_cats.len() - 2` —
+///   skipping the core struct entirely saves one full `ascent!` macro
+///   expansion per language (estimated 20–30 % downstream rustc memory),
+///   and the core struct would have been structurally >90 % identical to
+///   the main struct anyway. Only languages with substantial non-core
+///   categories (e.g., a true Proc/Name split where 3+ categories fall
+///   outside the bidirectionally-reachable core) keep the split.
 pub fn compute_core_categories(language: &LanguageDef) -> Option<BTreeSet<String>> {
     if language.types.len() <= 1 {
         return None; // Single-category language — no splitting benefit
@@ -687,6 +828,19 @@ pub fn compute_core_categories(language: &LanguageDef) -> Option<BTreeSet<String
 
     // No benefit if core == all categories
     if core.len() == all_cats.len() {
+        return None;
+    }
+
+    // Option C size gate: skip emission when the core struct would be
+    // structurally near-identical to the main struct. The second `ascent!`
+    // invocation's compilation cost — tens of GB of rustc RSS for the
+    // Calculator grammar — is not worth paying for a 5–10 % rule-filter
+    // reduction. Only emit the split when at least 3 categories are
+    // non-core (a true partition with enough rule exclusion to amortize
+    // the extra macro expansion). For Calculator (12 types, ~10–11 core)
+    // this skips emission; for languages with strict Proc/Name splits
+    // or similar architectural boundaries, emission continues.
+    if core.len() >= all_cats.len().saturating_sub(2) {
         return None;
     }
 
@@ -914,6 +1068,7 @@ mod tests {
             .map(|name| LangType {
                 name: Ident::new(name, Span::call_site()),
                 native_type: None,
+                collection_kind: None,
             })
             .collect();
 

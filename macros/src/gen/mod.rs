@@ -55,6 +55,7 @@ pub use syntax::parser::prattail_bridge::generate_prattail_parser_with_analysis;
 /// Returns `(code, PipelineAnalysis)` where the analysis captures WFST-derived
 /// data from the PraTTaIL pipeline for downstream Ascent codegen optimization.
 pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::PipelineAnalysis) {
+    use crate::logic::writer::spill_and_include;
     use native::eval::generate_eval_method;
     use runtime::environment::generate_environments;
     use syntax::debug::generate_debug;
@@ -72,42 +73,103 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     use term_ops::subst::{generate_env_substitution, generate_substitution};
     use types::enums::generate_ast_enums;
 
+    let lang_name = language.name.to_string();
+
     // Detect cancellation pairs for normalize arm generation
     let (cancellation_pairs, _cancellation_equations) =
         mettail_ast::pattern::detect_cancellation_pairs(language);
 
-    let ast_enums = generate_ast_enums(language);
-    let debug_impl = generate_debug(language);
-    let flatten_helpers = generate_flatten_helpers(language);
-    let normalize_impl = generate_normalize_functions(language, &cancellation_pairs);
-    let subst_impl = generate_substitution(language);
-    let env_types = generate_environments(language);
-    let env_subst_impl = generate_env_substitution(language);
-    let display_impl = generate_display(language);
-    let generation_impl = generate_term_generation(language);
-    let random_gen_impl = generate_random_generation(language);
-    let eval_impl = generate_eval_method(language);
-    let is_ground_impl = generate_is_ground_methods(language);
-    let term_depth_impl = generate_term_depth_methods(language);
-    let match_pattern_impl = generate_match_pattern(language);
-    let iterative_clone_impl = generate_iterative_clone(language);
-    let iterative_cmp_impl = generate_iterative_cmp(language);
-    let iterative_drop_impl = generate_iterative_drop(language);
-    let iterative_hash_impl = generate_iterative_hash(language);
-    let guard_codegen_impl = runtime::guard_codegen::generate_guard_codegen(language);
-    let var_inference_impl = generate_var_category_inference(language);
+    // Spill each emitter's output to its own file in `target/generated/<lang>/`
+    // and replace with an `include!` stub. Each emitter's TokenStream is dropped
+    // as soon as it is serialized — reducing the peak TokenStream memory held
+    // simultaneously inside this proc-macro from "sum of all emitters" to
+    // "largest single emitter". The on-disk per-concern files are also
+    // human-reviewable, which supports the debugging workflow.
+    //
+    // Emitters are named after their semantic concern (lowercase_snake_case).
+    // The corresponding files land at:
+    //   <ws>/target/generated/<lang>/<name>.rs
+    let ast_enums = spill_and_include(&lang_name, "ast_enums", generate_ast_enums(language));
+    let debug_impl = spill_and_include(&lang_name, "debug", generate_debug(language));
+    let flatten_helpers =
+        spill_and_include(&lang_name, "flatten", generate_flatten_helpers(language));
+    let normalize_impl = spill_and_include(
+        &lang_name,
+        "normalize",
+        generate_normalize_functions(language, &cancellation_pairs),
+    );
+    let subst_impl = spill_and_include(&lang_name, "subst", generate_substitution(language));
+    let env_types = spill_and_include(&lang_name, "env_types", generate_environments(language));
+    let env_subst_impl = spill_and_include(
+        &lang_name,
+        "env_subst",
+        generate_env_substitution(language),
+    );
+    let display_impl = spill_and_include(&lang_name, "display", generate_display(language));
+    let generation_impl = spill_and_include(
+        &lang_name,
+        "term_generation",
+        generate_term_generation(language),
+    );
+    let random_gen_impl = spill_and_include(
+        &lang_name,
+        "random_generation",
+        generate_random_generation(language),
+    );
+    let eval_impl = spill_and_include(&lang_name, "eval", generate_eval_method(language));
+    let is_ground_impl =
+        spill_and_include(&lang_name, "is_ground", generate_is_ground_methods(language));
+    let term_depth_impl = spill_and_include(
+        &lang_name,
+        "term_depth",
+        generate_term_depth_methods(language),
+    );
+    let match_pattern_impl = spill_and_include(
+        &lang_name,
+        "match_pattern",
+        generate_match_pattern(language),
+    );
+    let iterative_clone_impl = spill_and_include(
+        &lang_name,
+        "iterative_clone",
+        generate_iterative_clone(language),
+    );
+    let iterative_cmp_impl = spill_and_include(
+        &lang_name,
+        "iterative_cmp",
+        generate_iterative_cmp(language),
+    );
+    let iterative_drop_impl = spill_and_include(
+        &lang_name,
+        "iterative_drop",
+        generate_iterative_drop(language),
+    );
+    let iterative_hash_impl = spill_and_include(
+        &lang_name,
+        "iterative_hash",
+        generate_iterative_hash(language),
+    );
+    let guard_codegen_impl = spill_and_include(
+        &lang_name,
+        "guard_codegen",
+        runtime::guard_codegen::generate_guard_codegen(language),
+    );
+    let var_inference_impl = spill_and_include(
+        &lang_name,
+        "var_inference",
+        generate_var_category_inference(language),
+    );
 
-    // Parser code: PraTTaIL (inline) — also captures pipeline analysis
+    // Parser code: PraTTaIL (inline) — also captures pipeline analysis.
+    // The parser output is large (DFA tables, parse fns per category); spill it.
     let (parser_code, pipeline_analysis) = {
         let (prattail_parser, analysis) = generate_prattail_parser_with_analysis(language);
         let category_parse_impls = generate_prattail_category_parse_impls(language);
-        (
-            quote! {
-                #prattail_parser
-                #category_parse_impls
-            },
-            analysis,
-        )
+        let combined = quote! {
+            #prattail_parser
+            #category_parse_impls
+        };
+        (spill_and_include(&lang_name, "parser", combined), analysis)
     };
 
     let code = quote! {
@@ -363,19 +425,56 @@ pub fn generate_var_label(category: &Ident) -> Ident {
     quote::format_ident!("{}Var", first_letter)
 }
 
-/// Generate the literal variant label for a category with native type
+/// Generate the literal variant label for a category with native type.
 ///
-/// Convention: "NumLit" for integers, "FloatLit" for floats, "BoolLit" for bools
-/// Used for auto-generated literal constructors
+/// Convention (by `NativeType` classification):
+/// - `NumLit` — integer types and `CanonicalBigInt` (any `*BigInt` wrapper).
+/// - `FloatLit` — `f32`/`f64`.
+/// - `BoolLit` — `bool`.
+/// - `StringLit` — `str`/`String`.
+/// - `RatLit` — `CanonicalBigRat`.
+/// - `FixedLit` — `CanonicalFixedPoint`.
+/// - `Lit` — generic fallback for any other native type.
+///
+/// Used for auto-generated literal constructor variants.
 pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
     use native::NativeType;
     let nt = NativeType::from_syn_type(native_type);
+    // Group integer-like (including `CanonicalBigInt`) before narrower classifiers
+    // so `is_integer()` correctly covers arbitrary-precision ints.
+    if nt.is_integer() {
+        return quote::format_ident!("NumLit");
+    }
     match nt {
-        NativeType::Int32 | NativeType::Int64 | NativeType::UInt32 | NativeType::UInt64
-        | NativeType::Isize | NativeType::Usize => quote::format_ident!("NumLit"),
         NativeType::Float32 | NativeType::Float64 => quote::format_ident!("FloatLit"),
         NativeType::Bool => quote::format_ident!("BoolLit"),
         NativeType::Str => quote::format_ident!("StringLit"),
+        NativeType::CanonicalBigRat => quote::format_ident!("RatLit"),
+        NativeType::CanonicalFixedPoint => quote::format_ident!("FixedLit"),
+        // Collection wrappers: the variant label matches the collection's
+        // surface kind. `Vec` is the list backing, `HashBag` the bag backing,
+        // `HashMap`/`HashMapLit` the map backing.
+        NativeType::VecCollection => quote::format_ident!("ListLit"),
+        NativeType::HashBagCollection | NativeType::HashSetCollection => {
+            quote::format_ident!("BagLit")
+        }
+        NativeType::HashMapLitCollection | NativeType::HashMapCollection => {
+            quote::format_ident!("MapLit")
+        }
         NativeType::Other(_) => quote::format_ident!("Lit"), // Generic fallback
+        // Unreachable: `is_integer()` above already returned for these.
+        NativeType::Int8
+        | NativeType::Int16
+        | NativeType::Int32
+        | NativeType::Int64
+        | NativeType::Int128
+        | NativeType::Isize
+        | NativeType::UInt8
+        | NativeType::UInt16
+        | NativeType::UInt32
+        | NativeType::UInt64
+        | NativeType::UInt128
+        | NativeType::Usize
+        | NativeType::CanonicalBigInt => quote::format_ident!("NumLit"),
     }
 }

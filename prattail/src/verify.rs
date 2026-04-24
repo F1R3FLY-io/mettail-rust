@@ -769,6 +769,7 @@ mod tests {
             name: "Expr".to_string(),
             native_type: None,
             is_primary: true,
+            has_var: true,
         }];
         let syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![(
             "DeadRule".to_string(),
@@ -786,6 +787,7 @@ mod tests {
             name: "Expr".to_string(),
             native_type: None,
             is_primary: true,
+            has_var: true,
         }];
         let syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![];
         let result = verify_from_bundle(&wpds_analysis, &cats, &syntax);

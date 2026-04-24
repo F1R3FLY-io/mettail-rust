@@ -1588,11 +1588,13 @@ mod tests {
                 name: "Expr".to_string(),
                 native_type: None,
                 is_primary: true,
+                has_var: true,
             },
             crate::pipeline::CategoryInfo {
                 name: "Type".to_string(),
                 native_type: None,
                 is_primary: false,
+                has_var: true,
             },
         ];
         let result = analyze_from_bundle(&syntax, &cats);

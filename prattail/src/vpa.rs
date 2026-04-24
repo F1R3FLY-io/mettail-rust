@@ -3020,6 +3020,7 @@ mod tests {
             name: "Expr".to_string(),
             native_type: None,
             is_primary: true,
+            has_var: true,
         }];
         let syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![(
             "Group".to_string(),

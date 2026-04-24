@@ -5,7 +5,7 @@
 //! 2. Build NFA via Thompson's construction
 //! 3. Compute alphabet equivalence classes
 //! 4. Convert NFA → DFA via subset construction
-//! 5. Minimize DFA via Hopcroft's algorithm
+//! 5. Minimize DFA via Hopcroft's algorithm (skipped when both float and fixed-point literals are active)
 //! 6. Generate Rust lexer code
 
 use proc_macro2::TokenStream;
@@ -98,8 +98,14 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
     let dfa = subset_construction(&nfa, &partition);
     let num_dfa_states = dfa.states.len();
 
-    // Step 4: Minimize DFA
-    let min_dfa = minimize_dfa(&dfa);
+    // Step 4: Minimize DFA. When both float and fixed-point literals are used, Hopcroft
+    // minimization can merge states in ways that break maximal munch on shared prefixes
+    // (e.g. `3.5` vs `3.5p0`). Use the subset DFA for the lexer in that case.
+    let min_dfa = if input.needs.float && input.needs.fixed_point {
+        dfa
+    } else {
+        minimize_dfa(&dfa)
+    };
     let num_minimized_states = min_dfa.states.len();
 
     // Collect all token kinds for enum generation
@@ -108,17 +114,37 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
         token_kinds.push(TokenKind::Ident);
     }
     if input.needs.integer {
-        token_kinds.push(TokenKind::Integer);
+        if input.literal_patterns.integer_by_category.is_empty() {
+            token_kinds.push(TokenKind::Integer);
+        } else {
+            for cat in input.literal_patterns.integer_by_category.keys() {
+                token_kinds.push(TokenKind::IntegerLit(cat.clone()));
+            }
+        }
     }
     if input.needs.float {
         token_kinds.push(TokenKind::Float);
     }
     if input.needs.boolean {
-        token_kinds.push(TokenKind::True);
-        token_kinds.push(TokenKind::False);
+        if input.literal_patterns.boolean.is_some() {
+            token_kinds.push(TokenKind::BooleanLit);
+        } else {
+            token_kinds.push(TokenKind::True);
+            token_kinds.push(TokenKind::False);
+        }
     }
     if input.needs.string_lit {
         token_kinds.push(TokenKind::StringLit);
+    }
+    if input.needs.rational {
+        for cat in input.literal_patterns.rational_by_category.keys() {
+            token_kinds.push(TokenKind::RationalLit(cat.clone()));
+        }
+    }
+    if input.needs.fixed_point {
+        for cat in input.literal_patterns.fixed_by_category.keys() {
+            token_kinds.push(TokenKind::FixedPointLit(cat.clone()));
+        }
     }
     for terminal in &input.terminals {
         token_kinds.push(terminal.kind.clone());
@@ -174,8 +200,12 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     let dfa = subset_construction(&nfa, &partition);
     let num_dfa_states = dfa.states.len();
 
-    // Step 4: Minimize DFA
-    let min_dfa = minimize_dfa(&dfa);
+    // Step 4: Minimize DFA (see `generate_lexer` — skip minimization when float + fixed overlap).
+    let min_dfa = if input.needs.float && input.needs.fixed_point {
+        dfa
+    } else {
+        minimize_dfa(&dfa)
+    };
     let num_minimized_states = min_dfa.states.len();
 
     // Collect all token kinds for enum generation
@@ -184,17 +214,37 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
         token_kinds.push(TokenKind::Ident);
     }
     if input.needs.integer {
-        token_kinds.push(TokenKind::Integer);
+        if input.literal_patterns.integer_by_category.is_empty() {
+            token_kinds.push(TokenKind::Integer);
+        } else {
+            for cat in input.literal_patterns.integer_by_category.keys() {
+                token_kinds.push(TokenKind::IntegerLit(cat.clone()));
+            }
+        }
     }
     if input.needs.float {
         token_kinds.push(TokenKind::Float);
     }
     if input.needs.boolean {
-        token_kinds.push(TokenKind::True);
-        token_kinds.push(TokenKind::False);
+        if input.literal_patterns.boolean.is_some() {
+            token_kinds.push(TokenKind::BooleanLit);
+        } else {
+            token_kinds.push(TokenKind::True);
+            token_kinds.push(TokenKind::False);
+        }
     }
     if input.needs.string_lit {
         token_kinds.push(TokenKind::StringLit);
+    }
+    if input.needs.rational {
+        for cat in input.literal_patterns.rational_by_category.keys() {
+            token_kinds.push(TokenKind::RationalLit(cat.clone()));
+        }
+    }
+    if input.needs.fixed_point {
+        for cat in input.literal_patterns.fixed_by_category.keys() {
+            token_kinds.push(TokenKind::FixedPointLit(cat.clone()));
+        }
     }
     for terminal in &input.terminals {
         token_kinds.push(terminal.kind.clone());
@@ -234,21 +284,39 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
 /// When true and the DFA exceeds the direct-coded threshold, hot states (BFS depth ≤ 2)
 /// are direct-coded while cold states use compressed table lookup.
 pub fn generate_lexer_as_string_hybrid(input: &LexerInput, hybrid_lexer: bool) -> (String, LexerStats) {
-    // Step 1: Build NFA from terminal patterns + custom tokens
+    let trace = std::env::var("PRATTAIL_MACRO_TRACE").is_ok();
+    macro_rules! stage {
+        ($name:literal, $val:expr) => {
+            if trace {
+                eprintln!("[macro-trace] {} lexer:{} = {}", input.language_name, $name, $val);
+            }
+        };
+        ($name:literal) => {
+            if trace {
+                eprintln!("[macro-trace] {} lexer:{}", input.language_name, $name);
+            }
+        };
+    }
+
+    stage!("build_nfa.start");
     let nfa = build_nfa_with_custom(&input.terminals, &input.needs, &input.literal_patterns, &input.custom_tokens);
     let num_nfa_states = nfa.states.len();
+    stage!("build_nfa.done", num_nfa_states);
 
-    // Step 2: Compute alphabet equivalence classes
+    stage!("compute_equiv_classes.start");
     let partition = compute_equivalence_classes(&nfa);
     let num_equiv_classes = partition.num_classes;
+    stage!("compute_equiv_classes.done", num_equiv_classes);
 
-    // Step 3: Subset construction (NFA → DFA)
+    stage!("subset_construction.start");
     let dfa = subset_construction(&nfa, &partition);
     let num_dfa_states = dfa.states.len();
+    stage!("subset_construction.done", num_dfa_states);
 
-    // Step 4: Minimize DFA
+    stage!("minimize_dfa.start");
     let min_dfa = minimize_dfa(&dfa);
     let num_minimized_states = min_dfa.states.len();
+    stage!("minimize_dfa.done", num_minimized_states);
 
     // Collect all token kinds for enum generation
     let mut token_kinds: Vec<TokenKind> = vec![TokenKind::Eof];
@@ -406,7 +474,8 @@ pub fn extract_terminals(
     // Check for native types
     for ty in types {
         match ty.native_type_name.as_deref() {
-            Some("i32") | Some("i64") | Some("u32") | Some("u64") | Some("isize")
+            Some("i8") | Some("i16") | Some("i32") | Some("i64") | Some("i128") | Some("u8")
+            | Some("u16") | Some("u32") | Some("u64") | Some("u128") | Some("isize")
             | Some("usize") => {
                 needs.integer = true;
             },
@@ -430,7 +499,19 @@ pub fn extract_terminals(
             Some("str") | Some("String") => {
                 needs.string_lit = true;
             },
-            _ => {},
+            Some(other)
+                // BigInt (incl. CanonicalBigInt) needs integer tokenization. BigRat / CanonicalBigRat
+                // uses the separate rational literal path when configured in `literals { ... }`;
+                // constructor-only languages should not pull in the legacy `…r` integer stub.
+                if other.ends_with("BigInt") =>
+            {
+                needs.integer = true;
+            },
+            Some(other) if other.ends_with("CanonicalFixedPoint") => {
+                needs.fixed_point = true;
+            },
+            Some(_) => {},
+            None => {},
         }
     }
 

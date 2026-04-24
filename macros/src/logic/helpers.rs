@@ -128,9 +128,17 @@ fn generate_subterm_pool_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) 
         }
     }
 
-    // 2. Auto-generated variants (Apply, MApply, Lam, MLam) for each domain
+    // 2. Auto-generated variants (Apply, MApply, Lam, MLam) for each domain.
+    //    Post-HOL-B: only emit pool arms for (src, domain) pairs that
+    //    actually got HOL variants — otherwise the pattern would reference
+    //    a non-existent enum variant.
+    let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
+    let src_str = src.to_string();
     for domain_type in &language.types {
         let domain = &domain_type.name;
+        if !hol_pairs.contains(&(src_str.clone(), domain.to_string())) {
+            continue;
+        }
         let auto = generate_auto_variant_pool_arms(src, tgt, domain);
         arms.extend(auto);
     }
@@ -326,11 +334,21 @@ pub fn generate_consolidated_congruence_rules(
     let cat_upper = category.to_string().to_uppercase();
     let cat_str = category.to_string();
 
-    // Only include domains reachable from this category
+    // Only include domains that are both reachable AND have HOL variants
+    // auto-generated on this category. HOL variants (`Apply{dom}`,
+    // `MApply{dom}`, `Lam{dom}`, `MLam{dom}`) are post-HOL-B gated by
+    // `compute_hol_domain_pairs`; if a (category, domain) pair isn't in
+    // that set, the variants don't exist and generating congruence
+    // rules referencing them would be a compile error.
+    let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
     let domains: Vec<&Ident> = language
         .types
         .iter()
-        .filter(|t| reachable.contains(&(cat_str.clone(), t.name.to_string())))
+        .filter(|t| {
+            let dom_str = t.name.to_string();
+            reachable.contains(&(cat_str.clone(), dom_str.clone()))
+                && hol_pairs.contains(&(cat_str.clone(), dom_str))
+        })
         .map(|t| &t.name)
         .collect();
 

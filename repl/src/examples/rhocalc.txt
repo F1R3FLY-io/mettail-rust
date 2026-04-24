@@ -20,3 +20,11 @@ const = ^val.{^n.{(n?x).{*(val)}}}
 cell = ^loc.{^init.{loc!(init)}}
 read = ^loc.{^ret.{(loc?x).{{loc!(*(x)) | ret!(*(x))}}}}
 write = ^loc.{^val.{(loc?x).{loc!(val)}}}
+
+// List and Bag (communication then operation, like add)
+list_concat_comm = { a!( [ 1, 2 ] ) | b!( [ 3, 4 ] ) | (a?x, b?y).{ concat(*(x), *(y)) } }
+list_len_comm = { a!( [ 1, 2, 3 ] ) | (a?x).{ len(*(x)) } }
+list_at_comm = { a!( [ 1, 2, 3 ] ) | b!( 1 ) | (a?lst, b?i).{ at(*(lst), *(i)) } }
+bag_union_comm = { a!( #{ 1 | 2 }# ) | b!( #{ 2 | 3 }# ) | (a?x, b?y).{ union(*(x), *(y)) } }
+bag_count_comm = { a!( #{ 1 | 2 | 2 }# ) | c!( 2 ) | (a?b, c?e).{ count(*(b), *(e)) } }
+bag_remove_comm = { a!( #{ 1 | 2 | 2 }# ) | c!( 2 ) | (a?b, c?e).{ remove(*(b), *(e)) } }

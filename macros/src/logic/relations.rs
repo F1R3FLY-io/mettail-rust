@@ -55,19 +55,44 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
         });
     }
 
-    // Fold relations
+    // Fold relations — the second column type must match the runtime
+    // relation declaration (see `generate_relations` below). For collection
+    // categories, that's the payload type (`Vec<Proc>` etc.), not the enum
+    // category name. Extraction-time formatting uses `ty.starts_with("Vec")`
+    // (etc.) to dispatch to `DisplaySlice` for Vec-typed columns.
     for lang_type in &language.types {
         let cat = &lang_type.name;
-        let has_fold = language
+        let has_fold_as_result = language
             .terms
             .iter()
             .any(|r| r.category == *cat && r.eval_mode == Some(EvalMode::Fold));
+        let has_fold_as_param = language.terms.iter().any(|r| {
+            r.eval_mode == Some(EvalMode::Fold)
+                && r.term_context.as_ref().is_some_and(|ctx| {
+                    ctx.iter().any(|p| match p {
+                        TermParam::Simple { ty: mettail_ast::types::TypeExpr::Base(ref id), .. } => {
+                            id == &lang_type.name
+                        },
+                        _ => false,
+                    })
+                })
+        });
+        let has_fold = has_fold_as_result || has_fold_as_param;
         if has_fold {
             let fold_rel = format_ident!("fold_{}", cat.to_string().to_lowercase());
-            let ty = cat.to_string();
+            let first_ty = cat.to_string();
+            let second_ty = match (lang_type.collection_kind.as_ref(), lang_type.native_type.as_ref()) {
+                (Some(_), Some(payload_ty)) => {
+                    use quote::ToTokens;
+                    let mut s = payload_ty.to_token_stream().to_string();
+                    while s.contains(" :: ") { s = s.replace(" :: ", "::"); }
+                    s
+                }
+                _ => cat.to_string(),
+            };
             out.push(RelationForExtraction {
                 name: fold_rel,
-                param_types: vec![ty.clone(), ty],
+                param_types: vec![first_ty, second_ty],
             });
         }
     }
@@ -166,18 +191,52 @@ pub fn generate_relations(language: &LanguageDef, _demanded: &BTreeSet<String>) 
             relation #rw_rel(#cat, #cat);
         });
 
-        // Fold (big-step eval) relation, only if this category has fold-mode constructors.
+        // Fold (big-step eval) relation, only if this category has fold-mode constructors
+        // or participates as a fold rule parameter.
         // A-RT03: dual-indexed like rw_cat — fold rules query column 0 in recursive
         // positions, but custom logic may query column 1.
-        let has_fold = language
+        // For collection categories (List, Bag, Map), the second column holds the
+        // unwrapped payload type (Vec<Proc>, HashBag<Proc>, HashMapLit<Proc,Proc>)
+        // so the user eval body can call `.iter()`, `.extend()`, `.insert()`, etc.
+        // directly without destructuring the enum.
+        let has_fold_as_result = language
             .terms
             .iter()
             .any(|r| r.category == *cat && r.eval_mode == Some(EvalMode::Fold));
+        let has_fold_as_param = language.terms.iter().any(|r| {
+            r.eval_mode == Some(EvalMode::Fold)
+                && r.term_context.as_ref().is_some_and(|ctx| {
+                    ctx.iter().any(|p| match p {
+                        TermParam::Simple { ty: mettail_ast::types::TypeExpr::Base(ref id), .. } => {
+                            id == &lang_type.name
+                        },
+                        _ => false,
+                    })
+                })
+        });
+        let has_fold = has_fold_as_result || has_fold_as_param;
         if has_fold {
-            relations.push(quote! {
-                #[ds(crate::dual_indexed)]
-                relation #fold_rel(#cat, #cat);
-            });
+            // Collections (List/Bag/Map) carry the unwrapped payload type in col 2,
+            // so rust_code bodies can call .iter() / .extend() / .insert() directly.
+            // DualIndexedRel requires both columns to be the same type, so collections
+            // fall back to the default datastructure (ByodsBinRel) — acceptable because
+            // collection fold lookups are driven by col 1 (the term), not col 2.
+            let is_collection_cat = lang_type.collection_kind.is_some();
+            let fold_second_ty =
+                match (lang_type.collection_kind.as_ref(), lang_type.native_type.as_ref()) {
+                    (Some(_), Some(payload_ty)) => quote! { #payload_ty },
+                    _ => quote! { #cat },
+                };
+            if is_collection_cat {
+                relations.push(quote! {
+                    relation #fold_rel(#cat, #fold_second_ty);
+                });
+            } else {
+                relations.push(quote! {
+                    #[ds(crate::dual_indexed)]
+                    relation #fold_rel(#cat, #fold_second_ty);
+                });
+            }
         }
     }
 

@@ -2742,6 +2742,7 @@ pub fn build_decision_trees_from_spec(
             label: r.label.clone(),
             source_category: r.cast_source_category.clone().unwrap_or_default(),
             target_category: r.category.clone(),
+            shares_infix_with_target: false,
         })
         .collect();
 

@@ -1740,6 +1740,7 @@ mod tests {
             name: name.to_string(),
             native_type: None,
             is_primary: false,
+            has_var: true,
         }
     }
 

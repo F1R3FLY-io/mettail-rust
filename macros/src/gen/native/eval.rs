@@ -26,7 +26,16 @@ fn classify_hol_rule_for_pda<'a>(
     rule: &'a GrammarRule,
     category: &syn::Ident,
 ) -> Option<Vec<(syn::Ident, &'a syn::Ident, bool)>> {
-    let ctx = rule.term_context.as_ref()?;
+    // Zero-ary rules (no term_context) are PDA-compatible: they have no
+    // children to recurse into. The caller emits a Visit arm that pushes the
+    // rust_code's value directly (no Reduce frame needed for the
+    // eager-cross-eval pattern). Returning `Some(Vec::new())` rather than
+    // `None` is the critical difference: `None` disables PDA for the WHOLE
+    // category, while an empty vec just means this particular rule has no
+    // same-cat children.
+    let Some(ctx) = rule.term_context.as_ref() else {
+        return Some(Vec::new());
+    };
     let mut out = Vec::with_capacity(ctx.len());
     for p in ctx {
         match p {
@@ -71,6 +80,127 @@ fn term_context_param_names(term_context: &[TermParam]) -> Vec<syn::Ident> {
     names
 }
 
+/// True if the type is a category with `native_type` (e.g. `Int`, `Float`).
+/// False for collection categories (`List`, `Bag`) and non-native types
+/// — the param binding for those must use `.clone()` rather than `.eval()`.
+fn type_has_native_eval(ty: &TypeExpr, language: &LanguageDef) -> bool {
+    let cat = match ty {
+        TypeExpr::Base(ident) => ident,
+        _ => return false,
+    };
+    language
+        .get_type(cat)
+        .and_then(|t| t.native_type.as_ref())
+        .is_some()
+}
+
+/// Extract parameter names AND whether each should bind via `.eval()` (true)
+/// or `.clone()` (false). Categories without a native type (collections,
+/// `Proc`, etc.) cannot be `.eval()`'d, so the cross-category bindings have
+/// to clone — matching main's `term_context_params_with_eval`.
+fn term_context_params_with_eval(
+    term_context: &[TermParam],
+    language: &LanguageDef,
+) -> Vec<(syn::Ident, bool)> {
+    let mut out = Vec::new();
+    for p in term_context {
+        match p {
+            TermParam::Simple { name, ty } => {
+                let use_eval = type_has_native_eval(ty, language);
+                out.push((name.clone(), use_eval));
+            },
+            TermParam::Abstraction { binder, body, .. } => {
+                out.push((binder.clone(), false));
+                out.push((body.clone(), false));
+            },
+            TermParam::MultiAbstraction { binder, body, .. } => {
+                out.push((binder.clone(), false));
+                out.push((body.clone(), false));
+            },
+            TermParam::GuardBody { name, .. } => {
+                let _ = name;
+            },
+        }
+    }
+    out
+}
+
+/// Calculator `Fraction` uses `try_from_nd` → `Option`; Ascent maps `None`
+/// to `BigRat::Err`. The `eval`/`try_eval` arms must `match` on the
+/// `Option` so the generated `impl` type-checks (else we'd get an
+/// `expected CanonicalBigRat, found Option<CanonicalBigRat>` mismatch).
+///
+/// Only fires for the canonical `Fraction . a:BigInt, b:BigInt |- ... : BigRat`
+/// rule when an `Err` constructor exists in the same category.
+fn hol_bigrat_fraction_try_from_nd_option(
+    language: &LanguageDef,
+    category: &syn::Ident,
+    label: &syn::Ident,
+) -> bool {
+    let err_ident = quote::format_ident!("Err");
+    let category_has_err = language
+        .terms
+        .iter()
+        .any(|r| r.category == *category && r.label == err_ident);
+    category_has_err && label.to_string() == "Fraction" && category.to_string() == "BigRat"
+}
+
+/// Calculator numeric casts return `Option<native>`; `None` maps to
+/// `cast_error_*` / `Err` via fold. The eval arm must unwrap the `Option`.
+///
+/// Naming: `*Bin` = binary cast with explicit width/places (`int`, `uint`,
+/// `float`, `fixed`). `BigintCast` / `BigratCast` = unary `bigint` /
+/// `bigrat` from `Proc` (signed arbitrary precision).
+fn hol_numeric_cast_option(
+    _language: &LanguageDef,
+    category: &syn::Ident,
+    label: &syn::Ident,
+) -> bool {
+    matches!(
+        (category.to_string().as_str(), label.to_string().as_str()),
+        ("Int", "IntBin")
+            | ("UInt32", "UIntBin")
+            | ("Float", "FloatBin")
+            | ("Fixed", "FixedBin")
+            | ("BigInt", "BigintCast")
+            | ("BigRat", "BigratCast")
+    )
+}
+
+/// `Int::Fact` returns `Option<i32>` (None for negative inputs) so the
+/// HOL step emitter can route `None` to `Int::Err`. The eval arm must
+/// unwrap the Option via `match`; otherwise the generated `impl eval`
+/// type-checks against the native i32 return type fail.
+fn hol_int_fact_option(
+    language: &LanguageDef,
+    category: &syn::Ident,
+    label: &syn::Ident,
+) -> bool {
+    let err_ident = quote::format_ident!("Err");
+    let category_has_err = language
+        .terms
+        .iter()
+        .any(|r| r.category == *category && r.label == err_ident);
+    category_has_err && label.to_string() == "Fact" && category.to_string() == "Int"
+}
+
+/// `DivBigRat` must not call `num-rational` division when the divisor is
+/// zero (panics in `reduce`). When the category has an `Err` constructor,
+/// the eval arm is wrapped in a divisor-zero guard that panics with a
+/// rewriteable message instead.
+fn hol_bigrat_div_zero_guard(
+    language: &LanguageDef,
+    category: &syn::Ident,
+    label: &syn::Ident,
+) -> bool {
+    let err_ident = quote::format_ident!("Err");
+    let category_has_err = language
+        .terms
+        .iter()
+        .any(|r| r.category == *category && r.label == err_ident);
+    category_has_err && label.to_string() == "DivBigRat" && category.to_string() == "BigRat"
+}
+
 pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
     let mut impls = Vec::new();
 
@@ -103,6 +233,16 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             generate_literal_label(native_type)
         };
 
+        // Collection categories (List/Bag/Map): `.eval()` only unwraps the
+        // literal variant (`ListLit`, `BagLit`, `MapLit`). Per-rule fold
+        // bodies are consumed by Ascent rules, not by `.eval()` — trying to
+        // compile the user's `![{ … match &i { Int::NumLit(n) => … } }]`
+        // here would fail because eval-time params are native types, but
+        // the user wrote patterns against enum variants. This matches main's
+        // behaviour: collection eval returns the payload if already folded,
+        // otherwise panics with "apply fold rules first".
+        let is_collection_for_eval = lang_type.collection_kind.is_some();
+
         // Generate match arms for eval()
         let mut match_arms = Vec::new();
 
@@ -110,6 +250,8 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         if !has_literal_rule {
             let nt = NativeType::from_syn_type(native_type);
             let literal_arm = if nt.is_string() {
+                quote! { #category::#literal_label(n) => n.clone(), }
+            } else if is_collection_for_eval {
                 quote! { #category::#literal_label(n) => n.clone(), }
             } else {
                 quote! { #category::#literal_label(n) => *n, }
@@ -142,7 +284,9 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         // can't PDA-ify — at that point we drop the PDA variant and emit only
         // the recursive form. This is conservative: it sacrifices stack
         // safety for rules with abstractions in exchange for simpler codegen.
-        let mut pda_supported = true;
+        // `pda_supported` stays true throughout — unclassifiable rules abort via
+        // `compile_error!` in the `None` arm below rather than flipping the flag.
+        let pda_supported = true;
         // Frame enum variants (one per HOL rule that has any same-category child):
         let mut pda_frame_variants: Vec<TokenStream> = Vec::new();
         // Arms inside `match node { ... }` of the Visit case:
@@ -155,12 +299,16 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             let nt = NativeType::from_syn_type(native_type);
             let try_literal_arm = if nt.is_string() {
                 quote! { #category::#literal_label(n) => Some(n.clone()), }
+            } else if is_collection_for_eval {
+                quote! { #category::#literal_label(n) => Some(n.clone()), }
             } else {
                 quote! { #category::#literal_label(n) => Some(*n), }
             };
             try_eval_arms.push(try_literal_arm);
 
             let pda_literal_arm = if nt.is_string() {
+                quote! { #category::#literal_label(n) => values.push(n.clone()), }
+            } else if is_collection_for_eval {
                 quote! { #category::#literal_label(n) => values.push(n.clone()), }
             } else {
                 quote! { #category::#literal_label(n) => values.push(*n), }
@@ -175,6 +323,14 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             #category::#var_label(_) => return None,
         });
 
+        // Collection categories delegate all per-rule evaluation to the Ascent
+        // fold pipeline, which runs with different param types than `.eval()`
+        // would use. Skip the per-rule arm generation entirely for them —
+        // `.eval()` falls through to the catch-all panic arm when the term
+        // has not yet been folded to its literal variant.
+        if is_collection_for_eval {
+            // Keep only the literal and Var arms already pushed above.
+        } else {
         for rule in &rules {
             let label = &rule.label;
 
@@ -205,22 +361,105 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             }
             // HOL syntax: rule with Rust code block - generate eval from rust_code
             else if let Some(ref rust_code_block) = rule.rust_code {
-                let param_names = rule
+                // Resolve `(name, use_eval)` per param: native-typed categories
+                // bind via `.eval()`; collection / non-native categories bind
+                // via `.clone()` (cannot be `.eval()`'d).
+                let params_with_eval = rule
                     .term_context
                     .as_ref()
-                    .map(|ctx| term_context_param_names(ctx))
+                    .map(|ctx| term_context_params_with_eval(ctx, language))
                     .unwrap_or_default();
+                let param_names: Vec<syn::Ident> =
+                    params_with_eval.iter().map(|(n, _)| n.clone()).collect();
                 let param_count = param_names.len();
-                let param_bindings: Vec<_> = param_names
+                let param_bindings: Vec<_> = params_with_eval
                     .iter()
-                    .map(|name| quote! { let #name = #name.as_ref().eval(); })
+                    .map(|(name, use_eval)| {
+                        if *use_eval {
+                            quote! { let #name = #name.as_ref().eval(); }
+                        } else {
+                            // Non-native categories (Proc, List, Bag, Map) must
+                            // bind by reference — user eval code typically
+                            // `match`es on these and Rust prohibits moving out
+                            // of `Drop` types in a by-value match. `.as_ref()`
+                            // on `Box<Category>` yields `&Category`, which
+                            // matches without moving.
+                            quote! { let #name = #name.as_ref(); }
+                        }
+                    })
                     .collect();
-                let try_param_bindings: Vec<_> = param_names
+                let try_param_bindings: Vec<_> = params_with_eval
                     .iter()
-                    .map(|name| quote! { let #name = #name.as_ref().try_eval()?; })
+                    .map(|(name, use_eval)| {
+                        if *use_eval {
+                            quote! { let #name = #name.as_ref().try_eval()?; }
+                        } else {
+                            quote! { let #name = #name.as_ref(); }
+                        }
+                    })
                     .collect();
                 let rust_code = &rust_code_block.code;
-                let match_arm = if param_count == 0 {
+                // Detect the three known `Option<native>`-returning rule
+                // patterns from main: `Fraction` (BigRat::Err), the numeric
+                // casts (`IntBin`/`UIntBin`/`FloatBin`/`FixedBin`/
+                // `BigintCast`/`BigratCast`), and `DivBigRat` (zero-divisor
+                // guard). Each gets its own `match`/guard wrapper so the
+                // emitted arm returns the inner native value (not Option).
+                let fraction_option =
+                    hol_bigrat_fraction_try_from_nd_option(language, category, label);
+                let numeric_cast_option = hol_numeric_cast_option(language, category, label);
+                let div_zero_guard = hol_bigrat_div_zero_guard(language, category, label);
+                let int_fact_option = hol_int_fact_option(language, category, label);
+                let match_arm = if fraction_option && param_count > 0 {
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#param_bindings)*
+                            match (#rust_code) {
+                                Some(__r) => __r,
+                                None => panic!(
+                                    "zero denominator in fraction; normalize with rewrite rules to error",
+                                ),
+                            }
+                        },
+                    }
+                } else if int_fact_option && param_count > 0 {
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#param_bindings)*
+                            match (#rust_code) {
+                                Some(__r) => __r,
+                                None => panic!(
+                                    "factorial of negative; normalize with rewrite rules to error",
+                                ),
+                            }
+                        },
+                    }
+                } else if numeric_cast_option && param_count > 0 {
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#param_bindings)*
+                            match (#rust_code) {
+                                Some(__r) => __r,
+                                None => panic!(
+                                    "numeric cast error; normalize with rewrite rules to cast_error",
+                                ),
+                            }
+                        },
+                    }
+                } else if div_zero_guard && param_count == 2 {
+                    let b_name = &param_names[1];
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#param_bindings)*
+                            if ::num_traits::Zero::is_zero(#b_name.get()) {
+                                panic!(
+                                    "division by zero in BigRat; normalize with fold rules to error",
+                                );
+                            }
+                            (#rust_code)
+                        },
+                    }
+                } else if param_count == 0 {
                     quote! {
                         #category::#label => (#rust_code),
                     }
@@ -273,12 +512,22 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     match classify_hol_rule_for_pda(rule, category) {
                         Some(classified) => {
                             let reduce_variant = format_ident!("Reduce{}", label);
-                            // Resolve cross-category native type for captured fields.
-                            // `language.types` has `native_type: Option<syn::Type>`
-                            // — we need to find it for each cross-category param.
-                            let mut cross_fields: Vec<TokenStream> = Vec::new();
-                            let mut cross_field_names: Vec<syn::Ident> = Vec::new();
-                            let mut cross_unresolved = false;
+                            // For each cross-category param, decide how it's
+                            // captured in the Reduce frame:
+                            //   - CrossKind::Native(storage_ty): evaluate to a
+                            //     native value at Visit time and store it.
+                            //   - CrossKind::Borrow(cat): the param's category
+                            //     has no native_type (e.g. Proc in calculator).
+                            //     We store an owned clone of the child term
+                            //     (`Box<Cat>`) in the frame and bind `&Cat` to
+                            //     the user's rust_code at Reduce time — the
+                            //     recursive fallback does exactly the same
+                            //     via `let #n = #n.as_ref();`.
+                            enum CrossKind {
+                                Native(TokenStream),
+                                Borrow(TokenStream),
+                            }
+                            let mut cross_kinds: Vec<(syn::Ident, CrossKind)> = Vec::new();
                             for (name, ty_id, same) in &classified {
                                 if *same { continue; }
                                 let target_native = language
@@ -286,7 +535,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                     .iter()
                                     .find(|t| t.name == **ty_id)
                                     .and_then(|t| t.native_type.as_ref());
-                                match target_native {
+                                let kind = match target_native {
                                     Some(nt) => {
                                         // Map native type → storage type, mirroring
                                         // the `try_eval` return type. `str` must be
@@ -298,110 +547,163 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                             NativeType::Float64 => quote! { ::mettail_runtime::CanonicalFloat64 },
                                             _ => quote! { #nt },
                                         };
-                                        cross_fields.push(quote! { #name: #storage_ty });
-                                        cross_field_names.push(name.clone());
+                                        CrossKind::Native(storage_ty)
                                     }
                                     None => {
-                                        // Can't resolve cross-cat's native type → give up PDA.
-                                        cross_unresolved = true;
-                                        break;
+                                        // Cross-cat has no native_type (e.g. Proc):
+                                        // borrow-clone the child term into the frame.
+                                        let ty_ident = *ty_id;
+                                        CrossKind::Borrow(quote! { ::std::boxed::Box<#ty_ident> })
                                     }
-                                }
+                                };
+                                cross_kinds.push((name.clone(), kind));
                             }
 
-                            if cross_unresolved {
-                                pda_supported = false;
+                            let cross_fields: Vec<TokenStream> = cross_kinds
+                                .iter()
+                                .map(|(n, k)| match k {
+                                    CrossKind::Native(ty) | CrossKind::Borrow(ty) => {
+                                        quote! { #n: #ty }
+                                    }
+                                })
+                                .collect();
+                            let cross_field_names: Vec<syn::Ident> = cross_kinds
+                                .iter()
+                                .map(|(n, _)| n.clone())
+                                .collect();
+
+                            // Emit Frame variant.
+                            if cross_fields.is_empty() {
+                                pda_frame_variants.push(quote! { #reduce_variant, });
                             } else {
-                                // Emit Frame variant.
-                                if cross_fields.is_empty() {
-                                    pda_frame_variants.push(quote! { #reduce_variant, });
-                                } else {
-                                    pda_frame_variants.push(quote! {
-                                        #reduce_variant { #(#cross_fields),* },
+                                pda_frame_variants.push(quote! {
+                                    #reduce_variant { #(#cross_fields),* },
+                                });
+                            }
+
+                            // Emit Visit arm for this constructor.
+                            // Pattern: #category::#label(p0, p1, ...).
+                            let param_pat: Vec<_> = classified
+                                .iter()
+                                .map(|(n, _, _)| quote! { #n })
+                                .collect();
+                            let eager_cross_evals: Vec<TokenStream> = cross_kinds
+                                .iter()
+                                .map(|(n, k)| match k {
+                                    CrossKind::Native(_) => quote! {
+                                        // Native cross-cat: evaluate now. Cross-category
+                                        // tree depth is bounded in practice.
+                                        let #n = #n.as_ref().try_eval()?;
+                                    },
+                                    CrossKind::Borrow(_) => quote! {
+                                        // Non-native cross-cat (e.g. Proc): clone the
+                                        // child box so the frame owns it. `rust_code`
+                                        // receives `&Cat` after deref at Reduce time.
+                                        let #n = #n.clone();
+                                    },
+                                })
+                                .collect();
+                            let reduce_push = if cross_field_names.is_empty() {
+                                quote! { work.push(__EvalFrame::#reduce_variant); }
+                            } else {
+                                quote! {
+                                    work.push(__EvalFrame::#reduce_variant {
+                                        #(#cross_field_names),*
                                     });
                                 }
+                            };
+                            // Same-category children: push in REVERSE so the left-
+                            // most child is processed first (LIFO stack).
+                            let same_cat_pushes: Vec<TokenStream> = classified
+                                .iter()
+                                .rev()
+                                .filter(|(_, _, same)| *same)
+                                .map(|(n, _, _)| quote! {
+                                    work.push(__EvalFrame::Visit(#n.as_ref()));
+                                })
+                                .collect();
 
-                                // Emit Visit arm for this constructor.
-                                // Pattern: #category::#label(p0, p1, ...).
-                                let param_pat: Vec<_> = classified
-                                    .iter()
-                                    .map(|(n, _, _)| quote! { #n })
-                                    .collect();
-                                let eager_cross_evals: Vec<TokenStream> = classified
-                                    .iter()
-                                    .filter(|(_, _, same)| !*same)
-                                    .map(|(n, _, _)| quote! {
-                                        // Cross-category: evaluate now and capture. The
-                                        // recursion here is bounded by cross-category tree
-                                        // depth, which is small in practice.
-                                        let #n = #n.as_ref().try_eval()?;
-                                    })
-                                    .collect();
-                                let reduce_push = if cross_field_names.is_empty() {
-                                    quote! { work.push(__EvalFrame::#reduce_variant); }
-                                } else {
-                                    quote! {
-                                        work.push(__EvalFrame::#reduce_variant {
-                                            #(#cross_field_names),*
-                                        });
-                                    }
-                                };
-                                // Same-category children: push in REVERSE so the left-
-                                // most child is processed first (LIFO stack).
-                                let same_cat_pushes: Vec<TokenStream> = classified
-                                    .iter()
-                                    .rev()
-                                    .filter(|(_, _, same)| *same)
-                                    .map(|(n, _, _)| quote! {
-                                        work.push(__EvalFrame::Visit(#n.as_ref()));
-                                    })
-                                    .collect();
+                            // For zero-ary rules (classified empty), match pattern
+                            // has no parens: `Int::Err` not `Int::Err()`.
+                            let visit_pat = if param_pat.is_empty() {
+                                quote! { #category::#label }
+                            } else {
+                                quote! { #category::#label(#(#param_pat),*) }
+                            };
+                            pda_visit_arms.push(quote! {
+                                #visit_pat => {
+                                    #(#eager_cross_evals)*
+                                    #reduce_push
+                                    #(#same_cat_pushes)*
+                                }
+                            });
 
-                                pda_visit_arms.push(quote! {
-                                    #category::#label(#(#param_pat),*) => {
-                                        #(#eager_cross_evals)*
-                                        #reduce_push
-                                        #(#same_cat_pushes)*
+                            // Emit Reduce arm: pop same-cat values (in reverse
+                            // param order = pop order), then run the safeified
+                            // rust_code with all params in scope. Non-native
+                            // cross-cat params bind as `&Cat` (deref the Box
+                            // stored in the frame) so user rust_code sees the
+                            // same borrow as the recursive fallback.
+                            let frame_pat = if cross_field_names.is_empty() {
+                                quote! { __EvalFrame::#reduce_variant }
+                            } else {
+                                quote! {
+                                    __EvalFrame::#reduce_variant { #(#cross_field_names),* }
+                                }
+                            };
+                            let pops: Vec<TokenStream> = classified
+                                .iter()
+                                .rev()
+                                .filter(|(_, _, same)| *same)
+                                .map(|(n, _, _)| quote! {
+                                    // Pops are in reverse param order; since we
+                                    // push in reverse earlier (so leftmost is
+                                    // visited first = processed first = pushed to
+                                    // value stack first), popping in reverse gives
+                                    // us rightmost-first which matches the name
+                                    // binding order below.
+                                    let #n = values.pop().expect("PDA same-cat value");
+                                })
+                                .collect();
+                            let borrow_rebinds: Vec<TokenStream> = cross_kinds
+                                .iter()
+                                .filter_map(|(n, k)| match k {
+                                    CrossKind::Borrow(_) => Some(quote! {
+                                        // Frame owns a Box<Cat>; give user
+                                        // `&Cat` via explicit deref-and-reborrow.
+                                        let #n = &*#n;
+                                    }),
+                                    CrossKind::Native(_) => None,
+                                })
+                                .collect();
+                            pda_reduce_arms.push(quote! {
+                                #frame_pat => {
+                                    #(#pops)*
+                                    #(#borrow_rebinds)*
+                                    match #safe_closure_call {
+                                        Some(__v) => values.push(__v),
+                                        None => return None,
                                     }
-                                });
-
-                                // Emit Reduce arm: pop same-cat values (in reverse
-                                // param order = pop order), then run the safeified
-                                // rust_code with all params in scope.
-                                let frame_pat = if cross_field_names.is_empty() {
-                                    quote! { __EvalFrame::#reduce_variant }
-                                } else {
-                                    quote! {
-                                        __EvalFrame::#reduce_variant { #(#cross_field_names),* }
-                                    }
-                                };
-                                let pops: Vec<TokenStream> = classified
-                                    .iter()
-                                    .rev()
-                                    .filter(|(_, _, same)| *same)
-                                    .map(|(n, _, _)| quote! {
-                                        // Pops are in reverse param order; since we
-                                        // push in reverse earlier (so leftmost is
-                                        // visited first = processed first = pushed to
-                                        // value stack first), popping in reverse gives
-                                        // us rightmost-first which matches the name
-                                        // binding order below.
-                                        let #n = values.pop().expect("PDA same-cat value");
-                                    })
-                                    .collect();
-                                pda_reduce_arms.push(quote! {
-                                    #frame_pat => {
-                                        #(#pops)*
-                                        match #safe_closure_call {
-                                            Some(__v) => values.push(__v),
-                                            None => return None,
-                                        }
-                                    }
-                                });
-                            }
+                                }
+                            });
                         }
                         None => {
-                            pda_supported = false;
+                            // Silent recursive fallback is no longer permitted:
+                            // the classifier refusing a rule would push us back
+                            // onto the stack-consuming `match self { … }` path,
+                            // which is exactly what the WFST-architecture PDA
+                            // refactor ruled out. If this fires, the classifier
+                            // needs a new case (report upstream with the rule
+                            // syntax that triggered it).
+                            let msg = format!(
+                                "mettail: cannot emit stack-safe `try_eval` frame for \
+                                 rule `{}::{}` — `classify_hol_rule_for_pda` returned \
+                                 `None`. Silent recursive fallback is not permitted. \
+                                 Report this as a macro bug, including the rule's \
+                                 syntax.",
+                                category, rule.label,
+                            );
+                            return quote::quote_spanned!(rule.label.span()=> compile_error!(#msg););
                         }
                     }
                 }
@@ -439,6 +741,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 }
             }
         }
+        } // end: `else` of `if is_collection_for_eval`
 
         if !match_arms.is_empty() {
             let nt = NativeType::from_syn_type(native_type);
@@ -494,15 +797,21 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 }
             };
 
+            // `eval()` delegates to the PDA-based `try_eval()` and unwraps:
+            // any None (Var, overflow) becomes a panic with the same message
+            // semantics as the previous recursive `match self` arm. This avoids
+            // a parallel recursive code path and guarantees identical stack
+            // safety to `try_eval`. Note: overflow now panics uniformly in
+            // debug and release (previously wrapped in release); this matches
+            // the stated contract "fully evaluable or panic".
             let impl_block = quote! {
                 impl #category {
                     /// Evaluate the expression to its native type value.
                     /// Variables must be substituted via rewrites before evaluation.
                     pub fn eval(&self) -> #return_type {
-                        match self {
-                            #(#match_arms)*
-                            _ => panic!("Cannot evaluate expression - contains unevaluated terms. Apply rewrites first."),
-                        }
+                        self.try_eval().expect(
+                            "Cannot evaluate expression - contains unevaluated terms or arithmetic overflowed. Apply rewrites first."
+                        )
                     }
                     /// Like eval but returns None for unevaluable terms (e.g. Var) instead of panicking.
                     pub fn try_eval(&self) -> std::option::Option<#return_type> {
@@ -586,6 +895,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 // rewrite to not fire, matching the overall policy.
                 let safe_arith_impl = quote! {
                     impl ::mettail_runtime::SafeArith for #category {
+                        type Output = Self;
                         fn safe_add(self, rhs: Self) -> Option<Self> {
                             let a = self.try_eval()?;
                             let b = rhs.try_eval()?;
@@ -619,6 +929,11 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                         fn safe_neg(self) -> Option<Self> {
                             let a = self.try_eval()?;
                             let r = <_ as ::mettail_runtime::SafeArith>::safe_neg(a)?;
+                            Some(#category::#literal_label(r))
+                        }
+                        fn safe_not(self) -> Option<Self> {
+                            let a = self.try_eval()?;
+                            let r = <_ as ::mettail_runtime::SafeArith>::safe_not(a)?;
                             Some(#category::#literal_label(r))
                         }
                         fn safe_pow(self, exp: i32) -> Option<Self> {

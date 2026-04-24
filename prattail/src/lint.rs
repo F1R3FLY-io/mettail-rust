@@ -298,20 +298,26 @@ impl DiagnosticId {
     }
 
     /// True if this diagnostic ID is groupable by [`group_diagnostics`].
+    ///
+    /// Must cover every ID with a dedicated grouper arm in the match at
+    /// `group_diagnostics` — otherwise groupable diagnostics leak through
+    /// the `non_groupable` path and the per-ID grouper is never called.
     #[inline]
     pub const fn is_groupable(&self) -> bool {
         matches!(self,
             DiagnosticId::W01  | DiagnosticId::W02  | DiagnosticId::W03  |
-            DiagnosticId::W05  | DiagnosticId::W07  | DiagnosticId::G03  |
-            DiagnosticId::G08  | DiagnosticId::G27  | DiagnosticId::D01  |
-            DiagnosticId::D02  | DiagnosticId::D03  | DiagnosticId::D08  |
-            DiagnosticId::D09  | DiagnosticId::A01  | DiagnosticId::A04  |
-            DiagnosticId::A08  | DiagnosticId::CAP03 | DiagnosticId::CAP05 |
-            DiagnosticId::DIS01 | DiagnosticId::W10 | DiagnosticId::W12 |
-            DiagnosticId::W14  |
+            DiagnosticId::W05  | DiagnosticId::W07  | DiagnosticId::W10  |
+            DiagnosticId::W12  | DiagnosticId::W14  |
+            DiagnosticId::G03  | DiagnosticId::G08  | DiagnosticId::G27  |
+            DiagnosticId::D01  | DiagnosticId::D02  | DiagnosticId::D03  |
+            DiagnosticId::D08  | DiagnosticId::D09  |
+            DiagnosticId::A01  | DiagnosticId::A04  | DiagnosticId::A08  |
+            DiagnosticId::CAP03 | DiagnosticId::CAP05 |
+            DiagnosticId::DIS01 |
             // Lint-B cleanup: high-volume IDs that produce many
             // near-identical duplicates in unconfigured languages.
-            DiagnosticId::M01  | DiagnosticId::K01  | DiagnosticId::SYM02 |
+            DiagnosticId::M01  | DiagnosticId::K01  |
+            DiagnosticId::SYM02 |
             DiagnosticId::N02  | DiagnosticId::N05
         )
     }
@@ -3029,7 +3035,7 @@ fn encode_syntax_item(item: &SyntaxItemSpec, env: &mut DebruijnEnv, buf: &mut Ve
             buf.push(cat_bytes.len() as u8);
             buf.extend_from_slice(cat_bytes);
         }
-        SyntaxItemSpec::Collection { param_name, element_category, separator, kind } => {
+        SyntaxItemSpec::Collection { param_name, element_category, separator, key_val_separator: _, kind } => {
             buf.push(env.resolve(param_name));
             buf.push(0x03); // Collection tag
             let cat_bytes = element_category.as_bytes();
@@ -5644,6 +5650,7 @@ fn lint_x04_composition_cast_chain_break(
                         label: r.label.clone(),
                         source_category: source_cat.clone(),
                         target_category: r.category.clone(),
+                    shares_infix_with_target: false,
                     })
                 } else {
                     None
@@ -5663,6 +5670,7 @@ fn lint_x04_composition_cast_chain_break(
                         label: r.label.clone(),
                         source_category: source_cat.clone(),
                         target_category: r.category.clone(),
+                    shares_infix_with_target: false,
                     })
                 } else {
                     None
@@ -9618,6 +9626,7 @@ mod tests {
             name: name.to_string(),
             native_type: native_type.map(|s| s.to_string()),
             is_primary,
+            has_var: true,
         }
     }
 
@@ -10138,6 +10147,7 @@ mod tests {
             label: "IntToProc".to_string(),
             source_category: "Int".to_string(),
             target_category: "Proc".to_string(),
+        shares_infix_with_target: false,
         });
 
         let mut diags = Vec::new();
@@ -10458,11 +10468,13 @@ mod tests {
             label: "IntToProc".to_string(),
             source_category: "Int".to_string(),
             target_category: "Proc".to_string(),
+        shares_infix_with_target: false,
         });
         b.cast_rules.push(CastRule {
             label: "ProcToInt".to_string(),
             source_category: "Proc".to_string(),
             target_category: "Int".to_string(),
+        shares_infix_with_target: false,
         });
 
         let mut diags = Vec::new();
@@ -10481,11 +10493,13 @@ mod tests {
             label: "IntToProc".to_string(),
             source_category: "Int".to_string(),
             target_category: "Proc".to_string(),
+        shares_infix_with_target: false,
         });
         b.cast_rules.push(CastRule {
             label: "BoolToProc".to_string(),
             source_category: "Bool".to_string(),
             target_category: "Proc".to_string(),
+        shares_infix_with_target: false,
         });
 
         let mut diags = Vec::new();
@@ -10508,16 +10522,19 @@ mod tests {
             label: "IntToBool".to_string(),
             source_category: "Int".to_string(),
             target_category: "Bool".to_string(),
+        shares_infix_with_target: false,
         });
         b.cast_rules.push(CastRule {
             label: "BoolToProc".to_string(),
             source_category: "Bool".to_string(),
             target_category: "Proc".to_string(),
+        shares_infix_with_target: false,
         });
         b.cast_rules.push(CastRule {
             label: "IntToProc".to_string(),
             source_category: "Int".to_string(),
             target_category: "Proc".to_string(),
+        shares_infix_with_target: false,
         });
 
         let mut diags = Vec::new();
@@ -10535,6 +10552,7 @@ mod tests {
             label: "IntToProc".to_string(),
             source_category: "Int".to_string(),
             target_category: "Proc".to_string(),
+        shares_infix_with_target: false,
         });
 
         let mut diags = Vec::new();
@@ -10588,21 +10606,25 @@ mod tests {
             label: "AtoB".to_string(),
             source_category: "A".to_string(),
             target_category: "B".to_string(),
+        shares_infix_with_target: false,
         });
         b.cast_rules.push(CastRule {
             label: "BtoC".to_string(),
             source_category: "B".to_string(),
             target_category: "C".to_string(),
+        shares_infix_with_target: false,
         });
         b.cast_rules.push(CastRule {
             label: "CtoD".to_string(),
             source_category: "C".to_string(),
             target_category: "D".to_string(),
+        shares_infix_with_target: false,
         });
         b.cast_rules.push(CastRule {
             label: "DtoE".to_string(),
             source_category: "D".to_string(),
             target_category: "E".to_string(),
+        shares_infix_with_target: false,
         });
 
         let mut diags = Vec::new();
@@ -10621,6 +10643,7 @@ mod tests {
             label: "AtoB".to_string(),
             source_category: "A".to_string(),
             target_category: "B".to_string(),
+        shares_infix_with_target: false,
         });
 
         let mut diags = Vec::new();
@@ -11189,6 +11212,7 @@ mod tests {
             label: "AtoB".to_string(),
             source_category: "A".to_string(),
             target_category: "B".to_string(),
+        shares_infix_with_target: false,
         });
 
         let rules_a = vec![{

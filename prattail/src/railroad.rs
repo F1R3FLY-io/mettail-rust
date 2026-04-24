@@ -370,6 +370,7 @@ mod tests {
                     name: "Expr".to_string(),
                     native_type: Some("i32".to_string()),
                     is_primary: true,
+                    has_var: true,
                 },
             ],
             rules: vec![

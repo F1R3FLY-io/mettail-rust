@@ -1,0 +1,68 @@
+@startuml
+skinparam defaultFontSize 11
+skinparam ArrowFontSize 11
+skinparam ParticipantFontSize 12
+
+actor Caller
+participant "mettail Worker\n(scheduler)" as W
+participant "RhoEvaluator" as RE
+participant "Observer\n(owned by RE)" as Obs
+participant "DebruijnInterpreter" as DI
+database "RSpace\n(PathMap)" as RS
+
+Caller -> W : start_session(expr)
+W -> RE : start_session(expr)
+activate RE
+
+RE -> RE : allocate Par\n= ⟦expr⟧ encoding
+RE -> DI : inj(par, rand)
+activate DI
+
+loop until normal form OR Abort
+  alt deterministic step
+    DI -> RS : produce(chan, data)
+    RS --> DI : ack (or immediate match)
+    DI -> RS : consume(chan, pattern)
+    RS --> DI : COMM fires\n— continuation + bindings
+  else non-confluent rewrite (Lookahead)
+    DI -> DI : x!(P)[n]\nspeculative branch fan-out
+    DI -> RS : collect PathMap leaves
+    RS --> DI : success PathMap,\nfailure PathMap
+  end
+
+  DI -> Obs : on_event(e : CekEvent)
+  Obs --> DI : CekControl
+
+  alt CekControl::Continue
+    note over DI : fall through to next iteration
+  else CekControl::Checkpoint
+    DI -> RS : snapshot()
+    RS --> DI : RSpaceHandle
+    DI -> Obs : on_checkpoint(handle)
+    Obs --> DI : (ack)
+  else CekControl::Pause
+    DI --> RE : PauseResult
+    deactivate DI
+    RE --> W : paused (yield quantum)
+    deactivate RE
+    ...scheduler parks session until PauseResume event...
+    W -> RE : resume(session)
+    activate RE
+    RE -> DI : resume_inj()
+    activate DI
+  else CekControl::Abort
+    note over DI : break loop\n(will emit Aborted result)
+  end
+end
+
+DI --> RE : result\n(normal-form Par OR Aborted)
+deactivate DI
+
+RE -> Obs : on_completion(trace : PdaTrace)
+Obs --> RE : (ack)
+
+RE --> W : RhoOutcome
+deactivate RE
+
+W --> Caller : result
+@enduml

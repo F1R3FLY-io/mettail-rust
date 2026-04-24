@@ -367,9 +367,10 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
                     let ty_str = format!(
                         "{}({})",
                         match coll_type {
-                            CollectionType::HashBag => "HashBag",
+                            CollectionType::HashBag | CollectionType::HashMap => "HashBag",
                             CollectionType::HashSet => "HashSet",
                             CollectionType::Vec => "Vec",
+                            CollectionType::HashMap => "HashMap",
                         },
                         element_type
                     );
@@ -411,11 +412,15 @@ fn type_expr_to_string(ty: &TypeExpr) -> String {
         TypeExpr::Base(id) => id.to_string(),
         TypeExpr::Collection { coll_type, element } => {
             let coll_name = match coll_type {
-                CollectionType::HashBag => "HashBag",
+                CollectionType::HashBag | CollectionType::HashMap => "HashBag",
                 CollectionType::HashSet => "HashSet",
                 CollectionType::Vec => "Vec",
+                CollectionType::HashMap => "HashMap",
             };
             format!("{}({})", coll_name, type_expr_to_string(element))
+        },
+        TypeExpr::Map { key, value } => {
+            format!("HashMap({}, {})", type_expr_to_string(key), type_expr_to_string(value))
         },
         TypeExpr::Arrow { domain, codomain } => {
             format!("[{} -> {}]", type_expr_to_string(domain), type_expr_to_string(codomain))

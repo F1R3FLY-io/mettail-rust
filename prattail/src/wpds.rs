@@ -2187,6 +2187,7 @@ pub fn analyze_wpds_from_bundle(
             name: c.name.clone(),
             native_type: None,
             is_primary: c.is_primary,
+            has_var: true,
         })
         .collect();
 
@@ -2673,6 +2674,7 @@ mod tests {
             name: "Expr".to_string(),
             native_type: Some("i64".to_string()),
             is_primary: true,
+            has_var: true,
         }];
 
         let inputs = vec![
@@ -2721,11 +2723,13 @@ mod tests {
                 name: "Expr".to_string(),
                 native_type: None,
                 is_primary: true,
+                has_var: true,
             },
             CategorySpec {
                 name: "Type".to_string(),
                 native_type: None,
                 is_primary: false,
+                has_var: true,
             },
         ];
 
@@ -2819,11 +2823,13 @@ mod tests {
                 name: "Expr".to_string(),
                 native_type: Some("i64".to_string()),
                 is_primary: true,
+                has_var: true,
             },
             CategorySpec {
                 name: "Orphan".to_string(),
                 native_type: None,
                 is_primary: false,
+                has_var: true,
             },
         ];
 
@@ -3392,11 +3398,13 @@ mod tests {
                 name: "Expr".to_string(),
                 native_type: None,
                 is_primary: true,
+                has_var: true,
             },
             CategorySpec {
                 name: "Decl".to_string(),
                 native_type: None,
                 is_primary: false,
+                has_var: true,
             },
         ];
 
@@ -3890,6 +3898,7 @@ mod tests {
             name: "Expr".to_string(),
             native_type: Some("i64".to_string()),
             is_primary: true,
+            has_var: true,
         }];
 
         let inputs = vec![RuleSpecInput {
@@ -3951,11 +3960,13 @@ mod tests {
                 name: "Expr".to_string(),
                 native_type: Some("i64".to_string()),
                 is_primary: true,
+                has_var: true,
             },
             CategorySpec {
                 name: "Type".to_string(),
                 native_type: Some("String".to_string()),
                 is_primary: false,
+                has_var: true,
             },
         ];
 

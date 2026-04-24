@@ -443,6 +443,11 @@ fn collect_category_refs_from_type_expr(
         TypeExpr::Collection { element, .. } => {
             collect_category_refs_from_type_expr(element, category_set)
         }
+        TypeExpr::Map { key, value } => {
+            let mut refs = collect_category_refs_from_type_expr(key, category_set);
+            refs.extend(collect_category_refs_from_type_expr(value, category_set));
+            refs
+        }
         TypeExpr::Refined { base, .. } => {
             collect_category_refs_from_type_expr(base, category_set)
         }
@@ -598,8 +603,9 @@ fn detect_clone_storm(lang: &LanguageDef) -> Vec<AntipatternWarning> {
                 if warned.insert((constructor.clone(), category.clone())) {
                     let coll_name = match coll_type {
                         CollectionType::Vec => "Vec",
-                        CollectionType::HashBag => "HashBag",
+                        CollectionType::HashBag | CollectionType::HashMap => "HashBag",
                         CollectionType::HashSet => "HashSet",
+                        CollectionType::HashMap => "HashMap",
                     };
                     warnings.push(AntipatternWarning {
                         code: "C-AP05",
@@ -669,8 +675,9 @@ fn extract_collection_from_type_expr(ty: &TypeExpr) -> Option<(String, String)> 
         TypeExpr::Collection { coll_type, element } => {
             let coll_name = match coll_type {
                 CollectionType::Vec => "Vec",
-                CollectionType::HashBag => "HashBag",
+                CollectionType::HashBag | CollectionType::HashMap => "HashBag",
                 CollectionType::HashSet => "HashSet",
+                CollectionType::HashMap => "HashMap",
             };
             Some((coll_name.to_string(), element.to_string()))
         }
@@ -754,6 +761,7 @@ mod tests {
             .map(|n| LangType {
                 name: make_ident(n),
                 native_type: None,
+                collection_kind: None,
             })
             .collect();
         lang
@@ -870,6 +878,7 @@ mod tests {
             LangType {
                 name: make_ident("Expr"),
                 native_type: None,
+                collection_kind: None,
             },
         ];
         // Constructor: Add . Expr ::= Expr "+" Expr ;
@@ -907,10 +916,12 @@ mod tests {
             LangType {
                 name: make_ident("Stmt"),
                 native_type: None,
+                collection_kind: None,
             },
             LangType {
                 name: make_ident("Expr"),
                 native_type: None,
+                collection_kind: None,
             },
         ];
         // Stmt references Expr, but Expr does not reference Stmt — depth 1
@@ -950,6 +961,7 @@ mod tests {
         lang.types = vec![LangType {
             name: make_ident("Proc"),
             native_type: None,
+            collection_kind: None,
         }];
         lang.terms = vec![
             GrammarRule {
@@ -1012,6 +1024,7 @@ mod tests {
         lang.types = vec![LangType {
             name: make_ident("Proc"),
             native_type: None,
+            collection_kind: None,
         }];
         lang.terms = vec![
             GrammarRule {
@@ -1086,6 +1099,7 @@ mod tests {
         lang.types = vec![LangType {
             name: make_ident("Proc"),
             native_type: None,
+            collection_kind: None,
         }];
         lang.terms = vec![GrammarRule {
             label: make_ident("PPar"),
@@ -1123,10 +1137,12 @@ mod tests {
             LangType {
                 name: make_ident("Proc"),
                 native_type: None,
+                collection_kind: None,
             },
             LangType {
                 name: make_ident("Name"),
                 native_type: None,
+                collection_kind: None,
             },
         ];
         lang.terms = vec![GrammarRule {
@@ -1178,6 +1194,7 @@ mod tests {
         lang.types = vec![LangType {
             name: make_ident("Proc"),
             native_type: None,
+            collection_kind: None,
         }];
         lang.terms = vec![GrammarRule {
             label: make_ident("PPar"),

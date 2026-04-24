@@ -381,13 +381,33 @@ fn generate_engine_category_arm(
     let has_literal_rule = rules.iter().any(|rule| is_literal_rule(rule));
     if let Some(native_type) = has_native_type(category, language) {
         if !has_literal_rule {
-            variant_arms.push(generate_engine_auto_literal_arm(category, native_type));
+            // For collection-kind categories (![Vec<T>] / ![HashBag<T>] /
+            // ![HashMap<K,V>] as Cat), thread the collection delimiters so
+            // Display matches the parser-expected surface syntax
+            // (`list(...)`, `bag(...)`, `map(k:v, ...)`) — merge plan B.1.
+            let collection_kind = language
+                .types
+                .iter()
+                .find(|t| &t.name == category)
+                .and_then(|t| t.collection_kind.as_ref());
+            variant_arms.push(generate_engine_auto_literal_arm(
+                category,
+                native_type,
+                collection_kind,
+            ));
         }
     }
 
-    // Auto-generated lambda/apply variants for every domain category
+    // Auto-generated lambda/apply variants — post-HOL-B: only for
+    // (category, domain) pairs flagged by `compute_hol_domain_pairs`.
+    let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
+    let category_str_disp = category.to_string();
     for domain_lang_type in &language.types {
         let domain_name = &domain_lang_type.name;
+
+        if !hol_pairs.contains(&(category_str_disp.clone(), domain_name.to_string())) {
+            continue;
+        }
 
         // LamDomain
         let lam_variant = format_ident!("Lam{}", domain_name);
@@ -443,15 +463,24 @@ fn generate_engine_category_arm(
         let mapply_prefix: String = format!("$${}", domain_lower);
         variant_arms.push(quote! {
             #category::#mapply_variant(lam, args) => {
-                // For MApply, we need to format args with ", " separator.
-                // Since args are a Vec of a potentially different category,
-                // we handle them inline: convert each arg to string, join them.
-                let arg_strs: Vec<_> = args.iter().map(|a| a.to_string()).collect();
-                let joined = arg_strs.join(", ");
-                // Push in reverse (stack is LIFO): "$$domain" "(" lam ", " joined ")"
+                // Each arg is pushed as a separate Display task so the
+                // iterative driver traverses them without recursion — the
+                // previous inline `.to_string()` call on each arg re-entered
+                // Display at an arbitrary depth determined by the arg's
+                // subtree, which was a stack-overflow hazard for deep args.
+                // Layout: "$$domain" "(" lam [", " arg_0 ... ", " arg_{n-1}] ")"
                 stack.push(DisplayTask::WriteLiteral(")"));
-                stack.push(DisplayTask::WriteString(joined));
-                stack.push(DisplayTask::WriteLiteral(", "));
+                // Push args in reverse order so arg_0 is processed first (LIFO).
+                // `args` is `Vec<ArgCat>` (not boxed); iter() yields `&ArgCat`
+                // which can be cast directly to `*const _`.
+                for (i, arg) in args.iter().enumerate().rev() {
+                    stack.push(DisplayTask::#arg_task_variant(arg as *const _, 0));
+                    // Comma comes BEFORE each arg (after `lam` for arg_0, after
+                    // previous arg for arg_i). With reverse iteration, push the
+                    // comma AFTER the arg in stack order so it prints BEFORE.
+                    stack.push(DisplayTask::WriteLiteral(", "));
+                    let _ = i;
+                }
                 stack.push(DisplayTask::#body_task_variant(&**lam as *const _, 0));
                 stack.push(DisplayTask::WriteLiteral("("));
                 stack.push(DisplayTask::WriteString(#mapply_prefix.to_string()));
@@ -874,6 +903,88 @@ fn generate_engine_syntax_pattern_arm(
     // Check if this rule is a unary prefix operator
     let prefix_info = bp_lookup.prefix.get(&label_str);
 
+    // W3 (Neg-zero display canonicalization): if this rule is a unary-prefix
+    // `"-" a` operator over a numeric native-type category, we emit a runtime
+    // pre-scan so that `Neg(…Neg(Zero)…)` renders the `a` portion without
+    // the leading `-`. AST and evaluation are unchanged — Float specifically
+    // retains its `-0.0` bit pattern; we just normalize the printed form.
+    // Activated later in the `needs_bp_check` emission branch; here we only
+    // build the pre-scan expression so the arm can reference it.
+    let neg_zero_prescan: Option<TokenStream> = (|| {
+        prefix_info?; // only unary-prefix rules
+        if syntax_pattern.len() != 2 {
+            return None;
+        }
+        let is_minus = matches!(
+            syntax_pattern.first(),
+            Some(SyntaxExpr::Literal(s)) if s == "-"
+        );
+        if !is_minus {
+            return None;
+        }
+        let param_name = match syntax_pattern.get(1) {
+            Some(SyntaxExpr::Param(id)) => id.to_string(),
+            _ => return None,
+        };
+        // The unary param must be of this rule's own category (same-cat
+        // negation), so the inner-variant pattern `#category::#label(inner)`
+        // is well-typed for chain walking.
+        let param_ty = term_context.iter().find_map(|p| match p {
+            TermParam::Simple { name, ty } if name.to_string() == param_name => Some(ty),
+            _ => None,
+        })?;
+        let TypeExpr::Base(param_cat) = param_ty else {
+            return None;
+        };
+        if param_cat != category {
+            return None;
+        }
+        let lang_type = _language.types.iter().find(|t| &t.name == param_cat)?;
+        let native_type = lang_type.native_type.as_ref()?;
+        use crate::gen::native::NativeType;
+        let nt = NativeType::from_syn_type(native_type);
+        let lit_label = generate_literal_label(native_type);
+        let param_ident = syn::Ident::new(&param_name, proc_macro2::Span::call_site());
+
+        // Per-type literal-zero test, applied inside the match arm that binds
+        // `v` to the literal payload.
+        // Use the canonical wrappers' inner accessors + `num_traits::Zero` on
+        // the underlying value (the canonical types themselves don't impl Zero
+        // — see `runtime/src/canonical_*.rs`). Float comes through as a value,
+        // not a reference, so `==` against `0.0` covers both `+0.0` and `-0.0`
+        // (which is exactly what we want — display canonicalization, not
+        // bit-pattern preservation).
+        let zero_check: TokenStream = match &nt {
+            NativeType::Float32 | NativeType::Float64 => quote! { v.get() == 0.0 },
+            NativeType::CanonicalBigRat => quote! {
+                <num_rational::Ratio<num_bigint::BigInt> as num_traits::Zero>::is_zero(v.get())
+            },
+            NativeType::CanonicalFixedPoint => quote! {
+                <num_bigint::BigInt as num_traits::Zero>::is_zero(v.unscaled())
+            },
+            NativeType::CanonicalBigInt => quote! {
+                <num_bigint::BigInt as num_traits::Zero>::is_zero(v.get())
+            },
+            _ if nt.is_integer() => quote! { *v == 0 },
+            _ => return None,
+        };
+
+        Some(quote! {
+            {
+                let mut cur: &#category = #param_ident.as_ref();
+                loop {
+                    match cur {
+                        #category::#label(__neg_inner) => {
+                            cur = __neg_inner.as_ref();
+                        }
+                        #category::#lit_label(v) => break #zero_check,
+                        _ => break false,
+                    }
+                }
+            }
+        })
+    })();
+
     // Analyze term_context to understand the structure
     let mut param_names: Vec<String> = Vec::new();
     let mut has_abstraction = false;
@@ -1132,15 +1243,64 @@ fn generate_engine_syntax_pattern_arm(
             }
         }
     } else if needs_bp_check {
-        quote! {
-            #category::#label(#(#field_idents),*) => {
-                let needs_parens = #own_bp < min_bp;
-                if needs_parens {
-                    stack.push(DisplayTask::WriteLiteral(")"));
+        if let Some(prescan) = neg_zero_prescan {
+            // W3: Neg-zero display canonicalization.
+            //
+            // `forward_ops` was built left-to-right as [push("-"), push(child)]
+            // then reversed to [push(child), push("-")] (pop-order = child,
+            // then "-"). To suppress the "-" push when `__neg_zero` is true,
+            // we split `forward_ops` by position. `forward_ops[0]` is the
+            // child push (from the param); `forward_ops[1]` is the "-" push
+            // (from the literal). Only emit the latter when not a zero chain.
+            //
+            // (Unreversed, syntax_pattern is ["-", param] → forward_ops before
+            // reverse is [push("-"), push(param)]; after reverse the first
+            // element emitted is the param push, second is the "-" push. We
+            // gate the "-" push emission on `!__neg_zero`.)
+            let (child_push, minus_push) = if forward_ops.len() == 2 {
+                (forward_ops[0].clone(), forward_ops[1].clone())
+            } else {
+                // Unexpected shape; fall back to default emission.
+                return quote! {
+                    #category::#label(#(#field_idents),*) => {
+                        let needs_parens = #own_bp < min_bp;
+                        if needs_parens {
+                            stack.push(DisplayTask::WriteLiteral(")"));
+                        }
+                        #(#forward_ops)*
+                        if needs_parens {
+                            stack.push(DisplayTask::WriteLiteral("("));
+                        }
+                    }
+                };
+            };
+            quote! {
+                #category::#label(#(#field_idents),*) => {
+                    let needs_parens = #own_bp < min_bp;
+                    let __neg_zero: bool = #prescan;
+                    if needs_parens {
+                        stack.push(DisplayTask::WriteLiteral(")"));
+                    }
+                    #child_push
+                    if !__neg_zero {
+                        #minus_push
+                    }
+                    if needs_parens {
+                        stack.push(DisplayTask::WriteLiteral("("));
+                    }
                 }
-                #(#forward_ops)*
-                if needs_parens {
-                    stack.push(DisplayTask::WriteLiteral("("));
+            }
+        } else {
+            quote! {
+                #category::#label(#(#field_idents),*) => {
+                    let needs_parens = #own_bp < min_bp;
+                    if needs_parens {
+                        stack.push(DisplayTask::WriteLiteral(")"));
+                    }
+                    #(#forward_ops)*
+                    if needs_parens {
+                        stack.push(DisplayTask::WriteLiteral("("));
+                    }
                 }
             }
         }
@@ -1323,10 +1483,40 @@ fn generate_engine_auto_var_arm(category: &syn::Ident) -> TokenStream {
     }
 }
 
+/// Extract the VALUE type Ident from a two-arg collection native type
+/// (e.g. `HashMap<K, V>` → `Some(V)`, `HashMapLit<K, V>` → `Some(V)`).
+/// Returns None for one-arg collections (Vec, HashBag, HashSet).
+fn extract_map_value_ident(native_type: &syn::Type) -> Option<syn::Ident> {
+    use syn::GenericArgument;
+    let path = match native_type {
+        syn::Type::Path(t) => &t.path,
+        _ => return None,
+    };
+    let segment = path.segments.last()?;
+    let args = match &segment.arguments {
+        syn::PathArguments::AngleBracketed(a) => &a.args,
+        _ => return None,
+    };
+    // Need at least 2 args for a key-value map.
+    if args.len() < 2 {
+        return None;
+    }
+    let second = args.iter().nth(1)?;
+    match second {
+        GenericArgument::Type(syn::Type::Path(t)) => t
+            .path
+            .get_ident()
+            .cloned()
+            .or_else(|| t.path.segments.last().map(|s| s.ident.clone())),
+        _ => None,
+    }
+}
+
 /// Generate engine arm for auto-generated literal variant (NumLit, FloatLit, etc.)
 fn generate_engine_auto_literal_arm(
     category: &syn::Ident,
     native_type: &syn::Type,
+    collection_kind: Option<&mettail_ast::language::CollectionCategory>,
 ) -> TokenStream {
     let literal_label = generate_literal_label(native_type);
     let nt = crate::gen::native::NativeType::from_syn_type(native_type);
@@ -1339,7 +1529,211 @@ fn generate_engine_auto_literal_arm(
                 ));
             }
         }
+    } else if nt.is_collection() {
+        // Collection payloads. Wrap with the keyword prefix from
+        // `CollectionDelimiters` (default: `list(`, `bag(`, `map(`) so
+        // Display → parse roundtrip holds. Without this wrapping the
+        // generated parser's auto-synthesized `ListLit`/`BagLit`/`MapLit`
+        // rules would reject the Display output.
+        let (open, close, sep, kv_sep): (String, String, String, Option<String>) =
+            match collection_kind {
+                Some(mettail_ast::language::CollectionCategory::List(d))
+                | Some(mettail_ast::language::CollectionCategory::Bag(d))
+                | Some(mettail_ast::language::CollectionCategory::Map(d)) => (
+                    d.open.clone(),
+                    d.close.clone(),
+                    d.sep.clone(),
+                    d.key_val_sep.clone(),
+                ),
+                None => ("".to_string(), "".to_string(), ", ".to_string(), None),
+            };
+        // Extract the element category (e.g. Vec<Proc> → Proc). Every
+        // element gets pushed as a DisplayTask::Display<ElemCat> onto the
+        // OUTER display stack — we STAY inside the single iterative Display
+        // context instead of calling `write!(s, "{}", item)` which re-enters
+        // `display_iterative` (CPU-stack-deep on nested collections). Stack-
+        // safety invariant.
+        let elem_ident = crate::gen::native::native_type_element_ident(native_type);
+        // HashMap<K,V> / HashMapLit<K,V> take TWO generic args; extract V
+        // separately. For K we still use the first generic arg (same as
+        // element extraction), since HashMap's "element" concept is
+        // key+value pair.
+        let value_ident = extract_map_value_ident(native_type);
+        let elem_display_task = elem_ident
+            .as_ref()
+            .map(|c| format_ident!("Display{}", c));
+        let value_display_task = value_ident
+            .as_ref()
+            .map(|c| format_ident!("Display{}", c));
+
+        match nt {
+            crate::gen::native::NativeType::VecCollection => {
+                let Some(elem_task) = elem_display_task.clone() else {
+                    // Fallback for unknown element category — keep old
+                    // behavior (stack-unsafe, but at least compiles).
+                    return quote! {
+                        #category::#literal_label(v) => {
+                            use std::fmt::Write as _;
+                            let mut s = String::from(#open);
+                            for (i, item) in v.iter().enumerate() {
+                                if i > 0 { s.push_str(#sep); s.push(' '); }
+                                let _ = write!(s, "{}", item);
+                            }
+                            s.push_str(#close);
+                            stack.push(DisplayTask::WriteString(s));
+                        }
+                    };
+                };
+                let sep_with_space = format!("{} ", sep);
+                quote! {
+                    #category::#literal_label(v) => {
+                        // Push in reverse order so the first element is
+                        // popped (and displayed) first: open, elem0, sep,
+                        // elem1, sep, ..., elemN, close.
+                        stack.push(DisplayTask::WriteString(#close.to_string()));
+                        for (i, item) in v.iter().enumerate().rev() {
+                            stack.push(DisplayTask::#elem_task(item as *const _, 0u8));
+                            if i > 0 {
+                                stack.push(DisplayTask::WriteString(#sep_with_space.to_string()));
+                            }
+                        }
+                        stack.push(DisplayTask::WriteString(#open.to_string()));
+                    }
+                }
+            }
+            crate::gen::native::NativeType::HashMapCollection
+            | crate::gen::native::NativeType::HashMapLitCollection => {
+                let kv = kv_sep.unwrap_or_else(|| ":".to_string());
+                let (Some(key_task), Some(val_task)) = (elem_display_task.clone(), value_display_task.clone()) else {
+                    return quote! {
+                        #category::#literal_label(v) => {
+                            use std::fmt::Write as _;
+                            let mut s = String::from(#open);
+                            let mut entries: Vec<_> = v.iter().collect();
+                            entries.sort_by(|a, b| format!("{}", a.0).cmp(&format!("{}", b.0)));
+                            for (i, (k, val)) in entries.iter().enumerate() {
+                                if i > 0 { s.push_str(#sep); s.push(' '); }
+                                let _ = write!(s, "{}{}{}", k, #kv, val);
+                            }
+                            s.push_str(#close);
+                            stack.push(DisplayTask::WriteString(s));
+                        }
+                    };
+                };
+                let sep_with_space = format!("{} ", sep);
+                // Box the keys/vals so sorting doesn't move addresses we
+                // reference via pointers. Sort by formatted key (stable
+                // display order), then push Display tasks in reverse.
+                quote! {
+                    #category::#literal_label(v) => {
+                        let mut entries: Vec<_> = v.iter().collect();
+                        entries.sort_by(|a, b| format!("{}", a.0).cmp(&format!("{}", b.0)));
+                        // The entries Vec holds REFERENCES into v's storage,
+                        // so addresses inside v are stable across sort.
+                        stack.push(DisplayTask::WriteString(#close.to_string()));
+                        for (i, (k, val)) in entries.iter().enumerate().rev() {
+                            stack.push(DisplayTask::#val_task(*val as *const _, 0u8));
+                            stack.push(DisplayTask::WriteLiteral(#kv));
+                            stack.push(DisplayTask::#key_task(*k as *const _, 0u8));
+                            if i > 0 {
+                                stack.push(DisplayTask::WriteString(#sep_with_space.to_string()));
+                            }
+                        }
+                        stack.push(DisplayTask::WriteString(#open.to_string()));
+                    }
+                }
+            }
+            crate::gen::native::NativeType::HashBagCollection => {
+                let Some(elem_task) = elem_display_task.clone() else {
+                    return quote! {
+                        #category::#literal_label(v) => {
+                            use std::fmt::Write as _;
+                            let mut s = String::from(#open);
+                            let mut entries: Vec<_> = v.iter().collect();
+                            entries.sort_by(|a, b| format!("{}", a.0).cmp(&format!("{}", b.0)));
+                            let mut first = true;
+                            for (item, count) in entries {
+                                for _ in 0..count {
+                                    if !first { s.push_str(#sep); s.push(' '); }
+                                    first = false;
+                                    let _ = write!(s, "{}", item);
+                                }
+                            }
+                            s.push_str(#close);
+                            stack.push(DisplayTask::WriteString(s));
+                        }
+                    };
+                };
+                let sep_with_space = format!("{} ", sep);
+                quote! {
+                    #category::#literal_label(v) => {
+                        let mut entries: Vec<_> = v.iter().collect();
+                        entries.sort_by(|a, b| format!("{}", a.0).cmp(&format!("{}", b.0)));
+                        // Materialize (item_ptr, count) tuples, then flatten
+                        // to a Vec of item_ptrs for uniform display. The
+                        // `entries` Vec holds refs into v's storage; we
+                        // convert to raw pointers before flattening.
+                        let mut flat: Vec<*const _> = Vec::new();
+                        for (item, count) in entries {
+                            for _ in 0..count {
+                                flat.push(item as *const _);
+                            }
+                        }
+                        stack.push(DisplayTask::WriteString(#close.to_string()));
+                        for (i, ptr) in flat.iter().enumerate().rev() {
+                            stack.push(DisplayTask::#elem_task(*ptr, 0u8));
+                            if i > 0 {
+                                stack.push(DisplayTask::WriteString(#sep_with_space.to_string()));
+                            }
+                        }
+                        stack.push(DisplayTask::WriteString(#open.to_string()));
+                    }
+                }
+            }
+            crate::gen::native::NativeType::HashSetCollection => {
+                let Some(elem_task) = elem_display_task.clone() else {
+                    return quote! {
+                        #category::#literal_label(v) => {
+                            use std::fmt::Write as _;
+                            let mut s = String::from(#open);
+                            let mut entries: Vec<_> = v.iter().collect();
+                            entries.sort_by(|a, b| format!("{}", a).cmp(&format!("{}", b)));
+                            for (i, item) in entries.iter().enumerate() {
+                                if i > 0 { s.push_str(#sep); s.push(' '); }
+                                let _ = write!(s, "{}", item);
+                            }
+                            s.push_str(#close);
+                            stack.push(DisplayTask::WriteString(s));
+                        }
+                    };
+                };
+                let sep_with_space = format!("{} ", sep);
+                quote! {
+                    #category::#literal_label(v) => {
+                        let mut entries: Vec<_> = v.iter().collect();
+                        entries.sort_by(|a, b| format!("{}", a).cmp(&format!("{}", b)));
+                        stack.push(DisplayTask::WriteString(#close.to_string()));
+                        for (i, item) in entries.iter().enumerate().rev() {
+                            stack.push(DisplayTask::#elem_task(*item as *const _, 0u8));
+                            if i > 0 {
+                                stack.push(DisplayTask::WriteString(#sep_with_space.to_string()));
+                            }
+                        }
+                        stack.push(DisplayTask::WriteString(#open.to_string()));
+                    }
+                }
+            }
+            _ => quote! {
+                // Fallback for any other collection native type — use Display impl.
+                #category::#literal_label(v) => {
+                    stack.push(DisplayTask::WriteString(format!("{}", v)));
+                }
+            },
+        }
     } else {
+        // Bare value display for all numeric types (matches main). Suffixes
+        // like `n` / `r` / `u32` / `i32` are accepted at parse via optional
+        // regex fragments and explicit tokens, not required in display.
         quote! {
             #category::#literal_label(v) => {
                 stack.push(DisplayTask::WriteString(format!("{}", v)));
@@ -1419,5 +1813,6 @@ fn extract_base_category_ident(ty: &TypeExpr) -> syn::Ident {
         TypeExpr::Arrow { codomain, .. } => extract_base_category_ident(codomain),
         TypeExpr::MultiBinder(inner) => extract_base_category_ident(inner),
         TypeExpr::Refined { base, .. } => extract_base_category_ident(base),
+        TypeExpr::Map { value, .. } => extract_base_category_ident(value),
     }
 }

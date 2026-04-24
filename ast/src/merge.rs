@@ -876,6 +876,7 @@ mod tests {
         LangType {
             name: Ident::new(name, Span::call_site()),
             native_type: None,
+            collection_kind: None,
         }
     }
 
@@ -930,12 +931,14 @@ mod tests {
         a.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
             native_type: Some(syn::parse_quote!(i32)),
+            collection_kind: None,
         });
 
         let mut b = make_lang("B");
         b.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
             native_type: Some(syn::parse_quote!(i64)),
+            collection_kind: None,
         });
 
         let err = merge_language_defs(&a, &b, DuplicateStrategy::Error).unwrap_err();

@@ -1574,8 +1574,8 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, native_type: None },
-            CategoryInfo { name: "Name".to_string(), is_primary: false, native_type: None },
+            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
+            CategoryInfo { name: "Name".to_string(), is_primary: false, has_var: true, native_type: None },
         ];
 
         // Name has IdentCapture (Store) but is never referenced as NonTerminal (no TestEq)
@@ -1598,8 +1598,8 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, native_type: None },
-            CategoryInfo { name: "Name".to_string(), is_primary: false, native_type: None },
+            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
+            CategoryInfo { name: "Name".to_string(), is_primary: false, has_var: true, native_type: None },
         ];
 
         // Name has IdentCapture (Store) AND is referenced by Expr (TestEq)
@@ -1624,7 +1624,7 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, native_type: None },
+            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
         ];
 
         let all_syntax = vec![

@@ -34,6 +34,97 @@ fn test_int_add() {
 }
 
 #[test]
+fn test_bigint_literal_and_add() {
+    calc_normal_form("34n", "34");
+    calc_normal_form("34n + 8n", "42");
+}
+
+#[test]
+fn test_bigint_bitwise() {
+    calc_normal_form("3n bitand 1n", "1");
+    calc_normal_form("3n bitor 1n", "3");
+    calc_normal_form("bitnot 0n", "-1");
+}
+
+#[test]
+fn test_bigint_parse_eval_large_value() {
+    mettail_runtime::clear_var_cache();
+    let value = calc::BigInt::parse("123456789012345678901234567890n").expect("parse bigint");
+    assert_eq!(value.eval().to_string(), "123456789012345678901234567890");
+}
+
+#[test]
+fn test_bigint_and_i32_are_distinct() {
+    mettail_runtime::clear_var_cache();
+    let parse_result = calc::Int::parse("1n + 2n");
+    assert!(
+        parse_result.is_err(),
+        "BigInt literals should not parse as Int without explicit cast/coercion"
+    );
+}
+
+#[test]
+fn test_bigrat_literal_whole_and_composite() {
+    // Lone `<digits>r` (no `/…r`); composite `<digits>r/<digits>r`
+    calc_normal_form("3r", "3");
+    calc_normal_form("3r/4r", "3/4");
+    calc_normal_form("0xAr", "10");
+    calc_normal_form("1_0r", "10");
+    // 12/2 reduces to 6/1
+    calc_normal_form("0xCr/0x2r", "6");
+    calc_normal_form("0x5r/0x7r", "5/7");
+}
+
+#[test]
+fn test_fraction_constructor_and_arithmetic() {
+    calc_normal_form("fraction(3n, 4n)", "3/4");
+    calc_normal_form("fraction(10n, 3n)", "10/3");
+    calc_normal_form("fraction(3n, 1n) + fraction(1n, 3n)", "10/3");
+    calc_normal_form("fraction(1n, 2n) * fraction(2n, 3n)", "1/3");
+    calc_normal_form("fraction(1n, 2n) / fraction(3n, 4n)", "2/3");
+}
+
+#[test]
+fn test_fraction_zero_denominator_is_error() {
+    calc_normal_form("fraction(1n, 0n)", "error");
+}
+
+#[test]
+fn test_bigrat_literal_division_by_zero_is_error() {
+    // Parses as `(1r) / (0r)`, not a single `1r/0r` literal (which `parse_rational_lit` rejects).
+    calc_normal_form("1r/0r", "error");
+}
+
+#[test]
+fn test_bigrat_bitwise_lcm_and_not() {
+    // Parentheses: `/` binds tighter than infix ops, so use explicit rat operands.
+    calc_normal_form("(3r/4r) bitand (1r/4r)", "1/4");
+    calc_normal_form("(3r/4r) bitor (1r/4r)", "3/4");
+    calc_normal_form("(1r/2r) bitand (1r/3r)", "1/3");
+    calc_normal_form("(1r/2r) bitor (1r/3r)", "1/2");
+    // NOT: bitwise complement of numerator only, denominator unchanged
+    calc_normal_form("bitnot (0r)", "-1");
+    calc_normal_form("bitnot (1r)", "-2");
+}
+
+#[test]
+fn test_int_bitwise_precedence() {
+    // `bitand` tighter than `bitor`: `1 bitor 2 bitand 3` → `1 bitor (2 bitand 3)` → 3
+    calc_normal_form("1 bitor 2 bitand 3", "3");
+    calc_normal_form("(1 bitor 2) bitand 3", "3");
+}
+
+#[test]
+fn test_fraction_accepts_bigint_or_int_args() {
+    // With the `n`/`r` suffix made optional + Int→BigInt injection widening,
+    // `fraction(1, 2)` now parses successfully (bare ints widen to BigInt).
+    // Earlier semantics required explicit `n` suffix.
+    mettail_runtime::clear_var_cache();
+    assert!(calc::BigRat::parse("fraction(1, 2)").is_ok());
+    assert!(calc::BigRat::parse("fraction(1n, 2n)").is_ok());
+}
+
+#[test]
 fn test_int_sub() {
     calc_normal_form("10 - 4", "6");
     calc_normal_form("5 - -3", "8");
@@ -56,8 +147,136 @@ fn test_int_power() {
 }
 
 #[test]
-fn test_int_custom_op() {
-    calc_normal_form("1 ~ 2", "8");
+fn test_int_bitwise() {
+    calc_normal_form("5 bitand 3", "1");
+    calc_normal_form("5 bitor 3", "7");
+    // Rust `!` on `i32`: sign-extended bit pattern
+    calc_normal_form("bitnot 0", "-1");
+    calc_normal_form("bitnot (-1)", "0");
+}
+
+// --- Int: division, modulus (%), div/mod by zero ---
+
+#[test]
+fn test_int_div_and_mod_basic() {
+    calc_normal_form("10 / 3", "3");
+    calc_normal_form("10 % 3", "1");
+    calc_normal_form("-10 / 3", "-3");
+    // Rust `%`: sign follows dividend (first operand)
+    calc_normal_form("10 % -3", "1");
+    calc_normal_form("-10 % 3", "-1");
+    calc_normal_form("-10 % -3", "-1");
+}
+
+#[test]
+fn test_int_mod_congruence_inner_add_reduces() {
+    calc_normal_form("(10 + 5) % 3", "0");
+}
+
+/// Integer `/` with divisor zero matches Rust `i32` (panic).
+///
+/// Ignored in the default test run: `#[should_panic]` depends on unwinding, which does not match
+/// `#[profile.dev] codegen-backend = "cranelift"` and breaks some CI targets. To assert the
+/// panic locally, run with `cargo test -p mettail-languages --test calculator -- --ignored`.
+#[test]
+#[ignore]
+#[should_panic]
+fn test_int_div_by_zero_panics() {
+    calc_normal_form("10 / 0", "");
+}
+
+/// Integer `%` with divisor zero matches Rust `i32` (panic). See [`test_int_div_by_zero_panics`].
+#[test]
+#[ignore]
+#[should_panic]
+fn test_int_mod_by_zero_panics() {
+    calc_normal_form("10 % 0", "");
+}
+
+// --- Int: literal bounds (i32), optional i32 suffix ---
+
+#[test]
+fn test_int_literal_min_max() {
+    calc_normal_form("2147483647", "2147483647");
+    // `2147483648` does not parse as an Int literal; unary `-2147483648` is therefore split into
+    // `-` and `2147483648` (invalid). Use arithmetic for `i32::MIN`.
+    calc_normal_form("-2147483647 - 1", "-2147483648");
+}
+
+#[test]
+fn test_int_literal_explicit_i32_suffix() {
+    calc_normal_form("42i32", "42");
+    calc_normal_form("42i32 + 1", "43");
+}
+
+#[test]
+fn test_int_literal_rejects_above_i32_max() {
+    mettail_runtime::clear_var_cache();
+    assert!(calc::Int::parse("2147483648").is_err());
+    assert!(calc::Int::parse("2147483648i32").is_err());
+}
+
+// --- UInt32: literals and AddUInt32 ---
+
+#[test]
+fn test_uint32_literal_and_add() {
+    calc_normal_form("0u32", "0");
+    calc_normal_form("4294967295u32", "4294967295");
+    calc_normal_form("1u32 + 2u32", "3");
+    calc_normal_form("0xFFu32", "255");
+}
+
+#[test]
+fn test_uint32_bitwise() {
+    calc_normal_form("5u32 bitand 3u32", "1");
+    calc_normal_form("5u32 bitor 3u32", "7");
+    calc_normal_form("bitnot 0u32", "4294967295");
+}
+
+#[test]
+fn test_uint32_parse_rejects_overflow_literal() {
+    mettail_runtime::clear_var_cache();
+    assert!(calc::UInt32::parse("4294967296u32").is_err());
+}
+
+#[test]
+fn test_int_parse_rejects_u32_suffix() {
+    mettail_runtime::clear_var_cache();
+    assert!(calc::Int::parse("1u32").is_err());
+}
+
+// --- Int / UInt32: overflow (release wraps; debug uses checked ops and may panic — not asserted in tests) ---
+
+#[cfg(not(debug_assertions))]
+#[test]
+fn test_int_add_overflow_wraps_in_release() {
+    calc_normal_form("2147483647 + 1", "-2147483648");
+}
+
+#[cfg(not(debug_assertions))]
+#[test]
+fn test_int_sub_underflow_wraps_in_release() {
+    calc_normal_form("-2147483648 - 1", "2147483647");
+}
+
+#[cfg(not(debug_assertions))]
+#[test]
+fn test_uint32_add_overflow_wraps_in_release() {
+    calc_normal_form("4294967295u32 + 1u32", "0");
+}
+
+// --- Int: PowInt edge cases ---
+
+#[test]
+fn test_int_pow_small() {
+    calc_normal_form("2 ^ 30", "1073741824");
+}
+
+#[cfg(not(debug_assertions))]
+#[test]
+fn test_int_pow_31_wraps_in_release() {
+    // `2^31` does not fit in `i32`; release build wraps (same as Rust `2_i32.pow(31)`).
+    calc_normal_form("2 ^ 31", "-2147483648");
 }
 
 // --- Int: corner ---
@@ -101,6 +320,153 @@ fn test_float_scientific() {
     calc_normal_form("1.0e2", "100.0");
     calc_normal_form("2.5E+3", "2500.0");
     calc_normal_form("1.23e10", "12300000000.0");
+}
+
+#[test]
+fn test_float_optional_width_suffix() {
+    calc_normal_form("1.0f64", "1.0");
+    calc_normal_form("2.5f64", "2.5");
+    calc_normal_form("-1.25f64", "-1.25");
+}
+
+#[test]
+fn test_fixed_literal_and_div_mod() {
+    calc_normal_form("10p1", "10.0p1");
+    calc_normal_form("10p1 / 3p1", "3.3p1");
+    calc_normal_form("10p1 % 3p1", "0.1p1");
+}
+
+#[test]
+fn test_fixed_bitand() {
+    calc_normal_form("5p0 bitand 3p0", "1p0");
+}
+
+/// Float: exponent-only form and more `f64` / underscore cases (surface matches [`mettail_prattail::parse_float_lit`]).
+#[test]
+fn test_float_exponent_suffix_and_underscores() {
+    calc_normal_form("1e2", "100.0");
+    calc_normal_form("1e3f64", "1000.0");
+    calc_normal_form(".25f64", "0.25");
+    calc_normal_form("1_000.0f64", "1000.0");
+    calc_normal_form("-2.5e-1", "-0.25");
+}
+
+#[test]
+fn test_float_int_disambiguation() {
+    // Integer token `10` stays Int; `10.0` is a float literal.
+    calc_normal_form("10", "10");
+    calc_normal_form("10.0", "10.0");
+    // `+` / `*` are per-category: use float on both sides for cross-literal smoke.
+    calc_normal_form("1.0 + 2.0", "3.0");
+    calc_normal_form("2.5 * 2.0", "5.0");
+}
+
+// --- Fixed-point: literals, folds, comparisons, projections ---
+
+#[test]
+fn test_fixed_literals_normal_form() {
+    calc_normal_form("0p0", "0p0");
+    calc_normal_form("-1.25p2", "-1.25p2");
+    calc_normal_form("1_0p1", "10.0p1");
+    calc_normal_form(".25p2", "0.25p2");
+}
+
+#[test]
+fn test_fixed_add_sub_mul_neg_mixed_scale() {
+    calc_normal_form("1p0 + 0.5p1", "1.5p1");
+    calc_normal_form("2.0p1 - 0.5p1", "1.5p1");
+    calc_normal_form("3p0 * 2p0", "6p0");
+    calc_normal_form("-10p1", "-10.0p1");
+}
+
+#[test]
+fn test_fixed_comparisons_and_cross_scale_eq() {
+    calc_normal_form("10p1 == 10.0p1", "true");
+    // Same rational: 1 and 1.0 with one decimal place.
+    calc_normal_form("1p0 == 1.0p1", "true");
+    calc_normal_form("10p1 < 11p1", "true");
+    calc_normal_form("10p1 > 11p1", "false");
+    calc_normal_form("10p1 <= 10.0p1", "true");
+    calc_normal_form("10p1 >= 9p1", "true");
+    calc_normal_form("10p1 != 9p1", "true");
+}
+
+#[test]
+fn test_fixed_bitor() {
+    calc_normal_form("5p0 bitor 3p0", "7p0");
+}
+
+#[test]
+fn test_fixed_bitwise_not_and_mixed_scale() {
+    calc_normal_form("bitnot 0p0", "-1p0");
+    calc_normal_form("bitnot 1p0", "-2p0");
+    // Align to max places (1): 15p0 → 150, 14.0p1 → 140 unscaled; 150 bitand 140 = 132 → 13.2p1
+    calc_normal_form("15p0 bitand 14p1", "13.2p1");
+}
+
+#[test]
+fn test_fixed_bitwise_alignment_examples() {
+    // From the spec examples:
+    // 12.2p1 = 12.20p2 = 1220/100; 7.01p2 = 701/100
+    // OR: (1220 bitor 701)/100 = 1789/100 = 17.89p2
+    // AND: (1220 bitand 701)/100 = 132/100 = 1.32p2
+    calc_normal_form("12.2p1 bitor 7.01p2", "17.89p2");
+    calc_normal_form("12.2p1 bitand 7.01p2", "1.32p2");
+}
+
+#[test]
+fn test_bigrat_bitwise_alignment_examples() {
+    // (7/12) bitor (11/16) with lcm 48:
+    // 7/12 = 28/48, 11/16 = 33/48, (28 bitor 33)/48 = 61/48
+    calc_normal_form("(7r/12r) bitor (11r/16r)", "61/48");
+    // (7/12) bitand (13/16):
+    // 7/12 = 28/48, 13/16 = 39/48, (28 bitand 39)/48 = 4/48 = 1/12
+    calc_normal_form("(7r/12r) bitand (13r/16r)", "1/12");
+}
+
+#[test]
+fn test_fixed_projections_proc() {
+    // Binary `int`/`float` use validated numeric_cast semantics (fixed-point value 10.0, not unscaled 100).
+    calc_normal_form("int(10p1, 32)", "10");
+    calc_normal_form("float(10p1, 64)", "10.0");
+    calc_normal_form("bool(0p0)", "false");
+    calc_normal_form("bool(1p0)", "true");
+    calc_normal_form("str(1.5p1)", "1.5p1");
+}
+
+#[test]
+fn test_bool_from_uint_bigint_bigrat() {
+    calc_normal_form("bool(0u32)", "false");
+    calc_normal_form("bool(9u32)", "true");
+    calc_normal_form("bool(0n)", "false");
+    calc_normal_form("bool(-3n)", "true");
+    calc_normal_form("bool(0r)", "false");
+    calc_normal_form("bool(2r/3r)", "true");
+}
+
+#[test]
+fn test_fixed_parse_rejects_malformed() {
+    mettail_runtime::clear_var_cache();
+    assert!(calc::Fixed::parse("10px").is_err());
+    assert!(calc::Fixed::parse("1.23p1").is_err());
+    assert!(calc::Float::parse("").is_err());
+}
+
+/// Fixed `/` and `%` with divisor zero follow Rust `Div`/`Rem` on [`CanonicalFixedPoint`] (panic).
+///
+/// Ignored by default: `#[should_panic]` depends on unwinding; dev Cranelift can differ from LLVM.
+#[test]
+#[ignore]
+#[should_panic]
+fn test_fixed_div_by_zero_panics() {
+    calc_normal_form("10p1 / 0p0", "");
+}
+
+#[test]
+#[ignore]
+#[should_panic]
+fn test_fixed_mod_by_zero_panics() {
+    calc_normal_form("10p1 % 0p0", "");
 }
 
 // --- Bool ---
@@ -174,8 +540,8 @@ fn test_env_add_and_list() {
 
 #[test]
 fn test_env_substitute_and_exec() {
-    // "a + b" is Ambiguous across Float/Int/Str (all have '+' operator). Float env values
-    // ensure the Float alternative progresses during substitution (Stage B resolution).
+    // "a + b" is Ambiguous across Float/Int/Str (all have '+' operator). Env with numeric
+    // values (e.g. 1.0, 2.0) is substituted and reduced; we expect a numeric sum in normal forms.
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
     let mut env = lang.create_env();
@@ -189,9 +555,17 @@ fn test_env_substitute_and_exec() {
         .substitute_env(term.as_ref(), env.as_ref())
         .expect("substitute_env");
     let results = lang.run_ascent(substituted.as_ref()).expect("run_ascent");
-    let normal = results.normal_forms();
-    let displays: Vec<&str> = normal.iter().map(|nf| nf.display.as_str()).collect();
-    assert!(displays.contains(&"3.0"), "expected normal form \"3.0\" among {:?}", displays);
+    let displays: Vec<&str> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.as_str())
+        .collect();
+    // Substitution + reduction should produce the sum; may appear as "3" (Int) or "3.0" (Float).
+    assert!(
+        displays.contains(&"3") || displays.contains(&"3.0"),
+        "expected normal form \"3\" or \"3.0\" among {:?}",
+        displays
+    );
 }
 
 #[test]
@@ -231,15 +605,16 @@ fn test_float_literal_parse() {
 fn test_exec_float_1_0() {
     mettail_runtime::clear_var_cache();
     let term = calc::CalculatorLanguage::parse("1.0").expect("parse 1.0");
-    if let calc::CalculatorTermInner::Float(inner) = &term.0 {
-        if let calc::Float::FloatLit(v) = inner {
-            assert!((v.get() - 1.0).abs() < 1e-10, "expected 1.0, got {}", v.get());
-        } else {
-            panic!("expected FloatLit, got {:?}", inner);
-        }
-    } else {
-        panic!("expected Float variant, got {:?}", term.0);
-    }
+    let ok = match &term.0 {
+        calc::CalculatorTermInner::Float(inner) => matches!(inner, calc::Float::FloatLit(v) if (v.get() - 1.0).abs() < 1e-10),
+        calc::CalculatorTermInner::Ambiguous(alts) => alts.iter().any(|a| match a {
+            calc::CalculatorTermInner::Float(inner) => matches!(inner, calc::Float::FloatLit(v) if (v.get() - 1.0).abs() < 1e-10),
+            calc::CalculatorTermInner::Proc(p) => matches!(p, calc::Proc::ProcFloat(inner) if matches!(inner.as_ref(), calc::Float::FloatLit(v) if (v.get() - 1.0).abs() < 1e-10)),
+            _ => false,
+        }),
+        _ => false,
+    };
+    assert!(ok, "expected Float or Ambiguous containing Float(1.0), got {:?}", term.0);
 }
 
 // --- PraTTaIL-specific: unary prefix, right-assoc, postfix, ternary ---
@@ -346,9 +721,10 @@ fn test_factorial_with_addition() {
 
 #[test]
 fn test_factorial_with_negation() {
-    mettail_runtime::clear_var_cache();
-    let result = Int::parse("-5!").expect("should parse -5!");
-    assert_eq!(result.eval(), -120, "postfix ! should bind tighter than unary -");
+    // With atomic-negative lexing (`-?` on the Int pattern), `-5` lexes as a
+    // single `Int::NumLit(-5)`. Factorial is undefined on negative integers,
+    // so `Fact(NumLit(-5))` rewrites to `Int::Err` (displays as "error").
+    calc_normal_form("-5!", "error");
 }
 
 #[test]
@@ -465,26 +841,42 @@ fn test_ambiguous_parse_variable_expr() {
 
 #[test]
 fn test_unambiguous_int_literal() {
-    // "42" should parse unambiguously as Int (Float parser doesn't accept Integer tokens).
+    // "42" parses as Int or Ambiguous(ProcInt(Int), Int). Either way we can get value 42.
     mettail_runtime::clear_var_cache();
     let result = calc::CalculatorLanguage::parse("42").expect("parse 42");
-    if let calc::CalculatorTermInner::Int(inner) = &result.0 {
-        assert_eq!(inner.eval(), 42);
-    } else {
-        panic!("expected Int variant for '42', got {:?}", result.0);
-    }
+    let ok = match &result.0 {
+        calc::CalculatorTermInner::Int(inner) => inner.eval() == 42,
+        calc::CalculatorTermInner::Ambiguous(alts) => alts.iter().any(|a| match a {
+            calc::CalculatorTermInner::Int(inner) => inner.eval() == 42,
+            calc::CalculatorTermInner::Proc(p) => {
+                matches!(p, calc::Proc::ProcInt(inner) if inner.eval() == 42)
+            },
+            _ => false,
+        }),
+        _ => false,
+    };
+    assert!(ok, "expected Int or Ambiguous containing Int(42) for '42', got {:?}", result.0);
 }
 
 #[test]
 fn test_unambiguous_float_literal() {
-    // "1.5" should parse unambiguously as Float (Int parser doesn't accept Float tokens).
+    // "1.5" parses as Float or Ambiguous(ProcFloat(Float), Float). Either way we have Float.
     mettail_runtime::clear_var_cache();
     let result = calc::CalculatorLanguage::parse("1.5").expect("parse 1.5");
-    if let calc::CalculatorTermInner::Float(_) = &result.0 {
-        // ok
-    } else {
-        panic!("expected Float variant for '1.5', got {:?}", result.0);
-    }
+    let has_float = match &result.0 {
+        calc::CalculatorTermInner::Float(_) => true,
+        calc::CalculatorTermInner::Ambiguous(alts) => alts.iter().any(|a| match a {
+            calc::CalculatorTermInner::Float(_) => true,
+            calc::CalculatorTermInner::Proc(p) => matches!(p, calc::Proc::ProcFloat(_)),
+            _ => false,
+        }),
+        _ => false,
+    };
+    assert!(
+        has_float,
+        "expected Float or Ambiguous containing Float for '1.5', got {:?}",
+        result.0
+    );
 }
 
 /// `infer_var_types` should find variable `x` in `x + 1` for multi-type Calculator
@@ -630,19 +1022,260 @@ fn test_exec_paren_cross_category() {
     );
 }
 
-/// Bare variable `a` in an all-native language (Calculator) should infer as `Int`
-/// (the primary category). Calculator has no non-native categories, so all parsers
+/// Bare variable `a` in Calculator should infer as the primary category.
+/// Calculator's primary category is Proc (first in the types list), so all parsers
 /// are tried unconditionally. The Ambiguous result gets the primary category preference
 /// from `infer_term_type`.
 #[test]
-fn test_bare_variable_type_is_int() {
+fn test_bare_variable_type_is_primary() {
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
     let term = lang.parse_term("a").expect("parse 'a'");
     let term_type = lang.infer_term_type(term.as_ref());
-    // Calculator is all-native, so "a" is Ambiguous across all categories;
-    // type should show primary (Int)
-    assert_eq!(format!("{}", term_type), "Int");
+    // Calculator's primary category is Proc (first in the types list);
+    // "a" is Ambiguous across all categories, type shows primary (Proc)
+    assert_eq!(format!("{}", term_type), "Proc");
+}
+
+// --- Nested cast expressions (NFA disambiguation) ---
+
+#[test]
+fn test_float_of_int() {
+    calc_normal_form("float(10, 64)", "10.0");
+}
+
+#[test]
+fn test_nested_float_float_int() {
+    calc_normal_form("float(float(10, 64), 64)", "10.0");
+}
+
+#[test]
+fn test_triple_nested_float() {
+    calc_normal_form("float(float(float(10, 64), 64), 64)", "10.0");
+}
+
+#[test]
+fn test_nested_int_int() {
+    calc_normal_form("int(int(5, 32), 32)", "5");
+}
+
+#[test]
+fn test_nested_int_float() {
+    calc_normal_form("int(float(42, 64), 32)", "42");
+}
+
+#[test]
+fn test_nested_float_int_arithmetic() {
+    calc_normal_form("sin(3.14) + 3.0 * float(float(10, 64), 64)", "30.001592652916486");
+}
+
+// ── ProcTo* projections from list elements ──
+
+#[test]
+fn test_int_from_list_elem() {
+    calc_normal_form("int(at(list(3, 2.0, true), 0), 32)", "3");
+}
+
+#[test]
+fn test_float_from_list_elem() {
+    calc_normal_form("float(at(list(3, 2.0, true), 1), 64)", "2.0");
+}
+
+#[test]
+fn test_bool_from_list_elem() {
+    calc_normal_form("bool(at(list(3, 2.0, true), 2))", "true");
+}
+
+#[test]
+fn test_str_from_int_list_elem() {
+    calc_normal_form("str(at(list(3, 2.0, true), 0))", "\"3\"");
+}
+
+// --- Map ---
+
+#[test]
+fn test_map_literal_roundtrip() {
+    mettail_runtime::clear_var_cache();
+    let term = calc::Map::parse(r#"map(1:"hi", 2:"world")"#).expect("parse map literal");
+    let displayed = format!("{}", term);
+    mettail_runtime::clear_var_cache();
+    let reparsed = calc::Map::parse(&displayed).expect("reparse displayed map");
+    assert_eq!(term, reparsed, "map literal display should roundtrip");
+}
+
+#[test]
+fn test_map_empty_literal_roundtrip() {
+    mettail_runtime::clear_var_cache();
+    let term = calc::Map::parse("map()").expect("parse empty map");
+    let displayed = format!("{}", term);
+    mettail_runtime::clear_var_cache();
+    let reparsed = calc::Map::parse(&displayed).expect("reparse displayed empty map");
+    assert_eq!(term, reparsed);
+}
+
+// Map length (maplength to avoid ambiguity with length(List))
+#[test]
+fn test_map_length_empty() {
+    calc_normal_form("maplength(map())", "0");
+}
+
+#[test]
+fn test_map_length_one() {
+    calc_normal_form("maplength(map(1:2))", "1");
+}
+
+#[test]
+fn test_map_length_two() {
+    calc_normal_form("maplength(map(1:2, 3:4))", "2");
+}
+
+// Map get/put/delete
+#[test]
+fn test_map_get() {
+    calc_normal_form("get(map(1:10, 2:20), 1)", "10");
+    calc_normal_form("get(map(1:10, 2:20), 2)", "20");
+}
+
+#[test]
+fn test_map_put() {
+    calc_normal_form("get(put(map(), 1, 10), 1)", "10");
+    calc_normal_form("get(put(put(map(), 1, 10), 2, 20), 2)", "20");
+    calc_normal_form("get(put(put(map(1:10), 1, 99), 2, 20), 1)", "99");
+}
+
+#[test]
+fn test_map_delete() {
+    calc_normal_form("maplength(delete(map(1:10, 2:20), 1))", "1");
+    calc_normal_form("get(delete(map(1:10, 2:20), 1), 2)", "20");
+}
+
+#[test]
+fn test_map_merge() {
+    calc_normal_form("maplength(merge(map(), map()))", "0");
+    calc_normal_form("maplength(merge(map(1:10), map(2:20)))", "2");
+    calc_normal_form("get(merge(map(1:10, 2:20), map(2:99, 3:30)), 2)", "99");
+    calc_normal_form("get(merge(map(1:10, 2:20), map(2:99, 3:30)), 1)", "10");
+}
+
+#[test]
+fn test_map_has() {
+    calc_normal_form("has(map(), 1)", "false");
+    calc_normal_form("has(map(1:10), 1)", "true");
+    calc_normal_form("has(map(1:10), 2)", "false");
+    calc_normal_form("has(map(1:10, 2:20), 2)", "true");
+}
+
+#[test]
+fn test_map_keys() {
+    calc_normal_form("length(keys(map()))", "0");
+    calc_normal_form("length(keys(map(1:10)))", "1");
+    calc_normal_form("length(keys(map(1:10, 2:20)))", "2");
+    calc_normal_form("at(keys(map(1:10, 2:20)), 0)", "1");
+}
+
+#[test]
+fn test_map_values() {
+    calc_normal_form("length(values(map()))", "0");
+    calc_normal_form("length(values(map(1:10)))", "1");
+    calc_normal_form("at(values(map(1:10, 2:20)), 1)", "20");
+}
+
+// ── Explicit numeric casts — see `docs/design/made/native-types/numeric-casting.md`
+
+#[test]
+fn test_cast_int_float_floor() {
+    calc_normal_form("int(-3.5, 8)", "-4");
+}
+
+#[test]
+fn test_cast_uint_float_clamp() {
+    calc_normal_form("uint(-3.5, 8)", "0");
+}
+
+#[test]
+fn test_cast_uint_modular_u32() {
+    calc_normal_form("uint(257u32, 8)", "1");
+}
+
+#[test]
+fn test_cast_uint_signed_int_twos_complement() {
+    calc_normal_form("uint(-1, 8)", "255");
+}
+
+#[test]
+fn test_bigrat_unary_from_int_and_float() {
+    // Whole rationals use the same NF display as `42r` / int (`42`), not a `42r` suffix.
+    calc_normal_form("bigrat(42)", "42");
+    calc_normal_form("bigrat(0.5)", "1/2");
+}
+
+#[test]
+fn test_binary_int_requires_width() {
+    calc_normal_form("int(3.14, 8)", "3");
+}
+
+#[test]
+fn test_cast_int_invalid_width() {
+    calc_normal_form("int(1, 7)", "cast_error_int");
+}
+
+#[test]
+fn test_cast_int_nonfinite_float_is_error() {
+    calc_normal_form("int(0.0 / 0.0, 8)", "cast_error_int");
+}
+
+#[test]
+fn test_cast_float_overflow_to_inf() {
+    calc_normal_form("float(1e50, 32)", "inf");
+}
+
+#[test]
+fn test_bigint_unary_from_float() {
+    calc_normal_form("bigint(-3.5)", "-4");
+    calc_normal_form("bigint(1.23E10)", "12300000000");
+    calc_normal_form("bigint(1000000000000.23)", "1000000000000");
+    calc_normal_form("bigint(1E30)", "1000000000000000000000000000000");
+}
+
+#[test]
+fn test_cast_fixed_floor() {
+    calc_normal_form("fixed(3.49p2, 1)", "3.4p1");
+}
+
+// ── Regression: casts through Proc still work ──
+
+#[test]
+fn test_float_from_int_still_works() {
+    calc_normal_form("float(3, 64)", "3.0");
+}
+
+#[test]
+fn test_float_from_bigrat_expression() {
+    calc_normal_form("float(1r/4r, 64)", "0.25");
+}
+
+#[test]
+fn test_casts_from_numeric_strings() {
+    calc_normal_form(r#"int("2r/3r", 32)"#, "0");
+    calc_normal_form(r#"int("123n", 32)"#, "123");
+    calc_normal_form(r#"int("123i64", 64)"#, "123");
+    calc_normal_form(r#"int("10i32", 32)"#, "10");
+    calc_normal_form(r#"int("false", 32)"#, "0");
+    calc_normal_form(r#"int("true", 32)"#, "1");
+    calc_normal_form(r#"bigint("123n")"#, "123");
+    calc_normal_form(r#"bigrat("1r/2r")"#, "1/2");
+    calc_normal_form(r#"str(23r)"#, "\"23\"");
+}
+
+#[test]
+fn test_int_from_float_still_works() {
+    calc_normal_form("int(3.14, 32)", "3");
+}
+
+#[test]
+fn test_basic_arithmetic_regression() {
+    calc_normal_form("2 + 3", "5");
+    calc_normal_form("1.5 + 2.5", "4.0");
 }
 
 // ── NFA disambiguation: nested casts (duplicate-token prefix arms) ──

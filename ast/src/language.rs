@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use syn::{
     ext::IdentExt,
     parse::{Parse, ParseStream},
-    Ident, Result as SynResult, Token, Type,
+    GenericArgument, Ident, Result as SynResult, Token, Type,
 };
 
 use super::grammar::{parse_terms, GrammarRule};
@@ -19,14 +19,19 @@ pub enum AttributeValue {
     /// Integer value.
     #[expect(dead_code)] // Parsed from DSL, not yet consumed
     Int(i64),
-    /// Boolean value.
-    #[expect(dead_code)] // Parsed from DSL, not yet consumed
+    /// Boolean value (e.g., `auto_hol: false`).
     Bool(bool),
     /// String value (e.g., `log_semiring_model_path: "path/to/model.json"`).
     Str(String),
     /// Keyword identifier (e.g., `beam_width: none`, `beam_width: auto`).
     Keyword(String),
 }
+
+// NOTE: HOL variant auto-generation is fully automatic — it scans the grammar
+// for explicit `Lam{D}` / `Apply{D}` references and for multi-binder
+// `TermParam::Abstraction` / `TermParam::MultiAbstraction` params, and only
+// emits variants that are actually needed. There is no user-facing option
+// for this — see `macros/src/logic/common.rs::compute_hol_domain_pairs`.
 
 /// Top-level theory definition
 /// theory! { name: Foo, params: ..., options { ... }, types { ... }, terms { ... }, equations { ... }, rewrites { ... }, logic { ... } }
@@ -752,13 +757,224 @@ impl RewriteRule {
     }
 }
 
-/// Export: category name, optionally with native Rust type
-/// types { Elem; Name; ![i32] as Int; }
+/// Delimiter parameters for List/Bag/Map literal syntax (open, close, separator).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollectionDelimiters {
+    pub open: String,
+    pub close: String,
+    pub sep: String,
+    /// Map-only separator between key and value (e.g., ":").
+    /// `None` for List/Bag, `Some` for Map.
+    pub key_val_sep: Option<String>,
+}
+
+/// Collection category kind (List, Bag, Map) with optional delimiters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollectionCategory {
+    List(CollectionDelimiters),
+    Bag(CollectionDelimiters),
+    Map(CollectionDelimiters),
+}
+
+impl CollectionCategory {
+    /// Default delimiters for List: `list(`, `)`, `,`
+    pub fn list_defaults() -> CollectionDelimiters {
+        CollectionDelimiters {
+            open: "list(".to_string(),
+            close: ")".to_string(),
+            sep: ",".to_string(),
+            key_val_sep: None,
+        }
+    }
+    /// Default delimiters for Bag: `bag(`, `)`, `,`
+    pub fn bag_defaults() -> CollectionDelimiters {
+        CollectionDelimiters {
+            open: "bag(".to_string(),
+            close: ")".to_string(),
+            sep: ",".to_string(),
+            key_val_sep: None,
+        }
+    }
+    /// Default delimiters for Map: `map(`, `)`, `,`, `:`
+    pub fn map_defaults() -> CollectionDelimiters {
+        CollectionDelimiters {
+            open: "map(".to_string(),
+            close: ")".to_string(),
+            sep: ",".to_string(),
+            key_val_sep: Some(":".to_string()),
+        }
+    }
+}
+
+/// Export: category name, optionally with native Rust type or collection kind
+/// types { Elem; Name; ![i32] as Int; List; Bag ["{", "}", ","]; }
 #[derive(Debug, Clone)]
 pub struct LangType {
     pub name: Ident,
     /// Optional native Rust type (e.g., `i32` for `![i32] as Int`)
     pub native_type: Option<Type>,
+    /// Optional collection category (List, Bag, Map) with delimiters for literal syntax.
+    pub collection_kind: Option<CollectionCategory>,
+}
+
+/// Typed classification of a category's native Rust type.
+///
+/// Drives the "shared token-family variant" mapping used when desugaring
+/// `literals { ... }` entries: every category whose `NativeKind` returns the
+/// same `standard_token_variant()` shares one `Token::<name>(payload)` enum
+/// variant.
+///
+/// String comparisons are confined to the single `from_syn_type` constructor;
+/// all downstream dispatch is by typed `match`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NativeKind {
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    Int128,
+    Isize,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    UInt128,
+    Usize,
+    Float32,
+    Float64,
+    Bool,
+    /// `str` or `String`.
+    Str,
+    /// Any wrapper whose last path segment ends with `"BigInt"` — treated
+    /// as the arbitrary-precision integer category.
+    CanonicalBigInt,
+    /// `CanonicalBigRat` — arbitrary-precision rational.
+    CanonicalBigRat,
+    /// `CanonicalFixedPoint` — fixed-point decimal.
+    CanonicalFixedPoint,
+    /// Anything else (custom user wrapper, collection container, etc.).
+    Other,
+}
+
+impl NativeKind {
+    /// Classify a `syn::Type` by its last path segment. Returns `Other` for
+    /// anything that doesn't fit a known family.
+    pub fn from_syn_type(ty: &Type) -> Self {
+        let seg = match ty {
+            Type::Path(p) => match p.path.segments.last() {
+                Some(s) => s.ident.to_string(),
+                None => return Self::Other,
+            },
+            _ => return Self::Other,
+        };
+        match seg.as_str() {
+            "i8" => Self::Int8,
+            "i16" => Self::Int16,
+            "i32" => Self::Int32,
+            "i64" => Self::Int64,
+            "i128" => Self::Int128,
+            "isize" => Self::Isize,
+            "u8" => Self::UInt8,
+            "u16" => Self::UInt16,
+            "u32" => Self::UInt32,
+            "u64" => Self::UInt64,
+            "u128" => Self::UInt128,
+            "usize" => Self::Usize,
+            "f32" => Self::Float32,
+            "f64" => Self::Float64,
+            "bool" => Self::Bool,
+            "str" | "String" => Self::Str,
+            "CanonicalBigRat" => Self::CanonicalBigRat,
+            "CanonicalFixedPoint" => Self::CanonicalFixedPoint,
+            other if other.ends_with("BigInt") => Self::CanonicalBigInt,
+            _ => Self::Other,
+        }
+    }
+
+    /// Whether this kind is one of the bounded-integer widths or
+    /// `CanonicalBigInt` — i.e. shares `Token::Integer(IntLit)`.
+    #[inline]
+    pub const fn is_integer(self) -> bool {
+        matches!(
+            self,
+            Self::Int8
+                | Self::Int16
+                | Self::Int32
+                | Self::Int64
+                | Self::Int128
+                | Self::Isize
+                | Self::UInt8
+                | Self::UInt16
+                | Self::UInt32
+                | Self::UInt64
+                | Self::UInt128
+                | Self::Usize
+                | Self::CanonicalBigInt
+        )
+    }
+
+    /// Standard `Token::<name>` variant family for this native kind.
+    ///
+    /// Returns `None` for `Other` — caller keeps the user-facing
+    /// category name in that case. Callers in `macros` should convert
+    /// the result to `TokenFamily` via `TokenFamily::from_name()` for
+    /// all subsequent dispatch (single string→enum gateway).
+    pub const fn standard_token_variant(self) -> Option<&'static str> {
+        match self {
+            Self::Float32 | Self::Float64 => Some("Float"),
+            Self::Bool => Some("Boolean"),
+            Self::Str => Some("StringLit"),
+            // CanonicalBigInt / CanonicalBigRat / CanonicalFixedPoint do NOT
+            // collapse into a shared family variant — a shared `Token::Integer(i64)`
+            // would clamp arbitrary-precision literals like
+            // `32478132567813256718n` to i64::MAX. Returning None keeps the
+            // declared category name (e.g. `BigInt`, `BigRat`, `Fixed`) as the
+            // Token variant with a `&'a str` payload; the category's parse
+            // arm then calls `parse_int_lit` / `parse_rational_lit` /
+            // `parse_fixed_lit` on the full text — preserving precision.
+            Self::CanonicalBigInt => None,
+            Self::CanonicalBigRat => None,
+            Self::CanonicalFixedPoint => None,
+            // Fixed-width integer types collapse onto the shared
+            // `Token::Integer(i64)` variant.
+            Self::Int8
+            | Self::Int16
+            | Self::Int32
+            | Self::Int64
+            | Self::Int128
+            | Self::Isize
+            | Self::UInt8
+            | Self::UInt16
+            | Self::UInt32
+            | Self::UInt64
+            | Self::UInt128
+            | Self::Usize => Some("Integer"),
+            Self::Other => None,
+        }
+    }
+}
+
+/// Extract the element type Ident from a collection native type (e.g. `Vec<Proc>` → `Proc`,
+/// `HashBag<Proc>` → `Proc`). Returns None if the native type is not a generic container.
+fn element_ident_from_native_type(native_type: &Type) -> Option<Ident> {
+    let path = match native_type {
+        Type::Path(t) => &t.path,
+        _ => return None,
+    };
+    let segment = path.segments.last()?;
+    let args = match &segment.arguments {
+        syn::PathArguments::AngleBracketed(a) => &a.args,
+        _ => return None,
+    };
+    let first = args.first()?;
+    match first {
+        GenericArgument::Type(Type::Path(t)) => t
+            .path
+            .get_ident()
+            .cloned()
+            .or_else(|| t.path.segments.last().map(|s| s.ident.clone())),
+        _ => None,
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1095,6 +1311,12 @@ pub struct TokenDef {
     pub is_pop: bool,
     /// Output stream name (default: "main").
     pub stream: Option<Ident>,
+    /// True if this TokenDef was produced by desugaring a `literals {}` block
+    /// entry (main's surface syntax). False for entries declared directly in a
+    /// `tokens {}` block. Literal-block tokens carry the raw lexed `&'a str`
+    /// as payload and evaluate `rust_code` at parse time; `tokens{}` entries
+    /// carry the category's native payload type directly.
+    pub from_literals: bool,
 }
 
 /// A named lexer mode containing token definitions.
@@ -1188,6 +1410,108 @@ impl LanguageDef {
     pub fn get_type(&self, category: &Ident) -> Option<&LangType> {
         self.types.iter().find(|t| &t.name == category)
     }
+
+    /// Element type for a collection category (e.g. `List` → `Proc`). First tries the type-based
+    /// path (native_type + collection_kind) for List/Bag/Map; otherwise looks for a constructor
+    /// whose grammar contains a Collection item.
+    pub fn collection_element_type_for_category(&self, category: &Ident) -> Option<Ident> {
+        let cat_str = category.to_string();
+        if cat_str == "List" || cat_str == "Bag" || cat_str == "Map" {
+            if let Some(lang_type) = self.types.iter().find(|t| &t.name == category) {
+                if lang_type.collection_kind.is_some() {
+                    // Map is implicitly HashMap<Proc, Proc> for Phase 1, so element type is always Proc.
+                    if cat_str == "Map" {
+                        return Some(quote::format_ident!("Proc"));
+                    }
+                    if let Some(native_type) = lang_type.native_type.as_ref() {
+                        if let Some(elem) = element_ident_from_native_type(native_type) {
+                            return Some(elem);
+                        }
+                    }
+                    // Fallback: native_type parse failed; assume element type Proc.
+                    return Some(quote::format_ident!("Proc"));
+                }
+            }
+        }
+        // Term-based: constructor whose category matches and whose grammar has a Collection item.
+        self.terms
+            .iter()
+            .find(|r| &r.category == category)
+            .and_then(|r| {
+                r.items.iter().find_map(|i| {
+                    if let GrammarItem::Collection { element_type, .. } = i {
+                        Some(element_type.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+    }
+
+    /// Type name for the List category (e.g. "List") if present.
+    pub fn list_type_name(&self) -> Option<&Ident> {
+        self.types
+            .iter()
+            .find(|t| matches!(t.collection_kind.as_ref(), Some(CollectionCategory::List(_))))
+            .map(|t| &t.name)
+    }
+
+    /// Type name for the Bag category (e.g. "Bag") if present.
+    pub fn bag_type_name(&self) -> Option<&Ident> {
+        self.types
+            .iter()
+            .find(|t| matches!(t.collection_kind.as_ref(), Some(CollectionCategory::Bag(_))))
+            .map(|t| &t.name)
+    }
+
+    /// Type name for the Map category (e.g. "Map") if present.
+    #[allow(dead_code)]
+    pub fn map_type_name(&self) -> Option<&Ident> {
+        self.types
+            .iter()
+            .find(|t| matches!(t.collection_kind.as_ref(), Some(CollectionCategory::Map(_))))
+            .map(|t| &t.name)
+    }
+
+    /// Standard `Token::<name>` variant for a literal-category, derived from the
+    /// category's native type. Used when desugaring `literals { ... }` entries
+    /// into `TokenDef`s so they share a single Token-enum variant per family
+    /// (e.g. all integer-typed categories share `Token::Integer(IntLit)`).
+    ///
+    /// Returns `None` for categories whose native type doesn't fit a known
+    /// family — those keep their user-facing `TypeName` as the Token variant.
+    pub fn standard_token_variant_for_category(&self, category: &Ident) -> Option<&'static str> {
+        let lt = self.types.iter().find(|t| t.name == *category)?;
+        NativeKind::from_syn_type(lt.native_type.as_ref()?).standard_token_variant()
+    }
+
+    /// Label of the term that injects a collection type (List, Bag, Map) into the primary category.
+    /// E.g. for RhoCalc with `CastList . l:List |- l : Proc`, returns `CastList` for "List".
+    pub fn injection_term_label_for_collection(&self, collection_type: &str) -> Option<Ident> {
+        use super::grammar::TermParam;
+        use super::types::TypeExpr;
+        let primary = self.types.first().map(|t| &t.name)?;
+        for rule in &self.terms {
+            if &rule.category != primary {
+                continue;
+            }
+            let ctx = rule.term_context.as_ref()?;
+            if ctx.len() != 1 {
+                continue;
+            }
+            let param = &ctx[0];
+            let TermParam::Simple { ty, .. } = param else {
+                continue;
+            };
+            let TypeExpr::Base(cat) = ty else {
+                continue;
+            };
+            if *cat == collection_type {
+                return Some(rule.label.clone());
+            }
+        }
+        None
+    }
 }
 
 /// Parse a bracketed list of identifiers: `[Ident1, Ident2, ...]`
@@ -1269,8 +1593,20 @@ impl Parse for LanguageDef {
             (Vec::new(), Vec::new())
         };
 
+        // Parse: literals { ... } (optional; types{} must precede; desugars to TokenDef)
+        let literals_defs: Vec<TokenDef> = if input.peek(Ident) {
+            let lookahead = input.fork().parse::<Ident>()?;
+            if lookahead == "literals" {
+                parse_literals(input)?
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
         // Parse: tokens { ... } (optional)
-        let (token_defs, mode_defs, sync_constraints, tree_invariants) = if input.peek(Ident) {
+        let (mut token_defs, mode_defs, sync_constraints, tree_invariants) = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
             if lookahead == "tokens" {
                 parse_tokens(input)?
@@ -1280,6 +1616,78 @@ impl Parse for LanguageDef {
         } else {
             (Vec::new(), Vec::new(), Vec::new(), Vec::new())
         };
+
+        // Validate every literals{} name is declared in types{}.
+        // (Done before name-mapping so the diagnostic references the original name.)
+        for ld in &literals_defs {
+            if !types.iter().any(|t| t.name == ld.name) {
+                return Err(syn::Error::new(
+                    ld.name.span(),
+                    format!(
+                        "literals{{{}}} requires '{}' to be declared in types{{}}",
+                        ld.name, ld.name
+                    ),
+                ));
+            }
+        }
+
+        // Map each literals{} entry to its standard `Token::<name>` family
+        // variant based on the category's native type. All integer-typed
+        // categories share `Token::Integer(IntLit)`, all rational-typed
+        // share `Token::Rational(RationalLit)`, etc. The original category
+        // name is preserved in `TokenDef.category` so downstream codegen
+        // can route per-category eval logic to the same variant.
+        //
+        // Categories whose native type doesn't fit a known family (or
+        // categories with no native type) keep their user-facing
+        // TypeName as the Token variant.
+        let literals_defs: Vec<TokenDef> = literals_defs
+            .into_iter()
+            .map(|ld| {
+                let original = ld.name.clone();
+                let mapped_name = types
+                    .iter()
+                    .find(|t| t.name == original)
+                    .and_then(|t| t.native_type.as_ref())
+                    .and_then(|nt| NativeKind::from_syn_type(nt).standard_token_variant())
+                    .map(|s| Ident::new(s, original.span()))
+                    .unwrap_or_else(|| original.clone());
+                TokenDef {
+                    name: mapped_name,
+                    pattern: ld.pattern,
+                    // Preserve the original category so codegen can disambiguate
+                    // shared-family variants per literal source.
+                    category: Some(original),
+                    rust_code: ld.rust_code,
+                    priority: ld.priority,
+                    push_mode: ld.push_mode,
+                    is_pop: ld.is_pop,
+                    stream: ld.stream,
+                    from_literals: true,
+                }
+            })
+            .collect();
+
+        // Detect cross-block duplicates by `(name, pattern)` rather than name
+        // alone — `literals { Int { ... } BigInt { ... } }` legitimately
+        // produces two TokenDefs that share `name = Integer` (one Token
+        // variant per family) but with distinct patterns.
+        for ld in &literals_defs {
+            if token_defs
+                .iter()
+                .any(|td| td.name == ld.name && td.pattern == ld.pattern)
+            {
+                return Err(syn::Error::new(
+                    ld.name.span(),
+                    format!(
+                        "duplicate token (name '{}', identical pattern) declared in both \
+                         literals{{}} and tokens{{}}",
+                        ld.name
+                    ),
+                ));
+            }
+        }
+        token_defs.extend(literals_defs);
 
         // Parse: guards { ... } (optional, design doc §2A)
         let guard_config = if input.peek(Ident) {
@@ -1392,14 +1800,99 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
             // Parse [Type] - the brackets are part of the syntax, not the type
             let bracket_content;
             syn::bracketed!(bracket_content in content);
-            let native_type = bracket_content.parse::<Type>()?;
+            let native_type_raw = bracket_content.parse::<Type>()?;
 
             let _ = content.parse::<Token![as]>()?;
             let name = content.parse::<Ident>()?;
-            types.push(LangType { name, native_type: Some(native_type) });
+            let name_str = name.to_string();
+
+            // Special-case Map: `![HashMap] as Map` or `![HashMap<Proc, Proc>] as Map`
+            // expand to the runtime wrapper (HashMapLit) so the engine's deterministic Hash/Ord apply.
+            let native_type = if name_str == "Map" {
+                let is_hashmap = match &native_type_raw {
+                    Type::Path(tp) => tp.path.segments.last().is_some_and(|seg| {
+                        seg.ident == "HashMap"
+                            && matches!(
+                                seg.arguments,
+                                syn::PathArguments::None | syn::PathArguments::AngleBracketed(_)
+                            )
+                    }),
+                    _ => false,
+                };
+                if is_hashmap {
+                    syn::parse_str::<Type>("mettail_runtime::HashMapLit<Proc, Proc>")
+                        .expect("parse Map native type")
+                } else {
+                    native_type_raw
+                }
+            } else {
+                native_type_raw
+            };
+
+            // Optional (Param) legacy backward-compat and optional `[open, close, sep (, kv_sep)]`
+            // custom delimiters for List/Bag/Map.
+            let collection_kind = if name_str == "List" || name_str == "Bag" || name_str == "Map" {
+                if content.peek(syn::token::Paren) {
+                    let paren_content;
+                    syn::parenthesized!(paren_content in content);
+                    // Consume legacy params for backward compat: List(Proc), Bag(Proc), Map(Proc, Proc)
+                    let _ = paren_content.parse::<Ident>()?;
+                    if name_str == "Map" && paren_content.peek(Token![,]) {
+                        let _ = paren_content.parse::<Token![,]>()?;
+                        let _ = paren_content.parse::<Ident>()?;
+                    }
+                }
+                let delimiters: CollectionDelimiters = if content.peek(syn::token::Bracket) {
+                    let bracket_content;
+                    syn::bracketed!(bracket_content in content);
+                    let open: syn::LitStr = bracket_content.parse()?;
+                    let _ = bracket_content.parse::<Token![,]>()?;
+                    let close: syn::LitStr = bracket_content.parse()?;
+                    let _ = bracket_content.parse::<Token![,]>()?;
+                    let sep: syn::LitStr = bracket_content.parse()?;
+                    if name_str == "Map" {
+                        let _ = bracket_content.parse::<Token![,]>()?;
+                        let key_val_sep: syn::LitStr = bracket_content.parse()?;
+                        CollectionDelimiters {
+                            open: open.value(),
+                            close: close.value(),
+                            sep: sep.value(),
+                            key_val_sep: Some(key_val_sep.value()),
+                        }
+                    } else {
+                        CollectionDelimiters {
+                            open: open.value(),
+                            close: close.value(),
+                            sep: sep.value(),
+                            key_val_sep: None,
+                        }
+                    }
+                } else if name_str == "List" {
+                    CollectionCategory::list_defaults()
+                } else if name_str == "Bag" {
+                    CollectionCategory::bag_defaults()
+                } else {
+                    CollectionCategory::map_defaults()
+                };
+                Some(if name_str == "List" {
+                    CollectionCategory::List(delimiters)
+                } else if name_str == "Bag" {
+                    CollectionCategory::Bag(delimiters)
+                } else {
+                    CollectionCategory::Map(delimiters)
+                })
+            } else {
+                None
+            };
+
+            types.push(LangType {
+                name,
+                native_type: Some(native_type),
+                collection_kind,
+            });
         } else {
             // Could be either:
-            //   Name               — regular type
+            //   Name               — regular type (including bare `List`/`Bag`/`Map` with defaults)
             //   Name = { ... }     — refinement type
             let name = content.parse::<Ident>()?;
 
@@ -1409,7 +1902,17 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
                 let ref_def = parse_refinement_type_body(&content, name)?;
                 refinement_types.push(ref_def);
             } else {
-                types.push(LangType { name, native_type: None });
+                let name_str = name.to_string();
+                let collection_kind = if name_str == "List" {
+                    Some(CollectionCategory::List(CollectionCategory::list_defaults()))
+                } else if name_str == "Bag" {
+                    Some(CollectionCategory::Bag(CollectionCategory::bag_defaults()))
+                } else if name_str == "Map" {
+                    Some(CollectionCategory::Map(CollectionCategory::map_defaults()))
+                } else {
+                    None
+                };
+                types.push(LangType { name, native_type: None, collection_kind });
             }
         }
 
@@ -1919,6 +2422,7 @@ fn parse_token_def(input: ParseStream) -> SynResult<TokenDef> {
         push_mode,
         is_pop,
         stream,
+        from_literals: false,
     })
 }
 
@@ -2223,6 +2727,98 @@ pub fn parse_tokens_public(
 ) -> SynResult<(Vec<TokenDef>, Vec<ModeDef>)> {
     let (token_defs, mode_defs, _, _) = parse_tokens(input)?;
     Ok((token_defs, mode_defs))
+}
+
+/// Parse the `literals { ... }` block and desugar each entry into a `TokenDef`.
+///
+/// Syntax (main-branch surface):
+///
+/// ```text
+/// literals {
+///     TypeName {
+///         pattern: r"regex";
+///         eval: ![ rust_expr ]
+///     }
+///     ...
+/// }
+/// ```
+///
+/// Each entry desugars to:
+///
+/// ```text
+/// TokenDef {
+///     name: TypeName,
+///     pattern: <regex string>,
+///     category: Some(TypeName),   // name auto-binds to category
+///     rust_code: Some(<eval tokens>),
+///     priority: None,             // default 2 at CustomTokenSpec level
+///     push_mode: None, is_pop: false, stream: None,
+/// }
+/// ```
+///
+/// `TypeName` must be declared in `types { }` — enforced later during
+/// semantic validation (parse-time only checks surface shape).
+fn parse_literals(input: ParseStream) -> SynResult<Vec<TokenDef>> {
+    let literals_ident = input.parse::<Ident>()?;
+    if literals_ident != "literals" {
+        return Err(syn::Error::new(literals_ident.span(), "expected 'literals'"));
+    }
+    let content;
+    syn::braced!(content in input);
+
+    let mut defs = Vec::new();
+    while !content.is_empty() {
+        let type_name = content.parse::<Ident>()?;
+        let type_block;
+        syn::braced!(type_block in content);
+
+        // pattern: "..." or r"..."
+        let pattern_kw = type_block.parse::<Ident>()?;
+        if pattern_kw != "pattern" {
+            return Err(syn::Error::new(pattern_kw.span(), "expected 'pattern'"));
+        }
+        let _ = type_block.parse::<Token![:]>()?;
+        let pattern_lit: syn::LitStr = type_block.parse()?;
+        let pattern = pattern_lit.value();
+        let _ = type_block.parse::<Token![;]>()?;
+
+        // eval: ![ ... ]
+        let eval_kw = type_block.parse::<Ident>()?;
+        if eval_kw != "eval" {
+            return Err(syn::Error::new(eval_kw.span(), "expected 'eval'"));
+        }
+        let _ = type_block.parse::<Token![:]>()?;
+        if !type_block.peek(Token![!]) || !type_block.peek2(syn::token::Bracket) {
+            return Err(syn::Error::new(type_block.span(), "expected eval: ![ ... ]"));
+        }
+        let _ = type_block.parse::<Token![!]>()?;
+        let eval_content;
+        syn::bracketed!(eval_content in type_block);
+        let eval: TokenStream = eval_content.parse()?;
+
+        defs.push(TokenDef {
+            name: type_name.clone(),
+            pattern,
+            category: Some(type_name),
+            rust_code: Some(eval),
+            priority: None,
+            push_mode: None,
+            is_pop: false,
+            stream: None,
+            from_literals: true,
+        });
+
+        if type_block.peek(Token![;]) {
+            let _ = type_block.parse::<Token![;]>()?;
+        }
+    }
+
+    // Optional trailing comma after closing brace
+    if input.peek(Token![,]) {
+        let _ = input.parse::<Token![,]>()?;
+    }
+
+    Ok(defs)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

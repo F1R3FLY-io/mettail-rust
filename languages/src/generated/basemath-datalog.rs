@@ -121,8 +121,7 @@ fold_num(s.clone(), res) <--
     if let Num::NumLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_add(a, b) ?) }) (),
-    let res = Num::NumLit(__eval_val);
+    let res = Num::NumLit((a + b));
 
 fold_num(s.clone(), res) <--
     num(s),
@@ -133,8 +132,12 @@ fold_num(s.clone(), res) <--
     if let Num::NumLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_sub(a, b) ?) }) (),
-    let res = Num::NumLit(__eval_val);
+    let res = Num::NumLit((a - b));
+
+rw_num(s.clone(), t.clone()) <--
+    num(s),
+    if (match s { Num::Add(_, _) => true, Num::Sub(_, _) => true, _ => false, }),
+    fold_num(s, t);
 
 rw_num(s.clone(), t.clone()) <--
     num(s),

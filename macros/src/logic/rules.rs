@@ -284,8 +284,9 @@ fn condition_requires(condition: &Condition) -> HashSet<String> {
             let mut required = HashSet::new();
             required.insert(fc.var.to_string());
             match &fc.term {
-                FreshnessTarget::Var(v) => { required.insert(v.to_string()); }
-                FreshnessTarget::CollectionRest(v) => { required.insert(v.to_string()); }
+                FreshnessTarget::CollectionRest(v) | FreshnessTarget::Var(v) => {
+                    required.insert(v.to_string());
+                }
             }
             required
         }
@@ -950,7 +951,6 @@ fn premise_to_condition(premise: &mettail_ast::language::Premise) -> Option<Cond
                 args: args.clone(),
             })
         },
-        mettail_ast::language::Premise::Congruence { .. } => None, // Handled separately
         mettail_ast::language::Premise::ForAll { collection, param, body } => {
             Some(Condition::ForAll {
                 collection: collection.clone(),
@@ -961,6 +961,9 @@ fn premise_to_condition(premise: &mettail_ast::language::Premise) -> Option<Cond
         mettail_ast::language::Premise::BehavioralGuard(pred) => {
             Some(Condition::BehavioralGuard(pred.clone()))
         },
+        // `Congruence { source, target }` is only meaningful in rewrite rules;
+        // equations never carry it, so we just omit it from the condition list.
+        mettail_ast::language::Premise::Congruence { .. } => None,
     }
 }
 

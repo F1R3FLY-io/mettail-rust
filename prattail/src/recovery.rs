@@ -3407,7 +3407,7 @@ mod tests {
             steps: vec![
                 RepairAction::DeleteToken,                         // 1
                 RepairAction::InsertToken { token: 0 },            // 2
-                RepairAction::SwapTokens { pos_a: 0, pos_b: 1 },  // 1
+                RepairAction::SwapTokens { pos_a: 0, pos_b: 1 },   // 1
             ],
         };
         assert_eq!(action.edit_cost().0, 4);

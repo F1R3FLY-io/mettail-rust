@@ -44,7 +44,10 @@ fn arb_int_term(max_depth: u32) -> impl Strategy<Value = Int> {
                 Box::new(e)
             )),
             (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| Int::CustomOp(Box::new(a), Box::new(b))),
+                .prop_map(|(a, b)| Int::BitAndInt(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone())
+                .prop_map(|(a, b)| Int::BitOrInt(Box::new(a), Box::new(b))),
+            inner.clone().prop_map(|a| Int::BitNotInt(Box::new(a))),
         ]
     })
 }
@@ -65,7 +68,9 @@ fn classify_int(t: &Int) -> &'static str {
         Int::PowInt(..) => "PowInt",
         Int::Fact(..) => "Fact",
         Int::Tern(..) => "Tern",
-        Int::CustomOp(..) => "CustomOp",
+        Int::BitAndInt(..) => "BitAndInt",
+        Int::BitOrInt(..) => "BitOrInt",
+        Int::BitNotInt(..) => "BitNotInt",
         Int::NumLit(..) => "NumLit",
         _ => "Other",
     }
@@ -120,10 +125,19 @@ fn extract_subterms_per_constructor(t: &Int) -> Vec<Int> {
         results.push(f1.as_ref().clone());
         results.push(f2.as_ref().clone());
     }
-    // Rule for CustomOp
-    if let Int::CustomOp(f0, f1) = t {
+    // Rule for BitAndInt
+    if let Int::BitAndInt(f0, f1) = t {
         results.push(f0.as_ref().clone());
         results.push(f1.as_ref().clone());
+    }
+    // Rule for BitOrInt
+    if let Int::BitOrInt(f0, f1) = t {
+        results.push(f0.as_ref().clone());
+        results.push(f1.as_ref().clone());
+    }
+    // Rule for BitNotInt
+    if let Int::BitNotInt(f0) = t {
+        results.push(f0.as_ref().clone());
     }
     // NumLit: no subterms (leaf)
 
@@ -144,7 +158,9 @@ fn extract_subterms_consolidated(t: &Int) -> Vec<Int> {
         Int::Tern(f0, f1, f2) => {
             vec![f0.as_ref().clone(), f1.as_ref().clone(), f2.as_ref().clone()]
         },
-        Int::CustomOp(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Int::BitAndInt(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Int::BitOrInt(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Int::BitNotInt(f0) => vec![f0.as_ref().clone()],
         _ => vec![],
     }
 }
@@ -175,9 +191,13 @@ fn vi_extract(t: &Int) -> Vec<(Int, usize)> {
         Int::Tern(x0, x1, x2) => {
             vec![(x0.as_ref().clone(), 14), (x1.as_ref().clone(), 15), (x2.as_ref().clone(), 16)]
         },
-        Int::CustomOp(x0, x1) => {
+        Int::BitAndInt(x0, x1) => {
             vec![(x0.as_ref().clone(), 17), (x1.as_ref().clone(), 18)]
         },
+        Int::BitOrInt(x0, x1) => {
+            vec![(x0.as_ref().clone(), 19), (x1.as_ref().clone(), 20)]
+        },
+        Int::BitNotInt(x0) => vec![(x0.as_ref().clone(), 21)],
         _ => vec![],
     }
 }
@@ -202,8 +222,11 @@ fn vi_rebuild(t: &Int, vi: usize, new_val: Int) -> Int {
         (Int::Tern(_, x1, x2), 14) => Int::Tern(Box::new(new_val), x1.clone(), x2.clone()),
         (Int::Tern(x0, _, x2), 15) => Int::Tern(x0.clone(), Box::new(new_val), x2.clone()),
         (Int::Tern(x0, x1, _), 16) => Int::Tern(x0.clone(), x1.clone(), Box::new(new_val)),
-        (Int::CustomOp(_, x1), 17) => Int::CustomOp(Box::new(new_val), x1.clone()),
-        (Int::CustomOp(x0, _), 18) => Int::CustomOp(x0.clone(), Box::new(new_val)),
+        (Int::BitAndInt(_, x1), 17) => Int::BitAndInt(Box::new(new_val), x1.clone()),
+        (Int::BitAndInt(x0, _), 18) => Int::BitAndInt(x0.clone(), Box::new(new_val)),
+        (Int::BitOrInt(_, x1), 19) => Int::BitOrInt(Box::new(new_val), x1.clone()),
+        (Int::BitOrInt(x0, _), 20) => Int::BitOrInt(x0.clone(), Box::new(new_val)),
+        (Int::BitNotInt(_), 21) => Int::BitNotInt(Box::new(new_val)),
         _ => unreachable!("invalid variant index {} for {:?}", vi, classify_int(t)),
     }
 }
@@ -247,9 +270,16 @@ fn pair_extract_per_constructor(s: &Int, t: &Int) -> Vec<(Int, Int)> {
         results.push((s1.as_ref().clone(), t1.as_ref().clone()));
         results.push((s2.as_ref().clone(), t2.as_ref().clone()));
     }
-    if let (Int::CustomOp(s0, s1), Int::CustomOp(t0, t1)) = (s, t) {
+    if let (Int::BitAndInt(s0, s1), Int::BitAndInt(t0, t1)) = (s, t) {
         results.push((s0.as_ref().clone(), t0.as_ref().clone()));
         results.push((s1.as_ref().clone(), t1.as_ref().clone()));
+    }
+    if let (Int::BitOrInt(s0, s1), Int::BitOrInt(t0, t1)) = (s, t) {
+        results.push((s0.as_ref().clone(), t0.as_ref().clone()));
+        results.push((s1.as_ref().clone(), t1.as_ref().clone()));
+    }
+    if let (Int::BitNotInt(s0), Int::BitNotInt(t0)) = (s, t) {
+        results.push((s0.as_ref().clone(), t0.as_ref().clone()));
     }
 
     results
@@ -293,10 +323,17 @@ fn pair_extract_consolidated(s: &Int, t: &Int) -> Vec<(Int, Int)> {
             (s1.as_ref().clone(), t1.as_ref().clone()),
             (s2.as_ref().clone(), t2.as_ref().clone()),
         ],
-        (Int::CustomOp(s0, s1), Int::CustomOp(t0, t1)) => vec![
+        (Int::BitAndInt(s0, s1), Int::BitAndInt(t0, t1)) => vec![
             (s0.as_ref().clone(), t0.as_ref().clone()),
             (s1.as_ref().clone(), t1.as_ref().clone()),
         ],
+        (Int::BitOrInt(s0, s1), Int::BitOrInt(t0, t1)) => vec![
+            (s0.as_ref().clone(), t0.as_ref().clone()),
+            (s1.as_ref().clone(), t1.as_ref().clone()),
+        ],
+        (Int::BitNotInt(s0), Int::BitNotInt(t0)) => {
+            vec![(s0.as_ref().clone(), t0.as_ref().clone())]
+        },
         _ => vec![],
     }
 }
@@ -321,7 +358,13 @@ fn is_fold_trigger_per_constructor(t: &Int) -> bool {
     if let Int::Neg(_) = t {
         return true;
     }
-    if let Int::CustomOp(_, _) = t {
+    if let Int::BitAndInt(_, _) = t {
+        return true;
+    }
+    if let Int::BitOrInt(_, _) = t {
+        return true;
+    }
+    if let Int::BitNotInt(_) = t {
         return true;
     }
     false
@@ -337,7 +380,9 @@ fn is_fold_trigger_consolidated(t: &Int) -> bool {
             | Int::DivInt(_, _)
             | Int::ModInt(_, _)
             | Int::Neg(_)
-            | Int::CustomOp(_, _)
+            | Int::BitAndInt(_, _)
+            | Int::BitOrInt(_, _)
+            | Int::BitNotInt(_)
     )
 }
 
@@ -475,7 +520,9 @@ fn test_variant_index_injectivity() {
         Int::PowInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
         Int::Fact(Box::new(Int::NumLit(0))),
         Int::Tern(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1)), Box::new(Int::NumLit(2))),
-        Int::CustomOp(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
+        Int::BitAndInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
+        Int::BitOrInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
+        Int::BitNotInt(Box::new(Int::NumLit(0))),
     ];
 
     let mut all_vis: Vec<(String, usize, usize)> = Vec::new(); // (ctor, field_pos, vi)
@@ -497,8 +544,8 @@ fn test_variant_index_injectivity() {
         }
     }
 
-    // Verify we have the expected number of variant indices (19 fields total)
-    assert_eq!(all_vis.len(), 19, "Expected 19 variant indices (2+2+2+2+2+1+2+1+3+2)");
+    // Verify we have the expected number of variant indices (22 fields total)
+    assert_eq!(all_vis.len(), 22, "Expected 22 variant indices (incl. BitAnd/BitOr/BitNot)");
 }
 
 /// Test that NumLit (leaf) produces empty extractions.

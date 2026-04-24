@@ -28,6 +28,27 @@ use std::fmt::Write;
 use crate::automata::codegen::terminal_to_variant_name;
 use crate::automata::semiring::ComplexityWeight;
 use crate::binding_power::BindingPowerTable;
+
+thread_local! {
+    /// Tracks which `handle_mixfix_{Source}` functions have already been
+    /// emitted to the current output buffer, across all category-emission
+    /// passes for a single language. Prevents duplicate definitions when
+    /// the same source category (e.g., Int) serves as LED delegation source
+    /// for multiple target categories (Proc, BigInt, BigRat via injection
+    /// casts).
+    ///
+    /// Callers must invoke `reset_handle_mixfix_emitted()` at the start of
+    /// each language's parser generation.
+    static HANDLE_MIXFIX_EMITTED: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Reset the thread-local `handle_mixfix_{Source}` emission tracker.
+/// Call at the start of each language's parser generation to prevent state
+/// leaking between languages sharing a thread.
+pub fn reset_handle_mixfix_emitted() {
+    HANDLE_MIXFIX_EMITTED.with(|set| set.borrow_mut().clear());
+}
 use crate::dispatch::CastRule;
 use crate::pratt::PrefixHandler;
 use crate::prediction::FirstSet;
@@ -119,7 +140,7 @@ fn emit_observer_call(
 fn write_token_pattern_trampoline(buf: &mut String, token: &str) {
     match token {
         "Ident" => buf.push_str("Token::Ident(_)"),
-        "Integer" => buf.push_str("Token::Integer(_)"),
+        "Integer" => buf.push_str("Token::Integer(_, _)"),
         "Float" => buf.push_str("Token::Float(_)"),
         "Boolean" => buf.push_str("Token::Boolean(_)"),
         "StringLit" => buf.push_str("Token::StringLit(_)"),
@@ -1371,8 +1392,14 @@ fn write_nfa_merged_prefix_arm(
                             if segments.is_empty() {
                                 continue;
                             }
-                            let remaining_items: Vec<_> = segments[0]
-                                .inline_items
+                            // Multi-segment rules (same-cat NTs) emit full rule.items
+                            // so recursive parse_<cat> calls inline the same-cat NT.
+                            let source_items: &[RDSyntaxItem] = if segments.len() > 1 {
+                                &rd_rule.items
+                            } else {
+                                &segments[0].inline_items
+                            };
+                            let remaining_items: Vec<_> = source_items
                                 .iter()
                                 .skip(skip_count)
                                 .cloned()
@@ -1399,8 +1426,14 @@ fn write_nfa_merged_prefix_arm(
                         if segments.is_empty() {
                             continue;
                         }
-                        let remaining_items: Vec<_> = segments[0]
-                            .inline_items
+                        // Multi-segment rules (same-cat NTs) emit full rule.items
+                        // so recursive parse_<cat> calls inline the same-cat NT.
+                        let source_items: &[RDSyntaxItem] = if segments.len() > 1 {
+                            &rd_rule.items
+                        } else {
+                            &segments[0].inline_items
+                        };
+                        let remaining_items: Vec<_> = source_items
                             .iter()
                             .skip(skip_count)
                             .cloned()
@@ -2012,8 +2045,13 @@ fn write_nfa_merged_prefix_arm(
                 if segments.is_empty() {
                     continue;
                 }
+                let items_to_emit: &[RDSyntaxItem] = if segments.len() > 1 {
+                    &rd_rule.items
+                } else {
+                    &segments[0].inline_items
+                };
                 write!(cold_fns, "match (|| -> Result<{}, ParseError> {{", cat).unwrap();
-                write_inline_items(cold_fns, &segments[0].inline_items, true);
+                write_inline_items(cold_fns, items_to_emit, true);
                 write_nfa_inline_constructor(cold_fns, rd_rule, &segments);
                 cold_fns.push_str("})() {");
                 write!(cold_fns, "Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); nfa_weights.push({weight:?}); }},").unwrap();
@@ -2090,9 +2128,18 @@ fn write_nfa_merged_prefix_arm(
             if segments.is_empty() {
                 continue;
             }
-            // Fully inlineable: wrap in a closure to use ? operator
+            // For rules with same-category NTs (segments.len() > 1), emit
+            // the full `rd_rule.items` so that same-cat NTs become recursive
+            // parse_<cat> calls within the save/restore closure. For single-
+            // segment rules, use segments[0].inline_items (equivalent to
+            // rd_rule.items in that case).
+            let items_to_emit: &[RDSyntaxItem] = if segments.len() > 1 {
+                &rd_rule.items
+            } else {
+                &segments[0].inline_items
+            };
             write!(buf, "match (|| -> Result<{}, ParseError> {{", cat,).unwrap();
-            write_inline_items(buf, &segments[0].inline_items, true);
+            write_inline_items(buf, items_to_emit, true);
 
             // Build the constructor expression
             write_nfa_inline_constructor(buf, rd_rule, &segments);
@@ -2767,6 +2814,9 @@ pub struct TrampolineConfig {
     pub category: String,
     /// Whether this is the primary category.
     pub is_primary: bool,
+    /// Whether this category has a variable variant (e.g. IVar, BVar).
+    /// False for collection-only categories (List, Bag) which have no Var variant.
+    pub has_var: bool,
     /// Whether this category has infix operators.
     pub has_infix: bool,
     /// Whether this category has postfix operators.
@@ -2779,6 +2829,11 @@ pub struct TrampolineConfig {
     pub needs_dispatch: bool,
     /// Native type for this category.
     pub native_type: Option<String>,
+    /// Custom-/literal-Token variant names whose Token::{Name} variants
+    /// carry a payload (`Token::Name(_)` rather than the unit `Token::Name`).
+    /// Emission sites that construct raw match-arm strings consult this set
+    /// to decide between `Token::Foo` and `Token::Foo(_)` patterns.
+    pub payload_carrying_variants: Vec<String>,
     /// Cast rules targeting this category.
     pub cast_rules: Vec<CastRule>,
     /// Own FIRST set.
@@ -3095,6 +3150,11 @@ pub fn write_frame_enum(
                                 format!("std::collections::HashSet<{}>", element_category)
                             },
                             CollectionKind::Vec => format!("Vec<{}>", element_category),
+                            // HashMap treated as HashBag for codegen purposes;
+                            // map patterns are not fully supported in trampoline code.
+                            CollectionKind::HashMap => {
+                                format!("mettail_runtime::HashBag<{}>", element_category)
+                            },
                         };
                         fields.push(FrameField { name: name.clone(), type_str });
                     },
@@ -3115,6 +3175,14 @@ pub fn write_frame_enum(
     }
 
     // ── Per-collection variants ──
+    //
+    // Only emit a `CollectionElem_<label>` frame variant when the
+    // collection's element category matches the rule's own category —
+    // cross-category collections (e.g. `List = Vec<Proc>`) use an inline
+    // recursive loop in the prefix handler (see `write_rd_prefix_arms`)
+    // and never push a frame, so emitting one would just leave a dead
+    // enum variant and trigger `non-exhaustive patterns` errors at the
+    // unwind match (which we also skip for cross-cat).
     for rd_rule in rd_rules {
         if rd_rule.category != *cat || !is_simple_collection(rd_rule) {
             continue;
@@ -3128,11 +3196,15 @@ pub fn write_frame_enum(
                 _ => None,
             })
             .unwrap_or_else(|| cat.clone());
+        if element_category != *cat {
+            continue;
+        }
 
         let type_str = match collection_type {
             CollectionKind::HashBag => format!("mettail_runtime::HashBag<{}>", element_category),
             CollectionKind::HashSet => format!("std::collections::HashSet<{}>", element_category),
             CollectionKind::Vec => format!("Vec<{}>", element_category),
+            CollectionKind::HashMap => format!("mettail_runtime::HashBag<{}>", element_category),
         };
 
         variants.push(FrameVariant {
@@ -4398,9 +4470,19 @@ fn write_prefix_match_arms(
             buf.push_str("},");
         } else {
             // Multiple rules share this dispatch token — NFA-style merged arm.
-            // Only rules that are fully inlined (all NTs cross-category) can be
-            // merged. Rules requiring frame-pushing are emitted separately with
-            // a diagnostic comment.
+            //
+            // Classification:
+            //   - `inlineable`: rules tried as NFA save/restore arms. Includes
+            //     (a) rules with all cross-category NTs (segments.len() == 1),
+            //     and (b) rules with same-category NTs (segments.len() > 1)
+            //     emitted as closures that use recursive parse_<cat> calls
+            //     for same-cat NTs. This allows sharing a dispatch token across
+            //     heterogeneous arities (e.g., `int(Proc, Int)` + `int(Int)`
+            //     + `int(Float)` etc.).
+            //   - `frame_pushing`: rules that are ALSO tracked here as the
+            //     "stack-safe canonical fallback" when all NFA arms fail.
+            //     For deeply-nested same-category inputs, the fallback uses
+            //     the trampoline's frame-push to avoid Rust stack overflow.
             let mut inlineable: Vec<&RDRuleInfo> = Vec::new();
             let mut frame_pushing: Vec<&RDRuleInfo> = Vec::new();
 
@@ -4413,11 +4495,13 @@ fn write_prefix_match_arms(
                     if segments.is_empty() {
                         continue;
                     }
-                    // Check if first segment has a same-category nonterminal (frame-pushing)
+                    // All rules are NFA-inlineable: multi-segment rules will be
+                    // emitted with recursive same-cat parse calls inside the
+                    // save/restore closure. Multi-segment rules ALSO go into
+                    // frame_pushing for stack-safe fallback.
+                    inlineable.push(rd_rule);
                     if segments[0].nonterminal.is_some() {
                         frame_pushing.push(rd_rule);
-                    } else {
-                        inlineable.push(rd_rule);
                     }
                 }
             }
@@ -4499,36 +4583,117 @@ fn write_prefix_match_arms(
             }
         });
         let collection_info = rd_rule.items.iter().find_map(|item| match item {
-            RDSyntaxItem::Collection { element_category, separator, kind, .. } => {
-                Some((element_category.clone(), separator.clone(), *kind))
+            RDSyntaxItem::Collection { element_category, separator, kind, key_val_separator, .. } => {
+                Some((element_category.clone(), separator.clone(), *kind, key_val_separator.clone()))
             },
             _ => None,
         });
 
-        if let (Some(terminal), Some((_elem_cat, _sep, kind))) = (opening_terminal, collection_info)
+        if let (Some(terminal), Some((elem_cat, _sep, kind, kv_sep))) = (opening_terminal, collection_info)
         {
             let variant = terminal_to_variant_name(&terminal);
             let init_str = match kind {
                 CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
                 CollectionKind::HashSet => "std::collections::HashSet::new()",
                 CollectionKind::Vec => "Vec::new()",
+                CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
             };
 
-            write!(
-                buf,
-                "Token::{} => {{ \
-                    *pos += 1; \
-                    stack.push({enum_name}::{vp}CollectionElem_{label} {{ \
-                        elements: {init_str}, \
-                        saved_pos: *pos, \
-                        saved_bp: cur_bp, \
-                    }}); \
-                    cur_bp = 0; \
-                    continue 'drive; \
-                }},",
-                variant, enum_name = frame_info.enum_name, vp = config.frame_prefix(), label = rd_rule.label, init_str = init_str,
-            )
-            .unwrap();
+            if elem_cat == *cat {
+                // Same-category elements: use the frame-based trampoline
+                // loop; re-entering `parse_{cat}_impl` for each element is
+                // free (no extra function call) because we're already
+                // inside it.
+                write!(
+                    buf,
+                    "Token::{} => {{ \
+                        *pos += 1; \
+                        stack.push({enum_name}::{vp}CollectionElem_{label} {{ \
+                            elements: {init_str}, \
+                            saved_pos: *pos, \
+                            saved_bp: cur_bp, \
+                        }}); \
+                        cur_bp = 0; \
+                        continue 'drive; \
+                    }},",
+                    variant, enum_name = frame_info.enum_name, vp = config.frame_prefix(), label = rd_rule.label, init_str = init_str,
+                )
+                .unwrap();
+            } else {
+                // Cross-category elements (e.g. `list(Proc, Proc, ...)` on
+                // a `List` category): the frame mechanism cannot help here —
+                // `continue 'drive` would re-enter `parse_List_impl`, not
+                // `parse_Proc_impl`. Emit a direct recursive loop that
+                // calls `parse_{elem_cat}` for each element, mirroring
+                // the recursive-descent path at `recursive.rs:322-398`.
+                //
+                // For HashMap collections, each element is a (key, value)
+                // pair separated by `key_val_separator` (":"). For all
+                // other kinds it's a single value.
+                let coll_ty = match kind {
+                    CollectionKind::HashBag =>
+                        format!("mettail_runtime::HashBag<{}>", elem_cat),
+                    CollectionKind::HashMap => format!(
+                        "mettail_runtime::HashMapLit<{elem}, {elem}>",
+                        elem = elem_cat
+                    ),
+                    CollectionKind::HashSet =>
+                        format!("std::collections::HashSet<{}>", elem_cat),
+                    CollectionKind::Vec => format!("Vec<{}>", elem_cat),
+                };
+                let parse_one = match kind {
+                    CollectionKind::HashMap => format!(
+                        "let key = parse_{elem_cat}(tokens, pos, 0)?; \
+                         expect_token(tokens, pos, |t| matches!(t, Token::Colon), \":\")?; \
+                         let val = parse_{elem_cat}(tokens, pos, 0)?; \
+                         elements.insert(key, val);",
+                        elem_cat = elem_cat,
+                    ),
+                    CollectionKind::HashBag => format!(
+                        "let elem = parse_{elem_cat}(tokens, pos, 0)?; \
+                         elements.insert(elem);",
+                        elem_cat = elem_cat,
+                    ),
+                    CollectionKind::HashSet => format!(
+                        "let elem = parse_{elem_cat}(tokens, pos, 0)?; \
+                         elements.insert(elem);",
+                        elem_cat = elem_cat,
+                    ),
+                    CollectionKind::Vec => format!(
+                        "let elem = parse_{elem_cat}(tokens, pos, 0)?; \
+                         elements.push(elem);",
+                        elem_cat = elem_cat,
+                    ),
+                };
+                let _ = kv_sep; // covered by HashMap arm via `Token::Colon`
+                write!(
+                    buf,
+                    "Token::{} => {{ \
+                        *pos += 1; \
+                        expect_token(tokens, pos, |t| matches!(t, Token::LParen), \"(\")?; \
+                        let mut elements: {coll_ty} = {init_str}; \
+                        if !peek_token(tokens, *pos).map_or(true, |t| matches!(t, Token::RParen)) {{ \
+                            loop {{ \
+                                {parse_one} \
+                                if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::Comma)) {{ \
+                                    *pos += 1; \
+                                }} else {{ \
+                                    break; \
+                                }} \
+                            }} \
+                        }} \
+                        expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
+                        break 'prefix {cat}::{label}(elements); \
+                    }},",
+                    variant,
+                    coll_ty = coll_ty,
+                    init_str = init_str,
+                    parse_one = parse_one,
+                    cat = cat,
+                    label = rd_rule.label,
+                )
+                .unwrap();
+            }
         }
     }
 
@@ -4634,7 +4799,15 @@ fn write_prefix_match_arms(
                     cast_handled.insert(token.clone());
 
                     let mut arm = String::new();
-                    crate::pratt::write_token_pattern_pub(&mut arm, token);
+                    // W4b: suffix-guarded pattern for Integer-family tokens so
+                    // `parse_Proc`'s cast arm dispatches `0u32` to
+                    // `parse_UInt32` via the suffix-match rather than the
+                    // first-declared Integer category via the blanket arm.
+                    crate::pratt::write_token_pattern_pub_for_source(
+                        &mut arm,
+                        token,
+                        &cast_rule.source_category,
+                    );
                     write!(
                         arm,
                         " => {{ \
@@ -4758,16 +4931,18 @@ fn write_prefix_match_arms(
         for (source_cat, variants) in &cat_to_variants {
             let escaped_cat = source_cat.replace('\\', "\\\\").replace('"', "\\\"");
             let patterns: Vec<String> = variants.iter().map(|v| {
-                // Variants with data use wildcard: Token::Integer(_), Token::Ident(_), etc.
-                match *v {
-                    "Integer" => "Token::Integer(_)".to_string(),
-                    "Float" => "Token::Float(_)".to_string(),
-                    "Boolean" => "Token::Boolean(_)".to_string(),
-                    "StringLit" => "Token::StringLit(_)".to_string(),
-                    "Ident" => "Token::Ident(_)".to_string(),
-                    "Dollar" => "Token::Dollar(_)".to_string(),
-                    "DoubleDollar" => "Token::DoubleDollar(_)".to_string(),
-                    other => format!("Token::{}", other),
+                use crate::automata::TokenFamily;
+                let family = TokenFamily::from_name(v);
+                match family.match_pattern() {
+                    Some(pat) => pat.to_string(),
+                    None => {
+                        // Custom tokens: check payload_carrying_variants
+                        if config.payload_carrying_variants.iter().any(|s| s == v) {
+                            format!("Token::{}(_)", v)
+                        } else {
+                            format!("Token::{}", v)
+                        }
+                    }
                 }
             }).collect();
             write!(cast_match_arms, "{} => Some(\"{}\"),", patterns.join(" | "), escaped_cat).unwrap();
@@ -5009,29 +5184,56 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
         "i32" => {
             write!(
                 buf,
-                "Token::Integer(v) => {{ let val = *v as i32; *pos += 1; break 'prefix {}::NumLit(val); }},",
-                cat,
+                "Token::Integer(v, suffix) if suffix.matches_i32() => \
+                    match i32::try_from(*v) {{ \
+                        Ok(val) => {{ *pos += 1; break 'prefix {cat}::NumLit(val); }}, \
+                        Err(_) => return Err(ParseError::UnexpectedToken {{ \
+                            expected: Cow::Borrowed(\"{cat} literal in i32 range\"), \
+                            found: format!(\"{{:?}}\", tokens[*pos].0), \
+                            range: tokens[*pos].1, \
+                            hint: None, \
+                        }}), \
+                    }},",
+                cat = cat,
             ).unwrap();
         },
         "i64" | "isize" => {
             write!(
                 buf,
-                "Token::Integer(v) => {{ let val = *v; *pos += 1; break 'prefix {}::NumLit(val); }},",
+                "Token::Integer(v, suffix) if suffix.matches_i64() => {{ let val = *v; *pos += 1; break 'prefix {}::NumLit(val); }},",
                 cat,
             ).unwrap();
         },
         "u32" => {
             write!(
                 buf,
-                "Token::Integer(v) => {{ let val = *v as u32; *pos += 1; break 'prefix {}::NumLit(val); }},",
-                cat,
+                "Token::Integer(v, suffix) if suffix.matches_u32() => \
+                    match u32::try_from(*v) {{ \
+                        Ok(val) => {{ *pos += 1; break 'prefix {cat}::NumLit(val); }}, \
+                        Err(_) => return Err(ParseError::UnexpectedToken {{ \
+                            expected: Cow::Borrowed(\"{cat} literal in u32 range\"), \
+                            found: format!(\"{{:?}}\", tokens[*pos].0), \
+                            range: tokens[*pos].1, \
+                            hint: None, \
+                        }}), \
+                    }},",
+                cat = cat,
             ).unwrap();
         },
         "u64" | "usize" => {
             write!(
                 buf,
-                "Token::Integer(v) => {{ let val = *v as u64; *pos += 1; break 'prefix {}::NumLit(val); }},",
-                cat,
+                "Token::Integer(v, suffix) if suffix.matches_u64() => \
+                    match u64::try_from(*v) {{ \
+                        Ok(val) => {{ *pos += 1; break 'prefix {cat}::NumLit(val); }}, \
+                        Err(_) => return Err(ParseError::UnexpectedToken {{ \
+                            expected: Cow::Borrowed(\"{cat} literal in u64 range\"), \
+                            found: format!(\"{{:?}}\", tokens[*pos].0), \
+                            range: tokens[*pos].1, \
+                            hint: None, \
+                        }}), \
+                    }},",
+                cat = cat,
             ).unwrap();
         },
         "f32" | "f64" => {
@@ -5053,6 +5255,76 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 buf,
                 "Token::StringLit(v) => {{ let val = (*v).to_string(); *pos += 1; break 'prefix {}::StringLit(val); }},",
                 cat,
+            ).unwrap();
+        },
+        // CanonicalBigInt flows through a category-named `Token::{cat}(&str)`
+        // variant (like BigRat/Fixed) so arbitrary-precision literals such as
+        // `32478132567813256718n` preserve full precision. The text is parsed
+        // via `parse_int_lit` at parse time — an i64 round-trip would clamp.
+        t if t.ends_with("CanonicalBigInt") => {
+            write!(
+                buf,
+                "Token::{cat}(text) => {{ \
+                    let lit = mettail_prattail::parse_int_lit(text, None) \
+                        .map_err(|_| ParseError::UnexpectedToken {{ \
+                            expected: ::std::borrow::Cow::Borrowed(\"BigInt literal\"), \
+                            found: format!(\"{{:?}}\", &tokens[*pos].0), \
+                            range: tokens[*pos].1, \
+                            hint: None, \
+                        }})?; \
+                    let bi = lit.to_bigint() \
+                        .ok_or_else(|| ParseError::UnexpectedToken {{ \
+                            expected: ::std::borrow::Cow::Borrowed(\"BigInt literal with `n` suffix\"), \
+                            found: format!(\"{{:?}}\", &tokens[*pos].0), \
+                            range: tokens[*pos].1, \
+                            hint: None, \
+                        }})?; \
+                    let val = mettail_runtime::CanonicalBigInt::from(bi); \
+                    *pos += 1; \
+                    break 'prefix {cat}::NumLit(val); \
+                }},",
+                cat = cat,
+            ).unwrap();
+        },
+        // CanonicalBigRat — carried on `Token::{cat}(&str)` variant; parse at
+        // parse time via `parse_rational_lit`.
+        t if t.ends_with("CanonicalBigRat") => {
+            write!(
+                buf,
+                "Token::{cat}(text) => {{ \
+                    let lit = mettail_prattail::parse_rational_lit(text) \
+                        .map_err(|_| ParseError::UnexpectedToken {{ \
+                            expected: ::std::borrow::Cow::Borrowed(\"BigRat literal\"), \
+                            found: format!(\"{{:?}}\", &tokens[*pos].0), \
+                            range: tokens[*pos].1, \
+                            hint: None, \
+                        }})?; \
+                    let val = mettail_runtime::CanonicalBigRat::from(\
+                        lit.ratio().clone()\
+                    ); \
+                    *pos += 1; \
+                    break 'prefix {cat}::RatLit(val); \
+                }},",
+                cat = cat,
+            ).unwrap();
+        },
+        // CanonicalFixedPoint — carried on `Token::{cat}(&str)` variant;
+        // parse at parse time via `parse_fixed_lit`.
+        t if t.ends_with("CanonicalFixedPoint") => {
+            write!(
+                buf,
+                "Token::{cat}(text) => {{ \
+                    let val = mettail_runtime::parse_fixed_lit(text) \
+                        .map_err(|_| ParseError::UnexpectedToken {{ \
+                            expected: ::std::borrow::Cow::Borrowed(\"Fixed literal\"), \
+                            found: format!(\"{{:?}}\", &tokens[*pos].0), \
+                            range: tokens[*pos].1, \
+                            hint: None, \
+                        }})?; \
+                    *pos += 1; \
+                    break 'prefix {cat}::FixedLit(val); \
+                }},",
+                cat = cat,
             ).unwrap();
         },
         _ => {},
@@ -5411,9 +5683,19 @@ pub fn write_led_delegation_fns(
     let cat = &config.category;
 
     // ── Generate standalone handle_mixfix for sources that have mixfix ──
+    // Deduplicate ACROSS all categories (thread-local): the same source can
+    // appear as a LED delegation source in multiple target categories (e.g.,
+    // Int source appears for both Proc and BigInt targets when IntToBigInt
+    // is declared). Emitting `handle_mixfix_{src}` more than once produces
+    // `E0428: the name is defined multiple times`.
     for source in &config.led_delegation {
         if source.has_mixfix {
-            crate::pratt::write_handle_mixfix_pub(buf, &source.source_category, bp_table);
+            HANDLE_MIXFIX_EMITTED.with(|set| {
+                let mut s = set.borrow_mut();
+                if s.insert(source.source_category.clone()) {
+                    crate::pratt::write_handle_mixfix_pub(buf, &source.source_category, bp_table);
+                }
+            });
         }
     }
 
@@ -5910,10 +6192,23 @@ fn write_unwind_handlers(
                 continue;
             }
         }
+        // Cross-category collections never push a CollectionElem_ frame —
+        // the prefix arm inlines a direct recursive `parse_{elem_cat}` loop
+        // (see above). Skip the unwind handler here too: it would type-check
+        // against `elements: Vec<Cat>` + `lhs: Cat`, but the frame is never
+        // reached so emitting dead code just creates compile errors about
+        // mismatched `Vec<Proc>` vs `List` pushes.
+        let elem_cat_opt = rd_rule.items.iter().find_map(|item| match item {
+            RDSyntaxItem::Collection { element_category, .. } => Some(element_category.clone()),
+            _ => None,
+        });
+        if elem_cat_opt.as_deref().map_or(false, |ec| ec != *cat) {
+            continue;
+        }
 
         let collection_type = rd_rule.collection_type.unwrap_or(CollectionKind::HashBag);
         let insert_method = match collection_type {
-            CollectionKind::HashBag | CollectionKind::HashSet => "insert",
+            CollectionKind::HashBag | CollectionKind::HashSet | CollectionKind::HashMap => "insert",
             CollectionKind::Vec => "push",
         };
 
@@ -6234,6 +6529,16 @@ fn write_collection_eof_catch(
         if rd_rule.category != *cat || !is_simple_collection(rd_rule) {
             continue;
         }
+        // Cross-category collections never push a CollectionElem_ frame
+        // — skip the unwind catch too (same reason as the frame-variant
+        // emission and prefix unwind; see comment there).
+        let elem_cat_opt = rd_rule.items.iter().find_map(|item| match item {
+            RDSyntaxItem::Collection { element_category, .. } => Some(element_category.clone()),
+            _ => None,
+        });
+        if elem_cat_opt.as_deref().map_or(false, |ec| ec != *cat) {
+            continue;
+        }
 
         let closing_terminal = rd_rule.items.iter().rev().find_map(|item| {
             if let RDSyntaxItem::Terminal(t) = item {
@@ -6290,6 +6595,13 @@ fn write_collection_error_catch_inline(
 
     for rd_rule in rd_rules {
         if rd_rule.category != *cat || !is_simple_collection(rd_rule) {
+            continue;
+        }
+        let elem_cat_opt = rd_rule.items.iter().find_map(|item| match item {
+            RDSyntaxItem::Collection { element_category, .. } => Some(element_category.clone()),
+            _ => None,
+        });
+        if elem_cat_opt.as_deref().map_or(false, |ec| ec != *cat) {
             continue;
         }
 

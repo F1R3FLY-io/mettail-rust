@@ -276,7 +276,7 @@ rw_bool(s.clone(), t) <--
     if let Bool::BoolLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(a && b) }) (),
+    if let Some(__eval_val) = (|| ->::std::option::Option < _ > { #[allow(unused_imports)] use::mettail_runtime::lift::LiftPlain as _;::mettail_runtime::lift::Lift(a && b).lift() }) (),
     let t = Bool::BoolLit(__eval_val);
 
 rw_bool(s.clone(), t) <--
@@ -286,7 +286,7 @@ rw_bool(s.clone(), t) <--
     if let Bool::BoolLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(a || b) }) (),
+    if let Some(__eval_val) = (|| ->::std::option::Option < _ > { #[allow(unused_imports)] use::mettail_runtime::lift::LiftPlain as _;::mettail_runtime::lift::Lift(a || b).lift() }) (),
     let t = Bool::BoolLit(__eval_val);
 
 rw_bool(orig.clone(), t) <--
@@ -294,7 +294,7 @@ rw_bool(orig.clone(), t) <--
     if let Bool::Not(inner) = orig,
     if let Bool::BoolLit(s_ref) = inner.as_ref(),
     let a = s_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(! a) }) (),
+    if let Some(__eval_val) = (|| ->::std::option::Option < _ > { #[allow(unused_imports)] use::mettail_runtime::lift::LiftPlain as _;::mettail_runtime::lift::Lift(! a).lift() }) (),
     let t = Bool::BoolLit(__eval_val);
 
 fold_int(t.clone(), t.clone()) <--
@@ -310,8 +310,7 @@ fold_int(s.clone(), res) <--
     if let Int::NumLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_add(a, b) ?) }) (),
-    let res = Int::NumLit(__eval_val);
+    let res = Int::NumLit((a + b));
 
 fold_int(s.clone(), res) <--
     int(s),
@@ -322,8 +321,7 @@ fold_int(s.clone(), res) <--
     if let Int::NumLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_sub(a, b) ?) }) (),
-    let res = Int::NumLit(__eval_val);
+    let res = Int::NumLit((a - b));
 
 fold_int(s.clone(), res) <--
     int(s),
@@ -334,8 +332,7 @@ fold_int(s.clone(), res) <--
     if let Int::NumLit(b_ref) = & rv,
     let a = a_ref.clone(),
     let b = b_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some(< _ as::mettail_runtime::SafeArith >::safe_mul(a, b) ?) }) (),
-    let res = Int::NumLit(__eval_val);
+    let res = Int::NumLit((a * b));
 
 fold_int(s.clone(), res) <--
     int(s),
@@ -343,8 +340,18 @@ fold_int(s.clone(), res) <--
     fold_int(inner.as_ref().clone(), iv),
     if let Int::NumLit(a_ref) = & iv,
     let a = a_ref.clone(),
-    if let Some(__eval_val) = (|| -> std::option::Option < _ > { std::option::Option::Some((< _ as::mettail_runtime::SafeArith >::safe_neg(a) ?)) }) (),
-    let res = Int::NumLit(__eval_val);
+    let res = Int::NumLit(((- a)));
+
+rw_int(s.clone(), t.clone()) <--
+    int(s),
+    if (match s {
+        Int::AddInt(_, _) => true,
+        Int::SubInt(_, _) => true,
+        Int::MulInt(_, _) => true,
+        Int::Neg(_) => true,
+        _ => false,
+    }),
+    fold_int(s, t);
 
 rw_int(s.clone(), t.clone()) <--
     int(s),

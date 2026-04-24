@@ -1449,11 +1449,13 @@ mod tests {
                 name: "Expr".to_string(),
                 native_type: None,
                 is_primary: true,
+                has_var: true,
             },
             crate::pipeline::CategoryInfo {
                 name: "IntExpr".to_string(),
                 native_type: None,
                 is_primary: false,
+                has_var: true,
             },
         ];
         let result = check_from_bundle(&syntax, &cats);
@@ -1471,6 +1473,7 @@ mod tests {
             name: "Expr".to_string(),
             native_type: None,
             is_primary: true,
+            has_var: true,
         }];
         let result = check_from_bundle(&syntax, &cats);
         assert!(result.is_none(), "should return None for < 2 categories");

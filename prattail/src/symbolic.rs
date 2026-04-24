@@ -2908,6 +2908,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -2942,6 +2943,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -2974,6 +2976,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -3013,6 +3016,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
         let all_syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![];
@@ -3030,6 +3034,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -3059,11 +3064,13 @@ mod tests {
             CategoryInfo {
                 name: "Expr".to_string(),
                 is_primary: true,
+                has_var: true,
                 native_type: None,
             },
             CategoryInfo {
                 name: "Stmt".to_string(),
                 is_primary: false,
+                has_var: true,
                 native_type: None,
             },
         ];
@@ -3096,6 +3103,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -3122,6 +3130,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -3155,6 +3164,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -3210,6 +3220,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -3234,6 +3245,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -3260,6 +3272,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -3288,6 +3301,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -3300,6 +3314,7 @@ mod tests {
                 element_category: "Expr".to_string(),
                 separator: ",".to_string(),
                 kind: crate::CollectionKind::Vec,
+                key_val_separator: None,
             }],
         )];
 
@@ -3317,6 +3332,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -3352,6 +3368,7 @@ mod tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 
@@ -3786,6 +3803,7 @@ mod proptest_tests {
         let categories = vec![CategoryInfo {
             name: "Expr".to_string(),
             is_primary: true,
+            has_var: true,
             native_type: None,
         }];
 

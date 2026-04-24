@@ -119,6 +119,10 @@ impl TokenVariantMap {
                 TokenKind::Dollar => "Dollar".to_string(),
                 TokenKind::DoubleDollar => "DoubleDollar".to_string(),
                 TokenKind::Custom(name) => name.clone(),
+                TokenKind::IntegerLit(cat)
+                | TokenKind::RationalLit(cat)
+                | TokenKind::FixedPointLit(cat) => cat.clone(),
+                TokenKind::BooleanLit => "Boolean".to_string(),
             };
             insert(name);
         }
@@ -154,6 +158,10 @@ impl TokenVariantMap {
             TokenKind::Dollar => "Dollar".to_string(),
             TokenKind::DoubleDollar => "DoubleDollar".to_string(),
             TokenKind::Custom(name) => name.clone(),
+            TokenKind::IntegerLit(cat)
+            | TokenKind::RationalLit(cat)
+            | TokenKind::FixedPointLit(cat) => cat.clone(),
+            TokenKind::BooleanLit => "Boolean".to_string(),
         };
         self.get_id(&name)
     }
@@ -398,7 +406,7 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind], custom_tokens: 
             TokenKind::Eof | TokenKind::Ident => {},
             TokenKind::Integer => {
                 if seen.insert("Integer".to_string()) {
-                    buf.push_str("Integer(i64),");
+                    buf.push_str("Integer(i64, mettail_prattail::IntSuffix),");
                 }
             },
             TokenKind::Float => {
@@ -449,6 +457,21 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind], custom_tokens: 
                     }
                 }
             },
+            // Category-bound literal variants from main's literals{} block are
+            // modeled identically to TokenKind::Custom in the unified backend
+            // (see plan B.1a). Emit one variant per category name.
+            TokenKind::IntegerLit(cat)
+            | TokenKind::RationalLit(cat)
+            | TokenKind::FixedPointLit(cat) => {
+                if seen.insert(cat.clone()) {
+                    write!(buf, "{}(&'a str),", cat).unwrap();
+                }
+            },
+            TokenKind::BooleanLit => {
+                if seen.insert("Boolean".to_string()) {
+                    buf.push_str("Boolean(bool),");
+                }
+            },
         }
     }
 
@@ -480,7 +503,7 @@ fn write_token_display(buf: &mut String, token_kinds: &[TokenKind], custom_token
             TokenKind::Eof | TokenKind::Ident => {},
             TokenKind::Integer => {
                 if seen.insert("Integer".to_string()) {
-                    buf.push_str("Token::Integer(n) => format!(\"integer `{}`\", n),");
+                    buf.push_str("Token::Integer(n, _) => format!(\"integer `{}`\", n),");
                 }
             },
             TokenKind::Float => {
@@ -527,6 +550,18 @@ fn write_token_display(buf: &mut String, token_kinds: &[TokenKind], custom_token
                     } else {
                         write!(buf, "Token::{} => \"`{}`\".to_string(),", name, name).unwrap();
                     }
+                }
+            },
+            TokenKind::IntegerLit(cat)
+            | TokenKind::RationalLit(cat)
+            | TokenKind::FixedPointLit(cat) => {
+                if seen.insert(cat.clone()) {
+                    write!(buf, "Token::{}(s) => format!(\"{} `{{}}`\", s),", cat, cat).unwrap();
+                }
+            },
+            TokenKind::BooleanLit => {
+                if seen.insert("Boolean".to_string()) {
+                    buf.push_str("Token::Boolean(b) => format!(\"boolean `{}`\", b),");
                 }
             },
         }
@@ -659,26 +694,37 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind, custom_tokens: &[
         TokenKind::Eof => buf.push_str("Token::Eof"),
         TokenKind::Ident => buf.push_str("Token::Ident(text)"),
         TokenKind::Integer => {
-            // Saturating parse: literals larger than i64::MAX (or smaller than
-            // i64::MIN) clamp rather than panic. The lexer regex that produces
-            // this call is permissive about digit count — a display→lex
-            // roundtrip on `NumLit(i64::MIN)` writes `-9223372036854775808`
-            // whose unsigned-magnitude part (`9223372036854775808`) exceeds
-            // `i64::MAX`, triggering `ParseIntError::PosOverflow`. `expect`
-            // panicked inside `catch_unwind`'s caller, producing the
-            // double-panic abort seen in simulation runs.
+            // Route through `parse_int_lit` so suffix-aware literals (e.g.,
+            // `42i32`, `1u32`, `9999999999i64`) are stripped of their suffix
+            // and converted to the appropriate IntLit variant before the i64
+            // extraction. A bare `text.parse::<i64>()` on `42i32` would fail
+            // and saturate to i64::MAX, then `as i32` truncates to -1 —
+            // silently destroying the value.
+            //
+            // Saturating fallback preserved for i64::MIN roundtrip: a display→
+            // lex roundtrip on `NumLit(i64::MIN)` writes `-9223372036854775808`
+            // whose unsigned-magnitude part exceeds i64::MAX, triggering
+            // `ParseIntError::PosOverflow`.
             buf.push_str(
-                "Token::Integer(text.parse::<i64>().unwrap_or_else(|_| \
-                 if text.starts_with('-') { i64::MIN } else { i64::MAX }))",
+                "Token::Integer(\
+                    mettail_prattail::parse_int_lit(text, None)\
+                        .ok()\
+                        .and_then(|lit| lit.as_i64())\
+                        .unwrap_or_else(|| \
+                            if text.starts_with('-') { i64::MIN } else { i64::MAX }\
+                        ),\
+                    mettail_prattail::IntSuffix::from_text(text)\
+                )",
             );
         },
         TokenKind::Float => {
-            // `f64::from_str` returns `Ok(±Inf)` for values that overflow the
-            // representable range, so it never errors on well-formed numeric
-            // input. A parse failure here means the lexer regex produced
-            // something non-numeric, which is a lexer bug — we clamp to 0.0
-            // rather than panic so simulation surface errors don't abort.
-            buf.push_str("Token::Float(text.parse::<f64>().unwrap_or(0.0))");
+            // Route through `parse_float_lit` (runtime/src/float_lit.rs) so the
+            // `f64`/`f32` suffix is stripped before the f64 parse. A bare
+            // `text.parse::<f64>()` on e.g. "1.5f64" would fall back to the
+            // `unwrap_or(0.0)` sentinel, silently losing the value.
+            buf.push_str(
+                "Token::Float(mettail_runtime::parse_float_lit(text).map(|c| c.get()).unwrap_or(0.0))",
+            );
         },
         TokenKind::True => buf.push_str("Token::Boolean(true)"),
         TokenKind::False => buf.push_str("Token::Boolean(false)"),
@@ -695,21 +741,42 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind, custom_tokens: &[
         },
         TokenKind::Custom(name) => {
             if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
-                if let Some(ref code) = spec.constructor_code {
+                // `literals{}` variants carry the raw &str — their rust_code
+                // runs at parse time, not lex time — so we emit the text
+                // directly as payload regardless of `constructor_code`.
+                let is_str_payload = spec.payload_type.as_deref() == Some("str");
+                if is_str_payload {
+                    write!(buf, "Token::{}(text)", name).unwrap();
+                } else if let Some(ref code) = spec.constructor_code {
                     write!(buf, "Token::{}({{ let text = text; {} }})", name, code).unwrap();
                 } else if let Some(ref pt) = spec.payload_type {
-                    // Payload variant without custom code: default constructor
-                    if pt == "str" {
-                        write!(buf, "Token::{}(text)", name).unwrap();
-                    } else {
-                        write!(buf, "Token::{}(text.parse::<{}>().expect(\"invalid {} literal\"))", name, pt, name).unwrap();
-                    }
+                    write!(buf, "Token::{}(text.parse::<{}>().expect(\"invalid {} literal\"))", name, pt, name).unwrap();
                 } else {
                     write!(buf, "Token::{}", name).unwrap();
                 }
             } else {
                 write!(buf, "Token::{}", name).unwrap();
             }
+        },
+        // Category-bound literal variants modeled identically to Custom.
+        TokenKind::IntegerLit(cat)
+        | TokenKind::RationalLit(cat)
+        | TokenKind::FixedPointLit(cat) => {
+            if let Some(spec) = custom_tokens.iter().find(|s| s.name == *cat) {
+                let is_str_payload = spec.payload_type.as_deref() == Some("str");
+                if is_str_payload {
+                    write!(buf, "Token::{}(text)", cat).unwrap();
+                } else if let Some(ref code) = spec.constructor_code {
+                    write!(buf, "Token::{}({{ let text = text; {} }})", cat, code).unwrap();
+                } else {
+                    write!(buf, "Token::{}(text)", cat).unwrap();
+                }
+            } else {
+                write!(buf, "Token::{}(text)", cat).unwrap();
+            }
+        },
+        TokenKind::BooleanLit => {
+            buf.push_str("Token::Boolean(text == \"true\")");
         },
     }
 }
@@ -814,8 +881,16 @@ fn write_hybrid_lexer(
         );
     }
 
-    // dfa_next() function: hot states via match arms, cold states via table fallback
-    buf.push_str("#[inline(always)] fn dfa_next(state: u32, class: u8) -> u32 { match state {");
+    // dfa_next() function: hot states via match arms, cold states via table fallback.
+    // Inlining policy note (post-merge memory-reduction): this function can
+    // have 30+ state arms × 15-30 class arms each, producing ~600 nested
+    // match arms total (Calculator-scale grammars). `#[inline(always)]` on
+    // that mammoth match forces rustc to inline it at every lexer callsite,
+    // which bloats codegen and inflates peak compile RSS. `#[inline]`
+    // (without `always`) lets rustc decide based on call-site size, keeping
+    // the hot path available while avoiding forced Cartesian-product
+    // inlining at every token position.
+    buf.push_str("#[inline] fn dfa_next(state: u32, class: u8) -> u32 { match state {");
     for &state_idx in hot_states {
         let state = &dfa.states[state_idx];
         let has_transitions = state.transitions.iter().any(|&t| t != DEAD_STATE);
@@ -1029,12 +1104,19 @@ fn token_kind_to_constructor(kind: &TokenKind, text_var: &str, custom_tokens: &[
         TokenKind::Eof => "Token::Eof".to_string(),
         TokenKind::Ident => format!("Token::Ident({})", text_var),
         TokenKind::Integer => format!(
-            "Token::Integer({0}.parse::<i64>().unwrap_or_else(|_| \
-             if {0}.starts_with('-') {{ i64::MIN }} else {{ i64::MAX }}))",
+            "Token::Integer(\
+                mettail_prattail::parse_int_lit({0}, None)\
+                    .ok()\
+                    .and_then(|lit| lit.as_i64())\
+                    .unwrap_or_else(|| \
+                        if {0}.starts_with('-') {{ i64::MIN }} else {{ i64::MAX }}\
+                    ),\
+                mettail_prattail::IntSuffix::from_text({0})\
+            )",
             text_var
         ),
         TokenKind::Float => format!(
-            "Token::Float({}.parse::<f64>().unwrap_or(0.0))",
+            "Token::Float(mettail_runtime::parse_float_lit({}).map(|c| c.get()).unwrap_or(0.0))",
             text_var
         ),
         TokenKind::True => "Token::Boolean(true)".to_string(),
@@ -1051,14 +1133,13 @@ fn token_kind_to_constructor(kind: &TokenKind, text_var: &str, custom_tokens: &[
         }
         TokenKind::Custom(name) => {
             if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
-                if let Some(ref code) = spec.constructor_code {
+                let is_str_payload = spec.payload_type.as_deref() == Some("str");
+                if is_str_payload {
+                    format!("Token::{}({})", name, text_var)
+                } else if let Some(ref code) = spec.constructor_code {
                     format!("Token::{}({{ let text = {}; {} }})", name, text_var, code)
                 } else if let Some(ref pt) = spec.payload_type {
-                    if pt == "str" {
-                        format!("Token::{}({})", name, text_var)
-                    } else {
-                        format!("Token::{}({}.parse::<{}>().expect(\"invalid {} literal\"))", name, text_var, pt, name)
-                    }
+                    format!("Token::{}({}.parse::<{}>().expect(\"invalid {} literal\"))", name, text_var, pt, name)
                 } else {
                     format!("Token::{}", name)
                 }
@@ -1066,6 +1147,23 @@ fn token_kind_to_constructor(kind: &TokenKind, text_var: &str, custom_tokens: &[
                 format!("Token::{}", name)
             }
         }
+        TokenKind::IntegerLit(cat)
+        | TokenKind::RationalLit(cat)
+        | TokenKind::FixedPointLit(cat) => {
+            if let Some(spec) = custom_tokens.iter().find(|s| s.name == *cat) {
+                let is_str_payload = spec.payload_type.as_deref() == Some("str");
+                if is_str_payload {
+                    format!("Token::{}({})", cat, text_var)
+                } else if let Some(ref code) = spec.constructor_code {
+                    format!("Token::{}({{ let text = {}; {} }})", cat, text_var, code)
+                } else {
+                    format!("Token::{}({})", cat, text_var)
+                }
+            } else {
+                format!("Token::{}({})", cat, text_var)
+            }
+        }
+        TokenKind::BooleanLit => format!("Token::Boolean({} == \"true\")", text_var),
     }
 }
 
@@ -2182,7 +2280,11 @@ pub fn terminal_to_variant_name(terminal: &str) -> String {
 /// Data-carrying variants (Ident, Integer, Float, Boolean, StringLit, Dollar,
 /// DoubleDollar) use wildcard patterns (e.g., `Token::Ident(_) => 1`).
 /// Unit variants (Eof, Plus, Star, etc.) match directly.
-pub fn write_token_variant_id(buf: &mut String, variant_map: &TokenVariantMap) {
+pub fn write_token_variant_id(
+    buf: &mut String,
+    variant_map: &TokenVariantMap,
+    custom_tokens: &[CustomTokenSpec],
+) {
     use std::fmt::Write as _;
 
     buf.push_str(
@@ -2191,13 +2293,17 @@ pub fn write_token_variant_id(buf: &mut String, variant_map: &TokenVariantMap) {
          fn token_variant_id(token: &Token) -> u8 { match token {"
     );
 
-    /// Data-carrying token variants that need wildcard patterns.
-    const DATA_VARIANTS: &[&str] = &[
-        "Ident", "Integer", "Float", "Boolean", "StringLit", "Dollar", "DoubleDollar",
-    ];
-
     for (id, name) in variant_map.id_to_name.iter().enumerate() {
-        if DATA_VARIANTS.contains(&name.as_str()) {
+        let family = super::TokenFamily::from_name(name);
+        let has_payload = family.has_payload()
+            || custom_tokens
+                .iter()
+                .any(|s| s.name == *name && s.payload_type.is_some());
+        // Integer variant has two payload fields: (i64, IntSuffix).
+        let is_two_field = matches!(family, super::TokenFamily::Integer);
+        if is_two_field {
+            write!(buf, "Token::{}(_, _) => {},", name, id).unwrap();
+        } else if has_payload {
             write!(buf, "Token::{}(_) => {},", name, id).unwrap();
         } else {
             write!(buf, "Token::{} => {},", name, id).unwrap();
@@ -2993,7 +3099,7 @@ mod tests {
         let variant_map = TokenVariantMap::from_token_kinds(&token_kinds);
 
         let mut buf = String::new();
-        write_token_variant_id(&mut buf, &variant_map);
+        write_token_variant_id(&mut buf, &variant_map, &[]);
 
         // Should contain the function signature
         assert!(
@@ -3009,7 +3115,7 @@ mod tests {
             buf
         );
         assert!(
-            buf.contains("Token::Integer(_)"),
+            buf.contains("Token::Integer(_, _)"),
             "Integer should use wildcard pattern, got:\n{}",
             buf
         );
@@ -3383,9 +3489,7 @@ mod tests {
         let kinds = vec![
             TokenKind::Eof,
             TokenKind::Ident,
-            TokenKind::Ident, // duplicate
             TokenKind::Integer,
-            TokenKind::Integer, // duplicate
             TokenKind::True,
             TokenKind::False, // maps to same "Boolean" variant
         ];
@@ -3489,6 +3593,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
         let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
         let partition = compute_equivalence_classes(&nfa);
@@ -3513,6 +3619,8 @@ mod tests {
             float: false,
             string_lit: false,
             boolean: false,
+            rational: false,
+            fixed_point: false,
         };
         let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
         let partition = compute_equivalence_classes(&nfa);
@@ -4239,7 +4347,7 @@ mod tests {
         // Build default DFA from a simple terminal spec
         let (default_dfa, default_partition) = build_test_dfa(
             &[("+", TokenKind::Fixed("+".to_string()))],
-            BuiltinNeeds { ident: true, integer: false, float: false, string_lit: false, boolean: false },
+            BuiltinNeeds { ident: true, integer: false, float: false, string_lit: false, boolean: false, rational: false, fixed_point: false },
         );
         let default_token_kinds = vec![
             TokenKind::Eof,

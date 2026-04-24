@@ -1,0 +1,61 @@
+@startuml
+skinparam defaultFontSize 11
+skinparam ArrowFontSize 10
+skinparam state {
+  FontSize 11
+  AttributeFontSize 10
+  BorderThickness 1.2
+  BackgroundColor #FAFAFA
+  BorderColor #333333
+  BackgroundColor<<term>> #E8E8E8
+  BorderColor<<term>> #555555
+}
+
+title GreenThread session FSM (post-migration, coarsened)
+
+[*] --> Ready : new_session(task)
+
+state Ready     : pending scheduler dispatch;\n has work remaining
+state Running   : executing a quantum\n on a worker thread
+state Suspended : parked awaiting an\n inter-session message
+state Forked    : parent has just spawned\n child sessions (rare)
+state Completed <<term>>
+state Failed    <<term>>
+Completed : terminal — normal form reached
+Failed    : terminal — error or cost exhaustion
+
+Ready     --> Running   : schedulerDispatch(worker)\n / startQuantum
+Running   --> Running   : quantumEnd  [hasMoreWork]\n / enqueueSelf
+Running   --> Suspended : blockOn(ChannelId::InterSession(c))\n / park(waiting_on = c)
+Suspended --> Ready     : interSessionMsg(c)\n / unpark
+Running   --> Completed : quantumEnd  [normalForm]\n / deliver(RhoOutcome)
+Running   --> Failed    : evalError | costExhausted\n / record(error)
+Running   --> Forked    : spawnChild(categories)\n / register(children)
+Forked    --> Ready     : forkComplete\n / enqueueSelf
+
+Completed --> [*]
+Failed    --> [*]
+
+note right of Forked
+  **Session-level parallelism only.**
+  Object-language <b>P | Q</b> goes directly to
+  Rholang's <b>Par</b> constructor and is handled
+  inside the DebruijnInterpreter — not via
+  this FSM. (See §10.1–10.2.)
+end note
+
+note right of Suspended
+  <b>waiting_on</b> lists inter-session
+  <b>ChannelId::InterSession(_)</b> handles, not
+  RSpace names. Intra-session blocking on a
+  Rholang <i>consume</i> is handled inside the
+  DI lifeline, not at this FSM layer. (§10.4)
+end note
+
+note right of Ready
+  Transitions labelled
+  <b>event [guard] / action</b>
+  per Harel-style statechart semantics.
+end note
+
+@enduml

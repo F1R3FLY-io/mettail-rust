@@ -1,0 +1,42 @@
+@startuml
+skinparam defaultFontSize 11
+skinparam ArrowFontSize 10
+skinparam ActivityBorderThickness 1.5
+skinparam activity {
+  FontSize 11
+  BackgroundColor<<mt>> #E8F4FD
+  BorderColor<<mt>> #1f4e79
+  BackgroundColor<<ext>> #E8F8E8
+  BorderColor<<ext>> #2e7d32
+}
+
+:<b>Generator</b>   <i>macros/src/</i>
+----
+• parses <b>language!</b> specs
+• emits Rholang <b>Par</b> AST + source-maps
+• drives compile-time analyses
+   (Ascent, AbstractPar, WPDS, LTL, Lint, Recovery); <<mt>>
+
+-[#1f4e79]-> generates
+<i>(compile-time)</i>;
+
+:<b>Runtime abstraction layer</b>   <i>prattail/src/</i>
+----
+• <b>CekObserver / CekEvent / CekControl</b>
+• <b>HeapBudgetStrategy</b>   (replaces concrete GC)
+• M:N scheduler / Coordinator / Pool FSM
+• <b>ChannelMap</b>   (tagged RSpace / InterSession)
+• <b>AbstractPar</b>   (0CFA / k-CFA)
+• verify / ltl / recovery / lint / simulation
+• <b>RhoEvaluator</b> wrapper; <<mt>>
+
+-[#2e7d32,dashed]-> drives
+<i>(runtime: inj, snapshot, restore, lookahead)</i>;
+
+:<b>Rholang VM</b>   <i>f1r3node/rholang/</i>   <i>(external)</i>
+----
+• <b>DebruijnInterpreter::inj(par, rand)</b>
+• RSpace — PathMap-backed tuplespace   (σ)
+• Lookahead <b>x!(P)[n]</b> speculation; <<ext>>
+
+@enduml

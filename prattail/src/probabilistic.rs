@@ -2186,7 +2186,7 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, native_type: None },
+            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
         ];
 
         // Rule A has 1 item, Rule B has 5 items.
@@ -2216,8 +2216,8 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, native_type: None },
-            CategoryInfo { name: "Stmt".to_string(), is_primary: false, native_type: None },
+            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
+            CategoryInfo { name: "Stmt".to_string(), is_primary: false, has_var: true, native_type: None },
         ];
 
         let all_syntax = vec![
@@ -2243,7 +2243,7 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, native_type: None },
+            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
         ];
 
         // Two rules with different complexity: non-uniform distribution yields positive entropy.
@@ -2266,7 +2266,7 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, native_type: None },
+            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
         ];
 
         let all_syntax = vec![
@@ -2285,7 +2285,7 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, native_type: None },
+            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
         ];
 
         // Many rules: individual selectivities drop below 0.01.
@@ -2354,6 +2354,7 @@ mod proptest_tests {
                 CategoryInfo {
                     name: "Solo".to_string(),
                     is_primary: true,
+                    has_var: true,
                     native_type: None,
                 },
             ];
@@ -2401,6 +2402,7 @@ mod proptest_tests {
                 CategoryInfo {
                     name: "Cat".to_string(),
                     is_primary: true,
+                    has_var: true,
                     native_type: None,
                 },
             ];
@@ -2497,6 +2499,7 @@ mod proptest_tests {
                 CategoryInfo {
                     name: "Unif".to_string(),
                     is_primary: true,
+                    has_var: true,
                     native_type: None,
                 },
             ];

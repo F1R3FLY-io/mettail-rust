@@ -205,8 +205,8 @@ proc(c1.clone().normalize()) <--
 
 ppar_contains(parent.clone(), elem.clone()) <--
     proc(parent),
-    if let Proc::PPar(ref bag_field) = parent,
-    for (elem, _count) in bag_field.iter();
+    if let Proc::PPar(ref coll_field) = parent,
+    for (elem, _count) in coll_field.iter();
 
 proc(elem.clone()) <--
     ppar_contains(_parent, elem);

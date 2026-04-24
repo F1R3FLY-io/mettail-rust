@@ -1182,6 +1182,7 @@ mod tests {
             .map(|name| LangType {
                 name: Ident::new(name, Span::call_site()),
                 native_type: None,
+                collection_kind: None,
             })
             .collect();
 

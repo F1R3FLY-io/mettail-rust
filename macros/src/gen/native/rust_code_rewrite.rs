@@ -75,9 +75,24 @@ pub fn safeify(expr: &Expr) -> Expr {
 ///
 /// `rewritten` is expected to be the output of [`safeify`] — an expression
 /// that may produce `?` short-circuit failures internally.
+///
+/// **Lift dispatch:** the inner value passes through
+/// `mettail_runtime::lift::Lift(value).lift()` so an expression that already
+/// returns `Option<T>` (e.g. `calc_try_int_bin(&a, w)`) is detected by the
+/// autoref-specialization on `Lift<Option<T>>` and passes through unchanged
+/// — no `Some(Some(…))` double-wrap. A plain-`T` expression (e.g.
+/// `safe_add(a, b)?` after rewriting `a + b`) hits the `LiftPlain` trait
+/// fallback and gets wrapped as `Some(t)`.
 pub fn wrap_in_option_closure(rewritten: &Expr) -> TokenStream {
     quote! {
-        (|| -> std::option::Option<_> { std::option::Option::Some(#rewritten) })()
+        (|| -> ::std::option::Option<_> {
+            // `LiftPlain` must be in scope to enable trait method dispatch
+            // on `&Lift<T>`. The inherent impl on `Lift<Option<T>>` does
+            // not require the trait import — it wins regardless.
+            #[allow(unused_imports)]
+            use ::mettail_runtime::lift::LiftPlain as _;
+            ::mettail_runtime::lift::Lift(#rewritten).lift()
+        })()
     }
 }
 
@@ -87,9 +102,41 @@ pub fn safeify_and_wrap(expr: &Expr) -> TokenStream {
     wrap_in_option_closure(&rewritten)
 }
 
+/// Method-only safeify: rewrite `.expect(...)` / `.unwrap()` / `.pow()` etc.
+/// but leave binary/unary arithmetic operators intact. Use at codegen sites
+/// where the user's rust_code pattern-matches inner reference values
+/// (`&i32`, `&u32`) and does bare arithmetic on them — `SafeArith` requires
+/// owned types, so rewriting `x + y` to `safe_add(x, y)?` would fail to
+/// compile with "SafeArith not implemented for &T".
+///
+/// The returned expression is wrapped in a zero-arg closure that returns
+/// `Option<T>`. Methods that could panic short-circuit via `?`; bare
+/// operators stay as they were.
+pub fn safeify_methods_and_wrap(expr: &Expr) -> TokenStream {
+    let mut cloned = expr.clone();
+    let mut visitor = MethodOnlySafeifier;
+    visitor.visit_expr_mut(&mut cloned);
+    wrap_in_option_closure(&cloned)
+}
+
 // ─── The visitor ────────────────────────────────────────────────────────────
 
 struct Safeifier;
+
+/// Visitor that only rewrites method calls (`.expect`, `.unwrap`, `.pow`…),
+/// leaving binary operators alone. See `safeify_methods_and_wrap`.
+struct MethodOnlySafeifier;
+
+impl VisitMut for MethodOnlySafeifier {
+    fn visit_expr_mut(&mut self, node: &mut Expr) {
+        visit_mut::visit_expr_mut(self, node);
+        if let Expr::MethodCall(mc) = node {
+            if let Some(replacement) = rewrite_method_call(mc) {
+                *node = replacement;
+            }
+        }
+    }
+}
 
 impl VisitMut for Safeifier {
     fn visit_expr_mut(&mut self, node: &mut Expr) {
@@ -115,6 +162,12 @@ impl VisitMut for Safeifier {
                 let e = inner;
                 *node = syn::parse_quote! {
                     <_ as ::mettail_runtime::SafeArith>::safe_neg(#e)?
+                };
+            }
+            Expr::Unary(ExprUnary { op: UnOp::Not(_), expr: inner, .. }) => {
+                let e = inner;
+                *node = syn::parse_quote! {
+                    <_ as ::mettail_runtime::SafeArith>::safe_not(#e)?
                 };
             }
             Expr::MethodCall(mc) => {
@@ -148,6 +201,25 @@ fn rewrite_method_call(mc: &ExprMethodCall) -> Option<Expr> {
     let recv = &mc.receiver;
     let args = &mc.args;
     let method_name = mc.method.to_string();
+
+    // `.expect(msg)` — user wrote "panic on None/Err with message" but inside
+    // a `safeify_and_wrap` closure we want short-circuit instead of panic.
+    // Rewrite to `?` so the wrapper returns None. The panic message is
+    // discarded (fold rules don't carry Result errors). This also applies
+    // to `.unwrap_or_else(|_| panic!(...))` via chained rewrites — but the
+    // common case in user grammar code is `.expect(...)`.
+    if args.len() == 1 && method_name == "expect" {
+        return Some(syn::parse_quote! {
+            (#recv)?
+        });
+    }
+
+    // `.unwrap()` — same rewrite. Panicking on None/Err becomes short-circuit.
+    if args.is_empty() && method_name == "unwrap" {
+        return Some(syn::parse_quote! {
+            (#recv)?
+        });
+    }
 
     // Single-arg arithmetic methods.
     if args.len() == 1 {
@@ -342,7 +414,10 @@ mod tests {
         let wrapped = safeify_and_wrap(&expr);
         let s = normalise(wrapped);
         assert!(s.contains("Option"), "expected Option wrapper: {}", s);
-        assert!(s.contains("Some"), "expected Some in wrapper: {}", s);
+        // The wrapper uses `Lift(...).lift()` (LiftPlain trait) rather than a
+        // literal `Some(...)` — it works for both Option<T> and plain T.
+        assert!(s.contains("Lift"), "expected Lift wrapper: {}", s);
+        assert!(s.contains(". lift ()"), "expected .lift() call: {}", s);
         assert!(s.contains("safe_add"), "expected safe_add in body: {}", s);
     }
 

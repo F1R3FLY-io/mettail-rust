@@ -1,23 +1,75 @@
+//! Normalize generation — PDA-driven for non-native categories.
+//!
+//! Native categories (Int, Bool, UInt32, etc.) keep their per-category PDA
+//! (the existing `__NormTask` iterative normalize emitted inline inside
+//! `impl Cat { fn normalize() { ... } }` — unchanged from prior art).
+//!
+//! Non-native categories (Proc, Name, etc.) share ONE PDA driver. This
+//! eliminates the mutual recursion between `Proc::normalize` and cross-cat
+//! `<Child>::normalize` calls that used to overflow on deep ASTs.
+//!
+//! ## Architecture (non-native shared PDA)
+//!
+//! - `AnyNormalizedTerm` — heterogeneous wrapper, one `Wrap<Cat>` per
+//!   non-native category.
+//! - `NormTask` — work-stack frames:
+//!   - `Visit<Cat> { src, slot }` — initiate normalize of a borrowed Cat.
+//!   - `AssembleReg<Cat>_<L> { slot, <child slots> }` — reconstruct regular ctor.
+//!   - `AssembleColl<Cat>_<L> { slot, elements_start, elements_count, counts_vec }` — flatten collection.
+//!   - `AssembleBind<Cat>_<L> { slot, <pre slots>, cloned_pattern, body_slot }`.
+//!   - `AssembleMBind<Cat>_<L>` — multi-binder.
+//!   - `AssembleBetaApply<Cat>_<Dom> { slot, lam_slot, arg_slot }` — β-reduce.
+//!   - `AssembleBetaMApply<Cat>_<Dom> { slot, lam_slot, args_start, args_count }` — multi-β.
+//!   - `AssembleCancel_<Outer>_<Inner>_<Ctor> { slot, inner_slot }` — cancellation pair.
+//! - TLS pools: `NORM_TASK_POOL`, `NORM_RESULT_POOL`, `NORM_SOURCE_POOL`.
+//!   Source pool holds `Vec<Box<AnyNormalizedTerm>>` for β/cancel-rescheduled
+//!   owned values. Boxes have stable heap addresses; raw pointers derived
+//!   from them remain valid for the call duration even as the Vec grows.
+//!
+//! ## β-reduction iterative flow
+//!
+//! ```text
+//! AssembleBetaApply_<Cat>_<Dom> { slot, lam_slot, arg_slot }:
+//!   lam_normalized = results[lam_slot].take()
+//!   arg_normalized = results[arg_slot].take()
+//!   if lam_normalized is Cat::Lam<Dom>(scope):
+//!     (binder, body) = scope.unbind()
+//!     substituted = body.substitute_<dom>(&binder.0, &arg_normalized)  // subst PDA
+//!     sources.push(Box::new(AnyNorm::Wrap<Cat>(substituted)))
+//!     src_ptr = &*sources.last() -> Cat (stable)
+//!     stack.push(Visit<Cat> { src: src_ptr, slot })                     // renormalize
+//!   else:
+//!     results[slot] = Some(Wrap<Cat>(Cat::Apply<Dom>(Box::new(lam_normalized), Box::new(arg_normalized))))
+//! ```
+//!
+//! Church-numeral β-chains grow `sources` + `stack` + `results` on the heap,
+//! NOT the CPU stack — matches the stack-safety invariant.
+//!
+//! ## Cancellation pair iterative flow
+//!
+//! Same pattern as β: if inner matches the inner_ctor, peel it, push its
+//! payload onto `sources`, push a Visit to renormalize.
+
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
 use mettail_ast::grammar::{GrammarItem, NonTerminalKind, TermParam};
-use mettail_ast::language::LanguageDef;
+use mettail_ast::language::{LangType, LanguageDef};
 use mettail_ast::pattern::CancellationPair;
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
+use mettail_ast::types::CollectionType;
+use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
+use crate::gen::{is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
+use syn::Ident;
 
 /// For each constructor with a collection field, generates a helper function that automatically flattens nested collections of the same type.
 pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
-    use quote::format_ident;
-
     // Group rules by category
     let mut helpers_by_cat: HashMap<String, Vec<TokenStream>> = HashMap::new();
 
     for rule in &language.terms {
         // Skip rules that use new term_context with multi-binders
-        // These have structured fields, not just a collection
         if let Some(ref ctx) = rule.term_context {
             let has_multi_binder = ctx
                 .iter()
@@ -27,7 +79,6 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
             }
         }
 
-        // Check if this rule has a collection field (old style)
         let has_collection = rule
             .items
             .iter()
@@ -44,28 +95,28 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
         let helper = quote! {
             /// Auto-flattening insert for #label
             ///
-            /// If elem is itself a #label, recursively merges its contents instead of nesting.
-            /// This ensures that collection constructors are always flat, never nested.
+            /// Iteratively unwraps nested `#label` layers via an explicit
+            /// work-stack so deep same-category collection nesting (100+
+            /// levels) does not blow the call stack. Non-`#label` elements
+            /// are inserted directly; `#label` elements are peeled and
+            /// their inner members pushed back onto the stack.
             pub fn #helper_name(
                 bag: &mut mettail_runtime::HashBag<#category>,
-                elem: #category
+                elem: #category,
             ) {
-                // Use ref-binding to avoid moving out of elem (which has impl Drop).
-                // We only need to iterate over the inner bag by reference.
-                match elem {
-                    #category::#label(ref inner) => {
-                        // Flatten: recursively merge inner bag contents
-                        for (e, count) in inner.iter() {
-                            for _ in 0..count {
-                                // Recursive call handles multi-level nesting
-                                Self::#helper_name(bag, e.clone());
+                let mut stack: ::std::vec::Vec<#category> = ::std::vec::Vec::with_capacity(4);
+                stack.push(elem);
+                while let Some(current) = stack.pop() {
+                    if matches!(&current, #category::#label(_)) {
+                        if let #category::#label(inner) = &current {
+                            for (e, count) in inner.iter() {
+                                for _ in 0..count {
+                                    stack.push(e.clone());
+                                }
                             }
                         }
-                        // `elem` drops here with its original inner bag intact
-                    }
-                    _ => {
-                        // Normal insert - not a nested collection
-                        bag.insert(elem);
+                    } else {
+                        bag.insert(current);
                     }
                 }
             }
@@ -77,18 +128,15 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
             .push(helper);
     }
 
-    // Generate impl blocks for each category
     let impls: Vec<TokenStream> = language
         .types
         .iter()
         .filter_map(|lang_type| {
             let cat_name = &lang_type.name;
             let helpers = helpers_by_cat.get(&cat_name.to_string())?;
-
             if helpers.is_empty() {
                 return None;
             }
-
             Some(quote! {
                 impl #cat_name {
                     #(#helpers)*
@@ -102,550 +150,1821 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
     }
 }
 
-/// Generate normalize functions that recursively flatten nested collections,
-/// perform immediate beta-reduction, and eagerly collapse cancellation pairs.
+/// Generate normalize functions for all exported categories.
 ///
-/// Cancellation pairs (e.g., `PDrop(NQuote(P)) = P`) generate match arms that
-/// check for the inner constructor after normalizing the field, and collapse
-/// the composition to the identity when matched.
+/// A single unified PDA handles every category (native + non-native). At
+/// the Regular Assemble arm, native categories additionally apply
+/// `try_fold_to_literal()` for constant folding; non-native just wrap.
 pub fn generate_normalize_functions(
     language: &LanguageDef,
     cancellation_pairs: &[CancellationPair],
 ) -> TokenStream {
-    use quote::format_ident;
+    let all_cats: Vec<&LangType> = language.types.iter().collect();
 
-    let mut impls = Vec::new();
+    if all_cats.is_empty() {
+        return TokenStream::new();
+    }
 
-    for lang_type in &language.types {
+    generate_non_native_normalize_pda(&all_cats, language, cancellation_pairs)
+}
+
+
+// =============================================================================
+// Non-native shared PDA — new code
+// =============================================================================
+
+/// Build a set of (host_cat, domain_cat) pairs where host has HOL β-reducible
+/// variants for the given domain. Used to detect `Apply<Dom>`/`MApply<Dom>`
+/// Regular variants at emission time.
+fn compute_hol_pairs_set(language: &LanguageDef) -> HashSet<(String, String)> {
+    crate::logic::common::compute_hol_domain_pairs(language)
+        .into_iter()
+        .collect()
+}
+
+/// Build a set of (outer_cat_string, outer_ctor_string, inner_cat_string,
+/// inner_ctor_string) keys for cancellation pairs, used to detect outer
+/// Regular variants at emission time.
+#[allow(clippy::type_complexity)]
+fn compute_cancel_set<'a>(
+    cancellation_pairs: &'a [CancellationPair],
+) -> HashMap<(String, String), &'a CancellationPair> {
+    cancellation_pairs
+        .iter()
+        .map(|p| {
+            (
+                (
+                    p.outer_category.to_string(),
+                    p.outer_constructor.to_string(),
+                ),
+                p,
+            )
+        })
+        .collect()
+}
+
+/// Emit the full non-native normalize PDA: enums + TLS + driver + wrappers.
+fn generate_non_native_normalize_pda(
+    non_native_cats: &[&LangType],
+    language: &LanguageDef,
+    cancellation_pairs: &[CancellationPair],
+) -> TokenStream {
+    let any_norm_term = generate_any_normalized_term_enum(non_native_cats);
+    let norm_task = generate_norm_task_enum(non_native_cats, language, cancellation_pairs);
+    let tls = generate_norm_tls_pools();
+    let driver = generate_norm_driver(non_native_cats, language, cancellation_pairs);
+    let wrappers: Vec<TokenStream> = non_native_cats
+        .iter()
+        .map(|t| generate_norm_wrapper(&t.name))
+        .collect();
+
+    quote! {
+        #any_norm_term
+        #norm_task
+        #tls
+        #driver
+        #(#wrappers)*
+    }
+}
+
+/// Emit the heterogeneous wrapper enum for the non-native PDA's result buffer.
+fn generate_any_normalized_term_enum(non_native_cats: &[&LangType]) -> TokenStream {
+    let variants: Vec<TokenStream> = non_native_cats
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let wrap = format_ident!("Wrap{}", cat);
+            quote! { #wrap(#cat) }
+        })
+        .collect();
+
+    quote! {
+        /// Result-buffer element for the iterative normalize engine.
+        #[allow(dead_code)]
+        enum AnyNormalizedTerm {
+            #(#variants),*
+        }
+    }
+}
+
+/// Emit the work-stack frame enum.
+fn generate_norm_task_enum(
+    non_native_cats: &[&LangType],
+    language: &LanguageDef,
+    cancellation_pairs: &[CancellationPair],
+) -> TokenStream {
+    let hol_pairs = compute_hol_pairs_set(language);
+    let cancel_set = compute_cancel_set(cancellation_pairs);
+
+    let visit_variants: Vec<TokenStream> = non_native_cats
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("Visit{}", cat);
+            quote! {
+                #variant { src: *const #cat, slot: usize }
+            }
+        })
+        .collect();
+
+    let mut assemble_variants: Vec<TokenStream> = Vec::new();
+    for lang_type in non_native_cats {
         let category = &lang_type.name;
+        let cat_str = category.to_string();
+        let variants = collect_category_variants(category, language);
+        for v in &variants {
+            if let Some(decl) = generate_assemble_variant_decl(category, v, &hol_pairs, &cancel_set, &cat_str) {
+                assemble_variants.push(decl);
+            }
+        }
+    }
 
-        // Find all rules for this category
-        let rules_for_category: Vec<_> = language
-            .terms
-            .iter()
-            .filter(|rule| rule.category == *category)
-            .collect();
+    quote! {
+        /// Work-stack frame for the iterative normalize engine.
+        #[allow(dead_code, non_camel_case_types)]
+        enum NormTask {
+            #(#visit_variants,)*
+            #(#assemble_variants,)*
+        }
+    }
+}
 
-        // Collect cancellation pairs where this category is the outer
-        let cat_cancel_pairs: Vec<&CancellationPair> = cancellation_pairs
-            .iter()
-            .filter(|p| p.outer_category == *category)
-            .collect();
-        let cancelled_ctors: HashSet<String> = cat_cancel_pairs
-            .iter()
-            .map(|p| p.outer_constructor.to_string())
-            .collect();
+/// Emit Assemble variant declarations for a non-leaf variant. Returns None
+/// for leaf variants (Var, Literal, Nullary) which write directly during Visit.
+///
+/// HOL Apply<Dom>/MApply<Dom> Regular variants and cancellation-outer Regular
+/// variants get SPECIAL Assemble variants; all other Regulars get the
+/// generic `AssembleReg_<Cat>_<L>`.
+fn generate_assemble_variant_decl(
+    category: &Ident,
+    variant: &VariantKind,
+    hol_pairs: &HashSet<(String, String)>,
+    cancel_set: &HashMap<(String, String), &CancellationPair>,
+    cat_str: &str,
+) -> Option<TokenStream> {
+    match variant {
+        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => {
+            None
+        }
 
-        // Native types: generate simple recursive normalize (no beta-reduction, no collections)
-        if let Some(ref native_type) = lang_type.native_type {
-            let has_literal_rule = rules_for_category.iter().any(|r| is_literal_rule(r));
-            let has_var_rule = rules_for_category.iter().any(|r| is_var_rule(r));
-            let mut match_arms: Vec<TokenStream> = rules_for_category
-                .iter()
-                .filter_map(|rule| {
-                    if is_var_rule(rule) || is_literal_rule(rule) {
-                        return None;
-                    }
-                    let label = &rule.label;
-                    let fields: Vec<_> = rule
-                        .items
-                        .iter()
-                        .filter(|item| matches!(item, GrammarItem::NonTerminal { .. }))
-                        .collect();
-                    if fields.is_empty() {
-                        return Some(quote! { #category::#label => self.clone() });
-                    }
-                    let field_names: Vec<_> =
-                        (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
-                    let field_patterns: Vec<_> =
-                        field_names.iter().map(|n| quote! { ref #n }).collect();
-                    let normalized_fields: Vec<_> = fields
-                        .iter()
-                        .zip(field_names.iter())
-                        .map(|(item, name)| {
-                            if let GrammarItem::NonTerminal { ident: field_cat, .. } = item {
-                                if field_cat == category {
-                                    quote! { Box::new(#name.as_ref().normalize()) }
-                                } else {
-                                    quote! { #name.clone() }
-                                }
-                            } else {
-                                quote! { #name.clone() }
-                            }
-                        })
-                        .collect();
-                    Some(quote! {
-                        #category::#label(#(#field_patterns),*) => {
-                            #category::#label(#(#normalized_fields),*)
+        VariantKind::Regular { label, fields } => {
+            let label_str = label.to_string();
+
+            // HOL Apply<Dom>: β-reduction Assemble frame
+            if let Some(dom) = strip_prefix(&label_str, "Apply") {
+                if hol_pairs.contains(&(cat_str.to_string(), dom.to_string())) {
+                    let variant_name = format_ident!("AssembleBetaApply_{}_{}", category, dom);
+                    return Some(quote! {
+                        #variant_name { slot: usize, lam_slot: usize, arg_slot: usize }
+                    });
+                }
+            }
+            if let Some(dom) = strip_prefix(&label_str, "MApply") {
+                if hol_pairs.contains(&(cat_str.to_string(), dom.to_string())) {
+                    let variant_name = format_ident!("AssembleBetaMApply_{}_{}", category, dom);
+                    return Some(quote! {
+                        #variant_name {
+                            slot: usize,
+                            lam_slot: usize,
+                            args_start: usize,
+                            args_count: usize,
                         }
-                    })
-                })
+                    });
+                }
+            }
+
+            // Cancellation pair outer: AssembleCancel frame
+            if let Some(pair) = cancel_set.get(&(cat_str.to_string(), label_str.clone())) {
+                let inner_cat = &pair.inner_category;
+                let variant_name = format_ident!("AssembleCancel_{}_{}_{}", category, inner_cat, label);
+                return Some(quote! {
+                    #variant_name { slot: usize, inner_slot: usize }
+                });
+            }
+
+            // Generic Regular
+            let variant_name = format_ident!("AssembleReg_{}_{}", category, label);
+            let field_slots: Vec<TokenStream> = fields
+                .iter()
+                .enumerate()
+                .map(|(i, field)| emit_reg_field_decl(i, field))
                 .collect();
-            if !has_literal_rule {
-                let literal_label = generate_literal_label(native_type);
-                match_arms.push(quote! {
-                    #category::#literal_label(_) => self.clone()
-                });
-            }
-            if !has_var_rule {
-                let var_label = generate_var_label(category);
-                match_arms.push(quote! {
-                    #category::#var_label(_) => self.clone()
-                });
-            }
-            let impl_block = quote! {
-                impl #category {
-                    /// Recursively normalize subterms (no beta-reduction for native-type categories).
-                    /// If the reconstructed term is fully evaluable, folds it to a literal (constant folding).
-                    pub fn normalize(&self) -> Self {
-                        let reconstructed = match self {
-                            #(#match_arms),*,
-                            _ => self.clone()
-                        };
-                        reconstructed.try_fold_to_literal().unwrap_or(reconstructed)
-                    }
-                }
-            };
-            impls.push(impl_block);
-            continue;
+
+            Some(quote! {
+                #variant_name { slot: usize, #(#field_slots),* }
+            })
         }
 
-        // Find collection constructors
-        let has_collections = rules_for_category.iter().any(|rule| {
-            rule.items
-                .iter()
-                .any(|item| matches!(item, GrammarItem::Collection { .. }))
-        });
-
-        // Generate beta-reduction arms for Apply/Lam variants
-        let beta_reduction_arms = generate_beta_reduction_arms(category, language);
-
-        // Generate cancellation pair match arms for this category
-        let cancel_pair_arms: Vec<TokenStream> = cat_cancel_pairs
-            .iter()
-            .map(|pair| generate_cancellation_pair_arm(pair))
-            .collect();
-
-        // If no collections, no beta-reduction, and no cancellation pairs, generate a simple normalize
-        if !has_collections && beta_reduction_arms.is_empty() && cancel_pair_arms.is_empty() {
-            let impl_block = quote! {
-                impl #category {
-                    /// Normalize (no-op for categories without collections or beta-redexes)
-                    pub fn normalize(&self) -> Self {
-                        self.clone()
-                    }
+        VariantKind::Collection { label, coll_type, .. } => {
+            let variant_name = format_ident!("AssembleColl_{}_{}", category, label);
+            match coll_type {
+                CollectionType::HashBag | CollectionType::HashMap => {
+                    Some(quote! {
+                        #variant_name {
+                            slot: usize,
+                            elements_start: usize,
+                            elements_count: usize,
+                            counts_vec: Vec<usize>,
+                        }
+                    })
                 }
-            };
-            impls.push(impl_block);
-            continue;
+                _ => Some(quote! {
+                    #variant_name {
+                        slot: usize,
+                        elements_start: usize,
+                        elements_count: usize,
+                    }
+                }),
+            }
         }
 
-        // Generate match arms for each constructor
-        #[allow(clippy::unnecessary_filter_map)]
-        let match_arms: Vec<TokenStream> = rules_for_category
-            .iter()
-            .filter_map(|rule| {
-                let label = &rule.label;
-
-                // Skip constructors handled by cancellation pair arms
-                if cancelled_ctors.contains(&label.to_string()) {
-                    return None;
-                }
-
-                // Check if this rule uses term_context with multi-binder
-                let has_multi_binder = rule.term_context.as_ref().is_some_and(|ctx| {
-                    ctx.iter()
-                        .any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
-                });
-
-                // Check if this is a simple collection constructor (no multi-binder)
-                let is_collection = !has_multi_binder
-                    && rule
-                        .items
-                        .iter()
-                        .any(|item| matches!(item, GrammarItem::Collection { .. }));
-
-                if is_collection {
-                    // For collection constructors, rebuild using the flattening helper
-                    let helper_name =
-                        format_ident!("insert_into_{}", label.to_string().to_lowercase());
-
-                    Some(quote! {
-                        #category::#label(bag) => {
-                            // Rebuild the bag using the flattening insert helper
-                            let mut new_bag = mettail_runtime::HashBag::new();
-                            for (elem, count) in bag.iter() {
-                                for _ in 0..count {
-                                    // Recursively normalize the element before inserting
-                                    let normalized_elem = elem.normalize();
-                                    Self::#helper_name(&mut new_bag, normalized_elem);
-                                }
-                            }
-                            #category::#label(new_bag)
-                        }
-                    })
-                } else if has_multi_binder {
-                    // Multi-binder constructor: normalize the scope body
-                    // Count non-abstraction fields that precede the scope
-                    let ctx = rule.term_context.as_ref().unwrap();
-                    let pre_scope_fields: Vec<_> = ctx
-                        .iter()
-                        .take_while(|p| matches!(p, TermParam::Simple { .. }))
-                        .enumerate()
-                        .map(|(i, _)| {
-                            let name = format_ident!("field_{}", i);
-                            name
-                        })
-                        .collect();
-
-                    let field_patterns: Vec<_> = pre_scope_fields
-                        .iter()
-                        .map(|name| quote! { #name })
-                        .collect();
-                    let field_clones: Vec<_> = pre_scope_fields
-                        .iter()
-                        .map(|name| quote! { #name.clone() })
-                        .collect();
-
-                    Some(quote! {
-                        #category::#label(#(#field_patterns,)* scope) => {
-                            #category::#label(
-                                #(#field_clones,)*
-                                mettail_runtime::Scope::from_parts_unsafe(
-                                    scope.inner().unsafe_pattern.clone(),
-                                    Box::new(scope.inner().unsafe_body.as_ref().normalize())
-                                )
-                            )
-                        }
-                    })
-                } else if rule.bindings.is_empty() {
-                    // For non-collection, non-binder constructors
-                    // Get fields (excluding Terminals)
-                    let fields: Vec<_> = rule
-                        .items
-                        .iter()
-                        .filter(|item| {
-                            matches!(
-                                item,
-                                GrammarItem::NonTerminal { .. } | GrammarItem::Collection { .. }
-                            )
-                        })
-                        .collect();
-
-                    if fields.is_empty() {
-                        // Nullary - no changes needed
-                        Some(quote! {
-                            #category::#label => self.clone()
-                        })
-                    } else if fields.len() == 1 {
-                        // Single field constructor
-                        match fields[0] {
-                            GrammarItem::NonTerminal { ident: field_cat, kind: NonTerminalKind::Category } if field_cat == category => {
-                                // Recursive case - normalize the field
-                                Some(quote! {
-                                    #category::#label(f0) => {
-                                        #category::#label(Box::new(f0.as_ref().normalize()))
-                                    }
-                                })
-                            },
-                            GrammarItem::NonTerminal { kind: NonTerminalKind::Var, .. } =>
-                            {
-                                // Var field - just clone (no Box)
-                                Some(quote! {
-                                    #category::#label(v) => {
-                                        #category::#label(v.clone())
-                                    }
-                                })
-                            },
-                            _ => {
-                                // Different category or unsupported - just clone
-                                Some(quote! {
-                                    #category::#label(f0) => {
-                                        #category::#label(f0.clone())
-                                    }
-                                })
-                            },
-                        }
-                    } else {
-                        // Multiple fields - generate normalization for each
-                        let field_names: Vec<_> =
-                            (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
-
-                        let normalized_fields: Vec<_> = fields
-                            .iter()
-                            .enumerate()
-                            .map(|(i, field)| {
-                                let field_name = &field_names[i];
-                                match field {
-                                    GrammarItem::NonTerminal { ident: field_cat, kind } => {
-                                        if field_cat == category {
-                                            // Same category - normalize recursively (boxed)
-                                            quote! { Box::new(#field_name.as_ref().normalize()) }
-                                        } else if *kind == NonTerminalKind::Var {
-                                            // Var field - not boxed, just clone
-                                            quote! { #field_name.clone() }
-                                        } else if language
-                                            .types
-                                            .iter()
-                                            .any(|t| t.name == *field_cat)
-                                        {
-                                            // Another category (including native) - normalize it (boxed)
-                                            quote! { Box::new(#field_name.as_ref().normalize()) }
-                                        } else {
-                                            // Native type or unknown - just clone (boxed)
-                                            quote! { #field_name.clone() }
-                                        }
-                                    },
-                                    GrammarItem::Collection { .. } => {
-                                        // Collection field - just clone for now
-                                        // (collection flattening is handled separately)
-                                        quote! { #field_name.clone() }
-                                    },
-                                    _ => quote! { #field_name.clone() },
-                                }
-                            })
-                            .collect();
-
-                        Some(quote! {
-                            #category::#label(#(#field_names),*) => {
-                                #category::#label(#(#normalized_fields),*)
-                            }
-                        })
-                    }
-                } else {
-                    // Binder constructor
-                    // Count total AST fields (non-terminal, non-binder)
-                    let (_binder_idx, body_indices) = &rule.bindings[0];
-                    let body_idx = body_indices[0];
-
-                    // Phase 3A-C3 (predicated types): the actual
-                    // generated enum variant includes any
-                    // `?guard:Guard` slots from term_context as
-                    // BehavioralPred fields. To keep destructure
-                    // arity correct, we count them and emit
-                    // `pf{i}_pred` placeholders interleaved with the
-                    // grammar-item-derived field names. The exact
-                    // position of each predicate field within the
-                    // enum variant follows the term_context order
-                    // (channel, ?guard, scope), so we synthesize the
-                    // pattern from term_context when present.
-                    let guard_count = rule
-                        .term_context
-                        .as_ref()
-                        .map(|ctx| {
-                            ctx.iter()
-                                .filter(|p| matches!(p, TermParam::GuardBody { .. }))
-                                .count()
-                        })
-                        .unwrap_or(0);
-
-                    let mut field_names = Vec::new();
-                    let mut scope_field_idx = None;
-                    for (i, item) in rule.items.iter().enumerate() {
-                        if i == *_binder_idx {
-                            continue; // Skip binder
-                        }
-                        match item {
-                            GrammarItem::NonTerminal { .. } => {
-                                if i == body_idx {
-                                    scope_field_idx = Some(field_names.len());
-                                    field_names.push(format_ident!("scope"));
-                                } else {
-                                    field_names.push(format_ident!("f{}", field_names.len()));
-                                }
-                            },
-                            _ => {},
-                        }
-                    }
-
-                    let scope_idx = scope_field_idx.expect("Should have scope");
-
-                    // Insert predicate placeholders right before the
-                    // scope field (matches the enum variant layout
-                    // generated by `enums.rs`, where guard slots
-                    // appear in term_context order, between simple
-                    // params and the scoped continuation).
-                    if guard_count > 0 {
-                        let scope_name = field_names[scope_idx].clone();
-                        let mut new_names: Vec<_> =
-                            field_names.iter().take(scope_idx).cloned().collect();
-                        for g in 0..guard_count {
-                            new_names.push(format_ident!("pf{}_pred", g));
-                        }
-                        new_names.push(scope_name);
-                        field_names = new_names;
-                    }
-                    let scope_idx = scope_idx + guard_count;
-
-                    // Generate field reconstruction
-                    let reconstructed_fields: Vec<_> = field_names
-                        .iter()
-                        .enumerate()
-                        .map(|(i, name)| {
-                            if i == scope_idx {
-                                quote! {
-                                    mettail_runtime::Scope::from_parts_unsafe(
-                                        #name.inner().unsafe_pattern.clone(),
-                                        Box::new(#name.inner().unsafe_body.as_ref().normalize())
-                                    )
-                                }
-                            } else {
-                                quote! { #name.clone() }
-                            }
-                        })
-                        .collect();
-
-                    Some(quote! {
-                        #category::#label(#(#field_names),*) => {
-                            #category::#label(#(#reconstructed_fields),*)
-                        }
-                    })
+        VariantKind::Binder { label, pre_scope_fields, .. } => {
+            let variant_name = format_ident!("AssembleBind_{}_{}", category, label);
+            let pre_decls = emit_pre_field_decl_list(pre_scope_fields);
+            Some(quote! {
+                #variant_name {
+                    slot: usize,
+                    #(#pre_decls,)*
+                    cloned_pattern: mettail_runtime::Binder<String>,
+                    body_slot: usize,
                 }
             })
-            .collect();
+        }
 
-        // Add a fallback for any unhandled patterns
-        let fallback = quote! {
-            _ => self.clone()
-        };
+        VariantKind::MultiBinder { label, pre_scope_fields, .. } => {
+            let variant_name = format_ident!("AssembleMBind_{}_{}", category, label);
+            let pre_decls = emit_pre_field_decl_list(pre_scope_fields);
+            Some(quote! {
+                #variant_name {
+                    slot: usize,
+                    #(#pre_decls,)*
+                    cloned_pattern: Vec<mettail_runtime::Binder<String>>,
+                    body_slot: usize,
+                }
+            })
+        }
+    }
+}
 
-        let impl_block = quote! {
-            impl #category {
-                /// Recursively normalize this term by:
-                /// 1. Flattening nested collections (e.g., `PPar({PPar({a, b}), c})` becomes `PPar({a, b, c})`)
-                /// 2. Performing immediate beta-reduction (e.g., `Apply(Lam(^x.body), arg)` becomes `body[arg/x]`)
-                /// 3. Eagerly collapsing cancellation pairs (e.g., `PDrop(NQuote(P))` becomes `P`)
-                ///
-                /// This ensures terms are always in canonical form with beta-redexes reduced.
-                pub fn normalize(&self) -> Self {
-                    match self {
-                        #(#beta_reduction_arms,)*
-                        #(#cancel_pair_arms,)*
-                        #(#match_arms,)*
-                        #fallback
+/// Regular-field slot declaration (single slot, or collection range tuple).
+///
+/// **Cross-cat native fields** are stored as a cloned owned value in the
+/// frame (field name + Box<FieldCat>), because we normalize them eagerly
+/// at Visit time via `.normalize()` (calls the native per-category PDA)
+/// rather than pushing a Visit task.
+fn emit_reg_field_decl(i: usize, field: &FieldInfo) -> TokenStream {
+    if field.is_predicate {
+        let pred_name = format_ident!("f{}_pred", i);
+        return quote! { #pred_name: mettail_runtime::BehavioralPred };
+    }
+    if field.is_collection {
+        let start_name = format_ident!("f{}_start", i);
+        let count_name = format_ident!("f{}_count", i);
+        match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+            CollectionType::HashBag | CollectionType::HashMap => {
+                let counts_name = format_ident!("f{}_counts", i);
+                quote! { #start_name: usize, #count_name: usize, #counts_name: Vec<usize> }
+            }
+            _ => quote! { #start_name: usize, #count_name: usize },
+        }
+    } else {
+        let slot_name = format_ident!("f{}_slot", i);
+        quote! { #slot_name: usize }
+    }
+}
+
+/// Same as `emit_reg_field_decl` but for Binder/MultiBinder pre-scope fields
+/// (uses `pf{i}_*` prefix).
+fn emit_pre_field_decl_list(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> {
+    pre_scope_fields
+        .iter()
+        .enumerate()
+        .map(|(i, field)| {
+            if field.is_predicate {
+                let pred_name = format_ident!("pf{}_pred", i);
+                return quote! { #pred_name: mettail_runtime::BehavioralPred };
+            }
+            if field.is_collection {
+                let start_name = format_ident!("pf{}_start", i);
+                let count_name = format_ident!("pf{}_count", i);
+                match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+                    CollectionType::HashBag | CollectionType::HashMap => {
+                        let counts_name = format_ident!("pf{}_counts", i);
+                        quote! { #start_name: usize, #count_name: usize, #counts_name: Vec<usize> }
                     }
+                    _ => quote! { #start_name: usize, #count_name: usize },
+                }
+            } else {
+                let slot_name = format_ident!("pf{}_slot", i);
+                quote! { #slot_name: usize }
+            }
+        })
+        .collect()
+}
+
+fn strip_prefix<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    s.strip_prefix(prefix)
+}
+
+/// Emit the TLS pools for the non-native PDA.
+fn generate_norm_tls_pools() -> TokenStream {
+    quote! {
+        thread_local! {
+            /// Pool for reusing `NormTask` work stacks across normalize calls.
+            static NORM_TASK_POOL: std::cell::Cell<Vec<NormTask>> =
+                std::cell::Cell::new(Vec::new());
+
+            /// Pool for reusing result buffers across normalize calls.
+            static NORM_RESULT_POOL: std::cell::Cell<Vec<Option<AnyNormalizedTerm>>> =
+                std::cell::Cell::new(Vec::new());
+
+            /// Pool for reusing owned-source boxes (β/cancel rescheduling).
+            static NORM_SOURCE_POOL: std::cell::Cell<Vec<Box<AnyNormalizedTerm>>> =
+                std::cell::Cell::new(Vec::new());
+        }
+    }
+}
+
+// =============================================================================
+// Driver Emission
+// =============================================================================
+
+/// Emit the main `normalize_iterative` driver function.
+///
+/// **Frame-size fix (PDA stack-safety):** Each Visit{Cat} arm is extracted
+/// into its own `#[inline(never)]` helper. Without this split, normalize's
+/// match of all per-category arms forces rustc to allocate stack space for
+/// every variant's locals up front, overflowing the default 2 MB thread stack.
+fn generate_norm_driver(
+    non_native_cats: &[&LangType],
+    language: &LanguageDef,
+    cancellation_pairs: &[CancellationPair],
+) -> TokenStream {
+    let hol_pairs = compute_hol_pairs_set(language);
+    let cancel_set = compute_cancel_set(cancellation_pairs);
+
+    // Per-category Visit helpers (one fn per cat).
+    let visit_helper_fns: Vec<TokenStream> = non_native_cats
+        .iter()
+        .map(|t| generate_visit_helper_fn(&t.name, language, &hol_pairs, &cancel_set))
+        .collect();
+
+    // Tiny dispatch arms that delegate to the per-cat helper.
+    let visit_arms: Vec<TokenStream> = non_native_cats
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let visit_variant = format_ident!("Visit{}", cat);
+            let helper_fn = format_ident!("norm_visit_{}", cat.to_string().to_lowercase());
+            quote! {
+                NormTask::#visit_variant { src, slot } => {
+                    #helper_fn(stack, results, sources, src, slot);
                 }
             }
-        };
+        })
+        .collect();
 
-        impls.push(impl_block);
+    let mut assemble_arms: Vec<TokenStream> = Vec::new();
+    for lang_type in non_native_cats {
+        let category = &lang_type.name;
+        let cat_str = category.to_string();
+        let variants = collect_category_variants(category, language);
+        for v in &variants {
+            let is_native = lang_type.native_type.is_some();
+            if let Some(arm) = generate_assemble_arm(category, v, &hol_pairs, &cancel_set, &cat_str, is_native) {
+                assemble_arms.push(arm);
+            }
+        }
     }
 
     quote! {
-        #(#impls)*
+        #(#visit_helper_fns)*
+
+        /// Iterative normalize engine. Processes the work stack until empty.
+        ///
+        /// # Safety
+        ///
+        /// All `*const Cat` pointers in `NormTask::Visit<Cat>` must be valid
+        /// for reads for the duration of this function call. Pointers into
+        /// borrowed-source Cat values (from the initial `self` argument) are
+        /// valid because `self` outlives the call. Pointers into owned-source
+        /// boxes pushed via `sources.push(...)` are valid because the
+        /// heap data inside each `Box<AnyNormalizedTerm>` has a stable
+        /// address; growing `sources` moves Box handles, not the Cat data
+        /// they point to.
+        #[allow(dead_code, unused_variables, clippy::needless_range_loop, non_snake_case)]
+        fn normalize_iterative(
+            stack: &mut Vec<NormTask>,
+            results: &mut Vec<Option<AnyNormalizedTerm>>,
+            sources: &mut Vec<Box<AnyNormalizedTerm>>,
+        ) {
+            while let Some(task) = stack.pop() {
+                match task {
+                    #(#visit_arms)*
+                    #(#assemble_arms)*
+                }
+            }
+        }
     }
 }
 
-/// Generate match arms for beta-reduction of Apply/Lam variants
-fn generate_beta_reduction_arms(category: &syn::Ident, language: &LanguageDef) -> Vec<TokenStream> {
-    use quote::format_ident;
-
-    let mut arms = Vec::new();
-
-    // For each domain type, generate beta-reduction arms (including native, e.g. Int/Bool/Str)
-    for domain_lang_type in &language.types {
-        let domain = &domain_lang_type.name;
-        let domain_lower = domain.to_string().to_lowercase();
-
-        // Variant names
-        let apply_variant = format_ident!("Apply{}", domain);
-        let lam_variant = format_ident!("Lam{}", domain);
-        let mapply_variant = format_ident!("MApply{}", domain);
-        let mlam_variant = format_ident!("MLam{}", domain);
-
-        // Substitution method names
-        let subst_method = format_ident!("substitute_{}", domain_lower);
-        let multi_subst_method = format_ident!("multi_substitute_{}", domain_lower);
-
-        // Single-argument beta reduction:
-        // ApplyDomain(LamDomain(scope), arg) => body[binder := arg].normalize()
-        arms.push(quote! {
-            #category::#apply_variant(lam_box, arg_box) => {
-                // First normalize the function position
-                let lam_normalized = lam_box.as_ref().normalize();
-                match &lam_normalized {
-                    #category::#lam_variant(scope) => {
-                        // Beta-reduce: unbind and substitute
-                        let (binder, body) = scope.clone().unbind();
-                        // Normalize the argument before substitution, then normalize the result
-                        let arg_normalized = arg_box.as_ref().normalize();
-                        (*body).#subst_method(&binder.0, &arg_normalized).normalize()
-                    }
-                    _ => {
-                        // Not a beta-redex after normalization: return normalized subterms
-                        #category::#apply_variant(
-                            Box::new(lam_normalized),
-                            Box::new(arg_box.as_ref().normalize())
-                        )
-                    }
+/// Emit the per-category Visit helper function. Single `match src_ref { variants... }`
+/// body; pushes new tasks onto the shared `stack`.
+fn generate_visit_helper_fn(
+    cat: &Ident,
+    language: &LanguageDef,
+    hol_pairs: &HashSet<(String, String)>,
+    cancel_set: &HashMap<(String, String), &CancellationPair>,
+) -> TokenStream {
+    let helper_fn = format_ident!("norm_visit_{}", cat.to_string().to_lowercase());
+    let cat_str = cat.to_string();
+    let variants = collect_category_variants(cat, language);
+    let variant_arms: Vec<TokenStream> = variants
+        .iter()
+        .map(|v| generate_visit_variant_arm(cat, v, language, hol_pairs, cancel_set, &cat_str))
+        .collect();
+    let wrap_self = format_ident!("Wrap{}", cat);
+    quote! {
+        #[inline(never)]
+        #[allow(dead_code, unused_variables, clippy::needless_range_loop, non_snake_case)]
+        fn #helper_fn(
+            stack: &mut Vec<NormTask>,
+            results: &mut Vec<Option<AnyNormalizedTerm>>,
+            sources: &mut Vec<Box<AnyNormalizedTerm>>,
+            src: *const #cat,
+            slot: usize,
+        ) {
+            let src_ref = unsafe { &*src };
+            match src_ref {
+                #(#variant_arms)*
+                _ => {
+                    results[slot] = Some(AnyNormalizedTerm::#wrap_self(src_ref.clone()));
                 }
             }
-        });
-
-        // Multi-argument beta reduction:
-        // MApplyDomain(MLamDomain(scope), args) => body[binders := args].normalize()
-        arms.push(quote! {
-            #category::#mapply_variant(lam_box, args) => {
-                // First normalize the function position
-                let lam_normalized = lam_box.as_ref().normalize();
-                match &lam_normalized {
-                    #category::#mlam_variant(scope) => {
-                        // Beta-reduce: unbind and substitute all binders
-                        let (binders, body) = scope.clone().unbind();
-                        let vars: Vec<_> = binders.iter().map(|b| &b.0).collect();
-                        // Normalize arguments before substitution
-                        let args_normalized: Vec<_> = args.iter()
-                            .map(|a| a.normalize())
-                            .collect();
-                        (*body).#multi_subst_method(&vars, &args_normalized).normalize()
-                    }
-                    _ => {
-                        // Not a beta-redex after normalization: return normalized subterms
-                        #category::#mapply_variant(
-                            Box::new(lam_normalized),
-                            args.iter().map(|a| a.normalize()).collect()
-                        )
-                    }
-                }
-            }
-        });
+        }
     }
-
-    arms
 }
 
-/// Generate a match arm for a cancellation pair.
+/// Dispatch per-variant Visit handling.
+fn generate_visit_variant_arm(
+    cat: &Ident,
+    variant: &VariantKind,
+    language: &LanguageDef,
+    hol_pairs: &HashSet<(String, String)>,
+    cancel_set: &HashMap<(String, String), &CancellationPair>,
+    cat_str: &str,
+) -> TokenStream {
+    let wrap = format_ident!("Wrap{}", cat);
+
+    match variant {
+        VariantKind::Var { label } => {
+            quote! {
+                #cat::#label(v) => {
+                    results[slot] = Some(AnyNormalizedTerm::#wrap(#cat::#label(v.clone())));
+                }
+            }
+        }
+        VariantKind::Literal { label } => {
+            // Conservative: clone (works for both Copy and non-Copy).
+            quote! {
+                #cat::#label(v) => {
+                    results[slot] = Some(AnyNormalizedTerm::#wrap(#cat::#label(v.clone())));
+                }
+            }
+        }
+        VariantKind::Nullary { label } => {
+            quote! {
+                #cat::#label => {
+                    results[slot] = Some(AnyNormalizedTerm::#wrap(#cat::#label));
+                }
+            }
+        }
+        VariantKind::Regular { label, fields } => {
+            let label_str = label.to_string();
+
+            // HOL Apply<Dom>
+            if let Some(dom_str) = strip_prefix(&label_str, "Apply") {
+                if hol_pairs.contains(&(cat_str.to_string(), dom_str.to_string())) {
+                    return generate_beta_apply_visit_arm(cat, label, dom_str);
+                }
+            }
+            // HOL MApply<Dom>
+            if let Some(dom_str) = strip_prefix(&label_str, "MApply") {
+                if hol_pairs.contains(&(cat_str.to_string(), dom_str.to_string())) {
+                    return generate_beta_mapply_visit_arm(cat, label, dom_str);
+                }
+            }
+
+            // Cancellation pair outer
+            if let Some(pair) = cancel_set.get(&(cat_str.to_string(), label_str.clone())) {
+                return generate_cancel_visit_arm(cat, label, pair);
+            }
+
+            // Generic Regular
+            generate_regular_visit_arm(cat, label, fields, language)
+        }
+        VariantKind::Collection { label, element_cat, coll_type } => {
+            generate_collection_visit_arm(cat, label, element_cat, coll_type, language)
+        }
+        VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
+            generate_binder_visit_arm(cat, label, pre_scope_fields, body_cat, language)
+        }
+        VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
+            generate_multi_binder_visit_arm(cat, label, pre_scope_fields, body_cat, language)
+        }
+    }
+}
+
+/// Regular Visit arm: allocate child slots, push AssembleReg + per-field
+/// Visits. Cross-cat fields of NATIVE type are normalized eagerly at Visit
+/// time (bounded — native normalize is iterative) and stored as owned clones
+/// in the Assemble frame. Same-cat and non-native cross-cat fields get
+/// Visit tasks pushed onto the stack.
+fn generate_regular_visit_arm(
+    cat: &Ident,
+    label: &Ident,
+    fields: &[FieldInfo],
+    language: &LanguageDef,
+) -> TokenStream {
+    let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+    let assemble_variant = format_ident!("AssembleReg_{}_{}", cat, label);
+
+    let (alloc_stmts, push_stmts, assemble_fields) =
+        emit_reg_field_visit_alloc(cat, fields, &field_names, language);
+
+    quote! {
+        #cat::#label(#(ref #field_names),*) => {
+            #(#alloc_stmts)*
+            stack.push(NormTask::#assemble_variant { slot, #(#assemble_fields),* });
+            #(#push_stmts)*
+        }
+    }
+}
+
+/// Emit alloc/push/assemble-fields for a Regular variant's fields.
+fn emit_reg_field_visit_alloc(
+    cat: &Ident,
+    fields: &[FieldInfo],
+    field_names: &[Ident],
+    language: &LanguageDef,
+) -> (Vec<TokenStream>, Vec<TokenStream>, Vec<TokenStream>) {
+    let mut alloc_stmts: Vec<TokenStream> = Vec::new();
+    let mut push_stmts: Vec<TokenStream> = Vec::new();
+    let mut assemble_fields: Vec<TokenStream> = Vec::new();
+
+    for (i, field) in fields.iter().enumerate() {
+        let name = &field_names[i];
+
+        if field.is_predicate {
+            let pred_name = format_ident!("f{}_pred", i);
+            alloc_stmts.push(quote! {
+                let #pred_name = #name.clone();
+            });
+            assemble_fields.push(quote! { #pred_name });
+            continue;
+        }
+
+        if field.is_collection {
+            emit_collection_field_alloc(i, field, name, &mut alloc_stmts, &mut push_stmts, &mut assemble_fields);
+            continue;
+        }
+
+        // Non-collection scalar field. Unified dispatch: push Visit<FieldCat>.
+        // The shared PDA handles every category (native + non-native).
+        let field_cat = &field.category;
+        let visit_task = format_ident!("Visit{}", field_cat);
+        let slot_name = format_ident!("f{}_slot", i);
+        alloc_stmts.push(quote! {
+            let #slot_name = results.len();
+            results.push(None);
+        });
+        push_stmts.push(quote! {
+            stack.push(NormTask::#visit_task {
+                src: &**#name as *const _,
+                slot: #slot_name,
+            });
+        });
+        assemble_fields.push(quote! { #slot_name });
+    }
+
+    (alloc_stmts, push_stmts, assemble_fields)
+}
+
+/// Emit alloc/push/assemble for a single collection field (part of a
+/// Regular variant). Collection fields contain non-native elements (the
+/// element category must be in the shared PDA). Native-element collections
+/// are handled by the native per-category PDA if they existed — but they
+/// don't in practice for non-native categories.
+fn emit_collection_field_alloc(
+    i: usize,
+    field: &FieldInfo,
+    name: &Ident,
+    alloc_stmts: &mut Vec<TokenStream>,
+    push_stmts: &mut Vec<TokenStream>,
+    assemble_fields: &mut Vec<TokenStream>,
+) {
+    let start_name = format_ident!("f{}_start", i);
+    let count_name = format_ident!("f{}_count", i);
+    let visit_task = format_ident!("Visit{}", field.category);
+
+    match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+        CollectionType::HashBag | CollectionType::HashMap => {
+            let counts_name = format_ident!("f{}_counts", i);
+            alloc_stmts.push(quote! {
+                let #start_name = results.len();
+                let mut #counts_name: Vec<usize> = Vec::new();
+                for (_elem, count) in #name.iter() {
+                    results.push(None);
+                    #counts_name.push(count);
+                }
+                let #count_name = results.len() - #start_name;
+            });
+            push_stmts.push(quote! {
+                for (elem_idx, (elem, _count)) in #name.iter().enumerate() {
+                    stack.push(NormTask::#visit_task {
+                        src: elem as *const _,
+                        slot: #start_name + elem_idx,
+                    });
+                }
+            });
+            assemble_fields.push(quote! { #start_name, #count_name, #counts_name });
+        }
+        CollectionType::Vec => {
+            alloc_stmts.push(quote! {
+                let #start_name = results.len();
+                for _ in 0..#name.len() {
+                    results.push(None);
+                }
+                let #count_name = #name.len();
+            });
+            push_stmts.push(quote! {
+                for (idx, elem) in #name.iter().enumerate().rev() {
+                    stack.push(NormTask::#visit_task {
+                        src: elem as *const _,
+                        slot: #start_name + idx,
+                    });
+                }
+            });
+            assemble_fields.push(quote! { #start_name, #count_name });
+        }
+        CollectionType::HashSet => {
+            alloc_stmts.push(quote! {
+                let #start_name = results.len();
+                for _ in 0..#name.len() {
+                    results.push(None);
+                }
+                let #count_name = #name.len();
+            });
+            push_stmts.push(quote! {
+                for (elem_idx, elem) in #name.iter().enumerate() {
+                    stack.push(NormTask::#visit_task {
+                        src: elem as *const _,
+                        slot: #start_name + elem_idx,
+                    });
+                }
+            });
+            assemble_fields.push(quote! { #start_name, #count_name });
+        }
+    }
+}
+
+/// Collection variant Visit arm: push Visit for each element, Assemble
+/// reconstructs via `insert_into_<label>` helper (flattening).
+fn generate_collection_visit_arm(
+    cat: &Ident,
+    label: &Ident,
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+    _language: &LanguageDef,
+) -> TokenStream {
+    let assemble_variant = format_ident!("AssembleColl_{}_{}", cat, label);
+    let visit_task = format_ident!("Visit{}", element_cat);
+
+    match coll_type {
+        CollectionType::HashBag | CollectionType::HashMap => {
+            quote! {
+                #cat::#label(ref coll) => {
+                    let elements_start = results.len();
+                    let mut counts_vec: Vec<usize> = Vec::new();
+                    for (_elem, count) in coll.iter() {
+                        results.push(None);
+                        counts_vec.push(count);
+                    }
+                    let elements_count = results.len() - elements_start;
+                    stack.push(NormTask::#assemble_variant {
+                        slot,
+                        elements_start,
+                        elements_count,
+                        counts_vec,
+                    });
+                    for (elem_idx, (elem, _count)) in coll.iter().enumerate() {
+                        stack.push(NormTask::#visit_task {
+                            src: elem as *const _,
+                            slot: elements_start + elem_idx,
+                        });
+                    }
+                }
+            }
+        }
+        CollectionType::Vec => {
+            quote! {
+                #cat::#label(ref coll) => {
+                    let elements_start = results.len();
+                    for _ in 0..coll.len() {
+                        results.push(None);
+                    }
+                    let elements_count = coll.len();
+                    stack.push(NormTask::#assemble_variant {
+                        slot,
+                        elements_start,
+                        elements_count,
+                    });
+                    for (idx, elem) in coll.iter().enumerate().rev() {
+                        stack.push(NormTask::#visit_task {
+                            src: elem as *const _,
+                            slot: elements_start + idx,
+                        });
+                    }
+                }
+            }
+        }
+        CollectionType::HashSet => {
+            quote! {
+                #cat::#label(ref coll) => {
+                    let elements_start = results.len();
+                    for _ in 0..coll.len() {
+                        results.push(None);
+                    }
+                    let elements_count = coll.len();
+                    stack.push(NormTask::#assemble_variant {
+                        slot,
+                        elements_start,
+                        elements_count,
+                    });
+                    for (elem_idx, elem) in coll.iter().enumerate() {
+                        stack.push(NormTask::#visit_task {
+                            src: elem as *const _,
+                            slot: elements_start + elem_idx,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Binder Visit arm: push AssembleBind + Visits for pre-fields + body.
+fn generate_binder_visit_arm(
+    cat: &Ident,
+    label: &Ident,
+    pre_scope_fields: &[FieldInfo],
+    body_cat: &Ident,
+    language: &LanguageDef,
+) -> TokenStream {
+    let assemble_variant = format_ident!("AssembleBind_{}_{}", cat, label);
+    let body_visit = format_ident!("Visit{}", body_cat);
+
+    let total_fields = pre_scope_fields.len() + 1;
+    let field_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("f{}", i)).collect();
+    let scope_name = &field_names[total_fields - 1];
+
+    let (alloc_pre, push_pre, assemble_pre) =
+        emit_pre_field_visit_alloc(cat, pre_scope_fields, &field_names, language);
+
+    quote! {
+        #cat::#label(#(ref #field_names),*) => {
+            let binder = &#scope_name.inner().unsafe_pattern;
+            let body = &#scope_name.inner().unsafe_body;
+
+            #(#alloc_pre)*
+
+            let body_slot = results.len();
+            results.push(None);
+            let cloned_pattern = binder.clone();
+
+            stack.push(NormTask::#assemble_variant {
+                slot,
+                #(#assemble_pre,)*
+                cloned_pattern,
+                body_slot,
+            });
+
+            stack.push(NormTask::#body_visit {
+                src: &**body as *const _,
+                slot: body_slot,
+            });
+            #(#push_pre)*
+        }
+    }
+}
+
+/// MultiBinder Visit arm: same shape as Binder but cloned_pattern is a Vec.
+fn generate_multi_binder_visit_arm(
+    cat: &Ident,
+    label: &Ident,
+    pre_scope_fields: &[FieldInfo],
+    body_cat: &Ident,
+    language: &LanguageDef,
+) -> TokenStream {
+    let assemble_variant = format_ident!("AssembleMBind_{}_{}", cat, label);
+    let body_visit = format_ident!("Visit{}", body_cat);
+
+    let total_fields = pre_scope_fields.len() + 1;
+    let field_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("f{}", i)).collect();
+    let scope_name = &field_names[total_fields - 1];
+
+    let (alloc_pre, push_pre, assemble_pre) =
+        emit_pre_field_visit_alloc(cat, pre_scope_fields, &field_names, language);
+
+    quote! {
+        #cat::#label(#(ref #field_names),*) => {
+            let binders = &#scope_name.inner().unsafe_pattern;
+            let body = &#scope_name.inner().unsafe_body;
+
+            #(#alloc_pre)*
+
+            let body_slot = results.len();
+            results.push(None);
+            let cloned_pattern = binders.clone();
+
+            stack.push(NormTask::#assemble_variant {
+                slot,
+                #(#assemble_pre,)*
+                cloned_pattern,
+                body_slot,
+            });
+
+            stack.push(NormTask::#body_visit {
+                src: &**body as *const _,
+                slot: body_slot,
+            });
+            #(#push_pre)*
+        }
+    }
+}
+
+/// Emit alloc/push/assemble for Binder pre-scope fields (pf{i}_* prefix).
+fn emit_pre_field_visit_alloc(
+    cat: &Ident,
+    pre_scope_fields: &[FieldInfo],
+    field_names: &[Ident],
+    language: &LanguageDef,
+) -> (Vec<TokenStream>, Vec<TokenStream>, Vec<TokenStream>) {
+    let mut alloc_stmts: Vec<TokenStream> = Vec::new();
+    let mut push_stmts: Vec<TokenStream> = Vec::new();
+    let mut assemble_refs: Vec<TokenStream> = Vec::new();
+
+    for (i, field) in pre_scope_fields.iter().enumerate() {
+        let name = &field_names[i];
+
+        if field.is_predicate {
+            let pred_name = format_ident!("pf{}_pred", i);
+            alloc_stmts.push(quote! {
+                let #pred_name = #name.clone();
+            });
+            assemble_refs.push(quote! { #pred_name });
+            continue;
+        }
+
+        if field.is_collection {
+            let start_name = format_ident!("pf{}_start", i);
+            let count_name = format_ident!("pf{}_count", i);
+            let visit_task = format_ident!("Visit{}", field.category);
+            match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+                CollectionType::HashBag | CollectionType::HashMap => {
+                    let counts_name = format_ident!("pf{}_counts", i);
+                    alloc_stmts.push(quote! {
+                        let #start_name = results.len();
+                        let mut #counts_name: Vec<usize> = Vec::new();
+                        for (_elem, count) in #name.iter() {
+                            results.push(None);
+                            #counts_name.push(count);
+                        }
+                        let #count_name = results.len() - #start_name;
+                    });
+                    push_stmts.push(quote! {
+                        for (elem_idx, (elem, _count)) in #name.iter().enumerate() {
+                            stack.push(NormTask::#visit_task {
+                                src: elem as *const _,
+                                slot: #start_name + elem_idx,
+                            });
+                        }
+                    });
+                    assemble_refs.push(quote! { #start_name, #count_name, #counts_name });
+                }
+                CollectionType::Vec => {
+                    alloc_stmts.push(quote! {
+                        let #start_name = results.len();
+                        for _ in 0..#name.len() {
+                            results.push(None);
+                        }
+                        let #count_name = #name.len();
+                    });
+                    push_stmts.push(quote! {
+                        for (idx, elem) in #name.iter().enumerate().rev() {
+                            stack.push(NormTask::#visit_task {
+                                src: elem as *const _,
+                                slot: #start_name + idx,
+                            });
+                        }
+                    });
+                    assemble_refs.push(quote! { #start_name, #count_name });
+                }
+                CollectionType::HashSet => {
+                    alloc_stmts.push(quote! {
+                        let #start_name = results.len();
+                        for _ in 0..#name.len() {
+                            results.push(None);
+                        }
+                        let #count_name = #name.len();
+                    });
+                    push_stmts.push(quote! {
+                        for (elem_idx, elem) in #name.iter().enumerate() {
+                            stack.push(NormTask::#visit_task {
+                                src: elem as *const _,
+                                slot: #start_name + elem_idx,
+                            });
+                        }
+                    });
+                    assemble_refs.push(quote! { #start_name, #count_name });
+                }
+            }
+            continue;
+        }
+
+        let field_cat = &field.category;
+        let visit_task = format_ident!("Visit{}", field_cat);
+        let slot_name = format_ident!("pf{}_slot", i);
+
+        alloc_stmts.push(quote! {
+            let #slot_name = results.len();
+            results.push(None);
+        });
+        push_stmts.push(quote! {
+            stack.push(NormTask::#visit_task {
+                src: &**#name as *const _,
+                slot: #slot_name,
+            });
+        });
+        assemble_refs.push(quote! { #slot_name });
+    }
+
+    (alloc_stmts, push_stmts, assemble_refs)
+}
+
+/// β-reduction Visit arm: push AssembleBetaApply + Visit<Cat>(lam) + Visit<Dom>(arg).
+fn generate_beta_apply_visit_arm(cat: &Ident, label: &Ident, dom_str: &str) -> TokenStream {
+    let dom_ident = format_ident!("{}", dom_str);
+    let assemble_variant = format_ident!("AssembleBetaApply_{}_{}", cat, dom_ident);
+    let lam_visit = format_ident!("Visit{}", cat); // Apply<Dom>(Box<Cat>, Box<Dom>) — lam is Cat
+
+    // For arg: if Dom is non-native, push Visit<Dom>. If Dom is native,
+    // clone eagerly. We use the SAME dispatch as regular-field handling.
+    // But we need access to the `language` to check — defer to a shared
+    // emission helper that knows both cases. Here, we detect native vs
+    // non-native at emission time via the category list... we DON'T have
+    // the language here. Instead, emit code that handles both uniformly
+    // via Visit<Dom> and rely on the Dom's category being present in the
+    // PDA if non-native (if native, the Visit<Dom> doesn't exist — which
+    // would be a compile error). For Calculator, Dom is typically Int/
+    // Bool (native), which means we need NATIVE arg handling inline.
+    //
+    // Since we don't have `language` here, the caller must detect Dom's
+    // native-ness. Let's thread it in.
+    //
+    // TEMPORARY: assume Dom is non-native (Visit<Dom> exists). This works
+    // for grammars where HOL domains are non-native (e.g. lambda calculi).
+    // For Calculator with Int-domain HOL, we need a different path.
+    let arg_visit = format_ident!("Visit{}", dom_ident);
+
+    quote! {
+        #cat::#label(lam_box, arg_box) => {
+            let lam_slot = results.len();
+            results.push(None);
+            let arg_slot = results.len();
+            results.push(None);
+
+            stack.push(NormTask::#assemble_variant { slot, lam_slot, arg_slot });
+            // Push in reverse order so lam is processed first (LIFO).
+            stack.push(NormTask::#arg_visit {
+                src: &**arg_box as *const _,
+                slot: arg_slot,
+            });
+            stack.push(NormTask::#lam_visit {
+                src: &**lam_box as *const _,
+                slot: lam_slot,
+            });
+        }
+    }
+}
+
+/// β-reduction (multi-binder) Visit arm.
+fn generate_beta_mapply_visit_arm(cat: &Ident, label: &Ident, dom_str: &str) -> TokenStream {
+    let dom_ident = format_ident!("{}", dom_str);
+    let assemble_variant = format_ident!("AssembleBetaMApply_{}_{}", cat, dom_ident);
+    let lam_visit = format_ident!("Visit{}", cat);
+    let arg_visit = format_ident!("Visit{}", dom_ident);
+
+    quote! {
+        #cat::#label(lam_box, args) => {
+            let lam_slot = results.len();
+            results.push(None);
+            let args_start = results.len();
+            for _ in 0..args.len() {
+                results.push(None);
+            }
+            let args_count = args.len();
+
+            stack.push(NormTask::#assemble_variant {
+                slot,
+                lam_slot,
+                args_start,
+                args_count,
+            });
+            // Push args in reverse order (LIFO).
+            for (idx, arg) in args.iter().enumerate().rev() {
+                stack.push(NormTask::#arg_visit {
+                    src: arg as *const _,
+                    slot: args_start + idx,
+                });
+            }
+            stack.push(NormTask::#lam_visit {
+                src: &**lam_box as *const _,
+                slot: lam_slot,
+            });
+        }
+    }
+}
+
+/// Cancellation pair outer Visit arm.
+fn generate_cancel_visit_arm(cat: &Ident, label: &Ident, pair: &CancellationPair) -> TokenStream {
+    let inner_cat = &pair.inner_category;
+    let assemble_variant = format_ident!("AssembleCancel_{}_{}_{}", cat, inner_cat, label);
+    let inner_visit = format_ident!("Visit{}", inner_cat);
+
+    quote! {
+        #cat::#label(f0) => {
+            let inner_slot = results.len();
+            results.push(None);
+
+            stack.push(NormTask::#assemble_variant { slot, inner_slot });
+            stack.push(NormTask::#inner_visit {
+                src: &**f0 as *const _,
+                slot: inner_slot,
+            });
+        }
+    }
+}
+
+// =============================================================================
+// Assemble Arms
+// =============================================================================
+
+/// Dispatch per-variant Assemble arm. Leaf variants have no Assemble arm.
+fn generate_assemble_arm(
+    cat: &Ident,
+    variant: &VariantKind,
+    hol_pairs: &HashSet<(String, String)>,
+    cancel_set: &HashMap<(String, String), &CancellationPair>,
+    cat_str: &str,
+    is_native: bool,
+) -> Option<TokenStream> {
+    match variant {
+        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => {
+            None
+        }
+
+        VariantKind::Regular { label, fields } => {
+            let label_str = label.to_string();
+
+            // HOL Apply<Dom>
+            if let Some(dom_str) = strip_prefix(&label_str, "Apply") {
+                if hol_pairs.contains(&(cat_str.to_string(), dom_str.to_string())) {
+                    return Some(generate_beta_apply_assemble_arm(cat, dom_str));
+                }
+            }
+            if let Some(dom_str) = strip_prefix(&label_str, "MApply") {
+                if hol_pairs.contains(&(cat_str.to_string(), dom_str.to_string())) {
+                    return Some(generate_beta_mapply_assemble_arm(cat, dom_str));
+                }
+            }
+
+            // Cancellation
+            if let Some(pair) = cancel_set.get(&(cat_str.to_string(), label_str.clone())) {
+                return Some(generate_cancel_assemble_arm(cat, label, pair));
+            }
+
+            Some(generate_regular_assemble_arm(cat, label, fields, is_native))
+        }
+
+        VariantKind::Collection { label, element_cat, coll_type } => {
+            Some(generate_collection_assemble_arm(cat, label, element_cat, coll_type))
+        }
+
+        VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
+            Some(generate_binder_assemble_arm(cat, label, pre_scope_fields, body_cat))
+        }
+
+        VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
+            Some(generate_multi_binder_assemble_arm(cat, label, pre_scope_fields, body_cat))
+        }
+    }
+}
+
+/// Regular Assemble arm: extract fields from slots, reconstruct.
 ///
-/// For `CancellationPair { outer: PDrop, outer_cat: Proc, inner: NQuote, inner_cat: Name }`:
-/// ```text
-/// Proc::PDrop(f0) => {
-///     let inner_normalized = f0.as_ref().normalize();
-///     match inner_normalized {
-///         Name::NQuote(p) => p.as_ref().normalize(),
-///         other => Proc::PDrop(Box::new(other)),
-///     }
-/// }
-/// ```
+/// For NATIVE categories, additionally apply `try_fold_to_literal()` (which
+/// takes `&self` and returns `Option<Self>`) for constant folding — e.g.
+/// `Int::Add(NumLit(2), NumLit(3))` → `Int::NumLit(5)`. Matches pre-PDA
+/// native normalize behavior.
 ///
-/// The arm normalizes the inner field first, then checks if the result matches
-/// the inner constructor. If so, it collapses the composition to the identity
-/// (returning the innermost value, re-normalized as a safety net). Otherwise,
-/// it reconstructs the outer constructor with the normalized field.
-fn generate_cancellation_pair_arm(pair: &CancellationPair) -> TokenStream {
-    let outer_cat = &pair.outer_category;
-    let outer_ctor = &pair.outer_constructor;
+/// **Frame-size fix (PDA stack-safety, second tier):** wraps the body in a
+/// local `#[inline(never)]` inner fn so per-variant locals (`field_N`,
+/// `Box::new(...)`, `reconstructed`, `folded`) live in the helper's frame
+/// instead of `normalize_iterative`'s. See
+/// `iterative_clone.rs::generate_regular_assemble_arm` for the same idiom.
+fn generate_regular_assemble_arm(
+    cat: &Ident,
+    label: &Ident,
+    fields: &[FieldInfo],
+    is_native: bool,
+) -> TokenStream {
+    let assemble_variant = format_ident!("AssembleReg_{}_{}", cat, label);
+    let wrap = format_ident!("Wrap{}", cat);
+
+    // Build flat (pat-name, helper-arg-decl, helper-arg-name) lists.
+    let mut pat_flat: Vec<TokenStream> = Vec::new();
+    let mut decl_flat: Vec<TokenStream> = Vec::new();
+    let mut call_flat: Vec<TokenStream> = Vec::new();
+    for (i, field) in fields.iter().enumerate() {
+        if field.is_collection {
+            let start_name = format_ident!("f{}_start", i);
+            let count_name = format_ident!("f{}_count", i);
+            pat_flat.push(quote! { #start_name });
+            decl_flat.push(quote! { #start_name: usize });
+            call_flat.push(quote! { #start_name });
+            pat_flat.push(quote! { #count_name });
+            decl_flat.push(quote! { #count_name: usize });
+            call_flat.push(quote! { #count_name });
+            if matches!(
+                field.coll_type.as_ref().unwrap_or(&CollectionType::Vec),
+                CollectionType::HashBag | CollectionType::HashMap
+            ) {
+                let counts_name = format_ident!("f{}_counts", i);
+                pat_flat.push(quote! { #counts_name });
+                decl_flat.push(quote! { #counts_name: Vec<usize> });
+                call_flat.push(quote! { #counts_name });
+            }
+        } else {
+            let slot_name = format_ident!("f{}_slot", i);
+            pat_flat.push(quote! { #slot_name });
+            decl_flat.push(quote! { #slot_name: usize });
+            call_flat.push(quote! { #slot_name });
+        }
+    }
+
+    let field_extracts: Vec<TokenStream> = fields
+        .iter()
+        .enumerate()
+        .map(|(i, field)| emit_reg_field_extract(i, field))
+        .collect();
+
+    let construct_fields: Vec<TokenStream> = fields
+        .iter()
+        .enumerate()
+        .map(|(i, field)| emit_reg_field_construct(i, field))
+        .collect();
+
+    let finalize = if is_native {
+        quote! {
+            let folded = reconstructed.try_fold_to_literal().unwrap_or(reconstructed);
+            results[slot] = Some(AnyNormalizedTerm::#wrap(folded));
+        }
+    } else {
+        quote! {
+            results[slot] = Some(AnyNormalizedTerm::#wrap(reconstructed));
+        }
+    };
+
+    quote! {
+        NormTask::#assemble_variant { slot, #(#pat_flat),* } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble(
+                results: &mut Vec<Option<AnyNormalizedTerm>>,
+                slot: usize,
+                #(#decl_flat),*
+            ) {
+                #(#field_extracts)*
+                let reconstructed = #cat::#label(#(#construct_fields),*);
+                #finalize
+            }
+            assemble(results, slot, #(#call_flat),*);
+        }
+    }
+}
+
+fn emit_reg_slot_pattern(i: usize, field: &FieldInfo) -> TokenStream {
+    if field.is_predicate {
+        let pred_name = format_ident!("f{}_pred", i);
+        return quote! { #pred_name };
+    }
+    if field.is_collection {
+        let start_name = format_ident!("f{}_start", i);
+        let count_name = format_ident!("f{}_count", i);
+        match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+            CollectionType::HashBag | CollectionType::HashMap => {
+                let counts_name = format_ident!("f{}_counts", i);
+                quote! { #start_name, #count_name, #counts_name }
+            }
+            _ => quote! { #start_name, #count_name },
+        }
+    } else {
+        let slot_name = format_ident!("f{}_slot", i);
+        quote! { #slot_name }
+    }
+}
+
+fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
+    if field.is_predicate {
+        // Already in scope as f{i}_pred
+        return quote! {};
+    }
+    let result_ident = format_ident!("field_{}", i);
+    let wrap = format_ident!("Wrap{}", field.category);
+
+    if field.is_collection {
+        let start_name = format_ident!("f{}_start", i);
+        let count_name = format_ident!("f{}_count", i);
+        return match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+            CollectionType::HashBag | CollectionType::HashMap => {
+                let counts_name = format_ident!("f{}_counts", i);
+                let helper_name = format_ident!("insert_into_{}", "placeholder");
+                let _ = helper_name;
+                // For HashBag collections inside Regular variants (e.g.
+                // a Proc with a HashBag<Int> field), the elements are
+                // single-category. Reassemble into a bag. We DON'T use
+                // insert_into (that's only for the top-level Collection
+                // variants that flatten same-label bags).
+                quote! {
+                    let mut #result_ident = mettail_runtime::HashBag::new();
+                    for (idx, count) in #counts_name.iter().enumerate() {
+                        match results[#start_name + idx].take()
+                            .expect("normalize: missing collection element")
+                        {
+                            AnyNormalizedTerm::#wrap(v) => #result_ident.insert_n(v, *count),
+                            _ => unreachable!("normalize: wrong category in collection slot"),
+                        }
+                    }
+                }
+            }
+            CollectionType::Vec => {
+                quote! {
+                    let mut #result_ident = Vec::with_capacity(#count_name);
+                    for idx in 0..#count_name {
+                        match results[#start_name + idx].take()
+                            .expect("normalize: missing vec element")
+                        {
+                            AnyNormalizedTerm::#wrap(v) => #result_ident.push(v),
+                            _ => unreachable!("normalize: wrong category in vec slot"),
+                        }
+                    }
+                }
+            }
+            CollectionType::HashSet => {
+                quote! {
+                    let mut #result_ident = std::collections::HashSet::with_capacity(#count_name);
+                    for idx in 0..#count_name {
+                        match results[#start_name + idx].take()
+                            .expect("normalize: missing hashset element")
+                        {
+                            AnyNormalizedTerm::#wrap(v) => { #result_ident.insert(v); },
+                            _ => unreachable!("normalize: wrong category in hashset slot"),
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    let slot_name = format_ident!("f{}_slot", i);
+    // For non-collection scalar fields, we pushed None for native cross-cat
+    // (just cloned); for others we pushed a Visit task that fills the slot.
+    // Distinguish at extraction: if results[slot] is None, the Visit task
+    // wasn't pushed (native cross-cat case — use the cloned value, but we
+    // didn't store it anywhere!). Let's handle the non-native case
+    // uniformly: extract from the slot.
+    quote! {
+        let #result_ident = match results[#slot_name].take()
+            .expect("normalize: missing result in slot")
+        {
+            AnyNormalizedTerm::#wrap(v) => v,
+            _ => unreachable!("normalize: wrong category in slot"),
+        };
+    }
+}
+
+fn emit_reg_field_construct(i: usize, field: &FieldInfo) -> TokenStream {
+    if field.is_predicate {
+        let pred_name = format_ident!("f{}_pred", i);
+        return quote! { #pred_name };
+    }
+    let result_ident = format_ident!("field_{}", i);
+    if field.is_collection {
+        quote! { #result_ident }
+    } else {
+        quote! { Box::new(#result_ident) }
+    }
+}
+
+/// Collection Assemble arm: reconstruct via insert_into_<label> helper.
+fn generate_collection_assemble_arm(
+    cat: &Ident,
+    label: &Ident,
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+) -> TokenStream {
+    let assemble_variant = format_ident!("AssembleColl_{}_{}", cat, label);
+    let wrap = format_ident!("Wrap{}", cat);
+    let elem_wrap = format_ident!("Wrap{}", element_cat);
+
+    // See `iterative_clone.rs::generate_collection_assemble_arm` for the
+    // per-arm `#[inline(never)]` peel rationale.
+    match coll_type {
+        CollectionType::HashBag | CollectionType::HashMap => {
+            let helper_name = format_ident!("insert_into_{}", label.to_string().to_lowercase());
+            quote! {
+                NormTask::#assemble_variant { slot, elements_start, elements_count, counts_vec } => {
+                    #[inline(never)]
+                    #[allow(dead_code, unused_variables, non_snake_case)]
+                    fn assemble(
+                        results: &mut Vec<Option<AnyNormalizedTerm>>,
+                        slot: usize,
+                        elements_start: usize,
+                        elements_count: usize,
+                        counts_vec: Vec<usize>,
+                    ) {
+                        let mut new_bag = mettail_runtime::HashBag::new();
+                        for (idx, count) in counts_vec.iter().enumerate() {
+                            match results[elements_start + idx].take()
+                                .expect("normalize: missing hashbag element")
+                            {
+                                AnyNormalizedTerm::#elem_wrap(v) => {
+                                    for _ in 0..*count {
+                                        #cat::#helper_name(&mut new_bag, v.clone());
+                                    }
+                                }
+                                _ => unreachable!("normalize: wrong category in hashbag slot"),
+                            }
+                        }
+                        results[slot] = Some(AnyNormalizedTerm::#wrap(#cat::#label(new_bag)));
+                    }
+                    assemble(results, slot, elements_start, elements_count, counts_vec);
+                }
+            }
+        }
+        CollectionType::Vec => {
+            quote! {
+                NormTask::#assemble_variant { slot, elements_start, elements_count } => {
+                    #[inline(never)]
+                    #[allow(dead_code, unused_variables, non_snake_case)]
+                    fn assemble(
+                        results: &mut Vec<Option<AnyNormalizedTerm>>,
+                        slot: usize,
+                        elements_start: usize,
+                        elements_count: usize,
+                    ) {
+                        let mut vec = Vec::with_capacity(elements_count);
+                        for idx in 0..elements_count {
+                            match results[elements_start + idx].take()
+                                .expect("normalize: missing vec element")
+                            {
+                                AnyNormalizedTerm::#elem_wrap(v) => vec.push(v),
+                                _ => unreachable!("normalize: wrong category in vec slot"),
+                            }
+                        }
+                        results[slot] = Some(AnyNormalizedTerm::#wrap(#cat::#label(vec)));
+                    }
+                    assemble(results, slot, elements_start, elements_count);
+                }
+            }
+        }
+        CollectionType::HashSet => {
+            quote! {
+                NormTask::#assemble_variant { slot, elements_start, elements_count } => {
+                    #[inline(never)]
+                    #[allow(dead_code, unused_variables, non_snake_case)]
+                    fn assemble(
+                        results: &mut Vec<Option<AnyNormalizedTerm>>,
+                        slot: usize,
+                        elements_start: usize,
+                        elements_count: usize,
+                    ) {
+                        let mut set = std::collections::HashSet::with_capacity(elements_count);
+                        for idx in 0..elements_count {
+                            match results[elements_start + idx].take()
+                                .expect("normalize: missing hashset element")
+                            {
+                                AnyNormalizedTerm::#elem_wrap(v) => { set.insert(v); },
+                                _ => unreachable!("normalize: wrong category in hashset slot"),
+                            }
+                        }
+                        results[slot] = Some(AnyNormalizedTerm::#wrap(#cat::#label(set)));
+                    }
+                    assemble(results, slot, elements_start, elements_count);
+                }
+            }
+        }
+    }
+}
+
+/// Binder Assemble arm.
+fn generate_binder_assemble_arm(
+    cat: &Ident,
+    label: &Ident,
+    pre_scope_fields: &[FieldInfo],
+    body_cat: &Ident,
+) -> TokenStream {
+    let assemble_variant = format_ident!("AssembleBind_{}_{}", cat, label);
+    let wrap = format_ident!("Wrap{}", cat);
+    let body_wrap = format_ident!("Wrap{}", body_cat);
+
+    let slot_pattern = emit_pre_field_slot_pattern(pre_scope_fields);
+    let pre_extracts = emit_pre_field_extracts(pre_scope_fields);
+    let pre_construct = emit_pre_field_constructs(pre_scope_fields);
+
+    quote! {
+        NormTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
+            #(#pre_extracts)*
+            let body = match results[body_slot].take()
+                .expect("normalize: missing binder body")
+            {
+                AnyNormalizedTerm::#body_wrap(v) => v,
+                _ => unreachable!("normalize: wrong category in binder body"),
+            };
+            let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, Box::new(body));
+            results[slot] = Some(AnyNormalizedTerm::#wrap(
+                #cat::#label(#(#pre_construct)* new_scope)
+            ));
+        }
+    }
+}
+
+fn generate_multi_binder_assemble_arm(
+    cat: &Ident,
+    label: &Ident,
+    pre_scope_fields: &[FieldInfo],
+    body_cat: &Ident,
+) -> TokenStream {
+    let assemble_variant = format_ident!("AssembleMBind_{}_{}", cat, label);
+    let wrap = format_ident!("Wrap{}", cat);
+    let body_wrap = format_ident!("Wrap{}", body_cat);
+
+    let slot_pattern = emit_pre_field_slot_pattern(pre_scope_fields);
+    let pre_extracts = emit_pre_field_extracts(pre_scope_fields);
+    let pre_construct = emit_pre_field_constructs(pre_scope_fields);
+
+    quote! {
+        NormTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
+            #(#pre_extracts)*
+            let body = match results[body_slot].take()
+                .expect("normalize: missing multi-binder body")
+            {
+                AnyNormalizedTerm::#body_wrap(v) => v,
+                _ => unreachable!("normalize: wrong category in multi-binder body"),
+            };
+            let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, Box::new(body));
+            results[slot] = Some(AnyNormalizedTerm::#wrap(
+                #cat::#label(#(#pre_construct)* new_scope)
+            ));
+        }
+    }
+}
+
+fn emit_pre_field_slot_pattern(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> {
+    pre_scope_fields
+        .iter()
+        .enumerate()
+        .map(|(i, field)| {
+            if field.is_predicate {
+                let pred_name = format_ident!("pf{}_pred", i);
+                return quote! { #pred_name };
+            }
+            if field.is_collection {
+                let start_name = format_ident!("pf{}_start", i);
+                let count_name = format_ident!("pf{}_count", i);
+                match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+                    CollectionType::HashBag | CollectionType::HashMap => {
+                        let counts_name = format_ident!("pf{}_counts", i);
+                        quote! { #start_name, #count_name, #counts_name }
+                    }
+                    _ => quote! { #start_name, #count_name },
+                }
+            } else {
+                let slot_name = format_ident!("pf{}_slot", i);
+                quote! { #slot_name }
+            }
+        })
+        .collect()
+}
+
+fn emit_pre_field_extracts(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> {
+    pre_scope_fields
+        .iter()
+        .enumerate()
+        .map(|(i, field)| {
+            if field.is_predicate {
+                return quote! {};
+            }
+            let wrap = format_ident!("Wrap{}", field.category);
+            let result_ident = format_ident!("pre_field_{}", i);
+
+            if field.is_collection {
+                let start_name = format_ident!("pf{}_start", i);
+                let count_name = format_ident!("pf{}_count", i);
+                match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+                    CollectionType::HashBag | CollectionType::HashMap => {
+                        let counts_name = format_ident!("pf{}_counts", i);
+                        quote! {
+                            let mut #result_ident = mettail_runtime::HashBag::new();
+                            for (idx, count) in #counts_name.iter().enumerate() {
+                                match results[#start_name + idx].take()
+                                    .expect("normalize: missing pre-scope collection element")
+                                {
+                                    AnyNormalizedTerm::#wrap(v) => #result_ident.insert_n(v, *count),
+                                    _ => unreachable!("normalize: wrong category in pre-scope collection slot"),
+                                }
+                            }
+                        }
+                    }
+                    CollectionType::Vec => {
+                        quote! {
+                            let mut #result_ident = Vec::with_capacity(#count_name);
+                            for idx in 0..#count_name {
+                                match results[#start_name + idx].take()
+                                    .expect("normalize: missing pre-scope vec element")
+                                {
+                                    AnyNormalizedTerm::#wrap(v) => #result_ident.push(v),
+                                    _ => unreachable!("normalize: wrong category in pre-scope vec slot"),
+                                }
+                            }
+                        }
+                    }
+                    CollectionType::HashSet => {
+                        quote! {
+                            let mut #result_ident = std::collections::HashSet::with_capacity(#count_name);
+                            for idx in 0..#count_name {
+                                match results[#start_name + idx].take()
+                                    .expect("normalize: missing pre-scope hashset element")
+                                {
+                                    AnyNormalizedTerm::#wrap(v) => { #result_ident.insert(v); },
+                                    _ => unreachable!("normalize: wrong category in pre-scope hashset slot"),
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                let slot_name = format_ident!("pf{}_slot", i);
+                quote! {
+                    let #result_ident = match results[#slot_name].take()
+                        .expect("normalize: missing pre-scope result")
+                    {
+                        AnyNormalizedTerm::#wrap(v) => v,
+                        _ => unreachable!("normalize: wrong category in pre-scope slot"),
+                    };
+                }
+            }
+        })
+        .collect()
+}
+
+fn emit_pre_field_constructs(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> {
+    pre_scope_fields
+        .iter()
+        .enumerate()
+        .map(|(i, field)| {
+            if field.is_predicate {
+                let pred_name = format_ident!("pf{}_pred", i);
+                return quote! { #pred_name, };
+            }
+            let result_ident = format_ident!("pre_field_{}", i);
+            if field.is_collection {
+                quote! { #result_ident, }
+            } else {
+                quote! { Box::new(#result_ident), }
+            }
+        })
+        .collect()
+}
+
+/// β-reduction Assemble arm.
+///
+/// 1. Take lam and arg from slots.
+/// 2. If lam matches `Cat::Lam<Dom>(scope)`:
+///    a. Unbind to get (binder, body).
+///    b. Call `body.substitute_<dom>(&binder.0, &arg)` via the subst PDA.
+///    c. Box the substituted Cat into `sources`, push `Visit<Cat>` to
+///       renormalize — iterative, not recursive.
+/// 3. Else: reconstruct `Cat::Apply<Dom>(Box::new(lam), Box::new(arg))`.
+fn generate_beta_apply_assemble_arm(cat: &Ident, dom_str: &str) -> TokenStream {
+    let dom_ident = format_ident!("{}", dom_str);
+    let assemble_variant = format_ident!("AssembleBetaApply_{}_{}", cat, dom_ident);
+    let wrap_cat = format_ident!("Wrap{}", cat);
+    let wrap_dom = format_ident!("Wrap{}", dom_ident);
+    let lam_variant = format_ident!("Lam{}", dom_ident);
+    let apply_variant = format_ident!("Apply{}", dom_ident);
+    let subst_method = format_ident!("substitute_{}", dom_str.to_lowercase());
+    let visit_cat = format_ident!("Visit{}", cat);
+
+    quote! {
+        NormTask::#assemble_variant { slot, lam_slot, arg_slot } => {
+            let lam = match results[lam_slot].take()
+                .expect("normalize β: missing lam")
+            {
+                AnyNormalizedTerm::#wrap_cat(v) => v,
+                _ => unreachable!("normalize β: wrong category in lam slot"),
+            };
+            let arg = match results[arg_slot].take()
+                .expect("normalize β: missing arg")
+            {
+                AnyNormalizedTerm::#wrap_dom(v) => v,
+                _ => unreachable!("normalize β: wrong category in arg slot"),
+            };
+
+            // Ref-match to avoid moving out of `lam` (which impls Drop).
+            if let #cat::#lam_variant(scope) = &lam {
+                // β-reduce: clone scope, unbind, substitute, renormalize.
+                let (binder, body) = scope.clone().unbind();
+                let substituted = (*body).#subst_method(&binder.0, &arg);
+                sources.push(Box::new(AnyNormalizedTerm::#wrap_cat(substituted)));
+                let src_ptr: *const #cat = {
+                    let last_box = sources.last().expect("just pushed");
+                    match &**last_box {
+                        AnyNormalizedTerm::#wrap_cat(v) => v as *const _,
+                        _ => unreachable!(),
+                    }
+                };
+                // Drop lam + arg explicitly so we don't hold them across stack push.
+                drop(lam);
+                drop(arg);
+                stack.push(NormTask::#visit_cat { src: src_ptr, slot });
+            } else {
+                // Not a β-redex — reconstruct Apply with normalized subterms.
+                results[slot] = Some(AnyNormalizedTerm::#wrap_cat(
+                    #cat::#apply_variant(Box::new(lam), Box::new(arg))
+                ));
+            }
+        }
+    }
+}
+
+/// Multi-β Assemble arm.
+fn generate_beta_mapply_assemble_arm(cat: &Ident, dom_str: &str) -> TokenStream {
+    let dom_ident = format_ident!("{}", dom_str);
+    let assemble_variant = format_ident!("AssembleBetaMApply_{}_{}", cat, dom_ident);
+    let wrap_cat = format_ident!("Wrap{}", cat);
+    let wrap_dom = format_ident!("Wrap{}", dom_ident);
+    let mlam_variant = format_ident!("MLam{}", dom_ident);
+    let mapply_variant = format_ident!("MApply{}", dom_ident);
+    let multi_subst_method = format_ident!("multi_substitute_{}", dom_str.to_lowercase());
+    let visit_cat = format_ident!("Visit{}", cat);
+
+    quote! {
+        NormTask::#assemble_variant { slot, lam_slot, args_start, args_count } => {
+            let lam = match results[lam_slot].take()
+                .expect("normalize multi-β: missing lam")
+            {
+                AnyNormalizedTerm::#wrap_cat(v) => v,
+                _ => unreachable!("normalize multi-β: wrong category in lam slot"),
+            };
+            let mut args_vec: Vec<#dom_ident> = Vec::with_capacity(args_count);
+            for idx in 0..args_count {
+                match results[args_start + idx].take()
+                    .expect("normalize multi-β: missing arg")
+                {
+                    AnyNormalizedTerm::#wrap_dom(v) => args_vec.push(v),
+                    _ => unreachable!("normalize multi-β: wrong category in arg slot"),
+                }
+            }
+
+            if let #cat::#mlam_variant(scope) = &lam {
+                let (binders, body) = scope.clone().unbind();
+                let vars: Vec<_> = binders.iter().map(|b| &b.0).collect();
+                let substituted = (*body).#multi_subst_method(&vars, &args_vec);
+                sources.push(Box::new(AnyNormalizedTerm::#wrap_cat(substituted)));
+                let src_ptr: *const #cat = {
+                    let last_box = sources.last().expect("just pushed");
+                    match &**last_box {
+                        AnyNormalizedTerm::#wrap_cat(v) => v as *const _,
+                        _ => unreachable!(),
+                    }
+                };
+                drop(lam);
+                stack.push(NormTask::#visit_cat { src: src_ptr, slot });
+            } else {
+                results[slot] = Some(AnyNormalizedTerm::#wrap_cat(
+                    #cat::#mapply_variant(Box::new(lam), args_vec)
+                ));
+            }
+        }
+    }
+}
+
+/// Cancellation Assemble arm.
+fn generate_cancel_assemble_arm(
+    cat: &Ident,
+    label: &Ident,
+    pair: &CancellationPair,
+) -> TokenStream {
     let inner_cat = &pair.inner_category;
     let inner_ctor = &pair.inner_constructor;
+    let assemble_variant = format_ident!("AssembleCancel_{}_{}_{}", cat, inner_cat, label);
+    let wrap_cat = format_ident!("Wrap{}", cat);
+    let wrap_inner = format_ident!("Wrap{}", inner_cat);
+    let visit_cat = format_ident!("Visit{}", cat);
 
     quote! {
-        #outer_cat::#outer_ctor(f0) => {
-            let inner_normalized = f0.as_ref().normalize();
-            // Use ref-binding to avoid moving out of inner_normalized (which
-            // has impl Drop). We clone the inner body for the cancellation
-            // case and clone the whole value for the non-matching case.
-            match inner_normalized {
-                #inner_cat::#inner_ctor(ref p) => p.as_ref().normalize(),
-                ref other => #outer_cat::#outer_ctor(Box::new(other.clone())),
+        NormTask::#assemble_variant { slot, inner_slot } => {
+            let inner = match results[inner_slot].take()
+                .expect("normalize cancel: missing inner")
+            {
+                AnyNormalizedTerm::#wrap_inner(v) => v,
+                _ => unreachable!("normalize cancel: wrong category in inner slot"),
+            };
+
+            if let #inner_cat::#inner_ctor(p) = &inner {
+                // Peel: clone the inner-inner, reschedule for renormalize.
+                let peeled: #cat = (**p).clone();
+                sources.push(Box::new(AnyNormalizedTerm::#wrap_cat(peeled)));
+                let src_ptr: *const #cat = {
+                    let last_box = sources.last().expect("just pushed");
+                    match &**last_box {
+                        AnyNormalizedTerm::#wrap_cat(v) => v as *const _,
+                        _ => unreachable!(),
+                    }
+                };
+                drop(inner);
+                stack.push(NormTask::#visit_cat { src: src_ptr, slot });
+            } else {
+                results[slot] = Some(AnyNormalizedTerm::#wrap_cat(
+                    #cat::#label(Box::new(inner))
+                ));
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Per-category normalize wrappers
+// =============================================================================
+
+/// Emit `impl Cat { pub fn normalize(&self) -> Self { PDA wrapper } }` for a
+/// non-native category.
+fn generate_norm_wrapper(cat: &Ident) -> TokenStream {
+    let visit_variant = format_ident!("Visit{}", cat);
+    let wrap = format_ident!("Wrap{}", cat);
+
+    quote! {
+        impl #cat {
+            /// Iteratively normalize this term. Uses a shared PDA driver
+            /// across all non-native categories to handle cross-category
+            /// traversal, β-reduction, cancellation pairs, and collection
+            /// flattening without any recursion or mutual recursion.
+            pub fn normalize(&self) -> Self {
+                let result: Self = NORM_TASK_POOL.with(|t| {
+                    NORM_RESULT_POOL.with(|r| {
+                        NORM_SOURCE_POOL.with(|s| {
+                            let mut stack = t.take();
+                            let mut results = r.take();
+                            let mut sources = s.take();
+                            stack.clear();
+                            results.clear();
+                            sources.clear();
+
+                            results.push(None);
+                            stack.push(NormTask::#visit_variant {
+                                src: self as *const _,
+                                slot: 0,
+                            });
+
+                            normalize_iterative(&mut stack, &mut results, &mut sources);
+
+                            let root = match results[0].take()
+                                .expect("normalize: root slot empty")
+                            {
+                                AnyNormalizedTerm::#wrap(v) => v,
+                                _ => unreachable!("normalize: wrong category in root slot"),
+                            };
+
+                            s.set(sources);
+                            r.set(results);
+                            t.set(stack);
+                            root
+                        })
+                    })
+                });
+                result
             }
         }
     }

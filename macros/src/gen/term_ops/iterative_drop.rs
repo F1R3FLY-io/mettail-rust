@@ -363,7 +363,7 @@ fn generate_regular_push_arm(
                             }
                         }
                     }
-                    CollectionType::HashBag => {
+                    CollectionType::HashBag | CollectionType::HashMap => {
                         quote! {
                             for (elem, count) in std::mem::take(#name).into_iter() {
                                 // Each element in a HashBag is unique; count is multiplicity.
@@ -426,7 +426,7 @@ fn generate_collection_push_arm(
                 }
             }
         }
-        CollectionType::HashBag => {
+        CollectionType::HashBag | CollectionType::HashMap => {
             quote! {
                 #category::#label(ref mut coll) => {
                     for (elem, _count) in std::mem::take(coll).into_iter() {
@@ -487,7 +487,7 @@ fn generate_binder_push_arm(
                         }
                     });
                 }
-                CollectionType::HashBag => {
+                CollectionType::HashBag | CollectionType::HashMap => {
                     push_stmts.push(quote! {
                         for (elem, _count) in std::mem::take(#name).into_iter() {
                             stack.push(DropTask::#task_variant(elem));
@@ -573,7 +573,7 @@ fn generate_multi_binder_push_arm(
                         }
                     });
                 }
-                CollectionType::HashBag => {
+                CollectionType::HashBag | CollectionType::HashMap => {
                     push_stmts.push(quote! {
                         for (elem, _count) in std::mem::take(#name).into_iter() {
                             stack.push(DropTask::#task_variant(elem));

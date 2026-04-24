@@ -2,7 +2,8 @@
 
 **Status:** Implementation Phase  
 **Date:** January 2026  
-**Revision:** 5
+**Revision:** 5  
+**Related:** [HOL methods, imports, and codegen](../made/hol_syntax_methods.md) — Rust `![…]` blocks, eval/fold, import design
 
 ---
 

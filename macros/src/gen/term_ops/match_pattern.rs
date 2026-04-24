@@ -476,7 +476,7 @@ fn generate_collection_match_arm(
     let var_label = generate_var_label(category);
 
     match coll_type {
-        mettail_ast::types::CollectionType::HashBag => {
+        mettail_ast::types::CollectionType::HashBag | mettail_ast::types::CollectionType::HashMap => {
             quote! {
                 (#category::#label(g_bag), #category::#label(p_bag)) => {
                     let g_elems: Vec<_> = g_bag.iter()

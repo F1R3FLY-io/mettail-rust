@@ -388,9 +388,8 @@ pub fn check_equivalence_bounded(a: &KatExpr, b: &KatExpr, depth_limit: usize) -
 /// Collect all atomic test names from a KAT expression.
 fn collect_atoms_expr(expr: &KatExpr, acc: &mut HashSet<String>) {
     match expr {
-        KatExpr::Zero | KatExpr::One => {}
+        KatExpr::Zero | KatExpr::One | KatExpr::Action(_) => {}
         KatExpr::Test(t) => t.collect_atoms(acc),
-        KatExpr::Action(_) => {}
         KatExpr::Seq(a, b) | KatExpr::Alt(a, b) => {
             collect_atoms_expr(a, acc);
             collect_atoms_expr(b, acc);

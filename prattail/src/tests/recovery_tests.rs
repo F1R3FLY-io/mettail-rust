@@ -21,6 +21,7 @@ fn calculator_spec() -> LanguageSpec {
             name: "Int".to_string(),
             native_type: Some("i32".to_string()),
             is_primary: true,
+            has_var: true,
         }],
         rules: vec![
             // NumLit: integer literal
@@ -219,6 +220,7 @@ fn test_multi_category_generates_separate_sync_predicates() {
         name: "Bool".to_string(),
         native_type: Some("bool".to_string()),
         is_primary: false,
+        has_var: true,
     });
     let category_names = vec!["Int".to_string(), "Bool".to_string()];
     spec.rules
@@ -523,6 +525,7 @@ fn test_multi_category_generates_cross_cat_casts() {
         name: "Bool".to_string(),
         native_type: Some("bool".to_string()),
         is_primary: false,
+        has_var: true,
     });
     let category_names = vec!["Int".to_string(), "Bool".to_string()];
     spec.rules

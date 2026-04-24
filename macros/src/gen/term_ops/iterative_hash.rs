@@ -123,29 +123,33 @@ fn generate_hash_task_enum(language: &LanguageDef) -> TokenStream {
 // =============================================================================
 
 /// Generate the `hash_iterative` function that processes the work stack.
+///
+/// **Frame-size fix (PDA stack-safety):** Per-cat helpers keep individual
+/// stack frames small (see `iterative_clone.rs` for the same rationale).
 fn generate_hash_engine(language: &LanguageDef) -> TokenStream {
-    let task_arms: Vec<TokenStream> = language
+    let helper_fns: Vec<TokenStream> = language
         .types
         .iter()
         .map(|t| {
             let cat = &t.name;
-            let hash_variant = format_ident!("Hash{}", cat);
+            let cat_str = cat.to_string().to_lowercase();
+            let helper_fn = format_ident!("hash_handle_{}", cat_str);
+            let index_fn = format_ident!("variant_index_{}", cat_str);
             let variants = collect_category_variants(cat, language);
-            let index_fn = format_ident!("variant_index_{}", cat.to_string().to_lowercase());
-
             let variant_arms: Vec<TokenStream> = variants
                 .iter()
                 .map(|v| generate_hash_variant_arm(cat, v, language))
                 .collect();
-
             quote! {
-                HashTask::#hash_variant(ptr) => {
+                #[inline(never)]
+                #[allow(dead_code, unused_variables, non_snake_case)]
+                fn #helper_fn<H: std::hash::Hasher>(
+                    stack: &mut Vec<HashTask>,
+                    state: &mut H,
+                    ptr: *const #cat,
+                ) {
                     let val = unsafe { &*ptr };
-
-                    // Hash discriminant index first (consistent with derive(Hash))
                     std::hash::Hash::hash(&#index_fn(val), state);
-
-                    // Hash fields
                     match val {
                         #(#variant_arms)*
                     }
@@ -154,7 +158,24 @@ fn generate_hash_engine(language: &LanguageDef) -> TokenStream {
         })
         .collect();
 
+    let task_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let hash_variant = format_ident!("Hash{}", cat);
+            let helper_fn = format_ident!("hash_handle_{}", cat.to_string().to_lowercase());
+            quote! {
+                HashTask::#hash_variant(ptr) => {
+                    #helper_fn(stack, state, ptr);
+                }
+            }
+        })
+        .collect();
+
     quote! {
+        #(#helper_fns)*
+
         /// Iterative hash engine. Processes the work stack until empty,
         /// hashing each node's fields into the provided `Hasher` state.
         ///

@@ -1,0 +1,34 @@
+@startuml
+skinparam defaultFontSize 11
+skinparam ArrowFontSize 11
+skinparam ParticipantFontSize 12
+
+actor "mettail worker" as W
+participant "RhoEvaluator" as RE
+participant "DebruijnInterpreter" as DI
+database "RSpace\n(PathMap-backed\ntuplespace)" as RS
+
+W -> RE : start_session(expr)
+activate RE
+
+RE -> RE : allocate Par\n(encoded expr)
+RE -> DI : inj(par, rand)
+activate DI
+
+loop until no enabled COMM (normal form)
+  DI -> RS : produce(chan, data)
+  RS --> DI : ack (or match)
+  DI -> RS : consume(chan, pattern)
+  RS --> DI : COMM fires\n— continuation + bindings
+  DI -> RE : on_event(CekEvent::RhoComm)
+  activate RE #LightSteelBlue
+  RE --> DI : CekControl::Continue
+  deactivate RE
+end
+
+DI --> RE : result\n(normal-form Par)
+deactivate DI
+
+RE --> W : RhoOutcome
+deactivate RE
+@enduml

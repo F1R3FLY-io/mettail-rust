@@ -513,8 +513,12 @@ fn generate_binder_constructor_case(
                 // Collections will be handled in Phase 5
                 // For now, skip term generation for collection constructors
             },
-            GrammarItem::Binder { .. } => {}, // Skip
-            GrammarItem::Terminal(_) => {},   // Skip
+            GrammarItem::Terminal(_) => {}, // Skip
+            GrammarItem::Binder { .. } => {
+                // Binder slots are handled in the `binder_idx` branch above;
+                // any binder seen here beyond that is an over-multi-binder
+                // constructor — skip for exhaustive generation.
+            },
         }
     }
 

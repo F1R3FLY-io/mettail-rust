@@ -1906,7 +1906,7 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, native_type: None },
+            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
         ];
         // Expr -> Expr "+" Expr (self-recursive)
         let all_syntax = vec![
@@ -1936,7 +1936,7 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Stmt".to_string(), is_primary: true, native_type: None },
+            CategoryInfo { name: "Stmt".to_string(), is_primary: true, has_var: true, native_type: None },
         ];
         // Stmt -> "return" (no self-reference, no cycle)
         let all_syntax = vec![
@@ -1956,8 +1956,8 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, native_type: None },
-            CategoryInfo { name: "Stmt".to_string(), is_primary: false, native_type: None },
+            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
+            CategoryInfo { name: "Stmt".to_string(), is_primary: false, has_var: true, native_type: None },
         ];
         // Expr references Stmt, Stmt references Expr -> mutual recursion
         let all_syntax = vec![
@@ -2004,7 +2004,7 @@ mod tests {
         use crate::recursive::CollectionKind;
 
         let categories = vec![
-            CategoryInfo { name: "Stmt".to_string(), is_primary: true, native_type: None },
+            CategoryInfo { name: "Stmt".to_string(), is_primary: true, has_var: true, native_type: None },
         ];
         // Stmt -> Collection of Stmt (self-recursive via element_category)
         let all_syntax = vec![
@@ -2014,6 +2014,7 @@ mod tests {
                     param_name: "stmts".to_string(),
                     element_category: "Stmt".to_string(),
                     separator: ";".to_string(),
+                    key_val_separator: None,
                     kind: CollectionKind::Vec,
                 },
                 crate::SyntaxItemSpec::Terminal("}".to_string()),
@@ -2031,9 +2032,9 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "A".to_string(), is_primary: true, native_type: None },
-            CategoryInfo { name: "B".to_string(), is_primary: false, native_type: None },
-            CategoryInfo { name: "C".to_string(), is_primary: false, native_type: None },
+            CategoryInfo { name: "A".to_string(), is_primary: true, has_var: true, native_type: None },
+            CategoryInfo { name: "B".to_string(), is_primary: false, has_var: true, native_type: None },
+            CategoryInfo { name: "C".to_string(), is_primary: false, has_var: true, native_type: None },
         ];
         // A is self-recursive, B->C->B is mutually recursive, no cross-links
         let all_syntax = vec![
@@ -2074,7 +2075,7 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, native_type: None },
+            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
         ];
         let all_syntax = vec![
             ("Rec".to_string(), "Expr".to_string(), vec![

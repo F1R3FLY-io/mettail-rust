@@ -172,6 +172,10 @@ fn collect_type_category_refs(
         TypeExpr::Refined { base, .. } => {
             collect_type_category_refs(base, categories, refs);
         }
+        TypeExpr::Map { key, value } => {
+            collect_type_category_refs(key, categories, refs);
+            collect_type_category_refs(value, categories, refs);
+        }
     }
 }
 

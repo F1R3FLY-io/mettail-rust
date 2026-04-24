@@ -167,6 +167,7 @@ pub fn arb_syntax_item_with_cats(
                     element_category,
                     separator,
                     kind: CollectionKind::Vec,
+                    key_val_separator: None,
                 },
             ),
 
@@ -338,6 +339,7 @@ pub fn arb_grammar(
                     name: name.clone(),
                     native_type: None,
                     is_primary: i == 0,
+                    has_var: true,
                 })
                 .collect();
 
@@ -368,6 +370,7 @@ pub fn arb_category_info() -> impl Strategy<Value = CategoryInfo> {
         name,
         native_type: None,
         is_primary,
+        has_var: true,
     })
 }
 

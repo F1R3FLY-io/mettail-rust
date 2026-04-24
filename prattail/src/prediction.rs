@@ -1831,17 +1831,27 @@ pub fn build_dispatch_action_tables(
         }
 
         // ── Native literal dispatch ──
+        //
+        // CanonicalBigRat / CanonicalFixedPoint literals are carried on
+        // a category-named Token variant (e.g. `Token::BigRat(&str)`,
+        // `Token::Fixed(&str)`) per merge plan B.1a — not on a generic
+        // `Token::Rational` / `Token::FixedPoint` family variant. The
+        // variant name equals the category name, so we route directly
+        // through `cat` below rather than a family-name alias.
         if let Some(Some(native_type)) = native_types.get(cat) {
-            let literal_variants: Vec<&str> = match native_type.as_str() {
-                "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => vec!["Integer"],
-                "f32" | "f64" => vec!["Float"],
-                "bool" => vec!["Boolean"],
-                "str" | "String" => vec!["StringLit"],
+            let literal_variants: Vec<String> = match native_type.as_str() {
+                "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => vec!["Integer".to_string()],
+                "f32" | "f64" => vec!["Float".to_string()],
+                "bool" => vec!["Boolean".to_string()],
+                "str" | "String" => vec!["StringLit".to_string()],
+                _ if native_type.ends_with("CanonicalBigRat") => vec![cat.clone()],
+                _ if native_type.ends_with("CanonicalFixedPoint") => vec![cat.clone()],
+                _ if native_type.ends_with("CanonicalBigInt") => vec![cat.clone()],
                 _ => vec![],
             };
             for variant in literal_variants {
                 entries
-                    .entry(variant.to_string())
+                    .entry(variant)
                     .or_insert_with(|| DispatchAction::Direct {
                         rule_label: format!("{}Lit", cat),
                         parse_fn: format!("parse_{}_literal", cat.to_lowercase()),
@@ -2000,17 +2010,9 @@ pub fn generate_sync_predicate(
 
 /// Convert a token name (from FIRST/FOLLOW sets) to a match pattern string.
 fn token_to_match_pattern(token: &str) -> String {
-    match token {
-        "Ident" => "Token::Ident(_)".to_string(),
-        "Integer" => "Token::Integer(_)".to_string(),
-        "Float" => "Token::Float(_)".to_string(),
-        "Boolean" => "Token::Boolean(_)".to_string(),
-        "StringLit" => "Token::StringLit(_)".to_string(),
-        "Dollar" => "Token::Dollar(_)".to_string(),
-        "DoubleDollar" => "Token::DoubleDollar(_)".to_string(),
-        "Eof" => "Token::Eof".to_string(),
-        other => format!("Token::{}", other),
-    }
+    crate::automata::TokenFamily::from_name(token).match_pattern()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("Token::{}", token))
 }
 
 /// Generate a FIRST set as a `contains` check in generated code.
@@ -2021,15 +2023,19 @@ pub fn generate_first_set_check(first_set: &FirstSet, token_var: &str) -> TokenS
         .iter()
         .map(|t| {
             let variant = format_ident!("{}", t);
-            match t.as_str() {
-                "Ident" => quote! { Token::Ident(_) },
-                "Integer" => quote! { Token::Integer(_) },
-                "Float" => quote! { Token::Float(_) },
-                "Boolean" => quote! { Token::Boolean(_) },
-                "StringLit" => quote! { Token::StringLit(_) },
-                "Dollar" => quote! { Token::Dollar(_) },
-                "DoubleDollar" => quote! { Token::DoubleDollar(_) },
-                _ => quote! { Token::#variant },
+            {
+                use crate::automata::TokenFamily;
+                let family = TokenFamily::from_name(t);
+                if family.has_payload() {
+                    // Parse the known pattern string into a token stream
+                    let pat: proc_macro2::TokenStream = family.match_pattern()
+                        .expect("has_payload implies match_pattern is Some")
+                        .parse()
+                        .expect("static pattern string is valid tokens");
+                    pat
+                } else {
+                    quote! { Token::#variant }
+                }
             }
         })
         .collect();
@@ -2291,6 +2297,10 @@ fn token_kind_to_variant_name(kind: &super::automata::TokenKind) -> String {
         super::automata::TokenKind::Dollar => "Dollar".to_string(),
         super::automata::TokenKind::DoubleDollar => "DoubleDollar".to_string(),
         super::automata::TokenKind::Custom(name) => name.clone(),
+        super::automata::TokenKind::IntegerLit(cat)
+        | super::automata::TokenKind::RationalLit(cat)
+        | super::automata::TokenKind::FixedPointLit(cat) => cat.clone(),
+        super::automata::TokenKind::BooleanLit => "Boolean".to_string(),
     }
 }
 

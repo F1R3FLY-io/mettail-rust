@@ -280,6 +280,7 @@ fn encode_collection(
 ) {
     let tag = match coll_type {
         Some(CollectionType::HashBag) => TAG_COLLECTION_HASHBAG,
+        Some(CollectionType::HashMap) => TAG_COLLECTION_HASHBAG,
         Some(CollectionType::HashSet) => TAG_COLLECTION_HASHSET,
         Some(CollectionType::Vec) => TAG_COLLECTION_VEC,
         None => TAG_COLLECTION_INFER,

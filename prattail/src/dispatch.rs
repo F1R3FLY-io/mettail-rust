@@ -51,18 +51,141 @@ pub struct CastRule {
     pub source_category: String,
     /// Target category (e.g., "Proc").
     pub target_category: String,
+    /// True when source and target categories share at least one infix
+    /// operator terminal. When true, the cast-arm emission passes
+    /// `u8::MAX` as `min_bp` to `parse_{source}` so the shared infix
+    /// operator (e.g., `+` shared by Int and BigInt with IntToBigInt
+    /// injection) binds to the target's rule, not the source's.
+    /// Default: `false` (safe for cases where target has no shared
+    /// infix with source, e.g., ProcInt where Proc has no infix).
+    pub shares_infix_with_target: bool,
+}
+
+std::thread_local! {
+    /// Set of Token variant names (beyond the built-in family) that carry a
+    /// payload and therefore require a wildcard pattern `Token::Name(_)`
+    /// instead of the bare form `Token::Name`.
+    ///
+    /// Populated once per language codegen pass via
+    /// [`set_payload_variants`] before emitting match arms; cleared at the
+    /// end of the pass via [`clear_payload_variants`]. `write_token_pattern`
+    /// consults this set when `TokenFamily::Other` falls through.
+    pub static PAYLOAD_VARIANTS: std::cell::RefCell<std::collections::HashSet<String>>
+        = std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Initialize the thread-local payload-variants set for the current codegen pass.
+pub fn set_payload_variants(names: impl IntoIterator<Item = String>) {
+    PAYLOAD_VARIANTS.with(|c| {
+        let mut set = c.borrow_mut();
+        set.clear();
+        for n in names {
+            set.insert(n);
+        }
+    });
+}
+
+/// Clear the thread-local payload-variants set (called at end of codegen pass).
+pub fn clear_payload_variants() {
+    PAYLOAD_VARIANTS.with(|c| c.borrow_mut().clear());
 }
 
 /// Write a token match pattern string for a given token name.
+///
+/// Uses [`TokenFamily`] typed dispatch — no string comparisons on variant
+/// names. Payload-carrying families get wildcard patterns; unit-only
+/// variants (keywords, punctuation) get the bare form. For user-defined
+/// (Other-family) variants, consults the thread-local [`PAYLOAD_VARIANTS`]
+/// set populated by `set_payload_variants` at the start of each codegen
+/// pass so tuple variants like `Token::BigRat(&str)` / `Token::Fixed(&str)`
+/// emit a wildcard `(_)` instead of the bare form.
 pub fn write_token_pattern(buf: &mut String, token: &str) {
-    match token {
-        "Ident" => buf.push_str("Token::Ident(_)"),
-        "Integer" => buf.push_str("Token::Integer(_)"),
-        "Float" => buf.push_str("Token::Float(_)"),
-        "Boolean" => buf.push_str("Token::Boolean(_)"),
-        "StringLit" => buf.push_str("Token::StringLit(_)"),
-        _ => write!(buf, "Token::{}", token).unwrap(),
+    use crate::automata::TokenFamily;
+    match TokenFamily::from_name(token).match_pattern() {
+        Some(pattern) => buf.push_str(pattern),
+        None => {
+            let has_payload = PAYLOAD_VARIANTS.with(|c| c.borrow().contains(token));
+            if has_payload {
+                write!(buf, "Token::{}(_)", token).unwrap();
+            } else {
+                write!(buf, "Token::{}", token).unwrap();
+            }
+        },
     }
+}
+
+/// Map a native Rust type (e.g. `"i32"`, `"u32"`) to the corresponding
+/// `IntSuffix::matches_*` method name. Returns `None` for non-integer types.
+pub fn suffix_method_for_native_type(native_type: Option<&str>) -> Option<&'static str> {
+    match native_type? {
+        "i8" => Some("matches_i8"),
+        "i16" => Some("matches_i16"),
+        "i32" => Some("matches_i32"),
+        "i64" => Some("matches_i64"),
+        "i128" => Some("matches_i128"),
+        "isize" => Some("matches_isize"),
+        "u8" => Some("matches_u8"),
+        "u16" => Some("matches_u16"),
+        "u32" => Some("matches_u32"),
+        "u64" => Some("matches_u64"),
+        "u128" => Some("matches_u128"),
+        "usize" => Some("matches_usize"),
+        _ => None,
+    }
+}
+
+thread_local! {
+    /// W4b: Thread-local map from category name → native Rust type name
+    /// (e.g. `"Int" → "i32"`, `"UInt32" → "u32"`). Populated once at the
+    /// start of each codegen pass so `write_token_pattern_for_source` can
+    /// emit suffix-guarded patterns without plumbing the map through every
+    /// dispatch helper.
+    static CATEGORY_NATIVE_TYPES: std::cell::RefCell<HashMap<String, String>>
+        = std::cell::RefCell::new(HashMap::new());
+}
+
+/// W4b: Install the category → native-type map for the current codegen pass.
+/// Pair with [`clear_category_native_types`] at end of the pass to avoid
+/// leaking state across languages compiled in the same proc-macro thread.
+pub fn set_category_native_types(map: HashMap<String, String>) {
+    CATEGORY_NATIVE_TYPES.with(|c| *c.borrow_mut() = map);
+}
+
+/// W4b: Clear the category → native-type map. Call at end of each codegen
+/// pass so subsequent language compilations start fresh.
+pub fn clear_category_native_types() {
+    CATEGORY_NATIVE_TYPES.with(|c| c.borrow_mut().clear());
+}
+
+/// W4b: Look up the native type for a category (e.g. "Int" → "i32").
+pub fn native_type_for_category(cat: &str) -> Option<String> {
+    CATEGORY_NATIVE_TYPES.with(|c| c.borrow().get(cat).cloned())
+}
+
+/// W4b: Like `write_token_pattern` but, when `token == "Integer"` and the
+/// source category has an integer native type, emits a **suffix-guarded**
+/// pattern such as `Token::Integer(_, suffix) if suffix.matches_u32()` so
+/// that cross-cat dispatch for `parse_UInt32` only fires on u32-compatible
+/// literals. Without this guard, cross-cat dispatch into Proc for `0u32`
+/// routes to `parse_Int` via the blanket `Token::Integer(_, _)` arm and
+/// fails on the suffix mismatch inside `parse_Int`.
+///
+/// For non-integer sources (or non-Integer tokens), behavior matches
+/// `write_token_pattern` exactly — same pattern text, no extra guard.
+pub fn write_token_pattern_for_source(
+    buf: &mut String,
+    token: &str,
+    source_cat: &str,
+) {
+    use crate::automata::TokenFamily;
+    if matches!(TokenFamily::from_name(token), TokenFamily::Integer) {
+        let native_type = native_type_for_category(source_cat);
+        if let Some(method) = suffix_method_for_native_type(native_type.as_deref()) {
+            write!(buf, "Token::Integer(_, suffix) if suffix.{method}()").unwrap();
+            return;
+        }
+    }
+    write_token_pattern(buf, token);
 }
 
 /// Generate a `#[cold] #[inline(never)]` helper function for cross-category
@@ -288,7 +411,10 @@ pub fn write_category_dispatch(
             .unwrap_or(f64::INFINITY);
 
         let mut arm = String::new();
-        write_token_pattern(&mut arm, token);
+        // W4b: suffix-guarded pattern for integer-family tokens so that
+        // cross-cat infix dispatch routes `0u32` to `parse_UInt32`, not the
+        // first-declared Integer-literal category.
+        write_token_pattern_for_source(&mut arm, token, source_cat);
 
         // C3: Thread parent weight into child category
         let src_upper = source_cat.to_uppercase();
@@ -601,7 +727,10 @@ pub fn write_category_dispatch(
                     .unwrap_or(f64::INFINITY);
 
                 let mut arm = String::new();
-                write_token_pattern(&mut arm, token);
+                // W4b: suffix-guarded pattern for integer-family tokens so
+                // `0u32` dispatches to `parse_UInt32` rather than the first-
+                // declared Integer-literal category (e.g. `parse_Int`).
+                write_token_pattern_for_source(&mut arm, token, &rule.source_category);
                 // C3: Thread parent weight into child category for cast calls.
                 let source_upper = rule.source_category.to_uppercase();
                 let cat_lower = category;
@@ -965,6 +1094,7 @@ pub fn compute_cross_cat_prefix_arms(
     optimization_gates: &crate::cost_benefit::OptimizationGates,
     dead_rules: &std::collections::HashSet<String>,
     rd_rules: &[RDRuleInfo],
+    language_source_order: &[String],
 ) -> Vec<CrossCatPrefixArm> {
     let mut arms = Vec::new();
 
@@ -1296,10 +1426,66 @@ pub fn compute_cross_cat_prefix_arms(
             body.push_str("} *pos = saved; ");
         }
 
+        // W4 (Ambiguous-dispatch fallback chain): when no source-category
+        // operator combination matched (`!__best_found`), try each source
+        // category in declaration order — parse the bare expression and wrap
+        // it in the implicit cast. This handles cases like `int(-y == y!)`:
+        // the longest-match loop didn't find an operator after `parse_Bool`
+        // returned (the `==` was consumed by Bool's own cross-cat dispatch),
+        // so we wrap the parsed Bool in `IntFromBool`.
+        //
+        // W4c: Suppress the fallback for `Ident` specifically. Ident is the
+        // universal variable-binding token — every category's main prefix
+        // handler treats Ident as a same-cat free variable (XVar). Wrapping
+        // an Ident in a cross-cat cast would make display non-idempotent:
+        // `x` (same-cat var) would render as `cast(x)` on re-parse.
+        //
+        // For non-Ident tokens the fallback is essential — e.g. `int(-a > b)`
+        // needs parse_Int to fall back to `IntFromBool(GtInt(-a,b))` when
+        // Int's same-cat can't consume `> b`.
+        let is_ident_token = token == "Ident";
+        let mut amb_fallback = String::new();
+        if !is_ident_token {
+            for src in language_source_order {
+                if src == category {
+                    continue;
+                }
+                // Find the implicit cast label for this source → target pair.
+                // Prefer cast_rules (single-NT casts), fall back to RD function-
+                // style casts in `implicit_cast_labels`.
+                let cast_label = cast_rules.iter()
+                    .find(|cr| cr.source_category == *src && cr.target_category == category)
+                    .map(|cr| cr.label.clone())
+                    .or_else(|| implicit_cast_labels.get(&(src.clone(), category.to_string())).cloned());
+                if let Some(label) = cast_label {
+                    let src_upper = src.to_uppercase();
+                    write!(
+                        amb_fallback,
+                        "*pos = saved; \
+                         PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
+                         if let Ok(left) = parse_{src}(tokens, pos, 0) {{ \
+                             __CC_OK_BEGIN__ {category}::{label}(Box::new(left)) __CC_OK_END__ \
+                         }} ",
+                    ).unwrap();
+                }
+            }
+        }
+        let gated_amb_fallback = if amb_fallback.is_empty() {
+            String::new()
+        } else {
+            format!("{} *pos = saved; ", amb_fallback)
+        };
+
         // After trying all sources: if a match was found, check for chaining.
         // Chain detection: if the token after the best match is another comparison
         // operator, the expression is chained and the Pratt infix loop should
         // handle it via same-category binding powers instead.
+        //
+        // Note: `gated_amb_fallback` fires ONLY on the not-`__best_found` path
+        // (no source × operator combo matched). It must NOT fire in the chain
+        // branch — chained comparisons like `a > b > c` depend on the same-cat
+        // Pratt infix loop, and re-parsing via declaration-order casts would
+        // hijack that with a wrong-shape single-source result.
         if !chain_pattern.is_empty() {
             write!(
                 body,
@@ -1311,16 +1497,19 @@ pub fn compute_cross_cat_prefix_arms(
                         return true; \
                     }} \
                 }} \
+                {gated_amb_fallback} \
                 __SAME_CAT_FALLBACK__ }}",
             ).unwrap();
         } else {
-            body.push_str(
-                "if __best_found { \
+            write!(
+                body,
+                "if __best_found {{ \
                     *pos = __best_pos; \
                     return true; \
-                } \
-                __SAME_CAT_FALLBACK__ }",
-            );
+                }} \
+                {gated_amb_fallback} \
+                __SAME_CAT_FALLBACK__ }}",
+            ).unwrap();
         }
 
         let mut pattern = String::new();
@@ -1335,35 +1524,109 @@ pub fn compute_cross_cat_prefix_arms(
         });
     }
 
-    // Generate cast rule arms (for tokens unique to source category)
+    // Compute per-source accepted-set closure:
+    //   accepted(S) = FIRST(S) ∪ ⋃ { FIRST(sub) : cross_category_rules contains sub op sub → S }
+    //
+    // This is the set of tokens that can start an expression of category S,
+    // INCLUDING tokens that trigger S's own cross-category dispatch. Using this
+    // closure for cast-rule arms means a cast `S → C` accepts any token that
+    // `parse_S` itself accepts — enabling e.g. `float(1 == 1)` to reach
+    // `BoolToFloat(EqInt(1,1))` by entering `parse_Bool` (which handles `==`
+    // via its own cross-cat dispatch) and wrapping the result in BoolToFloat.
+    let accepted_source_first: HashMap<String, std::collections::HashSet<String>> = {
+        let mut acc: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+        for rule in cast_rules {
+            if !acc.contains_key(&rule.source_category) {
+                let mut tokens = std::collections::HashSet::new();
+                if let Some(fs) = first_sets.get(&rule.source_category) {
+                    for t in &fs.tokens { tokens.insert(t.clone()); }
+                }
+                for cc in cross_category_rules {
+                    if cc.result_category == rule.source_category {
+                        if let Some(fs) = first_sets.get(&cc.source_category) {
+                            for t in &fs.tokens { tokens.insert(t.clone()); }
+                        }
+                    }
+                }
+                acc.insert(rule.source_category.clone(), tokens);
+            }
+        }
+        acc
+    };
+
+    // Track tokens already covered by deterministic/ambiguous arms to avoid
+    // duplicate match patterns (Rust rejects unreachable duplicate arms).
+    let mut cast_already_covered: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    for arm in &arms {
+        if let Some(ref tv) = arm.token_variant {
+            cast_already_covered.insert(tv.clone());
+        }
+    }
+
+    // Generate cast rule arms — keyed on accepted(source) \ FIRST(target).
     for rule in cast_rules {
-        let source_first = first_sets.get(&rule.source_category);
+        let accepted = accepted_source_first.get(&rule.source_category);
         let target_first = first_sets.get(category);
 
-        if let (Some(source_first), Some(target_first)) = (source_first, target_first) {
-            let unique_to_source = source_first.difference(target_first);
-            for token in &unique_to_source.tokens {
+        if let (Some(accepted), Some(target_first)) = (accepted, target_first) {
+            let target_tokens: std::collections::HashSet<&String> =
+                target_first.tokens.iter().collect();
+            // W4b: Integer-family tokens with distinct suffix guards (e.g. Int
+            // vs UInt32, both on `Token::Integer`) emit SEPARATE arms whose
+            // patterns differ only in the `suffix.matches_*` guard. Skip the
+            // target-overlap and already-covered dedups for Integer tokens
+            // when the source has an integer native type — rustc treats the
+            // distinct suffix-guarded patterns as non-overlapping match arms.
+            let src_native = native_type_for_category(&rule.source_category);
+            let source_uses_integer_suffix = matches!(
+                crate::automata::TokenFamily::from_name("Integer"),
+                crate::automata::TokenFamily::Integer
+            ) && suffix_method_for_native_type(src_native.as_deref()).is_some();
+            for token in accepted {
+                let is_integer_tok = matches!(
+                    crate::automata::TokenFamily::from_name(token),
+                    crate::automata::TokenFamily::Integer
+                );
+                let allow_integer_override = is_integer_tok && source_uses_integer_suffix;
+                if !allow_integer_override && target_tokens.contains(token) {
+                    continue;
+                }
+                // Skip if already covered by an earlier arm for this category
+                // (deterministic, ambiguous, or a prior cast rule). Integer
+                // arms with distinct suffix guards are tracked by (token,
+                // source_category) so two cast rules sharing the Integer
+                // token can still emit their separate suffix-guarded arms.
+                let covered_key = if allow_integer_override {
+                    format!("{}|{}", token, rule.source_category)
+                } else {
+                    token.clone()
+                };
+                if !cast_already_covered.insert(covered_key) {
+                    continue;
+                }
                 let arm_weight = weight_map
                     .and_then(|wm| wm.get(&(category.to_string(), token.clone())).copied())
                     .unwrap_or(f64::INFINITY);
 
                 let source_upper = rule.source_category.to_uppercase();
+                let src_min_bp = if rule.shares_infix_with_target { "u8::MAX" } else { "0" };
                 let mut body = String::new();
-                // Phase 16F-0: use match instead of ? so the arm works
-                // in both Result-returning dispatch wrappers AND
-                // bool-returning trampoline cold functions.
                 write!(
                     body,
                     "{{ PARENT_WEIGHT_{source_upper}.with(|c| c.set(running_weight_{category}())); \
-                       match parse_{}(tokens, pos, 0) {{ \
+                       match parse_{}(tokens, pos, {}) {{ \
                            Ok(val) => {{ __CC_OK_BEGIN__ {}::{}(Box::new(val)) __CC_OK_END__ }}, \
                            Err(_) => {{ __SAME_CAT_FALLBACK__ }} \
                        }} }}",
-                    rule.source_category, rule.target_category, rule.label,
+                    rule.source_category, src_min_bp, rule.target_category, rule.label,
                 ).unwrap();
 
                 let mut pattern = String::new();
-                write_token_pattern(&mut pattern, token);
+                // W4b: suffix-guarded pattern for Integer-family tokens so
+                // cast dispatch into `parse_UInt32` doesn't swallow `0u32`
+                // via the blanket Integer arm that routes to `parse_Int`.
+                write_token_pattern_for_source(&mut pattern, token, &rule.source_category);
 
                 arms.push(CrossCatPrefixArm {
                     token_pattern: pattern,
@@ -1459,7 +1722,10 @@ pub fn compute_cross_cat_prefix_arms(
                 .unwrap();
 
                 let mut pattern = String::new();
-                write_token_pattern(&mut pattern, token);
+                // W4b: NT-first foreign arms also route to a source-category
+                // parser — apply the same suffix guard so we don't catch
+                // suffix-mismatched Integer literals.
+                write_token_pattern_for_source(&mut pattern, token, &source_cat);
 
                 arms.push(CrossCatPrefixArm {
                     token_pattern: pattern,
@@ -1485,7 +1751,7 @@ pub fn compute_cross_cat_prefix_arms(
 /// all require the cold dispatch function in their target category.
 pub fn categories_needing_dispatch(
     cross_category_rules: &[CrossCategoryRule],
-    _cast_rules: &[CastRule],
+    cast_rules: &[CastRule],
     rd_rules: &[crate::recursive::RDRuleInfo],
     category_names: &[String],
 ) -> Vec<String> {
@@ -1493,6 +1759,15 @@ pub fn categories_needing_dispatch(
 
     for rule in cross_category_rules {
         categories.insert(rule.result_category.clone());
+    }
+
+    // Targets of cast rules also need the dispatch function: the closure in
+    // `compute_cross_cat_prefix_arms` emits cast-fallback arms keyed on
+    // `accepted(source)`, which enables e.g. `float(1 == 1)` to reach
+    // `BoolToFloat(EqInt(1,1))` via `parse_Bool` — but only if Float itself
+    // has a cold dispatch function.
+    for cast in cast_rules {
+        categories.insert(cast.target_category.clone());
     }
 
     // Phase 16F-0: also include categories with NT-first foreign rules

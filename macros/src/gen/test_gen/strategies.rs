@@ -550,6 +550,38 @@ fn generate_literal_build_code(
             cat = cat,
             label = label,
         ),
+        // Collection types: generate empty collections rather than broken `as _` casts.
+        "Vec" => format!(
+            "AnyTerm::Wrap{cat}({cat}::{label}(Vec::new()))",
+            cat = cat,
+            label = label,
+        ),
+        "HashBag" => format!(
+            "AnyTerm::Wrap{cat}({cat}::{label}(mettail_runtime::HashBag::new()))",
+            cat = cat,
+            label = label,
+        ),
+        "HashMapLit" | "HashMap" => format!(
+            "AnyTerm::Wrap{cat}({cat}::{label}(mettail_runtime::HashMapLit::new()))",
+            cat = cat,
+            label = label,
+        ),
+        // Canonical numeric wrappers: use From<i32> or Default
+        nt if nt.ends_with("BigInt") || nt.ends_with("CanonicalBigInt") => format!(
+            "AnyTerm::Wrap{cat}({cat}::{label}(mettail_runtime::CanonicalBigInt::from(num_bigint::BigInt::from(reader.next_i32()))))",
+            cat = cat,
+            label = label,
+        ),
+        nt if nt.ends_with("BigRat") || nt.ends_with("CanonicalBigRat") => format!(
+            "AnyTerm::Wrap{cat}({cat}::{label}(mettail_runtime::CanonicalBigRat::from(num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32())))))",
+            cat = cat,
+            label = label,
+        ),
+        nt if nt.ends_with("FixedPoint") || nt.ends_with("CanonicalFixedPoint") => format!(
+            "AnyTerm::Wrap{cat}({cat}::{label}(mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(reader.next_i32()), 0)))",
+            cat = cat,
+            label = label,
+        ),
         _ => format!(
             "AnyTerm::Wrap{cat}({cat}::{label}(reader.next_i32() as _))",
             cat = cat,
@@ -619,7 +651,7 @@ fn generate_collection_build_code(
     coll_type: &mettail_ast::types::CollectionType,
 ) -> String {
     let coll_type_str = match coll_type {
-        mettail_ast::types::CollectionType::HashBag => "HashBag",
+        mettail_ast::types::CollectionType::HashBag | mettail_ast::types::CollectionType::HashMap => "HashBag",
         mettail_ast::types::CollectionType::HashSet => "HashSet",
         mettail_ast::types::CollectionType::Vec => "Vec",
     };
@@ -867,7 +899,7 @@ fn generate_direct_recursive_build(
                 if field.is_collection {
                     let coll_type = field.coll_type.as_ref().unwrap_or(&mettail_ast::types::CollectionType::Vec);
                     match coll_type {
-                        mettail_ast::types::CollectionType::HashBag => {
+                        mettail_ast::types::CollectionType::HashBag | mettail_ast::types::CollectionType::HashMap => {
                             code.push_str(&format!(
                                 "            let num_elems_{i} = (reader.next_byte() % 4) as usize;\n\
                                              let mut coll_{i} = mettail_runtime::HashBag::new();\n\
@@ -942,7 +974,7 @@ fn generate_direct_recursive_build(
             let elem_cat_lower = element_cat.to_string().to_lowercase();
 
             match coll_type {
-                mettail_ast::types::CollectionType::HashBag => {
+                mettail_ast::types::CollectionType::HashBag | mettail_ast::types::CollectionType::HashMap => {
                     format!(
                         "            let num_elems = (reader.next_byte() % 4) as usize;\n\
                                      let mut bag = mettail_runtime::HashBag::new();\n\

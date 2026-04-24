@@ -485,6 +485,107 @@ mod tests {
         assert!(language.terms[1].term_context.is_some());
     }
 
+    #[test]
+    fn parse_term_context_list_int() {
+        // Rule with two params: List and Int (e.g. DeleteList)
+        let input = quote! {
+            name: TestListInt,
+            types { List Int }
+            terms {
+                DeleteList . a:List, i:Int |- "delete" "(" a "," i ")" : List ;
+            }
+        };
+
+        let result = parse2::<LanguageDef>(input);
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+
+        let language = result.unwrap();
+        let rule = &language.terms[0];
+        assert_eq!(rule.label.to_string(), "DeleteList");
+        let ctx = rule.term_context.as_ref().expect("term_context");
+        assert_eq!(ctx.len(), 2);
+
+        match &ctx[0] {
+            TermParam::Simple { name, ty } => {
+                assert_eq!(name.to_string(), "a");
+                assert!(matches!(ty, TypeExpr::Base(id) if id.to_string() == "List"));
+            },
+            _ => panic!("Expected Simple param a:List"),
+        }
+        match &ctx[1] {
+            TermParam::Simple { name, ty } => {
+                assert_eq!(name.to_string(), "i");
+                assert!(
+                    matches!(ty, TypeExpr::Base(id) if id.to_string() == "Int"),
+                    "Second param should be Int, got {:?}",
+                    ctx[1]
+                );
+            },
+            _ => panic!("Expected Simple param i:Int"),
+        }
+
+        // Also verify items (from convert_term_context_to_items) match
+        assert_eq!(rule.items.len(), 2);
+        if let (
+            GrammarItem::NonTerminal { ident: t0, .. },
+            GrammarItem::NonTerminal { ident: t1, .. },
+        ) = (&rule.items[0], &rule.items[1])
+        {
+            assert_eq!(t0.to_string(), "List");
+            assert_eq!(t1.to_string(), "Int");
+        } else {
+            panic!("Expected items [List, Int], got {:?}", rule.items);
+        }
+    }
+
+    #[test]
+    fn parse_two_list_rules_second_has_int_param() {
+        // Two List rules: ConcatList (List, List) then DeleteList (List, Int)
+        let input = quote! {
+            name: TestTwoList,
+            types { List Int }
+            terms {
+                ConcatList . a:List, b:List |- "concat" "(" a "," b ")" : List ;
+                DeleteList . a:List, i:Int |- "delete" "(" a "," i ")" : List ;
+            }
+        };
+
+        let result = parse2::<LanguageDef>(input);
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+
+        let language = result.unwrap();
+        assert_eq!(language.terms.len(), 2);
+
+        let concat = &language.terms[0];
+        assert_eq!(concat.label.to_string(), "ConcatList");
+        let ctx0 = concat.term_context.as_ref().unwrap();
+        assert_eq!(ctx0.len(), 2);
+        assert!(
+            matches!(&ctx0[1], TermParam::Simple { ty: TypeExpr::Base(id), .. } if id.to_string() == "List")
+        );
+
+        let delete = &language.terms[1];
+        assert_eq!(delete.label.to_string(), "DeleteList");
+        let ctx1 = delete.term_context.as_ref().unwrap();
+        assert_eq!(ctx1.len(), 2);
+        assert!(
+            matches!(&ctx1[1], TermParam::Simple { ty: TypeExpr::Base(id), .. } if id.to_string() == "Int"),
+            "DeleteList second param should be Int, got {:?}",
+            ctx1[1]
+        );
+        assert_eq!(delete.items.len(), 2);
+        if let (
+            GrammarItem::NonTerminal { ident: t0, .. },
+            GrammarItem::NonTerminal { ident: t1, .. },
+        ) = (&delete.items[0], &delete.items[1])
+        {
+            assert_eq!(t0.to_string(), "List");
+            assert_eq!(t1.to_string(), "Int");
+        } else {
+            panic!("DeleteList items should be [List, Int], got {:?}", delete.items);
+        }
+    }
+
     // =========================================================================
     // Syntax Pattern Token Tests
     // =========================================================================
@@ -986,5 +1087,123 @@ mod tests {
         };
         let language = parse2::<LanguageDef>(input).expect("parse ok");
         assert!(language.terms[0].tier_directive.is_none());
+    }
+
+    // Port of main's `parse_literals_block` test, adapted for the unified token
+    // backend: `literals { ... }` entries desugar into `language.token_defs`
+    // with their `name` mapped to the standard `Token::<family>` variant
+    // derived from the category's native type, and the original block name
+    // preserved in the `category` field.
+    #[test]
+    fn parse_literals_block_desugars_to_token_defs() {
+        let input = r#"
+            name: TestLiterals,
+            types { ![i32] as Int ![bool] as Bool }
+            literals {
+                Int {
+                    pattern: r"[0-9]+";
+                    eval: ![ { text.parse::<i32>().unwrap_or(-1) } ]
+                }
+                Bool {
+                    pattern: r"yes|no";
+                    eval: ![ { text == "yes" } ]
+                }
+            }
+            terms { }
+        "#;
+
+        let result = syn::parse_str::<LanguageDef>(input);
+        assert!(
+            result.is_ok(),
+            "Failed to parse literals block: {:?}",
+            result.err()
+        );
+
+        let language = result.unwrap();
+        assert_eq!(
+            language.token_defs.len(),
+            2,
+            "literals{{}} should desugar into exactly 2 token_defs"
+        );
+
+        // `Int` with native `i32` → standard `Token::Integer(IntLit)` family.
+        let int_tok = &language.token_defs[0];
+        assert_eq!(int_tok.name.to_string(), "Integer");
+        assert_eq!(int_tok.pattern, "[0-9]+");
+        assert_eq!(
+            int_tok.category.as_ref().map(|c| c.to_string()),
+            Some("Int".to_string()),
+            "category preserves the user-facing literals{{}} block name"
+        );
+        assert!(int_tok.rust_code.is_some());
+        assert!(int_tok.priority.is_none());
+
+        // `Bool` with native `bool` → standard `Token::Boolean` family.
+        let bool_tok = &language.token_defs[1];
+        assert_eq!(bool_tok.name.to_string(), "Boolean");
+        assert_eq!(bool_tok.pattern, "yes|no");
+        assert_eq!(
+            bool_tok.category.as_ref().map(|c| c.to_string()),
+            Some("Bool".to_string())
+        );
+    }
+
+    /// Two integer-typed categories sharing the standard `Token::Integer`
+    /// variant must coexist — only `(name, pattern)` pairs are unique.
+    #[test]
+    fn parse_literals_block_shared_family_variant_allowed() {
+        let input = r#"
+            name: TestSharedFamily,
+            types { ![i32] as Int ![mettail_runtime::CanonicalBigInt] as BigInt }
+            literals {
+                Int {
+                    pattern: r"[0-9]+i32";
+                    eval: ![ 0_i32 ]
+                }
+                BigInt {
+                    pattern: r"[0-9]+n";
+                    eval: ![ 0_i32 ]
+                }
+            }
+            terms { }
+        "#;
+
+        let language = syn::parse_str::<LanguageDef>(input)
+            .expect("Int + BigInt sharing Token::Integer should parse");
+        assert_eq!(language.token_defs.len(), 2);
+        // Both share the standard Integer family variant.
+        assert!(
+            language.token_defs.iter().all(|td| td.name.to_string() == "Integer"),
+            "both literals should map to Token::Integer family"
+        );
+        // The original block names are recoverable via `category`.
+        let cats: Vec<String> = language
+            .token_defs
+            .iter()
+            .filter_map(|td| td.category.as_ref().map(|c| c.to_string()))
+            .collect();
+        assert!(cats.contains(&"Int".to_string()));
+        assert!(cats.contains(&"BigInt".to_string()));
+    }
+
+    #[test]
+    fn parse_literals_block_requires_type_decl() {
+        // Undeclared type `Missing` in literals{} should be rejected.
+        let input = r#"
+            name: TestLitUndeclared,
+            types { ![i32] as Int }
+            literals {
+                Missing {
+                    pattern: r"[0-9]+";
+                    eval: ![ { 0_i32 } ]
+                }
+            }
+            terms { }
+        "#;
+        let result = syn::parse_str::<LanguageDef>(input);
+        assert!(
+            result.is_err(),
+            "expected error for literals{{Missing}} without matching types entry"
+        );
     }
 }

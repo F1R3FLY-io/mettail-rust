@@ -607,6 +607,7 @@ mod tests {
             name: "Expr".to_string(),
             native_type: None,
             is_primary: true,
+            has_var: true,
         }];
         let result = track_from_bundle(&syntax, &cats);
         assert!(result.is_some(), "should produce provenance analysis for non-empty syntax");
@@ -621,6 +622,7 @@ mod tests {
             name: "Expr".to_string(),
             native_type: None,
             is_primary: true,
+            has_var: true,
         }];
         let result = track_from_bundle(&syntax, &cats);
         assert!(result.is_none(), "should return None for empty syntax");

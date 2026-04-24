@@ -92,7 +92,7 @@ fn generate_depth_arm(category: &Ident, variant: &VariantKind) -> TokenStream {
 /// Compute max depth across elements of a collection.
 fn collection_max_depth(name: TokenStream, coll_type: &CollectionType) -> TokenStream {
     match coll_type {
-        CollectionType::HashBag => {
+        CollectionType::HashBag | CollectionType::HashMap => {
             quote! { #name.iter().map(|(x, _count)| x.term_depth()).max().unwrap_or(0) }
         }
         CollectionType::Vec | CollectionType::HashSet => {

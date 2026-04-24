@@ -89,11 +89,14 @@ fn generate_is_ground_arm(category: &Ident, variant: &VariantKind) -> TokenStrea
 /// vs `Vec`/`HashSet` (yields `&T`).
 fn collection_all_ground(name: TokenStream, coll_type: &CollectionType) -> TokenStream {
     match coll_type {
-        CollectionType::HashBag => {
+        CollectionType::HashBag | CollectionType::HashMap => {
             quote! { #name.iter().all(|(x, _count)| x.is_ground()) }
         },
         CollectionType::Vec | CollectionType::HashSet => {
             quote! { #name.iter().all(|x| x.is_ground()) }
+        },
+        CollectionType::HashMap => {
+            quote! { #name.iter().all(|(k, v)| k.is_ground() && v.is_ground()) }
         },
     }
 }

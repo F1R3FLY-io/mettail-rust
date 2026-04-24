@@ -172,7 +172,7 @@ fn generate_assemble_variant(
                         let start_name = format_ident!("f{}_start", i);
                         let count_name = format_ident!("f{}_count", i);
                         match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                            CollectionType::HashBag => {
+                            CollectionType::HashBag | CollectionType::HashMap => {
                                 let counts_name = format_ident!("f{}_counts", i);
                                 quote! { #start_name: usize, #count_name: usize, #counts_name: Vec<usize> }
                             }
@@ -195,7 +195,7 @@ fn generate_assemble_variant(
         VariantKind::Collection { label, coll_type, .. } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
             match coll_type {
-                CollectionType::HashBag => {
+                CollectionType::HashBag | CollectionType::HashMap => {
                     Some(quote! {
                         #variant_name { slot: usize, elements_start: usize, elements_count: usize, counts_vec: Vec<usize> }
                     })
@@ -226,7 +226,7 @@ fn generate_assemble_variant(
                         let start_name = format_ident!("pf{}_start", i);
                         let count_name = format_ident!("pf{}_count", i);
                         match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                            CollectionType::HashBag => {
+                            CollectionType::HashBag | CollectionType::HashMap => {
                                 let counts_name = format_ident!("pf{}_counts", i);
                                 quote! { #start_name: usize, #count_name: usize, #counts_name: Vec<usize> }
                             }
@@ -266,7 +266,7 @@ fn generate_assemble_variant(
                         let start_name = format_ident!("pf{}_start", i);
                         let count_name = format_ident!("pf{}_count", i);
                         match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                            CollectionType::HashBag => {
+                            CollectionType::HashBag | CollectionType::HashMap => {
                                 let counts_name = format_ident!("pf{}_counts", i);
                                 quote! { #start_name: usize, #count_name: usize, #counts_name: Vec<usize> }
                             }
@@ -298,28 +298,58 @@ fn generate_assemble_variant(
 // =============================================================================
 
 /// Generate the `clone_iterative` function that processes the work stack.
+///
+/// **Frame-size fix (PDA stack-safety):** Each `Clone{Cat}` arm is extracted
+/// into its own `#[inline(never)]` helper function. The dispatch loop's match
+/// then has small arms that just call the helper, so rustc no longer has to
+/// allocate stack for every variant's locals up front. Without this split,
+/// the monolithic match in `clone_iterative` produces a single ~MB-sized
+/// stack frame and overflows the default 2 MB thread stack on the first call.
 fn generate_clone_engine(language: &LanguageDef) -> TokenStream {
-    // Generate match arms for Clone{Cat} tasks
+    // Per-`Clone{Cat}` helper functions: one small function per category whose
+    // body is the inner `match src_ref { variant1 => ..., ... }`. Each arm
+    // pushes new tasks onto the shared `stack`; the dispatch loop drives.
+    let clone_handler_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let cat_str = cat.to_string().to_lowercase();
+            let helper_fn = format_ident!("clone_handle_{}", cat_str);
+            let variants = collect_category_variants(cat, language);
+            let variant_arms: Vec<TokenStream> = variants
+                .iter()
+                .map(|v| generate_clone_match_arm(cat, v, language))
+                .collect();
+            quote! {
+                #[inline(never)]
+                #[allow(dead_code, unused_variables, non_snake_case)]
+                fn #helper_fn(
+                    stack: &mut Vec<CloneTask>,
+                    results: &mut Vec<Option<AnyClonedTerm>>,
+                    src: *const #cat,
+                    slot: usize,
+                ) {
+                    let src_ref = unsafe { &*src };
+                    match src_ref {
+                        #(#variant_arms)*
+                    }
+                }
+            }
+        })
+        .collect();
+
+    // Tiny dispatch arms that delegate to the per-cat helper.
     let clone_arms: Vec<TokenStream> = language
         .types
         .iter()
         .map(|t| {
             let cat = &t.name;
             let clone_variant = format_ident!("Clone{}", cat);
-            let wrap_variant = format_ident!("Wrap{}", cat);
-            let variants = collect_category_variants(cat, language);
-
-            let variant_arms: Vec<TokenStream> = variants
-                .iter()
-                .map(|v| generate_clone_match_arm(cat, v, language))
-                .collect();
-
+            let helper_fn = format_ident!("clone_handle_{}", cat.to_string().to_lowercase());
             quote! {
                 CloneTask::#clone_variant { src, slot } => {
-                    let src_ref = unsafe { &*src };
-                    match src_ref {
-                        #(#variant_arms)*
-                    }
+                    #helper_fn(stack, results, src, slot);
                 }
             }
         })
@@ -338,6 +368,8 @@ fn generate_clone_engine(language: &LanguageDef) -> TokenStream {
     }
 
     quote! {
+        #(#clone_handler_fns)*
+
         /// Iterative clone engine. Processes the work stack until empty.
         ///
         /// # Safety
@@ -432,7 +464,7 @@ fn generate_regular_clone_arm(
             let count_name = format_ident!("f{}_count", i);
 
             match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                CollectionType::HashBag => {
+                CollectionType::HashBag | CollectionType::HashMap => {
                     let counts_name = format_ident!("f{}_counts", i);
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -521,7 +553,7 @@ fn generate_collection_clone_arm(
     let clone_task = format_ident!("Clone{}", element_cat);
 
     match coll_type {
-        CollectionType::HashBag => {
+        CollectionType::HashBag | CollectionType::HashMap => {
             quote! {
                 #category::#label(ref coll) => {
                     let elements_start = results.len();
@@ -620,7 +652,7 @@ fn generate_binder_clone_arm(
             let count_name = format_ident!("pf{}_count", i);
 
             match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                CollectionType::HashBag => {
+                CollectionType::HashBag | CollectionType::HashMap => {
                     let counts_name = format_ident!("pf{}_counts", i);
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -751,7 +783,7 @@ fn generate_multi_binder_clone_arm(
             let count_name = format_ident!("pf{}_count", i);
 
             match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                CollectionType::HashBag => {
+                CollectionType::HashBag | CollectionType::HashMap => {
                     let counts_name = format_ident!("pf{}_counts", i);
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -888,6 +920,13 @@ fn unwrap_from_slot(cat: &Ident, slot_expr: TokenStream) -> TokenStream {
 }
 
 /// Generate assemble arm for Regular variant.
+///
+/// **Frame-size fix (PDA stack-safety, second tier):** wraps the body in a
+/// local `#[inline(never)]` inner function so the per-variant locals
+/// (`field_N`, `Box::new(...)`, `Vec::with_capacity`, etc.) live in the
+/// helper's stack frame, not in `clone_iterative`'s. Without this isolation,
+/// rustc unions the locals from all 700+ Assemble arms into a single mega-
+/// frame, overflowing the default 2 MB stack on the first call.
 fn generate_regular_assemble_arm(
     category: &Ident,
     label: &Ident,
@@ -897,28 +936,36 @@ fn generate_regular_assemble_arm(
     let assemble_variant = format_ident!("Assemble{}_{}", category, label);
     let wrap_variant = format_ident!("Wrap{}", category);
 
-    let field_slot_names: Vec<TokenStream> = fields
-        .iter()
-        .enumerate()
-        .map(|(i, field)| {
-            if field.is_collection {
-                let start_name = format_ident!("f{}_start", i);
-                let count_name = format_ident!("f{}_count", i);
-                match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                    CollectionType::HashBag => {
-                        let counts_name = format_ident!("f{}_counts", i);
-                        quote! { #start_name, #count_name, #counts_name }
-                    }
-                    _ => {
-                        quote! { #start_name, #count_name }
-                    }
-                }
-            } else {
-                let slot_name = format_ident!("f{}_slot", i);
-                quote! { #slot_name }
+    // Build (destructure name, helper-fn-arg name : type) lists in lockstep.
+    let mut field_pat_names: Vec<TokenStream> = Vec::new();
+    let mut helper_arg_decls: Vec<TokenStream> = Vec::new();
+    let mut helper_arg_names: Vec<TokenStream> = Vec::new();
+    for (i, field) in fields.iter().enumerate() {
+        if field.is_collection {
+            let start_name = format_ident!("f{}_start", i);
+            let count_name = format_ident!("f{}_count", i);
+            field_pat_names.push(quote! { #start_name });
+            helper_arg_decls.push(quote! { #start_name: usize });
+            helper_arg_names.push(quote! { #start_name });
+            field_pat_names.push(quote! { #count_name });
+            helper_arg_decls.push(quote! { #count_name: usize });
+            helper_arg_names.push(quote! { #count_name });
+            if matches!(
+                field.coll_type.as_ref().unwrap_or(&CollectionType::Vec),
+                CollectionType::HashBag | CollectionType::HashMap
+            ) {
+                let counts_name = format_ident!("f{}_counts", i);
+                field_pat_names.push(quote! { #counts_name });
+                helper_arg_decls.push(quote! { #counts_name: Vec<usize> });
+                helper_arg_names.push(quote! { #counts_name });
             }
-        })
-        .collect();
+        } else {
+            let slot_name = format_ident!("f{}_slot", i);
+            field_pat_names.push(quote! { #slot_name });
+            helper_arg_decls.push(quote! { #slot_name: usize });
+            helper_arg_names.push(quote! { #slot_name });
+        }
+    }
 
     let field_extracts: Vec<TokenStream> = fields
         .iter()
@@ -931,7 +978,7 @@ fn generate_regular_assemble_arm(
                 let result_ident = format_ident!("field_{}", i);
 
                 match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                    CollectionType::HashBag => {
+                    CollectionType::HashBag | CollectionType::HashMap => {
                         let counts_name = format_ident!("f{}_counts", i);
                         quote! {
                             let mut #result_ident = mettail_runtime::HashBag::new();
@@ -993,9 +1040,18 @@ fn generate_regular_assemble_arm(
         .collect();
 
     quote! {
-        CloneTask::#assemble_variant { slot, #(#field_slot_names),* } => {
-            #(#field_extracts)*
-            results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(#(#construct_fields),*)));
+        CloneTask::#assemble_variant { slot, #(#field_pat_names),* } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble(
+                results: &mut Vec<Option<AnyClonedTerm>>,
+                slot: usize,
+                #(#helper_arg_decls),*
+            ) {
+                #(#field_extracts)*
+                results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(#(#construct_fields),*)));
+            }
+            assemble(results, slot, #(#helper_arg_names),*);
         }
     }
 }
@@ -1012,46 +1068,79 @@ fn generate_collection_assemble_arm(
     let wrap_variant = format_ident!("Wrap{}", category);
     let elem_wrap = format_ident!("Wrap{}", element_cat);
 
+    // See `generate_regular_assemble_arm` for the rationale on wrapping the
+    // arm body in a local `#[inline(never)]` inner fn. Same frame-size fix.
     match coll_type {
-        CollectionType::HashBag => {
+        CollectionType::HashBag | CollectionType::HashMap => {
             quote! {
                 CloneTask::#assemble_variant { slot, elements_start, elements_count, counts_vec } => {
-                    let mut bag = mettail_runtime::HashBag::new();
-                    for (idx, count) in counts_vec.iter().enumerate() {
-                        match results[elements_start + idx].take().expect("iterative clone: missing hashbag element") {
-                            AnyClonedTerm::#elem_wrap(v) => bag.insert_n(v, *count),
-                            _ => unreachable!("iterative clone: wrong category in hashbag slot"),
+                    #[inline(never)]
+                    #[allow(dead_code, unused_variables, non_snake_case)]
+                    fn assemble(
+                        results: &mut Vec<Option<AnyClonedTerm>>,
+                        slot: usize,
+                        elements_start: usize,
+                        elements_count: usize,
+                        counts_vec: Vec<usize>,
+                    ) {
+                        let mut bag = mettail_runtime::HashBag::new();
+                        for (idx, count) in counts_vec.iter().enumerate() {
+                            match results[elements_start + idx].take().expect("iterative clone: missing hashbag element") {
+                                AnyClonedTerm::#elem_wrap(v) => bag.insert_n(v, *count),
+                                _ => unreachable!("iterative clone: wrong category in hashbag slot"),
+                            }
                         }
+                        results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(bag)));
                     }
-                    results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(bag)));
+                    assemble(results, slot, elements_start, elements_count, counts_vec);
                 }
             }
         }
         CollectionType::Vec => {
             quote! {
                 CloneTask::#assemble_variant { slot, elements_start, elements_count } => {
-                    let mut vec = Vec::with_capacity(elements_count);
-                    for idx in 0..elements_count {
-                        match results[elements_start + idx].take().expect("iterative clone: missing vec element") {
-                            AnyClonedTerm::#elem_wrap(v) => vec.push(v),
-                            _ => unreachable!("iterative clone: wrong category in vec slot"),
+                    #[inline(never)]
+                    #[allow(dead_code, unused_variables, non_snake_case)]
+                    fn assemble(
+                        results: &mut Vec<Option<AnyClonedTerm>>,
+                        slot: usize,
+                        elements_start: usize,
+                        elements_count: usize,
+                    ) {
+                        let mut vec = Vec::with_capacity(elements_count);
+                        for idx in 0..elements_count {
+                            match results[elements_start + idx].take().expect("iterative clone: missing vec element") {
+                                AnyClonedTerm::#elem_wrap(v) => vec.push(v),
+                                _ => unreachable!("iterative clone: wrong category in vec slot"),
+                            }
                         }
+                        results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(vec)));
                     }
-                    results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(vec)));
+                    assemble(results, slot, elements_start, elements_count);
                 }
             }
         }
         CollectionType::HashSet => {
             quote! {
                 CloneTask::#assemble_variant { slot, elements_start, elements_count } => {
-                    let mut set = std::collections::HashSet::with_capacity(elements_count);
-                    for idx in 0..elements_count {
-                        match results[elements_start + idx].take().expect("iterative clone: missing hashset element") {
-                            AnyClonedTerm::#elem_wrap(v) => { set.insert(v); },
-                            _ => unreachable!("iterative clone: wrong category in hashset slot"),
+                    #[inline(never)]
+                    #[allow(dead_code, unused_variables, non_snake_case)]
+                    fn assemble(
+                        results: &mut Vec<Option<AnyClonedTerm>>,
+                        slot: usize,
+                        elements_start: usize,
+                        elements_count: usize,
+                    ) {
+                        let mut set = std::collections::HashSet::with_capacity(elements_count);
+                        for idx in 0..elements_count {
+                            match results[elements_start + idx].take().expect("iterative clone: missing hashset element") {
+                                AnyClonedTerm::#elem_wrap(v) => { set.insert(v); },
+                                _ => unreachable!("iterative clone: wrong category in hashset slot"),
+                            }
                         }
+                        results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(set)));
                     }
-                    results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(set)));
+                    assemble(results, slot, elements_start, elements_count);
                 }
             }
         }
@@ -1084,7 +1173,7 @@ fn generate_binder_assemble_arm(
                 let start_name = format_ident!("pf{}_start", i);
                 let count_name = format_ident!("pf{}_count", i);
                 match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                    CollectionType::HashBag => {
+                    CollectionType::HashBag | CollectionType::HashMap => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! { #start_name, #count_name, #counts_name }
                     }
@@ -1115,7 +1204,7 @@ fn generate_binder_assemble_arm(
                 let result_ident = format_ident!("pre_field_{}", i);
 
                 match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                    CollectionType::HashBag => {
+                    CollectionType::HashBag | CollectionType::HashMap => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! {
                             let mut #result_ident = mettail_runtime::HashBag::new();
@@ -1182,15 +1271,89 @@ fn generate_binder_assemble_arm(
         })
         .collect();
 
+    // Build flat (pat-name, helper-arg-decl, helper-arg-name) lists in lockstep
+    // for the inner-fn signature. See `generate_regular_assemble_arm` for the
+    // frame-size rationale.
+    let mut pat_flat: Vec<TokenStream> = Vec::new();
+    let mut decl_flat: Vec<TokenStream> = Vec::new();
+    let mut call_flat: Vec<TokenStream> = Vec::new();
+    for (i, field) in pre_scope_fields.iter().enumerate() {
+        if field.is_predicate {
+            let pred_name = format_ident!("pf{}_pred", i);
+            pat_flat.push(quote! { #pred_name });
+            // Predicate fields are concrete user-typed values; mirror the
+            // existing inline shape (no parameter type known at codegen time).
+            // Use a generic runtime type marker via the existing predicate field
+            // name; rustc infers the type from how it's reused in the body.
+            // Predicate types need an explicit parameter type — keep these
+            // arms inline (no peel) by re-emitting the original arm.
+            // Fall through to the legacy path is achieved by NOT extracting
+            // when any field is a predicate.
+        } else if field.is_collection {
+            let start_name = format_ident!("pf{}_start", i);
+            let count_name = format_ident!("pf{}_count", i);
+            pat_flat.push(quote! { #start_name });
+            decl_flat.push(quote! { #start_name: usize });
+            call_flat.push(quote! { #start_name });
+            pat_flat.push(quote! { #count_name });
+            decl_flat.push(quote! { #count_name: usize });
+            call_flat.push(quote! { #count_name });
+            if matches!(
+                field.coll_type.as_ref().unwrap_or(&CollectionType::Vec),
+                CollectionType::HashBag | CollectionType::HashMap
+            ) {
+                let counts_name = format_ident!("pf{}_counts", i);
+                pat_flat.push(quote! { #counts_name });
+                decl_flat.push(quote! { #counts_name: Vec<usize> });
+                call_flat.push(quote! { #counts_name });
+            }
+        } else {
+            let slot_name = format_ident!("pf{}_slot", i);
+            pat_flat.push(quote! { #slot_name });
+            decl_flat.push(quote! { #slot_name: usize });
+            call_flat.push(quote! { #slot_name });
+        }
+    }
+
+    let has_predicate_field = pre_scope_fields.iter().any(|f| f.is_predicate);
+    if has_predicate_field {
+        // Predicate field type isn't available in this codegen layer, so we
+        // can't synthesize the inner-fn signature. Predicate-bearing binders
+        // are rare; emit the legacy inline form for these.
+        let _ = (&pat_flat, &decl_flat, &call_flat);
+        return quote! {
+            CloneTask::#assemble_variant { slot, #(#pre_field_slot_names,)* cloned_pattern, body_slot } => {
+                #(#pre_field_extracts)*
+                let body = match results[body_slot].take().expect("iterative clone: missing binder body") {
+                    AnyClonedTerm::#body_wrap(v) => v,
+                    _ => unreachable!("iterative clone: wrong category in binder body slot"),
+                };
+                let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, Box::new(body));
+                results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(#(#construct_pre_fields)* new_scope)));
+            }
+        };
+    }
+
     quote! {
-        CloneTask::#assemble_variant { slot, #(#pre_field_slot_names,)* cloned_pattern, body_slot } => {
-            #(#pre_field_extracts)*
-            let body = match results[body_slot].take().expect("iterative clone: missing binder body") {
-                AnyClonedTerm::#body_wrap(v) => v,
-                _ => unreachable!("iterative clone: wrong category in binder body slot"),
-            };
-            let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, Box::new(body));
-            results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(#(#construct_pre_fields)* new_scope)));
+        CloneTask::#assemble_variant { slot, #(#pat_flat,)* cloned_pattern, body_slot } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble(
+                results: &mut Vec<Option<AnyClonedTerm>>,
+                slot: usize,
+                #(#decl_flat,)*
+                cloned_pattern: mettail_runtime::Binder<String>,
+                body_slot: usize,
+            ) {
+                #(#pre_field_extracts)*
+                let body = match results[body_slot].take().expect("iterative clone: missing binder body") {
+                    AnyClonedTerm::#body_wrap(v) => v,
+                    _ => unreachable!("iterative clone: wrong category in binder body slot"),
+                };
+                let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, Box::new(body));
+                results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(#(#construct_pre_fields)* new_scope)));
+            }
+            assemble(results, slot, #(#call_flat,)* cloned_pattern, body_slot);
         }
     }
 }
@@ -1220,7 +1383,7 @@ fn generate_multi_binder_assemble_arm(
                 let start_name = format_ident!("pf{}_start", i);
                 let count_name = format_ident!("pf{}_count", i);
                 match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                    CollectionType::HashBag => {
+                    CollectionType::HashBag | CollectionType::HashMap => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! { #start_name, #count_name, #counts_name }
                     }
@@ -1250,7 +1413,7 @@ fn generate_multi_binder_assemble_arm(
                 let result_ident = format_ident!("pre_field_{}", i);
 
                 match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                    CollectionType::HashBag => {
+                    CollectionType::HashBag | CollectionType::HashMap => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! {
                             let mut #result_ident = mettail_runtime::HashBag::new();
@@ -1316,15 +1479,78 @@ fn generate_multi_binder_assemble_arm(
         })
         .collect();
 
+    // Same per-arm `#[inline(never)]` peel as Binder (see frame-size note on
+    // `generate_regular_assemble_arm`). Predicate-bearing pre-scope fields
+    // fall back to inline emission because their Rust types aren't visible
+    // to this codegen layer.
+    let mut pat_flat: Vec<TokenStream> = Vec::new();
+    let mut decl_flat: Vec<TokenStream> = Vec::new();
+    let mut call_flat: Vec<TokenStream> = Vec::new();
+    for (i, field) in pre_scope_fields.iter().enumerate() {
+        if field.is_predicate {
+            // Skip; the has_predicate_field check below routes to legacy.
+        } else if field.is_collection {
+            let start_name = format_ident!("pf{}_start", i);
+            let count_name = format_ident!("pf{}_count", i);
+            pat_flat.push(quote! { #start_name });
+            decl_flat.push(quote! { #start_name: usize });
+            call_flat.push(quote! { #start_name });
+            pat_flat.push(quote! { #count_name });
+            decl_flat.push(quote! { #count_name: usize });
+            call_flat.push(quote! { #count_name });
+            if matches!(
+                field.coll_type.as_ref().unwrap_or(&CollectionType::Vec),
+                CollectionType::HashBag | CollectionType::HashMap
+            ) {
+                let counts_name = format_ident!("pf{}_counts", i);
+                pat_flat.push(quote! { #counts_name });
+                decl_flat.push(quote! { #counts_name: Vec<usize> });
+                call_flat.push(quote! { #counts_name });
+            }
+        } else {
+            let slot_name = format_ident!("pf{}_slot", i);
+            pat_flat.push(quote! { #slot_name });
+            decl_flat.push(quote! { #slot_name: usize });
+            call_flat.push(quote! { #slot_name });
+        }
+    }
+
+    let has_predicate_field = pre_scope_fields.iter().any(|f| f.is_predicate);
+    if has_predicate_field {
+        let _ = (&pat_flat, &decl_flat, &call_flat);
+        return quote! {
+            CloneTask::#assemble_variant { slot, #(#pre_field_slot_names,)* cloned_pattern, body_slot } => {
+                #(#pre_field_extracts)*
+                let body = match results[body_slot].take().expect("iterative clone: missing multi-binder body") {
+                    AnyClonedTerm::#body_wrap(v) => v,
+                    _ => unreachable!("iterative clone: wrong category in multi-binder body slot"),
+                };
+                let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, Box::new(body));
+                results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(#(#construct_pre_fields)* new_scope)));
+            }
+        };
+    }
+
     quote! {
-        CloneTask::#assemble_variant { slot, #(#pre_field_slot_names,)* cloned_pattern, body_slot } => {
-            #(#pre_field_extracts)*
-            let body = match results[body_slot].take().expect("iterative clone: missing multi-binder body") {
-                AnyClonedTerm::#body_wrap(v) => v,
-                _ => unreachable!("iterative clone: wrong category in multi-binder body slot"),
-            };
-            let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, Box::new(body));
-            results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(#(#construct_pre_fields)* new_scope)));
+        CloneTask::#assemble_variant { slot, #(#pat_flat,)* cloned_pattern, body_slot } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble(
+                results: &mut Vec<Option<AnyClonedTerm>>,
+                slot: usize,
+                #(#decl_flat,)*
+                cloned_pattern: Vec<mettail_runtime::Binder<String>>,
+                body_slot: usize,
+            ) {
+                #(#pre_field_extracts)*
+                let body = match results[body_slot].take().expect("iterative clone: missing multi-binder body") {
+                    AnyClonedTerm::#body_wrap(v) => v,
+                    _ => unreachable!("iterative clone: wrong category in multi-binder body slot"),
+                };
+                let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, Box::new(body));
+                results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(#(#construct_pre_fields)* new_scope)));
+            }
+            assemble(results, slot, #(#call_flat,)* cloned_pattern, body_slot);
         }
     }
 }

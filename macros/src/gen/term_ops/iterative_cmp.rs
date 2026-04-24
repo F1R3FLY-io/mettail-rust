@@ -189,39 +189,66 @@ fn variant_wildcard_pattern(category: &Ident, variant: &VariantKind) -> TokenStr
 // =============================================================================
 
 /// Generate the `eq_iterative` function that processes the work stack for equality.
+///
+/// **Frame-size fix (PDA stack-safety):** Each per-category arm is extracted
+/// into its own `#[inline(never)]` helper. Without this split, `eq_iterative`
+/// becomes one mega-function whose `match (left, right) { ... }` arms force
+/// rustc to allocate stack space for every variant's locals up front,
+/// overflowing the default 2 MB thread stack on the first call.
 fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
-    // Generate match arms for each CmpTask variant
+    // Per-cat helper functions: each handles one CmpTask::Cmp{Cat}.
+    // Returns `Some(false)` to short-circuit (mismatch), `Some(true)` to
+    // continue (equal so far for this pair), `None` if there's nothing to
+    // do. We use `bool` directly via early return — caller must propagate.
+    let helper_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let cat_str = cat.to_string().to_lowercase();
+            let helper_fn = format_ident!("eq_handle_{}", cat_str);
+            let index_fn = format_ident!("variant_index_{}", cat_str);
+            let variants = collect_category_variants(cat, language);
+            let variant_arms: Vec<TokenStream> = variants
+                .iter()
+                .map(|v| generate_eq_variant_arm(cat, v, language))
+                .collect();
+            quote! {
+                /// Returns `false` on mismatch (caller should propagate),
+                /// `true` if matched so far (caller should continue draining stack).
+                #[inline(never)]
+                #[allow(dead_code, unused_variables, non_snake_case)]
+                fn #helper_fn(
+                    stack: &mut Vec<CmpTask>,
+                    left_ptr: *const #cat,
+                    right_ptr: *const #cat,
+                ) -> bool {
+                    let left = unsafe { &*left_ptr };
+                    let right = unsafe { &*right_ptr };
+                    if #index_fn(left) != #index_fn(right) {
+                        return false;
+                    }
+                    match (left, right) {
+                        #(#variant_arms)*
+                        _ => { return false; }
+                    }
+                    true
+                }
+            }
+        })
+        .collect();
+
     let task_arms: Vec<TokenStream> = language
         .types
         .iter()
         .map(|t| {
             let cat = &t.name;
             let cmp_variant = format_ident!("Cmp{}", cat);
-            let variants = collect_category_variants(cat, language);
-
-            let variant_arms: Vec<TokenStream> = variants
-                .iter()
-                .map(|v| generate_eq_variant_arm(cat, v, language))
-                .collect();
-
-            // Generate the variant-index function name for discriminant check
-            let index_fn = format_ident!("variant_index_{}", cat.to_string().to_lowercase());
-
+            let helper_fn = format_ident!("eq_handle_{}", cat.to_string().to_lowercase());
             quote! {
                 CmpTask::#cmp_variant(left_ptr, right_ptr) => {
-                    let left = unsafe { &*left_ptr };
-                    let right = unsafe { &*right_ptr };
-
-                    // Fast path: discriminant check
-                    if #index_fn(left) != #index_fn(right) {
+                    if !#helper_fn(stack, left_ptr, right_ptr) {
                         return false;
-                    }
-
-                    // Same discriminant — compare fields
-                    match (left, right) {
-                        #(#variant_arms)*
-                        // Different discriminant arms already returned false above
-                        _ => { return false; }
                     }
                 }
             }
@@ -229,6 +256,8 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
         .collect();
 
     quote! {
+        #(#helper_fns)*
+
         /// Iterative equality engine. Processes the work stack until empty.
         ///
         /// Returns `true` if all pushed comparison pairs are equal.
@@ -473,44 +502,68 @@ fn generate_eq_multi_binder_arm(
 // =============================================================================
 
 /// Generate the `cmp_iterative` function that processes the work stack for ordering.
+///
+/// **Frame-size fix (PDA stack-safety):** Same split as `eq_iterative` —
+/// per-cat helpers keep individual stack frames small. Each helper returns
+/// the ordering result; `Equal` means "continue draining stack", anything
+/// else means "stop and propagate".
 fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
+    let helper_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let cat_str = cat.to_string().to_lowercase();
+            let helper_fn = format_ident!("cmp_handle_{}", cat_str);
+            let index_fn = format_ident!("variant_index_{}", cat_str);
+            let variants = collect_category_variants(cat, language);
+            let variant_arms: Vec<TokenStream> = variants
+                .iter()
+                .map(|v| generate_cmp_variant_arm(cat, v, language))
+                .collect();
+            quote! {
+                /// Returns `Ordering::Equal` to keep draining the stack;
+                /// any other ordering means "stop and propagate up".
+                #[inline(never)]
+                #[allow(dead_code, unused_variables, non_snake_case)]
+                fn #helper_fn(
+                    stack: &mut Vec<CmpTask>,
+                    left_ptr: *const #cat,
+                    right_ptr: *const #cat,
+                ) -> std::cmp::Ordering {
+                    let left = unsafe { &*left_ptr };
+                    let right = unsafe { &*right_ptr };
+                    let l_idx = #index_fn(left);
+                    let r_idx = #index_fn(right);
+                    if l_idx != r_idx {
+                        stack.clear();
+                        return l_idx.cmp(&r_idx);
+                    }
+                    match (left, right) {
+                        #(#variant_arms)*
+                        _ => {
+                            stack.clear();
+                            return l_idx.cmp(&r_idx);
+                        }
+                    }
+                    std::cmp::Ordering::Equal
+                }
+            }
+        })
+        .collect();
+
     let task_arms: Vec<TokenStream> = language
         .types
         .iter()
         .map(|t| {
             let cat = &t.name;
             let cmp_variant = format_ident!("Cmp{}", cat);
-            let variants = collect_category_variants(cat, language);
-
-            let variant_arms: Vec<TokenStream> = variants
-                .iter()
-                .map(|v| generate_cmp_variant_arm(cat, v, language))
-                .collect();
-
-            let index_fn = format_ident!("variant_index_{}", cat.to_string().to_lowercase());
-
+            let helper_fn = format_ident!("cmp_handle_{}", cat.to_string().to_lowercase());
             quote! {
                 CmpTask::#cmp_variant(left_ptr, right_ptr) => {
-                    let left = unsafe { &*left_ptr };
-                    let right = unsafe { &*right_ptr };
-
-                    // Compare discriminant indices first
-                    let l_idx = #index_fn(left);
-                    let r_idx = #index_fn(right);
-                    if l_idx != r_idx {
-                        // Different discriminant: clear stack and return ordering
-                        stack.clear();
-                        return l_idx.cmp(&r_idx);
-                    }
-
-                    // Same discriminant — compare fields left-to-right
-                    match (left, right) {
-                        #(#variant_arms)*
-                        // Different discriminant arms already handled above
-                        _ => {
-                            stack.clear();
-                            return l_idx.cmp(&r_idx);
-                        }
+                    let ord = #helper_fn(stack, left_ptr, right_ptr);
+                    if ord != std::cmp::Ordering::Equal {
+                        return ord;
                     }
                 }
             }
@@ -518,6 +571,8 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
         .collect();
 
     quote! {
+        #(#helper_fns)*
+
         /// Iterative ordering engine. Processes the work stack until empty.
         ///
         /// Returns `std::cmp::Ordering` for the overall comparison.
@@ -1018,7 +1073,6 @@ fn generate_cmp_binder_arm(
             // Pattern comparison: use hash-based ordering (same as Scope::cmp)
             let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
                 let mut h = std::collections::hash_map::DefaultHasher::new();
-                std::hash::Hash::hash(p, &mut h);
                 std::hash::Hasher::finish(&h)
             };
             let pat_ord = hash_pat(&l_scope.unsafe_pattern).cmp(&hash_pat(&r_scope.unsafe_pattern));
@@ -1113,7 +1167,6 @@ fn generate_cmp_multi_binder_arm(
             for (lp, rp) in l_pats.iter().zip(r_pats.iter()) {
                 let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
                     let mut h = std::collections::hash_map::DefaultHasher::new();
-                    std::hash::Hash::hash(p, &mut h);
                     std::hash::Hasher::finish(&h)
                 };
                 let pat_ord = hash_pat(lp).cmp(&hash_pat(rp));

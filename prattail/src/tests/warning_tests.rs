@@ -402,6 +402,7 @@ mod dead_rule_tests {
             name: name.to_string(),
             native_type: native_type.map(|s| s.to_string()),
             is_primary: false,
+            has_var: true,
         }
     }
 

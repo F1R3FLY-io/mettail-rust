@@ -1262,7 +1262,8 @@ mod rhocalc_edge_cases {
 
     #[test]
     fn int_of_float_add() {
-        rhocalc_parses("{int(1.5 + 2.5)}");
+        // rhocalc requires explicit width: int(a:Proc, w:Int)
+        rhocalc_parses("{int(1.5 + 2.5, 32)}");
     }
 
     #[test]
@@ -1272,7 +1273,8 @@ mod rhocalc_edge_cases {
 
     #[test]
     fn float_of_int_add() {
-        rhocalc_parses("{float(1 + 2)}");
+        // rhocalc requires explicit width: float(a:Proc, w:Int)
+        rhocalc_parses("{float(1 + 2, 64)}");
     }
 
     // 16C: Process calculus nesting

@@ -2761,8 +2761,8 @@ mod tests {
             ]),
         ];
         let categories = vec![
-            CategoryInfo { name: "Proc".to_string(), native_type: None, is_primary: true },
-            CategoryInfo { name: "Name".to_string(), native_type: None, is_primary: false },
+            CategoryInfo { name: "Proc".to_string(), native_type: None, is_primary: true , has_var: true},
+            CategoryInfo { name: "Name".to_string(), native_type: None, is_primary: false , has_var: true},
         ];
         let plan = classify_grammar(&syntax, &categories);
         assert!(plan.requires(ModuleId::MultiTape), "cross-category should activate M8");
@@ -2777,6 +2777,7 @@ mod tests {
                     element_category: "Proc".to_string(),
                     separator: ",".to_string(),
                     kind: crate::recursive::CollectionKind::Vec,
+                    key_val_separator: None,
                 },
             ]),
         ];
@@ -3429,6 +3430,7 @@ mod tests {
                     element_category: "Expr".to_string(),
                     separator: ",".to_string(),
                     kind: crate::recursive::CollectionKind::Vec,
+                    key_val_separator: None,
                 },
             ]),
             // Arithmetic terminal → M12
@@ -3462,6 +3464,7 @@ mod tests {
                     element_category: "Expr".to_string(),
                     separator: ",".to_string(),
                     kind: crate::recursive::CollectionKind::Vec,
+                    key_val_separator: None,
                 },
                 SyntaxItemSpec::Binder {
                     param_name: "x".to_string(),
@@ -3505,6 +3508,7 @@ mod tests {
                     element_category: "Expr".to_string(),
                     separator: ",".to_string(),
                     kind: crate::recursive::CollectionKind::Vec,
+                    key_val_separator: None,
                 },
             ]),
             // Cross-category → M8+M11
@@ -4789,6 +4793,7 @@ mod proptest_tests {
                     param_name: param, element_category: cat,
                     separator: ",".to_string(),
                     kind: crate::recursive::CollectionKind::Vec,
+                    key_val_separator: None,
                 }),
         ]
     }

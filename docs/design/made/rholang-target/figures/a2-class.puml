@@ -1,0 +1,68 @@
+@startuml
+class RhoEvaluator {
+  +inj(par: Par, env: Env) : RhoOutcome
+  +checkpoint() : RSpaceHandle
+  +restore(h: RSpaceHandle) : void
+  +watch(expr: Par) : Par
+  +pause() : void
+  +resume() : void
+  -interpreter: DebruijnInterpreter
+  -observer: Box<dyn CekObserver>
+  -budget: HeapBudgetStrategy
+}
+
+interface CekObserver {
+  +on_event(e: CekStepEvent) : CekControl
+  +on_checkpoint(cfg: PdaConfiguration) : void
+  +on_completion(t: PdaTrace) : void
+}
+
+enum CekControl {
+  Continue
+  Checkpoint
+  Abort
+  Pause
+}
+
+enum CekEvent {
+  Step
+  ValueProduced
+  OperatorFound
+  Checkpoint
+  FramePushed
+  FramePopped
+  RuleApplied
+  RhoComm
+  RhoProduce
+  RhoConsume
+  RhoMatch
+  RhoPathMapLeaf
+}
+
+enum HeapBudgetStrategy {
+  Bounded(usize)
+  Adaptive(Tiers)
+  Unbounded
+}
+
+class GreenThread {
+  +id: GreenThreadId
+  +state: GreenThreadState
+  +run_quantum() : QuantumResult
+}
+
+enum GreenThreadState {
+  Ready
+  Running
+  Suspended
+  Completed
+  Failed
+  Forked
+}
+
+RhoEvaluator --> CekObserver
+RhoEvaluator --> HeapBudgetStrategy
+RhoEvaluator ..> CekEvent : emits
+RhoEvaluator <.. CekControl : receives
+GreenThread --> RhoEvaluator : drives
+@enduml

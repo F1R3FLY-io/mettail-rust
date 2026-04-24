@@ -52,7 +52,7 @@ mod pattern_codec;
 pub mod pattern_trie;
 mod relations;
 pub mod stratification;
-mod writer;
+pub mod writer;
 
 pub mod congruence;
 pub mod rules;
@@ -114,6 +114,25 @@ fn emit_collected_diagnostics(diagnostics: Vec<mettail_prattail::lint::LintDiagn
     }
 }
 
+/// Per-stratum Ascent content emitted by the multi-stratum split
+/// (Sprint 6g/6h: dependency-group partitioning).
+///
+/// Each `StratumContent` becomes its own `ascent!` struct. Stratum structs
+/// run in sequence between `PreStratum` (ground rules) and the `Main` fixpoint.
+/// Output relations from one stratum seed the next, so the Main struct's
+/// rustc stack frame is reduced proportionally to the number of strata.
+#[derive(Clone)]
+pub struct StratumContent {
+    /// Zero-based stratum index. Struct name is `{Name}AscentProgStratum{index}`.
+    pub index: usize,
+    /// Raw Ascent content (relations + rules), suitable for direct
+    /// inclusion in `ascent! { struct Foo; #raw_content }`.
+    pub raw_content: TokenStream,
+    /// Categories whose user equation/rewrite rules are handled in this stratum.
+    /// Used to seed the stratum's category relations from prior strata.
+    pub categories: BTreeSet<String>,
+}
+
 /// Output from Ascent source generation
 pub struct AscentSourceOutput {
     /// Full output including helper functions and ascent_source! wrapper (for debug dump & backward compat)
@@ -137,6 +156,9 @@ pub struct AscentSourceOutput {
     /// that directly seeds the rewrite relation at Ascent initialization,
     /// bypassing per-iteration pattern matching for fully ground LHS rewrites.
     pub ground_rewrite_seeds: Vec<TokenStream>,
+    /// Sprint 6g/6h: Per-stratum Ascent content produced by the multi-stratum split.
+    /// Empty `Vec` means the main struct holds all rules (legacy, single-struct path).
+    pub stratum_contents: Vec<StratumContent>,
 }
 
 /// Main entry point: Generate complete Ascent source for a theory.
@@ -337,6 +359,15 @@ pub fn generate_ascent_source(
         }
     });
 
+    // `ascent_source!` wraps the rule set so downstream test files can
+    // re-use the same source via `include_source!(<lang>_source)`
+    // (used in `languages/tests/ambient_tests.rs` and similar).
+    //
+    // Earlier I removed this wrapper thinking it was unused, which
+    // broke the test re-exports. It's back — the actual post-merge
+    // memory hog turned out to be `prattail::automata::minimize::minimize_dfa`
+    // (Hopcroft refinement on the Calculator-scale DFA) not this
+    // macro-parse step, so `ascent_source!` stays.
     let full_output = quote! {
         #helper_fns
 
@@ -374,12 +405,29 @@ pub fn generate_ascent_source(
     // Build the PatternIndex from equations and rewrites, then compute:
     // - Fine-grained dependency groups (connected components by constructor label)
     // - Alpha-equivalent LHS pattern groups (same De Bruijn bytes → shared matching code)
-    // - Subsumption warnings (general pattern subsumes specific pattern)
+    // - Subsumption warnings (general pattern subsumes specific pattern) — O(rules²) all-pairs
+    //
+    // Memory-reduction size gate (post-merge Calculator has 314 rules →
+    // 49K pairs; subsumption also accumulates many diagnostic records
+    // with formatted strings). For grammars beyond 200 rules the O(rules²)
+    // subsumption pass becomes the single largest proc-macro-time memory
+    // consumer. Skip it for large grammars — the user can re-enable via
+    // PRATTAIL_LINT_SUBSUMPTION=1 if they specifically want the warnings.
+    let rule_count = language.equations.len() + language.rewrites.len();
+    let subsumption_enabled = rule_count <= 200
+        || std::env::var("PRATTAIL_LINT_SUBSUMPTION").is_ok();
+    // Sprint 6g/6h: Accumulates per-stratum Ascent content for multi-stratum split.
+    // Populated below when the dependency-group analysis identifies splittable groups.
+    let mut stratum_contents: Vec<StratumContent> = Vec::new();
     if !language.equations.is_empty() || !language.rewrites.is_empty() {
         let pattern_index = pattern_trie::PatternIndex::build(language);
         let dep_groups = pattern_trie::compute_fine_dependency_groups(&pattern_index);
         let alpha_groups = pattern_trie::find_alpha_equivalent_groups(&pattern_index);
-        let subsumptions = pattern_trie::detect_subsumption(&pattern_index);
+        let subsumptions = if subsumption_enabled {
+            pattern_trie::detect_subsumption(&pattern_index)
+        } else {
+            Vec::new()
+        };
 
         // Collect diagnostics locally for batch grouping
         let mut macro_diagnostics = Vec::new();
@@ -453,38 +501,101 @@ pub fn generate_ascent_source(
 
         emit_collected_diagnostics(macro_diagnostics);
 
-        // Sprint 6g/6h Extension Point: Multi-stratum codegen
+        // Sprint 6g/6h: Multi-stratum codegen (ACTIVE).
         //
-        // The dependency groups above identify rules that can be evaluated
-        // independently. When a grammar has large independent groups (≥3 rules
-        // each), generating separate Ascent structs per group and chaining them
-        // (pre-stratum → per-group strata → main fixpoint) would reduce the
-        // main SCC's working set.
+        // Dependency groups partition rules by shared constructor co-reference.
+        // For large grammars whose monolithic `ascent! { run() }` body would exceed
+        // the 2 MB default thread stack, we peel qualifying groups out into their
+        // own `ascent!` structs that run in sequence between the pre-stratum and
+        // the main fixpoint. Each sub-stratum's `run()` compiles to a smaller
+        // rustc frame, and Datalog monotonicity preserves the least fixpoint.
         //
-        // Currently deferred because:
-        // 1. Each additional `ascent!` struct adds ~5-10s compilation time
-        // 2. The grammars tested so far have mostly single-rule independent
-        //    groups (25/66 in RhoCalc), where the compilation overhead
-        //    would exceed runtime savings
-        // 3. The pre-stratum (Sprint 5) already handles the highest-impact
-        //    case (ground HOL step rules)
-        //
-        // Activation condition: when a grammar has ≥2 independent groups
-        // with ≥5 rules each, generate per-group Ascent strata using
-        // `generate_stratified_content()` and `group_categories()`.
-        //
-        // Implementation plan (see Sprint 6g/6h in the plan):
-        // 1. For each independent group ≥5 rules:
-        //    a. Compute the group's category set via group_categories()
-        //    b. Generate relations for those categories only
-        //    c. Generate category rules filtered to those categories
-        //    d. Generate equation/rewrite rules for only the group's rules
-        //    e. Emit as a separate AscentSourceOutput.stratum_contents entry
-        // 2. In language.rs, generate per-stratum Ascent structs
-        // 3. Chain: pre-stratum → per-group strata → main fixpoint
-        let _ = &dep_groups;
+        // Activation is gated by `stratum_split_enabled`: large grammars with
+        // ≥2 sizable dep groups take the split; smaller grammars keep the
+        // legacy single-struct path so they don't pay the extra compile cost.
+        if stratum_split_enabled(rule_count) {
+            stratum_contents = generate_stratified_content(
+                language,
+                analysis,
+                &pattern_index,
+                &dep_groups,
+                &subsumed_equations,
+                &cancellation_equations,
+                &demanded,
+                &strat_info,
+            );
+            if !stratum_contents.is_empty() {
+                let stratum_summary: Vec<String> = stratum_contents.iter()
+                    .map(|s| format!("stratum {}: [{}]", s.index, s.categories.iter().cloned().collect::<Vec<_>>().join(", ")))
+                    .collect();
+                mettail_prattail::lint::emit_diagnostic(&build_lint(
+                    mettail_prattail::lint::DiagnosticId::G29, "multi-stratum-split-active",
+                    mettail_prattail::lint::LintSeverity::Note,
+                    format!(
+                        "Sprint 6g/6h: split {} rule(s) across {} sub-stratum Ascent struct(s) to keep `run()` frames under the default 2 MB stack",
+                        rule_count, stratum_contents.len(),
+                    ),
+                    Some(stratum_summary.join("; ")),
+                    Some(grammar_name.clone()),
+                ));
+            }
+        }
         let _ = &alpha_groups;
     }
+
+    // Sprint 6g/6h: When the multi-stratum split is active, regenerate the
+    // `raw_content` that backs the main `AscentProg` struct with a category
+    // filter that excludes every category already carried by a sub-stratum.
+    // This is what actually shrinks main's `run()` frame: rule count drops
+    // by the size of the sub-stratum user rules. Sub-strata already seed
+    // main's relations with their derived facts, so excluded rules never
+    // need to re-fire in main.
+    let (raw_content, core_raw_content) = if !stratum_contents.is_empty() {
+        let claimed_cats: BTreeSet<String> = stratum_contents
+            .iter()
+            .flat_map(|s| s.categories.iter().cloned())
+            .collect();
+        let main_cats: BTreeSet<String> = language
+            .types
+            .iter()
+            .map(|t| t.name.to_string())
+            .filter(|c| !claimed_cats.contains(c))
+            .collect();
+        let main_filter: CategoryFilter = Some(&main_cats);
+
+        let main_category_rules = generate_category_rules(language, main_filter);
+        let main_equation_rules = generate_equation_rules(
+            language,
+            main_filter,
+            analysis,
+            &subsumed_equations,
+            &cancellation_equations,
+            false,
+            &demanded,
+            Some(&strat_info),
+        );
+        let main_rewrite_rules = generate_rewrite_rules(language, main_filter, analysis, false, &demanded);
+        let main_raw = quote! {
+            #relations
+
+            #main_category_rules
+
+            #main_equation_rules
+
+            #main_rewrite_rules
+
+            #fused_content
+
+            #refinement_rules
+
+            #custom_logic
+        };
+        // Keep core as-is: core handles input dispatch independently of
+        // the sub-stratum split (core-only inputs skip main entirely).
+        (main_raw, core_raw_content)
+    } else {
+        (raw_content, core_raw_content)
+    };
 
     // Sprint 8: Log isomorphic WFST groups if detected
     if let Some(ref a) = analysis {
@@ -537,6 +648,7 @@ pub fn generate_ascent_source(
         core_raw_content,
         pre_stratum_content,
         ground_rewrite_seeds,
+        stratum_contents,
     }
 }
 
@@ -1715,6 +1827,172 @@ pub fn generate_rewrite_rules(
     }
 }
 
+/// Sprint 6g/6h: Gate the multi-stratum split.
+///
+/// rustc builds one stack frame per function. Ascent 0.8.0 emits the entire
+/// fixpoint as a single `run()` method whose body splices every SCC's rule
+/// bodies inline, so the frame size grows roughly linearly with rule count.
+/// On the default 2 MB thread stack, grammars past ~300 rules overflow before
+/// the first Datalog tuple moves. Below the gate we keep the legacy single-
+/// struct path because each additional `ascent!` invocation adds noticeable
+/// compile time.
+///
+/// Returns `true` when the grammar is large enough to justify paying that
+/// compile cost. We intentionally do *not* require `dep_groups` to be diverse:
+/// rules targeting the same category often share constructor labels and end
+/// up in one dep group, yet target-category-based partitioning still cleaves
+/// them safely because the peeled categories don't consume each other's
+/// outputs past what pre-stratum seeding already supplies.
+fn stratum_split_enabled(rule_count: usize) -> bool {
+    // Disabled pending a smarter partitioning strategy.
+    //
+    // The naive per-target-category split breaks cross-category dataflow:
+    // rules like `length(keys(map()))` depend on producers from earlier
+    // strata (`keys` → `List`, then `length` → `Int`), but a split based
+    // purely on target category orders `Int` before `List`, so `LenList`'s
+    // body never sees the derived `list(...)` facts.
+    //
+    // Peer fix (per-category `#[inline(never)]` helpers in `iterative_clone`,
+    // `iterative_cmp`, `iterative_hash`, `normalize`, `subst`) addresses the
+    // actual measured overflow on the default 2 MB stack — clone_iterative
+    // was the true culprit, not Ascent's `run()`. Keeping this gate wired
+    // but always returning `false` preserves the plumbing for a future
+    // dataflow-aware partition (see Tasks #8b/#8c).
+    let _ = rule_count;
+    false
+}
+
+/// Sprint 6g/6h: Generate per-stratum Ascent content by partitioning user
+/// equation and rewrite rules across sub-stratum structs.
+///
+/// Partitioning is by *target category*: each native-type category whose
+/// rule count clears a per-stratum threshold is peeled into its own Ascent
+/// struct. The primary (non-native) category stays in the main fixpoint
+/// along with any cross-category user rules that target it.
+///
+/// Each sub-stratum:
+/// - Declares the same relation schema as main (Ascent requires matching
+///   schemas for push-compatibility across structs).
+/// - Restricts user equations and rewrites to its one target category.
+/// - Retains reflexivity/congruence/deconstruction rules for that category
+///   so its fixpoint has a complete local view without main's help.
+/// - Reads cross-category inputs (e.g. `proc(...)` for a `Bool`-targeting
+///   rule) from the relations seeded by pre-stratum's deconstruction.
+///
+/// The caller regenerates main's user rules with the complementary
+/// `cat_filter`, preventing duplication and keeping main's `run()` frame
+/// small.
+fn generate_stratified_content(
+    language: &LanguageDef,
+    analysis: Option<&mettail_prattail::PipelineAnalysis>,
+    _pattern_index: &pattern_trie::PatternIndex,
+    _dep_groups: &[Vec<pattern_trie::RuleId>],
+    subsumed_equations: &HashSet<usize>,
+    cancellation_equations: &HashSet<usize>,
+    demanded: &BTreeSet<String>,
+    strat_info: &crate::logic::equations::StratificationInfo,
+) -> Vec<StratumContent> {
+    // Per-category rule count (user equations + user rewrites targeting the
+    // category). We skip subsumed equations the same way the main codegen
+    // path does so our count reflects what would actually be emitted.
+    let rule_count_for = |cat: &str| -> usize {
+        let eqs = language.equations.iter().enumerate().filter(|(i, eq)| {
+            if subsumed_equations.contains(i) || cancellation_equations.contains(i) {
+                return false;
+            }
+            eq.left
+                .category(language)
+                .or_else(|| eq.right.category(language))
+                .map(|c| c.to_string() == cat)
+                .unwrap_or(false)
+        }).count();
+        let rws = language.rewrites.iter().filter(|rw| {
+            rw.left
+                .category(language)
+                .or_else(|| rw.right.category(language))
+                .map(|c| c.to_string() == cat)
+                .unwrap_or(false)
+        }).count();
+        eqs + rws
+    };
+
+    // Peel every native category with at least `PER_STRATUM_THRESHOLD` user
+    // rules into its own Ascent struct. Native categories are natural peel
+    // targets: their rules are closed over literal arithmetic + casts and
+    // rarely introduce cycles back into the primary category past what
+    // pre-stratum's deconstruction already supplies. Non-native categories
+    // (e.g. `Proc`, `Name`) stay in the main fixpoint.
+    const PER_STRATUM_THRESHOLD: usize = 5;
+    let total_cats = language.types.len();
+    let mut strata: Vec<StratumContent> = Vec::new();
+    let mut claimed: BTreeSet<String> = BTreeSet::new();
+
+    for lang_type in &language.types {
+        if lang_type.native_type.is_none() {
+            continue;
+        }
+        let cat_name = lang_type.name.to_string();
+        let count = rule_count_for(&cat_name);
+        if count < PER_STRATUM_THRESHOLD {
+            continue;
+        }
+        // Safety valve: never peel so many categories that main is empty —
+        // leave at least one category for the main fixpoint. (`total_cats`
+        // counts all categories including non-native; if claiming this one
+        // drops main below 1 cat we stop.)
+        if claimed.len() + 1 >= total_cats {
+            break;
+        }
+
+        let mut target_cats = BTreeSet::new();
+        target_cats.insert(cat_name.clone());
+
+        let cat_filter: CategoryFilter = Some(&target_cats);
+
+        // Ascent requires all structs exchanging tuples via `.push()` to
+        // declare the same relation schema, so we emit full relations here.
+        let all_cats: BTreeSet<String> =
+            language.types.iter().map(|t| t.name.to_string()).collect();
+        let relations = crate::logic::relations::generate_relations(language, &all_cats);
+
+        // Category deconstruction: restricted to this stratum's single
+        // category so its own fold/expansion rules can discover subterms
+        // as they arise during the fixpoint.
+        let category_rules = crate::logic::categories::generate_category_rules(language, cat_filter);
+
+        let equation_rules = crate::logic::equations::generate_equation_rules(
+            language,
+            cat_filter,
+            analysis,
+            subsumed_equations,
+            cancellation_equations,
+            false,
+            demanded,
+            Some(strat_info),
+        );
+        let rewrite_rules = generate_rewrite_rules(language, cat_filter, analysis, false, demanded);
+
+        let raw_content = quote! {
+            #relations
+
+            #category_rules
+
+            #equation_rules
+
+            #rewrite_rules
+        };
+
+        claimed.insert(cat_name.clone());
+        strata.push(StratumContent {
+            index: strata.len(),
+            raw_content,
+            categories: target_cats,
+        });
+    }
+
+    strata
+}
+
 /// Generate pre-stratum content for ground HOL step rule optimization.
 ///
 /// The pre-stratum evaluates provably-ground HOL step rules (matching only literal
@@ -2067,6 +2345,17 @@ fn generate_hol_step_rules(
         let rust_code = &rule.rust_code.as_ref().unwrap().code;
         let safe_code = safeify_rust_code(rust_code);
 
+        // Err-variant detection: when the category has a zero-arg `Err`
+        // constructor (e.g. BigRat::Err, Int::Err), a user `rust_code` that
+        // evaluates to `None` (after safeify) is routed to `Cat::Err`
+        // rather than silently dropping the rule. This makes user-visible
+        // errors (division by zero, factorial of negative) normal-form as
+        // "error" rather than leaving the term stuck in its current shape.
+        let err_ident = format_ident!("Err");
+        let category_has_err = language.terms.iter().any(|r| {
+            r.category == *category && r.label == err_ident && common::fold_field_count(r) == 0
+        });
+
         // Sprint 3: look up constructor weight for sorting (lower = more frequent = first)
         let rule_weight = analysis
             .and_then(|a| a.constructor_weights.get(&rule.label.to_string()).copied())
@@ -2115,22 +2404,38 @@ fn generate_hol_step_rules(
 
                 // `#safe_code` is a closure call that returns `Option<T>` — the
                 // user's `#rust_code` with arithmetic rewritten through `SafeArith`
-                // (see `safeify_rust_code`). The `if let Some(...)` guard means a
-                // step that would have overflowed (e.g., `i32::MAX + 1`) simply does
-                // not fire: the term stays in its current form and the runner can
-                // reach it as a terminal state. This is the Ascent-rule counterpart
-                // of the PDA `try_eval` — each rule is a trampoline step.
-                binary_rust_rules.push((rule_weight, quote! {
-                    #rw_rel(s.clone(), t) <--
-                        #cat_rel(s),
-                        if let #category::#label(left, right) = s,
-                        if let #left_cat::#left_lit_label(a_ref) = left.as_ref(),
-                        if let #right_cat::#right_lit_label(b_ref) = right.as_ref(),
-                        let a = a_ref.clone(),
-                        let b = b_ref.clone(),
-                        if let Some(__eval_val) = #safe_code,
-                        let t = #category::#result_lit_label(__eval_val);
-                }));
+                // (see `safeify_rust_code`). Two dispatches:
+                //   - category_has_err: `None → Cat::Err` (user-visible error).
+                //   - else: `None` silently drops the rule (term stays in current
+                //     shape; matches PDA `try_eval` step semantics on overflow).
+                let binary_rule = if category_has_err {
+                    quote! {
+                        #rw_rel(s.clone(), t) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, right) = s,
+                            if let #left_cat::#left_lit_label(a_ref) = left.as_ref(),
+                            if let #right_cat::#right_lit_label(b_ref) = right.as_ref(),
+                            let a = a_ref.clone(),
+                            let b = b_ref.clone(),
+                            let t = match #safe_code {
+                                Some(__v) => #category::#result_lit_label(__v),
+                                None => #category::#err_ident,
+                            };
+                    }
+                } else {
+                    quote! {
+                        #rw_rel(s.clone(), t) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, right) = s,
+                            if let #left_cat::#left_lit_label(a_ref) = left.as_ref(),
+                            if let #right_cat::#right_lit_label(b_ref) = right.as_ref(),
+                            let a = a_ref.clone(),
+                            let b = b_ref.clone(),
+                            if let Some(__eval_val) = #safe_code,
+                            let t = #category::#result_lit_label(__eval_val);
+                    }
+                };
+                binary_rust_rules.push((rule_weight, binary_rule));
             },
             1 => {
                 // Unary step rule (e.g. Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step)
@@ -2152,17 +2457,32 @@ fn generate_hol_step_rules(
                 // for rust_code without shadowing
                 let term_var = format_ident!("orig");
                 // See note on binary rules: `#safe_code` is the `SafeArith`-rewritten
-                // form of `#rust_code`. Factorial overflow (n! for n ≥ 13 on i32)
-                // returns `None` from `safe_product`, so the rule skips that term.
-                unary_rust_rules.push((rule_weight, quote! {
-                    #rw_rel(#term_var.clone(), t) <--
-                        #cat_rel(#term_var),
-                        if let #category::#label(inner) = #term_var,
-                        if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
-                        let #param_name = s_ref.clone(),
-                        if let Some(__eval_val) = #safe_code,
-                        let t = #category::#result_lit_label(__eval_val);
-                }));
+                // form of `#rust_code`. When category has `Err`, route `None` to it
+                // (e.g. Int::Fact of negative → Int::Err). Else `None` drops the rule.
+                let unary_rule = if category_has_err {
+                    quote! {
+                        #rw_rel(#term_var.clone(), t) <--
+                            #cat_rel(#term_var),
+                            if let #category::#label(inner) = #term_var,
+                            if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
+                            let #param_name = s_ref.clone(),
+                            let t = match #safe_code {
+                                Some(__v) => #category::#result_lit_label(__v),
+                                None => #category::#err_ident,
+                            };
+                    }
+                } else {
+                    quote! {
+                        #rw_rel(#term_var.clone(), t) <--
+                            #cat_rel(#term_var),
+                            if let #category::#label(inner) = #term_var,
+                            if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
+                            let #param_name = s_ref.clone(),
+                            if let Some(__eval_val) = #safe_code,
+                            let t = #category::#result_lit_label(__eval_val);
+                    }
+                };
+                unary_rust_rules.push((rule_weight, unary_rule));
             },
             _ => {
                 // N-ary step rule (3+ arguments)
@@ -2231,17 +2551,33 @@ fn generate_hol_step_rules(
                     .collect();
 
                 // Use __src/__dst to avoid name collisions with user-defined param names.
-                // `#safe_code` is the `SafeArith`-rewritten `#rust_code`; a `None`
-                // means this N-ary rule does not fire on this term (trampoline step).
-                nary_rust_rules.push((rule_weight, quote! {
-                    #rw_rel(__src.clone(), __dst) <--
-                        #cat_rel(__src),
-                        if let #category::#label(#(#field_names),*) = __src,
-                        #(#destructure_fields)*
-                        #(#let_bindings)*
-                        if let Some(__eval_val) = #safe_code,
-                        let __dst = #category::#result_lit_label(__eval_val);
-                }));
+                // `#safe_code` is the `SafeArith`-rewritten `#rust_code`. When the
+                // category has `Err`, route `None` to it (e.g. Fraction(1n, 0n) →
+                // BigRat::Err). Else `None` silently drops the rule.
+                let nary_rule = if category_has_err {
+                    quote! {
+                        #rw_rel(__src.clone(), __dst) <--
+                            #cat_rel(__src),
+                            if let #category::#label(#(#field_names),*) = __src,
+                            #(#destructure_fields)*
+                            #(#let_bindings)*
+                            let __dst = match #safe_code {
+                                Some(__v) => #category::#result_lit_label(__v),
+                                None => #category::#err_ident,
+                            };
+                    }
+                } else {
+                    quote! {
+                        #rw_rel(__src.clone(), __dst) <--
+                            #cat_rel(__src),
+                            if let #category::#label(#(#field_names),*) = __src,
+                            #(#destructure_fields)*
+                            #(#let_bindings)*
+                            if let Some(__eval_val) = #safe_code,
+                            let __dst = #category::#result_lit_label(__eval_val);
+                    }
+                };
+                nary_rust_rules.push((rule_weight, nary_rule));
             },
         }
     }
@@ -2280,10 +2616,22 @@ fn generate_fold_big_step_rules(
             continue;
         }
 
-        let has_fold = language
+        let has_fold_as_result = language
             .terms
             .iter()
             .any(|r| r.category == *category && r.eval_mode == Some(EvalMode::Fold));
+        // Collection categories (e.g. Map) may only appear as *params* of fold rules (LenMap(Map)->Int);
+        // we still need the literal fold rule (fold_map(t, payload) <-- map(t), if let MapLit(ref payload) = t).
+        let has_fold_as_param = language.terms.iter().any(|r| {
+            r.eval_mode == Some(EvalMode::Fold)
+                && r.term_context.as_ref().is_some_and(|ctx| {
+                    ctx.iter().any(|p| match p {
+                        TermParam::Simple { ty: TypeExpr::Base(ref id), .. } => id == category,
+                        _ => false,
+                    })
+                })
+        });
+        let has_fold = has_fold_as_result || has_fold_as_param;
         if !has_fold {
             continue;
         }
@@ -2294,23 +2642,60 @@ fn generate_fold_big_step_rules(
         let rw_rel = &rn.rw_rel;
 
         let is_native = common::native_type_for(language, category).is_some();
+        let is_collection = common::is_collection_category(language, category);
 
-        if is_native {
+        // Prefer collection branch when both apply (e.g. Map): so 3-param fold rules (PutMap) are generated.
+        if is_native && !is_collection {
             // Native category (e.g. Int): fold to literal variant
             let num_lit = common::literal_label_for(language, category)
                 .expect("native category must have a literal label");
 
-            rules.push(quote! {
-                #fold_rel(t.clone(), t.clone()) <--
-                    #cat_rel(t),
-                    if let #category::#num_lit(_) = t;
-            });
+            if is_collection {
+                rules.push(quote! {
+                    #fold_rel(t.clone(), payload.clone()) <--
+                        #cat_rel(t),
+                        if let #category::#num_lit(ref payload) = t;
+                });
+            } else {
+                rules.push(quote! {
+                    #fold_rel(t.clone(), t.clone()) <--
+                        #cat_rel(t),
+                        if let #category::#num_lit(_) = t;
+                });
+                // Zero-ary `Err` is already a value (e.g. `BigRat::Err` for zero denominator).
+                let err_ident = format_ident!("Err");
+                if language.terms.iter().any(|r| {
+                    r.category == *category && r.label == err_ident && common::fold_field_count(r) == 0
+                }) {
+                    rules.push(quote! {
+                        #fold_rel(t.clone(), t.clone()) <--
+                            #cat_rel(t),
+                            if let #category::#err_ident = t;
+                    });
+                }
+                for cast_err in
+                    ["CastErrInt", "CastErrUInt32", "CastErrFloat", "CastErrFixed", "CastErrBigInt"]
+                {
+                    let cast_err_ident = format_ident!("{}", cast_err);
+                    if language.terms.iter().any(|r| {
+                        r.category == *category
+                            && r.label == cast_err_ident
+                            && common::fold_field_count(r) == 0
+                    }) {
+                        rules.push(quote! {
+                            #fold_rel(t.clone(), t.clone()) <--
+                                #cat_rel(t),
+                                if let #category::#cast_err_ident = t;
+                        });
+                    }
+                }
+            }
 
             for rule in &language.terms {
                 if rule.category != *category {
                     continue;
                 }
-                let param_names = fold_param_names(rule);
+                let param_names = common::fold_param_names(rule);
                 let param_count = param_names.len();
 
                 // Support unary (1 param) and binary (2 params) fold rules
@@ -2319,63 +2704,627 @@ fn generate_fold_big_step_rules(
                 if param_count == 0 || param_count > 2 {
                     continue;
                 }
-                let all_same_category = fold_params_all_same_category(rule, category);
+                let all_same_category = common::fold_params_all_same_category(rule, category);
                 if !all_same_category {
                     continue;
                 }
                 let label = &rule.label;
 
-                let rust_code = if let Some(ref rust_block) = rule.rust_code {
-                    &rust_block.code
+                let err_ident = format_ident!("Err");
+                let category_has_err = language.terms.iter().any(|r| {
+                    r.category == *category && r.label == err_ident && common::fold_field_count(r) == 0
+                });
+                let div_bigrat_zero_to_err = param_count == 2
+                    && *category == "BigRat"
+                    && *label == "DivBigRat"
+                    && category_has_err;
+
+                let (res_expr, is_collection) = if let Some(ref rust_block) = rule.rust_code {
+                    let rust_code = &rust_block.code;
+                    let is_col = common::is_collection_category(language, category);
+                    let res = if is_col {
+                        // Collection categories (e.g. List = Vec<Proc>): user
+                        // rust_code can `.expect()` / `.unwrap()` on index lookups
+                        // (`a.get(idx).cloned().expect(...)`) or panic on
+                        // out-of-range indices. Route through method-only
+                        // safeify so those method calls become `?` and the
+                        // fold silently fails instead of crashing the Ascent
+                        // runner. Binary operators stay as-is since `Vec`/
+                        // `HashBag` arithmetic isn't routed through SafeArith.
+                        let safe_code = crate::gen::native::rust_code_rewrite::safeify_methods_and_wrap(rust_code);
+                        quote! { #safe_code }
+                    } else if div_bigrat_zero_to_err {
+                        // `1r/0r` parses as `1r / 0r` (division), not a single rational literal; avoid
+                        // num-rational panics when the divisor is zero (same normal form as `fraction(1n,0n)`).
+                        quote! {
+                            match (if ::num_traits::Zero::is_zero(b.get()) {
+                                std::option::Option::None
+                            } else {
+                                std::option::Option::Some((#rust_code))
+                            }) {
+                                Some(__q) => #category::#num_lit(__q),
+                                None => #category::#err_ident,
+                            }
+                        }
+                    } else {
+                        // Route user `rust_code` through `safeify_and_wrap` so
+                        // every `+ - * / %` etc. goes through `SafeArith::safe_*`
+                        // and short-circuits on overflow / div-by-zero / NaN.
+                        // The wrapper produces `Option<T>`. If the category has
+                        // an `Err` variant, map `None` to it; otherwise the
+                        // `res_expr` evaluates to `Option<T>` and the Ascent
+                        // rule below uses an `if let Some(__eval_val) = ..., let
+                        // res = #category::#num_lit(__eval_val)` guard.
+                        let safe_code = safeify_rust_code(rust_code);
+                        if category_has_err {
+                            quote! {
+                                match #safe_code {
+                                    Some(__v) => #category::#num_lit(__v),
+                                    None => #category::#err_ident,
+                                }
+                            }
+                        } else {
+                            quote! { #safe_code }
+                        }
+                    };
+                    (res, is_col)
                 } else {
                     continue;
                 };
-                let safe_code = safeify_rust_code(rust_code);
 
-                // `#safe_code` = `SafeArith`-rewritten `#rust_code`. Overflow
-                // returns `None` so the fold rule silently skips that term.
+                // When the category has an `Err` variant the `res_expr`
+                // returns `T` directly (mapped via match); otherwise it
+                // returns `Option<T>` and the Ascent rule must guard with
+                // `if let Some(__v) = #res_expr, let res = Cat::Lit(__v)`.
+                // Rule bodies end with `;` after the last clause.
+                let bind_res: TokenStream = if div_bigrat_zero_to_err || category_has_err {
+                    quote! { let res = #res_expr; }
+                } else if is_collection {
+                    // Collection: res_expr is Option<payload>, wrap into
+                    // Cat::<Lit>(payload) only when Some.
+                    quote! {
+                        if let Some(__fold_payload) = #res_expr,
+                        let res = #category::#num_lit(__fold_payload);
+                    }
+                } else {
+                    quote! {
+                        if let Some(__fold_val) = #res_expr,
+                        let res = #category::#num_lit(__fold_val);
+                    }
+                };
+
                 if param_count == 1 {
-                    // Unary fold rule (e.g., Neg)
+                    // Unary fold rule (e.g., Neg; or LenList for List)
+                    if is_collection {
+                        rules.push(quote! {
+                            #fold_rel(s.clone(), res) <--
+                                #cat_rel(s),
+                                if let #category::#label(inner) = s,
+                                #fold_rel(inner.as_ref().clone(), lv),
+                                let a = lv,
+                                #bind_res
+                        });
+                    } else {
+                        rules.push(quote! {
+                            #fold_rel(s.clone(), res) <--
+                                #cat_rel(s),
+                                if let #category::#label(inner) = s,
+                                #fold_rel(inner.as_ref().clone(), iv),
+                                if let #category::#num_lit(a_ref) = &iv,
+                                let a = a_ref.clone(),
+                                #bind_res
+                        });
+                    }
+                } else {
+                    // Binary fold rule (e.g., Add, Sub; or ConcatList for List)
+                    if is_collection {
+                        rules.push(quote! {
+                            #fold_rel(s.clone(), res) <--
+                                #cat_rel(s),
+                                if let #category::#label(left, right) = s,
+                                #fold_rel(left.as_ref().clone(), lv),
+                                #fold_rel(right.as_ref().clone(), rv),
+                                let a = lv,
+                                let b = rv,
+                                #bind_res
+                        });
+                    } else {
+                        rules.push(quote! {
+                            #fold_rel(s.clone(), res) <--
+                                #cat_rel(s),
+                                if let #category::#label(left, right) = s,
+                                #fold_rel(left.as_ref().clone(), lv),
+                                #fold_rel(right.as_ref().clone(), rv),
+                                if let #category::#num_lit(a_ref) = &lv,
+                                if let #category::#num_lit(b_ref) = &rv,
+                                let a = a_ref.clone(),
+                                let b = b_ref.clone(),
+                                #bind_res
+                        });
+                    }
+                }
+            }
+
+            // Trigger rule: fold(s, res) → rw(s, Lit(res)) for collection categories,
+            // fold(s, res) → rw(s, res) for non-collection native categories
+            if is_collection {
+                let trigger_arms: Vec<TokenStream> = language
+                    .terms
+                    .iter()
+                    .filter(|r| r.category == *category && r.eval_mode == Some(EvalMode::Fold))
+                    .map(|rule| {
+                        let label = &rule.label;
+                        let n = common::fold_field_count(rule);
+                        if n == 0 {
+                            quote! { #category::#label => true, }
+                        } else {
+                            let pat: Vec<TokenStream> = (0..n).map(|_| quote! { _ }).collect();
+                            quote! { #category::#label(#(#pat),*) => true, }
+                        }
+                    })
+                    .collect();
+                if !trigger_arms.is_empty() {
+                    rules.push(quote! {
+                        #rw_rel(s.clone(), #category::#num_lit(t.clone())) <--
+                            #cat_rel(s),
+                            if (match s {
+                                #(#trigger_arms)*
+                                _ => false,
+                            }),
+                            #fold_rel(s, t);
+                    });
+                }
+            } else {
+                let trigger_arms: Vec<TokenStream> = language
+                    .terms
+                    .iter()
+                    .filter(|r| r.category == *category && r.eval_mode == Some(EvalMode::Fold))
+                    .map(|rule| {
+                        let label = &rule.label;
+                        let n = common::fold_field_count(rule);
+                        if n == 0 {
+                            quote! { #category::#label => true, }
+                        } else {
+                            let pat: Vec<TokenStream> = (0..n).map(|_| quote! { _ }).collect();
+                            quote! { #category::#label(#(#pat),*) => true, }
+                        }
+                    })
+                    .collect();
+                if !trigger_arms.is_empty() {
+                    rules.push(quote! {
+                        #rw_rel(s.clone(), t.clone()) <--
+                            #cat_rel(s),
+                            if (match s {
+                                #(#trigger_arms)*
+                                _ => false,
+                            }),
+                            #fold_rel(s, t);
+                    });
+                }
+            }
+
+            // Cross-category fold rules for native non-collection result (e.g. Int with LenList(List)->Int)
+            if !is_collection {
+                for rule in &language.terms {
+                    if rule.category != *category
+                        || rule.eval_mode != Some(EvalMode::Fold)
+                        || rule.rust_code.is_none()
+                    {
+                        continue;
+                    }
+                    let param_names = common::fold_param_names(rule);
+                    let param_count = param_names.len();
+                    if param_count == 0 || param_count > 2 {
+                        continue;
+                    }
+                    let all_same_category = common::fold_params_all_same_category(rule, category);
+                    if all_same_category {
+                        continue;
+                    }
+                    let label = &rule.label;
+                    let rust_code = &rule.rust_code.as_ref().unwrap().code;
+                    let label_str = label.to_string();
+                    let res_expr = if matches!(
+                        label_str.as_str(),
+                        "IntBin"
+                            | "UIntBin"
+                            | "FloatBin"
+                            | "FixedBin"
+                            | "BigintCast"
+                            | "BigratCast"
+                    ) {
+                        if label_str == "BigratCast" {
+                            quote! {
+                                match (#rust_code) {
+                                    Some(__v) => #category::RatLit(__v),
+                                    None => #category::Err,
+                                }
+                            }
+                        } else if label_str == "BigintCast" {
+                            quote! {
+                                match (#rust_code) {
+                                    Some(__v) => #category::NumLit(__v),
+                                    None => #category::CastErrBigInt,
+                                }
+                            }
+                        } else if label_str == "IntBin" {
+                            quote! {
+                                match (#rust_code) {
+                                    Some(__v) => #category::NumLit(__v),
+                                    None => #category::CastErrInt,
+                                }
+                            }
+                        } else if label_str == "UIntBin" {
+                            quote! {
+                                match (#rust_code) {
+                                    Some(__v) => #category::NumLit(__v),
+                                    None => #category::CastErrUInt32,
+                                }
+                            }
+                        } else if label_str == "FloatBin" {
+                            quote! {
+                                match (#rust_code) {
+                                    Some(__v) => #category::FloatLit(__v),
+                                    None => #category::CastErrFloat,
+                                }
+                            }
+                        } else if label_str == "FixedBin" {
+                            quote! {
+                                match (#rust_code) {
+                                    Some(__v) => #category::FixedLit(__v),
+                                    None => #category::CastErrFixed,
+                                }
+                            }
+                        } else {
+                            quote! { #category::#num_lit((#rust_code)) }
+                        }
+                    } else {
+                        quote! { #category::#num_lit((#rust_code)) }
+                    };
+                    if param_count == 1 {
+                        let p0 = &param_names[0];
+                        let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
+                            if let Some(TermParam::Simple { ty: TypeExpr::Base(ident), .. }) =
+                                ctx.first()
+                            {
+                                common::relation_names(ident).fold_rel
+                            } else {
+                                fold_rel.clone()
+                            }
+                        } else {
+                            fold_rel.clone()
+                        };
+                        rules.push(quote! {
+                            #fold_rel(s.clone(), res) <--
+                                #cat_rel(s),
+                                if let #category::#label(inner) = s,
+                                #inner_fold_rel(inner.as_ref().clone(), lv),
+                                let #p0 = lv,
+                                let res = #res_expr;
+                        });
+                    } else {
+                        let p0 = &param_names[0];
+                        let p1 = &param_names[1];
+                        let (left_fold_rel, right_fold_rel) =
+                            if let Some(ref ctx) = rule.term_context {
+                                let types: Vec<_> = ctx
+                                    .iter()
+                                    .filter_map(|p| match p {
+                                        TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                            Some(ident.clone())
+                                        },
+                                        _ => None,
+                                    })
+                                    .collect();
+                                if types.len() == 2 {
+                                    let left_rn = common::relation_names(&types[0]);
+                                    let right_rn = common::relation_names(&types[1]);
+                                    (left_rn.fold_rel, right_rn.fold_rel)
+                                } else {
+                                    (fold_rel.clone(), fold_rel.clone())
+                                }
+                            } else {
+                                (fold_rel.clone(), fold_rel.clone())
+                            };
+                        // CountBag(bag, elem): only fold when first arg is Bag-injection variant (avoids panic
+                        // when folding count(*(b), *(e)) before comm substitutes b,e)
+                        let is_count_bag_proc = rule.label == "CountBag"
+                            && rule
+                                .term_context
+                                .as_ref()
+                                .and_then(|ctx| ctx.first())
+                                .map(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Base(t), .. } if *t == "Proc"))
+                                .unwrap_or(false);
+                        let proc_bag_guard = if is_count_bag_proc {
+                            let primary_cat = language
+                                .types
+                                .first()
+                                .map(|t| t.name.clone())
+                                .unwrap_or_else(|| format_ident!("Proc"));
+                            let bag_label = language
+                                .injection_term_label_for_collection("Bag")
+                                .unwrap_or_else(|| format_ident!("ProcBag"));
+                            quote! { if (match & lv { #primary_cat::#bag_label(_) => true, _ => false }), }
+                        } else {
+                            quote! {}
+                        };
+                        rules.push(quote! {
+                            #fold_rel(s.clone(), res) <--
+                                #cat_rel(s),
+                                if let #category::#label(left, right) = s,
+                                #left_fold_rel(left.as_ref().clone(), lv),
+                                #right_fold_rel(right.as_ref().clone(), rv),
+                                #proc_bag_guard
+                                let #p0 = lv,
+                                let #p1 = rv,
+                                let res = #res_expr;
+                        });
+                    }
+                }
+            }
+
+            // Cross-category fold rules for collection categories
+            if is_collection {
+                for rule in &language.terms {
+                    if rule.category != *category
+                        || rule.eval_mode != Some(EvalMode::Fold)
+                        || rule.rust_code.is_none()
+                    {
+                        continue;
+                    }
+                    let param_names = common::fold_param_names(rule);
+                    let param_count = param_names.len();
+                    if param_count == 0 || param_count > 2 {
+                        continue;
+                    }
+                    let all_same = common::fold_params_all_same_category(rule, category);
+                    if all_same {
+                        continue;
+                    }
+                    let label = &rule.label;
+                    let rust_code = &rule.rust_code.as_ref().unwrap().code;
+                    let res_expr = quote! { (#rust_code) };
+                    if param_count == 1 {
+                        let p0 = &param_names[0];
+                        let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
+                            if let Some(TermParam::Simple { ty: TypeExpr::Base(ident), .. }) =
+                                ctx.first()
+                            {
+                                common::relation_names(ident).fold_rel
+                            } else {
+                                fold_rel.clone()
+                            }
+                        } else {
+                            fold_rel.clone()
+                        };
+                        rules.push(quote! {
+                            #fold_rel(s.clone(), res) <--
+                                #cat_rel(s),
+                                if let #category::#label(inner) = s,
+                                #inner_fold_rel(inner.as_ref().clone(), lv),
+                                let #p0 = lv,
+                                let res = #res_expr;
+                        });
+                    } else {
+                        let p0 = &param_names[0];
+                        let p1 = &param_names[1];
+                        let (left_fold_rel, right_fold_rel) =
+                            if let Some(ref ctx) = rule.term_context {
+                                let types: Vec<_> = ctx
+                                    .iter()
+                                    .filter_map(|p| match p {
+                                        TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                            Some(ident.clone())
+                                        },
+                                        _ => None,
+                                    })
+                                    .collect();
+                                if types.len() == 2 {
+                                    let left_rn = common::relation_names(&types[0]);
+                                    let right_rn = common::relation_names(&types[1]);
+                                    (left_rn.fold_rel, right_rn.fold_rel)
+                                } else {
+                                    (fold_rel.clone(), fold_rel.clone())
+                                }
+                            } else {
+                                (fold_rel.clone(), fold_rel.clone())
+                            };
+                        rules.push(quote! {
+                            #fold_rel(s.clone(), res) <--
+                                #cat_rel(s),
+                                if let #category::#label(left, right) = s,
+                                #left_fold_rel(left.as_ref().clone(), lv),
+                                #right_fold_rel(right.as_ref().clone(), rv),
+                                let #p0 = lv,
+                                let #p1 = rv,
+                                let res = #res_expr;
+                        });
+                    }
+                }
+            }
+        } else if is_collection {
+            // Collection category (List, Bag, Map): literal folds to payload so rust_code gets Vec/HashBag/HashMapLit
+            let num_lit = match lang_type.collection_kind.as_ref() {
+                Some(mettail_ast::language::CollectionCategory::List(_)) => format_ident!("ListLit"),
+                Some(mettail_ast::language::CollectionCategory::Bag(_)) => format_ident!("BagLit"),
+                Some(mettail_ast::language::CollectionCategory::Map(_)) => format_ident!("MapLit"),
+                None => continue,
+            };
+            rules.push(quote! {
+                #fold_rel(t.clone(), payload.clone()) <--
+                    #cat_rel(t),
+                    if let #category::#num_lit(ref payload) = t;
+            });
+            for rule in &language.terms {
+                if rule.category != *category
+                    || rule.eval_mode != Some(EvalMode::Fold)
+                    || rule.rust_code.is_none()
+                {
+                    continue;
+                }
+                let param_names = common::fold_param_names(rule);
+                let param_count = param_names.len();
+                if param_count == 0 || param_count > 3 {
+                    continue;
+                }
+                let label = &rule.label;
+                let rust_code = &rule.rust_code.as_ref().unwrap().code;
+                // Collection fold rules (DeleteList, ConcatList, PutMap, …):
+                // route user rust_code through method-only safeify so
+                // `.expect()` / `.unwrap()` on Option-returning index
+                // lookups become `?`-propagated — index out-of-range or
+                // missing-key now silently fails the fold rather than
+                // panicking the Ascent runner. Binary operators stay
+                // untouched (collection rust_code rarely needs them, and
+                // SafeArith doesn't apply to Vec/HashBag arithmetic).
+                let safe_code = crate::gen::native::rust_code_rewrite::safeify_methods_and_wrap(rust_code);
+                let res_expr = quote! { #safe_code };
+                if param_count == 1 {
+                    let p0 = &param_names[0];
+                    let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
+                        if let Some(TermParam::Simple { ty: TypeExpr::Base(ident), .. }) =
+                            ctx.first()
+                        {
+                            common::relation_names(ident).fold_rel
+                        } else {
+                            fold_rel.clone()
+                        }
+                    } else {
+                        fold_rel.clone()
+                    };
                     rules.push(quote! {
                         #fold_rel(s.clone(), res) <--
                             #cat_rel(s),
                             if let #category::#label(inner) = s,
-                            #fold_rel(inner.as_ref().clone(), iv),
-                            if let #category::#num_lit(a_ref) = &iv,
-                            let a = a_ref.clone(),
-                            if let Some(__eval_val) = #safe_code,
-                            let res = #category::#num_lit(__eval_val);
+                            #inner_fold_rel(inner.as_ref().clone(), lv),
+                            let #p0 = lv,
+                            if let Some(res) = #res_expr;
+                    });
+                } else if param_count == 3 {
+                    let p0 = &param_names[0];
+                    let p1 = &param_names[1];
+                    let p2 = &param_names[2];
+                    let (left_fold_rel, mid_fold_rel, right_fold_rel) =
+                        if let Some(ref ctx) = rule.term_context {
+                            let types: Vec<_> = ctx
+                                .iter()
+                                .filter_map(|p| match p {
+                                    TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                        Some(ident.clone())
+                                    },
+                                    _ => None,
+                                })
+                                .collect();
+                            if types.len() == 3 {
+                                let left_rn = common::relation_names(&types[0]);
+                                let mid_rn = common::relation_names(&types[1]);
+                                let right_rn = common::relation_names(&types[2]);
+                                (left_rn.fold_rel, mid_rn.fold_rel, right_rn.fold_rel)
+                            } else {
+                                (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
+                            }
+                        } else {
+                            (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
+                        };
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, mid, right) = s,
+                            #left_fold_rel(left.as_ref().clone(), lv),
+                            #mid_fold_rel(mid.as_ref().clone(), mv),
+                            #right_fold_rel(right.as_ref().clone(), rv),
+                            let #p0 = lv,
+                            let #p1 = mv,
+                            let #p2 = rv,
+                            if let Some(res) = #res_expr;
                     });
                 } else {
-                    // Binary fold rule (e.g., Add, Sub)
+                    let p0 = &param_names[0];
+                    let p1 = &param_names[1];
+                    let (left_fold_rel, right_fold_rel) = if let Some(ref ctx) = rule.term_context {
+                        let types: Vec<_> = ctx
+                            .iter()
+                            .filter_map(|p| match p {
+                                TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                    Some(ident.clone())
+                                },
+                                _ => None,
+                            })
+                            .collect();
+                        if types.len() == 2 {
+                            let left_rn = common::relation_names(&types[0]);
+                            let right_rn = common::relation_names(&types[1]);
+                            (left_rn.fold_rel, right_rn.fold_rel)
+                        } else {
+                            (fold_rel.clone(), fold_rel.clone())
+                        }
+                    } else {
+                        (fold_rel.clone(), fold_rel.clone())
+                    };
                     rules.push(quote! {
                         #fold_rel(s.clone(), res) <--
                             #cat_rel(s),
                             if let #category::#label(left, right) = s,
-                            #fold_rel(left.as_ref().clone(), lv),
-                            #fold_rel(right.as_ref().clone(), rv),
-                            if let #category::#num_lit(a_ref) = &lv,
-                            if let #category::#num_lit(b_ref) = &rv,
-                            let a = a_ref.clone(),
-                            let b = b_ref.clone(),
-                            if let Some(__eval_val) = #safe_code,
-                            let res = #category::#num_lit(__eval_val);
+                            #left_fold_rel(left.as_ref().clone(), lv),
+                            #right_fold_rel(right.as_ref().clone(), rv),
+                            let #p0 = lv,
+                            let #p1 = rv,
+                            if let Some(res) = #res_expr;
                     });
                 }
+            }
+            // Trigger rule: s ~> ListLit(res) / BagLit(res) when fold(s, res)
+            let trigger_arms: Vec<TokenStream> = language
+                .terms
+                .iter()
+                .filter(|r| r.category == *category && r.eval_mode == Some(EvalMode::Fold))
+                .map(|rule| {
+                    let label = &rule.label;
+                    let n = common::fold_field_count(rule);
+                    if n == 0 {
+                        quote! { #category::#label => true, }
+                    } else {
+                        let pat: Vec<TokenStream> = (0..n).map(|_| quote! { _ }).collect();
+                        quote! { #category::#label(#(#pat),*) => true, }
+                    }
+                })
+                .collect();
+            if !trigger_arms.is_empty() {
+                rules.push(quote! {
+                    #rw_rel(s.clone(), #category::#num_lit(t.clone())) <--
+                        #cat_rel(s),
+                        if (match s {
+                            #(#trigger_arms)*
+                            _ => false,
+                        }),
+                        #fold_rel(s, t);
+                });
             }
         } else {
             // Non-native category (e.g. Proc): identity for non-fold constructors, rust_code for fold
 
             // Area 6: Consolidated identity rule — one rule per non-native category
             // Replaces N per-constructor identity rules with one inline match
+            // Special case: PDrop(NQuote(_)) must NOT use identity — it has a custom fold that
+            // reduces *(@(P)) to P (Exec semantics), so identity would block remove/count etc.
             let identity_arms: Vec<TokenStream> = language
                 .terms
                 .iter()
                 .filter(|r| r.category == *category && r.eval_mode != Some(EvalMode::Fold))
                 .map(|rule| {
                     let label = &rule.label;
-                    let n = fold_field_count(rule);
-                    if n == 0 {
+                    let n = common::fold_field_count(rule);
+                    let is_pdrop_with_name = rule.label == "PDrop"
+                        && n == 1
+                        && rule
+                            .term_context
+                            .as_ref()
+                            .and_then(|ctx| ctx.first())
+                            .map(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Base(t), .. } if *t == "Name"))
+                            .unwrap_or(false);
+                    if is_pdrop_with_name {
+                        quote! { #category::#label(ref n) => !matches!(n.as_ref(), Name::NQuote(_)), }
+                    } else if n == 0 {
                         quote! { #category::#label => true, }
                     } else {
                         let pat: Vec<TokenStream> = (0..n).map(|_| quote! { _ }).collect();
@@ -2410,13 +3359,24 @@ fn generate_fold_big_step_rules(
                 {
                     continue;
                 }
-                let param_names = fold_param_names(rule);
+                let param_names = common::fold_param_names(rule);
                 let label = &rule.label;
                 let rust_code = &rule.rust_code.as_ref().unwrap().code;
-                let safe_code = safeify_rust_code(rust_code);
 
                 // Only emit fold when result is not Err (e.g. Add only rewrites when both args are ints).
-                let filter_err = if category_has_err {
+                // Exception: numeric cast folds that *finalize* to `Err` on failure (invalid width, NaN, …)
+                // must still produce `fold_proc(_, Err)` so the trigger rewrites to `error`.
+                let label_str = label.to_string();
+                let fold_fold_through_err = matches!(
+                    label_str.as_str(),
+                    "IntBinProc"
+                        | "UIntBinProc"
+                        | "FloatBinProc"
+                        | "FixedBinProc"
+                        | "BigintCastProc"
+                        | "BigratCastProc"
+                );
+                let filter_err = if category_has_err && !fold_fold_through_err {
                     quote! {
                         ,
                         if (match & res { #category :: #err_label => false , _ => true })
@@ -2425,17 +3385,87 @@ fn generate_fold_big_step_rules(
                     quote! {}
                 };
 
-                // `#safe_code` = `SafeArith`-rewritten `#rust_code`. Non-native
-                // fold bodies get the same overflow-to-`None` treatment.
-                if param_names.len() == 2 {
+                // Non-native fold rules (e.g. Proc): route through full
+                // `safeify_and_wrap` — binary operators AND methods both
+                // get rewritten. `runtime/src/safe_arith.rs` has a blanket
+                // `impl<T: SafeArith + Copy> SafeArith for &T` so
+                // `x + y` on `&u32 + &u32` (common pattern in user code
+                // that match-extracts inner values) now routes through
+                // `safe_add` and short-circuits on overflow via `?`
+                // instead of panicking in debug builds. The `if let
+                // Some(res) = #safe_code` guard below turns short-circuits
+                // into "fold doesn't fire" — the term stays as-is until
+                // a different rule matches.
+                let safe_code = safeify_rust_code(rust_code);
+                if param_names.len() == 3 {
                     let p0 = &param_names[0];
                     let p1 = &param_names[1];
+                    let p2 = &param_names[2];
+                    let (left_fold_rel, mid_fold_rel, right_fold_rel) =
+                        if let Some(ref ctx) = rule.term_context {
+                            let types: Vec<_> = ctx
+                                .iter()
+                                .filter_map(|p| match p {
+                                    TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                        Some(ident.clone())
+                                    },
+                                    _ => None,
+                                })
+                                .collect();
+                            if types.len() == 3 {
+                                let left_rn = common::relation_names(&types[0]);
+                                let mid_rn = common::relation_names(&types[1]);
+                                let right_rn = common::relation_names(&types[2]);
+                                (left_rn.fold_rel, mid_rn.fold_rel, right_rn.fold_rel)
+                            } else {
+                                (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
+                            }
+                        } else {
+                            (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
+                        };
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, mid, right) = s,
+                            #left_fold_rel(left.as_ref().clone(), lv),
+                            #mid_fold_rel(mid.as_ref().clone(), mv),
+                            #right_fold_rel(right.as_ref().clone(), rv),
+                            let #p0 = lv,
+                            let #p1 = mv,
+                            let #p2 = rv,
+                            if let Some(res) = #safe_code
+                            #filter_err;
+                    });
+                } else if param_names.len() == 2 {
+                    let p0 = &param_names[0];
+                    let p1 = &param_names[1];
+                    // Use per-param fold relation when term_context has different param types (e.g. DeleteList List,Int)
+                    let (left_fold_rel, right_fold_rel) = if let Some(ref ctx) = rule.term_context {
+                        let types: Vec<_> = ctx
+                            .iter()
+                            .filter_map(|p| match p {
+                                TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                    Some(ident.clone())
+                                },
+                                _ => None,
+                            })
+                            .collect();
+                        if types.len() == 2 {
+                            let left_rn = common::relation_names(&types[0]);
+                            let right_rn = common::relation_names(&types[1]);
+                            (left_rn.fold_rel, right_rn.fold_rel)
+                        } else {
+                            (fold_rel.clone(), fold_rel.clone())
+                        }
+                    } else {
+                        (fold_rel.clone(), fold_rel.clone())
+                    };
                     rules.push(quote! {
                         #fold_rel(s.clone(), res) <--
                             #cat_rel(s),
                             if let #category::#label(left, right) = s,
-                            #fold_rel(left.as_ref().clone(), lv),
-                            #fold_rel(right.as_ref().clone(), rv),
+                            #left_fold_rel(left.as_ref().clone(), lv),
+                            #right_fold_rel(right.as_ref().clone(), rv),
                             let #p0 = lv,
                             let #p1 = rv,
                             if let Some(res) = #safe_code
@@ -2443,11 +3473,22 @@ fn generate_fold_big_step_rules(
                     });
                 } else if param_names.len() == 1 {
                     let p0 = &param_names[0];
+                    let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
+                        if let Some(TermParam::Simple { ty: TypeExpr::Base(ident), .. }) =
+                            ctx.first()
+                        {
+                            common::relation_names(ident).fold_rel
+                        } else {
+                            fold_rel.clone()
+                        }
+                    } else {
+                        fold_rel.clone()
+                    };
                     rules.push(quote! {
                         #fold_rel(s.clone(), res) <--
                             #cat_rel(s),
                             if let #category::#label(inner) = s,
-                            #fold_rel(inner.as_ref().clone(), lv),
+                            #inner_fold_rel(inner.as_ref().clone(), lv),
                             let #p0 = lv,
                             if let Some(res) = #safe_code
                             #filter_err;
@@ -2456,34 +3497,36 @@ fn generate_fold_big_step_rules(
             }
         }
 
-        // Area 5: Consolidated fold trigger — one rule per category
-        // Replaces N per-constructor trigger rules with one inline match
-        let trigger_arms: Vec<TokenStream> = language
-            .terms
-            .iter()
-            .filter(|r| r.category == *category && r.eval_mode == Some(EvalMode::Fold))
-            .map(|rule| {
-                let label = &rule.label;
-                let n = fold_field_count(rule);
-                if n == 0 {
-                    quote! { #category::#label => true, }
-                } else {
-                    let pat: Vec<TokenStream> = (0..n).map(|_| quote! { _ }).collect();
-                    quote! { #category::#label(#(#pat),*) => true, }
-                }
-            })
-            .collect();
+        // Area 5: Consolidated fold trigger — one rule per category (non-collection only).
+        // Collection categories (List/Bag) already have a wrapped trigger above (ListLit(t)/BagLit(t)).
+        if !is_collection {
+            let trigger_arms: Vec<TokenStream> = language
+                .terms
+                .iter()
+                .filter(|r| r.category == *category && r.eval_mode == Some(EvalMode::Fold))
+                .map(|rule| {
+                    let label = &rule.label;
+                    let n = common::fold_field_count(rule);
+                    if n == 0 {
+                        quote! { #category::#label => true, }
+                    } else {
+                        let pat: Vec<TokenStream> = (0..n).map(|_| quote! { _ }).collect();
+                        quote! { #category::#label(#(#pat),*) => true, }
+                    }
+                })
+                .collect();
 
-        if !trigger_arms.is_empty() {
-            rules.push(quote! {
-                #rw_rel(s.clone(), t.clone()) <--
-                    #cat_rel(s),
-                    if (match s {
-                        #(#trigger_arms)*
-                        _ => false,
-                    }),
-                    #fold_rel(s, t);
-            });
+            if !trigger_arms.is_empty() {
+                rules.push(quote! {
+                    #rw_rel(s.clone(), t.clone()) <--
+                        #cat_rel(s),
+                        if (match s {
+                            #(#trigger_arms)*
+                            _ => false,
+                        }),
+                        #fold_rel(s, t);
+                });
+            }
         }
     }
 

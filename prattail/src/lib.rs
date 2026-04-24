@@ -383,17 +383,43 @@ impl BeamWidthConfig {
 /// - float:   `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?`
 /// - string:  `"([^"\\]|\\.)*"`
 /// - ident:   `[a-zA-Z_][a-zA-Z0-9_]*`
+///
+/// When `boolean` is `Some(pattern)`, the lexer uses that regex for boolean
+/// literals (e.g. `yes|no`) and emits a single token with the matched text;
+/// when `None`, the default `true`/`false` keywords are used.
 #[derive(Debug, Clone)]
 pub struct LiteralPatterns {
     /// Integer literal pattern (e.g., `[0-9]+`).
     pub integer: String,
+    /// Optional per-category integer literal patterns.
+    ///
+    /// Key = category name from `types {}` (e.g., `Int`, `UInt32`), value = regex pattern.
+    /// When non-empty, lexer generation can build separate integer token paths per category.
+    pub integer_by_category: std::collections::HashMap<String, String>,
+    /// Per-category rational literal regex patterns (e.g. `…r/…r`, optional `…r`).
+    pub rational_by_category: std::collections::HashMap<String, String>,
+    /// Per-category fixed-point literal regex patterns (`<mantissa>p<scale>`).
+    pub fixed_by_category: std::collections::HashMap<String, String>,
     /// Float literal pattern (e.g., `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?`).
     pub float: String,
     /// String literal pattern (e.g., `"([^"\\]|\\.)*"`).
     pub string: String,
     /// Identifier pattern (e.g., `[a-zA-Z_][a-zA-Z0-9_]*`).
     pub ident: String,
+    /// Optional boolean literal pattern (e.g. `yes|no`). When `None`, default `true`/`false` keywords are used.
+    pub boolean: Option<String>,
 }
+
+pub mod int_lit;
+pub mod rational_lit;
+pub use int_lit::{parse_int_lit, IntLit, IntSuffix, Suffix};
+pub use rational_lit::{parse_rational_lit, RationalLit};
+pub use trampoline::reset_handle_mixfix_emitted;
+// Note: parse_fixed_lit and parse_float_lit live in the `mettail-runtime` crate
+// (they construct runtime types CanonicalFixedPoint / CanonicalFloat64). The
+// dependency direction is runtime → prattail (not the reverse), so we keep
+// these parsers next to the types they produce. Callers:
+//   use mettail_runtime::{parse_fixed_lit, parse_float_lit};
 
 /// The embedded content of `literal_patterns.ebnf`, compiled into the binary.
 const DEFAULT_LITERAL_PATTERNS_EBNF: &str = include_str!("literal_patterns.ebnf");
@@ -644,6 +670,20 @@ pub struct CategorySpec {
     pub native_type: Option<String>,
     /// Whether this is the primary (first-declared) category.
     pub is_primary: bool,
+    /// Whether this category has a variable variant (e.g. IVar, BVar).
+    /// False for collection-only categories (List, Bag) which have no Var variant.
+    pub has_var: bool,
+}
+
+impl Default for CategorySpec {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            native_type: None,
+            is_primary: false,
+            has_var: false,
+        }
+    }
 }
 
 /// A grammar rule specification.
@@ -723,6 +763,9 @@ pub enum SyntaxItemSpec {
         element_category: String,
         separator: String,
         kind: CollectionKind,
+        /// Map-only separator between key and value (e.g., ":").
+        /// Must be `Some` when `kind == HashMap`, otherwise `None`.
+        key_val_separator: Option<String>,
     },
     /// Repeat a body pattern with separator between repetitions.
     /// Nullable (0 iterations). The body can be any SyntaxItemSpec:
@@ -823,6 +866,7 @@ impl LanguageSpec {
     /// All classification flags (is_infix, is_postfix, is_cast, etc.) are
     /// derived automatically via [`classify::classify_rule()`]. The bridge
     /// only needs to provide structural data and DSL annotations.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_options(
         name: String,
         types: Vec<CategorySpec>,

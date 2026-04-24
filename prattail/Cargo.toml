@@ -13,9 +13,12 @@ description = "PraTTaIL: Pratt + Recursive Descent parser generator with automat
 ascent-parallel = []
 
 [dependencies]
+# Note: prattail does NOT depend on runtime. fixed_lit/float_lit were moved
+# to runtime/ to break the cycle (runtime → prattail for CEK/CESK re-exports).
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
+# Feature-branch (WFST/CESK/presburger) deps — always-on in this branch.
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }
 proptest = { version = "1" }
@@ -28,6 +31,10 @@ crossbeam-channel = { version = "0.5" }
 crossbeam-deque = { version = "0.8" }
 dashmap = { version = "6" }
 num_cpus = { version = "1" }
+# Main-branch numeric-literal deps for BigInt/BigRat literal parsing.
+num-bigint = "0.4"
+num-rational = { version = "0.4", features = ["num-bigint-std"] }
+num-traits = "0.2"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
