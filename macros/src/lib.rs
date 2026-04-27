@@ -19,6 +19,7 @@ use mettail_ast::compose::ComposeDef;
 use mettail_ast::language::LanguageDef;
 use mettail_ast::merge::{apply_extends, apply_includes, apply_mixins};
 use mettail_ast::validation::validate_language;
+use gen::runtime::wpds_codegen::generate_wpds_engine_module;
 use gen::{
     generate_all, generate_blockly_definitions, generate_language_impl, generate_metadata,
     write_blockly_blocks, write_blockly_categories,
@@ -130,6 +131,14 @@ pub fn language(input: TokenStream) -> TokenStream {
     );
     stage!("generate_language_impl.done");
 
+    // W7 Stage 6: WPDS-runtime engine for the language.
+    // Emits a `<Lang>WpdsEngine` struct and `WpdsStepEngine` impl alongside
+    // the existing trampoline parser. Coexists harmlessly until Stage 10's
+    // hard cutover. See `prattail/docs/design/wpds-migration-survey.md`.
+    stage!("generate_wpds_engine_module.start");
+    let wpds_engine_code = generate_wpds_engine_module(&language_def);
+    stage!("generate_wpds_engine_module.done");
+
     // Generate test file for cargo test / cargo nextest integration.
     // Gated by `options { emit_tests: true }` (default: true).
     let emit_tests = language_def
@@ -183,6 +192,7 @@ pub fn language(input: TokenStream) -> TokenStream {
     let ascent_include = spill_and_include(&lang_name, "ascent", ascent_code);
     let metadata_include = spill_and_include(&lang_name, "metadata", metadata_code);
     let language_include = spill_and_include(&lang_name, "language", language_code);
+    let wpds_include = spill_and_include(&lang_name, "wpds", wpds_engine_code);
     let strategies_include = spill_and_include(&lang_name, "strategies", public_strategies);
 
     let combined = quote::quote! {
@@ -191,6 +201,7 @@ pub fn language(input: TokenStream) -> TokenStream {
         #ascent_include
         #metadata_include
         #language_include
+        #wpds_include
 
         /// Public proptest strategies for generating random well-formed terms.
         ///

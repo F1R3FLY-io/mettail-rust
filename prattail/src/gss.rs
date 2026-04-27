@@ -1,26 +1,41 @@
-//! CEK-9A: Graph-Structured Stack (GSS) for GLL parsing.
+//! Graph-Structured Stack (GSS) for GLL/WPDS-runtime parsing.
 //!
 //! Generalizes the CEK continuation stack to a **graph-structured stack**
-//! where multiple parse states share common continuations. This turns
-//! PraTTaIL from a deterministic parser with NFA fallback into a full
-//! GLL parser that handles ALL ambiguity natively.
+//! where multiple parse states share common continuations. Supports both:
+//!
+//! - Legacy GLL-style sharing via `GraphStructuredStack` (string-tagged nodes)
+//! - Runtime WPDS branching via [`WpdsGss<W>`] (typed via [`StackSymbolV2`]
+//!   and a generic [`Semiring`] weight)
+//!
+//! ## Runtime use
+//!
+//! Stage 3 of W7 plan v5.1 activates this module as the substrate for the
+//! WPDS walker (Stage 4). [`WpdsGss<LexicographicWeight>`] is the canonical
+//! instantiation; [`WpdsGss<TropicalWeight>`] and other weights remain
+//! available for analysis tooling.
+//!
+//! Always-on; no feature gates (per plan v5.1 mandate).
 //!
 //! ## Architecture
 //!
-//! GSS nodes are `(pos, frame_tag)` pairs; edges are shared continuations.
-//! The WFST selects the best parse from the GSS's packed parse forest.
-//! Falls back to deterministic CEK for unambiguous grammars (zero overhead).
+//! GSS nodes are `(pos, symbol)` pairs; edges are shared continuations
+//! carrying weights. The WFST/WPDS selects the best parse from the GSS's
+//! packed parse forest. Falls back to a deterministic single-frontier walk
+//! for unambiguous grammars (zero overhead).
+//!
+//! All path-enumeration operations are **iterative** (no host-stack
+//! recursion) to satisfy the project's PDA/trampoline mandate.
 //!
 //! ## References
 //!
 //! - Scott, E. & Johnstone, A. (2010). *GLL parsing.* ENTCS.
 //! - Tomita, M. (1986). *Efficient parsing for natural language.* Kluwer.
-//!
-//! ## Feature Gate
-//!
-//! Available under `gll-parsing` feature (depends on `reactive-cek`).
+//! - Reps, Lal & Kidd (2007). WPDS poststar/prestar saturation.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+use crate::automata::semiring::Semiring;
+use crate::wpds_runtime::StackSymbolV2;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // GSS Types
@@ -152,30 +167,26 @@ impl GraphStructuredStack {
     ///
     /// Each path is a sequence of node IDs from the frontier to the
     /// bottom of the stack. Used for extracting parse forests.
+    ///
+    /// Iterative implementation (explicit work-stack) to satisfy the
+    /// project's no-host-recursion mandate.
     pub fn paths_to_root(&self, start: GssNodeId) -> Vec<Vec<GssNodeId>> {
         let mut result = Vec::new();
-        let mut current_path = vec![start];
-        self.dfs_paths(start, &mut current_path, &mut result);
+        // Each work item carries the current node and the path taken to reach it.
+        let mut work: Vec<(GssNodeId, Vec<GssNodeId>)> = vec![(start, vec![start])];
+        while let Some((node, path)) = work.pop() {
+            let edges = self.edges_from(node);
+            if edges.is_empty() {
+                result.push(path);
+            } else {
+                for edge in edges {
+                    let mut next = path.clone();
+                    next.push(edge.target);
+                    work.push((edge.target, next));
+                }
+            }
+        }
         result
-    }
-
-    fn dfs_paths(
-        &self,
-        node: GssNodeId,
-        path: &mut Vec<GssNodeId>,
-        result: &mut Vec<Vec<GssNodeId>>,
-    ) {
-        let edges = self.edges_from(node);
-        if edges.is_empty() {
-            // Leaf (bottom of stack)
-            result.push(path.clone());
-            return;
-        }
-        for edge in edges {
-            path.push(edge.target);
-            self.dfs_paths(edge.target, path, result);
-            path.pop();
-        }
     }
 }
 
@@ -258,22 +269,304 @@ impl Sppf {
     }
 
     /// Count the number of distinct parse trees represented.
+    ///
+    /// Iterative: builds a memo table indexed by `SppfNodeId`, processed in
+    /// creation order. Since SPPF children/alternatives may only refer to
+    /// earlier IDs (a strict creation invariant), one bottom-up pass suffices.
+    /// Avoids host-stack recursion on deeply nested forests.
     pub fn tree_count(&self, root: SppfNodeId) -> usize {
-        match self.node(root) {
-            Some(SppfNode::Terminal { .. }) => 1,
-            Some(SppfNode::Interior { children, .. }) => {
-                children.iter().map(|&c| self.tree_count(c)).product::<usize>().max(1)
-            },
-            Some(SppfNode::Packed { alternatives }) => {
-                alternatives
+        let n = self.nodes.len();
+        if (root as usize) >= n {
+            return 0;
+        }
+        let mut memo: Vec<usize> = vec![0; n];
+        for (id, node) in self.nodes.iter().enumerate() {
+            memo[id] = match node {
+                SppfNode::Terminal { .. } => 1,
+                SppfNode::Interior { children, .. } => children
+                    .iter()
+                    .map(|&c| memo[c as usize])
+                    .product::<usize>()
+                    .max(1),
+                SppfNode::Packed { alternatives } => alternatives
                     .iter()
                     .map(|alt| {
-                        alt.iter().map(|&c| self.tree_count(c)).product::<usize>().max(1)
+                        alt.iter()
+                            .map(|&c| memo[c as usize])
+                            .product::<usize>()
+                            .max(1)
                     })
-                    .sum()
-            },
-            None => 0,
+                    .sum(),
+            };
         }
+        memo[root as usize]
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WpdsGss — typed graph-structured stack for the WPDS-runtime walker
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A node in the typed [`WpdsGss`].
+///
+/// Carries an integer-indexed [`StackSymbolV2`] (no `String` allocations on
+/// the hot path) plus the input position at which this stack frame was
+/// created. Used for structural sharing: two parse branches reaching the
+/// same `(pos, symbol)` combine into one node.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WpdsGssNode {
+    /// Input position when this node was created.
+    pub pos: usize,
+    /// The stack symbol at this frame.
+    pub symbol: StackSymbolV2,
+}
+
+/// An edge in the typed GSS, weighted by an arbitrary [`Semiring`].
+#[derive(Debug, Clone)]
+pub struct WpdsGssEdge<W: Semiring> {
+    /// Successor node (the frame *below* on the stack).
+    pub target: GssNodeId,
+    /// Edge weight (e.g., [`crate::automata::lex_weight::LexicographicWeight`]).
+    pub weight: W,
+}
+
+/// Typed graph-structured stack for the WPDS-runtime walker.
+///
+/// Generic over weight semiring `W`. Mirrors [`GraphStructuredStack`]'s API
+/// but with typed symbols and weights, plus WPDS-specific stack operations
+/// (`push_symbol`, `pop_symbol`, `replace_top`).
+#[derive(Debug, Clone)]
+pub struct WpdsGss<W: Semiring> {
+    nodes: Vec<WpdsGssNode>,
+    edges: HashMap<GssNodeId, Vec<WpdsGssEdge<W>>>,
+    frontier: Vec<GssNodeId>,
+    node_index: HashMap<WpdsGssNode, GssNodeId>,
+}
+
+impl<W: Semiring> WpdsGss<W> {
+    /// Create an empty typed GSS.
+    pub fn new() -> Self {
+        WpdsGss {
+            nodes: Vec::new(),
+            edges: HashMap::new(),
+            frontier: Vec::new(),
+            node_index: HashMap::new(),
+        }
+    }
+
+    /// Get or create a node, ensuring structural sharing on `(pos, symbol)`.
+    pub fn get_or_create_node(&mut self, node: WpdsGssNode) -> GssNodeId {
+        if let Some(&id) = self.node_index.get(&node) {
+            return id;
+        }
+        let id = self.nodes.len() as GssNodeId;
+        self.node_index.insert(node.clone(), id);
+        self.nodes.push(node);
+        id
+    }
+
+    /// Add a weighted edge from `source` to `target`.
+    pub fn add_edge(&mut self, source: GssNodeId, target: GssNodeId, weight: W) {
+        self.edges.entry(source).or_default().push(WpdsGssEdge { target, weight });
+    }
+
+    /// Number of nodes.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Number of edges.
+    pub fn edge_count(&self) -> usize {
+        self.edges.values().map(|v| v.len()).sum()
+    }
+
+    /// Look up a node.
+    pub fn node(&self, id: GssNodeId) -> Option<&WpdsGssNode> {
+        self.nodes.get(id as usize)
+    }
+
+    /// Outgoing edges from a node (empty slice if none).
+    pub fn edges_from(&self, id: GssNodeId) -> &[WpdsGssEdge<W>] {
+        self.edges.get(&id).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// Whether the GSS is empty.
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Read-only view of the active frontier.
+    pub fn frontier(&self) -> &[GssNodeId] {
+        &self.frontier
+    }
+
+    /// Replace the entire frontier (used by the walker after a saturation step).
+    pub fn replace_frontier(&mut self, new_frontier: Vec<GssNodeId>) {
+        self.frontier = new_frontier;
+    }
+
+    /// Push a node onto the active frontier.
+    pub fn push_frontier(&mut self, node_id: GssNodeId) {
+        self.frontier.push(node_id);
+    }
+
+    /// Pop a node from the active frontier.
+    pub fn pop_frontier(&mut self) -> Option<GssNodeId> {
+        self.frontier.pop()
+    }
+
+    /// Current frontier size.
+    pub fn frontier_size(&self) -> usize {
+        self.frontier.len()
+    }
+
+    // ─── WPDS rule operations ───────────────────────────────────────────────
+
+    /// WPDS push: emit a new frame on top of `frontier_node`.
+    ///
+    /// Mirrors `WpdsRule::Push` semantics. Creates a new GSS node for
+    /// `(pos, symbol)`, links it to `frontier_node` with `weight`, and
+    /// returns the new node's id (does NOT mutate the frontier).
+    pub fn push_symbol(
+        &mut self,
+        frontier_node: GssNodeId,
+        symbol: StackSymbolV2,
+        pos: usize,
+        weight: W,
+    ) -> GssNodeId {
+        let new_id = self.get_or_create_node(WpdsGssNode { pos, symbol });
+        self.add_edge(new_id, frontier_node, weight);
+        new_id
+    }
+
+    /// WPDS pop: drop the top frame, returning the predecessor node.
+    ///
+    /// `frontier_node` is the frame being popped. Returns `Some(target)`
+    /// from the first outgoing edge, or `None` if `frontier_node` is at
+    /// the GSS root (no predecessors).
+    ///
+    /// For ambiguous backwards traversal (multiple predecessors), use
+    /// [`WpdsGss::pop_all_predecessors`].
+    pub fn pop_symbol(&mut self, frontier_node: GssNodeId) -> Option<GssNodeId> {
+        self.edges_from(frontier_node).first().map(|e| e.target)
+    }
+
+    /// All predecessor nodes reachable by popping `frontier_node`.
+    ///
+    /// Useful when the GSS has multiple parallel calling contexts to pop
+    /// back into. Each returned id is paired with the edge weight that
+    /// would be incurred by the pop.
+    pub fn pop_all_predecessors(&self, frontier_node: GssNodeId) -> Vec<(GssNodeId, &W)> {
+        self.edges_from(frontier_node)
+            .iter()
+            .map(|e| (e.target, &e.weight))
+            .collect()
+    }
+
+    /// WPDS replace: swap the top symbol for a new one.
+    ///
+    /// Conceptually: pop `frontier_node`, then push `new_symbol` onto the
+    /// same predecessors. Implemented by creating a new GSS node inheriting
+    /// `frontier_node`'s outgoing edges (modulo the times-composition with
+    /// `weight`).
+    pub fn replace_top(
+        &mut self,
+        frontier_node: GssNodeId,
+        new_symbol: StackSymbolV2,
+        pos: usize,
+        weight: W,
+    ) -> GssNodeId {
+        let new_id = self.get_or_create_node(WpdsGssNode { pos, symbol: new_symbol });
+        // Copy outgoing edges from frontier_node, composing weights.
+        let preds: Vec<(GssNodeId, W)> = self
+            .edges_from(frontier_node)
+            .iter()
+            .map(|e| (e.target, weight.times(&e.weight)))
+            .collect();
+        for (target, w) in preds {
+            self.add_edge(new_id, target, w);
+        }
+        new_id
+    }
+
+    /// Fork the stack: create a parallel branch at `from` sharing its
+    /// continuation (predecessors).
+    ///
+    /// Used for ambiguity fanout. `new_node` becomes a new frontier node
+    /// linked to `from`'s predecessors with `weight`.
+    pub fn fork(&mut self, from: GssNodeId, new_node: WpdsGssNode, weight: W) -> GssNodeId {
+        let new_id = self.get_or_create_node(new_node);
+        self.add_edge(new_id, from, weight);
+        self.frontier.push(new_id);
+        new_id
+    }
+
+    // ─── Path enumeration & cycle detection ─────────────────────────────────
+
+    /// Enumerate all paths from `start` to a GSS root (a node with no
+    /// outgoing edges).
+    ///
+    /// Iterative; uses an explicit work-stack to avoid host-stack recursion.
+    pub fn paths_to_root(&self, start: GssNodeId) -> Vec<Vec<GssNodeId>> {
+        let mut result = Vec::new();
+        let mut work: Vec<(GssNodeId, Vec<GssNodeId>)> = vec![(start, vec![start])];
+        while let Some((node, path)) = work.pop() {
+            let edges = self.edges_from(node);
+            if edges.is_empty() {
+                result.push(path);
+            } else {
+                for edge in edges {
+                    // Cycle guard: skip targets already on this path.
+                    if path.contains(&edge.target) {
+                        continue;
+                    }
+                    let mut next = path.clone();
+                    next.push(edge.target);
+                    work.push((edge.target, next));
+                }
+            }
+        }
+        result
+    }
+
+    /// Whether a cycle is reachable from `start` by following outgoing edges.
+    ///
+    /// Iterative DFS with a visit stack and a `recursion-stack` tracker
+    /// (the standard back-edge cycle detection without host recursion).
+    pub fn has_cycle_from(&self, start: GssNodeId) -> bool {
+        // 0 = unvisited, 1 = in progress (on rec stack), 2 = done
+        let mut state: HashMap<GssNodeId, u8> = HashMap::new();
+        // Each work item is (node, edge_index). edge_index = next edge to try.
+        let mut work: Vec<(GssNodeId, usize)> = vec![(start, 0)];
+        state.insert(start, 1);
+        while let Some(&(node, ref idx)) = work.last() {
+            let edges = self.edges_from(node);
+            let i = *idx;
+            if i < edges.len() {
+                // Bump the index in place.
+                let last = work.last_mut().expect("work non-empty");
+                last.1 += 1;
+                let target = edges[i].target;
+                match state.get(&target).copied().unwrap_or(0) {
+                    0 => {
+                        state.insert(target, 1);
+                        work.push((target, 0));
+                    }
+                    1 => return true, // back-edge — cycle
+                    _ => { /* already finished — not a back edge */ }
+                }
+            } else {
+                state.insert(node, 2);
+                work.pop();
+            }
+        }
+        false
+    }
+}
+
+impl<W: Semiring> Default for WpdsGss<W> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -402,5 +695,248 @@ mod tests {
         });
 
         assert_eq!(sppf.tree_count(packed), 2);
+    }
+
+    // ─── WpdsGss tests ──────────────────────────────────────────────────────
+
+    use crate::automata::lex_weight::LexicographicWeight;
+    use crate::automata::semiring::TropicalWeight;
+
+    fn lex(cost: f64, src: u16, rule: u16) -> LexicographicWeight {
+        LexicographicWeight::from_cost(cost, src, rule)
+    }
+
+    #[test]
+    fn test_wpds_gss_create_and_share() {
+        let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
+        let n = WpdsGssNode { pos: 0, symbol: StackSymbolV2::category_entry(3) };
+        let id1 = g.get_or_create_node(n.clone());
+        let id2 = g.get_or_create_node(n);
+        assert_eq!(id1, id2, "structural sharing on (pos, symbol)");
+        assert_eq!(g.node_count(), 1);
+    }
+
+    #[test]
+    fn test_wpds_gss_push_symbol() {
+        let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
+        let root = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let pushed = g.push_symbol(root, StackSymbolV2::rule_at(0, 1, 0, Some(5)), 1, lex(2.0, 0, 1));
+        assert_eq!(g.node_count(), 2);
+        assert_eq!(g.edge_count(), 1);
+        let edges = g.edges_from(pushed);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target, root);
+        assert_eq!(edges[0].weight.primary.0, 2.0);
+    }
+
+    #[test]
+    fn test_wpds_gss_pop_symbol() {
+        let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
+        let root = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let top = g.push_symbol(root, StackSymbolV2::rule_at(0, 0, 0, None), 1, lex(1.0, 0, 0));
+        let popped = g.pop_symbol(top);
+        assert_eq!(popped, Some(root));
+        // Pop at root should yield None.
+        assert_eq!(g.pop_symbol(root), None);
+    }
+
+    #[test]
+    fn test_wpds_gss_replace_top_inherits_predecessors() {
+        let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
+        let root = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let mid = g.push_symbol(root, StackSymbolV2::rule_at(0, 0, 0, None), 1, lex(1.0, 0, 0));
+        let replaced = g.replace_top(
+            mid,
+            StackSymbolV2::rule_at(0, 0, 1, None),
+            2,
+            lex(0.5, 0, 0),
+        );
+        let pred = g.pop_symbol(replaced);
+        assert_eq!(pred, Some(root), "replace inherits the predecessor");
+    }
+
+    #[test]
+    fn test_wpds_gss_fork_shares_continuation() {
+        let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
+        let root = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        g.push_frontier(root);
+        let alt_a = g.fork(
+            root,
+            WpdsGssNode { pos: 1, symbol: StackSymbolV2::rule_at(0, 0, 0, None) },
+            lex(1.0, 0, 0),
+        );
+        let alt_b = g.fork(
+            root,
+            WpdsGssNode { pos: 1, symbol: StackSymbolV2::rule_at(0, 1, 0, None) },
+            lex(1.0, 0, 1),
+        );
+        assert_eq!(g.node_count(), 3);
+        // Both forks point at root.
+        assert_eq!(g.pop_symbol(alt_a), Some(root));
+        assert_eq!(g.pop_symbol(alt_b), Some(root));
+        // Both are on the frontier (plus the original root push).
+        assert_eq!(g.frontier_size(), 3);
+    }
+
+    #[test]
+    fn test_wpds_gss_paths_iterative_avoids_recursion() {
+        let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
+        // Build a deep linear stack (1000 frames) — would overflow with recursive DFS.
+        let root = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let mut current = root;
+        for i in 1..=1000 {
+            current = g.push_symbol(
+                current,
+                StackSymbolV2::rule_at(0, 0, (i % 250) as u8, None),
+                i,
+                lex(1.0, 0, 0),
+            );
+        }
+        let paths = g.paths_to_root(current);
+        assert_eq!(paths.len(), 1, "linear chain has one path");
+        assert_eq!(paths[0].len(), 1001, "1000 push edges + start");
+    }
+
+    #[test]
+    fn test_wpds_gss_paths_branching() {
+        let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
+        let root = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let a = g.push_symbol(root, StackSymbolV2::rule_at(0, 0, 0, None), 1, lex(1.0, 0, 0));
+        let b = g.push_symbol(root, StackSymbolV2::rule_at(0, 1, 0, None), 1, lex(1.0, 0, 1));
+        let merge = g.get_or_create_node(WpdsGssNode {
+            pos: 2,
+            symbol: StackSymbolV2::rule_at(0, 0, 1, None),
+        });
+        g.add_edge(merge, a, lex(1.0, 0, 0));
+        g.add_edge(merge, b, lex(1.0, 0, 0));
+        let paths = g.paths_to_root(merge);
+        assert_eq!(paths.len(), 2, "diamond yields two paths");
+        for p in &paths {
+            assert_eq!(p.first(), Some(&merge));
+            assert_eq!(p.last(), Some(&root));
+        }
+    }
+
+    #[test]
+    fn test_wpds_gss_cycle_detection_acyclic() {
+        let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
+        let root = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let mid = g.push_symbol(root, StackSymbolV2::rule_at(0, 0, 0, None), 1, lex(1.0, 0, 0));
+        let top = g.push_symbol(mid, StackSymbolV2::rule_at(0, 0, 1, None), 2, lex(1.0, 0, 0));
+        assert!(!g.has_cycle_from(top));
+        assert!(!g.has_cycle_from(root));
+    }
+
+    #[test]
+    fn test_wpds_gss_cycle_detection_self_loop() {
+        let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
+        let n = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        // Add a self-edge — pathological GSS, but cycle detection should catch.
+        g.add_edge(n, n, lex(1.0, 0, 0));
+        assert!(g.has_cycle_from(n));
+    }
+
+    #[test]
+    fn test_wpds_gss_cycle_detection_two_node_cycle() {
+        let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
+        let a = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let b = g.get_or_create_node(WpdsGssNode {
+            pos: 1,
+            symbol: StackSymbolV2::rule_at(0, 0, 0, None),
+        });
+        g.add_edge(a, b, lex(1.0, 0, 0));
+        g.add_edge(b, a, lex(1.0, 0, 0));
+        assert!(g.has_cycle_from(a));
+        assert!(g.has_cycle_from(b));
+    }
+
+    #[test]
+    fn test_wpds_gss_pop_all_predecessors() {
+        let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
+        let r1 = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let r2 = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(1),
+        });
+        let merged = g.get_or_create_node(WpdsGssNode {
+            pos: 1,
+            symbol: StackSymbolV2::rule_at(0, 0, 0, None),
+        });
+        g.add_edge(merged, r1, lex(1.0, 0, 0));
+        g.add_edge(merged, r2, lex(2.0, 1, 0));
+        let preds = g.pop_all_predecessors(merged);
+        assert_eq!(preds.len(), 2);
+    }
+
+    #[test]
+    fn test_wpds_gss_works_with_tropical_weight() {
+        // The typed GSS is generic over Semiring; make sure non-Lex weights compile.
+        let mut g: WpdsGss<TropicalWeight> = WpdsGss::new();
+        let n = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let _ = g.push_symbol(
+            n,
+            StackSymbolV2::rule_at(0, 0, 0, None),
+            1,
+            TropicalWeight::new(0.5),
+        );
+        assert_eq!(g.node_count(), 2);
+    }
+
+    #[test]
+    fn test_wpds_gss_replace_top_composes_weights() {
+        let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
+        let root = g.get_or_create_node(WpdsGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let mid = g.push_symbol(root, StackSymbolV2::rule_at(0, 0, 0, None), 1, lex(1.0, 0, 0));
+        let replaced = g.replace_top(
+            mid,
+            StackSymbolV2::rule_at(0, 0, 1, None),
+            2,
+            lex(0.5, 2, 3),
+        );
+        // The replacement edge should carry the times-composition of replace weight
+        // and the inherited edge weight.
+        let edges = g.edges_from(replaced);
+        assert_eq!(edges.len(), 1);
+        // Left-projection: replace weight (0.5, 2, 3) on left ⊗ inherited (1.0, 0, 0).
+        // Primary = 1.5, src/rule from left = (2, 3).
+        assert!((edges[0].weight.primary.0 - 1.5).abs() < 1e-9);
+        assert_eq!(edges[0].weight.src_idx, 2);
+        assert_eq!(edges[0].weight.rule_idx, 3);
     }
 }

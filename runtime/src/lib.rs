@@ -11,6 +11,10 @@
 mod binding;
 pub use binding::*;
 
+/// Runtime diagnostics queue (D11 ambiguous-display warnings, etc.).
+/// Stage 7 of W7 plan v5.1.
+pub mod diagnostics;
+
 // Canonical float types for Float category (Eq/Hash/Ord)
 mod canonical_float;
 pub use canonical_float::{CanonicalFloat32, CanonicalFloat64};
@@ -99,6 +103,16 @@ pub use behavioral_pred::{
     BehavioralPred, PredArg, Quantifier, QuantifiedDomain,
     set_pred_fact_snapshot, clear_pred_fact_snapshot,
     evaluate_pred_with_bindings,
+};
+
+// Phase 7: refinement-type predicate registry + evaluator. Generated
+// rule action codegen calls `evaluate_refinement_predicate` after
+// constructing a candidate term against a refined category to enforce
+// the refinement.
+pub mod refinement;
+pub use refinement::{
+    clear_refinement_registry, evaluate_refinement_predicate,
+    register_refinement_predicate, RefinementPredicate,
 };
 
 // T4 user assertion registry — see `t4_assertions` for full lifecycle.

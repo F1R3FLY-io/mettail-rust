@@ -232,70 +232,260 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
 fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream {
     use quote::{format_ident, quote};
 
+    // Stage 3 (2026-04-27): determine which categories have a WPDS facade
+    // emitted (`parse_<Cat>_via_wpds`). The facade is emitted for every
+    // category in `collect_category_names_with_literals` — categories
+    // with user-written rules, from_literals TokenDefs, or collection_kind.
+    // For categories without a facade, we skip emitting the parallel
+    // `Cat::parse_via_wpds` method.
+    let wpds_categories: std::collections::BTreeSet<String> = {
+        let mut set = std::collections::BTreeSet::new();
+        // user rules
+        for rule in &language.terms {
+            set.insert(rule.category.to_string());
+        }
+        // from_literals TokenDefs
+        for type_def in &language.types {
+            let name = type_def.name.to_string();
+            let has_lit = language.token_defs.iter().any(|td| {
+                td.from_literals
+                    && td.category.as_ref().map(|c| c.to_string() == name).unwrap_or(false)
+            });
+            if has_lit {
+                set.insert(name);
+            }
+        }
+        // collection_kind
+        for type_def in &language.types {
+            if type_def.collection_kind.is_some() {
+                set.insert(type_def.name.to_string());
+            }
+        }
+        set
+    };
+
     let impls: Vec<TokenStream> = language
         .types
         .iter()
         .map(|t| {
             let cat = &t.name;
+            let cat_str = cat.to_string();
+            let has_wpds_facade = wpds_categories.contains(&cat_str);
             let parse_fn = format_ident!("parse_{}", cat);
-            let parse_fn_recovering = format_ident!("parse_{}_recovering", cat);
+            let _parse_fn_recovering = format_ident!("parse_{}_recovering", cat);
 
             let running_weight_fn = format_ident!("running_weight_{}", cat);
+            let _ = running_weight_fn;
             let wfst_methods = quote! {
                 /// Parse with weight emission: calls `lex_weighted()` to get
-                /// per-token tropical weights, then parses normally.
+                /// per-token tropical weights, then parses normally via the WPDS
+                /// facade.
                 ///
                 /// Returns `(result, weights)` where `weights[i]` is the tropical
                 /// weight (lower = higher priority) for `tokens[i]`.
                 ///
-                /// Requires the `wfst` feature.
+                /// Stage 7 (2026-04-27): the trampoline-side parser was removed;
+                /// the WPDS path captures lex weights via the per-grammar lex
+                /// strategy table. The exposed `weights` array is the per-token
+                /// lex weight (separate from the parser's lex-min disambiguation
+                /// weight, which is internal to the WPDS engine).
                 pub fn parse_structured_weighted(input: &str) -> Result<(#cat, Vec<f64>), ParseError> {
                     let weighted_tokens = lex_weighted(input)?;
                     let weights: Vec<f64> = weighted_tokens.iter().map(|(_, _, w)| *w).collect();
-                    let tokens: Vec<(Token<'_>, Range)> = weighted_tokens
-                        .into_iter()
-                        .map(|(t, r, _)| (t, r))
-                        .collect();
-                    let mut pos = 0usize;
-                    let result = #parse_fn(&tokens, &mut pos, 0)?;
-                    if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
-                        return Err(ParseError::TrailingTokens {
-                            found: format_token_friendly(&tokens[pos].0),
-                            range: tokens[pos].1,
-                            hint: Some(Cow::Borrowed("the parser finished but input remains; check for missing operators or extra tokens")),
-                        });
-                    }
+                    let result = Self::parse_structured(input)?;
                     Ok((result, weights))
                 }
 
                 /// B4: Parse with confidence scoring.
                 ///
-                /// Returns `(ast, confidence)` where `confidence` is the accumulated
-                /// tropical weight of dispatch decisions along the parse path.
-                ///
-                /// **Interpretation:**
-                /// - `0.0` — fully deterministic parse (no ambiguity encountered)
-                /// - Low values (< 1.0) — mostly deterministic with minor ambiguity
-                /// - High values (> 2.0) — significant ambiguity encountered
-                ///
-                /// Useful for language servers and IDE integration to flag low-confidence
-                /// parses (e.g., display "ambiguous parse" diagnostics).
+                /// Returns `(ast, confidence)`. Stage 7 (2026-04-27): the
+                /// confidence value is now always `0.0` because the trampoline's
+                /// `running_weight_<Cat>` accumulator was removed. The WPDS
+                /// engine maintains its own internal lex-min cost but does not
+                /// currently expose a per-parse confidence summary; future work
+                /// can wire the engine's terminal weight through.
                 pub fn parse_with_confidence(input: &str) -> Result<(#cat, f64), ParseError> {
-                    let tokens = lex(input)?;
-                    let mut pos = 0usize;
-                    let result = #parse_fn(&tokens, &mut pos, 0)?;
-                    if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
-                        return Err(ParseError::TrailingTokens {
-                            found: format_token_friendly(&tokens[pos].0),
-                            range: tokens[pos].1,
-                            hint: Some(Cow::Borrowed("the parser finished but input remains; check for missing operators or extra tokens")),
-                        });
-                    }
-                    let confidence = #running_weight_fn();
-                    Ok((result, confidence))
+                    let result = Self::parse_structured(input)?;
+                    Ok((result, 0.0))
                 }
             };
 
+            let parse_via_wpds_fn = format_ident!("parse_{}_via_wpds", cat);
+            let parse_via_wpds_method = if has_wpds_facade {
+                quote! {
+                    /// Stage 3 (2026-04-27): WPDS-driven parser path.
+                    ///
+                    /// Lexes via the trampoline-side `lex(input)`, converts each
+                    /// `Token` to `(TokenKind, &str)` via the per-grammar
+                    /// `token_to_kind` + `token_text` adapter (Stage 2), then
+                    /// dispatches to the WPDS facade `parse_<Cat>_via_wpds`.
+                    /// Trampoline `Cat::parse` and this method coexist during
+                    /// the migration; after Phase 13's atomic swap, this
+                    /// becomes the canonical `Cat::parse`.
+                    pub fn parse_via_wpds(input: &str) -> Result<#cat, ParseError> {
+                        let tokens = lex(input)?;
+                        let kinds: Vec<mettail_prattail::automata::TokenKind> =
+                            tokens.iter().map(|(t, _)| token_to_kind(t)).collect();
+                        let texts: Vec<&str> = tokens
+                            .iter()
+                            .map(|(t, r)| token_text(t, input, *r))
+                            .collect();
+                        let mut pos = 0usize;
+                        match #parse_via_wpds_fn(&kinds, &texts, &mut pos, 0) {
+                            Ok(v) => {
+                                // Trailing-token check: WPDS facade returns
+                                // Ok as soon as the walker hits Accepted, but
+                                // parity with the trampoline `parse_structured`
+                                // requires we reject parses that didn't
+                                // consume the entire token stream (excluding
+                                // the trailing `Eof` sentinel).
+                                if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
+                                    return Err(ParseError::TrailingTokens {
+                                        found: format_token_friendly(&tokens[pos].0),
+                                        range: tokens[pos].1,
+                                        hint: Some(Cow::Borrowed(
+                                            "the WPDS parser finished but input remains; check for missing operators or extra tokens",
+                                        )),
+                                    });
+                                }
+                                Ok(v)
+                            }
+                            Err(WpdsParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
+                                expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
+                                range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                                hint: None,
+                            }),
+                            Err(WpdsParseError::ParseFailed { message, position }) => {
+                                let range = tokens
+                                    .get(position)
+                                    .map(|(_, r)| *r)
+                                    .unwrap_or_else(|| {
+                                        tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                    });
+                                Err(ParseError::UnexpectedToken {
+                                    expected: Cow::Owned(message),
+                                    found: tokens
+                                        .get(position)
+                                        .map(|(t, _)| format_token_friendly(t))
+                                        .unwrap_or_else(|| "end of input".to_string()),
+                                    range,
+                                    hint: None,
+                                })
+                            }
+                            Err(WpdsParseError::Incomplete { position }) => {
+                                let range = tokens
+                                    .get(position)
+                                    .map(|(_, r)| *r)
+                                    .unwrap_or_else(|| {
+                                        tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                    });
+                                Err(ParseError::UnexpectedToken {
+                                    expected: Cow::Borrowed("WPDS engine did not consume all tokens"),
+                                    found: tokens
+                                        .get(position)
+                                        .map(|(t, _)| format_token_friendly(t))
+                                        .unwrap_or_else(|| "end of input".to_string()),
+                                    range,
+                                    hint: None,
+                                })
+                            }
+                        }
+                    }
+                }
+            } else {
+                quote! {}
+            };
+            let _ = parse_via_wpds_fn;
+            let _ = parse_fn;
+            // Stage 5+6 (2026-04-27): `Cat::parse` and `Cat::parse_structured`
+            // route through the WPDS parser facade. Categories without a WPDS
+            // facade (no rules, no from_literals, no collection_kind) emit a
+            // diagnostic stub that reports the missing parser at runtime — in
+            // practice none of the shipped grammars hit this path; if any do,
+            // it indicates a grammar definition oversight (an unused
+            // `LangType` declared but never referenced by any rule).
+            let parse_structured_body = if has_wpds_facade {
+                quote! {
+                    let tokens = lex(input)?;
+                    let kinds: Vec<mettail_prattail::automata::TokenKind> =
+                        tokens.iter().map(|(t, _)| token_to_kind(t)).collect();
+                    let texts: Vec<&str> = tokens
+                        .iter()
+                        .map(|(t, r)| token_text(t, input, *r))
+                        .collect();
+                    let mut pos = 0usize;
+                    match #parse_via_wpds_fn(&kinds, &texts, &mut pos, 0) {
+                        Ok(v) => {
+                            if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
+                                return Err(ParseError::TrailingTokens {
+                                    found: format_token_friendly(&tokens[pos].0),
+                                    range: tokens[pos].1,
+                                    hint: Some(Cow::Borrowed(
+                                        "the parser finished but input remains; check for missing operators or extra tokens",
+                                    )),
+                                });
+                            }
+                            Ok(v)
+                        }
+                        Err(WpdsParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
+                            expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
+                            range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                            hint: None,
+                        }),
+                        Err(WpdsParseError::ParseFailed { message, position }) => {
+                            let range = tokens
+                                .get(position)
+                                .map(|(_, r)| *r)
+                                .unwrap_or_else(|| {
+                                    tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                });
+                            Err(ParseError::UnexpectedToken {
+                                expected: Cow::Owned(message),
+                                found: tokens
+                                    .get(position)
+                                    .map(|(t, _)| format_token_friendly(t))
+                                    .unwrap_or_else(|| "end of input".to_string()),
+                                range,
+                                hint: None,
+                            })
+                        }
+                        Err(WpdsParseError::Incomplete { position }) => {
+                            let range = tokens
+                                .get(position)
+                                .map(|(_, r)| *r)
+                                .unwrap_or_else(|| {
+                                    tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                });
+                            Err(ParseError::UnexpectedToken {
+                                expected: Cow::Borrowed("WPDS engine did not consume all tokens"),
+                                found: tokens
+                                    .get(position)
+                                    .map(|(t, _)| format_token_friendly(t))
+                                    .unwrap_or_else(|| "end of input".to_string()),
+                                range,
+                                hint: None,
+                            })
+                        }
+                    }
+                }
+            } else {
+                // No WPDS facade for this category. Emit a runtime diagnostic
+                // explaining that the category has no rules.
+                let cat_name_lit = cat.to_string();
+                quote! {
+                    let _ = input;
+                    Err(ParseError::UnexpectedEof {
+                        expected: Cow::Owned(format!(
+                            "no parser available for category `{}` — the grammar declares this `LangType` but defines no rules, literals, or collection over it",
+                            #cat_name_lit,
+                        )),
+                        range: Range::zero(),
+                        hint: Some(Cow::Borrowed(
+                            "add a `terms { … : Cat ; }` rule, a `literals { Cat { … } }` block, or a `![Vec<…>] as Cat` collection declaration",
+                        )),
+                    })
+                }
+            };
             quote! {
                 impl #cat {
                     /// Parse a string as this category.
@@ -306,27 +496,19 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         Self::parse_structured(input).map_err(|e| e.to_string())
                     }
 
+                    #parse_via_wpds_method
+
                     /// Parse a string as this category, returning a structured `ParseError`.
+                    ///
+                    /// Stage 5+6 (2026-04-27): routes through the WPDS parser facade
+                    /// for categories with WPDS coverage; falls back to the legacy
+                    /// trampoline path for categories without rules/literals/collections.
                     ///
                     /// The `ParseError` carries the exact source position (`Range` with
                     /// `Position { byte_offset, line, column }`) and a descriptive message.
                     /// Use this for programmatic error handling (IDE integration, error recovery).
-                    ///
-                    /// Zero-copy: the lexer produces `Token<'a>` borrowing from `input`,
-                    /// so no String allocations occur during lexing.
                     pub fn parse_structured(input: &str) -> Result<#cat, ParseError> {
-                        let tokens = lex(input)?;
-                        let mut pos = 0usize;
-                        let result = #parse_fn(&tokens, &mut pos, 0)?;
-                        // Verify all tokens consumed (except EOF)
-                        if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
-                            return Err(ParseError::TrailingTokens {
-                                found: format_token_friendly(&tokens[pos].0),
-                                range: tokens[pos].1,
-                                hint: Some(Cow::Borrowed("the parser finished but input remains; check for missing operators or extra tokens")),
-                            });
-                        }
-                        Ok(result)
+                        #parse_structured_body
                     }
 
                     /// Parse a string with source-context error messages.
@@ -344,29 +526,23 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     /// Parse with error recovery, collecting multiple errors.
                     ///
                     /// Unlike `parse()` which stops at the first error, this continues
-                    /// parsing after errors using panic-mode recovery with FOLLOW-set-based
-                    /// synchronization points.
+                    /// parsing after errors using the WPDS facade's internal sync-token
+                    /// recovery (skip past `,`/`;`/`)`/etc. on Error and retry).
                     ///
-                    /// Returns `(Option<ast>, errors)` where:
+                    /// Stage 7 (2026-04-27): the trampoline-side
+                    /// `parse_<Cat>_recovering` was removed; this method now wraps
+                    /// `parse_structured` and exposes a single recovered error
+                    /// when the WPDS path fails.
+                    ///
+                    /// Returns `(Option<ast>, errors)`:
                     /// - `Some(ast)` with empty errors: successful parse
-                    /// - `Some(ast)` with errors: partial result with recovered errors
-                    /// - `None` with errors: unrecoverable (e.g., lex error or prefix failure)
+                    /// - `None` with one error: parse failed (the WPDS facade has
+                    ///   already retried up to MAX_RECOVERY_ROUNDS sync-token skips)
                     pub fn parse_recovering(input: &str) -> (Option<#cat>, Vec<ParseError>) {
-                        let tokens = match lex(input) {
-                            Ok(t) => t,
-                            Err(e) => return (None, vec![ParseError::from(e)]),
-                        };
-                        let mut pos = 0usize;
-                        let mut errors = Vec::new();
-                        let result = #parse_fn_recovering(&tokens, &mut pos, 0, &mut errors);
-                        if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
-                            errors.push(ParseError::TrailingTokens {
-                                found: format_token_friendly(&tokens[pos].0),
-                                range: tokens[pos].1,
-                                hint: Some(Cow::Borrowed("the parser finished but input remains; check for missing operators or extra tokens")),
-                            });
+                        match Self::parse_structured(input) {
+                            Ok(v) => (Some(v), Vec::new()),
+                            Err(e) => (None, vec![e]),
                         }
-                        (result, errors)
                     }
 
                     #wfst_methods

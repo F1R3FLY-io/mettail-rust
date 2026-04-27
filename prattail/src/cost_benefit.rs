@@ -119,9 +119,12 @@ pub enum Optimization {
     /// Backward liveness analysis removes captures unused by subsequent segments.
     EnvironmentTrimming,
 
-    /// CEK02: Runtime parse/eval tracing via CekObserver callback pattern.
-    /// Generates `parse_Cat_traced<O: CekObserver>()` alongside `parse_Cat()`.
-    CekTracedParser,
+    // CEK02: CekTracedParser — REMOVED in Stage 6 Phase F.2 (2026-04-24).
+    // Was: runtime parse/eval tracing via parser-side `CekObserver` callback
+    // pattern in the trampoline. Stage 6 Phase E.4 deletes
+    // `parse_<Cat>_traced` codegen + parser-side CEK trace types entirely;
+    // this enum variant is no longer reachable. The Display/FromStr
+    // round-trip continues to cover all remaining variants.
 
     /// CEK03: Dead frame elimination via WPDS poststar reachability.
     /// Suppresses unreachable Frame_Cat variants, prefix arms, and unwind handlers.
@@ -247,7 +250,6 @@ impl fmt::Display for Optimization {
             Self::PredicateDispatch => write!(f, "PD01:PredicateDispatch"),
             Self::RefinementTypeCheck => write!(f, "RT01:RefinementTypeCheck"),
             Self::EnvironmentTrimming => write!(f, "CEK01:EnvironmentTrimming"),
-            Self::CekTracedParser => write!(f, "CEK02:CekTracedParser"),
             Self::DeadFrameElimination => write!(f, "CEK03:DeadFrameElimination"),
             Self::GreenThreadForkJoin => write!(f, "GT01:GreenThreadForkJoin"),
             Self::HashConsing => write!(f, "ART01:HashConsing"),
@@ -440,8 +442,7 @@ impl std::str::FromStr for Optimization {
             s if s.eq_ignore_ascii_case("LazyAnalysis") => Ok(Self::LazyAnalysis),
             s if s.eq_ignore_ascii_case("ParallelAnalysis") => Ok(Self::ParallelAnalysis),
             s if s.eq_ignore_ascii_case("CachedLints") => Ok(Self::CachedLints),
-            "CEK02" => Ok(Self::CekTracedParser),
-            s if s.eq_ignore_ascii_case("CekTracedParser") => Ok(Self::CekTracedParser),
+            // "CEK02" / "CekTracedParser" — REMOVED in Stage 6 Phase F.2.
             "GT01" => Ok(Self::GreenThreadForkJoin),
             s if s.eq_ignore_ascii_case("GreenThreadForkJoin") => Ok(Self::GreenThreadForkJoin),
             // Display format: "A1:LeftFactoring"
@@ -1427,14 +1428,10 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         ),
     ));
 
-    // CEK02: CEK-runtime tracing — gate for traced CEK machine execution
-    candidates.push(OptimizationCandidate::new(
-        Optimization::CekTracedParser,
-        0.5, // diagnostic benefit (tracing)
-        0.15, // low cost (instrumentation overhead)
-        profile.category_count >= 1,
-        format!("category_count={} (threshold: >=1)", profile.category_count),
-    ));
+    // CEK02: CekTracedParser candidate — REMOVED in Stage 6 Phase F.2.
+    // The traced parser codegen is deleted by Stage 6 Phase E.4, so the gate
+    // has no consumer. Removed from the candidates list to keep the cost-
+    // benefit catalog reachable.
 
     // GT01: Green thread fork/join cost analysis
     candidates.push(OptimizationCandidate::new(
@@ -2298,7 +2295,7 @@ impl Optimization {
 
             // CEK machine / green thread infrastructure
             Self::EnvironmentTrimming => OptimizationStatus::Auto, // CEK01: dead capture elimination
-            Self::CekTracedParser => OptimizationStatus::Diagnostic, // CEK02: tracing
+            // CEK02 (CekTracedParser) — REMOVED in Stage 6 Phase F.2.
             Self::GreenThreadForkJoin => OptimizationStatus::Diagnostic, // GT01: fork/join cost analysis
         }
     }
@@ -2623,8 +2620,8 @@ mod tests {
     fn test_all_candidates_evaluated() {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
-        // 50 base + 15 cfg-gated advanced automata + constraint theory variants + type-system + egraph (when all features enabled)
-        assert_eq!(all.len(), 72, "should evaluate all 72 optimization candidates");
+        // Stage 6 Phase F.2 (2026-04-24) removed CEK02:CekTracedParser (was 72 → 71).
+        assert_eq!(all.len(), 71, "should evaluate all 71 optimization candidates");
     }
 
     #[test]
@@ -3749,8 +3746,7 @@ mod tests {
             "CD01", "CD02", "CD03", "CD04", "CD05",
             "DB01", "DB02", "DB03", "DB04",
         ];
-        // Feature-gated short codes
-        all_short_codes.push("CEK02");
+        // Feature-gated short codes. Stage 6 Phase F.2 removed CEK02 (CekTracedParser).
         all_short_codes.push("GT01");
         let parsed_variants: HashSet<Optimization> = all_short_codes
             .iter()

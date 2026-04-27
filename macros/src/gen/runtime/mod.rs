@@ -10,3 +10,4 @@ pub mod guard_codegen;
 pub mod language;
 pub mod metadata;
 pub mod predicate_lower;
+pub mod wpds_codegen;

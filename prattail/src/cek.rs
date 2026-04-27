@@ -659,27 +659,14 @@ impl fmt::Display for TransitionRule {
 // Runtime Tracing (CEK Observer Pattern) — feature = "cek-runtime"
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Observer control response — returned by [`CekObserver::on_event`] to direct
-/// the parser's next step.
+/// Re-export of [`crate::control::CekControl`] for backward compatibility.
 ///
-/// - `Continue`: proceed to the next transition (default / fast path).
-/// - `Checkpoint`: record the current [`PdaConfiguration`] and continue.
-/// - `Abort`: halt the parse immediately, returning partial results.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CekControl {
-    /// Proceed with the next transition.
-    Continue,
-    /// Record a checkpoint at the current configuration, then continue.
-    Checkpoint,
-    /// Abort the parse, returning partial results.
-    Abort,
-}
-
-impl Default for CekControl {
-    fn default() -> Self {
-        Self::Continue
-    }
-}
+/// Phase 10 (F.0) of the WPDS migration moved `CekControl` to the neutral
+/// `crate::control` module so the evaluator (`cek_eval`) survives Stage 6
+/// Phase E.4 — which deletes parser-side CEK types in this file. Existing
+/// consumers using `prattail::cek::CekControl` continue to work via this
+/// re-export; new code should use `prattail::control::CekControl` directly.
+pub use crate::control::CekControl;
 
 /// A single CEK step event emitted at each of the 5 transition points
 /// (DRIVE, PUSH, POP, INFIX, ACCEPT).

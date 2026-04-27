@@ -27,6 +27,19 @@ pub mod program_tests;
 pub mod simulation_binary;
 pub mod simulation_tests;
 
+// ─── W7 Stage 9 (plan v5.1) ─────────────────────────────────────────────────
+// Six new test_gen modules covering ambiguity-prone WPDS walker paths.
+// Each emits ≥10 baseline tests per language and is invocable from the
+// language test pipeline. Wiring into auto-emission lands alongside Stage 6
+// codegen maturation; for now the generators live here as importable APIs.
+
+pub mod cross_cat_ambiguity;
+pub mod pratt_bp_boundaries;
+pub mod binder_shadowing;
+pub mod recovery_corruption;
+pub mod ambiguity_exposure;
+pub mod parity;
+
 use mettail_ast::language::LanguageDef;
 use mettail_prattail::PipelineAnalysis;
 use std::path::PathBuf;
@@ -89,6 +102,15 @@ pub fn write_test_file(language: &LanguageDef, pipeline: &PipelineAnalysis) {
     let analytical_content = generate_analytical_section(language, pipeline);
     if !analytical_content.is_empty() {
         write_test_section(&lang_name, "analytical", &analytical_content);
+    }
+
+    // Phase 9 (2026-04-26): Model A dual-codegen parity tests. Calls
+    // both `Cat::parse(input)` (trampoline) and `parse_<Cat>_via_wpds(...)`
+    // (WPDS facade), asserts equality. Wired here as the 6th test
+    // section so it auto-builds with each language.
+    let parity_content = parity::generate_parity_section(language).to_string();
+    if !parity_content.is_empty() {
+        write_test_section(&lang_name, "parity", &parity_content);
     }
 }
 

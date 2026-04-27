@@ -1,18 +1,33 @@
 use crate::{parse_int_lit, IntLit, Suffix};
 
+// Per the contract documented at parse_int_lit (int_lit.rs:303-315): when
+// `default_suffix` is None, the result is the NARROWEST type that fits via
+// the cascade i32 → u32 → i64 → u64 → i128 → u128 → BigInt. These tests
+// verify that bound-tightening behaviour for small values (which fit in i32).
+
 #[test]
-fn parses_default_i64_decimal() {
-    assert_eq!(parse_int_lit("0", None).unwrap(), IntLit::I64(0));
-    assert_eq!(parse_int_lit("23", None).unwrap(), IntLit::I64(23));
-    assert_eq!(parse_int_lit("1_000_000", None).unwrap(), IntLit::I64(1_000_000));
+fn parses_narrowest_fit_decimal() {
+    assert_eq!(parse_int_lit("0", None).unwrap(), IntLit::I32(0));
+    assert_eq!(parse_int_lit("23", None).unwrap(), IntLit::I32(23));
+    assert_eq!(parse_int_lit("1_000_000", None).unwrap(), IntLit::I32(1_000_000));
+    // Values exceeding i32::MAX skip to the next-widest fit.
+    assert_eq!(
+        parse_int_lit("3_000_000_000", None).unwrap(),
+        IntLit::U32(3_000_000_000),
+    );
+    assert_eq!(
+        parse_int_lit("9_999_999_999", None).unwrap(),
+        IntLit::I64(9_999_999_999),
+    );
 }
 
 #[test]
 fn parses_radix_prefixes() {
-    assert_eq!(parse_int_lit("0b1010", None).unwrap(), IntLit::I64(10));
-    assert_eq!(parse_int_lit("0o77", None).unwrap(), IntLit::I64(63));
-    assert_eq!(parse_int_lit("0xFF", None).unwrap(), IntLit::I64(255));
-    assert_eq!(parse_int_lit("0xFF_FF", None).unwrap(), IntLit::I64(65535));
+    // Small values fit i32 under the narrowest-fit cascade.
+    assert_eq!(parse_int_lit("0b1010", None).unwrap(), IntLit::I32(10));
+    assert_eq!(parse_int_lit("0o77", None).unwrap(), IntLit::I32(63));
+    assert_eq!(parse_int_lit("0xFF", None).unwrap(), IntLit::I32(255));
+    assert_eq!(parse_int_lit("0xFF_FF", None).unwrap(), IntLit::I32(65535));
 }
 
 #[test]

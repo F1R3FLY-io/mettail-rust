@@ -46,8 +46,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
-use crate::cek::CekControl;
 use crate::cesk_store::{LocalCeskStore, StoreAddr, StoreValue};
+use crate::control::CekControl;
 use crate::gc::{GcStrategy, RefCountGc};
 
 // ══════════════════════════════════════════════════════════════════════════════

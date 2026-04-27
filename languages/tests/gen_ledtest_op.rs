@@ -13,25 +13,25 @@ use mettail_runtime::BehavioralPred;
 // ═══════════════════════════════════════════════════════════
 // Constructor weights (lower = more frequent):
 //   Grouping             weight: 0.0000
-//   NegNum               weight: 0.0000
 //   EqNum                weight: 0.0000
+//   ExprToNum            weight: 0.0000
+//   NegNum               weight: 0.0000
 //   NumLit               weight: 0.0000
 //   PredLit              weight: 0.0000
-//   ExprToNum            weight: 0.0000
 //   CastPred             weight: 0.5000
 //   CastNum              weight: 0.5000
-//   VarNum               weight: 2.0000
 //   VarExpr              weight: 2.0000
-//   Expr::EPar           weight: inf
-//   Num::FactNum         weight: inf
-//   Pred::AndPred        weight: inf
-//   Pred::NeNum          weight: inf
-//   Pred::EqNum          weight: inf
+//   VarNum               weight: 2.0000
 //   Num::NegNum          weight: inf
-//   Expr::CastNum        weight: inf
-//   Num::MulNum          weight: inf
-//   Expr::CastPred       weight: inf
+//   Pred::EqNum          weight: inf
 //   Num::AddNum          weight: inf
+//   Expr::EPar           weight: inf
+//   Num::MulNum          weight: inf
+//   Pred::NeNum          weight: inf
+//   Pred::AndPred        weight: inf
+//   Expr::CastNum        weight: inf
+//   Num::ExprToNum       weight: inf
+//   Num::FactNum         weight: inf
 //   ... and 1 more
 // Category weights:
 //   Pred                 weight: 0.0833

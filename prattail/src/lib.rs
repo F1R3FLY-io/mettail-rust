@@ -67,6 +67,38 @@ pub mod tensor;
 pub mod transducer;
 pub mod wpds;
 
+/// WPDS runtime: reactive FSM types (`WpdsState`/`Event`/`Transition`),
+/// integer-indexed `StackSymbolV2`, and `WpdsControl` directives.
+/// Stage 1 of W7 plan v5.1 — see `prattail/docs/design/wpds-migration-survey.md`.
+pub mod wpds_runtime;
+
+/// WPDS walker: pure reactive FSM (`State × Event → Transition`) driving
+/// the runtime parser. Stage 4 of W7 plan v5.1.
+pub mod wpds_walker;
+
+/// WPDS incremental parsing session: checkpoint cache + reparse for LSP
+/// integration. Stage 5 of W7 plan v5.1.
+pub mod wpds_session;
+
+/// Parity testing infrastructure: Model A (dual codegen) + Model B
+/// (postcard golden ASTs). Stage 8 of W7 plan v5.1.
+pub mod parity;
+
+/// Phase 10 (F.0): shared parser/evaluator control directives. Hosts
+/// `CekControl` so the evaluator (`cek_eval`) survives Stage 6 Phase E.4
+/// when parser-side `cek.rs` types are deleted.
+pub mod control;
+
+/// Phase 6: inline sub-language parsers (predicates) used by the WPDS
+/// walker for slots that don't fit the main grammar's state machine.
+pub mod parser;
+
+/// Phase 6 / F.0-sibling: behavioral predicate AST. Hosted here so the
+/// WPDS walker can produce predicates without crossing the
+/// prattail → runtime cycle. Runtime re-exports this module's types for
+/// backward compatibility.
+pub mod behavioral_pred;
+
 /// CEK machine architecture: reactive state machine, trace entries,
 /// incremental session, environment infrastructure.
 pub mod cek;

@@ -12,8 +12,8 @@ use mettail_runtime::BehavioralPred;
 // WFST-derived test coverage plan
 // ═══════════════════════════════════════════════════════════
 // Constructor weights (lower = more frequent):
-//   Grouping             weight: 0.0000
 //   NumLit               weight: 0.0000
+//   Grouping             weight: 0.0000
 //   VarNum               weight: 2.0000
 // Category weights:
 //   Num                  weight: 0.6667

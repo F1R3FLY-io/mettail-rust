@@ -18,6 +18,10 @@ ascent-parallel = []
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
+# Phase 6 (F.0 sibling): BehavioralPred moved here from runtime so the WPDS
+# walker can produce predicates without crossing the dependency cycle.
+# `BehavioralPred` impls `moniker::BoundTerm<String>` as a no-op leaf.
+moniker = { workspace = true }
 # Feature-branch (WFST/CESK/presburger) deps — always-on in this branch.
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }

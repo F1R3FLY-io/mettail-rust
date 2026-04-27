@@ -1,0 +1,783 @@
+//! Semantic-action table emission.
+//!
+//! Phase A.2: for each atomic rule, emit an `ActionEntry` whose `action_fn`
+//! consumes a captured token and pushes the parsed term into the builder.
+//! Phase A.3+ extends to composite rules (Pratt, binder, collection, …).
+
+use mettail_ast::grammar::GrammarRule;
+use mettail_ast::language::LanguageDef;
+use mettail_ast::types::CollectionType;
+use mettail_prattail::binding_power::InfixRuleInfo;
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
+use syn::Ident;
+
+use super::binder::{classify_binder, emit_binder_action_entry};
+use super::collection::{classify_collection, CollectionShape};
+use super::infix;
+use super::prefix::{classify_atomic, AtomicShape, LiteralFamily};
+use crate::gen::native::NativeType;
+
+/// Emit the body of `action_for` — a `match (src_idx, rule_idx)` with
+/// one arm per rule that has a semantic action.
+///
+/// `per_cat` is the pre-built combined user + synthetic rule list built
+/// by `synthetic::build_per_category_rules`, converted to
+/// `Vec<Vec<(rule_idx, &rule)>>` in the caller.
+pub fn emit_action_for_body(
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<(u16, &GrammarRule)>],
+) -> TokenStream {
+    let mut arms = Vec::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        // Look up the Rust ident for this category's AST enum — needed to
+        // construct wrapper variants like `Int::NumLit(v)`.
+        let cat_name = &categories[cat_i];
+        let cat_ident = format_ident!("{}", cat_name);
+        for (rule_idx, rule) in rules {
+            // Phase 5: try classifying as a binder rule first; takes
+            // precedence over collection / atomic / infix classification.
+            if let Some(shape) = classify_binder(rule) {
+                if let Some(entry) =
+                    emit_binder_action_entry(cat_i as u16, *rule_idx, &shape, &cat_ident)
+                {
+                    arms.push(entry);
+                }
+                continue;
+            }
+            // Phase 4: try classifying as a collection rule next.
+            if let Some(shape) = classify_collection(rule) {
+                if let Some(entry) =
+                    emit_collection_action_entry(cat_i as u16, *rule_idx, &shape, &cat_ident)
+                {
+                    arms.push(entry);
+                }
+                continue;
+            }
+            let shape = classify_atomic(rule, language);
+            if !matches!(shape, AtomicShape::NonAtomic) {
+                if let Some(entry) =
+                    emit_action_entry_arm(cat_i as u16, *rule_idx, &shape, &cat_ident)
+                {
+                    arms.push(entry);
+                }
+                continue;
+            }
+            // Phase 3: try classifying as an infix / postfix / mixfix rule.
+            if let Some(info) = infix::classify_rule_public(rule) {
+                if let Some(entry) =
+                    emit_infix_action_entry(cat_i as u16, *rule_idx, &info, &cat_ident)
+                {
+                    arms.push(entry);
+                }
+            }
+        }
+    }
+
+    if arms.is_empty() {
+        quote! { None }
+    } else {
+        quote! {
+            match (src_idx, rule_idx) {
+                #(#arms)*
+                _ => None,
+            }
+        }
+    }
+}
+
+fn emit_action_entry_arm(
+    src_idx: u16,
+    rule_idx: u16,
+    shape: &AtomicShape,
+    cat_ident: &Ident,
+) -> Option<TokenStream> {
+    let (action_fn, arity) = match shape {
+        AtomicShape::LiteralInteger => (emit_integer_literal_action(), 1u8),
+        AtomicShape::LiteralBoolean => (emit_boolean_literal_action(), 1u8),
+        AtomicShape::LiteralString => (emit_string_literal_action(), 1u8),
+        AtomicShape::LiteralFloat => (emit_float_literal_action(), 1u8),
+        AtomicShape::LiteralPatterned {
+            native_type,
+            family,
+            wrapper_variant,
+            rust_code,
+            ..
+        } => (
+            emit_literal_patterned_action(
+                cat_ident,
+                native_type,
+                *family,
+                wrapper_variant,
+                rust_code,
+            ),
+            1u8,
+        ),
+        AtomicShape::TerminalKeyword { wrapper_variant, .. } => (
+            emit_terminal_keyword_action(cat_ident, wrapper_variant),
+            1u8,
+        ),
+        AtomicShape::VarRule { wrapper_variant } => (
+            emit_var_rule_action(cat_ident, wrapper_variant),
+            1u8,
+        ),
+        // Stage 1.1: cross-cat wrap-action — pop 1 source-cat Term arg,
+        // wrap as Cat::wrapper_variant(Box::new(arg)).
+        AtomicShape::CrossCatProjection {
+            source_cat_name,
+            wrapper_variant,
+        }
+        | AtomicShape::CrossCatPrefixUnary {
+            source_cat_name,
+            wrapper_variant,
+            ..
+        } => (
+            emit_cross_cat_wrap_action(cat_ident, source_cat_name, wrapper_variant),
+            1u8,
+        ),
+        AtomicShape::NonAtomic => return None, // Phase 3 dispatch handled separately.
+    };
+    Some(quote! {
+        (#src_idx, #rule_idx) => {
+            static ENTRY: mettail_prattail::wpds_runtime::ActionEntry =
+                mettail_prattail::wpds_runtime::ActionEntry {
+                    action_fn: #action_fn,
+                    arity: #arity,
+                };
+            Some(&ENTRY)
+        }
+        ,
+    })
+}
+
+/// Emit the action body for `AtomicShape::LiteralPatterned`.
+///
+/// The user's `rust_code` (from `literals { Cat { eval: ![ { ... } ] } }`)
+/// returns `Result<Intermediate, ()>`. The intermediate type depends on the
+/// family:
+/// - `Integer` / `CanonicalBigInt`: `IntLit` (requires width-specific extraction)
+/// - `Rational`: `CanonicalBigRat`
+/// - `FixedPoint`: `CanonicalFixedPoint`
+/// - `Float`: native `f32`/`f64` (or a wrapper)
+/// - `Boolean`: `bool`
+/// - `String`: `String`
+///
+/// The action: capture text → run rust_code → extract native type → wrap in
+/// `Cat::<wrapper_variant>(native)` → push. On parse failure, don't push
+/// (builder remains empty; facade surfaces as `ParseError::InvalidLiteral`).
+/// This is simpler than pushing a `Cat::Err` variant because not every
+/// category has an `Err` variant. Parity drift OK per
+/// `feedback_parity_drift_ok_if_better.md`.
+fn emit_literal_patterned_action(
+    cat_ident: &Ident,
+    native_type: &syn::Type,
+    family: LiteralFamily,
+    wrapper_variant: &Ident,
+    rust_code: &TokenStream,
+) -> TokenStream {
+    let conversion = emit_native_conversion(native_type, family);
+    // The payload type for `push_term` — unsized `str` becomes `String`.
+    let payload_type = normalize_payload_type(native_type);
+    quote! {
+        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            let arg = args.into_iter().next();
+            let text: &str = arg
+                .as_ref()
+                .and_then(|a| a.as_token_text())
+                .unwrap_or("");
+            let __result: Result<#payload_type, ()> = (|| -> Result<#payload_type, ()> {
+                let __intermediate = { #rust_code }?;
+                #conversion
+            })();
+            if let Ok(__v) = __result {
+                b.push_term::<#cat_ident>(#cat_ident::#wrapper_variant(__v));
+            }
+            // On Err: no push. Facade converts empty builder to
+            // ParseError::InvalidLiteral.
+        }
+    }
+}
+
+/// Normalize a category's native type for `push_term::<T>()`, matching the
+/// AST-variant payload selection in `macros/src/gen/types/enums.rs`:
+/// - `str` → `std::string::String` (unsized can't be a generic param)
+/// - `f32`/`f64` → `CanonicalFloat32`/`CanonicalFloat64` (derive Eq/Hash/Ord)
+/// - everything else → `#native_type` as-is
+fn normalize_payload_type(native_type: &syn::Type) -> TokenStream {
+    let nt = NativeType::from_syn_type(native_type);
+    match nt {
+        NativeType::Str => quote! { std::string::String },
+        NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
+        NativeType::Float64 => quote! { mettail_runtime::CanonicalFloat64 },
+        _ => quote! { #native_type },
+    }
+}
+
+/// Emit the intermediate-to-native conversion step. Runs inside a closure
+/// where `__intermediate` holds the unwrapped `Ok(_)` result from the user
+/// `rust_code` block. Returns `Result<#native_type, ()>`.
+fn emit_native_conversion(native_type: &syn::Type, family: LiteralFamily) -> TokenStream {
+    let nt = NativeType::from_syn_type(native_type);
+    match family {
+        LiteralFamily::Integer => match nt {
+            NativeType::Int8 => quote! {
+                __intermediate.as_i64()
+                    .and_then(|v| i8::try_from(v).ok())
+                    .ok_or(())
+            },
+            NativeType::Int16 => quote! {
+                __intermediate.as_i64()
+                    .and_then(|v| i16::try_from(v).ok())
+                    .ok_or(())
+            },
+            NativeType::Int32 => quote! {
+                __intermediate.as_i64()
+                    .and_then(|v| i32::try_from(v).ok())
+                    .ok_or(())
+            },
+            NativeType::Int64 => quote! {
+                __intermediate.as_i64().ok_or(())
+            },
+            NativeType::Int128 => quote! {
+                __intermediate.as_i64()
+                    .map(|v| v as i128)
+                    .ok_or(())
+            },
+            NativeType::Isize => quote! {
+                __intermediate.as_i64()
+                    .and_then(|v| isize::try_from(v).ok())
+                    .ok_or(())
+            },
+            NativeType::UInt8 => quote! {
+                __intermediate.as_i64()
+                    .and_then(|v| u8::try_from(v).ok())
+                    .ok_or(())
+            },
+            NativeType::UInt16 => quote! {
+                __intermediate.as_i64()
+                    .and_then(|v| u16::try_from(v).ok())
+                    .ok_or(())
+            },
+            NativeType::UInt32 => quote! {
+                __intermediate.as_i64()
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or(())
+            },
+            NativeType::UInt64 => quote! {
+                __intermediate.as_i64()
+                    .and_then(|v| u64::try_from(v).ok())
+                    .ok_or(())
+            },
+            NativeType::UInt128 => quote! {
+                __intermediate.as_i64()
+                    .and_then(|v| u128::try_from(v).ok())
+                    .ok_or(())
+            },
+            NativeType::Usize => quote! {
+                __intermediate.as_i64()
+                    .and_then(|v| usize::try_from(v).ok())
+                    .ok_or(())
+            },
+            NativeType::CanonicalBigInt => quote! {
+                __intermediate
+                    .to_bigint()
+                    .map(mettail_runtime::CanonicalBigInt::new)
+                    .ok_or(())
+            },
+            _ => quote! { Err(()) },
+        },
+        // Rational: user's `parse_rational_lit` returns `RationalLit(Ratio<BigInt>)`.
+        // Wrap into `CanonicalBigRat` via its `From<Ratio<BigInt>>` impl.
+        LiteralFamily::Rational => quote! {
+            Ok(mettail_runtime::CanonicalBigRat::from(__intermediate.0))
+        },
+        // FixedPoint / Float / Boolean / String: the user's rust_code
+        // already returns the payload type directly (CanonicalFixedPoint /
+        // CanonicalFloat64 / bool / String).
+        LiteralFamily::FixedPoint
+        | LiteralFamily::Float
+        | LiteralFamily::Boolean
+        | LiteralFamily::String => quote! {
+            Ok(__intermediate)
+        },
+    }
+}
+
+/// Emit the action body for `AtomicShape::TerminalKeyword` — nullary rules
+/// like `Err . |- "error" : Int`. Pushes `Cat::<wrapper_variant>` with no
+/// payload.
+fn emit_terminal_keyword_action(cat_ident: &Ident, wrapper_variant: &Ident) -> TokenStream {
+    quote! {
+        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+         _args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            b.push_term::<#cat_ident>(#cat_ident::#wrapper_variant);
+        }
+    }
+}
+
+/// Stage 1.1: emit the wrap-action body for cross-cat projection /
+/// cross-cat prefix unary. The action pops 1 source-cat Term arg and
+/// wraps as `Cat::wrapper_variant(Box::new(arg))`.
+fn emit_cross_cat_wrap_action(
+    cat_ident: &Ident,
+    source_cat_name: &str,
+    wrapper_variant: &Ident,
+) -> TokenStream {
+    let source_cat_ident = format_ident!("{}", source_cat_name);
+    quote! {
+        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            let arg = match args.into_iter().next().and_then(|a| a.into_term::<#source_cat_ident>()) {
+                Some(t) => t,
+                None => return,
+            };
+            b.push_term::<#cat_ident>(#cat_ident::#wrapper_variant(Box::new(arg)));
+        }
+    }
+}
+
+/// Phase 5a: emit the action body for `AtomicShape::VarRule`. The rule
+/// captured an `Ident` token; the action wraps it as
+/// `Cat::<TVar>(OrdVar(Var::Free(get_or_create_var(name))))`.
+fn emit_var_rule_action(cat_ident: &Ident, wrapper_variant: &Ident) -> TokenStream {
+    quote! {
+        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            let arg = args.into_iter().next();
+            let name = arg
+                .as_ref()
+                .and_then(|a| a.as_token_text())
+                .unwrap_or("")
+                .to_string();
+            let var = mettail_runtime::OrdVar(
+                mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(name)),
+            );
+            b.push_term::<#cat_ident>(#cat_ident::#wrapper_variant(var));
+        }
+    }
+}
+
+/// Phase 4: Emit an action entry for a collection-finalize rule. The action
+/// has arity 1: the auto-pushed `ActionArg::CollectionId` injected by the
+/// walker when the `CollectionMarker` symbol was pushed. The action drains
+/// the indexed accumulator from `SemanticBuilder.collection_stack`,
+/// downcasts each `ActionArg::Term` to the element category's native type,
+/// constructs the container per `coll_kind`, and pushes
+/// `Cat::Label(container)` onto the builder stack.
+fn emit_collection_action_entry(
+    src_idx: u16,
+    rule_idx: u16,
+    shape: &CollectionShape,
+    cat_ident: &Ident,
+) -> Option<TokenStream> {
+    let label_ident = format_ident!("{}", shape.label);
+    let element_cat_ident = format_ident!("{}", shape.element_cat);
+    let container_construct: TokenStream = match shape.coll_kind {
+        CollectionType::Vec => quote! {
+            elems.into_iter().collect::<std::vec::Vec<#element_cat_ident>>()
+        },
+        CollectionType::HashBag => quote! {
+            mettail_runtime::HashBag::<#element_cat_ident>::from_iter(elems.into_iter())
+        },
+        CollectionType::HashSet => quote! {
+            std::collections::HashSet::<#element_cat_ident>::from_iter(elems.into_iter())
+        },
+        CollectionType::HashMap => quote! {
+            // HashMap collection: not yet supported by classifier (needs
+            // key/value element split). Default to empty map for now.
+            std::collections::HashMap::<#element_cat_ident, #element_cat_ident>::new()
+        },
+    };
+    let action_fn = quote! {
+        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            let id = match args.into_iter().next().and_then(|a| a.as_collection_id()) {
+                Some(id) => id,
+                None => return,
+            };
+            let drained = b.drain_collection(id);
+            let elems: std::vec::Vec<#element_cat_ident> = drained
+                .into_iter()
+                .filter_map(|a| a.into_term::<#element_cat_ident>())
+                .collect();
+            let container = #container_construct;
+            b.push_term::<#cat_ident>(#cat_ident::#label_ident(container));
+        }
+    };
+    Some(quote! {
+        (#src_idx, #rule_idx) => {
+            static ENTRY: mettail_prattail::wpds_runtime::ActionEntry =
+                mettail_prattail::wpds_runtime::ActionEntry {
+                    action_fn: #action_fn,
+                    arity: 1u8,
+                };
+            Some(&ENTRY)
+        }
+        ,
+    })
+}
+
+/// Phase 3: Emit an action entry for an infix / postfix / mixfix rule.
+/// Arity = number of operands (2 for binary infix, 1 for postfix, N for
+/// mixfix). Action body pops N args from the builder, downcasts each to
+/// the operand category's term type, and constructs
+/// `<Cat>::<Label>(Box::new(arg_0), ..., Box::new(arg_N))`.
+fn emit_infix_action_entry(
+    src_idx: u16,
+    rule_idx: u16,
+    info: &InfixRuleInfo,
+    cat_ident: &Ident,
+) -> Option<TokenStream> {
+    let arity: u8 = if info.is_postfix {
+        1
+    } else if info.is_mixfix {
+        // Mixfix: 1 LHS + N parts (each part has one operand).
+        1 + info.mixfix_parts.len() as u8
+    } else {
+        2 // binary infix
+    };
+    let label_ident = format_ident!("{}", info.label);
+    let operand_cat_ident = format_ident!("{}", info.category);
+    let action_fn = if info.is_postfix {
+        // Arity-1: pop one operand, construct unary variant.
+        quote! {
+            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+                let mut iter = args.into_iter();
+                let arg0 = match iter.next().and_then(|a| a.into_term::<#operand_cat_ident>()) {
+                    Some(v) => v,
+                    None => return,
+                };
+                b.push_term::<#cat_ident>(#cat_ident::#label_ident(Box::new(arg0)));
+            }
+        }
+    } else if info.is_mixfix {
+        // Arity-N for mixfix. All operands have the same category for
+        // Calculator's ternary (all Int). Generic emission iterates.
+        let n = arity as usize;
+        let pops: Vec<TokenStream> = (0..n)
+            .map(|i| {
+                let var = format_ident!("arg{}", i);
+                quote! {
+                    let #var = match iter.next().and_then(|a| a.into_term::<#operand_cat_ident>()) {
+                        Some(v) => v,
+                        None => return,
+                    };
+                }
+            })
+            .collect();
+        let names: Vec<TokenStream> = (0..n)
+            .map(|i| {
+                let v = format_ident!("arg{}", i);
+                quote! { Box::new(#v) }
+            })
+            .collect();
+        quote! {
+            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+                let mut iter = args.into_iter();
+                #(#pops)*
+                b.push_term::<#cat_ident>(#cat_ident::#label_ident(#(#names),*));
+            }
+        }
+    } else {
+        // Arity-2 binary infix.
+        quote! {
+            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+                let mut iter = args.into_iter();
+                let arg0 = match iter.next().and_then(|a| a.into_term::<#operand_cat_ident>()) {
+                    Some(v) => v,
+                    None => return,
+                };
+                let arg1 = match iter.next().and_then(|a| a.into_term::<#operand_cat_ident>()) {
+                    Some(v) => v,
+                    None => return,
+                };
+                b.push_term::<#cat_ident>(
+                    #cat_ident::#label_ident(Box::new(arg0), Box::new(arg1))
+                );
+            }
+        }
+    };
+    Some(quote! {
+        (#src_idx, #rule_idx) => {
+            static ENTRY: mettail_prattail::wpds_runtime::ActionEntry =
+                mettail_prattail::wpds_runtime::ActionEntry {
+                    action_fn: #action_fn,
+                    arity: #arity,
+                };
+            Some(&ENTRY)
+        }
+        ,
+    })
+}
+
+// ── Legacy actions retained for the four builtin `NonTerminalKind::*`
+// literal variants. No shipped grammar uses these today, but the
+// classifier still recognizes them so keep the emitters correct.
+
+fn emit_integer_literal_action() -> TokenStream {
+    quote! {
+        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            let arg = args.into_iter().next();
+            let text = arg
+                .as_ref()
+                .and_then(|a| a.as_token_text())
+                .unwrap_or("0");
+            let parsed: i64 = text.parse().unwrap_or_else(|_| {
+                if let Some(rest) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+                    i64::from_str_radix(&rest.replace('_', ""), 16).unwrap_or(0)
+                } else if let Some(rest) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
+                    i64::from_str_radix(&rest.replace('_', ""), 2).unwrap_or(0)
+                } else if let Some(rest) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
+                    i64::from_str_radix(&rest.replace('_', ""), 8).unwrap_or(0)
+                } else {
+                    0
+                }
+            });
+            b.push_term::<i64>(parsed);
+        }
+    }
+}
+
+fn emit_boolean_literal_action() -> TokenStream {
+    quote! {
+        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            let arg = args.into_iter().next();
+            let text = arg
+                .as_ref()
+                .and_then(|a| a.as_token_text())
+                .unwrap_or("false");
+            let parsed: bool = matches!(text, "true" | "yeap");
+            b.push_term::<bool>(parsed);
+        }
+    }
+}
+
+fn emit_string_literal_action() -> TokenStream {
+    quote! {
+        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            let arg = args.into_iter().next();
+            let text = arg
+                .as_ref()
+                .and_then(|a| a.as_token_text())
+                .unwrap_or("");
+            let stripped = text.trim_start_matches('"').trim_end_matches('"').to_string();
+            b.push_term::<String>(stripped);
+        }
+    }
+}
+
+fn emit_float_literal_action() -> TokenStream {
+    quote! {
+        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            let arg = args.into_iter().next();
+            let text = arg
+                .as_ref()
+                .and_then(|a| a.as_token_text())
+                .unwrap_or("0.0");
+            let parsed: f64 = text.parse().unwrap_or(0.0);
+            b.push_term::<f64>(parsed);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mettail_ast::grammar::{GrammarItem, NonTerminalKind};
+    use mettail_ast::language::{LangType, TokenDef};
+    use proc_macro2::Span;
+    use syn::{parse_quote, Ident};
+
+    fn rule(label: &str, cat: &str, kind: NonTerminalKind) -> GrammarRule {
+        GrammarRule {
+            label: Ident::new(label, Span::call_site()),
+            category: Ident::new(cat, Span::call_site()),
+            items: vec![GrammarItem::NonTerminal {
+                ident: Ident::new(&format!("{:?}", kind), Span::call_site()),
+                kind,
+            }],
+            bindings: Vec::new(),
+            term_context: None,
+            syntax_pattern: None,
+            rust_code: None,
+            eval_mode: None,
+            is_right_assoc: false,
+            prefix_bp: None,
+            tier_directive: None,
+        }
+    }
+
+    fn terminal_rule(label: &str, cat: &str, text: &str) -> GrammarRule {
+        GrammarRule {
+            label: Ident::new(label, Span::call_site()),
+            category: Ident::new(cat, Span::call_site()),
+            items: vec![GrammarItem::Terminal(text.into())],
+            bindings: Vec::new(),
+            term_context: None,
+            syntax_pattern: None,
+            rust_code: None,
+            eval_mode: None,
+            is_right_assoc: false,
+            prefix_bp: None,
+            tier_directive: None,
+        }
+    }
+
+    fn category_rule(label: &str, cat: &str, referenced_cat: &str) -> GrammarRule {
+        GrammarRule {
+            label: Ident::new(label, Span::call_site()),
+            category: Ident::new(cat, Span::call_site()),
+            items: vec![GrammarItem::NonTerminal {
+                ident: Ident::new(referenced_cat, Span::call_site()),
+                kind: NonTerminalKind::Category,
+            }],
+            bindings: Vec::new(),
+            term_context: None,
+            syntax_pattern: None,
+            rust_code: None,
+            eval_mode: None,
+            is_right_assoc: false,
+            prefix_bp: None,
+            tier_directive: None,
+        }
+    }
+
+    fn lang_with_rules(rules: Vec<GrammarRule>) -> LanguageDef {
+        LanguageDef {
+            name: Ident::new("Toy", Span::call_site()),
+            options: Default::default(),
+            extends_names: Vec::new(),
+            include_names: Vec::new(),
+            mixin_names: Vec::new(),
+            types: Vec::new(),
+            refinement_types: Vec::new(),
+            token_defs: Vec::new(),
+            mode_defs: Vec::new(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
+            terms: rules,
+            equations: Vec::new(),
+            rewrites: Vec::new(),
+            logic: None,
+            guard_config: None,
+        }
+    }
+
+    fn lang_with_int_literal() -> LanguageDef {
+        let mut lang = lang_with_rules(Vec::new());
+        lang.types.push(LangType {
+            name: Ident::new("Int", Span::call_site()),
+            native_type: Some(parse_quote!(i32)),
+            collection_kind: None,
+        });
+        lang.token_defs.push(TokenDef {
+            name: Ident::new("Integer", Span::call_site()),
+            pattern: r"[0-9]+".to_string(),
+            category: Some(Ident::new("Int", Span::call_site())),
+            rust_code: Some(
+                quote! { mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::I32)).map_err(|_| ()) },
+            ),
+            priority: None,
+            push_mode: None,
+            is_pop: false,
+            stream: None,
+            from_literals: true,
+        });
+        lang
+    }
+
+    /// Convert `Vec<GrammarRule>` per-cat layout to the indexed view the
+    /// emitter expects.
+    fn indexed<'a>(per_cat: &'a [Vec<GrammarRule>]) -> Vec<Vec<(u16, &'a GrammarRule)>> {
+        per_cat
+            .iter()
+            .map(|rules| {
+                rules
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| (i as u16, r))
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn empty_language_emits_none() {
+        let lang = lang_with_rules(Vec::new());
+        let per_cat: Vec<Vec<GrammarRule>> = Vec::new();
+        let idx = indexed(&per_cat);
+        let ts = emit_action_for_body(&lang, &[], &idx);
+        assert!(ts.to_string().trim() == "None");
+    }
+
+    #[test]
+    fn integer_literal_emits_action_with_arity_1() {
+        let rules = vec![rule("IntLit", "Int", NonTerminalKind::Integer)];
+        let lang = lang_with_rules(rules.clone());
+        let per_cat: Vec<Vec<GrammarRule>> = vec![rules];
+        let idx = indexed(&per_cat);
+        let ts = emit_action_for_body(&lang, &["Int".to_string()], &idx);
+        let s = ts.to_string();
+        assert!(s.contains("ActionEntry"));
+        assert!(s.contains("arity : 1u8") || s.contains("arity: 1u8"));
+    }
+
+    #[test]
+    fn mixed_rule_shapes_emits_only_atomic_arms() {
+        let rules = vec![
+            rule("IntLit", "Int", NonTerminalKind::Integer),
+            rule("BoolLit", "Bool", NonTerminalKind::Boolean),
+            {
+                let mut r = rule("NotAtomic", "Int", NonTerminalKind::Integer);
+                r.items.push(GrammarItem::Terminal("+".into()));
+                r
+            },
+        ];
+        let lang = lang_with_rules(rules.clone());
+        let per_cat: Vec<Vec<GrammarRule>> = vec![
+            vec![rules[0].clone(), rules[2].clone()],
+            vec![rules[1].clone()],
+        ];
+        let idx = indexed(&per_cat);
+        let ts = emit_action_for_body(&lang, &["Int".to_string(), "Bool".to_string()], &idx);
+        let s = ts.to_string();
+        assert!(s.matches("ActionEntry").count() >= 2);
+    }
+
+    #[test]
+    fn terminal_keyword_emits_action_pushing_nullary_variant() {
+        let r = terminal_rule("Err", "Int", "error");
+        let lang = lang_with_rules(vec![r.clone()]);
+        let per_cat: Vec<Vec<GrammarRule>> = vec![vec![r]];
+        let idx = indexed(&per_cat);
+        let ts = emit_action_for_body(&lang, &["Int".to_string()], &idx);
+        let s = ts.to_string();
+        assert!(s.contains("ActionEntry"));
+        assert!(s.contains("Int :: Err") || s.contains("Int::Err"));
+    }
+
+    #[test]
+    fn literal_patterned_int_emits_action_with_numlit_wrapper() {
+        // Category-referencing rule with rule.category == ident AND a
+        // from_literals TokenDef for that category.
+        let r = category_rule("IntLit", "Int", "Int");
+        let mut lang = lang_with_int_literal();
+        lang.terms.push(r.clone());
+        let per_cat: Vec<Vec<GrammarRule>> = vec![vec![r]];
+        let idx = indexed(&per_cat);
+        let ts = emit_action_for_body(&lang, &["Int".to_string()], &idx);
+        let s = ts.to_string();
+        assert!(s.contains("ActionEntry"));
+        assert!(s.contains("NumLit"));
+        assert!(s.contains("as_i64") || s.contains("i32"));
+    }
+}

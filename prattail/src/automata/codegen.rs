@@ -340,6 +340,7 @@ pub fn generate_lexer_string_hybrid(
 
     write_token_enum(&mut buf, token_kinds, custom_tokens);
     write_token_display(&mut buf, token_kinds, custom_tokens);
+    write_token_to_kind(&mut buf, token_kinds, custom_tokens);
     write_runtime_types_import(&mut buf);
 
     let strategy = if dfa.states.len() <= DIRECT_CODED_THRESHOLD {
@@ -568,6 +569,246 @@ fn write_token_display(buf: &mut String, token_kinds: &[TokenKind], custom_token
     }
 
     buf.push_str("} }");
+}
+
+/// Stage 2 (2026-04-27): write a `token_to_kind(t: &Token<'_>) -> TokenKind`
+/// function alongside the Token enum. This is the bridge that allows
+/// `Cat::parse(input: &str)` to convert lexer-produced `Token<'a>` values
+/// into the prattail-side `TokenKind` enum that the WPDS engine arms match
+/// on. ALSO emits `token_text` to extract the text representation per Token.
+fn write_token_to_kind(
+    buf: &mut String,
+    token_kinds: &[TokenKind],
+    custom_tokens: &[CustomTokenSpec],
+) {
+    let mut seen = std::collections::HashSet::<String>::new();
+    buf.push_str(
+        "#[allow(dead_code, non_snake_case)]\n\
+         fn token_to_kind(t: &Token<'_>) -> mettail_prattail::automata::TokenKind {\n\
+             use mettail_prattail::automata::TokenKind;\n\
+             match t {\n",
+    );
+    // Always: Eof, Ident
+    buf.push_str("Token::Eof => TokenKind::Eof,\n");
+    seen.insert("Eof".to_string());
+    buf.push_str("Token::Ident(_) => TokenKind::Ident,\n");
+    seen.insert("Ident".to_string());
+
+    for kind in token_kinds {
+        match kind {
+            TokenKind::Eof | TokenKind::Ident => {}
+            TokenKind::Integer => {
+                if seen.insert("Integer".to_string()) {
+                    buf.push_str("Token::Integer(_, _) => TokenKind::Integer,\n");
+                }
+            }
+            TokenKind::Float => {
+                if seen.insert("Float".to_string()) {
+                    buf.push_str("Token::Float(_) => TokenKind::Float,\n");
+                }
+            }
+            TokenKind::True | TokenKind::False => {
+                if seen.insert("Boolean".to_string()) {
+                    // Boolean Token variant carries a payload; map true → True, false → False
+                    buf.push_str("Token::Boolean(true) => TokenKind::True,\n");
+                    buf.push_str("Token::Boolean(false) => TokenKind::False,\n");
+                }
+            }
+            TokenKind::BooleanLit => {
+                if seen.insert("Boolean".to_string()) {
+                    // Custom-pattern Boolean: still emit BooleanLit
+                    buf.push_str("Token::Boolean(_) => TokenKind::BooleanLit,\n");
+                }
+            }
+            TokenKind::StringLit => {
+                if seen.insert("StringLit".to_string()) {
+                    buf.push_str("Token::StringLit(_) => TokenKind::StringLit,\n");
+                }
+            }
+            TokenKind::Fixed(text) => {
+                let variant_name = terminal_to_variant_name(text);
+                if seen.insert(variant_name.clone()) {
+                    write!(
+                        buf,
+                        "Token::{} => TokenKind::Fixed({:?}.to_string()),\n",
+                        variant_name, text
+                    )
+                    .unwrap();
+                }
+            }
+            TokenKind::Dollar => {
+                if seen.insert("Dollar".to_string()) {
+                    buf.push_str("Token::Dollar(_) => TokenKind::Dollar,\n");
+                }
+            }
+            TokenKind::DoubleDollar => {
+                if seen.insert("DoubleDollar".to_string()) {
+                    buf.push_str("Token::DoubleDollar(_) => TokenKind::DoubleDollar,\n");
+                }
+            }
+            TokenKind::Custom(name) => {
+                if seen.insert(name.clone()) {
+                    let has_payload = custom_tokens.iter().any(|s| {
+                        s.name == *name && s.payload_type.is_some()
+                    });
+                    if has_payload {
+                        write!(
+                            buf,
+                            "Token::{}(_) => TokenKind::Custom({:?}.to_string()),\n",
+                            name, name
+                        )
+                        .unwrap();
+                    } else {
+                        write!(
+                            buf,
+                            "Token::{} => TokenKind::Custom({:?}.to_string()),\n",
+                            name, name
+                        )
+                        .unwrap();
+                    }
+                }
+            }
+            TokenKind::IntegerLit(cat) => {
+                if seen.insert(cat.clone()) {
+                    write!(
+                        buf,
+                        "Token::{}(_) => TokenKind::IntegerLit({:?}.to_string()),\n",
+                        cat, cat
+                    )
+                    .unwrap();
+                }
+            }
+            TokenKind::RationalLit(cat) => {
+                if seen.insert(cat.clone()) {
+                    write!(
+                        buf,
+                        "Token::{}(_) => TokenKind::RationalLit({:?}.to_string()),\n",
+                        cat, cat
+                    )
+                    .unwrap();
+                }
+            }
+            TokenKind::FixedPointLit(cat) => {
+                if seen.insert(cat.clone()) {
+                    write!(
+                        buf,
+                        "Token::{}(_) => TokenKind::FixedPointLit({:?}.to_string()),\n",
+                        cat, cat
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+    buf.push_str("}\n}\n");
+
+    // token_text — recover string representation per token. For
+    // payload-carrying variants, use the payload directly; for fixed
+    // terminals, use the literal text; for numeric literals, recover
+    // from source via Range byte offsets.
+    let mut seen2 = std::collections::HashSet::<String>::new();
+    buf.push_str(
+        "#[allow(dead_code, non_snake_case, unused_variables)]\n\
+         fn token_text<'a>(t: &Token<'a>, source: &'a str, range: Range) -> &'a str {\n\
+             match t {\n",
+    );
+    buf.push_str("Token::Eof => \"\",\n");
+    seen2.insert("Eof".to_string());
+    buf.push_str("Token::Ident(s) => s,\n");
+    seen2.insert("Ident".to_string());
+
+    for kind in token_kinds {
+        match kind {
+            TokenKind::Eof | TokenKind::Ident => {}
+            TokenKind::Integer => {
+                if seen2.insert("Integer".to_string()) {
+                    buf.push_str(
+                        "Token::Integer(_, _) => &source[range.start.byte_offset..range.end.byte_offset],\n",
+                    );
+                }
+            }
+            TokenKind::Float => {
+                if seen2.insert("Float".to_string()) {
+                    buf.push_str(
+                        "Token::Float(_) => &source[range.start.byte_offset..range.end.byte_offset],\n",
+                    );
+                }
+            }
+            TokenKind::True | TokenKind::False | TokenKind::BooleanLit => {
+                if seen2.insert("Boolean".to_string()) {
+                    buf.push_str(
+                        "Token::Boolean(_) => &source[range.start.byte_offset..range.end.byte_offset],\n",
+                    );
+                }
+            }
+            TokenKind::StringLit => {
+                if seen2.insert("StringLit".to_string()) {
+                    // The lexer pre-strips surrounding quotes from the
+                    // Token::StringLit payload (e.g. `"hello"` → `hello`),
+                    // but the user-defined eval block in the `literals { Str { ... } }`
+                    // expects the full quoted form so it can do its own
+                    // unescape. Recover the full quoted text from the source
+                    // via Range byte offsets.
+                    buf.push_str(
+                        "Token::StringLit(_) => &source[range.start.byte_offset..range.end.byte_offset],\n",
+                    );
+                }
+            }
+            TokenKind::Fixed(text) => {
+                let variant_name = terminal_to_variant_name(text);
+                if seen2.insert(variant_name.clone()) {
+                    write!(buf, "Token::{} => {:?},\n", variant_name, text).unwrap();
+                }
+            }
+            TokenKind::Dollar => {
+                if seen2.insert("Dollar".to_string()) {
+                    buf.push_str("Token::Dollar(s) => s,\n");
+                }
+            }
+            TokenKind::DoubleDollar => {
+                if seen2.insert("DoubleDollar".to_string()) {
+                    buf.push_str("Token::DoubleDollar(s) => s,\n");
+                }
+            }
+            TokenKind::Custom(name) => {
+                if seen2.insert(name.clone()) {
+                    let has_payload = custom_tokens.iter().any(|s| {
+                        s.name == *name && s.payload_type.is_some()
+                    });
+                    if has_payload {
+                        let pt = custom_tokens
+                            .iter()
+                            .find(|s| s.name == *name)
+                            .and_then(|s| s.payload_type.as_deref())
+                            .unwrap_or("str");
+                        if pt == "str" {
+                            write!(buf, "Token::{}(s) => s,\n", name).unwrap();
+                        } else {
+                            write!(
+                                buf,
+                                "Token::{}(_) => &source[range.start.byte_offset..range.end.byte_offset],\n",
+                                name
+                            )
+                            .unwrap();
+                        }
+                    } else {
+                        write!(
+                            buf,
+                            "Token::{} => &source[range.start.byte_offset..range.end.byte_offset],\n",
+                            name
+                        )
+                        .unwrap();
+                    }
+                }
+            }
+            TokenKind::IntegerLit(cat) | TokenKind::RationalLit(cat) | TokenKind::FixedPointLit(cat) => {
+                if seen2.insert(cat.clone()) {
+                    write!(buf, "Token::{}(s) => s,\n", cat).unwrap();
+                }
+            }
+        }
+    }
+    buf.push_str("}\n}\n");
 }
 
 /// Write `use mettail_prattail::runtime_types::*;` to a string buffer.

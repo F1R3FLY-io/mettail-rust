@@ -682,7 +682,19 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 match self {
                     #(#display_arms),*,
-                    #inner_enum_name::Ambiguous(alts) => write!(f, "{}", alts[0]),
+                    #inner_enum_name::Ambiguous(alts) => {
+                        // W7 Stage 7: Display Option D — canonicalize to lex-best
+                        // primary (alts[0]) and emit a [LANG-D11] diagnostic so
+                        // consumers (REPL/LSP/parity tests) can detect that
+                        // ambiguity disambiguation took place. See
+                        // `prattail/docs/design/wpds-migration-survey.md` (M10).
+                        mettail_runtime::diagnostics::emit_d11(
+                            stringify!(#inner_enum_name),
+                            "",
+                            alts.len(),
+                        );
+                        write!(f, "{}", alts[0])
+                    }
                 }
             }
         }

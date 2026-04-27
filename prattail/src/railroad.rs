@@ -31,7 +31,11 @@
 use std::collections::HashMap;
 
 use crate::{LanguageSpec, RuleSpec, SyntaxItemSpec};
-use crate::cek::TraceCollector;
+// Phase 11 (F.1): railroad.rs decoupled from `TraceCollector`. Previously
+// `annotate_diagrams` consumed a `&TraceCollector`; it now takes a
+// `&HashMap<String, usize>` of rule_hits — the only field railroad ever
+// consumed. This removes the dependency on parser-side CEK types so
+// railroad survives Stage 6 Phase E.4 (atomic-swap commit 2).
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Railroad Node Types (Abstract — independent of the `railroad` crate)
@@ -293,14 +297,16 @@ fn syntax_item_to_node(item: &SyntaxItemSpec) -> RailroadNode {
 // Trace Annotation
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Annotate railroad diagrams with hit counts from a trace.
+/// Annotate railroad diagrams with hit counts from a rule_hits map.
 ///
-/// Maps trace entries to diagram nodes and updates hit_counts.
+/// Maps each `(rule_label, count)` pair to all diagrams' hit_counts.
+/// Phase 11 (F.1) decoupled this from `crate::cek::TraceCollector`; callers
+/// can now pass `&trace.rule_hits` (or any compatible map) directly.
 pub fn annotate_diagrams(
     diagrams: &mut HashMap<String, CategoryDiagram>,
-    trace: &TraceCollector,
+    rule_hits: &HashMap<String, usize>,
 ) {
-    for (rule_label, &count) in &trace.rule_hits {
+    for (rule_label, &count) in rule_hits {
         // Find which category this rule belongs to
         for diagram in diagrams.values_mut() {
             // Simple heuristic: if the rule label appears as a frame variant prefix,
@@ -536,11 +542,13 @@ mod tests {
         let spec = make_simple_spec();
         let mut diagrams = generate_railroad_diagrams(&spec);
 
-        let mut trace = TraceCollector::new();
-        trace.rule_hits.insert("InfixRHS".to_string(), 10);
-        trace.rule_hits.insert("RD_Lit_0".to_string(), 5);
+        // Phase 11 (F.1): annotate_diagrams now takes &HashMap<String, usize>
+        // directly, decoupling from crate::cek::TraceCollector.
+        let mut rule_hits: HashMap<String, usize> = HashMap::new();
+        rule_hits.insert("InfixRHS".to_string(), 10);
+        rule_hits.insert("RD_Lit_0".to_string(), 5);
 
-        annotate_diagrams(&mut diagrams, &trace);
+        annotate_diagrams(&mut diagrams, &rule_hits);
 
         let expr = &diagrams["Expr"];
         assert_eq!(expr.hit_counts.get("InfixRHS"), Some(&10));
