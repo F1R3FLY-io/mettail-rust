@@ -1364,6 +1364,73 @@ mod tests {
         }
     }
 
+    /// Stage 7+ Fork plan, step 1: synthetic test that asserts the
+    /// `Fork → AmbiguityFanout → step_fanout → BranchResolved` flow runs
+    /// end-to-end and selects the lex-min winner.
+    ///
+    /// Currently `#[ignore]` because the per-branch micro-driver
+    /// (`step_fanout`) is not yet implemented — the walker exits
+    /// immediately when `engine.step()` returns `Idle` for
+    /// `WpdsState::AmbiguityFanout`. This test should be unignored at
+    /// commit step 3 when the micro-driver lands; it is the gate that
+    /// confirms the engine drives forked parses to completion.
+    ///
+    /// Tracked in `feedback_use_wpds_disambiguation_not_heuristics.md`
+    /// and `wpds-fork-action-items-2026-04-27.md`.
+    #[test]
+    #[ignore = "Stage 7+ Fork plan: blocked on step_fanout micro-driver (commit step 3)"]
+    fn fork_drives_to_lex_min_winner() {
+        // Engine: at Ready -> Push entry -> Fork with 3 branches.
+        // Each branch returns an immediate Pop; LexicographicWeight
+        // tiebreaks on (cost, src_idx, rule_idx) — lower rule_idx wins.
+        let engine = ScriptedEngine::new(vec![
+            // Branch 0 step: Pop with weight (1.0, 0, 0)  — winner.
+            WpdsStepAction::Pop {
+                weight: lex(1.0, 0, 0),
+                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+            },
+            // Branch 1 step: Pop with weight (1.0, 0, 1).
+            WpdsStepAction::Pop {
+                weight: lex(1.0, 0, 1),
+                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+            },
+            // Branch 2 step: Pop with weight (1.0, 0, 2).
+            WpdsStepAction::Pop {
+                weight: lex(1.0, 0, 2),
+                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+            },
+            // Initial Fork.
+            WpdsStepAction::Fork {
+                branches: vec![
+                    (StackSymbolV2::rule_at(0, 0, 0, None), lex(1.0, 0, 0)),
+                    (StackSymbolV2::rule_at(0, 1, 0, None), lex(1.0, 0, 1)),
+                    (StackSymbolV2::rule_at(0, 2, 0, None), lex(1.0, 0, 2)),
+                ],
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+            // Setup: push entry first.
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        // Drive the fanout to completion.
+        let final_state = w.run_to_saturation(100, &empty_tokens());
+        // Expect: lex-min winner = rule_idx 0 (lowest); state in InfixLoop.
+        assert!(
+            matches!(final_state, WpdsState::InfixLoop { .. }),
+            "expected InfixLoop after BranchResolved, got {:?}",
+            final_state,
+        );
+        // The walker's terminal weight should reflect the winner's weight.
+        // (Exact assertion form depends on step_fanout's BranchResolved
+        // contract — refine when implementing.)
+    }
+
     #[test]
     fn run_to_completion_terminates_at_accept() {
         // Engine emits 3 advances then accepts.
