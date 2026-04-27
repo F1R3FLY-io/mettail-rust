@@ -616,6 +616,22 @@ fn pattern_term_to_syntax(pt: &PatternTerm, language: &LanguageDef) -> String {
             let b = pattern_to_user_syntax(body, language);
             format!("apply_pattern({}, {}, {})", p, v, b)
         },
+        PatternTerm::CommJoin {
+            first_bind,
+            rest_binds,
+            channel_names,
+            payloads,
+            cond,
+            body,
+        } => {
+            let b0 = pattern_to_user_syntax(first_bind, language);
+            let bs = pattern_to_user_syntax(rest_binds, language);
+            let ns = pattern_to_user_syntax(channel_names, language);
+            let qs = pattern_to_user_syntax(payloads, language);
+            let c = pattern_to_user_syntax(cond, language);
+            let bd = pattern_to_user_syntax(body, language);
+            format!("comm_join({}, {}, {}, {}, {}, {})", b0, bs, ns, qs, c, bd)
+        },
     }
 }
 

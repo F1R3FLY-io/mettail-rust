@@ -36,6 +36,17 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
             continue;
         }
 
+        // Skip mixed constructors (Collection + other NonTerminal fields).
+        // The flatten helper only makes sense for pure-collection constructors like PPar(HashBag).
+        let total_non_terminal_fields = rule
+            .items
+            .iter()
+            .filter(|i| matches!(i, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }))
+            .count();
+        if total_non_terminal_fields > 1 {
+            continue;
+        }
+
         let category = &rule.category;
         let label = &rule.label;
         let helper_name = format_ident!("insert_into_{}", label.to_string().to_lowercase());
@@ -235,7 +246,18 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                     .iter()
                     .filter(|item| matches!(item, GrammarItem::Collection { .. }))
                     .count();
-                let is_single_collection = !has_multi_binder && collection_count == 1;
+                let total_non_terminal_fields = rule
+                    .items
+                    .iter()
+                    .filter(|i| {
+                        matches!(i, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. })
+                    })
+                    .count();
+                // A "simple collection" constructor has exactly one field and it's a collection
+                // (e.g. PPar(HashBag<Proc>)). Mixed constructors like ForRowNoWhere(Box<InputBind>,
+                // Vec<InputBind>) are handled by the multi-field branch below.
+                let is_single_collection =
+                    !has_multi_binder && collection_count == 1 && total_non_terminal_fields == 1;
 
                 if is_single_collection {
                     let helper_name =

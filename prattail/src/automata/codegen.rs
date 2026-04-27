@@ -282,6 +282,24 @@ fn write_class_table(buf: &mut String, partition: &AlphabetPartition) {
     buf.push_str("];");
 }
 
+/// Emit `LEX_ACCEPT_PRIORITY[state]` = tropical weight for tie-breaking when several
+/// accepting states match the **same** end offset (e.g. keyword `for` vs `Ident`).
+/// Lower is better; non-accepting states use `f64::INFINITY`.
+fn write_lex_accept_priority_table(buf: &mut String, dfa: &Dfa) {
+    write!(buf, "static LEX_ACCEPT_PRIORITY: [f64; {}] = [", dfa.states.len()).unwrap();
+    for (i, state) in dfa.states.iter().enumerate() {
+        if i > 0 {
+            buf.push(',');
+        }
+        if state.accept.is_some() {
+            write!(buf, "{:.1}_f64", state.weight.value()).unwrap();
+        } else {
+            buf.push_str("f64::INFINITY");
+        }
+    }
+    buf.push_str("];");
+}
+
 /// Write the accept_token match arms to a string buffer.
 fn write_accept_arms(
     buf: &mut String,
@@ -542,6 +560,7 @@ fn write_direct_coded_lexer(
     integer_literal_eval: &std::collections::HashMap<String, String>,
 ) {
     write_class_table(buf, partition);
+    write_lex_accept_priority_table(buf, dfa);
 
     write!(buf, "const NUM_CLASSES: usize = {};", partition.num_classes).unwrap();
 
@@ -569,8 +588,11 @@ fn write_direct_coded_lexer(
          let start_line = line; \
          let start_col = col; \
          let mut state: u32 = 0; \
-         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-         if let Some(_) = accept_token(0, &input[start..start]) { last_accept = Some((0, pos, line, col)); } \
+         let mut last_accept: Option<(u32, usize, usize, usize, f64)> = None; \
+         if accept_token(0, &input[start..start]).is_some() { \
+         let w0 = LEX_ACCEPT_PRIORITY[0]; \
+         last_accept = Some((0, pos, line, col, w0)); \
+         } \
          while pos < bytes.len() { \
          let class = CHAR_CLASS[bytes[pos] as usize]; \
          let next = dfa_next(state, class); \
@@ -579,10 +601,17 @@ fn write_direct_coded_lexer(
          if bytes[pos] == b'\\n' { line += 1; col = 0; } \
          else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
          pos += 1; \
-         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
+         if accept_token(state, &input[start..pos]).is_some() { \
+         let w = LEX_ACCEPT_PRIORITY[state as usize]; \
+         let replace = match last_accept { \
+         None => true, \
+         Some((_, old_end, _, _, old_w)) => pos > old_end || (pos == old_end && w < old_w), \
+         }; \
+         if replace { last_accept = Some((state, pos, line, col, w)); } \
+         } \
          } \
          match last_accept { \
-         Some((accept_state, end, end_line, end_col)) => { \
+         Some((accept_state, end, end_line, end_col, _)) => { \
          pos = end; line = end_line; col = end_col; \
          let text = &input[start..end]; \
          if let Some(token) = accept_token(accept_state, text) { \
@@ -650,8 +679,11 @@ fn write_lex_weighted_function_direct_coded(buf: &mut String) {
          let start_line = line; \
          let start_col = col; \
          let mut state: u32 = 0; \
-         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-         if let Some(_) = accept_token(0, &input[start..start]) { last_accept = Some((0, pos, line, col)); } \
+         let mut last_accept: Option<(u32, usize, usize, usize, f64)> = None; \
+         if accept_token(0, &input[start..start]).is_some() { \
+         let w0 = LEX_ACCEPT_PRIORITY[0]; \
+         last_accept = Some((0, pos, line, col, w0)); \
+         } \
          while pos < bytes.len() { \
          let class = CHAR_CLASS[bytes[pos] as usize]; \
          let next = dfa_next(state, class); \
@@ -660,10 +692,17 @@ fn write_lex_weighted_function_direct_coded(buf: &mut String) {
          if bytes[pos] == b'\\n' { line += 1; col = 0; } \
          else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
          pos += 1; \
-         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
+         if accept_token(state, &input[start..pos]).is_some() { \
+         let w = LEX_ACCEPT_PRIORITY[state as usize]; \
+         let replace = match last_accept { \
+         None => true, \
+         Some((_, old_end, _, _, old_w)) => pos > old_end || (pos == old_end && w < old_w), \
+         }; \
+         if replace { last_accept = Some((state, pos, line, col, w)); } \
+         } \
          } \
          match last_accept { \
-         Some((accept_state, end, end_line, end_col)) => { \
+         Some((accept_state, end, end_line, end_col, _)) => { \
          pos = end; line = end_line; col = end_col; \
          let text = &input[start..end]; \
          if let Some(token) = accept_token(accept_state, text) { \
@@ -691,6 +730,7 @@ fn write_table_driven_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
 
     write_class_table(buf, partition);
     write_transition_table(buf, dfa, num_classes);
+    write_lex_accept_priority_table(buf, dfa);
 
     write!(
         buf,
@@ -724,8 +764,11 @@ fn write_table_driven_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
          let start_line = line; \
          let start_col = col; \
          let mut state: u32 = 0; \
-         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-         if accept_token(0, &input[start..start]).is_some() { last_accept = Some((0, pos, line, col)); } \
+         let mut last_accept: Option<(u32, usize, usize, usize, f64)> = None; \
+         if accept_token(0, &input[start..start]).is_some() { \
+         let w0 = LEX_ACCEPT_PRIORITY[0]; \
+         last_accept = Some((0, pos, line, col, w0)); \
+         } \
          while pos < bytes.len() { \
          let class = CHAR_CLASS[bytes[pos] as usize] as usize; \
          let next = TRANSITIONS[state as usize * NUM_CLASSES + class]; \
@@ -734,10 +777,17 @@ fn write_table_driven_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
          if bytes[pos] == b'\\n' { line += 1; col = 0; } \
          else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
          pos += 1; \
-         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
+         if accept_token(state, &input[start..pos]).is_some() { \
+         let w = LEX_ACCEPT_PRIORITY[state as usize]; \
+         let replace = match last_accept { \
+         None => true, \
+         Some((_, old_end, _, _, old_w)) => pos > old_end || (pos == old_end && w < old_w), \
+         }; \
+         if replace { last_accept = Some((state, pos, line, col, w)); } \
+         } \
          } \
          match last_accept { \
-         Some((accept_state, end, end_line, end_col)) => { \
+         Some((accept_state, end, end_line, end_col, _)) => { \
          pos = end; line = end_line; col = end_col; \
          let text = &input[start..end]; \
          if let Some(token) = accept_token(accept_state, text) { \
@@ -1128,6 +1178,7 @@ fn write_comb_driven_lexer(
 ) {
     write_class_table(buf, partition);
     write_comb_tables(buf, comb);
+    write_lex_accept_priority_table(buf, dfa);
 
     write!(buf, "const NUM_CLASSES: usize = {};", partition.num_classes).unwrap();
 
@@ -1178,6 +1229,7 @@ fn write_bitmap_driven_lexer(
 ) {
     write_class_table(buf, partition);
     write_bitmap_tables(buf, tables);
+    write_lex_accept_priority_table(buf, dfa);
 
     write!(buf, "const NUM_CLASSES: usize = {};", partition.num_classes).unwrap();
 
@@ -1242,8 +1294,11 @@ fn write_lex_function_with_dfa_next(buf: &mut String) {
          let start_line = line; \
          let start_col = col; \
          let mut state: u32 = 0; \
-         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-         if let Some(_) = accept_token(0, &input[start..start]) { last_accept = Some((0, pos, line, col)); } \
+         let mut last_accept: Option<(u32, usize, usize, usize, f64)> = None; \
+         if accept_token(0, &input[start..start]).is_some() { \
+         let w0 = LEX_ACCEPT_PRIORITY[0]; \
+         last_accept = Some((0, pos, line, col, w0)); \
+         } \
          while pos < bytes.len() { \
          let class = CHAR_CLASS[bytes[pos] as usize]; \
          let next = dfa_next(state, class); \
@@ -1252,10 +1307,17 @@ fn write_lex_function_with_dfa_next(buf: &mut String) {
          if bytes[pos] == b'\\n' { line += 1; col = 0; } \
          else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
          pos += 1; \
-         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
+         if accept_token(state, &input[start..pos]).is_some() { \
+         let w = LEX_ACCEPT_PRIORITY[state as usize]; \
+         let replace = match last_accept { \
+         None => true, \
+         Some((_, old_end, _, _, old_w)) => pos > old_end || (pos == old_end && w < old_w), \
+         }; \
+         if replace { last_accept = Some((state, pos, line, col, w)); } \
+         } \
          } \
          match last_accept { \
-         Some((accept_state, end, end_line, end_col)) => { \
+         Some((accept_state, end, end_line, end_col, _)) => { \
          pos = end; line = end_line; col = end_col; \
          let text = &input[start..end]; \
          if let Some(token) = accept_token(accept_state, text) { \
@@ -1302,8 +1364,11 @@ fn write_lex_weighted_function_with_dfa_next(buf: &mut String) {
          let start_line = line; \
          let start_col = col; \
          let mut state: u32 = 0; \
-         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-         if let Some(_) = accept_token(0, &input[start..start]) { last_accept = Some((0, pos, line, col)); } \
+         let mut last_accept: Option<(u32, usize, usize, usize, f64)> = None; \
+         if accept_token(0, &input[start..start]).is_some() { \
+         let w0 = LEX_ACCEPT_PRIORITY[0]; \
+         last_accept = Some((0, pos, line, col, w0)); \
+         } \
          while pos < bytes.len() { \
          let class = CHAR_CLASS[bytes[pos] as usize]; \
          let next = dfa_next(state, class); \
@@ -1312,10 +1377,17 @@ fn write_lex_weighted_function_with_dfa_next(buf: &mut String) {
          if bytes[pos] == b'\\n' { line += 1; col = 0; } \
          else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
          pos += 1; \
-         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
+         if accept_token(state, &input[start..pos]).is_some() { \
+         let w = LEX_ACCEPT_PRIORITY[state as usize]; \
+         let replace = match last_accept { \
+         None => true, \
+         Some((_, old_end, _, _, old_w)) => pos > old_end || (pos == old_end && w < old_w), \
+         }; \
+         if replace { last_accept = Some((state, pos, line, col, w)); } \
+         } \
          } \
          match last_accept { \
-         Some((accept_state, end, end_line, end_col)) => { \
+         Some((accept_state, end, end_line, end_col, _)) => { \
          pos = end; line = end_line; col = end_col; \
          let text = &input[start..end]; \
          if let Some(token) = accept_token(accept_state, text) { \

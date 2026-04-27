@@ -55,6 +55,17 @@ pub enum PatternTerm {
         value: Box<Pattern>,
         body: Box<Pattern>,
     },
+
+    /// RHS-only: multi-channel COMM reduction for `PForJoin` (replaces old `PInputs` + `eval`).
+    /// `(comm_join b bs ns qs cond body)` — see `crate::rhocalc::receive::comm_pforjoin_subst`.
+    CommJoin {
+        first_bind: Box<Pattern>,
+        rest_binds: Box<Pattern>,
+        channel_names: Box<Pattern>,
+        payloads: Box<Pattern>,
+        cond: Box<Pattern>,
+        body: Box<Pattern>,
+    },
 }
 
 /// Pattern for rule specification (both LHS and RHS).
@@ -161,6 +172,22 @@ impl PatternTerm {
             PatternTerm::ApplyPattern { pattern, value, body } => {
                 let mut vars = pattern.free_vars();
                 vars.extend(value.free_vars());
+                vars.extend(body.free_vars());
+                vars
+            },
+            PatternTerm::CommJoin {
+                first_bind,
+                rest_binds,
+                channel_names,
+                payloads,
+                cond,
+                body,
+            } => {
+                let mut vars = first_bind.free_vars();
+                vars.extend(rest_binds.free_vars());
+                vars.extend(channel_names.free_vars());
+                vars.extend(payloads.free_vars());
+                vars.extend(cond.free_vars());
                 vars.extend(body.free_vars());
                 vars
             },
@@ -301,6 +328,7 @@ impl PatternTerm {
             PatternTerm::Subst { term, .. } => term.category(language),
             PatternTerm::MultiSubst { scope, .. } => scope.category(language),
             PatternTerm::ApplyPattern { body, .. } => body.category(language),
+            PatternTerm::CommJoin { body, .. } => body.category(language),
         }
     }
 
@@ -347,6 +375,21 @@ impl PatternTerm {
             PatternTerm::ApplyPattern { pattern, value, body } => {
                 pattern.collect_var_occurrences(counts);
                 value.collect_var_occurrences(counts);
+                body.collect_var_occurrences(counts);
+            },
+            PatternTerm::CommJoin {
+                first_bind,
+                rest_binds,
+                channel_names,
+                payloads,
+                cond,
+                body,
+            } => {
+                first_bind.collect_var_occurrences(counts);
+                rest_binds.collect_var_occurrences(counts);
+                channel_names.collect_var_occurrences(counts);
+                payloads.collect_var_occurrences(counts);
+                cond.collect_var_occurrences(counts);
                 body.collect_var_occurrences(counts);
             },
         }
@@ -576,10 +619,11 @@ impl Pattern {
                 // matches the body pattern after binding the params
                 //
                 // Special case: when collection is a Zip, this is a correlated search.
-                // #zip(first, second).#map(|a, b| Body(a, b)): first is bound from context;
-                // for each a in first we search search_context for elements matching Body(a, b),
-                // and collect b's into second. We enumerate all valid matchings (one context
-                // element per first element, distinct indices) so rules fire for every possibility.
+                // #zip(first, second).#map(|a, b| Body(a, b)): `first` is either already bound
+                // earlier in the same collection, or (RhoCalc `Comm`) derived as channel names
+                // from metavariables `b`/`bs` when `first` is named `ns`. For each element of
+                // `first` we search search_context for Body(a, b), collect into `second`, and
+                // enumerate distinct-index matchings.
                 if let Pattern::Zip { first, second } = collection.as_ref() {
                     // Correlated search: Zip + Map. First is bound; second collects from matches.
 
@@ -597,14 +641,46 @@ impl Pattern {
                         _ => panic!("Zip second must be a variable"),
                     };
 
-                    // first should already be bound - get its binding
-                    // remove immutable borrow of result.bindings
-                    let first_binding = result
-                        .bindings
-                        .get_mut(&first_var_name)
-                        .map(|b| &b.expression)
-                        .unwrap()
-                        .clone();
+                    // `first` is usually bound earlier in the same collection (e.g. a matched list).
+                    // RhoCalc `Comm` uses `#zip(ns, qs)` where `ns` is the channel-name list implied
+                    // by `PForJoin b bs` — match `b` / `bs` first, then derive `ns` for correlated
+                    // `POutput` search (see `languages/src/rhocalc/receive.rs`).
+                    let first_binding_expr: TokenStream = match result.bindings.get(&first_var_name)
+                    {
+                        Some(b) => b.expression.clone(),
+                        None => {
+                            if first_var_name == "ns"
+                                && result.bindings.contains_key("b")
+                                && result.bindings.contains_key("bs")
+                            {
+                                let b_e = &result.bindings["b"].expression;
+                                let bs_e = &result.bindings["bs"].expression;
+                                quote! {
+                                    crate::rhocalc::receive::channel_names_from_row(
+                                        &#b_e,
+                                        #bs_e.as_slice(),
+                                    )
+                                    .unwrap_or_default()
+                                }
+                            } else {
+                                let first_ident = format_ident!("{}", &first_var_name);
+                                quote! { #first_ident.clone() }
+                            }
+                        },
+                    };
+
+                    if !result.bindings.contains_key(&first_var_name) {
+                        result.bindings.insert(
+                            first_var_name.clone(),
+                            VariableBinding {
+                                expression: first_binding_expr.clone(),
+                                lang_type: category.clone(),
+                                scope_kind: None,
+                            },
+                        );
+                    }
+
+                    let first_binding = first_binding_expr;
 
                     if params.len() != 2 {
                         panic!("Zip+Map requires exactly 2 params, got {}", params.len());
@@ -1322,6 +1398,9 @@ impl PatternTerm {
             },
             PatternTerm::ApplyPattern { .. } => {
                 unimplemented!("ApplyPattern in LHS patterns not supported")
+            },
+            PatternTerm::CommJoin { .. } => {
+                unimplemented!("CommJoin in LHS patterns not supported")
             },
         }
     }
@@ -2158,6 +2237,39 @@ impl PatternTerm {
                     (#body_expr)
                         .apply_pattern(&(#pattern_expr), &(#value_expr))
                         .unwrap_or_else(|| (#body_expr).clone())
+                }
+            },
+            PatternTerm::CommJoin {
+                first_bind,
+                rest_binds,
+                channel_names,
+                payloads,
+                cond,
+                body,
+            } => {
+                let b_e = first_bind.to_ascent_rhs(bindings, language);
+                let bs_e = rest_binds.to_ascent_rhs(bindings, language);
+                let ns_e = channel_names.to_ascent_rhs(bindings, language);
+                let qs_e = payloads.to_ascent_rhs(bindings, language);
+                let cond_e = cond.to_ascent_rhs(bindings, language);
+                let body_e = body.to_ascent_rhs(bindings, language);
+                quote! {
+                    {
+                        let __comm_b = #b_e;
+                        let __comm_bs = #bs_e;
+                        let __comm_ns = #ns_e;
+                        let __comm_qs = #qs_e;
+                        let __comm_cond = #cond_e;
+                        let __comm_body = #body_e;
+                        crate::rhocalc::receive::comm_pforjoin_subst(
+                            &__comm_b,
+                            __comm_bs.as_slice(),
+                            __comm_ns.as_slice(),
+                            __comm_qs.as_slice(),
+                            &__comm_cond,
+                            &__comm_body,
+                        )
+                    }
                 }
             },
         }

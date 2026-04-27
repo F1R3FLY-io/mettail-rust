@@ -1698,6 +1698,25 @@ fn generate_subst_impl(
             }
         }
     };
+    let proc_name_quote_subst = if is_proc
+        && language.types.iter().any(|t| t.name == "Name")
+        && language
+            .terms
+            .iter()
+            .any(|r| r.category == "Name" && r.label == "NQuote")
+    {
+        quote! {
+            let name_repls: Vec<Name> = repls
+                .iter()
+                .map(|p| Name::NQuote(Box::new(p.clone())))
+                .collect();
+            Some(self.subst(&vars_refs, &repls).subst_name(&vars_refs, &name_repls))
+        }
+    } else {
+        quote! {
+            Some(self.subst(&vars_refs, &repls))
+        }
+    };
     let apply_pattern_body = if is_proc {
         quote! {
             let mut env: std::collections::HashMap<mettail_runtime::FreeVar<String>, Self> =
@@ -1711,7 +1730,7 @@ fn generate_subst_impl(
                 .iter()
                 .map(|v| env.get(v).cloned().expect("binding exists"))
                 .collect();
-            Some(self.subst(&vars_refs, &repls))
+            #proc_name_quote_subst
         }
     } else {
         quote! {

@@ -142,99 +142,210 @@ mod comm {
 
     #[test]
     fn single_channel() {
-        assert_reduces_to("{(x <- c){*(x)} | c!(p)}", "p");
+        assert_reduces_to("{for(x <- c){*(x)} | c!(p)}", "p");
     }
 
     #[test]
     fn comm_with_body_using_channel() {
-        assert_reduces_to("{(x <- c){x!(0)} | c!(p)}", "p!(0)");
+        assert_reduces_to("{for(x <- c){x!(0)} | c!(p)}", "p!(0)");
     }
 
     #[test]
     fn comm_substitutes_quoted_value() {
-        // Comm: (x <- c){*(x)} | c!(0) → *(@ (0)) → 0
-        assert_reduces_to("{(x <- c){*(x)} | c!(0)}", "0");
+        // Comm: for(x <- c){*(x)} | c!(0) → *(@ (0)) → 0
+        assert_reduces_to("{for(x <- c){*(x)} | c!(0)}", "0");
     }
 
     #[test]
     fn multi_input_two_channels() {
-        assert_reduces_to("{(x <- c1, y <- c2){*(x)} | c1!(p) | c2!(q)}", "p");
+        assert_reduces_to("{for(x <- c1 & y <- c2){*(x)} | c1!(p) | c2!(q)}", "p");
     }
 
     #[test]
     fn multi_input_uses_both_vars() {
-        assert_reduces_to("{(x <- c1, y <- c2){{*(x) | *(y)}} | c1!(p) | c2!(q)}", "p");
+        assert_reduces_to("{for(x <- c1 & y <- c2){{*(x) | *(y)}} | c1!(p) | c2!(q)}", "p");
     }
 
     #[test]
     fn multi_input_three_channels() {
         assert_reduces_to(
-            "{(x <- a, y <- b, z <- c){{*(x) | *(y) | *(z)}} | a!(p) | b!(q) | c!(r)}",
+            "{for(x <- a & y <- b & z <- c){{*(x) | *(y) | *(z)}} | a!(p) | b!(q) | c!(r)}",
             "{p | q | r}",
         );
     }
 
     #[test]
     fn join_pattern_same_channel() {
-        assert_reduces_to("{(x <- c, y <- c){{*(x) | *(y)}} | c!(a) | c!(b)}", "{a | b}");
+        assert_reduces_to("{for(x <- c & y <- c){{*(x) | *(y)}} | c!(a) | c!(b)}", "{a | b}");
     }
 
     #[test]
     fn comm_with_remaining_parallel() {
-        // {(x <- c){*(x)} | c!(p) | q} → {p | q}
-        assert_reduces_to("{(x <- c){*(x)} | c!(p) | q}", "{p | q}");
+        // {for(x <- c){*(x)} | c!(p) | q} → {p | q}
+        assert_reduces_to("{for(x <- c){*(x)} | c!(p) | q}", "{p | q}");
     }
 
     #[test]
     fn pattern_comm_var_matches_payload() {
-        assert_reduces_to("{for(x <- c){x} | c!(p)}", "p");
+        assert_reduces_to("{for(x <- c){*x} | c!(p)}", "p");
+    }
+
+    #[test]
+    fn compact_for_row_with_ampersand_desugars_to_join() {
+        assert_reduces_to("{for(x <- c1 & y <- c2){*x} | c1!(p) | c2!(q)}", "p");
+    }
+
+    #[test]
+    fn quoted_name_binder_form_is_equivalent() {
+        assert_reduces_to("{for(@x <- c1 & @y <- c2){x} | c1!(p) | c2!(q)}", "p");
+    }
+
+    #[test]
+    fn compact_for_rows_with_semicolon_are_nested() {
+        assert_reduces_to("{for(x <- c1; y <- c2){*x} | c1!(p) | c2!(q)}", "p");
+    }
+
+    #[test]
+    fn compact_for_row_where_guard_blocks_when_false() {
+        assert_never_produces("{for(x <- c1 & y <- c2 where false){*x} | c1!(p) | c2!(q)}", "{p}");
+    }
+
+    #[test]
+    fn where_guard_false_is_noop_for_receive_pair() {
+        assert_never_produces("{for(x <- c where false){*x} | c!(p)}", "{p}");
+    }
+
+    #[test]
+    fn where_guard_expression_false_is_noop_for_receive_pair() {
+        assert_never_produces("{for(x <- c where x > 3){*x} | c!(2)}", "{2}");
+    }
+
+    #[test]
+    fn join_pattern_mismatch_is_noop_for_receive_group() {
+        assert_reduces_to(
+            "{for(@[1,2,4] <- c){7} | c!([1,2,3])}",
+            "{__for([1,2,4] <- c){7} | c!([1,2,3])}",
+        );
+        assert_never_produces("{for(@[1,2,4] <- c){7} | c!([1,2,3])}", "{7}");
     }
 
     #[test]
     fn pattern_comm_ground_pattern_matches_equal_payload() {
-        assert_reduces_to("{for(0 <- c){1} | c!(0)}", "1");
+        assert_reduces_to("{for(@0 <- c){1} | c!(0)}", "1");
     }
 
     #[test]
     fn pattern_comm_exact_constructor_pattern_matches() {
-        assert_reduces_to("{for(*(@(0)) <- c){1} | c!(*(@(0)))}", "1");
+        assert_reduces_to("{for(@*(@(0)) <- c){1} | c!(*(@(0)))}", "1");
     }
 
     #[test]
     fn pattern_comm_ground_pattern_blocks_mismatch() {
         // Pattern 0 does not match payload p, so COMM must not produce {0}.
         // (Other non-COMM rewrites may exist due HOL/native rules.)
-        assert_never_produces("{for(0 <- c){0} | c!(p)}", "{0}");
+        assert_never_produces("{for(@0 <- c){0} | c!(p)}", "{0}");
     }
 
     #[test]
     fn pattern_comm_list_literal_pattern_matches() {
-        assert_reduces_to("{for([0, 1] <- c){42} | c!([0, 1])}", "42");
+        assert_reduces_to("{for(@[0, 1] <- c){42} | c!([0, 1])}", "42");
     }
 
     #[test]
     fn pattern_comm_list_literal_pattern_blocks_mismatch() {
-        assert_never_produces("{for([0, 1] <- c){42} | c!([0, 1, 2])}", "{42}");
+        assert_never_produces("{for(@[0, 1] <- c){42} | c!([0, 1, 2])}", "{42}");
     }
 
     #[test]
     fn pattern_comm_bag_literal_pattern_matches() {
-        assert_reduces_to("{for(#{1|2}# <- c){7} | c!(#{2|1}#)}", "7");
+        assert_reduces_to("{for(@#{1|2}# <- c){7} | c!(#{2|1}#)}", "7");
     }
 
     #[test]
     fn pattern_comm_bag_literal_pattern_blocks_mismatch() {
-        assert_never_produces("{for(#{1|2}# <- c){7} | c!(#{1|1}#)}", "{7}");
+        assert_never_produces("{for(@#{1|2}# <- c){7} | c!(#{1|1}#)}", "{7}");
     }
 
     #[test]
     fn pattern_comm_map_literal_pattern_matches() {
-        assert_reduces_to("{for(map(1:2, 3:4) <- c){9} | c!(map(3:4, 1:2))}", "9");
+        assert_reduces_to("{for(@map(1:2, 3:4) <- c){9} | c!(map(3:4, 1:2))}", "9");
     }
 
     #[test]
     fn pattern_comm_map_literal_pattern_blocks_mismatch() {
-        assert_never_produces("{for(map(1:2, 3:4) <- c){9} | c!(map(1:2, 3:5))}", "{9}");
+        assert_never_produces("{for(@map(1:2, 3:4) <- c){9} | c!(map(1:2, 3:5))}", "{9}");
+    }
+
+    #[test]
+    fn complex_join_map_and_list_literal_pattern_matches() {
+        assert_reduces_to(
+            "{for(@map(1:x, 3:4) <- c & @[1,2,3] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "2",
+        );
+    }
+
+    #[test]
+    fn complex_join_map_and_list_literal_pattern_blocks_mismatch() {
+        assert_never_produces(
+            "{for(@map(1:x, 3:4) <- c & @[1,2,4] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "{2}",
+        );
+    }
+
+    #[test]
+    fn complex_join_map_and_list_var_pattern_matches() {
+        assert_reduces_to(
+            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "2",
+        );
+    }
+
+    #[test]
+    fn complex_join_map_and_list_var_pattern_with_guard_matches() {
+        assert_reduces_to(
+            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1 and y>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "2",
+        );
+    }
+
+    #[test]
+    fn complex_join_map_and_list_var_pattern_with_guard_blocks() {
+        assert_never_produces(
+            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1 and y>3){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "{2}",
+        );
+    }
+
+    #[test]
+    fn complex_multi_row_join_and_followup_row_matches() {
+        assert_reduces_to(
+            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1 and y>1; z <- c3 ){[x,z]} | c!(map(3:4, 1:2)) | c2!([1,2,3]) | c3!(11111111)}",
+            "[2, 11111111]",
+        );
+    }
+
+    #[test]
+    fn complex_multi_row_join_and_followup_row_guard_blocks() {
+        assert_never_produces(
+            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1 and y>1; z <- c3 where z > 1111111111111111 ){[x,z]} | c!(map(3:4, 1:2)) | c2!([1,2,3]) | c3!(11111111)}",
+            "{[2, 11111111]}",
+        );
+    }
+
+    #[test]
+    fn join_where_guard_string_eq_matches() {
+        assert_reduces_to(
+            r#"{for(qty <- stock & item <- shop where (qty > 1) and (item == "lemon")){[item, qty]} | stock!(2) | shop!("lemon")}"#,
+            r#"["lemon", 2]"#,
+        );
+    }
+
+    #[test]
+    fn join_where_guard_string_eq_blocks() {
+        assert_never_produces(
+            r#"{for(qty <- stock & item <- shop where (qty > 1) and (item == "lemon")){[item, qty]} | stock!(2) | shop!("lime")}"#,
+            r#"["lime", 2]"#,
+        );
     }
 
     #[test]
@@ -276,35 +387,35 @@ mod new_and_extrusion {
 
     #[test]
     fn new_congruence_propagates_body_rewrite() {
-        // new(x) in { {(z <- a){*(z)} | a!(0)} } → new(x) in { {*(@(0))} } → ...
-        assert_min_rewrites("new(x) in { {(z <- a){*(z)} | a!(0)} }", 1);
+        // new(x) in { {for(z <- a){*(z)} | a!(0)} } → new(x) in { {*(@(0))} } → ...
+        assert_min_rewrites("new(x) in { {for(z <- a){*(z)} | a!(0)} }", 1);
     }
 
     #[test]
     fn new_congruence_reaches_normal_form() {
-        assert_reduces_to("new(x) in { {(z <- a){*(z)} | a!(0)} }", "new(x) in { 0 }");
+        assert_reduces_to("new(x) in { {for(z <- a){*(z)} | a!(0)} }", "new(x) in { 0 }");
     }
 
     #[test]
     fn extrusion_forward() {
         // {new(x) in {p} | a!(0)} = new(x) in {{p | a!(0)}}
         // The initial PPar should connect to a rewrite (via equation + congruence).
-        assert_initial_rewrites("{new(x) in { (z <- a){*(z)} } | a!(0)}");
+        assert_initial_rewrites("{new(x) in { for(z <- a){*(z)} } | a!(0)}");
     }
 
     #[test]
     fn extrusion_reaches_result() {
-        // {new(x) in {(z <- a){*(z)}} | a!(0)}
-        //  =extrude= new(x) in {{(z <- a){*(z)} | a!(0)}}
+        // {new(x) in {for(z <- a){*(z)}} | a!(0)}
+        //  =extrude= new(x) in {{for(z <- a){*(z)} | a!(0)}}
         //  →comm→ new(x) in {{*(@(0))}} →exec→ new(x) in {0}
-        assert_reduces_to("{new(x) in { (z <- a){*(z)} } | a!(0)}", "new(x) in { 0 }");
+        assert_reduces_to("{new(x) in { for(z <- a){*(z)} } | a!(0)}", "new(x) in { 0 }");
     }
 
     #[test]
     fn extrusion_blocked_when_not_fresh() {
-        // {new(a) in {(z <- a){*(z)}} | a!(0)} — x=a is NOT fresh in a!(0),
+        // {new(a) in {for(z <- a){*(z)}} | a!(0)} — x=a is NOT fresh in a!(0),
         // so extrusion should not apply. The term is stuck.
-        let results = run("{new(a) in { (z <- a){*(z)} } | a!(0)}");
+        let results = run("{new(a) in { for(z <- a){*(z)} } | a!(0)}");
         let nfs = normal_form_displays(&results);
         // Should be a normal form as-is (no extrusion possible)
         assert!(!nfs.is_empty(), "blocked extrusion should still have normal forms");
@@ -684,6 +795,36 @@ mod native_ops {
         fn u32_eq() {
             assert_reduces_to("{3u32 == 3u32}", "true");
         }
+
+        #[test]
+        fn str_eq() {
+            assert_reduces_to(r#"{"abc" == "abc"}"#, "true");
+        }
+
+        #[test]
+        fn str_ne() {
+            assert_reduces_to(r#"{"abc" != "abd"}"#, "true");
+        }
+
+        #[test]
+        fn str_gt_lexicographic() {
+            assert_reduces_to(r#"{"b" > "a"}"#, "true");
+        }
+
+        #[test]
+        fn str_lt_lexicographic() {
+            assert_reduces_to(r#"{"apple" < "banana"}"#, "true");
+        }
+
+        #[test]
+        fn str_gte() {
+            assert_reduces_to(r#"{"abc" >= "abc"}"#, "true");
+        }
+
+        #[test]
+        fn str_lte() {
+            assert_reduces_to(r#"{"abc" <= "abc"}"#, "true");
+        }
     }
 
     mod boolean {
@@ -736,7 +877,7 @@ mod native_ops {
         #[test]
         fn remove_comm() {
             assert_reduces_to(
-                "{a!(#{1|2|2}#) | c!(2) | (b <- a, e <- c){remove(*(b), *(e))}}",
+                "{a!(#{1|2|2}#) | c!(2) | for(b <- a & e <- c){remove(*(b), *(e))}}",
                 "#{1|2}#",
             );
         }
@@ -744,7 +885,10 @@ mod native_ops {
         /// count(*(bag), *(elem)) after comm: counts occurrences of elem in bag
         #[test]
         fn count_comm() {
-            assert_reduces_to("{a!(#{1|2|2}#) | c!(2) | (b <- a, e <- c){count(*(b), *(e))}}", "2");
+            assert_reduces_to(
+                "{a!(#{1|2|2}#) | c!(2) | for(b <- a & e <- c){count(*(b), *(e))}}",
+                "2",
+            );
         }
     }
 
@@ -856,8 +1000,16 @@ mod parsing {
         let _ = run("@(0)");
     }
     #[test]
+    fn quote_bare_name() {
+        let _ = run("{@x!(0) | x!(1)}");
+    }
+    #[test]
     fn drop() {
         let _ = run("*(@(0))");
+    }
+    #[test]
+    fn drop_bare_name() {
+        let _ = run("*x");
     }
     #[test]
     fn send() {
@@ -865,11 +1017,11 @@ mod parsing {
     }
     #[test]
     fn receive() {
-        let _ = run("(y <- x){y!(0)}");
+        let _ = run("for(y <- x){y!(0)}");
     }
     #[test]
     fn multi_input() {
-        let _ = run("{(x <- c1, y <- c2){*(x)} | c1!(p) | c2!(q)}");
+        let _ = run("{for(x <- c1 & y <- c2){*(x)} | c1!(p) | c2!(q)}");
     }
 
     #[test]
@@ -877,6 +1029,12 @@ mod parsing {
         let lang = RhoCalcLanguage;
         assert!(lang.parse_term("(c?x).{x!(0)}").is_err());
         assert!(lang.parse_term("(c1?x, c2?y).{*(x)}").is_err());
+    }
+
+    #[test]
+    fn for_structural_pattern_requires_quote() {
+        let lang = RhoCalcLanguage;
+        assert!(lang.parse_term("for([1,2,4] <- c){7}").is_err());
     }
     #[test]
     fn new_single() {
@@ -1069,7 +1227,7 @@ fn rhocalc_cast_uint_signed_int_twos_complement() {
 
 #[test]
 fn rhocalc_cast_under_send_reduces_via_comm() {
-    let results = run("{(x <- c){*(x)} | c!({int(-3.5, 8)})}");
+    let results = run("{for(x <- c){*(x)} | c!({int(-3.5, 8)})}");
     let nfs = normal_form_displays(&results);
     assert!(
         nfs.iter().any(|nf| nf == "-4" || nf.contains("-4")),
@@ -1089,7 +1247,7 @@ mod type_inference {
     fn pinputs_infers_bound_var() {
         fresh();
         let lang = RhoCalcLanguage;
-        let term = lang.parse_term("(y <- x){*(y)}").expect("parse");
+        let term = lang.parse_term("for(y <- x){*(y)}").expect("parse");
         let var_types = lang.infer_var_types(term.as_ref());
         let y_info = var_types.iter().find(|v| v.name == "y");
         assert!(y_info.is_some(), "y should be found, got: {:?}", var_types);
@@ -1100,7 +1258,7 @@ mod type_inference {
     fn pinputs_lookup_by_name() {
         fresh();
         let lang = RhoCalcLanguage;
-        let term = lang.parse_term("(y <- x){*(y)}").expect("parse");
+        let term = lang.parse_term("for(y <- x){*(y)}").expect("parse");
         let y_type = lang.infer_var_type(term.as_ref(), "y");
         assert!(y_type.is_some());
         assert_eq!(format!("{}", y_type.unwrap()), "Name");
@@ -1110,7 +1268,9 @@ mod type_inference {
     fn multi_input_infers_both_vars() {
         fresh();
         let lang = RhoCalcLanguage;
-        let term = lang.parse_term("(x <- c1, y <- c2){*(x)}").expect("parse");
+        let term = lang
+            .parse_term("for(x <- c1 & y <- c2){*(x)}")
+            .expect("parse");
         let var_types = lang.infer_var_types(term.as_ref());
         assert!(var_types.iter().any(|v| v.name == "x"));
         assert!(var_types.iter().any(|v| v.name == "y"));

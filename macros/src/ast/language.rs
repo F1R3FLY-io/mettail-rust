@@ -1185,6 +1185,29 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
             }));
         }
 
+        if constructor == "comm_join" {
+            let first_bind = parse_pattern(&content)?;
+            let rest_binds = parse_pattern(&content)?;
+            let channel_names = parse_pattern(&content)?;
+            let payloads = parse_pattern(&content)?;
+            let cond = parse_pattern(&content)?;
+            let body = parse_pattern(&content)?;
+            if !content.is_empty() {
+                return Err(syn::Error::new(
+                    constructor.span(),
+                    "comm_join takes exactly 6 arguments: (comm_join b bs ns qs cond body)",
+                ));
+            }
+            return Ok(Pattern::Term(PatternTerm::CommJoin {
+                first_bind: Box::new(first_bind),
+                rest_binds: Box::new(rest_binds),
+                channel_names: Box::new(channel_names),
+                payloads: Box::new(payloads),
+                cond: Box::new(cond),
+                body: Box::new(body),
+            }));
+        }
+
         // Parse arguments as nested patterns
         // NOTE: Collections inside Apply are handled correctly - the Apply knows
         // its constructor and can look up the collection type from grammar

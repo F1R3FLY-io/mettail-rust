@@ -384,9 +384,9 @@ pub fn compute_core_categories(language: &LanguageDef) -> Option<BTreeSet<String
 
     let reachable = compute_category_reachability(language);
     let all_cats: Vec<String> = language.types.iter().map(|t| t.name.to_string()).collect();
-    let primary = match all_cats.first() {
-        Some(p) => p.clone(),
-        None => return None,
+    let primary = {
+        let p = all_cats.first()?;
+        p.clone()
     };
 
     let mut core = BTreeSet::new();

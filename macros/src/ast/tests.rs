@@ -392,7 +392,7 @@ mod tests {
             name: TestMulti,
             types { Proc Name }
             terms {
-                PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- "inputs" "(" xs "," ns ")" "{" p "}" : Proc ;
+                PMultiTest . ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- "inputs" "(" xs "," ns ")" "{" p "}" : Proc ;
             }
         };
 
@@ -712,7 +712,7 @@ mod tests {
             name: TestZip,
             types { Proc Name }
             terms {
-                PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- "for" "(" *zip(ns, xs) ")" "{" p "}" : Proc ;
+                PMultiZip . ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- "for" "(" *zip(ns, xs) ")" "{" p "}" : Proc ;
             }
         "#;
 

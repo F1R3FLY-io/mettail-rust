@@ -1774,7 +1774,7 @@ fn generate_language_struct_multi(
                 #(#parse_tries)*
                 match successes.len() {
                     0 => Err(first_err.unwrap_or_else(|| "Parse error".to_string())),
-                    1 => Ok(#term_name(successes.into_iter().next().expect("checked len == 1"))),
+                    1 => Ok(#term_name(successes.into_iter().next().unwrap())),
                     _ => Ok(#term_name(#inner_enum_name::from_alternatives(successes))),
                 }
             }

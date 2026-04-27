@@ -8,12 +8,17 @@ use mettail_macros::language;
 use num_traits::Zero;
 use std::ops::Neg;
 
+pub(crate) mod receive;
+mod type_inference;
+
 language! {
     name: RhoCalc,
 
     types {
         Proc
         Name
+        InputBind
+        ForRow
         ![i64] as Int
         ![u32] as UInt32
         ![mettail_runtime::CanonicalBigInt] as BigInt
@@ -66,22 +71,88 @@ language! {
         PZero .
         |- "{}" : Proc;
 
-        PDrop . n:Name  |- "*" "(" n ")" : Proc ;
+        PDrop . n:Name  |- "*" n : Proc ;
 
         PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
 
         POutput . n:Name, q:Proc
         |- n "!" "(" q ")" : Proc ;
+        POutputQuoted . n:Name, q:Proc
+        |- "@" n "!" "(" q ")" : Proc ![{
+            Proc::POutput(Box::new(Name::NQuote(Box::new(crate::rhocalc::receive::name_pattern_to_proc(&n)))), Box::new(q.clone()))
+        }] fold;
 
-        // Pattern-based single-input receive used by guarded COMM.
+        // Internal constructor for single-input receive with optional where-guard.
+        PForWhere . pat:Proc, n:Name, cond:Proc, body:Proc
+        |- "__for_where" "(" pat "<-" n "where" cond ")" "{" body "}" : Proc;
+
+        // Internal constructor for single-input receive used by guarded COMM.
         PFor . pat:Proc, n:Name, body:Proc
-        |- "for" "(" pat "<-" n ")" "{" body "}" : Proc;
+        |- "__for" "(" pat "<-" n ")" "{" body "}" : Proc;
 
-        PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
-        |- "(" *zip(xs,ns).*map(|x,n| x "<-" n).*sep(",") ")" "{" p "}" : Proc ;
+        // Internal guard gate used by where-clause gating.
+        GuardThen . cond:Proc, body:Proc
+        |- "__guard_then" "(" cond "," body ")" : Proc ![{
+            crate::rhocalc::receive::guard_then(&cond, &body)
+        }] fold;
+
+        // Internal helper for where-guarded communication.
+        // Produces reduced body when match+guard succeed; otherwise returns the original
+        // receive/send pair unchanged (blocked communication, identity).
+        CommWhere . pat:Proc, n:Name, q:Proc, cond:Proc, body:Proc
+        |- "__comm_where" "(" pat "<-" n "," q "," cond "," body ")" : Proc ![{
+            crate::rhocalc::receive::comm_pforwhere_subst(&pat, &n, &q, &cond, &body)
+        }] fold;
+
+        // Single pattern/channel binding.
+        InputBind . lhs:Name, n:Name
+        |- lhs "<-" n : InputBind ![{
+            InputBind::InputBind(
+                Box::new(lhs.clone()),
+                Box::new(n.clone()),
+            )
+        }] fold;
+        InputBindQuoted . pat:Proc, n:Name
+        |- "@" pat "<-" n : InputBind ![{
+            InputBind::InputBindQuoted(
+                Box::new(pat.clone()),
+                Box::new(n.clone()),
+            )
+        }] fold;
+
+        // A ForRow is one row of a multi-row for: one or more & binds with an optional where guard.
+        // More-specific variants (with & or where) come first so the parser tries them before the fallback.
+        ForRowWhere . b:InputBind, bs:Vec(InputBind), cond:Proc
+        |- b "&" bs.*sep("&") "where" cond : ForRow;
+
+        ForRowNoWhere . b:InputBind, bs:Vec(InputBind)
+        |- b "&" bs.*sep("&") : ForRow;
+
+        ForRowSingleWhere . b:InputBind, cond:Proc
+        |- b "where" cond : ForRow;
+
+        ForRowSingleNoWhere . b:InputBind
+        |- b : ForRow;
+
+        // Internal multi-channel receive created by PForRows desugaring.
+        // Not user-facing; uses __ prefix to avoid collision with user syntax.
+        PForJoin . b:InputBind, bs:Vec(InputBind), cond:Proc, body:Proc
+        |- "__for_join" "(" b "&" bs.*sep("&") "where" cond ")" "{" body "}" : Proc;
+
+        // User-facing `for` syntax: rows joined by `;` are nested (right fold), and each row
+        // can contain `&`-joined binds with optional `where`.
+        PForUser . rows:Vec(ForRow), body:Proc
+        |- "for" "(" rows.*sep(";") ")" "{" body "}" : Proc ![{
+            crate::rhocalc::receive::desugar_for_rows(rows, body)
+        }] fold;
+
 
         NQuote . p:Proc
         |- "@" "(" p ")" : Name ;
+
+        // Parenthesized Name grouping used by `*(x)` compatibility.
+        NParen . n:Name
+        |- "(" n ")" : Name ![{ n.clone() }] fold;
 
         PNew . ^[xs].p:[Name* -> Proc]
         |- "new" "(" xs.*sep(",") ")" "in" "{" p "}" : Proc;
@@ -275,6 +346,10 @@ language! {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x == y))),
                     _ => Proc::Err,
                 },
+                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
+                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x == y))),
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }}
         ] fold;
@@ -303,6 +378,10 @@ language! {
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
+                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -335,6 +414,10 @@ language! {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x > y))),
                     _ => Proc::Err,
                 },
+                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
+                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x > y))),
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }}
         ] fold;
@@ -363,6 +446,10 @@ language! {
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x < y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
+                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x < y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -395,6 +482,10 @@ language! {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x >= y))),
                     _ => Proc::Err,
                 },
+                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
+                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x >= y))),
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }}
         ] fold;
@@ -423,6 +514,10 @@ language! {
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x <= y))),
+                    _ => Proc::Err,
+                },
+                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
+                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x <= y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -826,12 +921,19 @@ language! {
         CommPattern . | unifies(pat, q) |- (PPar {(PFor pat n body), (POutput n q), ...rest})
             ~> (PPar {(apply_pattern pat q body), ...rest});
 
-        // communication:
-        // (n1 ? x1 , ... , nk ? xk).{ p } | n1!(q1) | ... | nk!(qk) ~> p(@q1,...,@qk)
-        Comm . |- (PPar {(PInputs ns cont), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest})
-            ~> (PPar {(eval cont qs.*map(|q| (NQuote q))), ...rest});
+        // Pattern communication with optional where-guard:
+        // reduce only when pattern unifies and substituted guard is true;
+        // otherwise keep the receive/send pair unchanged (blocked communication).
+        CommPatternWhere . | unifies(pat, q)
+            |- (PPar {(PForWhere pat n cond body), (POutput n q), ...rest})
+            ~> (PPar {(CommWhere pat n q cond body), ...rest});
+
+        // Zip+Map codegen derives `ns` from `b`/`bs` (see `pattern.rs` + `receive::channel_names_from_row`).
+        Comm . |- (PPar {(PForJoin b bs cond body), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest})
+            ~> (PPar {(comm_join b bs ns qs cond body), ...rest});
 
         Exec . |- (PDrop (NQuote P)) ~> P;
+        ExecParenQuote . |- (PDrop (NParen (NQuote P))) ~> P;
 
         ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
 
@@ -951,6 +1053,28 @@ language! {
             if let Name::NQuote(ref p) = n.as_ref(),
             let res = p.as_ref().clone();
 
+        // Evaluate guarded communication helper introduced by CommPatternWhere.
+        // This bridges rewrite-time construction (`CommWhere ...`) to runtime semantics:
+        // - successful match + true guard => reduced body
+        // - mismatch / false guard => original receive+send pair (identity)
+        fold_proc(s.clone(), res) <--
+            proc(s),
+            if let Proc::CommWhere(ref pat, ref n, ref q, ref cond, ref body) = s,
+            let res = crate::rhocalc::receive::comm_pforwhere_subst(
+                pat.as_ref(),
+                n.as_ref(),
+                q.as_ref(),
+                cond.as_ref(),
+                body.as_ref(),
+            );
+
+        // Desugar user-facing `for (...) { ... }` into internal receive forms so
+        // COMM/Extrusion rewrites (which match `PFor` / `PForJoin`) can fire.
+        fold_proc(s.clone(), res) <--
+            proc(s),
+            if let Proc::PForUser(ref rows, ref body) = s,
+            let res = crate::rhocalc::receive::desugar_for_rows(rows.clone(), body.as_ref());
+
         // many-step to a result
         relation path(Proc, Proc);
         path(p0, p1) <-- rw_proc(p0, p1);
@@ -960,6 +1084,7 @@ language! {
         relation path_vec(Vec<Proc>);
         path_vec(xs) <--
             proc(x0), rw_proc(x0,x1),
+            if x0 != x1,
             let xs = vec![x0.clone(), x1.clone()];
         path_vec(zs) <--
             path_vec(xs), path_vec(ys),

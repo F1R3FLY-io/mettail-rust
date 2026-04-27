@@ -198,6 +198,7 @@ impl TypeChecker {
             PatternTerm::Subst { term, .. } => self.infer_type_from_pattern(term, context),
             PatternTerm::MultiSubst { scope, .. } => self.infer_type_from_pattern(scope, context),
             PatternTerm::ApplyPattern { body, .. } => self.infer_type_from_pattern(body, context),
+            PatternTerm::CommJoin { body, .. } => self.infer_type_from_pattern(body, context),
         }
     }
 
