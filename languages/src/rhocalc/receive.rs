@@ -2,7 +2,7 @@ use super::{
     Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Proc, Str,
     UInt32,
 };
-use mettail_runtime::{FreeVar, HashBag, OrdVar, Var};
+use mettail_runtime::{Binder, FreeVar, HashBag, OrdVar, Scope, Var};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -18,6 +18,7 @@ fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
     match bind {
         InputBind::InputBind(lhs, _) => Some(name_pattern_to_proc(lhs.as_ref())),
         InputBind::InputBindQuoted(pat, _) => Some(pat.as_ref().clone()),
+        InputBind::InputBindQuery(lhs, _, _) => Some(name_pattern_to_proc(lhs.as_ref())),
         _ => None,
     }
 }
@@ -26,6 +27,7 @@ fn bind_channel_name(bind: &InputBind) -> Option<&Name> {
     match bind {
         InputBind::InputBind(_, n) => Some(n.as_ref()),
         InputBind::InputBindQuoted(_, n) => Some(n.as_ref()),
+        InputBind::InputBindQuery(_, n, _) => Some(n.as_ref()),
         _ => None,
     }
 }
@@ -236,32 +238,113 @@ pub fn comm_pforwhere_subst(pat: &Proc, n: &Name, q: &Proc, cond: &Proc, body: &
     }
 }
 
-fn apply_row(row: ForRow, inner: Proc) -> Proc {
-    match row {
-        ForRow::ForRowSingleNoWhere(b) => match *b {
-            InputBind::InputBind(lhs, n) => {
-                Proc::PFor(Box::new(name_pattern_to_proc(lhs.as_ref())), n, Box::new(inner))
-            },
-            InputBind::InputBindQuoted(pat, n) => Proc::PFor(pat, n, Box::new(inner)),
-            _ => Proc::Err,
+fn fresh_query_return(counter: &mut usize) -> (Binder<String>, Name) {
+    let idx = *counter;
+    *counter += 1;
+    let fv: FreeVar<String> = FreeVar::fresh_named(format!("__r{}", idx));
+    let binder = Binder(fv.clone());
+    let name = Name::NVar(OrdVar(Var::Free(fv)));
+    (binder, name)
+}
+
+fn mk_query_send(channel: &Name, ret: &Name, args: &[Proc]) -> Proc {
+    let mut items = Vec::with_capacity(1 + args.len());
+    items.push(Proc::PDrop(Box::new(ret.clone())));
+    items.extend(args.iter().cloned());
+    Proc::POutput(
+        Box::new(channel.clone()),
+        Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+    )
+}
+
+fn desugar_query_bind(
+    bind: InputBind,
+    counter: &mut usize,
+) -> (InputBind, Vec<(Binder<String>, Proc)>) {
+    match bind {
+        InputBind::InputBindQuery(lhs, channel, args) => {
+            let (binder, ret_name) = fresh_query_return(counter);
+            let recv_bind = InputBind::InputBind(lhs, Box::new(ret_name.clone()));
+            let send = mk_query_send(channel.as_ref(), &ret_name, &args);
+            (recv_bind, vec![(binder, send)])
         },
-        ForRow::ForRowSingleWhere(b, cond) => match *b {
-            InputBind::InputBind(lhs, n) => Proc::PForWhere(
-                Box::new(name_pattern_to_proc(lhs.as_ref())),
-                n,
-                cond,
-                Box::new(inner),
-            ),
-            InputBind::InputBindQuoted(pat, n) => Proc::PForWhere(pat, n, cond, Box::new(inner)),
-            _ => Proc::Err,
+        other => (other, vec![]),
+    }
+}
+
+fn apply_row_with_query_sugar(row: ForRow, inner: Proc, counter: &mut usize) -> Proc {
+    let (receive_proc, query_binders_and_sends): (Proc, Vec<(Binder<String>, Proc)>) = match row {
+        ForRow::ForRowSingleNoWhere(b) => {
+            let (b2, sends) = desugar_query_bind(*b, counter);
+            let recv = match b2 {
+                InputBind::InputBind(lhs, n) => {
+                    Proc::PFor(Box::new(name_pattern_to_proc(lhs.as_ref())), n, Box::new(inner))
+                },
+                InputBind::InputBindQuoted(pat, n) => Proc::PFor(pat, n, Box::new(inner)),
+                _ => Proc::Err,
+            };
+            (recv, sends)
+        },
+        ForRow::ForRowSingleWhere(b, cond) => {
+            let (b2, sends) = desugar_query_bind(*b, counter);
+            let recv = match b2 {
+                InputBind::InputBind(lhs, n) => Proc::PForWhere(
+                    Box::new(name_pattern_to_proc(lhs.as_ref())),
+                    n,
+                    cond,
+                    Box::new(inner),
+                ),
+                InputBind::InputBindQuoted(pat, n) => {
+                    Proc::PForWhere(pat, n, cond, Box::new(inner))
+                },
+                _ => Proc::Err,
+            };
+            (recv, sends)
         },
         ForRow::ForRowNoWhere(b, bs) => {
+            let mut acc_sends = Vec::new();
+            let (b2, mut sends0) = desugar_query_bind(*b, counter);
+            acc_sends.append(&mut sends0);
+            let mut bs2 = Vec::with_capacity(bs.len());
+            for ib in bs {
+                let (ib2, mut sends_i) = desugar_query_bind(ib, counter);
+                acc_sends.append(&mut sends_i);
+                bs2.push(ib2);
+            }
             let true_cond = Box::new(Proc::CastBool(Box::new(Bool::BoolLit(true))));
-            Proc::PForJoin(b, bs, true_cond, Box::new(inner))
+            (Proc::PForJoin(Box::new(b2), bs2, true_cond, Box::new(inner)), acc_sends)
         },
-        ForRow::ForRowWhere(b, bs, cond) => Proc::PForJoin(b, bs, cond, Box::new(inner)),
-        _ => Proc::Err,
+        ForRow::ForRowWhere(b, bs, cond) => {
+            let mut acc_sends = Vec::new();
+            let (b2, mut sends0) = desugar_query_bind(*b, counter);
+            acc_sends.append(&mut sends0);
+            let mut bs2 = Vec::with_capacity(bs.len());
+            for ib in bs {
+                let (ib2, mut sends_i) = desugar_query_bind(ib, counter);
+                acc_sends.append(&mut sends_i);
+                bs2.push(ib2);
+            }
+            (Proc::PForJoin(Box::new(b2), bs2, cond, Box::new(inner)), acc_sends)
+        },
+        _ => (Proc::Err, vec![]),
+    };
+
+    if query_binders_and_sends.is_empty() {
+        return receive_proc;
     }
+
+    let mut bag = HashBag::new();
+    for (_, send) in &query_binders_and_sends {
+        Proc::insert_into_ppar(&mut bag, send.clone());
+    }
+    Proc::insert_into_ppar(&mut bag, receive_proc);
+    let ppar = Proc::PPar(bag);
+
+    let binders: Vec<Binder<String>> = query_binders_and_sends
+        .into_iter()
+        .map(|(b, _)| b)
+        .collect();
+    Proc::PNew(Scope::new(binders, Box::new(ppar)))
 }
 
 /// Desugar a list of ForRows into nested `for` calls (right-to-left folding so
@@ -270,9 +353,10 @@ fn apply_row(row: ForRow, inner: Proc) -> Proc {
 /// The `body` parameter is taken by reference because Ascent binds fold-relation
 /// results as references in its generated rule code.
 pub fn desugar_for_rows(rows: Vec<ForRow>, body: &Proc) -> Proc {
-    rows.into_iter()
-        .rev()
-        .fold((*body).clone(), |inner, row| apply_row(row, inner))
+    let mut counter = 0usize;
+    rows.into_iter().rev().fold((*body).clone(), |inner, row| {
+        apply_row_with_query_sugar(row, inner, &mut counter)
+    })
 }
 
 pub(crate) fn channel_names_from_row(b: &InputBind, bs: &[InputBind]) -> Option<Vec<Name>> {

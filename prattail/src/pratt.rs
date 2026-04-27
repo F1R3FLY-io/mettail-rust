@@ -505,7 +505,20 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
                     )),",
                 )
                 .unwrap();
-                arm.push_str("_ => { *pos = nfa_positions[0]; Ok(nfa_results.into_iter().next().expect(\"nfa_results non-empty\")) },");
+                arm.push_str(
+                    "_ => { \
+                        let mut best_idx = 0usize; \
+                        for i in 1..nfa_positions.len() { \
+                            if nfa_positions[i] > nfa_positions[best_idx] { \
+                                best_idx = i; \
+                            } \
+                        } \
+                        *pos = nfa_positions[best_idx]; \
+                        let mut it = nfa_results.into_iter(); \
+                        let chosen = it.nth(best_idx).expect(\"best_idx in bounds\"); \
+                        Ok(chosen) \
+                    },",
+                );
                 arm.push('}'); // close match
                 arm.push('}'); // close arm body
                 match_arms.push(arm);
@@ -695,11 +708,69 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
     // so we dereference with `*name` to get `&str` and `.to_string()` for ownership.
     if !lookahead_handlers.is_empty() {
         let mut arm = String::from("Token::Ident(name) => { match peek_ahead(tokens, *pos, 1) {");
+        let mut by_variant: std::collections::BTreeMap<String, Vec<&PrefixHandler>> =
+            std::collections::BTreeMap::new();
         for handler in &lookahead_handlers {
             let terminal = handler.ident_lookahead.as_ref().expect("checked above");
             let variant = crate::automata::codegen::terminal_to_variant_name(terminal);
-            write!(arm, "Some(Token::{}) => {}(tokens, pos),", variant, handler.parse_fn_name)
+            by_variant.entry(variant).or_default().push(handler);
+        }
+        for (variant, handlers) in by_variant {
+            if handlers.len() == 1 {
+                write!(
+                    arm,
+                    "Some(Token::{}) => {}(tokens, pos),",
+                    variant, handlers[0].parse_fn_name
+                )
                 .unwrap();
+            } else {
+                write!(
+                    arm,
+                    "Some(Token::{}) => {{ \
+                        let nfa_saved = *pos; \
+                        let mut nfa_results: Vec<{cat}> = Vec::new(); \
+                        let mut nfa_positions: Vec<usize> = Vec::new(); \
+                        let mut nfa_first_err: Option<ParseError> = None;",
+                    variant
+                )
+                .unwrap();
+                for handler in handlers {
+                    write!(
+                        arm,
+                        "*pos = nfa_saved; \
+                         match {}(tokens, pos) {{ \
+                             Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); }}, \
+                             Err(e) => {{ if nfa_first_err.is_none() {{ nfa_first_err = Some(e); }} }}, \
+                         }}",
+                        handler.parse_fn_name
+                    )
+                    .unwrap();
+                }
+                arm.push_str(
+                    "match nfa_results.len() { \
+                        0 => Err(nfa_first_err.unwrap_or_else(|| \
+                            ParseError::UnexpectedToken { \
+                                expected: \"expression after identifier\", \
+                                found: tokens.get(nfa_saved + 1).map(|(t, _)| format!(\"{:?}\", t)).unwrap_or_else(|| \"<eof>\".to_string()), \
+                                range: tokens.get(nfa_saved).map(|(_, r)| *r).unwrap_or(Range::zero()), \
+                            } \
+                        )), \
+                        _ => { \
+                            let mut best_idx = 0usize; \
+                            for i in 1..nfa_positions.len() { \
+                                if nfa_positions[i] > nfa_positions[best_idx] { \
+                                    best_idx = i; \
+                                } \
+                            } \
+                            *pos = nfa_positions[best_idx]; \
+                            let mut it = nfa_results.into_iter(); \
+                            let chosen = it.nth(best_idx).expect(\"best_idx in bounds\"); \
+                            Ok(chosen) \
+                        }, \
+                    } \
+                },",
+                );
+            }
         }
         // Default: variable fallback
         write!(

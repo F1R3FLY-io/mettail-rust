@@ -981,6 +981,7 @@ mod native_ops {
 
 mod parsing {
     use super::*;
+    use mettail_runtime::BoundTerm;
 
     #[test]
     fn fraction_zero_denominator_is_error() {
@@ -1014,6 +1015,35 @@ mod parsing {
     #[test]
     fn send() {
         let _ = run("x!(0)");
+    }
+
+    #[test]
+    fn send_polyadic_is_list_sugar() {
+        fresh();
+        let poly = parse("x!(1, 2, 3)");
+        let list = parse("x!([1, 2, 3])");
+        assert!(poly.term_eq(&list), "expected polyadic send sugar to match list payload");
+    }
+
+    #[test]
+    fn query_receive_sugar_single() {
+        fresh();
+        let sugar = parse("for(p <- x!?(a, b)){p}");
+        let rhs = parse("new(r) in { { x!(*r, a, b) | for(p <- r){p} } }");
+        assert!(sugar.term_eq(&rhs), "expected `!?` to desugar to `new` + send + receive");
+    }
+
+    #[test]
+    fn query_receive_sugar_multiple_joins() {
+        fresh();
+        let sugar = parse("for(p <- x1!?(a1) & q <- x2!?(a2) & z <- c){z}");
+        let rhs = parse(
+            "new(r1, r2) in { { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 & z <- c){z} } }",
+        );
+        assert!(
+            sugar.term_eq(&rhs),
+            "expected multiple `!?` binds to desugar to multiple return channels"
+        );
     }
     #[test]
     fn receive() {
