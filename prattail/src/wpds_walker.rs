@@ -236,6 +236,39 @@ pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
     /// (tokens, identifiers, sub-terms). Semantic actions consume from
     /// and push back to this builder.
     builder: SemanticBuilder,
+    /// Stage 7+ Fork plan, step 2: per-branch micro-state during
+    /// `WpdsState::AmbiguityFanout`. Each entry is a `BranchCursor` that
+    /// pairs a GSS-tip node id with the branch's own `pos`, accumulated
+    /// `weight`, and `inner_state` (the post-Fork target state for that
+    /// branch). Empty when the walker is NOT in `AmbiguityFanout`. The
+    /// i-th entry here corresponds to the i-th `branches` GssNodeId in
+    /// `WpdsState::AmbiguityFanout { branches }`.
+    branch_cursors: Vec<BranchCursor<W>>,
+}
+
+/// Stage 7+ Fork plan, step 2: per-branch micro-state during
+/// `WpdsState::AmbiguityFanout`. Stored on `WpdsWalker::branch_cursors`
+/// parallel to the `Vec<GssNodeId>` in the state itself. Each cursor
+/// carries the branch's GSS tip, current input position, accumulated
+/// weight, and the per-branch target state to drive forward when the
+/// step_fanout micro-driver advances all branches in lock-step.
+#[derive(Debug, Clone)]
+pub struct BranchCursor<W: Semiring> {
+    /// GSS-tip node id for this branch (matches the corresponding entry
+    /// in `WpdsState::AmbiguityFanout { branches }`).
+    pub node: crate::gss::GssNodeId,
+    /// Per-branch input position. Branches may diverge in `pos` because
+    /// their first action (e.g., the Fork's `new_state` PrefixDispatch
+    /// over different rule_idx) commits different tokens.
+    pub pos: usize,
+    /// Per-branch accumulated weight. Lex-min ordering across cursors
+    /// selects the surviving branch when the fanout collapses.
+    pub weight: W,
+    /// The per-branch target state. The Fork action's `new_state` field
+    /// becomes each branch's initial `inner_state`; subsequent
+    /// `step_fanout` calls dispatch on this state and overwrite it with
+    /// the branch's post-step state.
+    pub inner_state: WpdsState,
 }
 
 impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
@@ -250,6 +283,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             top_node: None,
             beam_size: None,
             builder: SemanticBuilder::new(),
+            branch_cursors: Vec::new(),
         }
     }
 
@@ -286,6 +320,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             top_node: Some(top_id),
             beam_size: None,
             builder: SemanticBuilder::new(),
+            branch_cursors: Vec::new(),
         }
     }
 
@@ -318,6 +353,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             top_node,
             beam_size: None,
             builder: SemanticBuilder::new(),
+            branch_cursors: Vec::new(),
         }
     }
 
@@ -442,6 +478,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 let from = self.state.clone();
                 self.weight = self.weight.times(&weight);
                 self.top_node = Some(winner);
+                // Stage 7+ Fork plan, step 2: clear per-branch cursors when
+                // the fanout collapses. Step 3's `step_fanout` micro-driver
+                // emits this event when exactly one cursor survives.
+                self.branch_cursors.clear();
                 let new_state = WpdsState::InfixLoop {
                     cur_bp: match from {
                         WpdsState::AmbiguityFanout { .. } => 0,
@@ -801,20 +841,31 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 self.maybe_prune_frontier();
             }
             WpdsStepAction::Fork { branches, new_state } => {
+                // Stage 7+ Fork plan, step 2: populate per-branch cursors
+                // alongside the GSS-tip ids. Each cursor inherits the walker's
+                // current `pos`, the branch's per-symbol weight, and the
+                // shared `new_state` as its initial inner state. Subsequent
+                // `step_fanout` micro-steps drive each cursor independently
+                // until exactly one survives (BranchResolved) or all die
+                // (Error).
                 let prev = self.top_node;
                 let mut child_ids = Vec::with_capacity(branches.len());
+                let mut cursors: Vec<BranchCursor<W>> = Vec::with_capacity(branches.len());
                 for (symbol, w) in branches {
                     if let Some(p) = prev {
-                        let id = self.gss.push_symbol(p, symbol, self.pos, w);
+                        let id = self.gss.push_symbol(p, symbol, self.pos, w.clone());
                         child_ids.push(id);
+                        cursors.push(BranchCursor {
+                            node: id,
+                            pos: self.pos,
+                            weight: w,
+                            inner_state: new_state.clone(),
+                        });
                     }
                 }
+                self.branch_cursors = cursors;
                 self.state = WpdsState::AmbiguityFanout { branches: child_ids };
                 self.maybe_prune_frontier();
-                // The new_state passed in is the "post-fork" target; consumers
-                // typically resolve via BranchResolved later. We retain
-                // AmbiguityFanout until then.
-                let _ = new_state;
             }
             WpdsStepAction::Accept => {
                 self.state = WpdsState::Accepted;

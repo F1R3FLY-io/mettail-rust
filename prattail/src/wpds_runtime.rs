@@ -293,6 +293,15 @@ pub enum WpdsState {
         outer_bp: u8,
     },
     /// Multiple GSS branches active simultaneously; awaiting resolution.
+    /// The `branches: Vec<GssNodeId>` field lists the GSS-tip node ids of
+    /// every live branch. Per-branch micro-state (pos, weight, inner
+    /// state) is stored out-of-band on the walker as
+    /// `WpdsWalker::branch_cursors: Vec<BranchCursor<W>>` parallel to
+    /// this vector — the i-th `branches` entry corresponds to the i-th
+    /// `branch_cursors` entry. The reason for the split is that `WpdsState`
+    /// is non-generic but per-branch weight requires the walker's `W`
+    /// parameter; storing weights inside the state enum would force
+    /// `WpdsState` to be generic and cascade through every consumer.
     AmbiguityFanout { branches: Vec<GssNodeId> },
     /// WPDS poststar/prestar saturation in progress; `delta_size` frontier size.
     Saturating { delta_size: usize },
