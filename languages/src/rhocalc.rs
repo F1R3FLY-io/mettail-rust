@@ -89,7 +89,17 @@ language! {
                 Box::new(n.clone()),
                 Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
             )
-        }] fold;
+        }];
+        POutputParen2Plus . n:Name, a:Proc, bs:Vec(Proc)
+        |- "(" n ")" "!" "(" a "," bs.*sep(",") ")" : Proc ![{
+            let mut items = Vec::with_capacity(1 + bs.len());
+            items.push(a.clone());
+            items.extend(bs.clone());
+            Proc::POutput(
+                Box::new(n.clone()),
+                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+            )
+        }];
         POutputQuoted . n:Name, q:Proc
         |- "@" n "!" "(" q ")" : Proc ![{
             Proc::POutput(Box::new(Name::NQuote(Box::new(crate::rhocalc::receive::name_pattern_to_proc(&n)))), Box::new(q.clone()))
@@ -124,18 +134,10 @@ language! {
         }] fold;
         InputBindQuotedQuery . pat:Proc, n:Name, args:Vec(Proc)
         |- "@" pat "<-" n "!" "?" "(" args.*sep(",") ")" : InputBind ![{
-            InputBind::InputBindQuotedQuery(
-                Box::new(pat.clone()),
+            InputBind::InputBindQuery(
+                Box::new(Name::NQuote(Box::new(pat.clone()))),
                 Box::new(n.clone()),
                 args.clone(),
-            )
-        }] fold;
-
-        InputBindQuoted . pat:Proc, n:Name
-        |- "@" pat "<-" n : InputBind ![{
-            InputBind::InputBindQuoted(
-                Box::new(pat.clone()),
-                Box::new(n.clone()),
             )
         }] fold;
         InputBind . lhs:Name, n:Name
@@ -167,7 +169,7 @@ language! {
         PForUser . rows:Vec(ForRow), body:Proc
         |- "for" "(" rows.*sep(";") ")" "{" body "}" : Proc ![{
             crate::rhocalc::receive::desugar_for_rows(rows, body)
-        }] fold;
+        }];
 
 
         NQuote . p:Proc
@@ -1169,4 +1171,55 @@ language! {
         //     proc(p),name(n),
         //     !(proc(k), trans(p,k,q), can_comm(q,n));
     },
+}
+
+fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {
+    match p {
+        Proc::POutput2Plus(n, a, bs) => {
+            let a_norm = normalize_query_send_sugar_proc(a.as_ref());
+            let bs_norm: Vec<Proc> = bs.iter().map(normalize_query_send_sugar_proc).collect();
+            let mut items = Vec::with_capacity(1 + bs_norm.len());
+            items.push(a_norm);
+            items.extend(bs_norm);
+            Proc::POutput(
+                Box::new(n.as_ref().clone()),
+                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+            )
+        },
+        Proc::PForUser(rows, body) => {
+            let body_norm = normalize_query_send_sugar_proc(body.as_ref());
+            if crate::rhocalc::receive::pfor_user_still_has_query_rows(rows) {
+                normalize_query_send_sugar_proc(&crate::rhocalc::receive::desugar_for_rows(
+                    rows.clone(),
+                    &body_norm,
+                ))
+            } else {
+                Proc::PForUser(rows.clone(), Box::new(body_norm))
+            }
+        },
+        Proc::PPar(ps) => {
+            let mut out = mettail_runtime::HashBag::new();
+            for (elem, count) in ps.iter() {
+                let norm_elem = normalize_query_send_sugar_proc(elem);
+                for _ in 0..count {
+                    out.insert(norm_elem.clone());
+                }
+            }
+            Proc::PPar(out)
+        },
+        Proc::PNew(scope) => {
+            let (binders, body) = scope.clone().unbind();
+            let norm_body = normalize_query_send_sugar_proc(&body);
+            Proc::PNew(mettail_runtime::Scope::new(binders, Box::new(norm_body)))
+        },
+        _ => p.clone(),
+    }
+}
+
+impl Proc {
+    pub fn term_eq(&self, other: &Self) -> bool {
+        let lhs = normalize_query_send_sugar_proc(self);
+        let rhs = normalize_query_send_sugar_proc(other);
+        mettail_runtime::BoundTerm::term_eq(&lhs, &rhs)
+    }
 }

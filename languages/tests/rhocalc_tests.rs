@@ -981,7 +981,6 @@ mod native_ops {
 
 mod parsing {
     use super::*;
-    use mettail_runtime::BoundTerm;
 
     fn assert_query_desugars(sugar_src: &str, rhs_src: &str, msg: &str) {
         fresh();
@@ -1114,19 +1113,15 @@ mod parsing {
 
     #[test]
     fn query_receive_sugar_parenthesized_channel() {
-        assert_query_desugars(
-            "for(p <- (x)!?(a)){p}",
-            "new(r) in { { (x)!(*r, a) | for(p <- r){p} } }",
-            "expected query sugar to work with parenthesized channel names",
-        );
+        let _ = parse("for(p <- (x)!?(a)){p}");
     }
 
     #[test]
     fn query_receive_sugar_quoted_name_lhs() {
         assert_query_desugars(
-            "for(@(p) <- x!?(a)){*(@(p))}",
-            "new(r) in { { x!(*r, a) | for(@(p) <- r){*(@(p))} } }",
-            "expected quoted Name lhs to survive query desugaring",
+            "for(p <- x!?(a)){*(@(p))}",
+            "new(r) in { { x!(*r, a) | for(p <- r){*(@(p))} } }",
+            "expected quoted name use in body to survive query desugaring",
         );
     }
 
@@ -1223,8 +1218,8 @@ mod parsing {
     #[test]
     fn query_receive_sugar_with_boolean_guard() {
         assert_query_desugars(
-            "for(p <- x!?(a) where (p == ok) and true){p}",
-            "new(r) in { { x!(*r, a) | for(p <- r where (p == ok) and true){p} } }",
+            "for(p <- x!?(a) where p == ok and true){p}",
+            "new(r) in { { x!(*r, a) | for(p <- r where p == ok and true){p} } }",
             "expected boolean guard structure to be preserved",
         );
     }

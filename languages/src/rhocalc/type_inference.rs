@@ -55,17 +55,9 @@ fn input_bind_uses_name_var(bind: &InputBind, var_name: &str) -> bool {
             let pat = receive::name_pattern_to_proc(lhs.as_ref());
             proc_uses_name_var(&pat, var_name) || name_uses_var(n, var_name)
         },
-        InputBind::InputBindQuoted(pat, n) => {
-            proc_uses_name_var(pat, var_name) || name_uses_var(n, var_name)
-        },
         InputBind::InputBindQuery(lhs, n, args) => {
             let pat = receive::name_pattern_to_proc(lhs.as_ref());
             proc_uses_name_var(&pat, var_name)
-                || name_uses_var(n, var_name)
-                || args.iter().any(|a| proc_uses_name_var(a, var_name))
-        },
-        InputBind::InputBindQuotedQuery(pat, n, args) => {
-            proc_uses_name_var(pat, var_name)
                 || name_uses_var(n, var_name)
                 || args.iter().any(|a| proc_uses_name_var(a, var_name))
         },
@@ -79,17 +71,9 @@ fn input_bind_uses_proc_var(bind: &InputBind, var_name: &str) -> bool {
             let pat = receive::name_pattern_to_proc(lhs.as_ref());
             proc_uses_proc_var(&pat, var_name) || name_uses_var(n, var_name)
         },
-        InputBind::InputBindQuoted(pat, n) => {
-            proc_uses_proc_var(pat, var_name) || name_uses_var(n, var_name)
-        },
         InputBind::InputBindQuery(lhs, n, args) => {
             let pat = receive::name_pattern_to_proc(lhs.as_ref());
             proc_uses_proc_var(&pat, var_name)
-                || name_uses_var(n, var_name)
-                || args.iter().any(|a| proc_uses_proc_var(a, var_name))
-        },
-        InputBind::InputBindQuotedQuery(pat, n, args) => {
-            proc_uses_proc_var(pat, var_name)
                 || name_uses_var(n, var_name)
                 || args.iter().any(|a| proc_uses_proc_var(a, var_name))
         },
@@ -105,14 +89,11 @@ fn for_row_uses_name_var(row: &ForRow, var_name: &str) -> bool {
         },
         ForRow::ForRowNoWhere(b, bs) => {
             input_bind_uses_name_var(b.as_ref(), var_name)
-                || bs.iter()
-                    .any(|ib| input_bind_uses_name_var(ib, var_name))
+                || bs.iter().any(|ib| input_bind_uses_name_var(ib, var_name))
         },
         ForRow::ForRowWhere(b, bs, cond) => {
             input_bind_uses_name_var(b.as_ref(), var_name)
-                || bs
-                    .iter()
-                    .any(|ib| input_bind_uses_name_var(ib, var_name))
+                || bs.iter().any(|ib| input_bind_uses_name_var(ib, var_name))
                 || proc_uses_name_var(cond, var_name)
         },
         _ => false,
@@ -127,15 +108,11 @@ fn for_row_uses_proc_var(row: &ForRow, var_name: &str) -> bool {
         },
         ForRow::ForRowNoWhere(b, bs) => {
             input_bind_uses_proc_var(b.as_ref(), var_name)
-                || bs
-                    .iter()
-                    .any(|ib| input_bind_uses_proc_var(ib, var_name))
+                || bs.iter().any(|ib| input_bind_uses_proc_var(ib, var_name))
         },
         ForRow::ForRowWhere(b, bs, cond) => {
             input_bind_uses_proc_var(b.as_ref(), var_name)
-                || bs
-                    .iter()
-                    .any(|ib| input_bind_uses_proc_var(ib, var_name))
+                || bs.iter().any(|ib| input_bind_uses_proc_var(ib, var_name))
                 || proc_uses_proc_var(cond, var_name)
         },
         _ => false,
@@ -148,8 +125,7 @@ fn proc_uses_name_var(term: &Proc, var_name: &str) -> bool {
         Proc::POutput(n, q) => name_uses_var(n, var_name) || proc_uses_name_var(q, var_name),
         Proc::PDrop(n) => name_uses_var(n, var_name),
         Proc::PForUser(rows, body) => {
-            rows.iter()
-                .any(|r| for_row_uses_name_var(r, var_name))
+            rows.iter().any(|r| for_row_uses_name_var(r, var_name))
                 || proc_uses_name_var(body, var_name)
         },
         Proc::GuardThen(cond, body) => {
@@ -169,8 +145,7 @@ fn proc_uses_proc_var(term: &Proc, var_name: &str) -> bool {
         Proc::POutput(n, q) => name_uses_var(n, var_name) || proc_uses_proc_var(q, var_name),
         Proc::PDrop(n) => name_uses_var(n, var_name),
         Proc::PForUser(rows, body) => {
-            rows.iter()
-                .any(|r| for_row_uses_proc_var(r, var_name))
+            rows.iter().any(|r| for_row_uses_proc_var(r, var_name))
                 || proc_uses_proc_var(body, var_name)
         },
         Proc::GuardThen(cond, body) => {
@@ -188,7 +163,11 @@ fn infer_var_type_pfor_user(proc: &Proc, var_name: &str) -> Option<TermType> {
     infer_var_type_in_receive_rows(rows, body, var_name)
 }
 
-fn infer_var_type_in_receive_rows(rows: &[ForRow], body: &Proc, var_name: &str) -> Option<TermType> {
+fn infer_var_type_in_receive_rows(
+    rows: &[ForRow],
+    body: &Proc,
+    var_name: &str,
+) -> Option<TermType> {
     if rows.is_empty() {
         return None;
     }
@@ -208,11 +187,7 @@ fn infer_var_type_in_receive_rows(rows: &[ForRow], body: &Proc, var_name: &str) 
                 let mut names = Vec::new();
                 infer_receive_pattern_names(&pat, &mut names);
                 if names.iter().any(|n| n == var_name) {
-                    return Some(infer_receive_var_type(
-                        &cont,
-                        Some(cond.as_ref()),
-                        var_name,
-                    ));
+                    return Some(infer_receive_var_type(&cont, Some(cond.as_ref()), var_name));
                 }
             }
         },
@@ -228,11 +203,7 @@ fn infer_var_type_in_receive_rows(rows: &[ForRow], body: &Proc, var_name: &str) 
             let mut names = Vec::new();
             names_from_binds(b.as_ref(), bs, &mut names);
             if names.iter().any(|n| n == var_name) {
-                return Some(infer_receive_var_type(
-                    &cont,
-                    Some(cond.as_ref()),
-                    var_name,
-                ));
+                return Some(infer_receive_var_type(&cont, Some(cond.as_ref()), var_name));
             }
         },
         _ => {},
