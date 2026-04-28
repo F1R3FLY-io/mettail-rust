@@ -159,6 +159,20 @@ pub(crate) fn build_per_category_rules(
             .map(|i| i.to_string())
             .unwrap_or_else(|| type_def.name.to_string());
         // Trim trailing `(` from open delimiter (default form `list(` → `list`).
+        //
+        // **Known bug (tracked as B7)**: this 4-element split (`[Literal("list"),
+        // Literal("("), Op(Sep), Literal(")")]`) is rejected by
+        // `classify_collection` (collection.rs:58) which requires exactly 3
+        // syntax_pattern elements. The synthetic rule therefore never
+        // registers a collection prefix arm, breaking 211 tests in
+        // `gen_calculator_op` that round-trip cross-cat collection terms.
+        // The proper fix needs a coordinated change across (a) lexer
+        // tokenization of multi-char fixed strings like `"list("`,
+        // (b) synthetic.rs to emit a 3-element pattern, and (c)
+        // semantic_actions.rs HashMap codegen which currently builds
+        // `HashMap<K,V>` (not the wrapper `HashMapLit<K,V>` that
+        // `Map::MapLit` accepts) and ignores the drained elements.
+        // See `wpds-fork-action-items-2026-04-27.md` task B7.
         let trimmed_open = open.trim_end_matches('(').to_string();
         let needs_synth_paren = open != trimmed_open;
         let cat_ident = Ident::new(&cat_name, Span::call_site());

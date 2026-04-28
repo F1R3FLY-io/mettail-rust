@@ -1898,8 +1898,16 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
 
             if content.peek(Token![=]) {
                 // Refinement type: Name = { var: BaseType | predicate };
+                // Also push a LangType entry so the rest of the pipeline
+                // (Ascent relation emission, rule validation, etc.) treats
+                // PosInt as a first-class category.
                 let _ = content.parse::<Token![=]>()?;
-                let ref_def = parse_refinement_type_body(&content, name)?;
+                let ref_def = parse_refinement_type_body(&content, name.clone())?;
+                types.push(LangType {
+                    name,
+                    native_type: None,
+                    collection_kind: None,
+                });
                 refinement_types.push(ref_def);
             } else {
                 let name_str = name.to_string();
@@ -3396,11 +3404,49 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
                     ));
                 },
             },
+            // L11 (2026-04-28): case_insensitive triggers ASCII case-folding
+            // in NFA construction. Non-ASCII case folding requires per-locale
+            // tables (Turkish dotless i, German ß) and emits compile_error!
+            // when the grammar references non-ASCII keywords with
+            // case_insensitive: true.
+            "case_insensitive" => match &value {
+                AttributeValue::Bool(_) => {},
+                _ => {
+                    return Err(syn::Error::new(
+                        key_ident.span(),
+                        "case_insensitive must be a boolean (true or false)",
+                    ));
+                },
+            },
+            // L11 (2026-04-28): unicode_normalization runs a pre-pass on
+            // input bytes before lexing. Accepts NFC, NFD, NFKC, NFKD, or
+            // 'none' (the default).
+            "unicode_normalization" => match &value {
+                AttributeValue::Keyword(kw) => match kw.as_str() {
+                    "NFC" | "NFD" | "NFKC" | "NFKD" | "none" => {},
+                    _ => {
+                        return Err(syn::Error::new(
+                            key_ident.span(),
+                            format!(
+                                "unicode_normalization: invalid keyword '{}'. \
+                                 Use 'NFC', 'NFD', 'NFKC', 'NFKD', or 'none'",
+                                kw
+                            ),
+                        ));
+                    },
+                },
+                _ => {
+                    return Err(syn::Error::new(
+                        key_ident.span(),
+                        "unicode_normalization must be a keyword: 'NFC', 'NFD', 'NFKC', 'NFKD', or 'none'",
+                    ));
+                },
+            },
             unknown => {
                 return Err(syn::Error::new(
                     key_ident.span(),
                     format!(
-                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch, emit_tests, emit_blockly, emit_simulator",
+                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch, emit_tests, emit_blockly, emit_simulator, case_insensitive, unicode_normalization",
                         unknown
                     ),
                 ));

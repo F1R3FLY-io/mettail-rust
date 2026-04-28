@@ -44,6 +44,7 @@ pub mod classify;
 pub mod dispatch;
 pub mod ebnf;
 pub mod lexer;
+pub mod lexer_types;
 pub mod pipeline;
 pub mod pratt;
 pub mod prediction;

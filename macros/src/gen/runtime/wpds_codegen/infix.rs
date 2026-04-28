@@ -237,9 +237,16 @@ pub(crate) fn emit_bp_tables(
         let cat_lower = cat.to_lowercase();
         let infix_ident = format_ident!("infix_bp_{}", cat_lower);
         let postfix_ident = format_ident!("postfix_bp_{}", cat_lower);
+        let mixfix_ident = format_ident!("mixfix_bp_{}", cat_lower);
         per_cat_tables.push(emit_infix_bp_fn(&bp_table, cat, &infix_ident, &label_to_indices));
         per_cat_tables.push(emit_postfix_bp_fn(&bp_table, cat, &postfix_ident, &label_to_indices));
+        per_cat_tables.push(emit_mixfix_bp_fn(&bp_table, cat, &mixfix_ident, &label_to_indices));
     }
+    // B7 Pattern 1: per-rule mixfix-parts metadata. Used by the engine's
+    // Unwinding-MixfixMarker / MixfixContinuation arms to look up each
+    // inner operand's category and the separator that follows it. Keyed
+    // on (result_src_idx, rule_idx, part_idx).
+    per_cat_tables.push(emit_mixfix_parts_fn(&bp_table, categories, &label_to_indices));
     quote! { #(#per_cat_tables)* }
 }
 
@@ -323,6 +330,109 @@ fn emit_postfix_bp_fn(
         fn #fn_ident(terminal: &str) -> Option<(u8, u16, u16)> {
             match terminal {
                 #(#arms)*
+                _ => None,
+            }
+        }
+    }
+}
+
+/// B7 Pattern 1: emit a per-category mixfix BP lookup, returning
+/// `(left_bp, result_src_idx, rule_idx)` for any mixfix trigger keyword
+/// whose left operand is in this category. The InfixLoop dispatch
+/// queries this AFTER infix and postfix lookups; on hit, it consumes the
+/// trigger token and pushes a MixfixMarker with `bp=0` (zero operands
+/// completed so far).
+fn emit_mixfix_bp_fn(
+    bp_table: &BindingPowerTable,
+    category: &str,
+    fn_ident: &proc_macro2::Ident,
+    label_index: &std::collections::HashMap<(String, String), (u16, u16)>,
+) -> TokenStream {
+    let arms = bp_table
+        .operators
+        .iter()
+        .filter(|op| op.category == category && op.is_mixfix)
+        .filter_map(|op| {
+            let (result_src_idx, rule_idx) = *label_index
+                .get(&(op.result_category.clone(), op.label.clone()))?;
+            let term = &op.terminal;
+            let l = op.left_bp;
+            Some(quote! {
+                #term => Some((#l, #result_src_idx, #rule_idx)),
+            })
+        });
+    quote! {
+        /// Binding-power lookup for mixfix operators in this category.
+        /// Returns `(left_bp, result_src_idx, rule_idx)`.
+        #[allow(non_snake_case, dead_code)]
+        fn #fn_ident(terminal: &str) -> Option<(u8, u16, u16)> {
+            match terminal {
+                #(#arms)*
+                _ => None,
+            }
+        }
+    }
+}
+
+/// B7 Pattern 1: emit per-rule mixfix-parts metadata. Returns
+/// `mixfix_part(result_src_idx, rule_idx, part_idx) -> Option<(operand_src_idx, following_terminal: Option<&'static str>)>`.
+/// `following_terminal` is `Some(t)` for inner-not-last operands (the
+/// separator after that operand) and `None` for the last operand.
+/// `mixfix_parts_len(result_src_idx, rule_idx) -> Option<u8>` returns the
+/// number of inner operands so the engine knows when to stop.
+fn emit_mixfix_parts_fn(
+    bp_table: &BindingPowerTable,
+    categories: &[String],
+    label_index: &std::collections::HashMap<(String, String), (u16, u16)>,
+) -> TokenStream {
+    let mut part_arms = Vec::new();
+    let mut len_arms = Vec::new();
+    for op in bp_table.operators.iter().filter(|op| op.is_mixfix) {
+        let Some(&(result_src_idx, rule_idx)) =
+            label_index.get(&(op.result_category.clone(), op.label.clone()))
+        else {
+            continue;
+        };
+        let parts_len = op.mixfix_parts.len() as u8;
+        len_arms.push(quote! {
+            (#result_src_idx, #rule_idx) => Some(#parts_len),
+        });
+        for (part_idx, part) in op.mixfix_parts.iter().enumerate() {
+            let part_idx = part_idx as u8;
+            let operand_src_idx = categories
+                .iter()
+                .position(|c| c == &part.operand_category)
+                .map(|i| i as u16)
+                .unwrap_or(0);
+            let following_arm = match &part.following_terminal {
+                Some(t) => quote! { Some((#operand_src_idx, Some(#t))) },
+                None => quote! { Some((#operand_src_idx, None)) },
+            };
+            part_arms.push(quote! {
+                (#result_src_idx, #rule_idx, #part_idx) => #following_arm,
+            });
+        }
+    }
+    quote! {
+        /// Mixfix per-part metadata: returns `(operand_src_idx, following_terminal)`.
+        #[allow(non_snake_case, dead_code)]
+        fn mixfix_part(
+            result_src_idx: u16,
+            rule_idx: u16,
+            part_idx: u8,
+        ) -> Option<(u16, Option<&'static str>)> {
+            match (result_src_idx, rule_idx, part_idx) {
+                #(#part_arms)*
+                _ => None,
+            }
+        }
+
+        /// Mixfix parts count: returns the number of inner operands for
+        /// the (result_src, rule_idx) mixfix rule.
+        #[allow(non_snake_case, dead_code)]
+        fn mixfix_parts_len(result_src_idx: u16, rule_idx: u16) -> Option<u8> {
+            match (result_src_idx, rule_idx) {
+                #(#len_arms)*
                 _ => None,
             }
         }

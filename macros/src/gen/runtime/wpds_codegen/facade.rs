@@ -1,4 +1,4 @@
-//! `parse_<Cat>_via_wpds` facade emission (Phase 2 + Phase A.9).
+//! `parse_<Cat>_via_wpds` facade emission.
 //!
 //! Emits per-category wrapper functions that drive the WPDS walker to
 //! saturation on a `TokenKind` slice and extract the resulting AST term.
@@ -16,19 +16,20 @@
 //!
 //! The caller is responsible for tokenizing the source input. Parity-test
 //! harnesses (`test_gen/parity.rs`) provide a per-grammar `Token → TokenKind`
-//! adapter so both engines can run on the same source — see Phase 2 notes
-//! in `/home/dylon/.claude/plans/help-me-complete-the-sleepy-cocoa.md`.
+//! adapter so both engines can run on the same source.
 //!
-//! ## 📌 Long-term recovery note (mandate #8)
+//! ## Recovery
 //!
-//! On `WpdsState::Error`, this facade currently returns an error shape.
-//! Phase A.9 wires `mettail_prattail::recovery::find_best_recovery` at the
-//! wrapper level with `SYNC_TOKENS_<CAT>` emitted from the category's
-//! FOLLOW set. The endgame is to encode recovery as alternate WPDS edges
-//! (Skip / Delete / Substitute / Insert rules fanning out from every
-//! prefix-dispatch state, selected by `LexicographicWeight` lex-min).
-//! When that lands, the wrapper-level recovery plumbing is deleted and
-//! recovery becomes first-class WPDS semantics.
+//! TODAY: an outer skip-to-sync retry loop (lines 78-145 below) wraps the
+//! walker. On `WpdsState::Error`, the loop advances `pos` past the offending
+//! token until a sync delimiter (`)`, `}`, `]`, `;`, `,`) is found, re-seeds
+//! the walker, and retries up to MAX_RECOVERY_ROUNDS times.
+//!
+//! LONG-TERM (tracked as #64 / L12): encode recovery as alternate WPDS
+//! edges — Skip / Delete / Substitute / Insert branches fanning out from
+//! every PrefixDispatch dead-end, selected by `LexicographicWeight` lex-min.
+//! When that lands, this wrapper loop is DELETED and recovery becomes
+//! first-class WPDS semantics surfaced via `walker.recovery_trace()`.
 
 use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
@@ -45,42 +46,115 @@ pub(crate) fn emit_parse_fns(
     for (cat_src_idx, cat_name) in categories.iter().enumerate() {
         let cat_ident = format_ident!("{}", cat_name);
         let fn_name = format_ident!("parse_{}_via_wpds", cat_name);
+        let recovering_fn_name = format_ident!("parse_{}_via_wpds_recovering", cat_name);
+        let with_weight_fn_name = format_ident!("parse_{}_via_wpds_with_weight", cat_name);
         let cat_src_idx_u16 = cat_src_idx as u16;
         fns.push(quote! {
             /// WPDS-runtime parser for the `#cat_ident` category.
             ///
             /// Runs the walker to saturation and extracts the resulting AST
-            /// term via `SemanticBuilder::take_result`. On error, returns
-            /// `WpdsParseError` — Phase A.9 will add WFST recovery here.
+            /// term via `SemanticBuilder::take_result`. On error, the outer
+            /// retry loop attempts up to MAX_RECOVERY_ROUNDS sync-token
+            /// skips (see #64 / L12 for the principled WPDS-edge replacement).
+            ///
+            /// On `ParseFailed`, the returned error carries every recovery
+            /// attempt (including the final failure) in `attempts`. For
+            /// successful parses where recovery rounds were applied, use
+            /// `parse_<Cat>_via_wpds_recovering` to inspect the trail.
             pub fn #fn_name(
                 kinds: &[mettail_prattail::automata::TokenKind],
                 texts: &[&str],
                 pos: &mut usize,
                 min_bp: u8,
             ) -> Result<#cat_ident, WpdsParseError> {
-                use mettail_prattail::wpds_runtime::{
-                    SliceTokenSource, WpdsState,
-                };
+                let (result, _attempts) = #recovering_fn_name(kinds, texts, pos, min_bp);
+                result
+            }
+
+            /// L8 (2026-04-28): WPDS parser variant that returns the walker's
+            /// terminal weight alongside the parse result. The weight's
+            /// `primary` field carries the path's accumulated tropical cost;
+            /// `parse_with_confidence` exposes this as a confidence score
+            /// `exp(-cost)` ∈ (0, 1].
+            ///
+            /// Does NOT apply recovery — a clean accept yields
+            /// `Ok((term, weight))`; any non-Accepted termination yields
+            /// `Err(WpdsParseError)` without retries. Use
+            /// `parse_<Cat>_via_wpds_recovering` when sync-token skip
+            /// recovery is desired.
+            pub fn #with_weight_fn_name(
+                kinds: &[mettail_prattail::automata::TokenKind],
+                texts: &[&str],
+                pos: &mut usize,
+                min_bp: u8,
+            ) -> Result<
+                (
+                    #cat_ident,
+                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                ),
+                WpdsParseError,
+            > {
+                use mettail_prattail::wpds_runtime::WpdsState;
                 use mettail_prattail::wpds_walker::WpdsWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
-
-                let src = SliceTokenSource::with_texts(kinds, texts);
-                // Seed the walker at this category's src_idx (not the
-                // primary) so the PrefixDispatch arm guards on the
-                // correct `state_cat_src_idx`.
+                const MAX_STEPS: usize = 1_000_000;
                 let mut walker = WpdsWalker::<LexicographicWeight, _>::new_for_category(
                     #engine_ident::default(),
                     #cat_src_idx_u16,
                     min_bp,
                 );
+                let src = mettail_prattail::wpds_runtime::SliceTokenSource::with_texts(
+                    kinds, texts,
+                );
+                match walker.run_to_saturation(MAX_STEPS, &src) {
+                    WpdsState::Accepted => {
+                        *pos = walker.position();
+                        let weight = *walker.weight();
+                        let result = walker
+                            .builder_mut()
+                            .take_result::<#cat_ident>()
+                            .ok_or(WpdsParseError::EmptyResult)?;
+                        Ok((result, weight))
+                    }
+                    WpdsState::Error { message } => Err(WpdsParseError::ParseFailed {
+                        message,
+                        position: walker.position(),
+                        attempts: Vec::new(),
+                    }),
+                    _ => Err(WpdsParseError::Incomplete {
+                        position: walker.position(),
+                    }),
+                }
+            }
+
+            /// WPDS-runtime parser variant that exposes the recovery trail
+            /// alongside the parse result. Returns
+            /// `(Result<#cat_ident, WpdsParseError>, Vec<RecoveryAttempt>)`:
+            /// - `Ok` with empty `attempts`: clean parse, no recovery.
+            /// - `Ok` with non-empty `attempts`: parse succeeded after
+            ///   one or more sync-token skips; the trail records each.
+            /// - `Err(ParseFailed)` with non-empty `attempts`: every retry
+            ///   round and the final failure surface in the error's own
+            ///   `attempts` vec; the returned vec mirrors that data so
+            ///   callers don't need to pattern-match the variant.
+            ///
+            /// (#64 / L12 will replace the wrapper-level retry loop with
+            /// principled WPDS-edge recovery — Skip/Delete/Insert/Substitute
+            /// Fork branches at PrefixDispatch dead-ends.)
+            pub fn #recovering_fn_name(
+                kinds: &[mettail_prattail::automata::TokenKind],
+                texts: &[&str],
+                pos: &mut usize,
+                min_bp: u8,
+            ) -> (Result<#cat_ident, WpdsParseError>, Vec<RecoveryAttempt>) {
+                use mettail_prattail::wpds_runtime::WpdsState;
+                use mettail_prattail::wpds_walker::WpdsWalker;
+                use mettail_prattail::automata::lex_weight::LexicographicWeight;
+
                 const MAX_STEPS: usize = 1_000_000;
-                // Phase 8: outer retry loop wraps the walker. On Error,
-                // attempt one round of skip-to-sync recovery (advance pos
-                // past the offending token until a sync delimiter is
-                // found), then re-seed the walker and retry. Failed
-                // recovery surfaces ParseFailed.
                 const MAX_RECOVERY_ROUNDS: usize = 4;
                 const SYNC_TOKENS: &[&str] = &[")", "}", "]", ";", ","];
+                let mut attempts: Vec<RecoveryAttempt> = Vec::new();
                 let mut recovery_rounds = 0usize;
                 let mut start_pos: usize = 0;
                 loop {
@@ -89,9 +163,6 @@ pub(crate) fn emit_parse_fns(
                         #cat_src_idx_u16,
                         min_bp,
                     );
-                    // Walker starts at position 0 of the *adjusted* token slice;
-                    // for the recovery retry we logically advance start_pos
-                    // and reset MAX_STEPS.
                     let kinds_slice: &[mettail_prattail::automata::TokenKind] =
                         &kinds[start_pos..];
                     let texts_slice: &[&str] = &texts[start_pos..];
@@ -101,15 +172,15 @@ pub(crate) fn emit_parse_fns(
                     match walker.run_to_saturation(MAX_STEPS, &src) {
                         WpdsState::Accepted => {
                             *pos = start_pos + walker.position();
-                            return walker
+                            let result = walker
                                 .builder_mut()
                                 .take_result::<#cat_ident>()
                                 .ok_or(WpdsParseError::EmptyResult);
+                            return (result, attempts);
                         }
                         WpdsState::Error { message } => {
+                            let err_pos = start_pos + walker.position();
                             if recovery_rounds < MAX_RECOVERY_ROUNDS {
-                                let err_pos = start_pos + walker.position();
-                                // Find the next sync token text after err_pos.
                                 let mut next_sync: Option<usize> = None;
                                 for i in (err_pos + 1)..kinds.len() {
                                     let text = texts.get(i).copied().unwrap_or("");
@@ -120,27 +191,56 @@ pub(crate) fn emit_parse_fns(
                                 }
                                 match next_sync {
                                     Some(new_start) => {
+                                        attempts.push(RecoveryAttempt {
+                                            message: message.clone(),
+                                            position: err_pos,
+                                            recovery: Some(format!(
+                                                "skipped to position {}",
+                                                new_start,
+                                            )),
+                                        });
                                         recovery_rounds += 1;
                                         start_pos = new_start;
                                         continue;
                                     }
                                     None => {
-                                        return Err(WpdsParseError::ParseFailed {
-                                            message,
+                                        attempts.push(RecoveryAttempt {
+                                            message: message.clone(),
                                             position: err_pos,
+                                            recovery: None,
                                         });
+                                        return (
+                                            Err(WpdsParseError::ParseFailed {
+                                                message,
+                                                position: err_pos,
+                                                attempts: attempts.clone(),
+                                            }),
+                                            attempts,
+                                        );
                                     }
                                 }
                             }
-                            return Err(WpdsParseError::ParseFailed {
-                                message,
-                                position: start_pos + walker.position(),
+                            attempts.push(RecoveryAttempt {
+                                message: message.clone(),
+                                position: err_pos,
+                                recovery: None,
                             });
+                            return (
+                                Err(WpdsParseError::ParseFailed {
+                                    message,
+                                    position: err_pos,
+                                    attempts: attempts.clone(),
+                                }),
+                                attempts,
+                            );
                         }
                         _ => {
-                            return Err(WpdsParseError::Incomplete {
-                                position: start_pos + walker.position(),
-                            });
+                            return (
+                                Err(WpdsParseError::Incomplete {
+                                    position: start_pos + walker.position(),
+                                }),
+                                attempts,
+                            );
                         }
                     }
                 }
@@ -149,8 +249,27 @@ pub(crate) fn emit_parse_fns(
     }
     let _ = language;
     quote! {
+        /// One round of WPDS-facade recovery — captures the message that
+        /// triggered the round, the token position where it surfaced, and
+        /// the sync-token-skip action taken (or `None` if recovery
+        /// exhausted without finding a sync token).
+        #[derive(Debug, Clone)]
+        pub struct RecoveryAttempt {
+            /// Diagnostic message from the walker's `WpdsState::Error`.
+            pub message: std::string::String,
+            /// Token position where the error surfaced.
+            pub position: usize,
+            /// Skip action taken, or `None` if no sync token was found
+            /// (terminating round).
+            pub recovery: Option<std::string::String>,
+        }
+
         /// Error returned by `parse_<Cat>_via_wpds` wrappers when the walker
         /// terminates in a non-accepting state.
+        ///
+        /// `ParseFailed` carries the final-error fields plus the full
+        /// recovery-attempt trail, so consumers don't need to re-run the
+        /// recovering variant to inspect what was tried.
         #[derive(Debug, Clone)]
         pub enum WpdsParseError {
             /// Walker accepted, but the builder's term stack was empty —
@@ -158,9 +277,12 @@ pub(crate) fn emit_parse_fns(
             /// exactly one term).
             EmptyResult,
             /// Walker entered `WpdsState::Error` with a diagnostic message.
+            /// `attempts` records every recovery round (including the
+            /// terminating one).
             ParseFailed {
                 message: std::string::String,
                 position: usize,
+                attempts: Vec<RecoveryAttempt>,
             },
             /// Walker reached step budget without terminating.
             Incomplete {
@@ -174,8 +296,18 @@ pub(crate) fn emit_parse_fns(
                     WpdsParseError::EmptyResult => {
                         write!(f, "wpds parser produced no result")
                     }
-                    WpdsParseError::ParseFailed { message, position } => {
-                        write!(f, "wpds parse failed at position {}: {}", position, message)
+                    WpdsParseError::ParseFailed { message, position, attempts } => {
+                        if attempts.len() <= 1 {
+                            write!(f, "wpds parse failed at position {}: {}", position, message)
+                        } else {
+                            write!(
+                                f,
+                                "wpds parse failed at position {}: {} ({} recovery rounds)",
+                                position,
+                                message,
+                                attempts.len(),
+                            )
+                        }
                     }
                     WpdsParseError::Incomplete { position } => {
                         write!(f, "wpds parse incomplete at position {}", position)

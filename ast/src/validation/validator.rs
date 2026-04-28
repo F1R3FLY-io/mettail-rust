@@ -22,7 +22,9 @@ use crate::{
 use std::collections::HashSet;
 
 pub fn validate_language(language: &LanguageDef) -> Result<(), ValidationError> {
-    // Build set of exported categories
+    // Build set of exported categories. Refinement types declared in the
+    // types block (e.g. `PosInt = { x: Int | x > 0 }`) are also added to
+    // `language.types` by the parser, so they're picked up here too.
     let lang_types: HashSet<_> = language.types.iter().map(|t| t.name.to_string()).collect();
 
     // Build set of all defined categories (result types from all rules)

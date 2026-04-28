@@ -1,8 +1,11 @@
 //! Emits the per-language `impl WpdsStepEngine` body.
 //!
-//! Phase A.1 deliverable: the infrastructure-complete skeleton — Ready →
-//! PrefixDispatch transitions, all other states return Idle. Phase A.2–A.10
-//! populate the per-rule dispatch arms that make the engine actually parse.
+//! Covers all WpdsState dispatch: Ready → PrefixDispatch seed, prefix arms
+//! per atomic/binder/cross-cat rule, InfixLoop with Pratt BP, CollectionLoop
+//! for sep/close, BinderRule per-position dispatch, CrossCatDelegate for
+//! cross-cat projections, Unwinding for Pop chains, terminal Accepted/Error.
+//! AmbiguityFanout is `unreachable!` — the walker drives it via `step_fanout`,
+//! never `engine.step`.
 
 use mettail_ast::grammar::GrammarRule;
 use mettail_ast::language::LanguageDef;
@@ -59,15 +62,22 @@ pub(crate) fn emit_engine_impl_full(
     // bootstrap, and element_src_idx lookup for Unwinding-CollectionMarker.
     let collection_loop_body =
         super::collection::emit_collection_loop_arm(language, categories, per_cat);
-    let collection_close_lookup = super::collection::emit_collection_close_lookup(per_cat);
+    let collection_close_lookup =
+        super::collection::emit_collection_close_lookup(language, per_cat);
     let collection_element_src_lookup =
-        super::collection::emit_collection_element_src_lookup(categories, per_cat);
+        super::collection::emit_collection_element_src_lookup(language, categories, per_cat);
     // Phase 5: binder rule prefix arms (recognize trigger literal of binder
     // rules) + BinderRule state body (multi-step state machine per rule).
     let binder_arms = super::binder::emit_binder_prefix_arms(language, categories, per_cat);
     let binder_rule_body = super::binder::emit_binder_rule_body(categories, per_cat);
     // Phase 5b: BinderListLoop body for multi-binder list (^[xs]).
     let binder_list_loop_body = super::binder::emit_binder_list_loop_body(per_cat);
+    // B7 Pattern 2: paren-grouping arms in PrefixDispatch — backend
+    // emission of `(`-grouping for every parseable category, satisfying
+    // the user mandate "no per-grammar order; backend change". Emitted
+    // BEFORE generic prefix_arms so `(` matches grouping rather than
+    // any rule that happens to start with `(`.
+    let grouping_arms = super::prefix::emit_grouping_arms(categories);
 
     let action_for_body =
         semantic_actions::emit_action_for_body(language, categories, &per_cat_indexed);
@@ -77,6 +87,7 @@ pub(crate) fn emit_engine_impl_full(
     // helpers.
     let infix_loop_dispatch = emit_infix_loop_dispatch(categories);
     let postfix_dispatch = emit_postfix_dispatch(categories);
+    let mixfix_dispatch = emit_mixfix_dispatch(categories);
 
     quote! {
         impl mettail_prattail::wpds_walker::WpdsStepEngine<
@@ -135,6 +146,32 @@ pub(crate) fn emit_engine_impl_full(
                                         new_state: WpdsState::Unwinding,
                                     };
                                 }
+                                // B7 cross-cat element redirect: when
+                                // element_src_idx ≠ result_src_idx, the
+                                // result category's prefix arms cannot
+                                // match the element token (e.g. List's
+                                // arms won't match a Proc literal). Push
+                                // CategoryEntry(element_src) on top so
+                                // dispatch routes to the element category.
+                                let element_src_lookup: Option<u16> = {
+                                    let result_src_idx = result_src_idx;
+                                    let rule_idx = rule_idx;
+                                    #collection_element_src_lookup
+                                };
+                                if let Some(element_src_idx) = element_src_lookup {
+                                    if element_src_idx != result_src_idx {
+                                        return WpdsStepAction::Push {
+                                            symbol: StackSymbolV2::category_entry(
+                                                element_src_idx,
+                                            ),
+                                            weight: LexicographicWeight::one(),
+                                            new_state: WpdsState::PrefixDispatch {
+                                                pos: *pos,
+                                                cur_bp: *cur_bp,
+                                            },
+                                        };
+                                    }
+                                }
                             }
                         }
                         // Phase A.2: dispatch on the current category (derived
@@ -146,8 +183,17 @@ pub(crate) fn emit_engine_impl_full(
                         let peek = tokens.peek_kind(*pos);
                         let _ = frontier_top; // suppress unused warning
                         match peek {
-                            // Phase 4: collection open-delim arms run first
-                            // since `{` / `[` are unambiguous open markers.
+                            // B7 Pattern 2: paren-grouping `(` arms — match
+                            // first so `(` doesn't fall through to a rule's
+                            // `(`-prefixed pattern (none exist in shipped
+                            // grammars; the synthetic-collection paren is
+                            // consumed via CollectionOpenParen, never here).
+                            #grouping_arms
+                            // Phase 4: collection open-delim arms run before
+                            // generic prefix arms. Open delimiters are
+                            // typically `Fixed("{")` / `Fixed("[")` /
+                            // `Fixed("list")` — unambiguous in PrefixDispatch
+                            // context.
                             #collection_arms
                             // Phase 5: binder-rule trigger-literal arms.
                             #binder_arms
@@ -239,6 +285,92 @@ pub(crate) fn emit_engine_impl_full(
                                         outer_bp,
                                     })
                                 }
+                                mettail_prattail::wpds_runtime::SymbolKind::GroupingMarker => {
+                                    // B7 Pattern 2: inner expression of a
+                                    // grouping just returned. Demand the
+                                    // closing `)`, ConsumeAndPop the marker,
+                                    // and resume InfixLoop at the saved outer
+                                    // cur_bp so surrounding operators continue
+                                    // at the original precedence. The marker
+                                    // is transparent (no AST node, no action);
+                                    // the inner Term remains on the builder
+                                    // as the result.
+                                    let outer_bp = node.symbol.bp.unwrap_or(0);
+                                    match tokens.peek_text(_pos) {
+                                        Some(")") => WpdsStepAction::ConsumeAndPop {
+                                            weight: LexicographicWeight::one(),
+                                            new_state: WpdsState::InfixLoop {
+                                                cur_bp: outer_bp,
+                                            },
+                                        },
+                                        other => WpdsStepAction::Error(format!(
+                                            "expected `)` to close grouping at pos {}, found {:?}",
+                                            _pos, other
+                                        )),
+                                    }
+                                }
+                                mettail_prattail::wpds_runtime::SymbolKind::MixfixMarker => {
+                                    // B7 Pattern 1: inner operand just returned
+                                    // to the mixfix marker. Read marker.bp =
+                                    // index of just-completed inner operand,
+                                    // look up parts metadata, demand the
+                                    // following separator (or fire action on
+                                    // the last operand).
+                                    let result_src_idx = node.symbol.category_src_idx;
+                                    let rule_idx = node.symbol.rule_index_in_category;
+                                    let completed_idx = node.symbol.bp.unwrap_or(0);
+                                    let parts_len = mixfix_parts_len(
+                                        result_src_idx, rule_idx,
+                                    ).unwrap_or(0);
+                                    let part = mixfix_part(
+                                        result_src_idx, rule_idx, completed_idx,
+                                    );
+                                    let following = part.and_then(|(_, t)| t);
+                                    if completed_idx + 1 == parts_len {
+                                        // Last inner operand: pop the marker
+                                        // (auto-fires the rule's action with
+                                        // arity 1+parts.len) and resume the
+                                        // outer InfixLoop. outer_bp=0 is a
+                                        // pragmatic choice for top-level
+                                        // mixfix; if a future grammar nests
+                                        // mixfix inside a precedenced context,
+                                        // thread outer_bp via a dedicated
+                                        // marker field or state variant.
+                                        return WpdsStepAction::Pop {
+                                            weight: LexicographicWeight::one(),
+                                            new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                                        };
+                                    }
+                                    // Not the last: demand the separator,
+                                    // consume it, then transition to
+                                    // MixfixContinuation which will
+                                    // ReplaceAndPush the next operand entry.
+                                    match (following, tokens.peek_text(_pos)) {
+                                        (Some(t), Some(actual)) if actual == t => {
+                                            WpdsStepAction::Consume {
+                                                weight: LexicographicWeight::one(),
+                                                new_state: WpdsState::MixfixContinuation {
+                                                    result_src_idx,
+                                                    rule_idx,
+                                                    completed_idx: completed_idx + 1,
+                                                },
+                                            }
+                                        }
+                                        (Some(t), other) => WpdsStepAction::Error(format!(
+                                            "expected `{}` separator in mixfix at pos {}, found {:?}",
+                                            t, _pos, other
+                                        )),
+                                        (None, _) => {
+                                            // Inner operand without trailing
+                                            // separator and not the last —
+                                            // codegen invariant violation.
+                                            WpdsStepAction::Error(format!(
+                                                "mixfix part {} for (result={}, rule={}) has no following terminal but isn't last (parts_len={})",
+                                                completed_idx, result_src_idx, rule_idx, parts_len
+                                            ))
+                                        }
+                                    }
+                                }
                                 _ => WpdsStepAction::Idle,
                             }
                         } else {
@@ -246,15 +378,15 @@ pub(crate) fn emit_engine_impl_full(
                         }
                     }
                     WpdsState::InfixLoop { cur_bp } => {
-                        // Phase 4/5: if frontier_top is a CollectionMarker or
-                        // RuleAt (binder rule marker), skip infix dispatch and
-                        // fall through to Unwinding. The separator/close delim
-                        // (Phase 4) and binder action (Phase 5) are handled in
-                        // CollectionLoop / Unwinding-RuleAt arms, not InfixLoop.
+                        // Phase 4/5/B7: if frontier_top is a marker symbol
+                        // (CollectionMarker / RuleAt / MixfixMarker), skip
+                        // infix dispatch and fall through to Unwinding. Each
+                        // marker has its own Unwinding handler.
                         if let Some(node) = frontier_top {
                             match node.symbol.kind {
                                 mettail_prattail::wpds_runtime::SymbolKind::CollectionMarker
-                                | mettail_prattail::wpds_runtime::SymbolKind::RuleAt(_) => {
+                                | mettail_prattail::wpds_runtime::SymbolKind::RuleAt(_)
+                                | mettail_prattail::wpds_runtime::SymbolKind::MixfixMarker => {
                                     return WpdsStepAction::Advance(WpdsState::Unwinding);
                                 }
                                 _ => {}
@@ -327,6 +459,32 @@ pub(crate) fn emit_engine_impl_full(
                                 };
                             }
                         }
+                        // B7 Pattern 1: try mixfix. Mixfix triggers (e.g.
+                        // ternary `?`) consume the trigger token, push a
+                        // MixfixMarker (auto-fire on final pop), and
+                        // transition to PrefixDispatch{cur_bp:0} to parse
+                        // the first inner operand. Subsequent operands and
+                        // separators are driven by Unwinding-MixfixMarker
+                        // and MixfixContinuation.
+                        if let Some((l_bp, result_src, rule_idx)) =
+                            #mixfix_dispatch
+                        {
+                            if l_bp >= *cur_bp {
+                                return WpdsStepAction::ConsumeAndPush {
+                                    symbol: StackSymbolV2::mixfix_marker(
+                                        result_src, rule_idx, 0,
+                                    ),
+                                    weight: LexicographicWeight::from_cost(
+                                        0.0, result_src, rule_idx,
+                                    ),
+                                    new_state: WpdsState::PrefixDispatch {
+                                        pos: _pos + 1,
+                                        cur_bp: 0,
+                                    },
+                                    capture_token: false,
+                                };
+                            }
+                        }
                         // No operator matched — fall through to Unwinding.
                         WpdsStepAction::Advance(WpdsState::Unwinding)
                     }
@@ -339,6 +497,76 @@ pub(crate) fn emit_engine_impl_full(
                     } => {
                         // Phase 4: dispatch on close / sep / element.
                         #collection_loop_body
+                    }
+                    WpdsState::MixfixContinuation {
+                        result_src_idx,
+                        rule_idx,
+                        completed_idx,
+                    } => {
+                        // B7 Pattern 1: between-operand transition. The
+                        // separator was consumed in Unwinding-MixfixMarker;
+                        // now ReplaceAndPush so the marker's bp updates to
+                        // `completed_idx` (= next operand index) AND a new
+                        // CategoryEntry(operand_src_idx) goes on top to
+                        // route the sub-parse to the correct element cat.
+                        match mixfix_part(*result_src_idx, *rule_idx, *completed_idx) {
+                            Some((operand_src_idx, _following)) => {
+                                WpdsStepAction::ReplaceAndPush {
+                                    replace_symbol: StackSymbolV2::mixfix_marker(
+                                        *result_src_idx,
+                                        *rule_idx,
+                                        *completed_idx,
+                                    ),
+                                    push_symbol: StackSymbolV2::category_entry(
+                                        operand_src_idx,
+                                    ),
+                                    weight: LexicographicWeight::one(),
+                                    new_state: WpdsState::PrefixDispatch {
+                                        pos: _pos,
+                                        cur_bp: 0,
+                                    },
+                                }
+                            }
+                            None => WpdsStepAction::Error(format!(
+                                "mixfix part {} not found for (result={}, rule={})",
+                                completed_idx, result_src_idx, rule_idx
+                            )),
+                        }
+                    }
+                    WpdsState::CollectionOpenParen {
+                        result_src_idx,
+                        rule_idx,
+                        element_src_idx,
+                        outer_bp,
+                    } => {
+                        // B7: 2-token open delimiter — the prefix arm
+                        // already consumed `list` (or `bag` / `map`) and
+                        // pushed the CollectionMarker. Demand `(` next,
+                        // consume it, and transition to PrefixDispatch
+                        // with the CollectionMarker still on top.
+                        // PrefixDispatch then handles three sub-cases:
+                        //   (a) empty-collection — peek == close delim →
+                        //       ConsumeAndPop (existing close_lookup path);
+                        //   (b) cross-cat element (result_src ≠ element_src)
+                        //       → Push CategoryEntry(element_src) and
+                        //       recurse PrefixDispatch (handled in
+                        //       PrefixDispatch's CollectionMarker branch);
+                        //   (c) self-collection — fall through to normal
+                        //       per-category prefix dispatch.
+                        let _ = (result_src_idx, rule_idx, element_src_idx, outer_bp);
+                        match tokens.peek_text(_pos) {
+                            Some("(") => WpdsStepAction::Consume {
+                                weight: LexicographicWeight::one(),
+                                new_state: WpdsState::PrefixDispatch {
+                                    pos: _pos + 1,
+                                    cur_bp: 0,
+                                },
+                            },
+                            other => WpdsStepAction::Error(format!(
+                                "expected `(` after collection-open keyword at pos {}, found {:?}",
+                                _pos, other
+                            )),
+                        }
                     }
                     WpdsState::BinderRule {
                         result_src_idx,
@@ -382,8 +610,12 @@ pub(crate) fn emit_engine_impl_full(
                             },
                         }
                     }
-                    WpdsState::AmbiguityFanout { .. }
-                    | WpdsState::Saturating { .. } => WpdsStepAction::Idle,
+                    WpdsState::AmbiguityFanout { .. } => unreachable!(
+                        "engine.step called with AmbiguityFanout — walker drives \
+                         this state via step_fanout, not the engine. Reaching \
+                         this arm signals a routing bug in WpdsWalker::run_to_*."
+                    ),
+                    WpdsState::Saturating { .. } => WpdsStepAction::Idle,
                     WpdsState::Accepted | WpdsState::Error { .. } => WpdsStepAction::Idle,
                 }
             }
@@ -435,85 +667,24 @@ fn emit_postfix_dispatch(categories: &[String]) -> TokenStream {
     }
 }
 
-/// Legacy thin wrapper used by tests that predate Phase A.2. Still emits
-/// the minimal skeleton but without access to the full LanguageDef.
-pub(crate) fn emit_engine_impl(engine_ident: &Ident, primary_src_idx: u16) -> TokenStream {
+/// B7 Pattern 1: emit the per-category mixfix BP dispatch — `match
+/// state_cat_src_idx` calling the per-category `mixfix_bp_<cat>(text)`
+/// lookup. Evaluates to `Option<(u8, u16, u16)>` (left_bp, result_src,
+/// rule_idx) for any mixfix trigger keyword whose left operand is in
+/// the dispatched category.
+fn emit_mixfix_dispatch(categories: &[String]) -> TokenStream {
+    let arms = categories.iter().enumerate().map(|(i, cat)| {
+        let i_u16 = i as u16;
+        let fn_ident = quote::format_ident!("mixfix_bp_{}", cat.to_lowercase());
+        quote! { #i_u16 => #fn_ident(token_text), }
+    });
     quote! {
-        impl mettail_prattail::wpds_walker::WpdsStepEngine<
-            mettail_prattail::automata::lex_weight::LexicographicWeight,
-        > for #engine_ident
         {
-            fn step(
-                &self,
-                state: &mettail_prattail::wpds_runtime::WpdsState,
-                _gss: &mettail_prattail::gss::WpdsGss<
-                    mettail_prattail::automata::lex_weight::LexicographicWeight,
-                >,
-                frontier_top: Option<&mettail_prattail::gss::WpdsGssNode>,
-                _pos: usize,
-                _tokens: &dyn mettail_prattail::wpds_runtime::WpdsTokenSource,
-            ) -> mettail_prattail::wpds_walker::WpdsStepAction<
-                mettail_prattail::automata::lex_weight::LexicographicWeight,
-            > {
-                use mettail_prattail::wpds_runtime::{
-                    StackSymbolV2, WpdsState,
-                };
-                use mettail_prattail::wpds_walker::WpdsStepAction;
-                use mettail_prattail::automata::lex_weight::LexicographicWeight;
-                use mettail_prattail::automata::semiring::Semiring;
-
-                match state {
-                    WpdsState::Ready { min_bp } => {
-                        let primary = StackSymbolV2::category_entry(#primary_src_idx);
-                        WpdsStepAction::Push {
-                            symbol: primary,
-                            weight: LexicographicWeight::from_cost(0.0, #primary_src_idx, 0),
-                            new_state: WpdsState::PrefixDispatch {
-                                pos: 0,
-                                cur_bp: *min_bp,
-                            },
-                        }
-                    }
-                    WpdsState::PrefixDispatch { .. } => {
-                        // Phase A.2+ populates this arm with per-rule
-                        // prefix dispatch. Phase A.1 accepts once a frame
-                        // is established.
-                        if frontier_top.is_some() {
-                            WpdsStepAction::Accept
-                        } else {
-                            WpdsStepAction::Idle
-                        }
-                    }
-                    WpdsState::Unwinding => {
-                        // Phase A.2: pop `Return` frames, fire their actions,
-                        // then pop the enclosing `CategoryEntry` and accept.
-                        if let Some(node) = frontier_top {
-                            match node.symbol.kind {
-                                mettail_prattail::wpds_runtime::SymbolKind::Return => {
-                                    WpdsStepAction::Pop {
-                                        weight: LexicographicWeight::one(),
-                                        new_state: WpdsState::Unwinding,
-                                    }
-                                }
-                                mettail_prattail::wpds_runtime::SymbolKind::CategoryEntry => {
-                                    WpdsStepAction::Pop {
-                                        weight: LexicographicWeight::one(),
-                                        new_state: WpdsState::Accepted,
-                                    }
-                                }
-                                _ => WpdsStepAction::Idle,
-                            }
-                        } else {
-                            WpdsStepAction::Accept
-                        }
-                    }
-                    WpdsState::InfixLoop { .. }
-                    | WpdsState::CollectionLoop { .. }
-                    | WpdsState::AmbiguityFanout { .. }
-                    | WpdsState::Saturating { .. } => WpdsStepAction::Idle,
-                    WpdsState::Accepted | WpdsState::Error { .. } => WpdsStepAction::Idle,
-                }
+            match state_cat_src_idx {
+                #(#arms)*
+                _ => None,
             }
         }
     }
 }
+

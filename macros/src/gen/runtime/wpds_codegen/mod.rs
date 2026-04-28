@@ -1,40 +1,41 @@
 //! WPDS-runtime engine codegen (sub-tree facade).
 //!
-//! Stage 6 of W7 plan v5.1 (revised as plan v2). Walks a `LanguageDef` and
-//! emits a Rust module containing:
+//! Walks a `LanguageDef` and emits a Rust module containing:
 //!
 //! - A `<LangName>WpdsEngine` struct (zero-sized — all dispatch is via
 //!   `&self` methods on the trait impl).
 //! - An `impl mettail_prattail::wpds_walker::WpdsStepEngine<LexicographicWeight>`
 //!   with state-based dispatch keyed by category source-index.
 //! - Static category and rule-index tables for stable tiebreak indices.
-//! - (Phase A.2+) Per-rule push/pop/replace action tables, semantic action
-//!   registrations, prefix-dispatch arms, infix loops, cross-cat forks,
-//!   binder/collection/refinement/predicate handling, recovery wrappers.
+//! - Per-rule push/pop/replace action tables, semantic action registrations,
+//!   prefix-dispatch arms, infix loops, cross-cat Forks (F8), binder Forks
+//!   (F7), collection markers, refinement predicates, recovery wrappers.
 //!
 //! ## Module organization
-//!
-//! Per plan v2 Decision #9, this codegen lives in a per-concern sub-tree:
 //!
 //! - `mod.rs` (this file) — the facade: `generate_wpds_engine_module()`.
 //! - `tables.rs` — category/rule-index static tables.
 //! - `engine_impl.rs` — `impl WpdsStepEngine` body.
-//! - (Phase A.2+) `prefix.rs`, `infix.rs`, `mixfix.rs`, `binder.rs`,
-//!   `collection.rs`, `cross_cat.rs`, `refinement.rs`, `predicate.rs`,
-//!   `semantic_actions.rs`, `facade.rs`.
+//! - `prefix.rs`, `infix.rs`, `binder.rs`, `collection.rs`, `refinement.rs`,
+//!   `semantic_actions.rs`, `facade.rs`, `synthetic.rs`. Cross-category
+//!   projections are codegen'd directly within `prefix.rs` and `infix.rs`;
+//!   behavioral predicates are inlined into the action bodies emitted by
+//!   `semantic_actions.rs` (no separate `cross_cat.rs` or `predicate.rs`
+//!   module). Mixfix Optional groups (`#opt(...)`) are tracked as #68.
+//!   Classic Pratt-style ternaries (`a ? b : c`) are handled by `infix.rs`
+//!   BP analysis.
 //!
-//! ## 📌 Long-term recovery note (prominent, per plan v2 §0)
+//! ## 📌 Long-term recovery note
 //!
-//! Stage 6 Phase A.9 wires recovery at the **wrapper level**: when the
-//! walker terminates in `WpdsState::Error`, `parse_<Cat>_via_wpds` calls
-//! `mettail_prattail::recovery::find_best_recovery` and retries. This is
-//! pragmatic but not the endgame.
+//! TODAY: recovery is wrapper-level. `parse_<Cat>_via_wpds` (`facade.rs`)
+//! wraps the walker in a skip-to-sync retry loop. On `WpdsState::Error`,
+//! the loop advances `pos` past the offending token until a sync delimiter
+//! is found, then re-seeds the walker and retries up to MAX_RECOVERY_ROUNDS.
 //!
-//! **Long-term ideal:** recovery should be encoded as alternate WPDS edges
-//! (Skip/Delete/Substitute/Insert rules that fan out from every
-//! prefix-dispatch state, selected by `LexicographicWeight` lex-min when
-//! no primary rule matches). When that lands, the wrapper plumbing is
-//! deleted; recovery becomes first-class WPDS semantics.
+//! LONG-TERM (tracked as #64 / L12): recovery becomes alternate WPDS edges
+//! (Skip / Delete / Substitute / Insert Fork branches at every PrefixDispatch
+//! dead-end, selected by `LexicographicWeight` lex-min). When L12 lands,
+//! the wrapper loop is deleted and recovery becomes first-class WPDS semantics.
 //!
 //! Cross-references:
 //! - `prattail/src/wpds_runtime.rs` module doc
@@ -48,23 +49,16 @@
 //! spill-and-include pattern documented at
 //! `macros/src/logic/writer.rs::spill_and_include`).
 
-pub mod engine_impl;
-pub mod synthetic;
-pub mod tables;
-
-// Phase A.2+ per-concern modules will be declared here as they come
-// online. Declared empty for now to establish the stable file layout
-// referenced throughout the plan v2 sections §5–§8 and §3.
 pub mod binder;
 pub mod collection;
-pub mod cross_cat;
+pub mod engine_impl;
 pub mod facade;
 pub mod infix;
-pub mod mixfix;
-pub mod predicate;
 pub mod prefix;
 pub mod refinement;
 pub mod semantic_actions;
+pub mod synthetic;
+pub mod tables;
 
 use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
@@ -101,6 +95,17 @@ pub fn generate_wpds_engine_module(language: &LanguageDef) -> TokenStream {
     let bp_tables = infix::emit_bp_tables(language, &categories, &per_cat);
 
     let facade_fns = facade::emit_parse_fns(language, &categories, &engine_ident);
+
+    // Refinement-type predicate registrations. Empty if the language declares
+    // no `refinement_types`. Tests / language-init code call the emitted
+    // `register_refinements()` to install the predicates before parsing.
+    let refinement_registrations = refinement::emit_refinement_registrations(language);
+
+    // L11 (2026-04-28): per-grammar lexer configuration. Reads
+    // `case_insensitive` and `unicode_normalization` from
+    // `language.options` and emits a `LEXER_CONFIG` static the runtime
+    // lexer reads before each scan.
+    let lexer_config = emit_lexer_config(language);
 
     quote! {
         // ══════════════════════════════════════════════════════════════════
@@ -148,25 +153,66 @@ pub fn generate_wpds_engine_module(language: &LanguageDef) -> TokenStream {
         // Phase 2: per-category `parse_<Cat>_via_wpds` wrappers + shared
         // WpdsParseError.
         #facade_fns
+
+        // Refinement-type predicate registrations. Empty when no
+        // `refinement_types` are declared; otherwise emits a public
+        // `register_refinements()` function that callers (test setup,
+        // language init) invoke before parsing.
+        #refinement_registrations
+
+        // L11: per-grammar lexer configuration.
+        #lexer_config
     }
 }
 
-/// Collect category (type) names in source order.
+/// L11 (2026-04-28): emit a `LEXER_CONFIG` static reflecting the language's
+/// `options { case_insensitive: ..., unicode_normalization: ... }` block.
 ///
-/// `LanguageDef::types` is already in declaration order; we filter to types
-/// that have an associated grammar (i.e., that appear as the LHS of at least
-/// one rule). Built-in literal categories (Integer, Boolean, etc.) are
-/// excluded because they are not WPDS-driven entries.
-pub(crate) fn collect_category_names(language: &LanguageDef) -> Vec<String> {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut categories = Vec::new();
-    for rule in &language.terms {
-        let cat = rule.category.to_string();
-        if seen.insert(cat.clone()) {
-            categories.push(cat);
+/// For grammars without these options the const carries the defaults:
+/// `case_insensitive: false`, `unicode_normalization: None`. The runtime
+/// lexer reads these flags before scanning. Multi-mode lexing (L9) extends
+/// this with per-mode `ModeConfig` entries; for now the `modes` vec is
+/// empty (single default mode is implicit).
+fn emit_lexer_config(language: &LanguageDef) -> TokenStream {
+    use mettail_ast::language::AttributeValue;
+    let case_insensitive = matches!(
+        language.options.get("case_insensitive"),
+        Some(AttributeValue::Bool(true))
+    );
+    let normalization_expr = match language.options.get("unicode_normalization") {
+        Some(AttributeValue::Keyword(kw)) => match kw.as_str() {
+            "NFC" => quote! {
+                Some(mettail_prattail::lexer_types::UnicodeNormalForm::NFC)
+            },
+            "NFD" => quote! {
+                Some(mettail_prattail::lexer_types::UnicodeNormalForm::NFD)
+            },
+            "NFKC" => quote! {
+                Some(mettail_prattail::lexer_types::UnicodeNormalForm::NFKC)
+            },
+            "NFKD" => quote! {
+                Some(mettail_prattail::lexer_types::UnicodeNormalForm::NFKD)
+            },
+            _ => quote! { None },
+        },
+        _ => quote! { None },
+    };
+    quote! {
+        /// L11 (2026-04-28): per-grammar lexer configuration.
+        ///
+        /// Reflects `language!{} options { case_insensitive, unicode_normalization }`.
+        /// The runtime lexer consults this before scanning. Currently
+        /// thread-local; multi-mode (L9) will extend with mode_stack
+        /// integration.
+        pub fn lexer_config() -> mettail_prattail::lexer_types::LexerConfig {
+            mettail_prattail::lexer_types::LexerConfig {
+                case_insensitive: #case_insensitive,
+                unicode_normalization: #normalization_expr,
+                default_mode: 0,
+                modes: Vec::new(),
+            }
         }
     }
-    categories
 }
 
 /// Collect category names including those that have `literals { }` blocks
@@ -239,6 +285,22 @@ pub(crate) fn collect_category_names_with_literals(language: &LanguageDef) -> Ve
         }
         if type_def.native_type.is_some() {
             seen.insert(cat.clone());
+            categories.push(cat);
+        }
+    }
+    // Pass 5: any remaining user-declared `LangType` not covered above.
+    // Examples: Ambient's `Name` (declared but with no LHS rules, no
+    // literals block, no collection_kind, no native_type). These are
+    // typically reference-only categories — their tokens are bound by
+    // other rules' production bodies. `synthetic.rs` Phase 5a fabricates
+    // a Var rule for any such category, giving them an identifier-shaped
+    // parser. Without this pass the synthetic Var rule never gets emitted
+    // (it's gated on the category being in `cat_idx` built from the
+    // categories list returned here), and any rule body referencing the
+    // category becomes unparseable.
+    for type_def in &language.types {
+        let cat = type_def.name.to_string();
+        if seen.insert(cat.clone()) {
             categories.push(cat);
         }
     }
@@ -329,7 +391,7 @@ mod tests {
     #[test]
     fn collect_categories_in_source_order() {
         let lang = synthetic_language();
-        let cats = collect_category_names(&lang);
+        let cats = collect_category_names_with_literals(&lang);
         assert_eq!(cats, vec!["Expr".to_string(), "Bool".to_string()]);
     }
 
@@ -352,7 +414,7 @@ mod tests {
     #[test]
     fn primary_src_idx_is_first_declared_category() {
         let lang = synthetic_language();
-        let cats = collect_category_names(&lang);
+        let cats = collect_category_names_with_literals(&lang);
         let idx = primary_category_idx(&cats);
         assert_eq!(idx, 0, "Expr is declared first → src_idx 0");
     }

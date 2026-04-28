@@ -70,9 +70,11 @@ pub enum BinderPosition {
     /// next Literal in the syntax pattern).
     BinderListLoop { separator: String, close: String },
     /// `Param(name)` — sub-parse the param's category. After the parse
-    /// returns, the marker advances to the next position. If `is_final`,
-    /// the action fires when the marker pops in Unwinding.
-    ParamParse { cat: String, is_final: bool },
+    /// returns, the marker advances to the next position. When the marker
+    /// reaches `positions.len() + 1`, the rule's RuleAt symbol pops in
+    /// Unwinding and the action fires (no separate `is_final` flag needed
+    /// — it's encoded by position arithmetic).
+    ParamParse { cat: String },
     /// `Param(guard)` for `?guard:Guard` — parse predicate inline via
     /// `parse_predicate_from_tokens`. Advance position.
     GuardSlot,
@@ -116,8 +118,6 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
     }
     let mut param_map: std::collections::HashMap<String, ParamKind> =
         std::collections::HashMap::new();
-    let mut binder_param: Option<String> = None;
-    let mut body_param: Option<String> = None;
     let mut is_multi = false;
     let mut has_binder = false;
     let mut body_cat: Option<String> = None;
@@ -134,8 +134,6 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
             },
             TermParam::Abstraction { binder, body, ty } => {
                 let bcat = arrow_codomain_name(ty)?;
-                binder_param = Some(binder.to_string());
-                body_param = Some(body.to_string());
                 body_cat = Some(bcat.clone());
                 has_binder = true;
                 param_map.insert(binder.to_string(), ParamKind::Binder);
@@ -143,8 +141,6 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
             }
             TermParam::MultiAbstraction { binder, body, ty } => {
                 let bcat = arrow_codomain_name(ty)?;
-                binder_param = Some(binder.to_string());
-                body_param = Some(body.to_string());
                 body_cat = Some(bcat.clone());
                 has_binder = true;
                 is_multi = true;
@@ -156,14 +152,11 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
             }
         }
     }
-    let _ = (binder_param, body_param);
 
     // Walk syntax_pattern (skipping index 0 = trigger) building positions
     // + action_args in encountered-order (push order).
     let mut positions = Vec::new();
     let mut action_args = Vec::new();
-    let mut last_param_idx: Option<usize> = None;
-    let sp_len = sp.len();
     for (i, item) in sp.iter().enumerate().skip(1) {
         match item {
             SyntaxExpr::Literal(text) => {
@@ -178,18 +171,10 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                         action_args.push(ActionArgKind::BinderName);
                     }
                     ParamKind::Body { cat } | ParamKind::Simple { cat } => {
-                        // Determine if this Param is the FINAL Param/Body in the syntax_pattern
-                        // (any later index is Literal-only — implies action fires on this
-                        // Param's marker pop).
-                        let is_final = sp.iter().enumerate().skip(i + 1).all(|(_, it)| {
-                            matches!(it, SyntaxExpr::Literal(_))
-                        });
                         positions.push(BinderPosition::ParamParse {
                             cat: cat.clone(),
-                            is_final,
                         });
                         action_args.push(ActionArgKind::Term(cat.clone()));
-                        last_param_idx = Some(positions.len() - 1);
                     }
                     ParamKind::Guard => {
                         positions.push(BinderPosition::GuardSlot);
@@ -230,7 +215,6 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
             SyntaxExpr::Op(_) => return None,
         }
     }
-    let _ = (last_param_idx, sp_len);
 
     // Skip rules with no parsed positions (they're trivial and likely not
     // multi-step — let the atomic / TerminalKeyword classifier handle them).
@@ -274,52 +258,45 @@ fn lookup_src_idx(name: &str, categories: &[String]) -> Option<u16> {
     categories.iter().position(|c| c == name).map(|i| i as u16)
 }
 
-/// Phase 5: emit prefix-dispatch arms that recognize the FIRST literal
-/// of each multi-step rule. On match, the arm pushes a `RuleAt(1)`
-/// marker symbol and transitions to `BinderRule { ... }`.
+/// Phase 5 + F7 (2026-04-28): emit prefix-dispatch arms that recognize the
+/// FIRST literal of each multi-step rule. On match, the arm pushes a
+/// `RuleAt(1)` marker symbol and transitions to `BinderRule { ... }`.
 ///
-/// **Multi-rule trigger disambiguation (Stage 4 fix, 2026-04-27):** when
-/// multiple rules in the same result category share the same trigger
-/// keyword (e.g., Calculator's five `bool(arg)` cast rules with `arg` of
-/// different categories), naive per-rule arm emission produces identical
-/// match patterns where only the first arm fires (Rust match semantics).
-/// To match the trampoline's lookahead-based dispatch, we group rules by
-/// `(trigger, result_src_idx)` and for groups with ≥2 rules emit a single
-/// combined arm that peeks the token after the rule's literal prefix
-/// (typically `pos + 2` for `kw "(" arg ...` patterns) and dispatches to
-/// the rule whose first sub-parse `Param`'s source category has the peeked
-/// token in its FIRST set.
+/// **Multi-rule trigger disambiguation via Fork (F7):** when multiple rules
+/// in the same result category share the same trigger keyword (e.g.,
+/// Calculator's five `bool(arg)` cast rules with `arg` of different
+/// categories), the arm emits `WpdsStepAction::Fork` with one branch per
+/// rule. The walker fans out N `BranchCursor`s and `step_fanout` drives
+/// each independently until lex-min selects the surviving branch.
 ///
-/// **TECHNICAL DEBT (per `feedback_use_wpds_disambiguation_not_heuristics.md`):**
-/// the FIRST-set fallback table and the separator-lookahead scan in this
-/// function are HEURISTICS that paper over the absence of GLR-style
-/// branching. The principled fix is to emit `WpdsStepAction::Fork` with
-/// one branch per ambiguous rule and let the engine's lex-min weight
-/// machinery select the surviving branch. That requires the engine's
-/// step function to drive AmbiguityFanout state forward (currently it
-/// returns Idle), which is a runtime prerequisite. Until then, treat
-/// the heuristics here as a temporary scaffold and replace them with
-/// Fork emission once the engine supports the full Fork +
-/// AmbiguityFanout + BranchResolved handshake.
+/// Per-branch `LexicographicWeight::from_cost(0.0, result_src, rule_idx)`
+/// gives a unique tiebreak by source-order rule_idx — preserving the
+/// trampoline's first-declared-wins convention under tie. Wrong-arity
+/// branches auto-discriminate via parse failure: if the wrong branch's
+/// `BinderRule` state expects e.g. `,` but encounters `)`, the next
+/// `engine.step` returns `Error` → `Drop` → only the right-arity branch
+/// survives.
+///
+/// (Pre-F7 history: this used a FIRST-set lookup table + paren-depth scan
+/// + fallback-rule heuristic. The principled Fork-based replacement
+/// fulfills `feedback_use_wpds_disambiguation_not_heuristics.md`.)
 pub(crate) fn emit_binder_prefix_arms(
-    language: &mettail_ast::language::LanguageDef,
+    _language: &mettail_ast::language::LanguageDef,
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
 ) -> TokenStream {
     use std::collections::BTreeMap;
 
     /// Per-rule arm metadata.
-    struct RuleEntry<'a> {
+    struct RuleEntry {
         rule_i: usize,
         shape: BinderShape,
-        rule: &'a GrammarRule,
-        literal_prefix_count: usize,
     }
 
     // Group entries by (trigger, result_src_idx). BTreeMap gives
     // deterministic iteration order; within a group, source order is
     // preserved by insertion.
-    let mut groups: BTreeMap<(String, u16), Vec<RuleEntry<'_>>> = BTreeMap::new();
+    let mut groups: BTreeMap<(String, u16), Vec<RuleEntry>> = BTreeMap::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
             let Some(shape) = classify_binder(rule) else {
@@ -333,15 +310,10 @@ pub(crate) fn emit_binder_prefix_arms(
                 Some(SyntaxExpr::Literal(text)) => text.clone(),
                 _ => continue,
             };
-            let literal_prefix_count = literal_prefix_count_of(
-                rule.syntax_pattern.as_ref().expect("checked above"),
-            );
             let key = (trigger, cat_i as u16);
             groups.entry(key).or_default().push(RuleEntry {
                 rule_i,
                 shape,
-                rule,
-                literal_prefix_count,
             });
         }
     }
@@ -349,7 +321,8 @@ pub(crate) fn emit_binder_prefix_arms(
     let mut arms = Vec::new();
     for ((trigger, result_src_idx), entries) in groups {
         if entries.len() == 1 {
-            // Single-rule group: emit the legacy arm verbatim.
+            // Single-rule group: ConsumeAndPush directly. No ambiguity, no
+            // need for Fork.
             let entry = &entries[0];
             let rule_idx = entry.rule_i as u16;
             let body_src_idx = match &entry.shape.body_cat {
@@ -379,244 +352,46 @@ pub(crate) fn emit_binder_prefix_arms(
             continue;
         }
 
-        // Multi-rule group: emit a combined disambiguating arm.
-        //
-        // Require all rules in the group to share the same literal-prefix
-        // count (i.e., they all peek at the same offset). This holds for
-        // shapes like Calculator's five `bool(...)` rules. If they
-        // diverge, fall back to the legacy emission per-rule (the first
-        // arm wins, matching pre-fix behavior — diagnostics may surface
-        // via the parity gate).
-        let prefix_count = entries[0].literal_prefix_count;
-        let prefix_count_homogeneous = entries
+        // Multi-rule group → Fork. Emit one ForkBranch per rule; the
+        // walker fans out cursors and lex-min picks the winner.
+        let branches: Vec<TokenStream> = entries
             .iter()
-            .all(|e| e.literal_prefix_count == prefix_count);
-        if !prefix_count_homogeneous {
-            // Diverging prefix counts. Emit per-rule arms (only first
-            // fires) — the parity gate will surface this as a known
-            // limitation; future work tracked in
-            // wpds_codegen/binder.rs::emit_binder_prefix_arms doc.
-            for entry in &entries {
+            .map(|entry| {
                 let rule_idx = entry.rule_i as u16;
                 let body_src_idx = match &entry.shape.body_cat {
                     Some(name) => lookup_src_idx(name, categories).unwrap_or(result_src_idx),
                     None => result_src_idx,
                 };
-                arms.push(quote! {
-                    Some(mettail_prattail::automata::TokenKind::Fixed(__trigger))
-                        if __trigger == #trigger && state_cat_src_idx == #result_src_idx => {
-                        return WpdsStepAction::ConsumeAndPush {
-                            symbol: StackSymbolV2::rule_at(
-                                #result_src_idx, #rule_idx, 1u8, Some(_outer_bp),
-                            ),
-                            weight: LexicographicWeight::from_cost(
-                                0.0, #result_src_idx, #rule_idx,
-                            ),
-                            new_state: WpdsState::BinderRule {
-                                result_src_idx: #result_src_idx,
-                                rule_idx: #rule_idx,
-                                body_src_idx: #body_src_idx,
-                                outer_bp: _outer_bp,
-                            },
-                            capture_token: false,
-                        };
-                    }
-                });
-            }
-            continue;
-        }
-
-        // Build the inner match: per-FIRST-token → (rule_idx, body_src_idx).
-        // Conflicts (two rules' FIRST sets sharing a token) are resolved
-        // by source order (first-declared wins) via insert-only on a
-        // pattern-string key.
-        let mut seen_patterns: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        let mut inner_arms: Vec<TokenStream> = Vec::new();
-        // Pick the fallback rule: the one whose first-Param category is
-        // declared latest in `categories` (typically the most general
-        // domain like Proc). If no first-Param cat is found, use the
-        // last entry in source order.
-        let fallback_idx = entries
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, entry)| {
-                entry
-                    .shape
-                    .param_cats
-                    .first()
-                    .and_then(|c| categories.iter().position(|cn| cn == c))
-                    .unwrap_or(0)
-            })
-            .map(|(i, _)| i)
-            .unwrap_or(entries.len() - 1);
-        let fallback_rule_idx = entries[fallback_idx].rule_i as u16;
-        let fallback_body_src_idx = entries[fallback_idx]
-            .shape
-            .param_cats
-            .first()
-            .and_then(|c| lookup_src_idx(c, categories))
-            .unwrap_or(result_src_idx);
-
-        // Stage 4 fix: include the fallback rule in the FIRST-set scan
-        // (do NOT skip it). The fallback's role is purely to handle
-        // unknown tokens (the `_ =>` arm); its FIRST tokens still belong
-        // in the dispatch table so its specific tokens map to its own
-        // rule_idx (e.g., `StringLit → StrToBool`) instead of leaking
-        // into the next iterated rule whose FIRST set also accepts the
-        // shared token (e.g., `ProcToBool` accepting `StringLit` via
-        // `ProcStr` cross-cat). Without this, the SECOND rule with a
-        // shared FIRST token wins (since `seen_patterns.insert` rejects
-        // duplicates after the first), inverting the trampoline's
-        // first-declared-wins tiebreak convention.
-        for entry in entries.iter() {
-            let rule_idx_u16 = entry.rule_i as u16;
-            let first_param_cat = entry.shape.param_cats.first();
-            let first_param_src_idx = first_param_cat
-                .and_then(|c| lookup_src_idx(c, categories))
-                .unwrap_or(result_src_idx);
-            let Some(cat_name) = first_param_cat else {
-                continue;
-            };
-            let first_set = super::prefix::first_set_of_category(cat_name, language);
-            for ft in &first_set {
-                let pat = &ft.pattern;
-                let key = format!(
-                    "{}::{}",
-                    pat,
-                    ft.extra_guard
-                        .as_ref()
-                        .map(|g| g.to_string())
-                        .unwrap_or_default()
-                );
-                if !seen_patterns.insert(key) {
-                    continue;
-                }
-                let arm = match &ft.extra_guard {
-                    Some(g) => quote! {
-                        #pat if #g => (#rule_idx_u16, #first_param_src_idx),
-                    },
-                    None => quote! {
-                        #pat => (#rule_idx_u16, #first_param_src_idx),
-                    },
-                };
-                inner_arms.push(arm);
-            }
-        }
-
-        // Stage 4 fix (Category B): when the multi-rule group has rules
-        // of differing arity (e.g., Calculator's 1-arg `IntId` and 2-arg
-        // `IntBin` both triggered by `int(`), the FIRST-set dispatch on
-        // the first arg can't disambiguate (both rules accept the same
-        // primitive integer in their first slot). Resolve by scanning
-        // forward at runtime to the first separator at paren-depth 0:
-        // a `,` selects a multi-arg rule; `)` selects a 1-arg rule.
-        // Mirrors the trampoline's NFA-style try-each-rule loop.
-        let arities: Vec<u8> = entries.iter().map(|e| e.shape.action_arity).collect();
-        let has_mixed_arity = arities.iter().min() != arities.iter().max();
-        let arity_dispatch = if has_mixed_arity {
-            let multi_arity_idx = entries
-                .iter()
-                .position(|e| e.shape.action_arity > 1)
-                .unwrap_or(0);
-            let multi_rule_idx = entries[multi_arity_idx].rule_i as u16;
-            let multi_body_src_idx = entries[multi_arity_idx]
-                .shape
-                .param_cats
-                .first()
-                .and_then(|c| lookup_src_idx(c, categories))
-                .unwrap_or(result_src_idx);
-            Some(quote! {
-                {
-                    // Lookahead scan: starting just past the literal
-                    // prefix (i.e., at the first arg's first token),
-                    // walk forward tracking paren/bracket/brace depth.
-                    // The first separator at depth 0 disambiguates:
-                    // `,` → multi-arg rule; `)`/`]`/`}` → 1-arg rule.
-                    let mut __depth: i32 = 0;
-                    let mut __scan = *pos + #prefix_count;
-                    let mut __sep: u8 = 0; // 0=none, 1=comma, 2=close
-                    loop {
-                        match tokens.peek_text(__scan) {
-                            None => { break; }
-                            Some(t) => {
-                                if t == "(" || t == "[" || t == "{" {
-                                    __depth += 1;
-                                } else if t == ")" || t == "]" || t == "}" {
-                                    if __depth == 0 { __sep = 2; break; }
-                                    __depth -= 1;
-                                } else if t == "," && __depth == 0 {
-                                    __sep = 1;
-                                    break;
-                                }
-                            }
-                        }
-                        __scan += 1;
-                        if __scan > *pos + 4096 { break; } // guard runaway
-                    }
-                    if __sep == 1 {
-                        (#multi_rule_idx, #multi_body_src_idx)
-                    } else {
-                        match __next {
-                            #(#inner_arms)*
-                            _ => (#fallback_rule_idx, #fallback_body_src_idx),
-                        }
+                quote! {
+                    mettail_prattail::wpds_walker::ForkBranch {
+                        symbol: StackSymbolV2::rule_at(
+                            #result_src_idx, #rule_idx, 1u8, Some(_outer_bp),
+                        ),
+                        weight: LexicographicWeight::from_cost(
+                            0.0, #result_src_idx, #rule_idx,
+                        ),
+                        new_state: WpdsState::BinderRule {
+                            result_src_idx: #result_src_idx,
+                            rule_idx: #rule_idx,
+                            body_src_idx: #body_src_idx,
+                            outer_bp: _outer_bp,
+                        },
                     }
                 }
             })
-        } else {
-            None
-        };
-
-        let dispatch_body = match arity_dispatch {
-            Some(body) => body,
-            None => quote! {
-                match __next {
-                    #(#inner_arms)*
-                    _ => (#fallback_rule_idx, #fallback_body_src_idx),
-                }
-            },
-        };
+            .collect();
 
         arms.push(quote! {
             Some(mettail_prattail::automata::TokenKind::Fixed(__trigger))
                 if __trigger == #trigger && state_cat_src_idx == #result_src_idx => {
-                let __lookahead = *pos + #prefix_count;
-                let __next = tokens.peek_kind(__lookahead);
-                let (__rule_idx, __body_src_idx): (u16, u16) = #dispatch_body;
-                return WpdsStepAction::ConsumeAndPush {
-                    symbol: StackSymbolV2::rule_at(
-                        #result_src_idx, __rule_idx, 1u8, Some(_outer_bp),
-                    ),
-                    weight: LexicographicWeight::from_cost(
-                        0.0, #result_src_idx, __rule_idx,
-                    ),
-                    new_state: WpdsState::BinderRule {
-                        result_src_idx: #result_src_idx,
-                        rule_idx: __rule_idx,
-                        body_src_idx: __body_src_idx,
-                        outer_bp: _outer_bp,
-                    },
-                    capture_token: false,
+                return WpdsStepAction::Fork {
+                    branches: vec![ #( #branches ),* ],
+                    consume_trigger: true,
                 };
             }
         });
     }
     quote! { #(#arms)* }
-}
-
-/// Count consecutive `Literal` items at the start of a syntax pattern
-/// (including the trigger at index 0). Returns the offset at which the
-/// first sub-parse `Param` slot begins.
-fn literal_prefix_count_of(sp: &[SyntaxExpr]) -> usize {
-    let mut n = 0usize;
-    for item in sp {
-        match item {
-            SyntaxExpr::Literal(_) => n += 1,
-            _ => break,
-        }
-    }
-    n.max(1) // trigger always counts
 }
 
 /// Phase 5: emit the body of `WpdsState::BinderRule`. Reads the marker's
@@ -701,11 +476,12 @@ pub(crate) fn emit_binder_rule_body(
                             };
                         }
                     },
-                    BinderPosition::BinderListLoop { separator, close } => {
-                        let _ = (separator, close);
+                    BinderPosition::BinderListLoop { separator: _, close } => {
                         // Phase 5b: enter BinderListLoop sub-state. The
-                        // sub-state captures Idents until close, advances
-                        // marker to next_pos when close is observed.
+                        // first iteration here checks `close` (empty list)
+                        // or starts collecting Idents; subsequent iterations
+                        // (handled in BinderListLoop's own state) use the
+                        // separator to chain Ident captures.
                         quote! {
                             (#result_src_idx, #rule_idx, #pos) => {
                                 // Check first token: if Ident, capture and start collecting.
@@ -753,9 +529,8 @@ pub(crate) fn emit_binder_rule_body(
                             }
                         }
                     }
-                    BinderPosition::ParamParse { cat, is_final } => {
+                    BinderPosition::ParamParse { cat } => {
                         let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
-                        let _ = is_final;
                         quote! {
                             (#result_src_idx, #rule_idx, #pos) => {
                                 // Replace marker to next_pos so when the
@@ -841,7 +616,6 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
                             let token_text = tokens.peek_text(_pos).unwrap_or("");
                             if token_text == #close {
                                 // Done. Advance to next position via Replace.
-                                let _ = #pos; // suppress unused
                                 return WpdsStepAction::ConsumeAndReplace {
                                     symbol: StackSymbolV2::rule_at(
                                         #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
@@ -1042,36 +816,6 @@ pub(crate) fn emit_binder_action_entry(
         }
         ,
     })
-}
-
-/// Phase 5b: per-(rule_idx, position) lookup — is the position the
-/// FINAL ParamParse before the action fires? Used by Unwinding-RuleAt
-/// to decide whether to fire the action or advance the marker.
-pub(crate) fn emit_binder_unwinding_dispatch(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
-    let mut arms = Vec::new();
-    for (cat_i, rules) in per_cat.iter().enumerate() {
-        for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_binder(rule) else {
-                continue;
-            };
-            let result_src_idx = cat_i as u16;
-            let rule_idx = rule_i as u16;
-            // Find the FINAL position (last positions index + 1 = total positions).
-            let total_pos = shape.positions.len() as u8 + 1;
-            arms.push(quote! {
-                (#result_src_idx, #rule_idx) => Some(#total_pos),
-            });
-        }
-    }
-    if arms.is_empty() {
-        return quote! { None::<u8> };
-    }
-    quote! {
-        match (result_src_idx, rule_idx) {
-            #(#arms)*
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

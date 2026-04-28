@@ -44,6 +44,7 @@
 
 use std::any::Any;
 use std::fmt;
+use std::sync::Arc;
 
 use crate::automata::semiring::Semiring;
 use crate::automata::TokenKind;
@@ -74,6 +75,24 @@ pub enum SymbolKind {
     /// collection rule; `bp` carries an 8-bit accumulator id pointing into
     /// `SemanticBuilder.collection_stack`.
     CollectionMarker,
+    /// B7 Pattern 2: marker pushed at a grouping `(` so the engine knows
+    /// we're inside a precedence-reset sub-parse. The symbol's
+    /// `category_src_idx` is the result category (so when Unwinding
+    /// returns to this marker, we know which category's InfixLoop to
+    /// resume); `bp` carries the saved outer Pratt cur_bp for restoration
+    /// on `)` consumption. `rule_index_in_category` is unused (grouping
+    /// is transparent — no AST node, no action fires when this marker
+    /// pops).
+    GroupingMarker,
+    /// B7 Pattern 1 mixfix continuation marker. Pushed after an InfixLoop
+    /// dispatch consumes a mixfix operator's trigger token (e.g., `?` for
+    /// ternary). Carries `(category_src_idx = result_cat, rule_index = mixfix_rule)`
+    /// and uses `bp` as the "operand count completed so far" — initially 0
+    /// (we're about to parse parts[0]'s operand), incremented via Replace
+    /// each time an inner operand returns. When count == parts.len(), the
+    /// marker is ConsumeAndPop'd, firing the rule's action with arity =
+    /// 1 + parts.len (LHS already on builder + parts.len inner operands).
+    MixfixMarker,
 }
 
 /// A WPDS stack symbol indexed by integer category and rule position.
@@ -162,6 +181,39 @@ impl StackSymbolV2 {
         }
     }
 
+    /// B7 Pattern 2: construct a grouping-marker symbol. `outer_bp` is
+    /// the saved Pratt cur_bp at the open `(`; on close `)`, the engine
+    /// transitions to `WpdsState::InfixLoop { cur_bp: outer_bp }` so
+    /// surrounding operators continue at the original precedence level.
+    pub fn grouping_marker(result_src_idx: u16, outer_bp: u8) -> Self {
+        StackSymbolV2 {
+            category_src_idx: result_src_idx,
+            rule_index_in_category: 0,
+            bp: Some(outer_bp),
+            kind: SymbolKind::GroupingMarker,
+        }
+    }
+
+    /// B7 Pattern 1: construct a mixfix continuation marker. `bp` carries
+    /// the count of inner operands already parsed (0..=parts.len). On
+    /// each Unwinding back to this marker, the engine reads `bp`, demands
+    /// the corresponding `parts[bp].following_terminal`, increments via
+    /// Replace, and pushes the next operand's CategoryEntry. When `bp`
+    /// equals `parts.len`, the marker is ConsumeAndPop'd (firing the
+    /// mixfix rule's action with arity = 1 + parts.len).
+    pub fn mixfix_marker(
+        result_src_idx: u16,
+        rule_idx: u16,
+        operands_completed: u8,
+    ) -> Self {
+        StackSymbolV2 {
+            category_src_idx: result_src_idx,
+            rule_index_in_category: rule_idx,
+            bp: Some(operands_completed),
+            kind: SymbolKind::MixfixMarker,
+        }
+    }
+
     /// Construct a return symbol (pop pending).
     pub fn return_symbol(category_src_idx: u16, rule_index_in_category: u16) -> Self {
         StackSymbolV2 {
@@ -213,6 +265,14 @@ impl fmt::Display for StackSymbolV2 {
                 "⟨cat#{}.rule#{}.coll⟩{}",
                 self.category_src_idx, self.rule_index_in_category, bp_suffix
             ),
+            SymbolKind::GroupingMarker => {
+                write!(f, "⟨cat#{}.group⟩{}", self.category_src_idx, bp_suffix)
+            }
+            SymbolKind::MixfixMarker => write!(
+                f,
+                "⟨cat#{}.rule#{}.mixfix⟩{}",
+                self.category_src_idx, self.rule_index_in_category, bp_suffix
+            ),
         }
     }
 }
@@ -250,6 +310,54 @@ pub enum WpdsState {
         /// Index into `SemanticBuilder.collection_stack` identifying this
         /// in-flight accumulator.
         accumulator_id: u8,
+    },
+    /// B7 (2-token open delimiter): after the prefix arm consumed the
+    /// open keyword (e.g. `"list"`) and pushed the `CollectionMarker`,
+    /// this state demands the literal `(` next, consumes it, and
+    /// transitions to `PrefixDispatch` to parse the first element. The
+    /// state exists because the lexer tokenizes `list(` as two separate
+    /// `Fixed` tokens (whitespace between them is allowed), so a single
+    /// `ConsumeAndPush` cannot atomically consume both. For 3-element
+    /// synthetic patterns (no synthetic paren — e.g. RhoCalc's `"{" ... "}"`),
+    /// the prefix arm transitions directly to `PrefixDispatch` and skips
+    /// this state.
+    CollectionOpenParen {
+        /// Result category index (the collection's category).
+        result_src_idx: u16,
+        /// Rule index within the result category (selects finalize action).
+        rule_idx: u16,
+        /// Element category index — what the first (and subsequent)
+        /// element(s) are parsed as. For self-collections this equals
+        /// `result_src_idx`; for cross-cat collections (e.g. Calculator's
+        /// `![Vec<Proc>] as List`) it differs and the engine must push
+        /// a `CategoryEntry(element_src_idx)` after consuming `(`.
+        element_src_idx: u16,
+        /// Outer Pratt cur_bp to restore on close-delimiter consumption.
+        outer_bp: u8,
+    },
+    // (B7 Pattern 2 grouping uses no dedicated state — the prefix arm
+    // emits ConsumeAndPush(GroupingMarker, new_state=PrefixDispatch{cur_bp:0})
+    // directly. The marker's `bp` field carries the saved outer cur_bp
+    // for restoration. When Unwinding sees a GroupingMarker on top, the
+    // engine demands `)`, ConsumeAndPops, and resumes
+    // InfixLoop{cur_bp: marker.bp}.)
+
+    /// B7 Pattern 1 mixfix continuation. After Unwinding-MixfixMarker
+    /// consumes the per-operand following separator, the engine transitions
+    /// here to ReplaceAndPush the next operand's CategoryEntry. The state
+    /// carries `completed_idx` (= number of inner operands fully parsed
+    /// AND whose separator just got consumed) so the next step can index
+    /// into `mixfix_parts(result_src, rule_idx)` to find the next operand
+    /// category. Marker on the GSS is updated to reflect the new
+    /// `completed_idx` via Replace.
+    MixfixContinuation {
+        /// Result category index (the mixfix rule's result cat).
+        result_src_idx: u16,
+        /// Rule index within the result category.
+        rule_idx: u16,
+        /// Number of inner operands whose separator has been consumed
+        /// (i.e., index of the NEXT inner operand to parse).
+        completed_idx: u8,
     },
     /// Phase 5: mid-binder-rule. The engine progresses through the rule's
     /// `syntax_pattern` items (literals, binder ident slot, body parse)
@@ -465,6 +573,27 @@ pub trait WpdsTokenSource {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// L4 (2026-04-28): non-primary alternative interpretations of position
+    /// `pos`. Returns the alternatives BEYOND the primary `peek_kind`. The
+    /// default is empty (no lex ambiguity); concrete sources backed by a
+    /// `LexStream` (see `MultiTokenSource`) override this.
+    fn peek_alternatives(&self, _pos: usize) -> &[crate::lexer_types::LexAlternative] {
+        &[]
+    }
+
+    /// Whether position `pos` has multiple alternatives — i.e., the lex
+    /// substrate found 2+ accepting `TokenKind` interpretations at this
+    /// byte position.
+    fn is_ambiguous_at(&self, pos: usize) -> bool {
+        !self.peek_alternatives(pos).is_empty()
+    }
+
+    /// Per-position end byte for alternative `alt_idx`. Returns `None` for
+    /// sources that don't track byte offsets (the default `SliceTokenSource`).
+    fn end_byte(&self, _pos: usize, _alt_idx: usize) -> Option<usize> {
+        None
+    }
 }
 
 /// A slice-backed `WpdsTokenSource` for tests and simple batch consumers.
@@ -496,6 +625,76 @@ impl<'a> WpdsTokenSource for SliceTokenSource<'a> {
     }
     fn len(&self) -> usize {
         self.kinds.len()
+    }
+}
+
+/// L4 (2026-04-28): a `WpdsTokenSource` backed by a [`LexStream`].
+///
+/// Each entry carries one or more alternatives; the primary (lowest-weight)
+/// alternative is exposed via `peek_kind`/`peek_text`, and the remaining
+/// alternatives surface via `peek_alternatives` so the walker can fork at
+/// lex-ambiguous positions.
+///
+/// `MultiTokenSource` caches the primary `kind`/`text` slices to keep
+/// `peek_kind`/`peek_text` allocation-free during the parse loop.
+pub struct MultiTokenSource {
+    pub stream: crate::lexer_types::LexStream,
+    primary_kinds: Vec<TokenKind>,
+    primary_texts: Vec<String>,
+    /// Empty slice cache used when `peek_alternatives` would return more
+    /// than the single non-ambiguous primary.
+    empty_alts: Vec<crate::lexer_types::LexAlternative>,
+}
+
+impl MultiTokenSource {
+    /// Construct from a `LexStream`. Caches per-position primary kind/text.
+    pub fn new(stream: crate::lexer_types::LexStream) -> Self {
+        let primary_kinds = stream
+            .entries
+            .iter()
+            .map(|e| e.primary().kind.clone())
+            .collect();
+        let primary_texts = stream
+            .entries
+            .iter()
+            .map(|e| e.primary().text.clone())
+            .collect();
+        Self {
+            stream,
+            primary_kinds,
+            primary_texts,
+            empty_alts: Vec::new(),
+        }
+    }
+}
+
+impl WpdsTokenSource for MultiTokenSource {
+    fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
+        self.primary_kinds.get(pos).cloned()
+    }
+
+    fn peek_text(&self, pos: usize) -> Option<&str> {
+        self.primary_texts.get(pos).map(|s| s.as_str())
+    }
+
+    fn len(&self) -> usize {
+        self.stream.entries.len()
+    }
+
+    fn peek_alternatives(&self, pos: usize) -> &[crate::lexer_types::LexAlternative] {
+        match self.stream.entries.get(pos) {
+            Some(e) if e.alternatives.len() > 1 => &e.alternatives[1..],
+            _ => &self.empty_alts,
+        }
+    }
+
+    fn end_byte(&self, pos: usize, alt_idx: usize) -> Option<usize> {
+        self.stream
+            .entries
+            .get(pos)?
+            .alternatives
+            .get(alt_idx)
+            .map(|a| a.end_byte)
     }
 }
 
@@ -782,6 +981,31 @@ impl SemanticBuilder {
         self.stack.push(ActionArg::Predicate(Box::new(pred)));
     }
 
+    /// Cleanup 4 (Option A refinement, 2026-04-28): replay path for an
+    /// Arc-erased predicate captured from a Fork branch. `BuilderDelta::PushPredicate`
+    /// holds `Arc<dyn Any + Send + Sync>` so cloning during nested-Fork
+    /// `ForkInto` is total (no `Box` non-Clone restriction). At commit
+    /// time we downcast back to the concrete predicate type, clone, and
+    /// re-box for `ActionArg::Predicate(Box<dyn Any + Send>)` — the
+    /// downstream `into_predicate::<T>()` API stays unchanged.
+    ///
+    /// Today's only emitted predicate type is `BehavioralPred` (which
+    /// derives `Clone`). Future predicate types must be added to the
+    /// downcast cascade; the debug_assert flags missing additions
+    /// loudly. Cloning is cheap: predicate ASTs are small.
+    pub fn push_predicate_arc(&mut self, pred: Arc<dyn Any + Send + Sync>) {
+        if let Some(bp) = pred.downcast_ref::<crate::behavioral_pred::BehavioralPred>() {
+            self.stack.push(ActionArg::Predicate(Box::new(bp.clone())));
+            return;
+        }
+        debug_assert!(
+            false,
+            "push_predicate_arc: Arc<dyn Any + Send + Sync> did not downcast \
+             to BehavioralPred — add the new predicate type to the cascade",
+        );
+        let _ = pred;
+    }
+
     /// Pop the top N args (returned in push order: result[0] was
     /// pushed first). Panics if fewer than N args are available — a
     /// programming error in the engine's arity table.
@@ -864,6 +1088,27 @@ impl SemanticBuilder {
         } else {
             Vec::new()
         }
+    }
+
+    /// Option A (2026-04-28): donate cursor-local collection accumulators
+    /// to the live builder en bloc. Called by `commit_winner` before delta
+    /// replay so that `MaybeSpliceCollection` deltas (which call
+    /// `push_to_collection(id)`) and `FireAction` deltas (whose action
+    /// calls `drain_collection(id)`) find populated slots.
+    ///
+    /// Invariant: live builder's `collection_stack` MUST be empty at call
+    /// time — Fork is only emitted at PrefixDispatch boundaries where no
+    /// in-flight collection state exists on the live builder. The cursor's
+    /// `collection_stack` carries all accumulators allocated during fanout;
+    /// after donate, the cursor's mirror is empty (moved here).
+    pub fn adopt_collection_stack(&mut self, accs: Vec<Vec<ActionArg>>) {
+        debug_assert!(
+            self.collection_stack.is_empty(),
+            "adopt_collection_stack: live builder collection_stack must be \
+             empty at fanout boundary; got {} in-flight accumulators",
+            self.collection_stack.len(),
+        );
+        self.collection_stack = accs;
     }
 }
 

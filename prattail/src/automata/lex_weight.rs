@@ -163,14 +163,29 @@ use crate::automata::semiring::{
 // LexicographicWeight
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Three-component lexicographic weight: primary tropical cost + two integer
-/// tiebreaks (source-category and rule indices).
+/// Four-component lexicographic weight: primary tropical cost + three integer
+/// tiebreaks. Order: `primary > lex_alt_idx > src_idx > rule_idx`.
+///
+/// L1 (2026-04-28): added `lex_alt_idx` for lex-time disambiguation. When a
+/// DFA's `alt_accepts` slice contains 2+ TokenKinds at the same byte position,
+/// the walker forks across alternatives and uses `lex_alt_idx` (per the L2
+/// `LexAlternative` ordering) to break ties. Lower index = higher-priority
+/// alternative. Default `0` means "no lex ambiguity at this token".
+///
+/// `lex_alt_idx` lives ABOVE `src_idx` in priority: lex disambiguation runs
+/// before parser dispatch (per the WPDS-edge model in #64), so a parse path
+/// preferring a lower-index lex alternative wins over a path with the same
+/// primary cost but a higher-index alternative even if its `src_idx` would
+/// otherwise have won.
 ///
 /// See module docs for the semantic justification of left-projection times.
 #[derive(Clone, Copy, PartialEq)]
 pub struct LexicographicWeight {
     /// Primary cost — tropical (lower is better).
     pub primary: TropicalWeight,
+    /// Lex-alternative index within a DFA accept state (L1, lower wins).
+    /// `0` means "no lex ambiguity at this token" — the default.
+    pub lex_alt_idx: u16,
     /// Source-category index in the language's declared order (lower wins).
     pub src_idx: u16,
     /// Rule index within the category (lower wins).
@@ -178,27 +193,64 @@ pub struct LexicographicWeight {
 }
 
 impl LexicographicWeight {
-    /// Construct a weight with the given components.
+    /// Construct a weight with the given components. Sets `lex_alt_idx` to 0.
     #[inline]
     pub const fn new(primary: TropicalWeight, src_idx: u16, rule_idx: u16) -> Self {
         LexicographicWeight {
             primary,
+            lex_alt_idx: 0,
+            src_idx,
+            rule_idx,
+        }
+    }
+
+    /// Construct a weight with explicit lex-alt index.
+    #[inline]
+    pub const fn new_with_lex(
+        primary: TropicalWeight,
+        lex_alt_idx: u16,
+        src_idx: u16,
+        rule_idx: u16,
+    ) -> Self {
+        LexicographicWeight {
+            primary,
+            lex_alt_idx,
             src_idx,
             rule_idx,
         }
     }
 
     /// Construct a weight from a raw tropical cost and indices.
+    /// Sets `lex_alt_idx` to 0 (default — no lex ambiguity).
     #[inline]
     pub const fn from_cost(cost: f64, src_idx: u16, rule_idx: u16) -> Self {
         LexicographicWeight {
             primary: TropicalWeight::new(cost),
+            lex_alt_idx: 0,
             src_idx,
             rule_idx,
         }
     }
 
-    /// Lex-comparison: primary first, then src_idx, then rule_idx.
+    /// Construct a weight with explicit `lex_alt_idx` for lex-fork branches.
+    /// L1 (2026-04-28): used by the lex-Fork emission path (L6) when a DFA
+    /// position has multiple accepting `TokenKind` alternatives.
+    #[inline]
+    pub const fn from_cost_with_lex(
+        cost: f64,
+        src_idx: u16,
+        rule_idx: u16,
+        lex_alt_idx: u16,
+    ) -> Self {
+        LexicographicWeight {
+            primary: TropicalWeight::new(cost),
+            lex_alt_idx,
+            src_idx,
+            rule_idx,
+        }
+    }
+
+    /// Lex-comparison: primary, then lex_alt_idx, then src_idx, then rule_idx.
     ///
     /// Returns `Ordering::Less` for the lexicographically smaller weight
     /// (the "better" parse under our priority rules).
@@ -208,6 +260,7 @@ impl LexicographicWeight {
         self.primary
             .0
             .total_cmp(&other.primary.0)
+            .then(self.lex_alt_idx.cmp(&other.lex_alt_idx))
             .then(self.src_idx.cmp(&other.src_idx))
             .then(self.rule_idx.cmp(&other.rule_idx))
     }
@@ -229,8 +282,9 @@ impl Ord for LexicographicWeight {
 
 impl std::hash::Hash for LexicographicWeight {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Hash via bit pattern of primary plus the two indices.
+        // Hash via bit pattern of primary plus the three indices.
         self.primary.0.to_bits().hash(state);
+        self.lex_alt_idx.hash(state);
         self.src_idx.hash(state);
         self.rule_idx.hash(state);
     }
@@ -241,6 +295,7 @@ impl Semiring for LexicographicWeight {
     fn zero() -> Self {
         LexicographicWeight {
             primary: TropicalWeight::zero(),
+            lex_alt_idx: u16::MAX,
             src_idx: u16::MAX,
             rule_idx: u16::MAX,
         }
@@ -250,6 +305,7 @@ impl Semiring for LexicographicWeight {
     fn one() -> Self {
         LexicographicWeight {
             primary: TropicalWeight::one(),
+            lex_alt_idx: u16::MAX,
             src_idx: u16::MAX,
             rule_idx: u16::MAX,
         }
@@ -281,6 +337,7 @@ impl Semiring for LexicographicWeight {
         } else {
             LexicographicWeight {
                 primary: self.primary.times(&other.primary),
+                lex_alt_idx: self.lex_alt_idx,
                 src_idx: self.src_idx,
                 rule_idx: self.rule_idx,
             }
@@ -299,6 +356,7 @@ impl Semiring for LexicographicWeight {
 
     fn approx_eq(&self, other: &Self, epsilon: f64) -> bool {
         self.primary.approx_eq(&other.primary, epsilon)
+            && self.lex_alt_idx == other.lex_alt_idx
             && self.src_idx == other.src_idx
             && self.rule_idx == other.rule_idx
     }
@@ -314,8 +372,8 @@ impl fmt::Debug for LexicographicWeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "LexWeight(primary={:?}, src={}, rule={})",
-            self.primary, self.src_idx, self.rule_idx
+            "LexWeight(primary={:?}, lex_alt={}, src={}, rule={})",
+            self.primary, self.lex_alt_idx, self.src_idx, self.rule_idx
         )
     }
 }
@@ -324,8 +382,8 @@ impl fmt::Display for LexicographicWeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "({}, src#{}, rule#{})",
-            self.primary.0, self.src_idx, self.rule_idx
+            "({}, lex#{}, src#{}, rule#{})",
+            self.primary.0, self.lex_alt_idx, self.src_idx, self.rule_idx
         )
     }
 }
@@ -420,6 +478,38 @@ mod tests {
         let late_rule = LexicographicWeight::from_cost(5.0, 3, 9);
         assert_eq!(early_rule.plus(&late_rule), early_rule);
         assert_eq!(late_rule.plus(&early_rule), early_rule);
+    }
+
+    #[test]
+    fn lex_alt_idx_breaks_tie_above_src_idx() {
+        // L1 (2026-04-28): lex_alt_idx beats src_idx in tiebreak ordering.
+        // Same primary cost → lower lex_alt_idx wins, even if its src_idx
+        // would otherwise lose. Lex disambiguation runs before parser dispatch.
+        let lex_pref = LexicographicWeight::from_cost_with_lex(5.0, 9, 9, 0);
+        let lex_alt = LexicographicWeight::from_cost_with_lex(5.0, 1, 1, 1);
+        assert_eq!(lex_pref.plus(&lex_alt), lex_pref);
+        assert_eq!(lex_alt.plus(&lex_pref), lex_pref);
+    }
+
+    #[test]
+    fn lex_alt_idx_yields_to_lower_primary() {
+        // Primary cost still dominates: a higher lex_alt_idx with a
+        // strictly-better primary cost wins.
+        let alt_with_better_cost = LexicographicWeight::from_cost_with_lex(2.0, 0, 0, 5);
+        let pref_with_worse_cost = LexicographicWeight::from_cost_with_lex(3.0, 0, 0, 0);
+        assert_eq!(
+            alt_with_better_cost.plus(&pref_with_worse_cost),
+            alt_with_better_cost,
+        );
+    }
+
+    #[test]
+    fn from_cost_defaults_lex_alt_to_zero() {
+        // The 3-arg constructor sets lex_alt_idx to 0 (no lex ambiguity).
+        // This preserves source compatibility for the many callers that
+        // don't reason about lex alternatives.
+        let w = LexicographicWeight::from_cost(1.0, 2, 3);
+        assert_eq!(w.lex_alt_idx, 0);
     }
 
     #[test]

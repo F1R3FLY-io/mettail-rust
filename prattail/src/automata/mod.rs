@@ -67,6 +67,30 @@ pub enum TokenKind {
     DoubleDollar,
     /// Custom user-defined token kind from the `tokens { ... }` block.
     Custom(String),
+    /// L3 (2026-04-28): lex failure at this position — no DFA accept matched
+    /// the current bytes. Carries an error category for diagnostics and
+    /// recovery decisions. Treated as a real token in the parse so error
+    /// recovery (#64 / L12 WPDS-edge recovery) can compose lex failures
+    /// with parser failures uniformly.
+    LexError(LexErrorKind),
+}
+
+/// L3 (2026-04-28): kind of lex failure. Used by `TokenKind::LexError` to
+/// distinguish "no match" (DFA dead-end) from semantic eval failures
+/// (e.g., `parse_int_lit` returning `Err` for an out-of-range literal).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum LexErrorKind {
+    /// The DFA had no accepting transition at this byte position. The
+    /// nearest match-or-recovery target is determined by the lex-Fork
+    /// machinery (#64 / L12).
+    NoMatch,
+    /// A token DFA accepted but its eval block returned `Err`. The lexer
+    /// reports this so parser-side recovery can react to a malformed
+    /// literal differently from a structural mismatch.
+    EvalFailed,
+    /// An unexpected end-of-input was reached mid-token (e.g., unterminated
+    /// string literal).
+    UnexpectedEof,
 }
 
 impl TokenKind {
@@ -90,6 +114,9 @@ impl TokenKind {
             // Default priority for custom tokens; actual priority is set from
             // CustomTokenSpec.priority at the NFA accept-state level.
             TokenKind::Custom(_) => 2,
+            // LexError tokens are surfaced for recovery; lowest priority so
+            // any successful match preempts the error variant.
+            TokenKind::LexError(_) => 0,
         }
     }
 }

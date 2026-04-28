@@ -16,6 +16,7 @@ use super::binder::{classify_binder, emit_binder_action_entry};
 use super::collection::{classify_collection, CollectionShape};
 use super::infix;
 use super::prefix::{classify_atomic, AtomicShape, LiteralFamily};
+use super::refinement::lookup_refinement_type;
 use crate::gen::native::NativeType;
 
 /// Emit the body of `action_for` — a `match (src_idx, rule_idx)` with
@@ -47,7 +48,7 @@ pub fn emit_action_for_body(
                 continue;
             }
             // Phase 4: try classifying as a collection rule next.
-            if let Some(shape) = classify_collection(rule) {
+            if let Some(shape) = classify_collection(rule, language) {
                 if let Some(entry) =
                     emit_collection_action_entry(cat_i as u16, *rule_idx, &shape, &cat_ident)
                 {
@@ -57,9 +58,15 @@ pub fn emit_action_for_body(
             }
             let shape = classify_atomic(rule, language);
             if !matches!(shape, AtomicShape::NonAtomic) {
-                if let Some(entry) =
-                    emit_action_entry_arm(cat_i as u16, *rule_idx, &shape, &cat_ident)
-                {
+                let refinement_name = lookup_refinement_type(language, cat_name)
+                    .map(|r| r.name.to_string());
+                if let Some(entry) = emit_action_entry_arm(
+                    cat_i as u16,
+                    *rule_idx,
+                    &shape,
+                    &cat_ident,
+                    refinement_name.as_deref(),
+                ) {
                     arms.push(entry);
                 }
                 continue;
@@ -92,6 +99,7 @@ fn emit_action_entry_arm(
     rule_idx: u16,
     shape: &AtomicShape,
     cat_ident: &Ident,
+    refinement_name: Option<&str>,
 ) -> Option<TokenStream> {
     let (action_fn, arity) = match shape {
         AtomicShape::LiteralInteger => (emit_integer_literal_action(), 1u8),
@@ -111,6 +119,7 @@ fn emit_action_entry_arm(
                 *family,
                 wrapper_variant,
                 rust_code,
+                refinement_name,
             ),
             1u8,
         ),
@@ -175,10 +184,25 @@ fn emit_literal_patterned_action(
     family: LiteralFamily,
     wrapper_variant: &Ident,
     rust_code: &TokenStream,
+    refinement_name: Option<&str>,
 ) -> TokenStream {
     let conversion = emit_native_conversion(native_type, family);
     // The payload type for `push_term` — unsized `str` becomes `String`.
     let payload_type = normalize_payload_type(native_type);
+    // B8 (2026-04-28): if `cat_ident` names a refinement type, gate the
+    // push on `evaluate_refinement_predicate(name, &v)`. On false, no push
+    // (refinement violation surfaces as `WpdsParseError::EmptyResult` —
+    // RT01-equivalent diagnostic).
+    let push_guard = match refinement_name {
+        Some(name) => quote! {
+            if mettail_runtime::evaluate_refinement_predicate(#name, &__v) {
+                b.push_term::<#cat_ident>(#cat_ident::#wrapper_variant(__v));
+            }
+        },
+        None => quote! {
+            b.push_term::<#cat_ident>(#cat_ident::#wrapper_variant(__v));
+        },
+    };
     quote! {
         |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
          args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
@@ -192,7 +216,7 @@ fn emit_literal_patterned_action(
                 #conversion
             })();
             if let Ok(__v) = __result {
-                b.push_term::<#cat_ident>(#cat_ident::#wrapper_variant(__v));
+                #push_guard
             }
             // On Err: no push. Facade converts empty builder to
             // ParseError::InvalidLiteral.
@@ -240,11 +264,13 @@ fn emit_native_conversion(native_type: &syn::Type, family: LiteralFamily) -> Tok
             NativeType::Int64 => quote! {
                 __intermediate.as_i64().ok_or(())
             },
+            // Int128: lossless via `as_i128`. (B12 fix: was `as_i64.map(|v| v as i128)`,
+            // which silently dropped any value > i64::MAX even though it fit in i128.)
             NativeType::Int128 => quote! {
-                __intermediate.as_i64()
-                    .map(|v| v as i128)
-                    .ok_or(())
+                __intermediate.as_i128().ok_or(())
             },
+            // Isize: bound by i64 on every platform (isize ≤ i64), so as_i64 is lossless;
+            // the platform-narrowing happens at the final isize::try_from.
             NativeType::Isize => quote! {
                 __intermediate.as_i64()
                     .and_then(|v| isize::try_from(v).ok())
@@ -265,18 +291,20 @@ fn emit_native_conversion(native_type: &syn::Type, family: LiteralFamily) -> Tok
                     .and_then(|v| u32::try_from(v).ok())
                     .ok_or(())
             },
+            // UInt64: lossless via `as_u64`. (B12 fix: was `as_i64.and_then(u64::try_from)`,
+            // which silently rejected any value > i64::MAX even though it fit in u64,
+            // including u64::MAX itself.)
             NativeType::UInt64 => quote! {
-                __intermediate.as_i64()
-                    .and_then(|v| u64::try_from(v).ok())
-                    .ok_or(())
+                __intermediate.as_u64().ok_or(())
             },
+            // UInt128: lossless via `as_u128`.
             NativeType::UInt128 => quote! {
-                __intermediate.as_i64()
-                    .and_then(|v| u128::try_from(v).ok())
-                    .ok_or(())
+                __intermediate.as_u128().ok_or(())
             },
+            // Usize: lossless via `as_u64` (since usize ≤ u64 on every platform);
+            // the platform-narrowing happens at the final usize::try_from.
             NativeType::Usize => quote! {
-                __intermediate.as_i64()
+                __intermediate.as_u64()
                     .and_then(|v| usize::try_from(v).ok())
                     .ok_or(())
             },
@@ -374,37 +402,96 @@ fn emit_collection_action_entry(
 ) -> Option<TokenStream> {
     let label_ident = format_ident!("{}", shape.label);
     let element_cat_ident = format_ident!("{}", shape.element_cat);
-    let container_construct: TokenStream = match shape.coll_kind {
+    // The action body diverges between non-Map (sequential element drain)
+    // and Map (pair-walking key/value drain). Both produce the runtime
+    // container type that matches the AST variant's payload:
+    //   Vec → std::vec::Vec<E>
+    //   HashBag → mettail_runtime::HashBag<E>
+    //   HashSet → std::collections::HashSet<E>
+    //   HashMap → mettail_runtime::HashMapLit<K, V>  (NOT std::HashMap;
+    //     `Map::MapLit(HashMapLit)` per ast_enums.rs:750. The wrapper
+    //     gives deterministic Hash/Ord required by Ascent relations.)
+    let action_fn = match shape.coll_kind {
         CollectionType::Vec => quote! {
-            elems.into_iter().collect::<std::vec::Vec<#element_cat_ident>>()
+            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+                let id = match args.into_iter().next().and_then(|a| a.as_collection_id()) {
+                    Some(id) => id,
+                    None => return,
+                };
+                let drained = b.drain_collection(id);
+                let elems: std::vec::Vec<#element_cat_ident> = drained
+                    .into_iter()
+                    .filter_map(|a| a.into_term::<#element_cat_ident>())
+                    .collect();
+                b.push_term::<#cat_ident>(#cat_ident::#label_ident(elems));
+            }
         },
         CollectionType::HashBag => quote! {
-            mettail_runtime::HashBag::<#element_cat_ident>::from_iter(elems.into_iter())
+            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+                let id = match args.into_iter().next().and_then(|a| a.as_collection_id()) {
+                    Some(id) => id,
+                    None => return,
+                };
+                let drained = b.drain_collection(id);
+                let container = mettail_runtime::HashBag::<#element_cat_ident>::from_iter(
+                    drained
+                        .into_iter()
+                        .filter_map(|a| a.into_term::<#element_cat_ident>())
+                );
+                b.push_term::<#cat_ident>(#cat_ident::#label_ident(container));
+            }
         },
         CollectionType::HashSet => quote! {
-            std::collections::HashSet::<#element_cat_ident>::from_iter(elems.into_iter())
+            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+                let id = match args.into_iter().next().and_then(|a| a.as_collection_id()) {
+                    Some(id) => id,
+                    None => return,
+                };
+                let drained = b.drain_collection(id);
+                let container = std::collections::HashSet::<#element_cat_ident>::from_iter(
+                    drained
+                        .into_iter()
+                        .filter_map(|a| a.into_term::<#element_cat_ident>())
+                );
+                b.push_term::<#cat_ident>(#cat_ident::#label_ident(container));
+            }
         },
         CollectionType::HashMap => quote! {
-            // HashMap collection: not yet supported by classifier (needs
-            // key/value element split). Default to empty map for now.
-            std::collections::HashMap::<#element_cat_ident, #element_cat_ident>::new()
+            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+                let id = match args.into_iter().next().and_then(|a| a.as_collection_id()) {
+                    Some(id) => id,
+                    None => return,
+                };
+                let drained = b.drain_collection(id);
+                // Map elements are flattened key/value pairs in drain order:
+                // [k0, v0, k1, v1, ...]. Walk two-at-a-time and insert into
+                // a HashMapLit (the wrapper that `Map::MapLit(...)` accepts —
+                // see runtime/src/hashmap_lit.rs:30 for the wrapper rationale,
+                // and language.rs::map_defaults for the `:` key_val_sep that
+                // the parser uses to split pairs).
+                let mut iter = drained.into_iter();
+                let mut container = mettail_runtime::HashMapLit::<
+                    #element_cat_ident, #element_cat_ident,
+                >::default();
+                while let Some(k_arg) = iter.next() {
+                    let v_arg = match iter.next() {
+                        Some(v) => v,
+                        None => break, // odd-length drain; codegen invariant violation
+                    };
+                    if let (Some(k), Some(v)) = (
+                        k_arg.into_term::<#element_cat_ident>(),
+                        v_arg.into_term::<#element_cat_ident>(),
+                    ) {
+                        container.insert(k, v);
+                    }
+                }
+                b.push_term::<#cat_ident>(#cat_ident::#label_ident(container));
+            }
         },
-    };
-    let action_fn = quote! {
-        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
-            let id = match args.into_iter().next().and_then(|a| a.as_collection_id()) {
-                Some(id) => id,
-                None => return,
-            };
-            let drained = b.drain_collection(id);
-            let elems: std::vec::Vec<#element_cat_ident> = drained
-                .into_iter()
-                .filter_map(|a| a.into_term::<#element_cat_ident>())
-                .collect();
-            let container = #container_construct;
-            b.push_term::<#cat_ident>(#cat_ident::#label_ident(container));
-        }
     };
     Some(quote! {
         (#src_idx, #rule_idx) => {
@@ -779,5 +866,92 @@ mod tests {
         assert!(s.contains("ActionEntry"));
         assert!(s.contains("NumLit"));
         assert!(s.contains("as_i64") || s.contains("i32"));
+    }
+
+    /// Build a language with a single literal rule for `cat` whose native_type
+    /// is `native`. Used by B12 conversion-emission tests below.
+    fn lang_with_typed_literal(cat: &str, native: syn::Type) -> LanguageDef {
+        let mut lang = lang_with_rules(Vec::new());
+        lang.types.push(LangType {
+            name: Ident::new(cat, Span::call_site()),
+            native_type: Some(native),
+            collection_kind: None,
+        });
+        lang.token_defs.push(TokenDef {
+            name: Ident::new(cat, Span::call_site()),
+            pattern: r"[0-9]+".to_string(),
+            category: Some(Ident::new(cat, Span::call_site())),
+            rust_code: Some(
+                quote! { mettail_prattail::parse_int_lit(text, None).map_err(|_| ()) },
+            ),
+            priority: None,
+            push_mode: None,
+            is_pop: false,
+            stream: None,
+            from_literals: true,
+        });
+        lang
+    }
+
+    /// B12: Int128-typed literal must emit `as_i128()` (not `as_i64`).
+    /// Pre-fix it routed through `as_i64.map(|v| v as i128)`, silently
+    /// dropping any value > i64::MAX even though it fit in i128.
+    #[test]
+    fn literal_patterned_int128_emits_as_i128_conversion() {
+        let r = category_rule("IntLit", "Int128Cat", "Int128Cat");
+        let mut lang = lang_with_typed_literal("Int128Cat", parse_quote!(i128));
+        lang.terms.push(r.clone());
+        let per_cat: Vec<Vec<GrammarRule>> = vec![vec![r]];
+        let idx = indexed(&per_cat);
+        let ts = emit_action_for_body(&lang, &["Int128Cat".to_string()], &idx);
+        let s = ts.to_string();
+        assert!(s.contains("as_i128"), "expected as_i128() call, got: {s}");
+        assert!(!s.contains("as_i64"), "Int128 must not route through as_i64: {s}");
+    }
+
+    /// B12: UInt64-typed literal must emit `as_u64()` (not `as_i64`).
+    /// Pre-fix it routed through `as_i64.and_then(u64::try_from)`, silently
+    /// rejecting any value > i64::MAX (including u64::MAX itself).
+    #[test]
+    fn literal_patterned_uint64_emits_as_u64_conversion() {
+        let r = category_rule("UInt64Lit", "UInt64Cat", "UInt64Cat");
+        let mut lang = lang_with_typed_literal("UInt64Cat", parse_quote!(u64));
+        lang.terms.push(r.clone());
+        let per_cat: Vec<Vec<GrammarRule>> = vec![vec![r]];
+        let idx = indexed(&per_cat);
+        let ts = emit_action_for_body(&lang, &["UInt64Cat".to_string()], &idx);
+        let s = ts.to_string();
+        assert!(s.contains("as_u64"), "expected as_u64() call, got: {s}");
+        assert!(!s.contains("as_i64"), "UInt64 must not route through as_i64: {s}");
+    }
+
+    /// B12: UInt128-typed literal must emit `as_u128()` (not `as_i64`).
+    #[test]
+    fn literal_patterned_uint128_emits_as_u128_conversion() {
+        let r = category_rule("UInt128Lit", "UInt128Cat", "UInt128Cat");
+        let mut lang = lang_with_typed_literal("UInt128Cat", parse_quote!(u128));
+        lang.terms.push(r.clone());
+        let per_cat: Vec<Vec<GrammarRule>> = vec![vec![r]];
+        let idx = indexed(&per_cat);
+        let ts = emit_action_for_body(&lang, &["UInt128Cat".to_string()], &idx);
+        let s = ts.to_string();
+        assert!(s.contains("as_u128"), "expected as_u128() call, got: {s}");
+        assert!(!s.contains("as_i64"), "UInt128 must not route through as_i64: {s}");
+    }
+
+    /// B12: Usize-typed literal must route through `as_u64()` (lossless for
+    /// usize), then down-narrow with `usize::try_from`. Pre-fix it routed
+    /// through `as_i64.and_then(usize::try_from)`, dropping u64::MAX on 64-bit.
+    #[test]
+    fn literal_patterned_usize_emits_as_u64_with_usize_narrow() {
+        let r = category_rule("UsizeLit", "UsizeCat", "UsizeCat");
+        let mut lang = lang_with_typed_literal("UsizeCat", parse_quote!(usize));
+        lang.terms.push(r.clone());
+        let per_cat: Vec<Vec<GrammarRule>> = vec![vec![r]];
+        let idx = indexed(&per_cat);
+        let ts = emit_action_for_body(&lang, &["UsizeCat".to_string()], &idx);
+        let s = ts.to_string();
+        assert!(s.contains("as_u64"), "Usize must use as_u64 for the lossless prefix, got: {s}");
+        assert!(s.contains("usize :: try_from") || s.contains("usize::try_from"));
     }
 }

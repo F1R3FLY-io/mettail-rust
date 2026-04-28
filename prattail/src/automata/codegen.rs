@@ -123,6 +123,9 @@ impl TokenVariantMap {
                 | TokenKind::RationalLit(cat)
                 | TokenKind::FixedPointLit(cat) => cat.clone(),
                 TokenKind::BooleanLit => "Boolean".to_string(),
+                TokenKind::LexError(_) => unreachable!(
+                    "LexError TokenKind in codegen-time token_kinds list — runtime-only variant"
+                ),
             };
             insert(name);
         }
@@ -162,6 +165,9 @@ impl TokenVariantMap {
             | TokenKind::RationalLit(cat)
             | TokenKind::FixedPointLit(cat) => cat.clone(),
             TokenKind::BooleanLit => "Boolean".to_string(),
+            TokenKind::LexError(_) => unreachable!(
+                "LexError TokenKind in codegen-time token_kinds list — runtime-only variant"
+            ),
         };
         self.get_id(&name)
     }
@@ -473,6 +479,17 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind], custom_tokens: 
                     buf.push_str("Boolean(bool),");
                 }
             },
+            TokenKind::LexError(_) => {
+                // L3 (2026-04-28): LexError is a runtime-only token. The
+                // codegen-time `token_kinds` slice is built from the
+                // grammar's accepting NFA states; lex-failure synthesis
+                // happens at runtime, so this variant must never appear
+                // here.
+                unreachable!(
+                    "LexError TokenKind in codegen-time token_kinds list — \
+                     should be runtime-only"
+                );
+            },
         }
     }
 
@@ -565,6 +582,9 @@ fn write_token_display(buf: &mut String, token_kinds: &[TokenKind], custom_token
                     buf.push_str("Token::Boolean(b) => format!(\"boolean `{}`\", b),");
                 }
             },
+            TokenKind::LexError(_) => unreachable!(
+                "LexError TokenKind in codegen-time token_kinds list — runtime-only variant"
+            ),
         }
     }
 
@@ -698,6 +718,9 @@ fn write_token_to_kind(
                     .unwrap();
                 }
             }
+            TokenKind::LexError(_) => unreachable!(
+                "LexError TokenKind in codegen-time token_kinds list — runtime-only variant"
+            ),
         }
     }
     buf.push_str("}\n}\n");
@@ -806,6 +829,9 @@ fn write_token_to_kind(
                     write!(buf, "Token::{}(s) => s,\n", cat).unwrap();
                 }
             }
+            TokenKind::LexError(_) => unreachable!(
+                "LexError TokenKind in codegen-time token_kinds list — runtime-only variant"
+            ),
         }
     }
     buf.push_str("}\n}\n");
@@ -1019,6 +1045,9 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind, custom_tokens: &[
         TokenKind::BooleanLit => {
             buf.push_str("Token::Boolean(text == \"true\")");
         },
+        TokenKind::LexError(_) => unreachable!(
+            "LexError TokenKind in codegen-time write_token_constructor — runtime-only variant"
+        ),
     }
 }
 
@@ -1405,6 +1434,9 @@ fn token_kind_to_constructor(kind: &TokenKind, text_var: &str, custom_tokens: &[
             }
         }
         TokenKind::BooleanLit => format!("Token::Boolean({} == \"true\")", text_var),
+        TokenKind::LexError(_) => unreachable!(
+            "LexError TokenKind in codegen-time token-constructor builder — runtime-only variant"
+        ),
     }
 }
 

@@ -12,8 +12,8 @@
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind};
 use mettail_ast::language::{LanguageDef, NativeKind};
-use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote};
+use proc_macro2::TokenStream;
+use quote::quote;
 use syn::{Ident, Type};
 
 /// Lexer token family for a literal-patterned rule.
@@ -34,6 +34,59 @@ pub enum LiteralFamily {
     Boolean,
     /// Maps to `TokenKind::StringLit`.
     String,
+}
+
+/// B11 fix: classifies the calling context that drives literal-pattern arm
+/// emission. The Integer family's bare-polymorphic `TokenKind::Integer` arm
+/// is gated on this — present in `HomeCategory` (so a bare unsuffixed integer
+/// in BigInt's own PrefixDispatch resolves directly to BigInt's NumLit),
+/// suppressed in `CrossCatProjection` and `FirstSet` (so primitive-integer
+/// cross-cat projections like `ProcInt`/`ProcUInt32` aren't shadowed when
+/// the FIRST set of `BigInt` is consumed by other categories' cross-cat
+/// dispatch). Generalizes uniformly across all NativeKinds via
+/// `home_polymorphic_token_arm(family)` — adding a new kind to an existing
+/// family auto-inherits the correct behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmissionContext {
+    /// Emitting arms for a rule's home category (e.g., BigInt's PrefixDispatch
+    /// arms). The bare-polymorphic `TokenKind::Integer` arm IS emitted for
+    /// non-primitive integer kinds (`CanonicalBigInt`); without it, bare
+    /// unsuffixed integers route through cross-cat to Int via heuristics.
+    HomeCategory,
+    /// Emitting arms in another category's PrefixDispatch via cross-cat
+    /// projection (e.g., Proc's `ProcBigInt` arm derived from FIRST(BigInt)).
+    /// The bare-polymorphic arm is SUPPRESSED so primitive-integer cross-cat
+    /// projections are not shadowed.
+    CrossCatProjection,
+    /// Computing a FIRST set that will be consumed by cross-cat-projection
+    /// emission. Same suppression as `CrossCatProjection` to keep the FIRST
+    /// set free of home-only arms.
+    FirstSet,
+}
+
+/// B11 fix: returns the bare-polymorphic-Token pattern that the lexer emits
+/// for the given family in HOME context, if any. Keyed on `LiteralFamily`
+/// (not `NativeKind`) so any future kind whose `literal_family_for(kind)`
+/// returns `Some(Integer)` automatically gets the bare-Integer arm in home
+/// context — no codegen changes required when extending `NativeKind`.
+///
+/// Today only `LiteralFamily::Integer` has a polymorphic Token variant
+/// (`Token::Integer(_, suffix)` → `TokenKind::Integer`) emitted by the
+/// lexer for unsuffixed numeric input. Other families require explicit
+/// suffixes/delimiters in their lexer regexes (`r` for Rational, `p` for
+/// FixedPoint, decimal/exponent for Float, quoted for String, etc.) so
+/// they have no analogous polymorphic-Token routing trap.
+fn home_polymorphic_token_arm(family: LiteralFamily) -> Option<TokenStream> {
+    match family {
+        LiteralFamily::Integer => Some(quote! {
+            Some(mettail_prattail::automata::TokenKind::Integer)
+        }),
+        LiteralFamily::Rational
+        | LiteralFamily::FixedPoint
+        | LiteralFamily::Float
+        | LiteralFamily::Boolean
+        | LiteralFamily::String => None,
+    }
 }
 
 /// Classification of a rule for Phase A.2 codegen.
@@ -373,6 +426,11 @@ pub fn first_set_of_category(
 ) -> Vec<FirstToken> {
     let mut acc = Vec::new();
     let mut visited = std::collections::HashSet::new();
+    // FIRST sets are consumed by cross-cat projection emission and other
+    // codegen paths that dispatch on tokens in OTHER categories' contexts.
+    // Pass `EmissionContext::FirstSet` so home-only bare-polymorphic arms
+    // (e.g., `CanonicalBigInt`'s bare-Integer arm) are excluded — including
+    // them here would shadow primitive-integer cross-cat projections.
     collect_first_set(cat_name, language, &mut acc, &mut visited);
     acc
 }
@@ -383,6 +441,10 @@ fn collect_first_set(
     acc: &mut Vec<FirstToken>,
     visited: &mut std::collections::HashSet<String>,
 ) {
+    // FIRST-set construction always uses `FirstSet` context. Routed through
+    // `literal_patterned_pattern_and_guard_for_kind`'s `ctx` parameter to
+    // preserve the home-vs-cross-cat distinction for the Integer family.
+    let ctx = EmissionContext::FirstSet;
     if !visited.insert(cat_name.to_string()) {
         return; // cycle guard
     }
@@ -400,7 +462,7 @@ fn collect_first_set(
             let kind = NativeKind::from_syn_type(nt);
             if let Some(family) = literal_family_for(&kind) {
                 for (pattern, extra_guard) in
-                    literal_patterned_pattern_and_guard_for_kind(cat_name, family, Some(&kind))
+                    literal_patterned_pattern_and_guard_for_kind(cat_name, family, Some(&kind), ctx)
                 {
                     acc.push(FirstToken { pattern, extra_guard });
                 }
@@ -431,6 +493,35 @@ fn collect_first_set(
             }
         }
     }
+    // B7 Pattern 3 fix: synthetic collection-literal rules (`ListLit`,
+    // `BagLit`, `MapLit`) emitted by `synthetic.rs:118-200` are NOT in
+    // `language.terms` — they live in the macro's `per_cat` table. The
+    // walk over `language.terms` below therefore misses them, and any
+    // cross-cat projection rule whose source is a collection category
+    // (e.g. Calculator's `CastBag . b:Bag |- b : Proc;`) ends up missing
+    // `bag(`/`list(`/`map(` triggers in its FIRST set. The fix here is
+    // to inline the synthetic-collection-rule's FIRST contribution by
+    // reading `LangType::collection_kind` directly. The first-token of
+    // the open delim (after trimming a trailing `(` to match the lexer's
+    // 2-token tokenization of `list(`) is the FIRST element.
+    if let Some(lang_type) = language.types.iter().find(|t| t.name.to_string() == cat_name) {
+        if let Some(coll_kind) = lang_type.collection_kind.as_ref() {
+            let open = match coll_kind {
+                mettail_ast::language::CollectionCategory::List(d) => d.open.clone(),
+                mettail_ast::language::CollectionCategory::Bag(d) => d.open.clone(),
+                mettail_ast::language::CollectionCategory::Map(d) => d.open.clone(),
+            };
+            // Mirror synthetic.rs's split-on-trailing-`(` logic so the
+            // FIRST token equals the lexer's first emitted Fixed token.
+            let first_open = open.trim_end_matches('(').to_string();
+            acc.push(FirstToken {
+                pattern: quote! {
+                    Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
+                },
+                extra_guard: Some(quote! { __kw == #first_open }),
+            });
+        }
+    }
     // Walk all rules where rule.category == cat_name.
     for rule in &language.terms {
         if rule.category.to_string() != cat_name {
@@ -441,7 +532,7 @@ fn collect_first_set(
             AtomicShape::LiteralPatterned { cat_name: c, family, ref native_type, .. } => {
                 let nk = NativeKind::from_syn_type(native_type);
                 for (pattern, extra_guard) in
-                    literal_patterned_pattern_and_guard_for_kind(&c, family, Some(&nk))
+                    literal_patterned_pattern_and_guard_for_kind(&c, family, Some(&nk), ctx)
                 {
                     acc.push(FirstToken { pattern, extra_guard });
                 }
@@ -497,7 +588,11 @@ fn collect_first_set(
                 });
             }
             AtomicShape::CrossCatProjection { source_cat_name, .. } => {
-                // Recurse into the source category's FIRST set.
+                // Recurse into the source category's FIRST set. Option A
+                // (per-cursor collection support in fanout) makes this
+                // recursion unconditionally safe — F8's bucketed Fork
+                // emission can now drive cursors through any FIRST token,
+                // including transitive cross-cat tokens.
                 collect_first_set(&source_cat_name, language, acc, visited);
             }
             AtomicShape::CrossCatPrefixUnary { trigger, .. } => {
@@ -527,6 +622,56 @@ fn collect_first_set(
             }
         }
     }
+}
+
+/// B7 Pattern 2: emit auto-grouping `(` arms in PrefixDispatch.
+///
+/// For every parseable category, emit:
+/// ```text
+/// Some(TokenKind::Fixed(__open)) if __open == "(" && state_cat_src_idx == #c_src => {
+///     return WpdsStepAction::ConsumeAndPush {
+///         symbol: StackSymbolV2::grouping_marker(#c_src, *cur_bp),
+///         weight: LexicographicWeight::one(),
+///         new_state: WpdsState::PrefixDispatch { pos: *pos + 1, cur_bp: 0 },
+///         capture_token: false,
+///     };
+/// }
+/// ```
+///
+/// Grouping is transparent: no AST node, no action, just a precedence
+/// reset. The `GroupingMarker` (wpds_runtime.rs `SymbolKind::GroupingMarker`)
+/// carries the saved outer `cur_bp` in its `bp` field; on `)` consumption
+/// in the Unwinding-GroupingMarker arm, the engine resumes
+/// `InfixLoop { cur_bp: marker.bp }`.
+///
+/// **Backend-uniform fix** per the user's no-per-grammar-order mandate:
+/// every shipped grammar gains paren grouping without per-grammar work.
+/// Conflict-safe: `(` only enters PrefixDispatch as a standalone token
+/// when no in-flight collection consumes it (collection rules consume
+/// their open delim's `(` via `WpdsState::CollectionOpenParen`, not
+/// PrefixDispatch).
+pub fn emit_grouping_arms(categories: &[String]) -> TokenStream {
+    let mut arms = Vec::new();
+    for (cat_i, _cat_name) in categories.iter().enumerate() {
+        let result_src_idx = cat_i as u16;
+        arms.push(quote! {
+            Some(mettail_prattail::automata::TokenKind::Fixed(__open))
+                if __open == "(" && state_cat_src_idx == #result_src_idx => {
+                return WpdsStepAction::ConsumeAndPush {
+                    symbol: StackSymbolV2::grouping_marker(
+                        #result_src_idx, *cur_bp,
+                    ),
+                    weight: LexicographicWeight::one(),
+                    new_state: WpdsState::PrefixDispatch {
+                        pos: *pos + 1,
+                        cur_bp: 0,
+                    },
+                    capture_token: false,
+                };
+            }
+        });
+    }
+    quote! { #(#arms)* }
 }
 
 /// Map a `NativeKind` to the lexer's `LiteralFamily`.
@@ -613,166 +758,215 @@ pub fn emit_prefix_arms_for_category(
             });
         }
     }
+    // B11 fix (2026-04-28): two-pass emission. Pass 1 emits ALL atomic-shape
+    // arms across all rules; Pass 2 emits ALL cross-cat-projection arms.
+    // The previous interleaved per-rule emission (atomic + cross-cat together,
+    // in source order) caused IntToBigInt's bare-Integer cross-cat arm
+    // (rule_idx=1 in BigInt) to fire BEFORE NumLit's bare-Integer atomic arm
+    // (synthetic rule_idx=9), routing unsuffixed integers through Int via
+    // cross-cat instead of letting BigInt's NumLit consume them directly.
+    // With two passes, atomic arms always precede cross-cat arms in the
+    // generated match, so the home-category bare-Integer arm wins by
+    // first-match-wins semantics. Rule_idx is preserved (no per_cat
+    // reordering), so generated WPDS_RULES tables and stack-symbol payloads
+    // remain unchanged.
+    //
+    // F8 fix (2026-04-28): cross-cat projection emission was per-rule with
+    // an `IntSuffix::from_text` runtime guard heuristic. Post-B11 (which
+    // excludes bare-Integer arms from FirstSet ctx), the `is_bare_integer`
+    // branch became dead code. F8 replaces it with bucket-then-Fork: collect
+    // all projections, bucket by (pattern, extra_guard), emit Push for
+    // single-projection buckets, Fork for multi-projection buckets. Cross-cat
+    // ambiguity (e.g., ProcInt + ProcBigInt both accepting `IntegerLit("Int")`
+    // via BigInt's transitive FIRST chain) is resolved by lex-min over
+    // `from_cost(0.0, src, rule_idx)` — preserves source-order tiebreak.
+
+    // Pass 1: atomic-shape arms (LiteralPatterned, TerminalKeyword,
+    // VarRule, LiteralInteger/Boolean/String/Float). CrossCatProjection
+    // and CrossCatPrefixUnary shapes contribute zero atomic arms here.
     for &(rule_idx, rule) in rules_in_category {
         let shape = classify_atomic(rule, language);
         for arm in emit_atomic_arms(category_src_idx, rule_idx, &shape) {
             arms.push(arm);
         }
-        // Stage 1.1: cross-cat projection rules emit one prefix arm per
-        // token in the SOURCE category's FIRST set, dispatching to a
-        // CrossCatDelegate state that pushes the source CategoryEntry.
-        if let AtomicShape::CrossCatProjection {
-            source_cat_name,
-            wrapper_variant: _,
-        } = &shape
-        {
-            let cross_cat_arms = emit_cross_cat_projection_arms(
-                category_src_idx,
-                rule_idx,
-                source_cat_name,
-                language,
-            );
-            arms.push(cross_cat_arms);
-        }
-        // Stage 1.1: cross-cat prefix unary emits an arm matching the
-        // trigger literal, then delegates to source category.
+    }
+    // Pass 2a: collect cross-cat projections, then emit bucket-then-Fork.
+    // F8 (2026-04-28): replaces per-rule emission + IntSuffix runtime guard.
+    let projections: Vec<(u16, String)> = rules_in_category
+        .iter()
+        .filter_map(|&(rule_idx, rule)| match classify_atomic(rule, language) {
+            AtomicShape::CrossCatProjection { source_cat_name, .. } => {
+                Some((rule_idx, source_cat_name))
+            }
+            _ => None,
+        })
+        .collect();
+    if !projections.is_empty() {
+        arms.push(emit_cross_cat_projection_arms_bucketed(
+            category_src_idx,
+            &projections,
+            language,
+        ));
+    }
+    // Pass 2b: cross-cat-prefix-unary arms (trigger-literal + delegation).
+    // No shipped grammar shares a unary trigger across rules in the same
+    // result category, so single-arm-per-rule emission is sufficient.
+    for &(rule_idx, rule) in rules_in_category {
         if let AtomicShape::CrossCatPrefixUnary {
             trigger,
             source_cat_name,
             wrapper_variant: _,
-        } = &shape
+        } = classify_atomic(rule, language)
         {
             let arm = emit_cross_cat_prefix_unary_arm(
                 category_src_idx,
                 rule_idx,
-                trigger,
-                source_cat_name,
+                &trigger,
+                &source_cat_name,
                 language,
             );
             arms.push(arm);
         }
     }
-    let _ = category_name;
     quote! { #(#arms)* }
 }
 
-/// Stage 1.1: emit prefix arms for a cross-cat projection rule.
-/// For each token in `FIRST(source_cat)`, emit an arm that pushes a
-/// Return marker (with the result_cat's rule_idx for action lookup) then
-/// transitions to CrossCatDelegate to push the source CategoryEntry.
+/// F8 (2026-04-28): emit cross-cat projection arms for ALL projections in
+/// a result category, bucketed by `(pattern, extra_guard)`. Single-projection
+/// buckets emit `Push` arms; multi-projection buckets emit
+/// `WpdsStepAction::Fork` with one branch per projection. Lex-min over
+/// `from_cost(0.0, category_src, rule_idx)` picks the surviving branch
+/// (preserves source-order tiebreak).
 ///
-/// Stage 4 fix (2026-04-27): for `TokenKind::Integer` arms whose source
-/// category is a primitive integer type (i32, u32, i64, etc.), emit an
-/// `IntSuffix::from_text(...)` guard so suffix-mismatched inputs fall
-/// through to the next-declared cross-cat projection. Without this,
-/// `0u32` parsed as Calculator's `Proc` dispatches to `ProcInt` (the
-/// first declared Integer-accepting projection) and the eval block
-/// silently coerces u32 → i32, producing `Proc::ProcInt(NumLit(0))`
-/// instead of the correct `Proc::ProcUInt32(NumLit(0))`. Mirrors the
-/// trampoline's `Token::Integer(_, suffix) if suffix.matches_X()`
-/// pattern.
-///
-/// **TECHNICAL DEBT (per `feedback_use_wpds_disambiguation_not_heuristics.md`):**
-/// the `IntSuffix` matcher guards on bare-Integer arms are HEURISTICS
-/// that work around the absence of GLR-style branching in the WPDS
-/// engine. The principled fix: when multiple cross-cat projections share
-/// a FIRST token (e.g., `Proc::ProcInt` and `Proc::ProcUInt32` both
-/// accepting `TokenKind::Integer`), emit `WpdsStepAction::Fork` with one
-/// branch per projection, weighted so the lex-min selection picks the
-/// correct one based on the source's eval-block success/failure. Until
-/// the engine's step function drives `AmbiguityFanout` forward (currently
-/// returns Idle), treat the suffix-guard layer as a temporary scaffold;
-/// once Fork is fully wired, the `int_suffix_guard` helper and the
-/// `is_bare_integer` branch in the loop below can be removed.
-fn emit_cross_cat_projection_arms(
+/// Replaces the pre-F8 per-rule emission + `IntSuffix::from_text` runtime
+/// guard heuristic. Post-B11, `EmissionContext::FirstSet` excludes
+/// bare-Integer arms, so the IntSuffix guard was dead code; remaining
+/// ambiguity from category-bound FIRST tokens shared via transitive FIRST
+/// chains (e.g., Calculator's `IntToBigInt` cross-cat puts `IntegerLit("Int")`
+/// in BigInt's FIRST, shared by `Proc::ProcInt` and `Proc::ProcBigInt`) is
+/// resolved by Fork + lex-min — the principled WPDS mechanism.
+fn emit_cross_cat_projection_arms_bucketed(
     category_src_idx: u16,
-    rule_idx: u16,
-    source_cat_name: &str,
+    projections: &[(u16, String)],
     language: &LanguageDef,
 ) -> TokenStream {
-    let categories = super::collect_category_names_with_literals(language);
-    let source_src_idx = categories
-        .iter()
-        .position(|c| c == source_cat_name)
-        .map(|i| i as u16)
-        .unwrap_or(0);
-    let first_set = first_set_of_category(source_cat_name, language);
+    use std::collections::BTreeMap;
 
-    // Stage 4 fix: derive the source category's NativeKind to refine
-    // bare TokenKind::Integer arm guards with suffix matchers.
-    let source_kind: Option<NativeKind> = language
-        .types
-        .iter()
-        .find(|t| t.name.to_string() == source_cat_name)
-        .and_then(|t| t.native_type.as_ref())
-        .map(|nt| NativeKind::from_syn_type(nt));
-    let source_suffix_guard = source_kind.as_ref().and_then(int_suffix_guard);
+    struct ProjectionBranch {
+        rule_idx: u16,
+        source_src_idx: u16,
+    }
+    struct BucketEntry {
+        pat: TokenStream,
+        extra_guard: Option<TokenStream>,
+        branches: Vec<ProjectionBranch>,
+    }
+
+    let categories = super::collect_category_names_with_literals(language);
+    // Bucket key = (stringified pattern, stringified extra_guard).
+    // Two projections with same pat AND same guard go into one bucket
+    // (Fork). Same pat with different guards are mutually exclusive at
+    // runtime (e.g., `__cat == "Int"` vs `__cat == "BigInt"`) → separate
+    // buckets, first-match-wins is correct semantics.
+    //
+    // Option A (per-cursor collection support, 2026-04-28): the walker
+    // can now drive cursors through any FIRST token, including transitive
+    // cross-cat tokens that lead to collection-opening in the source
+    // category. Fork emission applies uniformly — no `via_cross_cat`
+    // filter needed.
+    let mut buckets: BTreeMap<(String, String), BucketEntry> = BTreeMap::new();
+    for (rule_idx, source_cat_name) in projections {
+        let source_src_idx = categories
+            .iter()
+            .position(|c| c == source_cat_name)
+            .map(|i| i as u16)
+            .unwrap_or(0);
+        for ft in first_set_of_category(source_cat_name, language) {
+            let pat_str = ft.pattern.to_string();
+            let guard_str = ft
+                .extra_guard
+                .as_ref()
+                .map(|g| g.to_string())
+                .unwrap_or_default();
+            let key = (pat_str, guard_str);
+            let entry = buckets.entry(key).or_insert_with(|| BucketEntry {
+                pat: ft.pattern.clone(),
+                extra_guard: ft.extra_guard.clone(),
+                branches: Vec::new(),
+            });
+            entry.branches.push(ProjectionBranch {
+                rule_idx: *rule_idx,
+                source_src_idx,
+            });
+        }
+    }
 
     let mut arms = Vec::new();
-    for ft in first_set {
-        let pat = ft.pattern;
-        // Detect the bare `TokenKind::Integer` arm so we can attach a
-        // suffix matcher. Compare the rendered TokenStream's text since
-        // `TokenStream` doesn't implement `PartialEq`.
-        let pat_str = pat.to_string();
-        let is_bare_integer = pat_str.contains("TokenKind :: Integer")
-            && !pat_str.contains("IntegerLit");
-        let guard = match (ft.extra_guard, is_bare_integer, source_suffix_guard.as_ref()) {
-            (Some(eg), _, _) => quote! { #eg && state_cat_src_idx == #category_src_idx },
-            (None, true, Some(sg)) => quote! {
-                state_cat_src_idx == #category_src_idx
-                    && {
-                        let __t = tokens.peek_text(*pos).unwrap_or("");
-                        let __suf = mettail_prattail::IntSuffix::from_text(__t);
-                        #sg
-                    }
-            },
-            (None, _, _) => quote! { state_cat_src_idx == #category_src_idx },
+    for (_key, entry) in buckets {
+        let pat = entry.pat;
+        let guard = match &entry.extra_guard {
+            Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
+            None => quote! { state_cat_src_idx == #category_src_idx },
         };
-        arms.push(quote! {
-            #pat if #guard => {
-                // Push the cross-cat Return marker; on pop after source
-                // parse returns, fire the wrap-action.
-                return WpdsStepAction::Push {
-                    symbol: StackSymbolV2::rule_at(
-                        #category_src_idx, #rule_idx, 0, Some(_outer_bp),
-                    ).with_kind_return(),
-                    weight: LexicographicWeight::from_cost(
-                        0.0, #category_src_idx, #rule_idx,
-                    ),
-                    new_state: WpdsState::CrossCatDelegate {
-                        source_src_idx: #source_src_idx,
-                        outer_bp: _outer_bp,
-                    },
-                };
-            }
-        });
+        if entry.branches.len() == 1 {
+            // Single-projection bucket: emit Push directly.
+            let b = &entry.branches[0];
+            let rule_idx = b.rule_idx;
+            let source_src_idx = b.source_src_idx;
+            arms.push(quote! {
+                #pat if #guard => {
+                    return WpdsStepAction::Push {
+                        symbol: StackSymbolV2::rule_at(
+                            #category_src_idx, #rule_idx, 0, Some(_outer_bp),
+                        ).with_kind_return(),
+                        weight: LexicographicWeight::from_cost(
+                            0.0, #category_src_idx, #rule_idx,
+                        ),
+                        new_state: WpdsState::CrossCatDelegate {
+                            source_src_idx: #source_src_idx,
+                            outer_bp: _outer_bp,
+                        },
+                    };
+                }
+            });
+        } else {
+            // Multi-projection bucket: emit Fork over all candidates.
+            // `consume_trigger: false` because the FIRST token belongs to
+            // the source-category sub-parse (CrossCatDelegate dispatches
+            // into source's PrefixDispatch, which consumes the token).
+            let branches: Vec<TokenStream> = entry
+                .branches
+                .iter()
+                .map(|b| {
+                    let rule_idx = b.rule_idx;
+                    let source_src_idx = b.source_src_idx;
+                    quote! {
+                        mettail_prattail::wpds_walker::ForkBranch {
+                            symbol: StackSymbolV2::rule_at(
+                                #category_src_idx, #rule_idx, 0, Some(_outer_bp),
+                            ).with_kind_return(),
+                            weight: LexicographicWeight::from_cost(
+                                0.0, #category_src_idx, #rule_idx,
+                            ),
+                            new_state: WpdsState::CrossCatDelegate {
+                                source_src_idx: #source_src_idx,
+                                outer_bp: _outer_bp,
+                            },
+                        }
+                    }
+                })
+                .collect();
+            arms.push(quote! {
+                #pat if #guard => {
+                    return WpdsStepAction::Fork {
+                        branches: vec![ #( #branches ),* ],
+                        consume_trigger: false,
+                    };
+                }
+            });
+        }
     }
     quote! { #(#arms)* }
-}
-
-/// Stage 4 fix: produce an `IntSuffix` matcher expression for primitive
-/// integer kinds. Returns `None` for non-integer or non-primitive kinds —
-/// callers should emit no guard in that case.
-fn int_suffix_guard(kind: &NativeKind) -> Option<TokenStream> {
-    match kind {
-        NativeKind::Int8 => Some(quote! { __suf.matches_i8() }),
-        NativeKind::Int16 => Some(quote! { __suf.matches_i16() }),
-        NativeKind::Int32 => Some(quote! { __suf.matches_i32() }),
-        NativeKind::Int64 => Some(quote! { __suf.matches_i64() }),
-        NativeKind::Int128 => Some(quote! { __suf.matches_i128() }),
-        NativeKind::Isize => Some(quote! { __suf.matches_isize() }),
-        NativeKind::UInt8 => Some(quote! { __suf.matches_u8() }),
-        NativeKind::UInt16 => Some(quote! { __suf.matches_u16() }),
-        NativeKind::UInt32 => Some(quote! { __suf.matches_u32() }),
-        NativeKind::UInt64 => Some(quote! { __suf.matches_u64() }),
-        NativeKind::UInt128 => Some(quote! { __suf.matches_u128() }),
-        NativeKind::Usize => Some(quote! { __suf.matches_usize() }),
-        // CanonicalBigInt has no suffix matcher (it accepts any Token::BigInt).
-        // CanonicalBigRat, CanonicalFixedPoint, Float32/64, Bool, Str, Other:
-        // no suffix matcher applicable.
-        _ => None,
-    }
 }
 
 /// Stage 1.1: emit a single prefix arm for a cross-cat prefix unary rule.
@@ -847,7 +1041,17 @@ fn emit_atomic_arms(
         )],
         AtomicShape::LiteralPatterned { cat_name, family, native_type, .. } => {
             let nk = NativeKind::from_syn_type(native_type);
-            literal_patterned_pattern_and_guard_for_kind(cat_name, *family, Some(&nk))
+            // emit_atomic_arms is invoked exclusively from
+            // emit_prefix_arms_for_category for the rule's HOME category, so
+            // pass `EmissionContext::HomeCategory`. CanonicalBigInt picks up
+            // the bare-Integer arm here so unsuffixed integers in BigInt's
+            // own PrefixDispatch resolve directly to BigInt's NumLit.
+            literal_patterned_pattern_and_guard_for_kind(
+                cat_name,
+                *family,
+                Some(&nk),
+                EmissionContext::HomeCategory,
+            )
         }
         AtomicShape::TerminalKeyword { terminal_text, .. } => vec![(
             quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
@@ -909,25 +1113,24 @@ fn emit_atomic_arms(
 ///   1. `state_cat_src_idx == #category_src_idx` (always required)
 ///   2. The semantic action's eval block (`parse_int_lit(text, suffix)`)
 ///     which validates the suffix matches the category's expected type.
-fn literal_patterned_pattern_and_guard(
-    cat_name: &str,
-    family: LiteralFamily,
-) -> Vec<(TokenStream, Option<TokenStream>)> {
-    literal_patterned_pattern_and_guard_for_kind(cat_name, family, None)
-}
-
-/// Stage 4 fix: variant that takes the source `NativeKind` to refine the
-/// emitted patterns. For `CanonicalBigInt` (typed payload — lexer emits
-/// `Token::BigInt(text)`, NOT `Token::Integer(_, _)`), we omit the bare
-/// `TokenKind::Integer` arm — it would otherwise shadow primitive-integer
-/// cross-cat projections like `ProcInt`/`ProcUInt32` that DO match
-/// `TokenKind::Integer`. For primitive integers (i32, u32, etc.), all three
-/// patterns are emitted as the lexer canonicalizes any of them to
-/// `Token::Integer(_, suffix)`.
+///
+/// **B11 (2026-04-28)**: the bare polymorphic `TokenKind::Integer` arm is
+/// gated on [`EmissionContext`]. In `HomeCategory` context the bare arm is
+/// always emitted for `Integer`-family kinds (including `CanonicalBigInt`)
+/// so unsuffixed integers in the home category's PrefixDispatch resolve
+/// directly to that category's NumLit. In `CrossCatProjection` and
+/// `FirstSet` contexts the bare arm is emitted only for primitive integer
+/// widths (i8/i16/i32/i64/i128/isize/u8/u16/u32/u64/u128/usize) — for
+/// `CanonicalBigInt` it's suppressed so primitive-integer cross-cat
+/// projections like `ProcInt`/`ProcUInt32` aren't shadowed when Proc
+/// derives `FIRST(BigInt)` for its `ProcBigInt` arm. The `kind`-based
+/// suppression list is unchanged from the prior `is_primitive_int`
+/// predicate but is now **only consulted in non-home contexts**.
 fn literal_patterned_pattern_and_guard_for_kind(
     cat_name: &str,
     family: LiteralFamily,
     kind: Option<&NativeKind>,
+    ctx: EmissionContext,
 ) -> Vec<(TokenStream, Option<TokenStream>)> {
     match family {
         LiteralFamily::Integer => {
@@ -944,33 +1147,37 @@ fn literal_patterned_pattern_and_guard_for_kind(
                     Some(quote! { __cat == #cat_name }),
                 ),
             ];
-            // Only primitive integers (i32, u32, etc.) lex as
-            // `Token::Integer(_, suffix)` → `TokenKind::Integer`.
-            // CanonicalBigInt lexes as `Token::BigInt(text)`; including
-            // the bare Integer arm here causes BigInt's cross-cat
-            // projection to fire on every unsuffixed integer, shadowing
-            // the primitive-integer projections.
-            let is_primitive_int = matches!(
-                kind,
-                None | Some(NativeKind::Int8)
-                | Some(NativeKind::Int16)
-                | Some(NativeKind::Int32)
-                | Some(NativeKind::Int64)
-                | Some(NativeKind::Int128)
-                | Some(NativeKind::Isize)
-                | Some(NativeKind::UInt8)
-                | Some(NativeKind::UInt16)
-                | Some(NativeKind::UInt32)
-                | Some(NativeKind::UInt64)
-                | Some(NativeKind::UInt128)
-                | Some(NativeKind::Usize)
-            );
-            if is_primitive_int {
-                // Built-in polymorphic Token::Integer → TokenKind::Integer.
-                arms.push((
-                    quote! { Some(mettail_prattail::automata::TokenKind::Integer) },
-                    None,
-                ));
+            // Bare polymorphic `TokenKind::Integer` arm. Always emitted in
+            // HomeCategory context; in CrossCatProjection / FirstSet
+            // contexts emitted only for primitive-integer widths so
+            // `CanonicalBigInt` doesn't shadow primitive-integer cross-cat
+            // projections (see fn doc above).
+            let emit_bare_arm = match ctx {
+                EmissionContext::HomeCategory => {
+                    home_polymorphic_token_arm(family).is_some()
+                }
+                EmissionContext::CrossCatProjection | EmissionContext::FirstSet => {
+                    matches!(
+                        kind,
+                        None | Some(NativeKind::Int8)
+                        | Some(NativeKind::Int16)
+                        | Some(NativeKind::Int32)
+                        | Some(NativeKind::Int64)
+                        | Some(NativeKind::Int128)
+                        | Some(NativeKind::Isize)
+                        | Some(NativeKind::UInt8)
+                        | Some(NativeKind::UInt16)
+                        | Some(NativeKind::UInt32)
+                        | Some(NativeKind::UInt64)
+                        | Some(NativeKind::UInt128)
+                        | Some(NativeKind::Usize)
+                    )
+                }
+            };
+            if emit_bare_arm {
+                if let Some(pat) = home_polymorphic_token_arm(family) {
+                    arms.push((pat, None));
+                }
             }
             arms
         }
@@ -1005,39 +1212,23 @@ fn literal_patterned_pattern_and_guard_for_kind(
                 Some(quote! { __cat == #cat_name }),
             ),
         ],
-        LiteralFamily::Float => {
-            let _ = cat_name;
-            vec![(
-                quote! { Some(mettail_prattail::automata::TokenKind::Float) },
-                None,
-            )]
-        }
-        LiteralFamily::Boolean => {
-            let _ = cat_name;
-            vec![(
-                quote! {
-                    Some(mettail_prattail::automata::TokenKind::True)
-                    | Some(mettail_prattail::automata::TokenKind::False)
-                    | Some(mettail_prattail::automata::TokenKind::BooleanLit)
-                },
-                None,
-            )]
-        }
-        LiteralFamily::String => {
-            let _ = cat_name;
-            vec![(
-                quote! { Some(mettail_prattail::automata::TokenKind::StringLit) },
-                None,
-            )]
-        }
+        LiteralFamily::Float => vec![(
+            quote! { Some(mettail_prattail::automata::TokenKind::Float) },
+            None,
+        )],
+        LiteralFamily::Boolean => vec![(
+            quote! {
+                Some(mettail_prattail::automata::TokenKind::True)
+                | Some(mettail_prattail::automata::TokenKind::False)
+                | Some(mettail_prattail::automata::TokenKind::BooleanLit)
+            },
+            None,
+        )],
+        LiteralFamily::String => vec![(
+            quote! { Some(mettail_prattail::automata::TokenKind::StringLit) },
+            None,
+        )],
     }
-}
-
-// Silence `unused` warnings that fire only on some feature-flag combos.
-#[allow(dead_code)]
-fn _keep_imports_live() -> Option<Span> {
-    let _ = format_ident!("Foo");
-    None
 }
 
 #[cfg(test)]
@@ -1224,7 +1415,7 @@ mod tests {
         // Calculator's `Err . |- "error" : Int` shape: empty term_context,
         // single-literal syntax_pattern. Must classify as TerminalKeyword.
         let lang = empty_lang();
-        let mut rule = GrammarRule {
+        let rule = GrammarRule {
             label: Ident::new("Err", Span::call_site()),
             category: Ident::new("Int", Span::call_site()),
             items: Vec::new(),
@@ -1239,7 +1430,6 @@ mod tests {
             prefix_bp: None,
             tier_directive: None,
         };
-        let _ = &mut rule;
         match classify_atomic(&rule, &lang) {
             AtomicShape::TerminalKeyword { terminal_text, wrapper_variant } => {
                 assert_eq!(terminal_text, "error");

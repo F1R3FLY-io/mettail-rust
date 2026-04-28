@@ -1473,14 +1473,48 @@ pub fn generate_refinement_type_rules(language: &LanguageDef) -> TokenStream {
         let base_lower = format_ident!("{}", base_ident.to_string().to_lowercase());
         let var_ident = &rdef.var;
 
+        // Resolve the base type's native variant so we can pattern-extract
+        // the inner native value before the linear/term guard runs. Without
+        // this, `*x as i64` panics at codegen because `x: BaseEnum` has no
+        // numeric cast. With this, the bound var `x` rebinds to the inner
+        // primitive (`*__inner`) inside the guard scope.
+        let extraction_clause = language
+            .types
+            .iter()
+            .find(|t| t.name == base_ident)
+            .and_then(|lt| lt.native_type.as_ref())
+            .map(|native_ty| {
+                let variant = crate::gen::generate_literal_label(native_ty);
+                let outer_ident = format_ident!("__refined_{}_outer", var_ident);
+                quote! {
+                    if let #base_ident::#variant(#var_ident) = #outer_ident
+                }
+            });
+
         // Generate the guard clause from the refinement predicate.
         let guard = generate_refinement_guard(&rdef.predicate, &rdef.var);
 
-        rules.push(quote! {
-            #rel_name(#var_ident.clone()) <--
-                #base_lower(#var_ident),
-                #guard;
-        });
+        let rule = if let Some(extract) = extraction_clause {
+            // Bind the enum to an outer name, pattern-extract the inner
+            // native into the user's bound var, then run the guard.
+            let outer_ident = format_ident!("__refined_{}_outer", var_ident);
+            quote! {
+                #rel_name(#outer_ident.clone()) <--
+                    #base_lower(#outer_ident),
+                    #extract,
+                    #guard;
+            }
+        } else {
+            // Base type has no native variant — fall back to direct binding
+            // (e.g., when the base is itself a wrapper category and the
+            // refinement is a Relation predicate that doesn't dereference).
+            quote! {
+                #rel_name(#var_ident.clone()) <--
+                    #base_lower(#var_ident),
+                    #guard;
+            }
+        };
+        rules.push(rule);
     }
 
     quote! { #(#rules)* }

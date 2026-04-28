@@ -13,6 +13,7 @@
 //! arity-1 action that pushes the constructed collection.
 
 use mettail_ast::grammar::{GrammarRule, PatternOp, SyntaxExpr, TermParam};
+use mettail_ast::language::{CollectionCategory, LanguageDef};
 use mettail_ast::types::{CollectionType, TypeExpr};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -20,12 +21,25 @@ use quote::quote;
 /// Classification of a collection-literal rule.
 #[derive(Debug, Clone)]
 pub struct CollectionShape {
-    /// Open delimiter (e.g., `"{"` for HashBag, `"["` for Vec).
+    /// Open delimiter as a single string (e.g., `"{"` for HashBag, `"list("` for default Vec).
+    /// When `has_synth_paren` is true, this is the concatenation of `open_token + "("`.
     pub open: String,
+    /// First-token slice of the open delimiter — what the lexer emits as a
+    /// single `Fixed` token. Equal to `open` when `has_synth_paren` is false;
+    /// when true, equal to `open_token == open.trim_end_matches('(')`.
+    pub open_token: String,
+    /// True when the synthetic-rule emitter (`synthetic.rs`) split a default
+    /// open delimiter like `"list("` into the 4-element pattern
+    /// `[Literal("list"), Literal("("), Op(Sep), Literal(close)]`. The
+    /// engine consumes two tokens in sequence (open keyword, then `(`) before
+    /// pushing the CollectionMarker.
+    pub has_synth_paren: bool,
     /// Close delimiter.
     pub close: String,
-    /// Separator between elements (e.g., `"|"` for HashBag).
+    /// Separator between elements (e.g., `"|"` for HashBag, `","` for Map between pairs).
     pub separator: String,
+    /// Pair separator for Map (`":"` between key and value). `None` for List/Bag/Set.
+    pub pair_separator: Option<String>,
     /// Category name of each element (e.g., `"Proc"`).
     pub element_cat: String,
     /// Container kind (Vec, HashBag, HashSet, HashMap).
@@ -37,7 +51,23 @@ pub struct CollectionShape {
 }
 
 /// Try to classify a `GrammarRule` as a collection-literal rule.
-pub(crate) fn classify_collection(rule: &GrammarRule) -> Option<CollectionShape> {
+///
+/// Accepts both 3- and 4-element syntax patterns:
+/// - 3-element: `[Literal(open), Op(Sep), Literal(close)]` — explicit single-token
+///   open delimiter (e.g., RhoCalc's `"{" ... "}"`).
+/// - 4-element: `[Literal(open_kw), Literal("("), Op(Sep), Literal(close)]` — the
+///   default form from `synthetic.rs` where `synthetic.rs` splits `"list("` into
+///   `["list", "("]` so the lexer (which tokenizes whitespace between tokens)
+///   sees them as two separate `Fixed` tokens. The engine consumes both before
+///   pushing the marker via `WpdsState::CollectionOpenParen`.
+///
+/// `language` is consulted to look up the `pair_separator` for Map collections —
+/// `LangType::collection_kind = Some(CollectionCategory::Map(d))` carries
+/// `d.key_val_sep` (e.g., `":"`) which encodes the inter-pair separator.
+pub(crate) fn classify_collection(
+    rule: &GrammarRule,
+    language: &LanguageDef,
+) -> Option<CollectionShape> {
     let tc = rule.term_context.as_ref()?;
     let sp = rule.syntax_pattern.as_ref()?;
     // Expect exactly 1 Simple param of Collection type.
@@ -54,19 +84,36 @@ pub(crate) fn classify_collection(rule: &GrammarRule) -> Option<CollectionShape>
         },
         _ => return None,
     };
-    // Expect syntax_pattern = [Literal(open), Op(Sep), Literal(close)].
-    if sp.len() != 3 {
-        return None;
-    }
-    let open = match &sp[0] {
+    // Accept 3-element [Literal, Op(Sep), Literal] or 4-element
+    // [Literal, Literal("("), Op(Sep), Literal] form.
+    let (open_token, has_synth_paren, sep_idx, close_idx) = match sp.len() {
+        3 => {
+            let open_kw = match &sp[0] {
+                SyntaxExpr::Literal(s) => s.clone(),
+                _ => return None,
+            };
+            (open_kw, false, 1usize, 2usize)
+        }
+        4 => {
+            let open_kw = match &sp[0] {
+                SyntaxExpr::Literal(s) => s.clone(),
+                _ => return None,
+            };
+            // Second element must be the literal `(` synthesized by synthetic.rs
+            // (which splits default open delimiters of the form `kw(`).
+            match &sp[1] {
+                SyntaxExpr::Literal(s) if s == "(" => {}
+                _ => return None,
+            }
+            (open_kw, true, 2usize, 3usize)
+        }
+        _ => return None,
+    };
+    let close = match &sp[close_idx] {
         SyntaxExpr::Literal(s) => s.clone(),
         _ => return None,
     };
-    let close = match &sp[2] {
-        SyntaxExpr::Literal(s) => s.clone(),
-        _ => return None,
-    };
-    let separator = match &sp[1] {
+    let separator = match &sp[sep_idx] {
         SyntaxExpr::Op(PatternOp::Sep {
             collection,
             separator,
@@ -74,10 +121,30 @@ pub(crate) fn classify_collection(rule: &GrammarRule) -> Option<CollectionShape>
         }) if collection == param_name => separator.clone(),
         _ => return None,
     };
+    // Look up the pair_separator from the LangType's collection_kind for Maps.
+    // For List/Bag/Set this is None; for Map it's the user's `key_val_sep`
+    // (default `":"` per `language.rs::map_defaults`).
+    let pair_separator = language
+        .types
+        .iter()
+        .find(|t| t.name == rule.category)
+        .and_then(|t| t.collection_kind.as_ref())
+        .and_then(|c| match c {
+            CollectionCategory::Map(d) => d.key_val_sep.clone(),
+            _ => None,
+        });
+    let open = if has_synth_paren {
+        format!("{}(", open_token)
+    } else {
+        open_token.clone()
+    };
     Some(CollectionShape {
         open,
+        open_token,
+        has_synth_paren,
         close,
         separator,
+        pair_separator,
         element_cat: element_ident,
         coll_kind: coll_type,
         result_cat: rule.category.to_string(),
@@ -110,65 +177,60 @@ pub(crate) fn emit_collection_prefix_arms(
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_collection(rule) else {
+            let Some(shape) = classify_collection(rule, language) else {
                 continue;
             };
             let result_src_idx = cat_i as u16;
             let rule_idx = rule_i as u16;
-            let open = &shape.open;
-            // Look up the element category's src_idx for the cross-cat case.
-            let element_src_idx = lookup_element_src_idx(&shape.element_cat, categories);
-            // Self-collection (element_cat == result_cat) — frontier_top.cat_src_idx
-            // already routes correctly. No CategoryEntry push needed.
-            if element_src_idx == Some(result_src_idx) {
-                arms.push(quote! {
-                    Some(mettail_prattail::automata::TokenKind::Fixed(__open))
-                        if __open == #open && state_cat_src_idx == #result_src_idx => {
-                        return WpdsStepAction::ConsumeAndPush {
-                            symbol: StackSymbolV2::collection_marker(
-                                #result_src_idx, #rule_idx, 0,
-                            ),
-                            weight: LexicographicWeight::from_cost(
-                                0.0, #result_src_idx, #rule_idx,
-                            ),
-                            new_state: WpdsState::PrefixDispatch {
-                                pos: *pos + 1,
-                                cur_bp: 0,
-                            },
-                            capture_token: false,
-                        };
+            // The lexer emits the open keyword as a single `Fixed` token
+            // matching `shape.open_token` (e.g. `"list"` for the default
+            // form, or `"{"` for explicit-delimited 3-element rules).
+            // For 4-element forms (`has_synth_paren = true`), the next
+            // token is `Fixed("(")` which the engine consumes via
+            // `WpdsState::CollectionOpenParen` BEFORE entering the
+            // first-element parse. For 3-element forms, the prefix arm
+            // transitions directly to `PrefixDispatch`.
+            let open_token = &shape.open_token;
+            // Look up the element category's src_idx (for both self and
+            // cross-cat). Required by CollectionOpenParen so the engine
+            // arm knows whether to push CategoryEntry for cross-cat.
+            let Some(element_src) = lookup_element_src_idx(&shape.element_cat, categories) else {
+                continue;
+            };
+            let new_state = if shape.has_synth_paren {
+                quote! {
+                    WpdsState::CollectionOpenParen {
+                        result_src_idx: #result_src_idx,
+                        rule_idx: #rule_idx,
+                        element_src_idx: #element_src,
+                        outer_bp: *cur_bp,
                     }
-                });
-            } else if let Some(element_src) = element_src_idx {
-                // Cross-cat collection: push CategoryEntry(element_src_idx)
-                // on top of the marker so PrefixDispatch routes to element cat.
-                arms.push(quote! {
-                    Some(mettail_prattail::automata::TokenKind::Fixed(__open))
-                        if __open == #open && state_cat_src_idx == #result_src_idx => {
-                        // Push the marker first via ConsumeAndPush. Walker
-                        // auto-allocates accumulator_id. Then the next step
-                        // (in PrefixDispatch with marker on top) will detect
-                        // a cross-cat shape via lookup and Push CategoryEntry.
-                        return WpdsStepAction::ConsumeAndPush {
-                            symbol: StackSymbolV2::collection_marker(
-                                #result_src_idx, #rule_idx, 0,
-                            ),
-                            weight: LexicographicWeight::from_cost(
-                                0.0, #result_src_idx, #rule_idx,
-                            ),
-                            new_state: WpdsState::PrefixDispatch {
-                                pos: *pos + 1,
-                                cur_bp: 0,
-                            },
-                            capture_token: false,
-                        };
+                }
+            } else {
+                quote! {
+                    WpdsState::PrefixDispatch {
+                        pos: *pos + 1,
+                        cur_bp: 0,
                     }
-                });
-                let _ = element_src;
-            }
+                }
+            };
+            arms.push(quote! {
+                Some(mettail_prattail::automata::TokenKind::Fixed(__open))
+                    if __open == #open_token && state_cat_src_idx == #result_src_idx => {
+                    return WpdsStepAction::ConsumeAndPush {
+                        symbol: StackSymbolV2::collection_marker(
+                            #result_src_idx, #rule_idx, 0,
+                        ),
+                        weight: LexicographicWeight::from_cost(
+                            0.0, #result_src_idx, #rule_idx,
+                        ),
+                        new_state: #new_state,
+                        capture_token: false,
+                    };
+                }
+            });
         }
     }
-    let _ = language;
     quote! { #(#arms)* }
 }
 
@@ -178,7 +240,7 @@ pub(crate) fn emit_collection_prefix_arms(
 /// == sep → `Consume` → `PrefixDispatch{cur_bp:0}` to parse next element;
 /// else → `Error`.
 pub(crate) fn emit_collection_loop_arm(
-    _language: &mettail_ast::language::LanguageDef,
+    language: &mettail_ast::language::LanguageDef,
     _categories: &[String],
     per_cat: &[Vec<GrammarRule>],
 ) -> TokenStream {
@@ -186,7 +248,7 @@ pub(crate) fn emit_collection_loop_arm(
     let mut lookup_arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_collection(rule) else {
+            let Some(shape) = classify_collection(rule, language) else {
                 continue;
             };
             let result_src_idx = cat_i as u16;
@@ -245,13 +307,14 @@ pub(crate) fn emit_collection_loop_arm(
 /// `WpdsState::Unwinding` arm when transitioning from CollectionMarker top
 /// to `WpdsState::CollectionLoop`.
 pub(crate) fn emit_collection_element_src_lookup(
+    language: &mettail_ast::language::LanguageDef,
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
 ) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_collection(rule) else {
+            let Some(shape) = classify_collection(rule, language) else {
                 continue;
             };
             let Some(element_src_idx) = lookup_element_src_idx(&shape.element_cat, categories)
@@ -281,11 +344,14 @@ pub(crate) fn emit_collection_element_src_lookup(
 /// empty-collection bootstrap: when frontier_top is a `CollectionMarker`
 /// and the next token equals the close delim, the empty-collection path
 /// fires `ConsumeAndPop` instead of falling through to element dispatch.
-pub(crate) fn emit_collection_close_lookup(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
+pub(crate) fn emit_collection_close_lookup(
+    language: &mettail_ast::language::LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_collection(rule) else {
+            let Some(shape) = classify_collection(rule, language) else {
                 continue;
             };
             let result_src_idx = cat_i as u16;
@@ -323,6 +389,27 @@ mod tests {
     use proc_macro2::Span;
     use syn::Ident;
 
+    fn empty_lang() -> mettail_ast::language::LanguageDef {
+        mettail_ast::language::LanguageDef {
+            name: Ident::new("Test", Span::call_site()),
+            options: Default::default(),
+            extends_names: Vec::new(),
+            include_names: Vec::new(),
+            mixin_names: Vec::new(),
+            types: Vec::new(),
+            refinement_types: Vec::new(),
+            token_defs: Vec::new(),
+            mode_defs: Vec::new(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
+            terms: Vec::new(),
+            equations: Vec::new(),
+            rewrites: Vec::new(),
+            logic: None,
+            guard_config: None,
+        }
+    }
+
     #[test]
     fn classifies_hashbag_collection_rule() {
         // Mirror of RhoCalc's:
@@ -354,13 +441,62 @@ mod tests {
             prefix_bp: None,
             tier_directive: None,
         };
-        let shape = classify_collection(&rule).expect("collection");
+        let lang = empty_lang();
+        let shape = classify_collection(&rule, &lang).expect("collection");
         assert_eq!(shape.open, "{");
+        assert_eq!(shape.open_token, "{");
+        assert!(!shape.has_synth_paren);
         assert_eq!(shape.close, "}");
         assert_eq!(shape.separator, "|");
+        assert_eq!(shape.pair_separator, None);
         assert_eq!(shape.element_cat, "Proc");
         assert_eq!(shape.label, "PPar");
         assert_eq!(shape.result_cat, "Proc");
         assert!(matches!(shape.coll_kind, CollectionType::HashBag));
+    }
+
+    #[test]
+    fn classifies_4element_split_open_pattern() {
+        // Mirror of synthetic.rs's default split form:
+        //   ListLit . ps:Vec(Proc) |- "list" "(" ps.*sep(",") ")" : List;
+        let rule = GrammarRule {
+            label: Ident::new("ListLit", Span::call_site()),
+            category: Ident::new("List", Span::call_site()),
+            items: Vec::new(),
+            bindings: Vec::new(),
+            term_context: Some(vec![TermParam::Simple {
+                name: Ident::new("ps", Span::call_site()),
+                ty: TypeExpr::Collection {
+                    coll_type: CollectionType::Vec,
+                    element: Box::new(TypeExpr::Base(Ident::new("Proc", Span::call_site()))),
+                },
+            }]),
+            syntax_pattern: Some(vec![
+                SyntaxExpr::Literal("list".into()),
+                SyntaxExpr::Literal("(".into()),
+                SyntaxExpr::Op(PatternOp::Sep {
+                    collection: Ident::new("ps", Span::call_site()),
+                    separator: ",".into(),
+                    source: None,
+                }),
+                SyntaxExpr::Literal(")".into()),
+            ]),
+            rust_code: None,
+            eval_mode: None,
+            is_right_assoc: false,
+            prefix_bp: None,
+            tier_directive: None,
+        };
+        let lang = empty_lang();
+        let shape = classify_collection(&rule, &lang).expect("4-element collection");
+        assert_eq!(shape.open, "list(");
+        assert_eq!(shape.open_token, "list");
+        assert!(shape.has_synth_paren);
+        assert_eq!(shape.close, ")");
+        assert_eq!(shape.separator, ",");
+        assert_eq!(shape.pair_separator, None);
+        assert_eq!(shape.element_cat, "Proc");
+        assert_eq!(shape.label, "ListLit");
+        assert!(matches!(shape.coll_kind, CollectionType::Vec));
     }
 }

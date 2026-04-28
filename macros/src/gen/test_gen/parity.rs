@@ -410,17 +410,20 @@ fn atomic_literal_fixtures(kind: &NativeKind, cat_name: &str) -> Vec<String> {
             ]
         }
         NativeKind::CanonicalBigRat => {
-            // Composite forms like `1r/2r` are dropped: neither backend
-            // currently lexes the composite as a single token (the BigRat
-            // regex matches `1r` only; the lexer hands `/2r` to the parser
-            // as a separate token, which both the trampoline `parse_BigRat`
-            // and WPDS facade reject as trailing input). Whole-number form
-            // is the safe parity-tested subset.
+            // C3 (2026-04-28): composite forms `1r/2r` now lex atomically —
+            // the BigRat regex was extended to match `<int>r(/<int>r)?` and
+            // the WPDS facade routes through `parse_rational_lit` which
+            // handles both whole and composite forms.
             vec![
                 "0r".into(),
                 "1r".into(),
                 "42r".into(),
                 "100r".into(),
+                "1r/2r".into(),
+                "3r/4r".into(),
+                "0r/1r".into(),
+                "10r/100r".into(),
+                "0xFr/0x2r".into(),
             ]
         }
         NativeKind::CanonicalFixedPoint => {
@@ -440,16 +443,12 @@ fn atomic_literal_fixtures(kind: &NativeKind, cat_name: &str) -> Vec<String> {
             ]
         }
         NativeKind::Bool => {
-            // `yeap`/`nope` aliases are deliberately omitted: the trampoline
-            // lexer's `Token::Boolean(text == "true")` short-circuit doesn't
-            // consult the user `eval` block, so trampoline returns
-            // `BoolLit(false)` for both `yeap` and `nope`. The WPDS path
-            // honors the eval block correctly. Per
-            // `feedback_parity_drift_ok_if_better.md`, this divergence is
-            // accepted (WPDS is correct), so we don't flag it as a parity
-            // failure here. After the trampoline is deleted in Stage 6,
-            // these aliases will be added back.
-            vec!["true".into(), "false".into()]
+            // C6 (2026-04-28): all four bool literals exercised. The regex
+            // accepts `yeap|nope|true|false`, the eval block converts each
+            // to bool. Stage 7 deleted the trampoline; both `Cat::parse()`
+            // and `Cat::parse_via_wpds()` now route through WPDS, which
+            // honors the eval block correctly for the `yeap`/`nope` aliases.
+            vec!["true".into(), "false".into(), "yeap".into(), "nope".into()]
         }
         NativeKind::Str => {
             vec![
@@ -459,6 +458,17 @@ fn atomic_literal_fixtures(kind: &NativeKind, cat_name: &str) -> Vec<String> {
             ]
         }
         NativeKind::Other => {
+            // `NativeKind::Other` is overloaded — it covers (a) custom
+            // user wrappers like `MyType` AND (b) container types like
+            // `Vec<T>` / `HashMap<K,V>` / `HashBag<T>` (which DO appear
+            // in shipped grammars as `![Vec<Proc>] as List` etc.).
+            // Container categories carry their own fixtures via the
+            // collection-literal path, so returning no atomic-literal
+            // fixtures here is the semantically correct response. A
+            // truly-unknown category would also hit this arm; if test
+            // coverage gaps for such a grammar become a problem, extend
+            // `NativeKind` with a dedicated variant rather than
+            // panicking here.
             let _ = cat_name;
             Vec::new()
         }

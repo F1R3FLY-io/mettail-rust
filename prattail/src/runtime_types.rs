@@ -48,6 +48,33 @@ pub struct Range {
     pub file_id: Option<u32>,
 }
 
+/// Character-based range — absolute character offsets from start of input.
+///
+/// Used by editor-protocol APIs (LSP, etc.) and the incremental re-lex
+/// machinery, both of which index by Unicode code point rather than UTF-8
+/// byte offset. Convert with `Range::to_char_offset(input)` and
+/// `Range::from_char_offset(input, start, end)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CharRange {
+    pub start_chars: usize,
+    pub end_chars: usize,
+}
+
+impl CharRange {
+    pub fn zero() -> Self {
+        CharRange { start_chars: 0, end_chars: 0 }
+    }
+
+    /// Width of the range in characters (saturating to 0 if reversed).
+    pub fn len(&self) -> usize {
+        self.end_chars.saturating_sub(self.start_chars)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.end_chars <= self.start_chars
+    }
+}
+
 impl Range {
     pub fn zero() -> Self {
         Range {
@@ -55,6 +82,74 @@ impl Range {
             end: Position::zero(),
             file_id: None,
         }
+    }
+
+    /// Compute the absolute character offsets corresponding to this range's
+    /// byte-based positions, given the source text.
+    ///
+    /// Byte offsets that exceed `input.len()` are saturated to the input's
+    /// byte length (the corresponding character offset is `input.chars().count()`).
+    pub fn to_char_offset(&self, input: &str) -> CharRange {
+        let start_byte = self.start.byte_offset.min(input.len());
+        let end_byte = self.end.byte_offset.min(input.len());
+        let start_chars = input[..start_byte].chars().count();
+        let end_chars = input[..end_byte].chars().count();
+        CharRange { start_chars, end_chars }
+    }
+
+    /// Construct a `Range` from absolute character offsets, computing the
+    /// corresponding byte offsets, line numbers, and per-line columns by
+    /// walking `input`.
+    ///
+    /// If a character offset exceeds the input's character count, it is
+    /// clamped to the end of the input. `file_id` is set to `None`; callers
+    /// that need a non-None file_id should overwrite it after construction.
+    pub fn from_char_offset(input: &str, start_chars: usize, end_chars: usize) -> Self {
+        let start = byte_to_position(input, char_to_byte(input, start_chars));
+        let end = byte_to_position(input, char_to_byte(input, end_chars));
+        Range {
+            start,
+            end,
+            file_id: None,
+        }
+    }
+}
+
+/// Convert an absolute character offset to a UTF-8 byte offset within `input`.
+///
+/// If `char_offset` is past the end of `input`, returns `input.len()`. The
+/// returned byte offset is always at a valid UTF-8 char boundary.
+#[inline]
+fn char_to_byte(input: &str, char_offset: usize) -> usize {
+    input
+        .char_indices()
+        .nth(char_offset)
+        .map(|(b, _)| b)
+        .unwrap_or(input.len())
+}
+
+/// Walk `input` to compute the `Position` (byte_offset/line/column) at the
+/// given UTF-8 byte offset. `byte_offset` must be on a char boundary or
+/// equal to `input.len()`.
+#[inline]
+fn byte_to_position(input: &str, byte_offset: usize) -> Position {
+    let mut line: usize = 0;
+    let mut column: usize = 0;
+    for (b, ch) in input.char_indices() {
+        if b >= byte_offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            column = 0;
+        } else {
+            column += 1;
+        }
+    }
+    Position {
+        byte_offset,
+        line,
+        column,
     }
 }
 
@@ -993,5 +1088,159 @@ mod tests {
         };
         let msg = err.to_string();
         assert!(msg.contains("hint: did you forget ')' ?"), "hint should appear, msg: {}", msg);
+    }
+
+    // ── L7: UTF-8 char/byte offset helpers ────────────────────────────────
+
+    #[test]
+    fn char_range_zero_and_len() {
+        let cr = CharRange::zero();
+        assert_eq!(cr.start_chars, 0);
+        assert_eq!(cr.end_chars, 0);
+        assert_eq!(cr.len(), 0);
+        assert!(cr.is_empty());
+
+        let cr2 = CharRange { start_chars: 3, end_chars: 7 };
+        assert_eq!(cr2.len(), 4);
+        assert!(!cr2.is_empty());
+
+        // Reversed (start > end) saturates to 0
+        let cr3 = CharRange { start_chars: 7, end_chars: 3 };
+        assert_eq!(cr3.len(), 0);
+        assert!(cr3.is_empty());
+    }
+
+    #[test]
+    fn range_to_char_offset_ascii() {
+        let input = "hello world";
+        let r = Range {
+            start: Position { byte_offset: 6, line: 0, column: 6 },
+            end: Position { byte_offset: 11, line: 0, column: 11 },
+            file_id: None,
+        };
+        let cr = r.to_char_offset(input);
+        assert_eq!(cr.start_chars, 6);
+        assert_eq!(cr.end_chars, 11);
+    }
+
+    #[test]
+    fn range_to_char_offset_unicode() {
+        // "héllo" — 'é' is 2 bytes (U+00E9), 5 chars, 6 bytes total.
+        let input = "héllo";
+        assert_eq!(input.len(), 6);
+        assert_eq!(input.chars().count(), 5);
+
+        // Range covering "éllo" (chars 1..5, bytes 1..6)
+        let r = Range {
+            start: Position { byte_offset: 1, line: 0, column: 1 },
+            end: Position { byte_offset: 6, line: 0, column: 5 },
+            file_id: None,
+        };
+        let cr = r.to_char_offset(input);
+        assert_eq!(cr.start_chars, 1);
+        assert_eq!(cr.end_chars, 5);
+    }
+
+    #[test]
+    fn range_to_char_offset_clamps_oversize_byte() {
+        let input = "abc";
+        let r = Range {
+            start: Position { byte_offset: 1, line: 0, column: 1 },
+            end: Position { byte_offset: 999, line: 0, column: 999 },
+            file_id: None,
+        };
+        let cr = r.to_char_offset(input);
+        assert_eq!(cr.start_chars, 1);
+        assert_eq!(cr.end_chars, 3); // clamped to chars().count()
+    }
+
+    #[test]
+    fn range_from_char_offset_ascii_single_line() {
+        let input = "hello world";
+        let r = Range::from_char_offset(input, 6, 11);
+        assert_eq!(r.start.byte_offset, 6);
+        assert_eq!(r.start.line, 0);
+        assert_eq!(r.start.column, 6);
+        assert_eq!(r.end.byte_offset, 11);
+        assert_eq!(r.end.line, 0);
+        assert_eq!(r.end.column, 11);
+        assert_eq!(r.file_id, None);
+    }
+
+    #[test]
+    fn range_from_char_offset_multi_line() {
+        // "abc\ndef\nghi" — chars: a(0)b(1)c(2)\n(3)d(4)e(5)f(6)\n(7)g(8)h(9)i(10)
+        let input = "abc\ndef\nghi";
+        let r = Range::from_char_offset(input, 5, 9);
+        // char 5 = 'e' on line 1, col 1
+        assert_eq!(r.start.byte_offset, 5);
+        assert_eq!(r.start.line, 1);
+        assert_eq!(r.start.column, 1);
+        // char 9 = 'h' on line 2, col 1
+        assert_eq!(r.end.byte_offset, 9);
+        assert_eq!(r.end.line, 2);
+        assert_eq!(r.end.column, 1);
+    }
+
+    #[test]
+    fn range_from_char_offset_unicode() {
+        // "α=β\nγ" — α(2 bytes), =(1), β(2), \n(1), γ(2). Chars: α(0),=(1),β(2),\n(3),γ(4).
+        let input = "α=β\nγ";
+        let r = Range::from_char_offset(input, 2, 4);
+        // char 2 = 'β' at byte 3, line 0, col 2
+        assert_eq!(r.start.byte_offset, 3);
+        assert_eq!(r.start.line, 0);
+        assert_eq!(r.start.column, 2);
+        // char 4 = 'γ' at byte 6, line 1, col 0
+        assert_eq!(r.end.byte_offset, 6);
+        assert_eq!(r.end.line, 1);
+        assert_eq!(r.end.column, 0);
+    }
+
+    #[test]
+    fn range_from_char_offset_clamps_to_end() {
+        let input = "abc";
+        let r = Range::from_char_offset(input, 999, 1_000_000);
+        assert_eq!(r.start.byte_offset, input.len());
+        assert_eq!(r.end.byte_offset, input.len());
+        assert_eq!(r.start.line, 0);
+        assert_eq!(r.start.column, 3);
+    }
+
+    #[test]
+    fn range_char_byte_round_trip_ascii() {
+        let input = "the quick brown fox";
+        let original = Range {
+            start: Position { byte_offset: 4, line: 0, column: 4 },
+            end: Position { byte_offset: 9, line: 0, column: 9 },
+            file_id: None,
+        };
+        let cr = original.to_char_offset(input);
+        let restored = Range::from_char_offset(input, cr.start_chars, cr.end_chars);
+        // byte_offset / line / column round-trip exactly for in-range positions
+        assert_eq!(restored.start, original.start);
+        assert_eq!(restored.end, original.end);
+    }
+
+    #[test]
+    fn range_char_byte_round_trip_unicode_multiline() {
+        // Layout:
+        //   🦀(4 bytes 0..4) ' '(4..5) r(5) u(6) s(7) t(8) \n(9)
+        //   日(10..13) 本(13..16) 語(16..19) \n(19)
+        //   a(20) s(21) c(22) i(23) i(24)
+        // Char indices:
+        //   🦀=0 ' '=1 r=2 u=3 s=4 t=5 \n=6 日=7 本=8 語=9 \n=10 a=11 ...
+        let input = "🦀 rust\n日本語\nascii";
+        let original = Range {
+            start: Position { byte_offset: 5, line: 0, column: 2 },
+            end: Position { byte_offset: 19, line: 1, column: 3 },
+            file_id: None,
+        };
+        let cr = original.to_char_offset(input);
+        assert_eq!(cr.start_chars, 2);
+        assert_eq!(cr.end_chars, 10);
+        let restored = Range::from_char_offset(input, cr.start_chars, cr.end_chars);
+        assert_eq!(restored.start, original.start);
+        assert_eq!(restored.end, original.end);
     }
 }

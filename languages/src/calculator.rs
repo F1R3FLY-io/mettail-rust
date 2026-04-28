@@ -46,9 +46,13 @@ language! {
             } ]
         }
         // BigRat sugar: `<int>r` (whole) or `<int>r/<int>r` (composite).
-        // Optional `r` suffix; leading `-?` supports negative rationals atomically.
+        // C3 (2026-04-28): regex now lexes the composite `1r/2r` form atomically
+        // so the rational literal arrives as a single token. Maximal-munch DFA
+        // priority: longer match wins, so `1r/2r` does not split into `1r`,`/`,`2r`.
+        // Negative-on-second-side (`-1r/-2r`) is intentionally NOT supported —
+        // splits into three tokens; users write `-(1r/2r)` for that case.
         BigRat {
-            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r?";
+            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r(/(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r)?";
             eval: ![ {
                 mettail_prattail::parse_rational_lit(text).map_err(|_| ())
             } ]

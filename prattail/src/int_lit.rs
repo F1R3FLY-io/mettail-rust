@@ -135,10 +135,30 @@ impl IntLit {
         }
     }
 
+    /// Convert any integer variant to a `num_bigint::BigInt`. Always succeeds
+    /// because every fixed-width integer fits in BigInt. Returns `Option` for
+    /// API parity with sister methods like `as_i64`, but the `None` case is
+    /// unreachable in practice — every variant produces `Some`. (B11 fix:
+    /// previously this only handled `IntLit::BigInt(_)`, returning `None` for
+    /// every other variant. That broke BigInt's category eval block when bare
+    /// unsuffixed integers — which `parse_int_lit` returns as the narrowest
+    /// fit, e.g. `IntLit::I32(0)` for "0" — were routed to BigInt's NumLit
+    /// arm. The eval block called `parse_int_lit(text, None).to_bigint()`
+    /// expecting it to always succeed, but it returned `None` for any
+    /// non-BigInt variant, leaving the builder empty.)
     pub fn to_bigint(&self) -> Option<BigInt> {
         match self {
+            IntLit::I8(v) => Some(BigInt::from(*v)),
+            IntLit::I16(v) => Some(BigInt::from(*v)),
+            IntLit::I32(v) => Some(BigInt::from(*v)),
+            IntLit::I64(v) => Some(BigInt::from(*v)),
+            IntLit::I128(v) => Some(BigInt::from(*v)),
+            IntLit::U8(v) => Some(BigInt::from(*v)),
+            IntLit::U16(v) => Some(BigInt::from(*v)),
+            IntLit::U32(v) => Some(BigInt::from(*v)),
+            IntLit::U64(v) => Some(BigInt::from(*v)),
+            IntLit::U128(v) => Some(BigInt::from(*v)),
             IntLit::BigInt(v) => Some(v.clone()),
-            _ => None,
         }
     }
 
@@ -159,6 +179,76 @@ impl IntLit {
             IntLit::BigInt(v) => {
                 use num_traits::ToPrimitive;
                 v.to_i64()
+            },
+        }
+    }
+
+    /// Convert any variant to i128, returning None on overflow. Lossless across
+    /// every variant that fits in i128 — e.g. `IntLit::I128(i128::MAX)`,
+    /// `IntLit::U64(u64::MAX)`, `IntLit::U128(u128::MAX as i128)` all succeed.
+    /// (B12 fix: emission previously routed Int128 conversions through
+    /// `as_i64`, which silently failed for any value greater than `i64::MAX`,
+    /// turning a valid `i128` literal into "WPDS produced no result".)
+    pub fn as_i128(&self) -> Option<i128> {
+        match self {
+            IntLit::I8(v) => Some(*v as i128),
+            IntLit::I16(v) => Some(*v as i128),
+            IntLit::I32(v) => Some(*v as i128),
+            IntLit::I64(v) => Some(*v as i128),
+            IntLit::I128(v) => Some(*v),
+            IntLit::U8(v) => Some(*v as i128),
+            IntLit::U16(v) => Some(*v as i128),
+            IntLit::U32(v) => Some(*v as i128),
+            IntLit::U64(v) => Some(*v as i128),
+            IntLit::U128(v) => i128::try_from(*v).ok(),
+            IntLit::BigInt(v) => {
+                use num_traits::ToPrimitive;
+                v.to_i128()
+            },
+        }
+    }
+
+    /// Convert any variant to u64, returning None on overflow or negative
+    /// values. Lossless for non-negative values up to u64::MAX. (B12 fix:
+    /// previously routed through `as_i64`, which failed for `IntLit::U64(v)`
+    /// where v > i64::MAX — silently rejecting valid u64 literals.)
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            IntLit::I8(v) => u64::try_from(*v).ok(),
+            IntLit::I16(v) => u64::try_from(*v).ok(),
+            IntLit::I32(v) => u64::try_from(*v).ok(),
+            IntLit::I64(v) => u64::try_from(*v).ok(),
+            IntLit::I128(v) => u64::try_from(*v).ok(),
+            IntLit::U8(v) => Some(*v as u64),
+            IntLit::U16(v) => Some(*v as u64),
+            IntLit::U32(v) => Some(*v as u64),
+            IntLit::U64(v) => Some(*v),
+            IntLit::U128(v) => u64::try_from(*v).ok(),
+            IntLit::BigInt(v) => {
+                use num_traits::ToPrimitive;
+                v.to_u64()
+            },
+        }
+    }
+
+    /// Convert any variant to u128, returning None on overflow or negative
+    /// values. Lossless for non-negative values up to u128::MAX. (B12 fix:
+    /// same reason as `as_u64`.)
+    pub fn as_u128(&self) -> Option<u128> {
+        match self {
+            IntLit::I8(v) => u128::try_from(*v).ok(),
+            IntLit::I16(v) => u128::try_from(*v).ok(),
+            IntLit::I32(v) => u128::try_from(*v).ok(),
+            IntLit::I64(v) => u128::try_from(*v).ok(),
+            IntLit::I128(v) => u128::try_from(*v).ok(),
+            IntLit::U8(v) => Some(*v as u128),
+            IntLit::U16(v) => Some(*v as u128),
+            IntLit::U32(v) => Some(*v as u128),
+            IntLit::U64(v) => Some(*v as u128),
+            IntLit::U128(v) => Some(*v),
+            IntLit::BigInt(v) => {
+                use num_traits::ToPrimitive;
+                v.to_u128()
             },
         }
     }

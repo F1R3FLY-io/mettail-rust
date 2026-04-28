@@ -2301,6 +2301,9 @@ fn token_kind_to_variant_name(kind: &super::automata::TokenKind) -> String {
         | super::automata::TokenKind::RationalLit(cat)
         | super::automata::TokenKind::FixedPointLit(cat) => cat.clone(),
         super::automata::TokenKind::BooleanLit => "Boolean".to_string(),
+        super::automata::TokenKind::LexError(_) => unreachable!(
+            "LexError TokenKind in FIRST-set computation — runtime-only variant"
+        ),
     }
 }
 
