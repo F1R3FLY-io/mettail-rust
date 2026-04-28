@@ -218,13 +218,17 @@ pub(crate) fn receive_apply(pattern: &Proc, value: &Proc, body: &Proc) -> Option
 
 pub fn comm_pforwhere_subst(pat: &Proc, n: &Name, q: &Proc, cond: &Proc, body: &Proc) -> Proc {
     let blocked = || {
-        Proc::CommWhere(
-            Box::new(pat.clone()),
-            Box::new(n.clone()),
-            Box::new(q.clone()),
-            Box::new(cond.clone()),
-            Box::new(body.clone()),
-        )
+        let bind = match pat {
+            Proc::PVar(v) => {
+                InputBind::InputBind(Box::new(Name::NVar(v.clone())), Box::new(n.clone()))
+            },
+            _ => InputBind::InputBindQuoted(Box::new(pat.clone()), Box::new(n.clone())),
+        };
+        let row = ForRow::ForRowSingleWhere(Box::new(bind), Box::new(cond.clone()));
+        let mut bag = HashBag::new();
+        Proc::insert_into_ppar(&mut bag, Proc::PForUser(vec![row], Box::new(body.clone())));
+        Proc::insert_into_ppar(&mut bag, Proc::POutput(Box::new(n.clone()), Box::new(q.clone())));
+        Proc::PPar(bag)
     };
 
     let Some(sub_body) = receive_apply(pat, q, body) else {
@@ -293,10 +297,7 @@ fn apply_row_with_query_sugar(row: ForRow, inner: Proc, counter: &mut usize) -> 
         },
         ForRow::ForRowSingleWhere(b, cond) => {
             let (b2, sends) = desugar_query_bind(*b, counter);
-            let recv = pfor_user_one_row(
-                ForRow::ForRowSingleWhere(Box::new(b2), cond),
-                inner,
-            );
+            let recv = pfor_user_one_row(ForRow::ForRowSingleWhere(Box::new(b2), cond), inner);
             (recv, sends)
         },
         ForRow::ForRowNoWhere(b, bs) => {
@@ -309,10 +310,7 @@ fn apply_row_with_query_sugar(row: ForRow, inner: Proc, counter: &mut usize) -> 
                 acc_sends.append(&mut sends_i);
                 bs2.push(ib2);
             }
-            (
-                pfor_user_one_row(ForRow::ForRowNoWhere(Box::new(b2), bs2), inner),
-                acc_sends,
-            )
+            (pfor_user_one_row(ForRow::ForRowNoWhere(Box::new(b2), bs2), inner), acc_sends)
         },
         ForRow::ForRowWhere(b, bs, cond) => {
             let mut acc_sends = Vec::new();
@@ -324,7 +322,10 @@ fn apply_row_with_query_sugar(row: ForRow, inner: Proc, counter: &mut usize) -> 
                 acc_sends.append(&mut sends_i);
                 bs2.push(ib2);
             }
-            (pfor_user_one_row(ForRow::ForRowWhere(Box::new(b2), bs2, cond), inner), acc_sends)
+            (
+                pfor_user_one_row(ForRow::ForRowWhere(Box::new(b2), bs2, cond), inner),
+                acc_sends,
+            )
         },
         _ => (Proc::Err, vec![]),
     };
@@ -366,8 +367,7 @@ pub fn pfor_user_still_has_query_rows(rows: &[ForRow]) -> bool {
             ) || bs.iter().any(|ib| {
                 matches!(
                     ib,
-                    InputBind::InputBindQuery(_, _, _)
-                        | InputBind::InputBindQuotedQuery(_, _, _)
+                    InputBind::InputBindQuery(_, _, _) | InputBind::InputBindQuotedQuery(_, _, _)
                 )
             })
         },
@@ -378,8 +378,7 @@ pub fn pfor_user_still_has_query_rows(rows: &[ForRow]) -> bool {
             ) || bs.iter().any(|ib| {
                 matches!(
                     ib,
-                    InputBind::InputBindQuery(_, _, _)
-                        | InputBind::InputBindQuotedQuery(_, _, _)
+                    InputBind::InputBindQuery(_, _, _) | InputBind::InputBindQuotedQuery(_, _, _)
                 )
             })
         },
@@ -409,17 +408,7 @@ pub fn desugar_polyadic_output(n: &Name, a: &Proc, bs: &[Proc]) -> Proc {
     let mut items = Vec::with_capacity(1 + bs.len());
     items.push(a.clone());
     items.extend(bs.iter().cloned());
-    Proc::POutput(
-        Box::new(n.clone()),
-        Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
-    )
-}
-
-fn is_trivially_true_const(p: &Proc) -> bool {
-    if let Proc::CastBool(b) = p {
-        return matches!(b.as_ref(), Bool::BoolLit(true));
-    }
-    false
+    Proc::POutput(Box::new(n.clone()), Box::new(Proc::CastList(Box::new(List::ListLit(items)))))
 }
 
 pub(crate) fn channel_names_from_row(b: &InputBind, bs: &[InputBind]) -> Option<Vec<Name>> {
@@ -443,36 +432,10 @@ pub fn comm_pforjoin_subst(
     qs: &[Proc],
     cond: &Proc,
     body: &Proc,
-) -> Proc {
-    let blocked = || {
-        let mut bag = HashBag::new();
-        let row = if is_trivially_true_const(cond) {
-            ForRow::ForRowNoWhere(Box::new(b.clone()), bs.to_vec())
-        } else {
-            ForRow::ForRowWhere(
-                Box::new(b.clone()),
-                bs.to_vec(),
-                Box::new(cond.clone()),
-            )
-        };
-        Proc::insert_into_ppar(
-            &mut bag,
-            Proc::PForUser(vec![row], Box::new(body.clone())),
-        );
-        for (n, q) in ns.iter().zip(qs.iter()) {
-            Proc::insert_into_ppar(
-                &mut bag,
-                Proc::POutput(Box::new(n.clone()), Box::new(q.clone())),
-            );
-        }
-        Proc::PPar(bag)
-    };
-
-    let Some(expected_ns) = channel_names_from_row(b, bs) else {
-        return blocked();
-    };
+) -> Option<Proc> {
+    let expected_ns = channel_names_from_row(b, bs)?;
     if expected_ns.len() != ns.len() || expected_ns.len() != qs.len() {
-        return blocked();
+        return None;
     }
     // PPar is a bag; output order in `ns/qs` is not stable. Align payloads to expected channels.
     let mut used = vec![false; ns.len()];
@@ -485,9 +448,7 @@ pub fn comm_pforjoin_subst(
                 break;
             }
         }
-        let Some(idx) = found else {
-            return blocked();
-        };
+        let idx = found?;
         used[idx] = true;
         aligned_qs.push(&qs[idx]);
     }
@@ -495,22 +456,16 @@ pub fn comm_pforjoin_subst(
     let mut acc_body = body.clone();
     let mut acc_cond = cond.clone();
     for (ib, q) in binds.iter().zip(aligned_qs.iter()) {
-        let Some(pat) = bind_pattern_proc(ib) else {
-            return blocked();
-        };
-        let Some(nb) = receive_apply(&pat, q, &acc_body) else {
-            return blocked();
-        };
+        let pat = bind_pattern_proc(ib)?;
+        let nb = receive_apply(&pat, q, &acc_body)?;
         acc_body = nb;
-        let Some(nc) = receive_apply(&pat, q, &acc_cond) else {
-            return blocked();
-        };
+        let nc = receive_apply(&pat, q, &acc_cond)?;
         acc_cond = nc;
     }
 
     match eval_guard_bool(&acc_cond) {
-        Some(true) => acc_body,
-        _ => blocked(),
+        Some(true) => Some(acc_body),
+        _ => None,
     }
 }
 
@@ -554,45 +509,17 @@ fn try_comm_on_pfor_user(
     let cont = pfor_continuation_after_first_row(rows, body);
     match &rows[0] {
         ForRow::ForRowSingleNoWhere(b) => {
-            try_comm_single(
-                b.as_ref(),
-                whole_bag,
-                for_key,
-                &cont,
-                false,
-                None,
-            )
+            try_comm_single(b.as_ref(), whole_bag, for_key, &cont, false, None)
         },
         ForRow::ForRowSingleWhere(b, cond) => {
-            try_comm_single(
-                b.as_ref(),
-                whole_bag,
-                for_key,
-                &cont,
-                true,
-                Some(cond.as_ref()),
-            )
+            try_comm_single(b.as_ref(), whole_bag, for_key, &cont, true, Some(cond.as_ref()))
         },
         ForRow::ForRowNoWhere(b, bs) => {
             let true_c = Proc::CastBool(Box::new(Bool::BoolLit(true)));
-            try_comm_join(
-                b.as_ref(),
-                bs,
-                &true_c,
-                whole_bag,
-                for_key,
-                &cont,
-            )
+            try_comm_join(b.as_ref(), bs, &true_c, whole_bag, for_key, &cont)
         },
         ForRow::ForRowWhere(b, bs, cond) => {
-            try_comm_join(
-                b.as_ref(),
-                bs,
-                cond.as_ref(),
-                whole_bag,
-                for_key,
-                &cont,
-            )
+            try_comm_join(b.as_ref(), bs, cond.as_ref(), whole_bag, for_key, &cont)
         },
         _ => None,
     }
@@ -611,50 +538,25 @@ fn try_comm_single(
     for (cand, _) in whole_bag.iter() {
         if let Proc::POutput(n_out, q) = cand {
             if n_out.as_ref() == n_for_output {
-                return finish_single_comm(
-                    whole_bag,
-                    for_key,
-                    cand,
-                    &pat,
-                    n_out,
-                    q.as_ref(),
-                    cont,
-                    is_where,
-                    where_cond,
-                );
+                if !pat.pattern_matches(q) {
+                    continue;
+                }
+                let new_center = if is_where {
+                    let c = where_cond?;
+                    let sub_body = receive_apply(&pat, q.as_ref(), cont)?;
+                    let sub_cond = receive_apply(&pat, q.as_ref(), c)?;
+                    match eval_guard_bool(&sub_cond) {
+                        Some(true) => sub_body,
+                        _ => continue,
+                    }
+                } else {
+                    cont.apply_pattern(&pat, q.as_ref())?
+                };
+                return ppar_remove_two_insert(whole_bag, for_key, cand, new_center);
             }
         }
     }
     None
-}
-
-fn finish_single_comm(
-    whole_bag: &HashBag<Proc>,
-    for_key: &Proc,
-    output_key: &Proc,
-    pat: &Proc,
-    n_out: &Name,
-    q: &Proc,
-    cont: &Proc,
-    is_where: bool,
-    where_cond: Option<&Proc>,
-) -> Option<Proc> {
-    if !pat.pattern_matches(q) {
-        return None;
-    }
-    let new_center = if is_where {
-        let c = where_cond?;
-        Proc::CommWhere(
-            Box::new(pat.clone()),
-            Box::new(n_out.clone()),
-            Box::new(q.clone()),
-            Box::new(c.clone()),
-            Box::new(cont.clone()),
-        )
-    } else {
-        cont.apply_pattern(pat, q)?
-    };
-    ppar_remove_two_insert(whole_bag, for_key, output_key, new_center)
 }
 
 /// Remove exactly one `key1`, one `key2`, and insert one `ins` in a new `PPar`.
@@ -706,7 +608,7 @@ fn try_comm_join(
             return None;
         }
     }
-    let res = comm_pforjoin_subst(b, bs, &ns_collected, &qs, cond, cont);
+    let res = comm_pforjoin_subst(b, bs, &ns_collected, &qs, cond, cont)?;
     work.insert(res);
     Some(Proc::PPar(work))
 }
