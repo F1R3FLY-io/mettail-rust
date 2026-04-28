@@ -55,9 +55,17 @@ fn input_bind_uses_name_var(bind: &InputBind, var_name: &str) -> bool {
             let pat = receive::name_pattern_to_proc(lhs.as_ref());
             proc_uses_name_var(&pat, var_name) || name_uses_var(n, var_name)
         },
+        InputBind::InputBindQuoted(pat, n) => {
+            proc_uses_name_var(pat, var_name) || name_uses_var(n, var_name)
+        },
         InputBind::InputBindQuery(lhs, n, args) => {
             let pat = receive::name_pattern_to_proc(lhs.as_ref());
             proc_uses_name_var(&pat, var_name)
+                || name_uses_var(n, var_name)
+                || args.iter().any(|a| proc_uses_name_var(a, var_name))
+        },
+        InputBind::InputBindQuotedQuery(pat, n, args) => {
+            proc_uses_name_var(pat, var_name)
                 || name_uses_var(n, var_name)
                 || args.iter().any(|a| proc_uses_name_var(a, var_name))
         },
@@ -71,9 +79,17 @@ fn input_bind_uses_proc_var(bind: &InputBind, var_name: &str) -> bool {
             let pat = receive::name_pattern_to_proc(lhs.as_ref());
             proc_uses_proc_var(&pat, var_name) || name_uses_var(n, var_name)
         },
+        InputBind::InputBindQuoted(pat, n) => {
+            proc_uses_proc_var(pat, var_name) || name_uses_var(n, var_name)
+        },
         InputBind::InputBindQuery(lhs, n, args) => {
             let pat = receive::name_pattern_to_proc(lhs.as_ref());
             proc_uses_proc_var(&pat, var_name)
+                || name_uses_var(n, var_name)
+                || args.iter().any(|a| proc_uses_proc_var(a, var_name))
+        },
+        InputBind::InputBindQuotedQuery(pat, n, args) => {
+            proc_uses_proc_var(pat, var_name)
                 || name_uses_var(n, var_name)
                 || args.iter().any(|a| proc_uses_proc_var(a, var_name))
         },

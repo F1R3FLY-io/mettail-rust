@@ -383,13 +383,6 @@ pub fn desugar_polyadic_output(n: &Name, a: &Proc, bs: &[Proc]) -> Proc {
     Proc::POutput(Box::new(n.clone()), Box::new(Proc::CastList(Box::new(List::ListLit(items)))))
 }
 
-fn is_trivially_true_const(p: &Proc) -> bool {
-    if let Proc::CastBool(b) = p {
-        return matches!(b.as_ref(), Bool::BoolLit(true));
-    }
-    false
-}
-
 pub(crate) fn channel_names_from_row(b: &InputBind, bs: &[InputBind]) -> Option<Vec<Name>> {
     let mut out = Vec::with_capacity(1 + bs.len());
     out.push(bind_channel_name(b)?.clone());
@@ -411,29 +404,10 @@ pub fn comm_pforjoin_subst(
     qs: &[Proc],
     cond: &Proc,
     body: &Proc,
-) -> Proc {
-    let blocked = || {
-        let mut bag = HashBag::new();
-        let row = if is_trivially_true_const(cond) {
-            ForRow::ForRowNoWhere(Box::new(b.clone()), bs.to_vec())
-        } else {
-            ForRow::ForRowWhere(Box::new(b.clone()), bs.to_vec(), Box::new(cond.clone()))
-        };
-        Proc::insert_into_ppar(&mut bag, Proc::PForUser(vec![row], Box::new(body.clone())));
-        for (n, q) in ns.iter().zip(qs.iter()) {
-            Proc::insert_into_ppar(
-                &mut bag,
-                Proc::POutput(Box::new(n.clone()), Box::new(q.clone())),
-            );
-        }
-        Proc::PPar(bag)
-    };
-
-    let Some(expected_ns) = channel_names_from_row(b, bs) else {
-        return blocked();
-    };
+) -> Option<Proc> {
+    let expected_ns = channel_names_from_row(b, bs)?;
     if expected_ns.len() != ns.len() || expected_ns.len() != qs.len() {
-        return blocked();
+        return None;
     }
     // PPar is a bag; output order in `ns/qs` is not stable. Align payloads to expected channels.
     let mut used = vec![false; ns.len()];
@@ -446,9 +420,7 @@ pub fn comm_pforjoin_subst(
                 break;
             }
         }
-        let Some(idx) = found else {
-            return blocked();
-        };
+        let idx = found?;
         used[idx] = true;
         aligned_qs.push(&qs[idx]);
     }
@@ -456,22 +428,16 @@ pub fn comm_pforjoin_subst(
     let mut acc_body = body.clone();
     let mut acc_cond = cond.clone();
     for (ib, q) in binds.iter().zip(aligned_qs.iter()) {
-        let Some(pat) = bind_pattern_proc(ib) else {
-            return blocked();
-        };
-        let Some(nb) = receive_apply(&pat, q, &acc_body) else {
-            return blocked();
-        };
+        let pat = bind_pattern_proc(ib)?;
+        let nb = receive_apply(&pat, q, &acc_body)?;
         acc_body = nb;
-        let Some(nc) = receive_apply(&pat, q, &acc_cond) else {
-            return blocked();
-        };
+        let nc = receive_apply(&pat, q, &acc_cond)?;
         acc_cond = nc;
     }
 
     match eval_guard_bool(&acc_cond) {
-        Some(true) => acc_body,
-        _ => blocked(),
+        Some(true) => Some(acc_body),
+        _ => None,
     }
 }
 
@@ -627,7 +593,7 @@ fn try_comm_join(
             return None;
         }
     }
-    let res = comm_pforjoin_subst(b, bs, &ns_collected, &qs, cond, cont);
+    let res = comm_pforjoin_subst(b, bs, &ns_collected, &qs, cond, cont)?;
     work.insert(res);
     Some(Proc::PPar(work))
 }

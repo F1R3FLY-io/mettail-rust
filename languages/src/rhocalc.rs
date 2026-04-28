@@ -89,17 +89,7 @@ language! {
                 Box::new(n.clone()),
                 Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
             )
-        }];
-        POutputParen2Plus . n:Name, a:Proc, bs:Vec(Proc)
-        |- "(" n ")" "!" "(" a "," bs.*sep(",") ")" : Proc ![{
-            let mut items = Vec::with_capacity(1 + bs.len());
-            items.push(a.clone());
-            items.extend(bs.clone());
-            Proc::POutput(
-                Box::new(n.clone()),
-                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
-            )
-        }];
+        }] fold;
         POutputQuoted . n:Name, q:Proc
         |- "@" n "!" "(" q ")" : Proc ![{
             Proc::POutput(Box::new(Name::NQuote(Box::new(crate::rhocalc::receive::name_pattern_to_proc(&n)))), Box::new(q.clone()))
@@ -134,10 +124,18 @@ language! {
         }] fold;
         InputBindQuotedQuery . pat:Proc, n:Name, args:Vec(Proc)
         |- "@" pat "<-" n "!" "?" "(" args.*sep(",") ")" : InputBind ![{
-            InputBind::InputBindQuery(
-                Box::new(Name::NQuote(Box::new(pat.clone()))),
+            InputBind::InputBindQuotedQuery(
+                Box::new(pat.clone()),
                 Box::new(n.clone()),
                 args.clone(),
+            )
+        }] fold;
+
+        InputBindQuoted . pat:Proc, n:Name
+        |- "@" pat "<-" n : InputBind ![{
+            InputBind::InputBindQuoted(
+                Box::new(pat.clone()),
+                Box::new(n.clone()),
             )
         }] fold;
         InputBind . lhs:Name, n:Name
@@ -169,7 +167,7 @@ language! {
         PForUser . rows:Vec(ForRow), body:Proc
         |- "for" "(" rows.*sep(";") ")" "{" body "}" : Proc ![{
             crate::rhocalc::receive::desugar_for_rows(rows, body)
-        }];
+        }] fold;
 
 
         NQuote . p:Proc
