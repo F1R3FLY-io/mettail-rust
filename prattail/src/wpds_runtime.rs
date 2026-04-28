@@ -596,6 +596,217 @@ pub trait WpdsTokenSource {
     }
 }
 
+/// L10 (2026-04-28): a token source that supports incremental edits.
+///
+/// LSP integrations and lex-fork commit (L6) need to mutate the lex stream
+/// after parsing has begun:
+/// - **`replace_range`**: replace a byte range with new bytes and re-lex
+///   the affected token positions.
+/// - **`commit_alternative`**: collapse a lex-ambiguous position to a
+///   specific alternative, re-lexing downstream positions if the chosen
+///   alternative consumes a different number of bytes than the primary.
+///
+/// All methods return `(token_pos_start, token_pos_end)` indicating which
+/// token positions were rewritten — the walker uses this to invalidate
+/// any in-flight state that depends on those positions.
+pub trait WpdsMutableTokenSource: WpdsTokenSource {
+    /// Replace the byte range `[byte_start..byte_end)` with `new_bytes`,
+    /// then re-lex from the affected position. Returns the new
+    /// `(token_pos_start, token_pos_end)` range that was rewritten.
+    fn replace_range(
+        &mut self,
+        byte_start: usize,
+        byte_end: usize,
+        new_bytes: &str,
+    ) -> Result<(usize, usize), std::string::String>;
+
+    /// Commit a specific lex alternative at position `pos`. Useful for
+    /// the walker after a lex-fork commits the winner: the alternate
+    /// interpretation becomes the canonical primary, and downstream
+    /// positions get re-lexed if the alt's `end_byte` differs from the
+    /// previous primary's `end_byte`.
+    ///
+    /// Returns `(token_pos_start, token_pos_end)` indicating the range
+    /// of positions that were rewritten (always at least `(pos, pos+1)`
+    /// since the primary at `pos` is replaced; downstream positions may
+    /// also be rewritten if the byte-end changed).
+    fn commit_alternative(
+        &mut self,
+        pos: usize,
+        alt_idx: u16,
+    ) -> Result<(usize, usize), std::string::String>;
+}
+
+/// L10 (2026-04-28): a `WpdsMutableTokenSource` that wraps a
+/// [`MultiTokenSource`] and a re-lex callback.
+///
+/// The callback `lex_fn` is the per-grammar lexer (typically a generated
+/// `lex_stream(input: &str) -> LexStream`). On `replace_range` /
+/// `commit_alternative`, the impl mutates `source_text` and calls
+/// `lex_fn(&source_text)` to rebuild the stream, then updates the cached
+/// primary kinds/texts.
+///
+/// The current implementation re-lexes the **entire** source on every
+/// edit. Downstream optimizations could lex only a subrange and splice
+/// the result; the trait surface supports this since it returns the
+/// rewritten range.
+pub struct MutableMultiTokenSource<L>
+where
+    L: Fn(&str) -> Result<crate::lexer_types::LexStream, std::string::String>,
+{
+    inner: MultiTokenSource,
+    source_text: std::string::String,
+    lex_fn: L,
+}
+
+impl<L> MutableMultiTokenSource<L>
+where
+    L: Fn(&str) -> Result<crate::lexer_types::LexStream, std::string::String>,
+{
+    /// Construct from an initial source string and a re-lex callback.
+    pub fn new(source: std::string::String, lex_fn: L) -> Result<Self, std::string::String> {
+        let stream = lex_fn(&source)?;
+        let inner = MultiTokenSource::new(stream);
+        Ok(Self {
+            inner,
+            source_text: source,
+            lex_fn,
+        })
+    }
+
+    /// Borrow the underlying source text.
+    pub fn source(&self) -> &str {
+        &self.source_text
+    }
+}
+
+impl<L> WpdsTokenSource for MutableMultiTokenSource<L>
+where
+    L: Fn(&str) -> Result<crate::lexer_types::LexStream, std::string::String>,
+{
+    fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
+        self.inner.peek_kind(pos)
+    }
+
+    fn peek_text(&self, pos: usize) -> Option<&str> {
+        self.inner.peek_text(pos)
+    }
+
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn peek_alternatives(&self, pos: usize) -> &[crate::lexer_types::LexAlternative] {
+        self.inner.peek_alternatives(pos)
+    }
+
+    fn end_byte(&self, pos: usize, alt_idx: usize) -> Option<usize> {
+        self.inner.end_byte(pos, alt_idx)
+    }
+}
+
+impl<L> WpdsMutableTokenSource for MutableMultiTokenSource<L>
+where
+    L: Fn(&str) -> Result<crate::lexer_types::LexStream, std::string::String>,
+{
+    fn replace_range(
+        &mut self,
+        byte_start: usize,
+        byte_end: usize,
+        new_bytes: &str,
+    ) -> Result<(usize, usize), std::string::String> {
+        if byte_start > byte_end || byte_end > self.source_text.len() {
+            return Err(format!(
+                "replace_range out of bounds: [{}..{}) of source len {}",
+                byte_start,
+                byte_end,
+                self.source_text.len(),
+            ));
+        }
+        // Locate token positions whose byte range overlaps the edit, so
+        // the caller knows what was rewritten. Compute BEFORE the edit so
+        // the positions reference the OLD stream.
+        let prev_token_start = self
+            .inner
+            .stream
+            .entries
+            .iter()
+            .position(|e| e.byte_start >= byte_start)
+            .unwrap_or(self.inner.stream.entries.len());
+        let prev_token_end = self
+            .inner
+            .stream
+            .entries
+            .iter()
+            .position(|e| e.byte_start >= byte_end)
+            .unwrap_or(self.inner.stream.entries.len());
+        // Mutate source.
+        self.source_text.replace_range(byte_start..byte_end, new_bytes);
+        // Re-lex.
+        let new_stream = (self.lex_fn)(&self.source_text)?;
+        let new_inner = MultiTokenSource::new(new_stream);
+        // Compute new end position by mapping byte_start + new_bytes.len()
+        // through the new stream.
+        let new_byte_end = byte_start + new_bytes.len();
+        let new_token_end = new_inner
+            .stream
+            .entries
+            .iter()
+            .position(|e| e.byte_start >= new_byte_end)
+            .unwrap_or(new_inner.stream.entries.len());
+        self.inner = new_inner;
+        Ok((prev_token_start, prev_token_end.max(new_token_end)))
+    }
+
+    fn commit_alternative(
+        &mut self,
+        pos: usize,
+        alt_idx: u16,
+    ) -> Result<(usize, usize), std::string::String> {
+        let entry = self
+            .inner
+            .stream
+            .entries
+            .get(pos)
+            .ok_or_else(|| format!("commit_alternative: pos {} out of bounds", pos))?;
+        let alt = entry
+            .alternatives
+            .get(alt_idx as usize)
+            .ok_or_else(|| {
+                format!(
+                    "commit_alternative: alt_idx {} out of bounds at pos {}",
+                    alt_idx, pos,
+                )
+            })?
+            .clone();
+        let prev_end = entry.alternatives[0].end_byte;
+        let new_end = alt.end_byte;
+        // Replace the primary alternative in place.
+        self.inner.stream.entries[pos].alternatives[0] = alt.clone();
+        // Refresh the primary caches for `pos`. We rebuild the inner
+        // wholesale to keep the primary_kinds/texts in sync — simpler
+        // than mutating in place and easier to reason about.
+        let stream = std::mem::take(&mut self.inner.stream);
+        self.inner = MultiTokenSource::new(stream);
+        if new_end != prev_end {
+            // Downstream bytes may now lex differently; re-lex from
+            // `new_end` to end of source. We model this as a no-op
+            // replace_range that triggers a full re-lex of the tail.
+            let tail_start = new_end.min(self.source_text.len());
+            let original_tail: std::string::String =
+                self.source_text[tail_start..].to_string();
+            let (tail_s, tail_e) =
+                self.replace_range(tail_start, self.source_text.len(), &original_tail)?;
+            // Union with (pos, pos+1) — the primary at `pos` was always
+            // rewritten by the alternative swap, even if `replace_range`
+            // reports an empty tail range.
+            Ok((pos.min(tail_s), (pos + 1).max(tail_e)))
+        } else {
+            Ok((pos, pos + 1))
+        }
+    }
+}
+
 /// A slice-backed `WpdsTokenSource` for tests and simple batch consumers.
 ///
 /// Holds a slice of `TokenKind` plus an optional parallel slice of text
@@ -1135,6 +1346,96 @@ impl fmt::Debug for SemanticBuilder {
 mod tests {
     use super::*;
     use crate::automata::semiring::TropicalWeight;
+    use crate::lexer_types::{LexAlternative, LexEntry, LexStream};
+
+    fn ascii_alt(text: &str, end: usize, weight: f64) -> LexAlternative {
+        LexAlternative {
+            kind: TokenKind::Ident,
+            text: text.to_string(),
+            end_byte: end,
+            weight: TropicalWeight::new(weight),
+        }
+    }
+
+    fn fake_lex(input: &str) -> Result<LexStream, std::string::String> {
+        // Trivial whitespace-tokenizing lexer: each non-empty whitespace-
+        // separated word becomes an `Ident` LexEntry. Used only for
+        // MutableMultiTokenSource unit tests.
+        let mut entries = Vec::new();
+        let bytes = input.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if bytes[i].is_ascii_whitespace() {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            let text = &input[start..i];
+            entries.push(LexEntry {
+                byte_start: start,
+                alternatives: vec![ascii_alt(text, i, 1.0)],
+            });
+        }
+        Ok(LexStream { entries })
+    }
+
+    #[test]
+    fn mutable_token_source_initial_lex() {
+        let m = MutableMultiTokenSource::new("foo bar baz".to_string(), fake_lex)
+            .expect("construct");
+        assert_eq!(m.len(), 3);
+        assert_eq!(m.peek_text(0), Some("foo"));
+        assert_eq!(m.peek_text(1), Some("bar"));
+        assert_eq!(m.peek_text(2), Some("baz"));
+    }
+
+    #[test]
+    fn mutable_token_source_replace_range_relexes() {
+        let mut m = MutableMultiTokenSource::new("foo bar".to_string(), fake_lex)
+            .expect("construct");
+        let (start, end) = m
+            .replace_range(4, 7, "qux qux2")
+            .expect("replace_range");
+        // Replacement of "bar" with "qux qux2" — old token start=1, end=2;
+        // new tokens cover 1..=2 (qux, qux2).
+        assert!(start <= 1);
+        assert!(end >= 3);
+        assert_eq!(m.peek_text(0), Some("foo"));
+        assert_eq!(m.peek_text(1), Some("qux"));
+        assert_eq!(m.peek_text(2), Some("qux2"));
+    }
+
+    #[test]
+    fn mutable_token_source_commit_alternative_swaps_primary() {
+        // Construct via direct stream injection so we control the
+        // alternatives. The `fake_lex` produces single-alt entries; for
+        // commit_alternative we need an entry with two alts.
+        let stream = LexStream {
+            entries: vec![LexEntry {
+                byte_start: 0,
+                alternatives: vec![
+                    ascii_alt("foo", 3, 1.0),
+                    ascii_alt("foobar", 6, 2.0),
+                ],
+            }],
+        };
+        let inner = MultiTokenSource::new(stream);
+        let mut m = MutableMultiTokenSource {
+            inner,
+            source_text: "foobar".to_string(),
+            lex_fn: fake_lex,
+        };
+        assert_eq!(m.peek_text(0), Some("foo"));
+        // Commit alt 1 (foobar, end=6).
+        let (s, e) = m.commit_alternative(0, 1).expect("commit");
+        assert_eq!(s, 0);
+        assert!(e >= 1);
+        // After commit, primary is the 6-byte form.
+        assert_eq!(m.peek_text(0), Some("foobar"));
+    }
 
     #[test]
     fn stack_symbol_v2_size_is_compact() {
