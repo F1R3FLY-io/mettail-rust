@@ -1117,6 +1117,16 @@ mod parsing {
     }
 
     #[test]
+    fn quoted_plain_bind_parses() {
+        let _ = parse("for(@[1,2,3] <- c){7}");
+    }
+
+    #[test]
+    fn quoted_query_bind_parses() {
+        let _ = parse("for(@[1,2,3] <- c!?(a)){7}");
+    }
+
+    #[test]
     fn query_receive_sugar_quoted_name_lhs() {
         assert_query_desugars(
             "for(p <- x!?(a)){*(@(p))}",

@@ -93,6 +93,59 @@ fn test_no_ambiguity_for_infix_rules() {
 }
 
 #[test]
+fn test_no_ambiguity_when_terminal_skeletons_differ() {
+    // Same first token in category, but one rule has an additional terminal tail.
+    // This mirrors rhocalc InputBindQuoted vs InputBindQuotedQuery.
+    let rules = vec![
+        make_rule_info(
+            "InputBindQuoted",
+            "InputBind",
+            vec![FirstItem::Terminal("@".to_string())],
+            false,
+        ),
+        make_rule_info(
+            "InputBindQuotedQuery",
+            "InputBind",
+            vec![FirstItem::Terminal("@".to_string())],
+            false,
+        ),
+    ];
+    let categories = vec!["InputBind".to_string()];
+    let syntax = vec![
+        (
+            "InputBindQuoted".to_string(),
+            "InputBind".to_string(),
+            vec![
+                SyntaxItemSpec::Terminal("@".to_string()),
+                SyntaxItemSpec::Terminal("<-".to_string()),
+            ],
+        ),
+        (
+            "InputBindQuotedQuery".to_string(),
+            "InputBind".to_string(),
+            vec![
+                SyntaxItemSpec::Terminal("@".to_string()),
+                SyntaxItemSpec::Terminal("<-".to_string()),
+                SyntaxItemSpec::Terminal("!".to_string()),
+                SyntaxItemSpec::Terminal("?".to_string()),
+                SyntaxItemSpec::Terminal("(".to_string()),
+                SyntaxItemSpec::Terminal(")".to_string()),
+            ],
+        ),
+    ];
+
+    let warnings = detect_grammar_warnings(&rules, &categories, &syntax);
+
+    assert!(
+        !warnings
+            .iter()
+            .any(|w| matches!(w, GrammarWarning::AmbiguousPrefix { .. })),
+        "rules with distinct terminal skeletons should not be reported ambiguous: {:?}",
+        warnings
+    );
+}
+
+#[test]
 fn test_no_ambiguity_for_var_rules() {
     // Var rules should be excluded from ambiguity check
     let rules = vec![
