@@ -224,7 +224,7 @@ mod comm {
     fn join_pattern_mismatch_is_noop_for_receive_group() {
         assert_reduces_to(
             "{for(@[1,2,4] <- c){7} | c!([1,2,3])}",
-            "{__for([1,2,4] <- c){7} | c!([1,2,3])}",
+            "{for(@[1,2,4] <- c){7} | c!([1,2,3])}",
         );
         assert_never_produces("{for(@[1,2,4] <- c){7} | c!([1,2,3])}", "{7}");
     }
@@ -985,8 +985,8 @@ mod parsing {
 
     fn assert_query_desugars(sugar_src: &str, rhs_src: &str, msg: &str) {
         fresh();
-        let sugar = parse(sugar_src);
-        let rhs = parse(rhs_src);
+        let sugar = parse(sugar_src).normalize();
+        let rhs = parse(rhs_src).normalize();
         assert!(sugar.term_eq(&rhs), "{}", msg);
     }
 
@@ -1027,78 +1027,70 @@ mod parsing {
     #[test]
     fn send_polyadic_is_list_sugar() {
         fresh();
-        let poly = parse("x!(1, 2, 3)");
-        let list = parse("x!([1, 2, 3])");
+        let poly = parse("x!(1, 2, 3)").normalize();
+        let list = parse("x!([1, 2, 3])").normalize();
         assert!(poly.term_eq(&list), "expected polyadic send sugar to match list payload");
     }
 
     #[test]
     fn send_polyadic_two_args_is_list_sugar() {
         fresh();
-        let poly = parse("x!(1, 2)");
-        let list = parse("x!([1, 2])");
+        let poly = parse("x!(1, 2)").normalize();
+        let list = parse("x!([1, 2])").normalize();
         assert!(poly.term_eq(&list), "expected 2-arg send sugar to match list payload");
     }
 
     #[test]
     fn query_receive_sugar_single() {
-        fresh();
-        let sugar = parse("for(p <- x!?(a, b)){p}");
-        let rhs = parse("new(r) in { { x!(*r, a, b) | for(p <- r){p} } }");
-        assert!(sugar.term_eq(&rhs), "expected `!?` to desugar to `new` + send + receive");
+        assert_query_desugars(
+            "for(p <- x!?(a, b)){p}",
+            "new(r) in { { x!(*r, a, b) | for(p <- r){p} } }",
+            "expected `!?` to desugar to `new` + send + receive",
+        );
     }
 
     #[test]
     fn query_receive_sugar_zero_args() {
-        fresh();
-        let sugar = parse("for(p <- x!?()){p}");
-        let rhs = parse("new(r) in { { x!(*r) | for(p <- r){p} } }");
-        assert!(sugar.term_eq(&rhs), "expected zero-arg `!?` to pass only return channel");
+        assert_query_desugars(
+            "for(p <- x!?()){p}",
+            "new(r) in { { x!(*r) | for(p <- r){p} } }",
+            "expected zero-arg `!?` to pass only return channel",
+        );
     }
 
     #[test]
     fn query_receive_sugar_single_with_where() {
-        fresh();
-        let sugar = parse("for(p <- x!?(a, b) where p == ok){p}");
-        let rhs = parse("new(r) in { { x!(*r, a, b) | for(p <- r where p == ok){p} } }");
-        assert!(
-            sugar.term_eq(&rhs),
-            "expected `!?` bind with where-guard to desugar through private return channel"
+        assert_query_desugars(
+            "for(p <- x!?(a, b) where p == ok){p}",
+            "new(r) in { { x!(*r, a, b) | for(p <- r where p == ok){p} } }",
+            "expected `!?` bind with where-guard to desugar through private return channel",
         );
     }
 
     #[test]
     fn query_receive_sugar_multiple_joins() {
-        fresh();
-        let sugar = parse("for(p <- x1!?(a1) & q <- x2!?(a2) & z <- c){z}");
-        let rhs = parse(
+        assert_query_desugars(
+            "for(p <- x1!?(a1) & q <- x2!?(a2) & z <- c){z}",
             "new(r1, r2) in { { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 & z <- c){z} } }",
-        );
-        assert!(
-            sugar.term_eq(&rhs),
-            "expected multiple `!?` binds to desugar to multiple return channels"
+            "expected multiple `!?` binds to desugar to multiple return channels",
         );
     }
 
     #[test]
     fn query_receive_sugar_mixed_join_with_plain_bind() {
-        fresh();
-        let sugar = parse("for(p <- x!?(a) & q <- c){q}");
-        let rhs = parse("new(r) in { { x!(*r, a) | for(p <- r & q <- c){q} } }");
-        assert!(
-            sugar.term_eq(&rhs),
-            "expected `!?` bind to compose with plain join binds"
+        assert_query_desugars(
+            "for(p <- x!?(a) & q <- c){q}",
+            "new(r) in { { x!(*r, a) | for(p <- r & q <- c){q} } }",
+            "expected `!?` bind to compose with plain join binds",
         );
     }
 
     #[test]
     fn query_receive_sugar_mixed_rows_with_plain_bind() {
-        fresh();
-        let sugar = parse("for(p <- x!?(a); q <- c){q}");
-        let rhs = parse("new(r) in { { x!(*r, a) | for(p <- r; q <- c){q} } }");
-        assert!(
-            sugar.term_eq(&rhs),
-            "expected `!?` bind to compose with semicolon-separated rows"
+        assert_query_desugars(
+            "for(p <- x!?(a); q <- c){q}",
+            "new(r) in { { x!(*r, a) | for(p <- r; q <- c){q} } }",
+            "expected `!?` bind to compose with semicolon-separated rows",
         );
     }
 
