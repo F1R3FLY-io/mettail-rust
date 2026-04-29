@@ -1003,7 +1003,7 @@ impl Repl {
                 } else {
                     print!("Parsing... ");
                     let t = language
-                        .parse_term_for_env(term_str)
+                        .parse_term(term_str)
                         .map_err(|e| anyhow::anyhow!("{}", e))?;
                     println!("{}", "✓".green());
                     (t, false)
@@ -1011,7 +1011,7 @@ impl Repl {
             } else {
                 print!("Parsing... ");
                 let t = language
-                    .parse_term_for_env(term_str)
+                    .parse_term(term_str)
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
                 println!("{}", "✓".green());
                 (t, false)
@@ -1019,7 +1019,7 @@ impl Repl {
         } else {
             print!("Parsing... ");
             let t = language
-                .parse_term_for_env(term_str)
+                .parse_term(term_str)
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
             println!("{}", "✓".green());
             (t, false)

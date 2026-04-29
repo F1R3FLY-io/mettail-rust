@@ -18,6 +18,8 @@ pub(crate) fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
     match bind {
         InputBind::InputBind(lhs, _) => Some(name_pattern_to_proc(lhs.as_ref())),
         InputBind::InputBindQuery(lhs, _, _) => Some(name_pattern_to_proc(lhs.as_ref())),
+        InputBind::InputBindQuoted(pat, _) => Some(pat.as_ref().clone()),
+        InputBind::InputBindQuotedQuery(pat, _, _) => Some(pat.as_ref().clone()),
         _ => None,
     }
 }
@@ -26,6 +28,8 @@ fn bind_channel_name(bind: &InputBind) -> Option<&Name> {
     match bind {
         InputBind::InputBind(_, n) => Some(n.as_ref()),
         InputBind::InputBindQuery(_, n, _) => Some(n.as_ref()),
+        InputBind::InputBindQuoted(_, n) => Some(n.as_ref()),
+        InputBind::InputBindQuotedQuery(_, n, _) => Some(n.as_ref()),
         _ => None,
     }
 }
