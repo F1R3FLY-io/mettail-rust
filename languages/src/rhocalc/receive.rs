@@ -374,19 +374,6 @@ pub fn desugar_for_rows(rows: Vec<ForRow>, body: &Proc) -> Proc {
     Proc::PNew(Scope::new(binders, Box::new(Proc::PPar(bag))))
 }
 
-#[allow(dead_code)]
-pub fn desugar_for_user(rows: &[ForRow], body: &Proc) -> Proc {
-    desugar_for_rows(rows.to_vec(), body)
-}
-
-#[allow(dead_code)]
-pub fn desugar_polyadic_output(n: &Name, a: &Proc, bs: &[Proc]) -> Proc {
-    let mut items = Vec::with_capacity(1 + bs.len());
-    items.push(a.clone());
-    items.extend(bs.iter().cloned());
-    Proc::POutput(Box::new(n.clone()), Box::new(Proc::CastList(Box::new(List::ListLit(items)))))
-}
-
 pub(crate) fn channel_names_from_row(b: &InputBind, bs: &[InputBind]) -> Option<Vec<Name>> {
     let mut out = Vec::with_capacity(1 + bs.len());
     out.push(bind_channel_name(b)?.clone());
