@@ -415,6 +415,18 @@ fn collect_category_refs_from_term_param(
             collect_category_refs_from_type_expr(ty, category_set)
         }
         TermParam::GuardBody { .. } => Vec::new(),
+        TermParam::Optional { params: inner } => {
+            // Opt-Group: an Optional contributes the union of inner-param
+            // category references. Inner Option<T> fields still reference
+            // category T at the type level; antipattern detection (which
+            // cares about inter-category structural patterns) treats them
+            // identically to direct fields.
+            let mut refs = Vec::new();
+            for p in inner {
+                refs.extend(collect_category_refs_from_term_param(p, category_set));
+            }
+            refs
+        }
     }
 }
 
@@ -665,6 +677,19 @@ fn extract_collection_from_param(param: &TermParam) -> Option<(String, String)> 
         TermParam::Simple { ty, .. } => ty,
         TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => ty,
         TermParam::GuardBody { .. } => return None,
+        TermParam::Optional { params: inner } => {
+            // Opt-Group: return the FIRST inner param's collection (if
+            // any). For multi-inner Optional groups, antipattern
+            // detection runs on each inner separately at the call sites
+            // — this single-shot helper returns the first match. If
+            // none of the inner params contain a collection, return None.
+            for p in inner {
+                if let Some(found) = extract_collection_from_param(p) {
+                    return Some(found);
+                }
+            }
+            return None;
+        }
     };
     extract_collection_from_type_expr(ty)
 }

@@ -14,6 +14,7 @@ pub mod calculator;
 pub mod guarded_rho;
 pub mod lambda;
 pub mod led_test;
+pub mod optsmoke;
 pub mod refinementsmoke;
 pub mod rhocalc;
 

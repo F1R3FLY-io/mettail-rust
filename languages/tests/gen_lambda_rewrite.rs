@@ -30,7 +30,7 @@ fn rewrite_lambda_beta() {
     assert!(!rw.rhs.is_empty(), "Rewrite Beta RHS should be non-empty");
 }
 
-// Concrete execution test: run "( 1 , 1 )" through SimulationRunner,
+// Concrete execution test: run "( 0 , 0 )" through SimulationRunner,
 // assert it reaches NormalForm (exercises rewrite rule Beta).
 #[test]
 fn rewrite_lambda_beta_exec() {
@@ -46,12 +46,12 @@ fn rewrite_lambda_beta_exec() {
     let runner = SimulationRunner::new(lang_ref, config);
     mettail_runtime::clear_var_cache();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runner.run_to_normal_form("( 1 , 1 )")
+        runner.run_to_normal_form("( 0 , 0 )")
     }));
     if let Ok(Ok(trace)) = result {
         assert!(
             matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
-            "Rewrite rule Beta: input '( 1 , 1 )' did not reach NF: {:?}",
+            "Rewrite rule Beta: input '( 0 , 0 )' did not reach NF: {:?}",
             trace.outcome,
         );
     }

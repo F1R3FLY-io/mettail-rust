@@ -200,6 +200,37 @@ pub fn generate_nested_tests(
             continue;
         }
 
+        // Opt-Group: append `None` for each Optional inner param of the
+        // outer rule. `extract_simple_params` only includes top-level
+        // Simple params, so `construction_parts` has fewer entries than
+        // the variant's flat field count when Optional groups exist.
+        let optional_count: usize = outer_rule
+            .term_context
+            .as_ref()
+            .map(|ctx| {
+                fn count_one(
+                    p: &mettail_ast::grammar::TermParam,
+                    in_optional: bool,
+                ) -> usize {
+                    use mettail_ast::grammar::TermParam;
+                    match p {
+                        TermParam::Optional { params: inner } => {
+                            inner.iter().map(|q| count_one(q, true)).sum()
+                        }
+                        TermParam::Simple { .. } => {
+                            if in_optional { 1 } else { 0 }
+                        }
+                        TermParam::GuardBody { .. }
+                        | TermParam::Abstraction { .. }
+                        | TermParam::MultiAbstraction { .. } => 0,
+                    }
+                }
+                ctx.iter().map(|p| count_one(p, false)).sum()
+            })
+            .unwrap_or(0);
+        for _ in 0..optional_count {
+            construction_parts.push("None".to_string());
+        }
         let construction_code = format!(
             "{}::{}({})",
             outer.category,
@@ -281,7 +312,7 @@ fn build_simple_leaf_map(language: &LanguageDef) -> HashMap<String, SimpleLeaf> 
             let lit_label = crate::gen::generate_literal_label(native_type).to_string();
 
             // Pick a "safe" representative value (non-zero for divisors)
-            let (raw_val, construction) = pick_safe_representative(&cat, &lit_label, &type_str);
+            let (raw_val, construction) = pick_safe_representative(language, &cat, &lit_label, &type_str);
 
             map.insert(
                 cat,
@@ -298,25 +329,36 @@ fn build_simple_leaf_map(language: &LanguageDef) -> HashMap<String, SimpleLeaf> 
 
 /// Pick a safe representative value for a native type.
 /// Returns (raw_value, construction_code).
-fn pick_safe_representative(cat: &str, lit_label: &str, type_str: &str) -> (String, String) {
+///
+/// N1: spec-derived. Integer types route through
+/// `spec_admitted_integer_samples(language, Safe)` to project the
+/// "safe" representative onto the language's effective Integer
+/// pattern. Non-integer types use values from the universally-
+/// admitted domain of their Float/Bool/StringLit patterns.
+fn pick_safe_representative(language: &LanguageDef, cat: &str, lit_label: &str, type_str: &str) -> (String, String) {
+    let int_safe = || -> String {
+        crate::gen::spec_admitted_integer_samples(
+            language, crate::gen::SamplePurpose::Safe,
+        ).into_iter().next().unwrap_or_else(|| "1".to_string())
+    };
     match type_str {
         "i32" => {
-            let raw = "2i32".to_string();
+            let raw = format!("{}i32", int_safe());
             let cons = format!("{}::{}({})", cat, lit_label, raw);
             (raw, cons)
         },
         "i64" => {
-            let raw = "2i64".to_string();
+            let raw = format!("{}i64", int_safe());
             let cons = format!("{}::{}({})", cat, lit_label, raw);
             (raw, cons)
         },
         "u32" => {
-            let raw = "2u32".to_string();
+            let raw = format!("{}u32", int_safe());
             let cons = format!("{}::{}({})", cat, lit_label, raw);
             (raw, cons)
         },
         "u64" => {
-            let raw = "2u64".to_string();
+            let raw = format!("{}u64", int_safe());
             let cons = format!("{}::{}({})", cat, lit_label, raw);
             (raw, cons)
         },

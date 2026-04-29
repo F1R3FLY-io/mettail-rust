@@ -30,9 +30,22 @@ use mettail_runtime::BehavioralPred;
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn eval_importedmath_div_5_5() {
+fn eval_importedmath_div_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Div(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_importedmath_div_3_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Div(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -43,35 +56,48 @@ fn eval_importedmath_div_5_5() {
 }
 
 #[test]
-fn eval_importedmath_div_5_2() {
+fn eval_importedmath_div_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Div(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_importedmath_div_5_1() {
+fn eval_importedmath_div_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Div(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn eval_importedmath_div_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Div(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_importedmath_div_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Div(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -121,6 +147,19 @@ fn eval_importedmath_div_1_5() {
 }
 
 #[test]
+fn eval_importedmath_div_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn eval_importedmath_div_1_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
@@ -160,6 +199,19 @@ fn eval_importedmath_div_0_5() {
 }
 
 #[test]
+fn eval_importedmath_div_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn eval_importedmath_div_0_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
@@ -186,9 +238,22 @@ fn eval_importedmath_div_0_1() {
 }
 
 #[test]
-fn eval_importedmath_sub_5_5() {
+fn eval_importedmath_sub_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-2"),
+        "{} should evaluate to -2, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_importedmath_sub_3_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -199,9 +264,35 @@ fn eval_importedmath_sub_5_5() {
 }
 
 #[test]
-fn eval_importedmath_sub_5_2() {
+fn eval_importedmath_sub_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_importedmath_sub_3_1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_importedmath_sub_3_0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -209,32 +300,6 @@ fn eval_importedmath_sub_5_2() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "3"),
         "{} should evaluate to 3, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_importedmath_sub_5_1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_importedmath_sub_5_0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -248,6 +313,19 @@ fn eval_importedmath_sub_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "-3"),
         "{} should evaluate to -3, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_importedmath_sub_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -303,6 +381,19 @@ fn eval_importedmath_sub_1_5() {
 }
 
 #[test]
+fn eval_importedmath_sub_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-2"),
+        "{} should evaluate to -2, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn eval_importedmath_sub_1_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
@@ -355,6 +446,19 @@ fn eval_importedmath_sub_0_5() {
 }
 
 #[test]
+fn eval_importedmath_sub_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-3"),
+        "{} should evaluate to -3, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn eval_importedmath_sub_0_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
@@ -394,35 +498,22 @@ fn eval_importedmath_sub_0_0() {
 }
 
 #[test]
-fn eval_importedmath_add_5_5() {
+fn eval_importedmath_add_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "10"),
-        "{} should evaluate to 10, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "8"),
+        "{} should evaluate to 8, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_importedmath_add_5_2() {
+fn eval_importedmath_add_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "7"),
-        "{} should evaluate to 7, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_importedmath_add_5_1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -433,9 +524,9 @@ fn eval_importedmath_add_5_1() {
 }
 
 #[test]
-fn eval_importedmath_add_5_0() {
+fn eval_importedmath_add_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -443,6 +534,32 @@ fn eval_importedmath_add_5_0() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "5"),
         "{} should evaluate to 5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_importedmath_add_3_1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_importedmath_add_3_0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -456,6 +573,19 @@ fn eval_importedmath_add_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "7"),
         "{} should evaluate to 7, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_importedmath_add_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "5"),
+        "{} should evaluate to 5, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -511,6 +641,19 @@ fn eval_importedmath_add_1_5() {
 }
 
 #[test]
+fn eval_importedmath_add_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn eval_importedmath_add_1_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
@@ -563,6 +706,19 @@ fn eval_importedmath_add_0_5() {
 }
 
 #[test]
+fn eval_importedmath_add_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn eval_importedmath_add_0_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
@@ -608,215 +764,72 @@ fn eval_importedmath_add_0_0() {
 #[test]
 fn nested_importedmath_div_sub_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(2i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn nested_importedmath_div_sub_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(2i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn nested_importedmath_div_add_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(2i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn nested_importedmath_div_add_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(2i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn nested_importedmath_div_sub_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Div(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "-2"),
+        "{} should evaluate to -2, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn nested_importedmath_div_sub_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_div_add_0_2_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_div_add_0_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_sub_div_0_2_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_sub_div_0_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_sub_add_0_2_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_sub_add_0_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_sub_add_0_0_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_sub_div_0_2_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_sub_div_0_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_sub_add_0_2_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_sub_add_0_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Div(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -827,113 +840,204 @@ fn nested_importedmath_sub_add_0_1_in_slot0() {
 }
 
 #[test]
-fn nested_importedmath_sub_add_0_0_in_slot0() {
+fn nested_importedmath_div_add_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Div(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_div_add_0_1_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Div(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_sub_div_0_2_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_sub_div_0_1_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_sub_add_0_2_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_sub_add_0_1_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_sub_add_0_0_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_sub_div_0_2_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_sub_div_0_1_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_sub_add_0_2_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_sub_add_0_1_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_sub_add_0_0_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn nested_importedmath_add_div_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn nested_importedmath_add_div_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn nested_importedmath_add_sub_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn nested_importedmath_add_sub_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_add_sub_0_0_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_add_div_0_2_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_add_div_0_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_importedmath_add_sub_0_2_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -944,9 +1048,9 @@ fn nested_importedmath_add_sub_0_2_in_slot0() {
 }
 
 #[test]
-fn nested_importedmath_add_sub_0_1_in_slot0() {
+fn nested_importedmath_add_sub_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -957,16 +1061,68 @@ fn nested_importedmath_add_sub_0_1_in_slot0() {
 }
 
 #[test]
-fn nested_importedmath_add_sub_0_0_in_slot0() {
+fn nested_importedmath_add_div_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Add(Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_add_div_0_1_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_add_sub_0_2_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_add_sub_0_1_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_importedmath_add_sub_0_0_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1171,6 +1327,18 @@ fn wpds_importedmath_add_0_2() {
 }
 
 #[test]
+fn wpds_importedmath_add_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn wpds_importedmath_add_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
@@ -1210,6 +1378,18 @@ fn wpds_importedmath_add_1_1() {
 fn wpds_importedmath_add_1_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpds_importedmath_add_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1267,6 +1447,18 @@ fn wpds_importedmath_add_2_2() {
 }
 
 #[test]
+fn wpds_importedmath_add_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn wpds_importedmath_add_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
@@ -1279,9 +1471,9 @@ fn wpds_importedmath_add_2_5() {
 }
 
 #[test]
-fn wpds_importedmath_add_5_0() {
+fn wpds_importedmath_add_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1291,9 +1483,9 @@ fn wpds_importedmath_add_5_0() {
 }
 
 #[test]
-fn wpds_importedmath_add_5_1() {
+fn wpds_importedmath_add_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1303,9 +1495,9 @@ fn wpds_importedmath_add_5_1() {
 }
 
 #[test]
-fn wpds_importedmath_add_5_2() {
+fn wpds_importedmath_add_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1315,9 +1507,21 @@ fn wpds_importedmath_add_5_2() {
 }
 
 #[test]
-fn wpds_importedmath_add_5_5() {
+fn wpds_importedmath_add_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpds_importedmath_add_3_5() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1354,6 +1558,18 @@ fn wpds_importedmath_sub_0_1() {
 fn wpds_importedmath_sub_0_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpds_importedmath_sub_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1411,6 +1627,18 @@ fn wpds_importedmath_sub_1_2() {
 }
 
 #[test]
+fn wpds_importedmath_sub_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn wpds_importedmath_sub_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
@@ -1459,6 +1687,18 @@ fn wpds_importedmath_sub_2_2() {
 }
 
 #[test]
+fn wpds_importedmath_sub_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = ImportedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn wpds_importedmath_sub_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
@@ -1471,9 +1711,9 @@ fn wpds_importedmath_sub_2_5() {
 }
 
 #[test]
-fn wpds_importedmath_sub_5_0() {
+fn wpds_importedmath_sub_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1483,9 +1723,9 @@ fn wpds_importedmath_sub_5_0() {
 }
 
 #[test]
-fn wpds_importedmath_sub_5_1() {
+fn wpds_importedmath_sub_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1495,9 +1735,9 @@ fn wpds_importedmath_sub_5_1() {
 }
 
 #[test]
-fn wpds_importedmath_sub_5_2() {
+fn wpds_importedmath_sub_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1507,9 +1747,9 @@ fn wpds_importedmath_sub_5_2() {
 }
 
 #[test]
-fn wpds_importedmath_sub_5_5() {
+fn wpds_importedmath_sub_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1519,93 +1759,9 @@ fn wpds_importedmath_sub_5_5() {
 }
 
 #[test]
-fn wpds_importedmath_div_0_1() {
+fn wpds_importedmath_sub_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpds_importedmath_div_0_2() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpds_importedmath_div_0_5() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpds_importedmath_div_1_1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpds_importedmath_div_1_2() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpds_importedmath_div_1_5() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpds_importedmath_div_2_1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = ImportedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpds_importedmath_div_2_2() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1662,5 +1818,5 @@ fn type_pres_importedmath_sub_0_0() {
 }
 }
 
-// Total operational semantics tests: 126 (P1=44, P2a=28, P2b=0, P3a=0, P3b=0, P4a=3, P4b=9, P5a=40, P5b=2)
+// Total operational semantics tests: 138 (P1=56, P2a=28, P2b=0, P3a=0, P3b=0, P4a=3, P4b=9, P5a=40, P5b=2)
 

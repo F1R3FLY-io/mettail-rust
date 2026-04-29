@@ -281,62 +281,130 @@ fn extract_chained_element_pattern(op: &PatternOp, term_ctx: Option<&Vec<TermPar
 fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
     // Use term_context if available (new syntax)
     if let Some(ctx) = &rule.term_context {
-        let defs: Vec<TokenStream> = ctx
-            .iter()
-            .map(|param| match param {
+        fn one_param(param: &TermParam) -> Vec<TokenStream> {
+            match param {
                 TermParam::Simple { name, ty } => {
                     let name_str = name.to_string();
                     let ty_str = type_expr_to_string(ty);
                     let name_lit = LitStr::new(&name_str, name.span());
                     let ty_lit = LitStr::new(&ty_str, Span::call_site());
-                    quote! {
+                    vec![quote! {
                         mettail_runtime::FieldDef {
                             name: #name_lit,
                             ty: #ty_lit,
                             is_binder: false,
                         }
-                    }
+                    }]
                 },
                 TermParam::Abstraction { binder, body, ty } => {
                     let name_str = format!("^{}.{}", binder, body);
                     let ty_str = type_expr_to_string(ty);
                     let name_lit = LitStr::new(&name_str, binder.span());
                     let ty_lit = LitStr::new(&ty_str, Span::call_site());
-                    quote! {
+                    vec![quote! {
                         mettail_runtime::FieldDef {
                             name: #name_lit,
                             ty: #ty_lit,
                             is_binder: true,
                         }
-                    }
+                    }]
                 },
                 TermParam::MultiAbstraction { binder, body, ty } => {
                     let name_str = format!("^[{}].{}", binder, body);
                     let ty_str = type_expr_to_string(ty);
                     let name_lit = LitStr::new(&name_str, binder.span());
                     let ty_lit = LitStr::new(&ty_str, Span::call_site());
-                    quote! {
+                    vec![quote! {
                         mettail_runtime::FieldDef {
                             name: #name_lit,
                             ty: #ty_lit,
                             is_binder: true,
                         }
-                    }
+                    }]
                 },
                 TermParam::GuardBody { name, .. } => {
                     let name_str = format!("?{}", name);
                     let name_lit = LitStr::new(&name_str, name.span());
-                    quote! {
+                    vec![quote! {
                         mettail_runtime::FieldDef {
                             name: #name_lit,
                             ty: "Guard",
                             is_binder: false,
                         }
-                    }
+                    }]
                 },
-            })
-            .collect();
-
+                TermParam::Optional { params: inner } => {
+                    // Opt-Group: each inner param becomes an Option<>-wrapped
+                    // FieldDef whose `ty` field is wrapped as `Option<T>`
+                    // and whose `name` is suffixed with `?` so diagnostic
+                    // consumers (debug print, equality, hash-cons key
+                    // builder) know the field may be absent.
+                    fn one_optional(param: &TermParam) -> Vec<TokenStream> {
+                        match param {
+                            TermParam::Simple { name, ty } => {
+                                let name_str = format!("{}?", name);
+                                let ty_str = format!("Option<{}>", type_expr_to_string(ty));
+                                let name_lit = LitStr::new(&name_str, name.span());
+                                let ty_lit = LitStr::new(&ty_str, Span::call_site());
+                                vec![quote! {
+                                    mettail_runtime::FieldDef {
+                                        name: #name_lit,
+                                        ty: #ty_lit,
+                                        is_binder: false,
+                                    }
+                                }]
+                            },
+                            TermParam::Abstraction { binder, body, ty } => {
+                                let name_str = format!("^{}.{}?", binder, body);
+                                let ty_str = format!("Option<{}>", type_expr_to_string(ty));
+                                let name_lit = LitStr::new(&name_str, binder.span());
+                                let ty_lit = LitStr::new(&ty_str, Span::call_site());
+                                vec![quote! {
+                                    mettail_runtime::FieldDef {
+                                        name: #name_lit,
+                                        ty: #ty_lit,
+                                        is_binder: true,
+                                    }
+                                }]
+                            },
+                            TermParam::MultiAbstraction { binder, body, ty } => {
+                                let name_str = format!("^[{}].{}?", binder, body);
+                                let ty_str = format!("Option<{}>", type_expr_to_string(ty));
+                                let name_lit = LitStr::new(&name_str, binder.span());
+                                let ty_lit = LitStr::new(&ty_str, Span::call_site());
+                                vec![quote! {
+                                    mettail_runtime::FieldDef {
+                                        name: #name_lit,
+                                        ty: #ty_lit,
+                                        is_binder: true,
+                                    }
+                                }]
+                            },
+                            TermParam::GuardBody { name } => {
+                                let name_str = format!("?{}?", name);
+                                let name_lit = LitStr::new(&name_str, name.span());
+                                vec![quote! {
+                                    mettail_runtime::FieldDef {
+                                        name: #name_lit,
+                                        ty: "Option<Guard>",
+                                        is_binder: false,
+                                    }
+                                }]
+                            },
+                            TermParam::Optional { params: nested } => {
+                                // Nested Optional: flatten — Option<Option<T>>
+                                // collapses to Option<T> at the outer level
+                                // (the WPDS engine never produces Some(Some(...)),
+                                // only Some(...) or None).
+                                nested.iter().flat_map(one_optional).collect()
+                            },
+                        }
+                    }
+                    inner.iter().flat_map(one_optional).collect()
+                },
+            }
+        }
+        let defs: Vec<TokenStream> = ctx.iter().flat_map(one_param).collect();
         return quote! { &[#(#defs),*] };
     }
 

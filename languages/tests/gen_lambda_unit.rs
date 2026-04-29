@@ -29,7 +29,7 @@ fn lambda_metadata_populated() {
 #[test]
 fn unit_lambda_term_lam() {
     mettail_runtime::clear_var_cache();
-    let term = Term::Lam(mettail_runtime::Scope::new(mettail_runtime::Binder(mettail_runtime::get_or_create_var("x")), Box::new(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x")))))));
+    let term = Term::Lam(mettail_runtime::Scope::new(mettail_runtime::Binder(mettail_runtime::get_or_create_var("a")), Box::new(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Lam");
 }
@@ -37,7 +37,7 @@ fn unit_lambda_term_lam() {
 #[test]
 fn unit_lambda_term_app() {
     mettail_runtime::clear_var_cache();
-    let term = Term::App(Box::new(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Term::App(Box::new(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for App");
     if let Ok(parsed) = Term::parse(&displayed) {
@@ -53,7 +53,7 @@ fn unit_lambda_auto_term_tvar() {
     let term = Term::TVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
+                mettail_runtime::get_or_create_var("a")
             )
         )
     );

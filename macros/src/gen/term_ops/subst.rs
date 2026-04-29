@@ -110,6 +110,14 @@ pub(crate) struct FieldInfo {
     /// predicates are not FreeVars of the host category and do not
     /// participate in alpha-conversion. (Phase 3A, predicated types.)
     pub(crate) is_predicate: bool,
+    /// Opt-Group (2026-04-29): if true, this field's runtime type is
+    /// `Option<Box<Cat>>` (or `Option<Scope<...>>` for Optional inner
+    /// abstractions, `Option<HashBag<Cat>>` for Optional collections).
+    /// Iterators and constructor-emitters wrap reads in
+    /// `if let Some(__inner) = field.as_ref() { ... }` and unwrap
+    /// `__inner` to a borrow of the inner type. Nested Optional
+    /// flattens — the parser-walker never produces `Some(Some(...))`.
+    pub(crate) is_optional: bool,
 }
 
 // =============================================================================
@@ -514,6 +522,11 @@ fn generate_assemble_variant_decl(
                 .iter()
                 .enumerate()
                 .map(|(i, field)| {
+                    if field.is_optional {
+                        let slot_name = format_ident!("f{}_slot", i);
+                        let some_flag = format_ident!("f{}_some", i);
+                        return quote! { #slot_name: usize, #some_flag: bool };
+                    }
                     if field.is_collection {
                         let start_name = format_ident!("f{}_start", i);
                         let count_name = format_ident!("f{}_count", i);
@@ -900,6 +913,29 @@ fn generate_regular_visit_arm(
     for (i, field) in fields.iter().enumerate() {
         let name = &field_names[i];
         let visit_task = format_ident!("Visit{}", field.category);
+
+        if field.is_optional {
+            // Opt-Group: Optional fields use slot+some_flag pattern. Push
+            // VisitTask only if Some; assemble reconstructs Option<Box<T>>.
+            let slot_name = format_ident!("f{}_slot", i);
+            let some_flag = format_ident!("f{}_some", i);
+            alloc_stmts.push(quote! {
+                let #some_flag: bool = #name.is_some();
+                let #slot_name = results.len();
+                if #some_flag { results.push(None); }
+            });
+            push_stmts.push(quote! {
+                if let Some(__b) = #name.as_ref() {
+                    stack.push(SubstTask::#visit_task {
+                        src: __b.as_ref() as *const _,
+                        slot: #slot_name,
+                        op_idx,
+                    });
+                }
+            });
+            assemble_fields.push(quote! { #slot_name, #some_flag });
+            continue;
+        }
 
         if field.is_collection {
             let start_name = format_ident!("f{}_start", i);
@@ -1402,6 +1438,17 @@ fn generate_regular_assemble_arm(
     let mut decl_flat: Vec<TokenStream> = Vec::new();
     let mut call_flat: Vec<TokenStream> = Vec::new();
     for (i, field) in fields.iter().enumerate() {
+        if field.is_optional {
+            let slot_name = format_ident!("f{}_slot", i);
+            let some_flag = format_ident!("f{}_some", i);
+            pat_flat.push(quote! { #slot_name });
+            pat_flat.push(quote! { #some_flag });
+            decl_flat.push(quote! { #slot_name: usize });
+            decl_flat.push(quote! { #some_flag: bool });
+            call_flat.push(quote! { #slot_name });
+            call_flat.push(quote! { #some_flag });
+            continue;
+        }
         if field.is_collection {
             let start_name = format_ident!("f{}_start", i);
             let count_name = format_ident!("f{}_count", i);
@@ -1439,7 +1486,10 @@ fn generate_regular_assemble_arm(
         .enumerate()
         .map(|(i, field)| {
             let result_ident = format_ident!("field_{}", i);
-            if field.is_collection {
+            if field.is_optional {
+                // Already Option<Box<T>> from extract; pass through.
+                quote! { #result_ident }
+            } else if field.is_collection {
                 quote! { #result_ident }
             } else {
                 quote! { Box::new(#result_ident) }
@@ -1470,6 +1520,24 @@ fn generate_regular_assemble_arm(
 fn emit_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
     let result_ident = format_ident!("field_{}", i);
     let wrap = format_ident!("Wrap{}", field.category);
+
+    if field.is_optional {
+        // Opt-Group: extract `Option<Box<Cat>>` from slot+some_flag.
+        let slot_name = format_ident!("f{}_slot", i);
+        let some_flag = format_ident!("f{}_some", i);
+        return quote! {
+            let #result_ident: Option<Box<_>> = if #some_flag {
+                match results[#slot_name].take()
+                    .expect("iterative subst: missing optional inner")
+                {
+                    AnySubstTerm::#wrap(v) => Some(Box::new(v)),
+                    _ => unreachable!("iterative subst: wrong category in optional slot"),
+                }
+            } else {
+                None
+            };
+        };
+    }
 
     if field.is_collection {
         let start_name = format_ident!("f{}_start", i);
@@ -2122,12 +2190,14 @@ pub(crate) fn collect_category_variants(
                     is_collection: false,
                     coll_type: None,
                     is_predicate: false,
+                    is_optional: false,
                 },
                 FieldInfo {
                     category: domain_name.clone(),
                     is_collection: false,
                     coll_type: None,
                     is_predicate: false,
+                    is_optional: false,
                 },
             ],
         });
@@ -2143,12 +2213,14 @@ pub(crate) fn collect_category_variants(
                     is_collection: false,
                     coll_type: None,
                     is_predicate: false,
+                    is_optional: false,
                 },
                 FieldInfo {
                     category: domain_name.clone(),
                     is_collection: true,
                     coll_type: Some(CollectionType::Vec),
                     is_predicate: false,
+                    is_optional: false,
                 },
             ],
         });
@@ -2190,13 +2262,11 @@ pub(crate) fn variant_kind_from_term_context(label: &Ident, ctx: &[TermParam]) -
         let binder_cat = extract_multi_binder_category(domain);
         let body_cat = extract_base_category(codomain);
 
+        // Opt-Group: pre-scope fields recursively flatten Optional groups,
+        // tagging each inner field with `is_optional: true`.
         let pre_scope_fields: Vec<FieldInfo> = ctx
             .iter()
-            .filter_map(|p| match p {
-                TermParam::Simple { ty, .. } => Some(field_info_from_type_expr(ty)),
-                TermParam::GuardBody { .. } => Some(field_info_for_guard_slot()),
-                _ => None,
-            })
+            .flat_map(|p| field_infos_from_term_param(p, false))
             .collect();
 
         return VariantKind::MultiBinder {
@@ -2221,11 +2291,7 @@ pub(crate) fn variant_kind_from_term_context(label: &Ident, ctx: &[TermParam]) -
 
         let pre_scope_fields: Vec<FieldInfo> = ctx
             .iter()
-            .filter_map(|p| match p {
-                TermParam::Simple { ty, .. } => Some(field_info_from_type_expr(ty)),
-                TermParam::GuardBody { .. } => Some(field_info_for_guard_slot()),
-                _ => None,
-            })
+            .flat_map(|p| field_infos_from_term_param(p, false))
             .collect();
 
         return VariantKind::Binder {
@@ -2236,15 +2302,13 @@ pub(crate) fn variant_kind_from_term_context(label: &Ident, ctx: &[TermParam]) -
         };
     }
 
+    // Opt-Group: regular variant fields recursively flatten Optional groups.
+    // Each inner Simple/GuardBody contributes one FieldInfo with
+    // `is_optional: true` tagged. Inner Abstractions in Optional context
+    // (rare) emit `Option<Scope<...>>` typed fields.
     let fields: Vec<FieldInfo> = ctx
         .iter()
-        .filter_map(|p| {
-            if let TermParam::Simple { ty, .. } = p {
-                Some(field_info_from_type_expr(ty))
-            } else {
-                None
-            }
-        })
+        .flat_map(|p| field_infos_from_term_param(p, false))
         .collect();
 
     if fields.len() == 1 && fields[0].is_collection {
@@ -2320,12 +2384,14 @@ pub(crate) fn variant_kind_from_items(
                     is_collection: false,
                     coll_type: None,
                     is_predicate: false,
+                    is_optional: false,
                 }),
                 GrammarItem::Collection { element_type, coll_type, .. } => Some(FieldInfo {
                     category: element_type.clone(),
                     is_collection: true,
                     coll_type: Some(coll_type.clone()),
                     is_predicate: false,
+                    is_optional: false,
                 }),
                 _ => None,
             })
@@ -2347,12 +2413,14 @@ pub(crate) fn variant_kind_from_items(
                 is_collection: false,
                 coll_type: None,
                 is_predicate: false,
+                is_optional: false,
             }),
             GrammarItem::Collection { element_type, coll_type, .. } => Some(FieldInfo {
                 category: element_type.clone(),
                 is_collection: true,
                 coll_type: Some(coll_type.clone()),
                 is_predicate: false,
+                is_optional: false,
             }),
             _ => None,
         })
@@ -2397,18 +2465,21 @@ fn field_info_from_type_expr(ty: &TypeExpr) -> FieldInfo {
             is_collection: false,
             coll_type: None,
             is_predicate: false,
+            is_optional: false,
         },
         TypeExpr::Collection { coll_type, element } => FieldInfo {
             category: extract_base_category(element),
             is_collection: true,
             coll_type: Some(coll_type.clone()),
             is_predicate: false,
+            is_optional: false,
         },
         _ => FieldInfo {
             category: format_ident!("Unknown"),
             is_collection: false,
             coll_type: None,
             is_predicate: false,
+            is_optional: false,
         },
     }
 }
@@ -2420,5 +2491,50 @@ pub(crate) fn field_info_for_guard_slot() -> FieldInfo {
         is_collection: false,
         coll_type: None,
         is_predicate: true,
+        is_optional: false,
+    }
+}
+
+/// Opt-Group: create FieldInfo from a TermParam, recursively flattening
+/// `TermParam::Optional` so each inner Simple/Abstraction/MultiAbstraction/
+/// GuardBody contributes one FieldInfo with `is_optional: true`. Returns
+/// a Vec because Optional groups may contain multiple inner params, each
+/// becoming its own variant field.
+pub(crate) fn field_infos_from_term_param(
+    param: &TermParam,
+    in_optional: bool,
+) -> Vec<FieldInfo> {
+    match param {
+        TermParam::Simple { ty, .. } => {
+            let mut info = field_info_from_type_expr(ty);
+            info.is_optional = in_optional;
+            vec![info]
+        }
+        TermParam::GuardBody { .. } => {
+            let mut info = field_info_for_guard_slot();
+            info.is_optional = in_optional;
+            vec![info]
+        }
+        TermParam::Optional { params: inner } => inner
+            .iter()
+            .flat_map(|p| field_infos_from_term_param(p, true))
+            .collect(),
+        TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. }
+            if in_optional =>
+        {
+            let body_cat = if let TypeExpr::Arrow { codomain, .. } = ty {
+                extract_base_category(codomain)
+            } else {
+                format_ident!("Unknown")
+            };
+            vec![FieldInfo {
+                category: body_cat,
+                is_collection: false,
+                coll_type: None,
+                is_predicate: false,
+                is_optional: true,
+            }]
+        }
+        TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => vec![],
     }
 }

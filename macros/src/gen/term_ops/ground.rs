@@ -114,6 +114,11 @@ fn field_ground_check(field: &FieldInfo, name: &Ident) -> TokenStream {
         return quote! { true };
     }
     let _ = name;
+    if field.is_optional {
+        // Opt-Group: None is trivially ground (no variables); Some(b)
+        // is ground iff inner is ground.
+        return quote! { #name.as_ref().map(|__b| __b.is_ground()).unwrap_or(true) };
+    }
     if field.is_collection {
         let coll_type = field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag);
         collection_all_ground(quote! { #name }, coll_type)

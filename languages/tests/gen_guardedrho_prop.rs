@@ -160,12 +160,11 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
         let result = match choice {
             0 => AnyTerm::WrapProc(Proc::PNil),
             _ => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapProc(Proc::PVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
@@ -179,12 +178,11 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     match choice {
         0 => AnyTerm::WrapProc(Proc::PNil).unwrap_proc(),
         1 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapProc(Proc::PVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
@@ -209,7 +207,7 @@ Proc::PPar(bag)
         5 => {
             let pre_0 = Box::new(build_name_from_tape(reader, child_depth));
             let pred_1 = mettail_runtime::BehavioralPred::Top;
-            let binder_name = format!("v{}", reader.next_byte() % 8);
+            let binder_name = format!("a{}", reader.next_byte() % 8);
 let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));
 let body = build_proc_from_tape(reader, child_depth);
 let scope = mettail_runtime::Scope::new(binder, Box::new(body));
@@ -231,12 +229,11 @@ let scope = mettail_runtime::Scope::new(binder, Box::new(body));
 fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     if depth == 0 {
         let result = {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapName(Name::NVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
@@ -248,12 +245,11 @@ fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     let child_depth = depth - 1;
     match choice {
         0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapName(Name::NVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
@@ -273,21 +269,7 @@ fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapInt(Int::IVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX)),
-        };
+        let result = AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX));
         return result.unwrap_int();
     }
 

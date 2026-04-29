@@ -12,11 +12,11 @@ use mettail_runtime::BehavioralPred;
 // WFST-derived test coverage plan
 // ═══════════════════════════════════════════════════════════
 // Constructor weights (lower = more frequent):
-//   BoolLit              weight: 0.0000
-//   Neg                  weight: 0.0000
-//   Grouping             weight: 0.0000
 //   IntLit               weight: 0.0000
+//   Neg                  weight: 0.0000
+//   BoolLit              weight: 0.0000
 //   Not                  weight: 0.0000
+//   Grouping             weight: 0.0000
 //   VarInt               weight: 2.0000
 //   VarBool              weight: 2.0000
 // Category weights:
@@ -36,19 +36,6 @@ use mettail_runtime::BehavioralPred;
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn eval_mixedmath_neg_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_mixedmath_neg_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Neg(Box::new(Int::NumLit(5i32)));
@@ -59,6 +46,19 @@ fn eval_mixedmath_neg_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "-5"),
         "{} should evaluate to -5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_neg_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::Neg(Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-3"),
+        "{} should evaluate to -3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -101,61 +101,61 @@ fn eval_mixedmath_neg_0() {
 }
 
 #[test]
-fn eval_mixedmath_mulint_5_neg1() {
+fn eval_mixedmath_mulint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-5"),
-        "{} should evaluate to -5, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "15"),
+        "{} should evaluate to 15, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_mixedmath_mulint_5_5() {
+fn eval_mixedmath_mulint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "25"),
-        "{} should evaluate to 25, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "9"),
+        "{} should evaluate to 9, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_mixedmath_mulint_5_2() {
+fn eval_mixedmath_mulint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "10"),
-        "{} should evaluate to 10, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "6"),
+        "{} should evaluate to 6, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_mixedmath_mulint_5_1() {
+fn eval_mixedmath_mulint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_mixedmath_mulint_5_0() {
+fn eval_mixedmath_mulint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -163,19 +163,6 @@ fn eval_mixedmath_mulint_5_0() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "0"),
         "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_mulint_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -189,6 +176,19 @@ fn eval_mixedmath_mulint_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "10"),
         "{} should evaluate to 10, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_mulint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "6"),
+        "{} should evaluate to 6, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -231,19 +231,6 @@ fn eval_mixedmath_mulint_2_0() {
 }
 
 #[test]
-fn eval_mixedmath_mulint_1_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_mixedmath_mulint_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
@@ -254,6 +241,19 @@ fn eval_mixedmath_mulint_1_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "5"),
         "{} should evaluate to 5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_mulint_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -296,9 +296,9 @@ fn eval_mixedmath_mulint_1_0() {
 }
 
 #[test]
-fn eval_mixedmath_mulint_0_neg1() {
+fn eval_mixedmath_mulint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -309,9 +309,9 @@ fn eval_mixedmath_mulint_0_neg1() {
 }
 
 #[test]
-fn eval_mixedmath_mulint_0_5() {
+fn eval_mixedmath_mulint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -361,22 +361,22 @@ fn eval_mixedmath_mulint_0_0() {
 }
 
 #[test]
-fn eval_mixedmath_subint_5_neg1() {
+fn eval_mixedmath_subint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "6"),
-        "{} should evaluate to 6, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "-2"),
+        "{} should evaluate to -2, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_mixedmath_subint_5_5() {
+fn eval_mixedmath_subint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -387,48 +387,35 @@ fn eval_mixedmath_subint_5_5() {
 }
 
 #[test]
-fn eval_mixedmath_subint_5_2() {
+fn eval_mixedmath_subint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_mixedmath_subint_5_1() {
+fn eval_mixedmath_subint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_mixedmath_subint_5_0() {
+fn eval_mixedmath_subint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_subint_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -449,6 +436,19 @@ fn eval_mixedmath_subint_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "-3"),
         "{} should evaluate to -3, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_subint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -491,19 +491,6 @@ fn eval_mixedmath_subint_2_0() {
 }
 
 #[test]
-fn eval_mixedmath_subint_1_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_mixedmath_subint_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
@@ -514,6 +501,19 @@ fn eval_mixedmath_subint_1_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "-4"),
         "{} should evaluate to -4, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_subint_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-2"),
+        "{} should evaluate to -2, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -556,19 +556,6 @@ fn eval_mixedmath_subint_1_0() {
 }
 
 #[test]
-fn eval_mixedmath_subint_0_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_mixedmath_subint_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
@@ -579,6 +566,19 @@ fn eval_mixedmath_subint_0_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "-5"),
         "{} should evaluate to -5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_subint_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-3"),
+        "{} should evaluate to -3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -621,48 +621,22 @@ fn eval_mixedmath_subint_0_0() {
 }
 
 #[test]
-fn eval_mixedmath_addint_5_neg1() {
+fn eval_mixedmath_addint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "8"),
+        "{} should evaluate to 8, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_mixedmath_addint_5_5() {
+fn eval_mixedmath_addint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "10"),
-        "{} should evaluate to 10, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_addint_5_2() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "7"),
-        "{} should evaluate to 7, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_addint_5_1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -673,9 +647,9 @@ fn eval_mixedmath_addint_5_1() {
 }
 
 #[test]
-fn eval_mixedmath_addint_5_0() {
+fn eval_mixedmath_addint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -686,16 +660,29 @@ fn eval_mixedmath_addint_5_0() {
 }
 
 #[test]
-fn eval_mixedmath_addint_2_neg1() {
+fn eval_mixedmath_addint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_addint_3_0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -709,6 +696,19 @@ fn eval_mixedmath_addint_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "7"),
         "{} should evaluate to 7, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_addint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "5"),
+        "{} should evaluate to 5, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -751,19 +751,6 @@ fn eval_mixedmath_addint_2_0() {
 }
 
 #[test]
-fn eval_mixedmath_addint_1_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_mixedmath_addint_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
@@ -774,6 +761,19 @@ fn eval_mixedmath_addint_1_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "6"),
         "{} should evaluate to 6, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_addint_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -816,19 +816,6 @@ fn eval_mixedmath_addint_1_0() {
 }
 
 #[test]
-fn eval_mixedmath_addint_0_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_mixedmath_addint_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
@@ -839,6 +826,19 @@ fn eval_mixedmath_addint_0_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "5"),
         "{} should evaluate to 5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_addint_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -1134,20 +1134,7 @@ fn nested_mixedmath_neg_addint_0_0_in_slot0() {
 #[test]
 fn nested_mixedmath_mulint_neg_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-4"),
-        "{} should evaluate to -4, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_mulint_neg_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1158,9 +1145,22 @@ fn nested_mixedmath_mulint_neg_1_in_slot1() {
 }
 
 #[test]
+fn nested_mixedmath_mulint_neg_1_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn nested_mixedmath_mulint_neg_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1173,20 +1173,7 @@ fn nested_mixedmath_mulint_neg_0_in_slot1() {
 #[test]
 fn nested_mixedmath_mulint_subint_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-4"),
-        "{} should evaluate to -4, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_mulint_subint_0_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1197,9 +1184,22 @@ fn nested_mixedmath_mulint_subint_0_1_in_slot1() {
 }
 
 #[test]
+fn nested_mixedmath_mulint_subint_0_1_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn nested_mixedmath_mulint_subint_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1212,20 +1212,7 @@ fn nested_mixedmath_mulint_subint_0_0_in_slot1() {
 #[test]
 fn nested_mixedmath_mulint_addint_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_mulint_addint_0_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1236,9 +1223,22 @@ fn nested_mixedmath_mulint_addint_0_1_in_slot1() {
 }
 
 #[test]
+fn nested_mixedmath_mulint_addint_0_1_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn nested_mixedmath_mulint_addint_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1251,20 +1251,7 @@ fn nested_mixedmath_mulint_addint_0_0_in_slot1() {
 #[test]
 fn nested_mixedmath_mulint_neg_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-4"),
-        "{} should evaluate to -4, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_mulint_neg_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1275,9 +1262,22 @@ fn nested_mixedmath_mulint_neg_1_in_slot0() {
 }
 
 #[test]
+fn nested_mixedmath_mulint_neg_1_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn nested_mixedmath_mulint_neg_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1290,20 +1290,7 @@ fn nested_mixedmath_mulint_neg_0_in_slot0() {
 #[test]
 fn nested_mixedmath_mulint_subint_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-4"),
-        "{} should evaluate to -4, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_mulint_subint_0_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1314,9 +1301,22 @@ fn nested_mixedmath_mulint_subint_0_1_in_slot0() {
 }
 
 #[test]
+fn nested_mixedmath_mulint_subint_0_1_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn nested_mixedmath_mulint_subint_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1329,20 +1329,7 @@ fn nested_mixedmath_mulint_subint_0_0_in_slot0() {
 #[test]
 fn nested_mixedmath_mulint_addint_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_mulint_addint_0_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1353,9 +1340,22 @@ fn nested_mixedmath_mulint_addint_0_1_in_slot0() {
 }
 
 #[test]
+fn nested_mixedmath_mulint_addint_0_1_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn nested_mixedmath_mulint_addint_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1368,20 +1368,7 @@ fn nested_mixedmath_mulint_addint_0_0_in_slot0() {
 #[test]
 fn nested_mixedmath_subint_neg_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_neg_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1392,74 +1379,22 @@ fn nested_mixedmath_subint_neg_1_in_slot1() {
 }
 
 #[test]
+fn nested_mixedmath_subint_neg_1_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn nested_mixedmath_subint_neg_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_mulint_0_2_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_mulint_0_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_mulint_0_0_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_addint_0_2_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_addint_0_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1470,113 +1405,48 @@ fn nested_mixedmath_subint_addint_0_1_in_slot1() {
 }
 
 #[test]
-fn nested_mixedmath_subint_addint_0_0_in_slot1() {
+fn nested_mixedmath_subint_mulint_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn nested_mixedmath_subint_neg_2_in_slot0() {
+fn nested_mixedmath_subint_mulint_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-4"),
-        "{} should evaluate to -4, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn nested_mixedmath_subint_neg_1_in_slot0() {
+fn nested_mixedmath_subint_mulint_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-3"),
-        "{} should evaluate to -3, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn nested_mixedmath_subint_neg_0_in_slot0() {
+fn nested_mixedmath_subint_addint_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_mulint_0_2_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_mulint_0_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_mulint_0_0_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_addint_0_2_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_addint_0_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1587,22 +1457,9 @@ fn nested_mixedmath_subint_addint_0_1_in_slot0() {
 }
 
 #[test]
-fn nested_mixedmath_subint_addint_0_0_in_slot0() {
+fn nested_mixedmath_subint_addint_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_addint_neg_2_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1613,9 +1470,9 @@ fn nested_mixedmath_addint_neg_2_in_slot1() {
 }
 
 #[test]
-fn nested_mixedmath_addint_neg_1_in_slot1() {
+fn nested_mixedmath_subint_addint_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1626,42 +1483,185 @@ fn nested_mixedmath_addint_neg_1_in_slot1() {
 }
 
 #[test]
-fn nested_mixedmath_addint_neg_0_in_slot1() {
+fn nested_mixedmath_subint_neg_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::SubInt(Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "-3"),
+        "{} should evaluate to -3, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_subint_neg_1_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-2"),
+        "{} should evaluate to -2, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_subint_neg_0_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_subint_mulint_0_2_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_subint_mulint_0_1_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_subint_mulint_0_0_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_subint_addint_0_2_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_subint_addint_0_1_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_subint_addint_0_0_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_addint_neg_2_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_addint_neg_1_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_addint_neg_0_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn nested_mixedmath_addint_mulint_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn nested_mixedmath_addint_mulint_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2168,9 +2168,9 @@ fn wpds_mixedmath_neg_2() {
 }
 
 #[test]
-fn wpds_mixedmath_neg_5() {
+fn wpds_mixedmath_neg_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(5i32)));
+    let input_term = Int::Neg(Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2180,9 +2180,9 @@ fn wpds_mixedmath_neg_5() {
 }
 
 #[test]
-fn wpds_mixedmath_neg_neg1() {
+fn wpds_mixedmath_neg_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::Neg(Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2228,9 +2228,9 @@ fn wpds_mixedmath_addint_0_2() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_0_5() {
+fn wpds_mixedmath_addint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2240,9 +2240,9 @@ fn wpds_mixedmath_addint_0_5() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_0_neg1() {
+fn wpds_mixedmath_addint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2288,9 +2288,9 @@ fn wpds_mixedmath_addint_1_2() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_1_5() {
+fn wpds_mixedmath_addint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2300,9 +2300,9 @@ fn wpds_mixedmath_addint_1_5() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_1_neg1() {
+fn wpds_mixedmath_addint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2348,9 +2348,9 @@ fn wpds_mixedmath_addint_2_2() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_2_5() {
+fn wpds_mixedmath_addint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2360,9 +2360,9 @@ fn wpds_mixedmath_addint_2_5() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_2_neg1() {
+fn wpds_mixedmath_addint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");

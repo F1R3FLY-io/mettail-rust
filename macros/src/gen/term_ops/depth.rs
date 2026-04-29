@@ -110,6 +110,11 @@ fn field_depth_expr(field: &FieldInfo, name: &Ident) -> TokenStream {
         let _ = name;
         return quote! { 0 };
     }
+    if field.is_optional {
+        // Opt-Group: depth of `Option<Box<Cat>>` is 0 if None, else
+        // 1 + inner depth (the Box adds one level of nesting).
+        return quote! { #name.as_ref().map(|__b| __b.term_depth()).unwrap_or(0) };
+    }
     if field.is_collection {
         let coll_type = field
             .coll_type

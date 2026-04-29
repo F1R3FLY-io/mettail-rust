@@ -344,7 +344,20 @@ fn generate_hash_regular_arm(
     // Fields up to and including last collection: hash eagerly
     for (i, field) in fields.iter().enumerate().take(eager_end) {
         let name = &field_names[i];
-        if field.is_predicate {
+        if field.is_optional {
+            // Opt-Group: hash a discriminant byte (0=None, 1=Some), then
+            // re-enter Hash on inner if Some. Re-entrant call is bounded
+            // because the inner Box runs through the trampoline engine.
+            final_stmts.push(quote! {
+                match #name.as_ref() {
+                    None => std::hash::Hash::hash(&0u8, state),
+                    Some(__b) => {
+                        std::hash::Hash::hash(&1u8, state);
+                        std::hash::Hash::hash(&**__b, state);
+                    }
+                }
+            });
+        } else if field.is_predicate {
             // Phase 3A-B4: predicate fields are bare BehavioralPred
             // values that derive `Hash`. Inline-hash them in field
             // order without dereferencing.
@@ -372,7 +385,19 @@ fn generate_hash_regular_arm(
 
     for &(i, field) in deferred.iter().rev() {
         let name = &field_names[i];
-        if field.is_predicate {
+        if field.is_optional {
+            // Opt-Group: emit eagerly (deferred-trailing semantics don't
+            // apply to Option-tag-discriminant hashing).
+            final_stmts.push(quote! {
+                match #name.as_ref() {
+                    None => std::hash::Hash::hash(&0u8, state),
+                    Some(__b) => {
+                        std::hash::Hash::hash(&1u8, state);
+                        std::hash::Hash::hash(&**__b, state);
+                    }
+                }
+            });
+        } else if field.is_predicate {
             // Phase 3A-B4: predicate fields hash inline regardless of
             // position; pushed in reverse order means we need to emit
             // the hash now since they don't go on the stack.

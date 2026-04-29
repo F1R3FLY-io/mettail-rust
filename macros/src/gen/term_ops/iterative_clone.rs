@@ -163,11 +163,18 @@ fn generate_assemble_variant(
 
         VariantKind::Regular { label, fields } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
-            // For each field, we store either a single slot or (start, count) for collections
+            // For each field, we store either a single slot or (start, count) for collections.
+            // Opt-Group: optional fields add a `f{i}_some: bool` flag so the
+            // assemble arm reconstructs Some(Box::new(...)) or None.
             let field_slots: Vec<TokenStream> = fields
                 .iter()
                 .enumerate()
                 .map(|(i, field)| {
+                    if field.is_optional {
+                        let slot_name = format_ident!("f{}_slot", i);
+                        let some_flag = format_ident!("f{}_some", i);
+                        return quote! { #slot_name: usize, #some_flag: bool };
+                    }
                     if field.is_collection {
                         let start_name = format_ident!("f{}_start", i);
                         let count_name = format_ident!("f{}_count", i);
@@ -458,6 +465,29 @@ fn generate_regular_clone_arm(
     for (i, field) in fields.iter().enumerate() {
         let name = &field_names[i];
         let clone_task = format_ident!("Clone{}", field.category);
+
+        if field.is_optional {
+            // Opt-Group: Optional fields store `Option<Box<Cat>>`. Clone
+            // sets `f{i}_some` to track whether the slot is populated;
+            // the assemble arm reconstructs Some(Box::new(...)) or None.
+            let slot_name = format_ident!("f{}_slot", i);
+            let some_flag = format_ident!("f{}_some", i);
+            alloc_stmts.push(quote! {
+                let #some_flag: bool = #name.is_some();
+                let #slot_name = results.len();
+                if #some_flag { results.push(None); }
+            });
+            push_stmts.push(quote! {
+                if let Some(__b) = #name.as_ref() {
+                    stack.push(CloneTask::#clone_task {
+                        src: __b.as_ref() as *const _,
+                        slot: #slot_name,
+                    });
+                }
+            });
+            assemble_fields.push(quote! { #slot_name, #some_flag });
+            continue;
+        }
 
         if field.is_collection {
             let start_name = format_ident!("f{}_start", i);
@@ -941,6 +971,17 @@ fn generate_regular_assemble_arm(
     let mut helper_arg_decls: Vec<TokenStream> = Vec::new();
     let mut helper_arg_names: Vec<TokenStream> = Vec::new();
     for (i, field) in fields.iter().enumerate() {
+        if field.is_optional {
+            let slot_name = format_ident!("f{}_slot", i);
+            let some_flag = format_ident!("f{}_some", i);
+            field_pat_names.push(quote! { #slot_name });
+            field_pat_names.push(quote! { #some_flag });
+            helper_arg_decls.push(quote! { #slot_name: usize });
+            helper_arg_decls.push(quote! { #some_flag: bool });
+            helper_arg_names.push(quote! { #slot_name });
+            helper_arg_names.push(quote! { #some_flag });
+            continue;
+        }
         if field.is_collection {
             let start_name = format_ident!("f{}_start", i);
             let count_name = format_ident!("f{}_count", i);
@@ -972,6 +1013,21 @@ fn generate_regular_assemble_arm(
         .enumerate()
         .map(|(i, field)| {
             let wrap = format_ident!("Wrap{}", field.category);
+            if field.is_optional {
+                let slot_name = format_ident!("f{}_slot", i);
+                let some_flag = format_ident!("f{}_some", i);
+                let result_ident = format_ident!("field_{}", i);
+                return quote! {
+                    let #result_ident: Option<Box<_>> = if #some_flag {
+                        match results[#slot_name].take().expect("iterative clone: missing optional inner") {
+                            AnyClonedTerm::#wrap(v) => Some(Box::new(v)),
+                            _ => unreachable!("iterative clone: wrong category in optional slot"),
+                        }
+                    } else {
+                        None
+                    };
+                };
+            }
             if field.is_collection {
                 let start_name = format_ident!("f{}_start", i);
                 let count_name = format_ident!("f{}_count", i);
@@ -1031,7 +1087,10 @@ fn generate_regular_assemble_arm(
         .enumerate()
         .map(|(i, field)| {
             let result_ident = format_ident!("field_{}", i);
-            if field.is_collection {
+            if field.is_optional {
+                // Already Option<Box<T>> from extract; pass through.
+                quote! { #result_ident }
+            } else if field.is_collection {
                 quote! { #result_ident }
             } else {
                 quote! { Box::new(#result_ident) }

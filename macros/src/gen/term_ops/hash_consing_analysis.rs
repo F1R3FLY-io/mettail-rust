@@ -102,20 +102,35 @@ fn collect_category_refs(rule: &GrammarRule, categories: &HashSet<String>) -> Ha
     let mut refs = HashSet::new();
 
     // Check new-syntax (term_context)
-    if let Some(term_context) = &rule.term_context {
-        for param in term_context {
+    //
+    // Opt-Group: walk recursively so an inner Option<Box<T>> field still
+    // contributes T to the hash-consing reference set. The Some(x) branch
+    // produces a value of category T that needs to be hash-consed
+    // structurally, so the recursion graph must include T.
+    fn walk_term_params(
+        params: &[TermParam],
+        categories: &HashSet<String>,
+        refs: &mut HashSet<String>,
+    ) {
+        for param in params {
             match param {
                 TermParam::Simple { ty, .. } => {
-                    collect_type_category_refs(ty, categories, &mut refs);
+                    collect_type_category_refs(ty, categories, refs);
                 }
                 TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
-                    collect_type_category_refs(ty, categories, &mut refs);
+                    collect_type_category_refs(ty, categories, refs);
                 }
                 TermParam::GuardBody { .. } => {
                     // Guard bodies carry no category references.
                 }
+                TermParam::Optional { params: inner } => {
+                    walk_term_params(inner, categories, refs);
+                }
             }
         }
+    }
+    if let Some(term_context) = &rule.term_context {
+        walk_term_params(term_context, categories, &mut refs);
     }
 
     // Check old-syntax (items)

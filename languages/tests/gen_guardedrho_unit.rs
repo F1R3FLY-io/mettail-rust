@@ -58,7 +58,7 @@ fn unit_guardedrho_proc_castint() {
 #[test]
 fn unit_guardedrho_proc_poutput() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::POutput(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Proc::PNil));
+    let term = Proc::POutput(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Proc::PNil));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for POutput");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -71,7 +71,7 @@ fn unit_guardedrho_proc_poutput() {
 #[test]
 fn unit_guardedrho_proc_pguardedinput() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PGuardedInput(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), mettail_runtime::BehavioralPred::Top, mettail_runtime::Scope::new(mettail_runtime::Binder(mettail_runtime::get_or_create_var("x")), Box::new(Proc::PNil)));
+    let term = Proc::PGuardedInput(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), mettail_runtime::BehavioralPred::Top, mettail_runtime::Scope::new(mettail_runtime::Binder(mettail_runtime::get_or_create_var("a")), Box::new(Proc::PNil)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PGuardedInput");
 }
@@ -92,7 +92,7 @@ fn unit_guardedrho_name_nquote() {
 #[test]
 fn unit_guardedrho_proc_pdrop() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PDrop(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Proc::PDrop(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PDrop");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -108,7 +108,7 @@ fn unit_guardedrho_auto_proc_pvar() {
     let term = Proc::PVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
+                mettail_runtime::get_or_create_var("a")
             )
         )
     );
@@ -122,26 +122,12 @@ fn unit_guardedrho_auto_name_nvar() {
     let term = Name::NVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
+                mettail_runtime::get_or_create_var("a")
             )
         )
     );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NVar");
-}
-
-#[test]
-fn unit_guardedrho_auto_int_ivar() {
-    mettail_runtime::clear_var_cache();
-    let term = Int::IVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for IVar");
 }
 
 #[test]

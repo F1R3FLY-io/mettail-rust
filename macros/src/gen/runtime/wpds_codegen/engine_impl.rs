@@ -72,6 +72,10 @@ pub(crate) fn emit_engine_impl_full(
     let binder_rule_body = super::binder::emit_binder_rule_body(categories, per_cat);
     // Phase 5b: BinderListLoop body for multi-binder list (^[xs]).
     let binder_list_loop_body = super::binder::emit_binder_list_loop_body(per_cat);
+    // Opt-Group (2026-04-29): per-rule per-group OptionalGroup state
+    // dispatch — FIRST-set peek + inner-position walk + finalize.
+    let optional_group_body =
+        super::binder::emit_optional_group_body(categories, per_cat);
     // B7 Pattern 2: paren-grouping arms in PrefixDispatch — backend
     // emission of `(`-grouping for every parseable category, satisfying
     // the user mandate "no per-grammar order; backend change". Emitted
@@ -371,6 +375,39 @@ pub(crate) fn emit_engine_impl_full(
                                         }
                                     }
                                 }
+                                mettail_prattail::wpds_runtime::SymbolKind::OptionalGroupAt(sub_pos) => {
+                                    // Opt-Group: inner ParamParse / Literal /
+                                    // BinderIdent / GuardSlot just returned to
+                                    // the optional-group marker. The marker's
+                                    // sub_pos was advanced when the inner step
+                                    // executed (Replace/ConsumeAndReplace set
+                                    // OptionalGroupAt(next_sub_pos)). Resume
+                                    // the OptionalGroup state at that sub_pos.
+                                    let result_src_idx = node.symbol.category_src_idx;
+                                    let rule_idx = node.symbol.rule_index_in_category;
+                                    let outer_bp = node.symbol.bp.unwrap_or(0);
+                                    return WpdsStepAction::Advance(
+                                        WpdsState::OptionalGroup {
+                                            result_src_idx,
+                                            rule_idx,
+                                            // group_idx isn't carried in the
+                                            // marker (the synthetic
+                                            // dispatch keys on (result, rule,
+                                            // group, sub_pos) but only one
+                                            // OptionalGroup can be live at any
+                                            // outer position). For pilot
+                                            // grammars with a single group per
+                                            // rule, group_idx=0; for
+                                            // multi-group rules the body
+                                            // dispatcher resolves group_idx
+                                            // from sub_pos via the per-rule
+                                            // table.
+                                            group_idx: 0,
+                                            sub_pos,
+                                            outer_bp,
+                                        },
+                                    );
+                                }
                                 _ => WpdsStepAction::Idle,
                             }
                         } else {
@@ -386,7 +423,12 @@ pub(crate) fn emit_engine_impl_full(
                             match node.symbol.kind {
                                 mettail_prattail::wpds_runtime::SymbolKind::CollectionMarker
                                 | mettail_prattail::wpds_runtime::SymbolKind::RuleAt(_)
-                                | mettail_prattail::wpds_runtime::SymbolKind::MixfixMarker => {
+                                | mettail_prattail::wpds_runtime::SymbolKind::MixfixMarker
+                                | mettail_prattail::wpds_runtime::SymbolKind::OptionalGroupAt(_) => {
+                                    // Opt-Group: an OptionalGroupAt marker
+                                    // indicates we're mid-group; defer to
+                                    // Unwinding so the OptionalGroup state
+                                    // resumes at the recorded sub_pos.
                                     return WpdsStepAction::Advance(WpdsState::Unwinding);
                                 }
                                 _ => {}
@@ -615,6 +657,25 @@ pub(crate) fn emit_engine_impl_full(
                          this state via step_fanout, not the engine. Reaching \
                          this arm signals a routing bug in WpdsWalker::run_to_*."
                     ),
+                    WpdsState::OptionalGroup {
+                        result_src_idx,
+                        rule_idx,
+                        group_idx,
+                        sub_pos,
+                        outer_bp,
+                    } => {
+                        // Opt-Group (2026-04-29): per-rule per-group dispatch.
+                        // sub_pos=0 peeks the FIRST set and chooses
+                        // take-or-skip; sub_pos>0 walks inner positions; the
+                        // final sub_pos finalizes via OptGroupFinalize.
+                        // For grammars without `#opt(...)`, the
+                        // `optional_group_body` collapses to `WpdsStepAction::Idle`
+                        // and the destructured fields are unused. Suppress the
+                        // unused-variable warnings via explicit no-op binds —
+                        // these compile to nothing in optimized builds.
+                        let _ = (result_src_idx, rule_idx, group_idx, sub_pos, outer_bp);
+                        #optional_group_body
+                    }
                     WpdsState::Saturating { .. } => WpdsStepAction::Idle,
                     WpdsState::Accepted | WpdsState::Error { .. } => WpdsStepAction::Idle,
                 }

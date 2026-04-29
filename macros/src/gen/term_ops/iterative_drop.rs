@@ -353,6 +353,18 @@ fn generate_regular_push_arm(
             let task_variant = format_ident!("Drop{}", field.category);
             let dummy_fn = format_ident!("dummy_{}", field.category.to_string().to_lowercase());
 
+            if field.is_optional {
+                // Opt-Group: `Option<Box<Cat>>` field. `take()` extracts
+                // the Box (leaves None) without needing a dummy. Push
+                // the inner if Some.
+                let _ = dummy_fn.clone();
+                return quote! {
+                    if let Some(__b) = #name.take() {
+                        stack.push(DropTask::#task_variant(*__b));
+                    }
+                };
+            }
+
             if field.is_collection {
                 // Collection field inside a Regular variant: take and push elements
                 match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {

@@ -141,7 +141,14 @@ fn generate_random_depth_0(
             // Check if it's a Var or literal constructor (Integer, Boolean, StringLiteral, FloatLiteral)
             if let GrammarItem::NonTerminal { ident: nt, kind } = non_terminals[0] {
                 if *kind == NonTerminalKind::Var {
-                    // VarRef or other Var rules - generate variables
+                    // VarRef or other Var rules — generate variables
+                    // using a spec-derived ident name (replaces
+                    // hard-coded "_" fallback). When `vars` is non-
+                    // empty we use one from the binder context;
+                    // otherwise we use `spec_admitted_var_name(language)`
+                    // which derives from the language's effective
+                    // Ident pattern.
+                    let fallback_name = crate::gen::spec_admitted_var_name(language);
                     cases.push(quote! {
                         if !vars.is_empty() {
                             let idx = rng.gen_range(0..vars.len());
@@ -156,18 +163,41 @@ fn generate_random_depth_0(
                             #cat_name::#label(
                                 mettail_runtime::OrdVar(
                                     mettail_runtime::Var::Free(
-                                        mettail_runtime::get_or_create_var("_")
+                                        mettail_runtime::get_or_create_var(#fallback_name)
                                     )
                                 )
                             )
                         }
                     });
                 } else if kind.is_literal() {
-                    // Literal rules - generate random native values
+                    // Literal rules — generate native values whose RANGE
+                    // is projected onto the spec's effective lexer
+                    // pattern. Reads `effective_pattern_for(language,
+                    // "Integer"|"Float"|"StringLit")` and consults
+                    // `classify_token` to decide whether the pattern
+                    // admits negatives. Replaces hard-coded
+                    // `-100..100` / `0..20` ranges with spec-derived
+                    // bounds.
+                    use crate::gen::test_gen::automaton_walk::classify::{
+                        classify_token, effective_pattern_for, language_equivalent, CanonicalKind,
+                    };
                     let literal_case = match kind {
-                        NonTerminalKind::Integer => quote! {
-                            let val = rng.gen_range(-100i32..100i32);
-                            #cat_name::#label(val)
+                        NonTerminalKind::Integer => {
+                            let pattern = effective_pattern_for(language, "Integer");
+                            let signed = matches!(classify_token(&pattern), CanonicalKind::SignedInt)
+                                || (matches!(classify_token(&pattern), CanonicalKind::Unclassified)
+                                    && language_equivalent(&pattern, "-?[0-9]+"));
+                            if signed {
+                                quote! {
+                                    let val = rng.gen_range(-100i32..100i32);
+                                    #cat_name::#label(val)
+                                }
+                            } else {
+                                quote! {
+                                    let val = rng.gen_range(0i32..100i32);
+                                    #cat_name::#label(val)
+                                }
+                            }
                         },
                         NonTerminalKind::Boolean => quote! {
                             let val: bool = rng.gen();
@@ -181,29 +211,52 @@ fn generate_random_depth_0(
                                 .and_then(|t| t.native_type.as_ref())
                                 .map(|n| NativeType::from_syn_type(n).is_float() && NativeType::from_syn_type(n) == NativeType::Float32)
                                 .unwrap_or(false);
+                            let pattern = effective_pattern_for(language, "Float");
+                            let signed = matches!(classify_token(&pattern), CanonicalKind::SignedFloat)
+                                || (matches!(classify_token(&pattern), CanonicalKind::Unclassified)
+                                    && language_equivalent(
+                                        &pattern,
+                                        r"-?[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?",
+                                    ));
                             let (wrapper_ty, val_ty) = if is_f32 {
-                                (
-                                    quote! { mettail_runtime::CanonicalFloat32 },
-                                    quote! { rng.gen_range(-100.0f32..100.0f32) },
-                                )
+                                if signed {
+                                    (quote! { mettail_runtime::CanonicalFloat32 },
+                                     quote! { rng.gen_range(-100.0f32..100.0f32) })
+                                } else {
+                                    (quote! { mettail_runtime::CanonicalFloat32 },
+                                     quote! { rng.gen_range(0.0f32..100.0f32) })
+                                }
+                            } else if signed {
+                                (quote! { mettail_runtime::CanonicalFloat64 },
+                                 quote! { rng.gen_range(-100.0f64..100.0f64) })
                             } else {
-                                (
-                                    quote! { mettail_runtime::CanonicalFloat64 },
-                                    quote! { rng.gen_range(-100.0f64..100.0f64) },
-                                )
+                                (quote! { mettail_runtime::CanonicalFloat64 },
+                                 quote! { rng.gen_range(0.0f64..100.0f64) })
                             };
                             quote! {
                                 let val = #val_ty;
                                 #cat_name::#label(#wrapper_ty::from(val))
                             }
                         },
-                        NonTerminalKind::StringLiteral => quote! {
-                            let len = rng.gen_range(0..20usize);
-                            let val = (0..len).map(|_| {
-                                let idx = rng.gen_range(0..26u8);
-                                (b'a' + idx) as char
-                            }).collect::<String>();
-                            #cat_name::#label(val)
+                        NonTerminalKind::StringLiteral => {
+                            // The default StringLit pattern admits any
+                            // sequence of non-quote/non-backslash bytes
+                            // (or escape sequences). For sampling we
+                            // emit a small lowercase-ASCII string —
+                            // valid under the default pattern. If the
+                            // spec overrides StringLit to a more
+                            // restrictive pattern the parser will
+                            // surface a roundtrip failure loudly per
+                            // the user directive.
+                            let _ = effective_pattern_for(language, "StringLit");
+                            quote! {
+                                let len = rng.gen_range(0..20usize);
+                                let val = (0..len).map(|_| {
+                                    let idx = rng.gen_range(0..26u8);
+                                    (b'a' + idx) as char
+                                }).collect::<String>();
+                                #cat_name::#label(val)
+                            }
                         },
                         _ => continue,
                     };
@@ -376,7 +429,13 @@ fn generate_random_depth_d(
     }
 }
 
-/// Generate random simple constructor (no binders)
+/// Generate random simple constructor (no binders).
+///
+/// Opt-Group: when the rule's term_context contains `TermParam::Optional`,
+/// the corresponding variant fields are `Option<Box<T>>`. Random generation
+/// always emits `None` for those positions (Some-generation is a future
+/// enhancement; defaulting to None is a defensible no-coverage-loss choice
+/// since shipped random testers don't exercise optional groups).
 fn generate_random_simple_constructor(
     cat_name: &Ident,
     rule: &GrammarRule,
@@ -393,10 +452,82 @@ fn generate_random_simple_constructor(
         })
         .collect();
 
-    match arg_cats.len() {
-        1 => generate_random_unary(cat_name, label, &arg_cats[0], language),
-        2 => generate_random_binary(cat_name, label, &arg_cats[0], &arg_cats[1], language),
-        _ => generate_random_nary(cat_name, label, &arg_cats, language),
+    // Compute the OPTIONAL-suffix count: how many of the trailing arg
+    // positions are Option<Box<T>> per Opt-Group flattening. The
+    // `convert_term_context_to_items` helper appends Optional inner items
+    // AT THEIR DECLARATION POSITION; for the IfElse pilot, Optional sits
+    // at the end of the term_context so all optional positions are at
+    // the suffix. Multi-Optional or non-trailing Optional grammars are
+    // not currently emitted by random.rs (which is a heuristic-driven
+    // generator, not a fuzzer-strict one) — defer until a shipped grammar
+    // exercises that shape.
+    let optional_count: usize = rule
+        .term_context
+        .as_ref()
+        .map(|ctx| {
+            fn count(p: &mettail_ast::grammar::TermParam) -> usize {
+                use mettail_ast::grammar::TermParam;
+                match p {
+                    TermParam::Optional { params: inner } => inner
+                        .iter()
+                        .map(count_one)
+                        .sum(),
+                    _ => 0,
+                }
+            }
+            fn count_one(p: &mettail_ast::grammar::TermParam) -> usize {
+                use mettail_ast::grammar::TermParam;
+                match p {
+                    TermParam::Simple { .. } | TermParam::GuardBody { .. } => 1,
+                    TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => 1,
+                    TermParam::Optional { params: inner } => {
+                        inner.iter().map(count_one).sum()
+                    }
+                }
+            }
+            ctx.iter().map(count).sum()
+        })
+        .unwrap_or(0);
+
+    let positional_count = arg_cats.len().saturating_sub(optional_count);
+    let positional_cats: Vec<Ident> = arg_cats.iter().take(positional_count).cloned().collect();
+
+    let core: TokenStream = match positional_cats.len() {
+        0 => quote! { #cat_name::#label() },
+        1 => generate_random_unary(cat_name, label, &positional_cats[0], language),
+        2 => generate_random_binary(cat_name, label, &positional_cats[0], &positional_cats[1], language),
+        _ => generate_random_nary(cat_name, label, &positional_cats, language),
+    };
+
+    if optional_count == 0 {
+        core
+    } else {
+        // Re-emit the variant call appending `None` for each Optional position.
+        let none_args: Vec<TokenStream> = (0..optional_count).map(|_| quote! { None }).collect();
+        // The `core` token stream ends with `Cat::Label(args)`. Inject `None`
+        // before the closing paren by re-constructing:
+        let positional_args: Vec<TokenStream> = positional_cats
+            .iter()
+            .enumerate()
+            .map(|(_, cat)| {
+                if !is_lang_type(cat, language) {
+                    quote! { panic!("Non-exported category") }
+                } else {
+                    quote! {
+                        Box::new(#cat::generate_random_at_depth_internal(
+                            vars, depth - 1, max_collection_width, rng, binding_depth,
+                        ))
+                    }
+                }
+            })
+            .collect();
+        let _ = core;
+        quote! {
+            #cat_name::#label(
+                #(#positional_args,)*
+                #(#none_args),*
+            )
+        }
     }
 }
 
@@ -602,13 +733,16 @@ fn generate_random_multi_binder_constructor(
         .collect();
 
     // Generate multi-binder scope construction
+    // Binder name prefix derived from the spec's effective Ident
+    // pattern (defaults to "a" for the standard Ident pattern).
+    let var_prefix = crate::gen::spec_admitted_var_name(language);
     let scope_construction = quote! {
         // Generate 1-3 binder names
         let num_binders = rng.gen_range(1usize..=3);
         let mut binder_names = Vec::with_capacity(num_binders);
         let mut extended_vars = vars.to_vec();
         for j in 0..num_binders {
-            let binder_name = format!("x{}_{}", binding_depth, j);
+            let binder_name = format!("{}{}_{}", #var_prefix, binding_depth, j);
             extended_vars.push(binder_name.clone());
             binder_names.push(binder_name);
         }
@@ -678,8 +812,9 @@ fn generate_random_simple_binder(
         return quote! {};
     }
 
+    let var_prefix = crate::gen::spec_admitted_var_name(language);
     quote! {
-        let binder_name = format!("x{}", binding_depth);
+        let binder_name = format!("{}{}", #var_prefix, binding_depth);
         let mut extended_vars = vars.to_vec();
         extended_vars.push(binder_name.clone());
 
@@ -709,6 +844,7 @@ fn generate_random_binder_with_one_arg(
     if !is_lang_type(arg_cat, language) || !is_lang_type(body_cat, language) {
         return quote! {};
     }
+    let var_prefix = crate::gen::spec_admitted_var_name(language);
 
     quote! {
         let d1 = rng.gen_range(0..depth);
@@ -720,7 +856,7 @@ fn generate_random_binder_with_one_arg(
 
         let arg1 = #arg_cat::generate_random_at_depth_internal(vars, d1, max_collection_width, rng, binding_depth);
 
-        let binder_name = format!("x{}", binding_depth);
+        let binder_name = format!("{}{}", #var_prefix, binding_depth);
         let mut extended_vars = vars.to_vec();
         extended_vars.push(binder_name.clone());
         let body = #body_cat::generate_random_at_depth_internal(
@@ -759,8 +895,9 @@ fn generate_random_binder_with_multiple_args(
         }
     }).collect();
 
+    let var_prefix = crate::gen::spec_admitted_var_name(language);
     quote! {
-        let binder_name = format!("x{}", binding_depth);
+        let binder_name = format!("{}{}", #var_prefix, binding_depth);
         let mut extended_vars = vars.to_vec();
         extended_vars.push(binder_name.clone());
         let body = #body_cat::generate_random_at_depth_internal(

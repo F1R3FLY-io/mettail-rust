@@ -227,6 +227,38 @@ pub enum WpdsStepAction<W: Semiring> {
         weight: W,
         new_state: WpdsState,
     },
+    /// Opt-Group (2026-04-29): skip path. The OptionalGroup state at
+    /// sub_pos=0 peeked the FIRST set and found no match. Walker:
+    ///   1. Pushes `ActionArg::Optional(None)` to the builder (via
+    ///      `push_optional_absent`).
+    ///   2. Replaces the (top) outer RuleAt marker with `replace_symbol`
+    ///      (advancing the outer position past the group).
+    ///   3. Transitions to `new_state` (typically BinderRule at next outer pos).
+    /// No token consumption. No `optional_stack` activity (the scope was
+    /// never opened).
+    OptGroupAbsent {
+        replace_symbol: StackSymbolV2,
+        weight: W,
+        new_state: WpdsState,
+    },
+    /// Opt-Group (2026-04-29): take-path finalize. The OptionalGroup state
+    /// at sub_pos = inner.len()+1 has walked all inner positions. Walker:
+    ///   1. Pops the OptionalGroupAt(...) marker on top (no action fires —
+    ///      OptionalGroupAt is intentionally excluded from the action-fire
+    ///      symbol list).
+    ///   2. Calls `finalize_optional_scope_present()` on the builder,
+    ///      which pops the inner-arg accumulator from `optional_stack`
+    ///      and pushes `ActionArg::Optional(Some(inner_args))` to the
+    ///      main stack (or to the OUTER optional_stack top if nested).
+    ///   3. Replaces the (now-on-top) outer RuleAt marker with
+    ///      `replace_symbol` (advancing past the group).
+    ///   4. Transitions to `new_state`.
+    /// No token consumption.
+    OptGroupFinalize {
+        replace_symbol: StackSymbolV2,
+        weight: W,
+        new_state: WpdsState,
+    },
     /// Parse complete.
     Accept,
     /// Parse failed; message is propagated as `WpdsState::Error { message }`.
@@ -967,6 +999,13 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     symbol.bp = Some(id);
                     self.builder.push_collection_id(id);
                 }
+                // Opt-Group: pushing the FIRST OptionalGroupAt marker
+                // (sub_pos=1) opens the inner-arg accumulator scope. All
+                // subsequent push_xxx calls until OptGroupFinalize redirect
+                // to the new scope's inner Vec.
+                if let SymbolKind::OptionalGroupAt(1) = symbol.kind {
+                    self.builder.start_optional_scope();
+                }
                 let prev = self.top_node.unwrap_or_else(|| {
                     self.gss.get_or_create_node(WpdsGssNode {
                         pos: self.pos,
@@ -1213,6 +1252,79 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 }
                 self.branch_cursors = cursors;
                 self.state = WpdsState::AmbiguityFanout { branches: child_ids };
+                self.maybe_prune_frontier();
+            }
+            WpdsStepAction::OptGroupAbsent {
+                replace_symbol,
+                weight,
+                new_state,
+            } => {
+                // Opt-Group skip path: push Optional(None) to builder
+                // (auto-routes via push_arg_internal — landing in the
+                // outer optional scope if nested, or main stack), then
+                // replace the (top) outer RuleAt marker to advance past
+                // the group.
+                self.builder.push_optional_absent();
+                let popped = self
+                    .top_node
+                    .and_then(|id| self.gss.node(id))
+                    .map(|n| n.symbol);
+                if let Some(top) = self.top_node {
+                    self.top_node = self.gss.pop_symbol(top);
+                }
+                let _ = popped;
+                let prev = self.top_node.unwrap_or_else(|| {
+                    self.gss.get_or_create_node(WpdsGssNode {
+                        pos: self.pos,
+                        symbol: StackSymbolV2::category_entry(0),
+                    })
+                });
+                let new_id = self
+                    .gss
+                    .push_symbol(prev, replace_symbol, self.pos, weight.clone());
+                self.top_node = Some(new_id);
+                self.weight = self.weight.times(&weight);
+                self.state = new_state;
+                self.maybe_prune_frontier();
+            }
+            WpdsStepAction::OptGroupFinalize {
+                replace_symbol,
+                weight,
+                new_state,
+            } => {
+                // Opt-Group take-path finalize:
+                //   1. Pop the OptionalGroupAt marker on top (no action
+                //      fires — OptionalGroupAt is intentionally excluded
+                //      from the action-fire symbol list).
+                //   2. Wrap captured inner args via
+                //      `finalize_optional_scope_present()` (routes the
+                //      resulting Optional(Some(inner)) via push_arg_internal,
+                //      landing in the outer optional scope when nested).
+                //   3. Pop the (now-on-top) outer RuleAt marker (no action
+                //      fires — a non-final RuleAt position pops silently
+                //      via Replace semantics).
+                //   4. Push `replace_symbol` (the advanced outer RuleAt at
+                //      next outer position).
+                // Steps 3 + 4 implement a Replace of the outer RuleAt.
+                if let Some(top) = self.top_node {
+                    self.top_node = self.gss.pop_symbol(top);
+                }
+                self.builder.finalize_optional_scope_present();
+                if let Some(top) = self.top_node {
+                    self.top_node = self.gss.pop_symbol(top);
+                }
+                let prev = self.top_node.unwrap_or_else(|| {
+                    self.gss.get_or_create_node(WpdsGssNode {
+                        pos: self.pos,
+                        symbol: StackSymbolV2::category_entry(0),
+                    })
+                });
+                let new_id = self
+                    .gss
+                    .push_symbol(prev, replace_symbol, self.pos, weight.clone());
+                self.top_node = Some(new_id);
+                self.weight = self.weight.times(&weight);
+                self.state = new_state;
                 self.maybe_prune_frontier();
             }
             WpdsStepAction::Accept => {
@@ -1532,6 +1644,19 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             }
             WpdsStepAction::Accept => CursorOutcome::Resolved,
             WpdsStepAction::Error(_) => CursorOutcome::Drop,
+            WpdsStepAction::OptGroupAbsent { .. } | WpdsStepAction::OptGroupFinalize { .. } => {
+                // Opt-Group: Fork + Opt-Group combination is out of the
+                // pilot scope. The cursor-side implementation requires
+                // BuilderDelta entries for `PushOptionalAbsent` and
+                // `FinalizeOptionalScope` plus their commit-time replay
+                // — substantial work without a current shipped grammar
+                // exercising both Fork and Opt-Group simultaneously.
+                // Drop the cursor: fork branches that try to traverse
+                // an Opt-Group are silently abandoned. Synchronous
+                // (non-fork) Opt-Group dispatch goes through `apply_action`
+                // (above), where these variants are fully handled.
+                CursorOutcome::Drop
+            }
             WpdsStepAction::Idle => {
                 // Cursor's engine has no opinion. Treat as Drop to avoid
                 // infinite step_fanout iterations (a branch that cannot

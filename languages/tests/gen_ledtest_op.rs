@@ -12,26 +12,26 @@ use mettail_runtime::BehavioralPred;
 // WFST-derived test coverage plan
 // ═══════════════════════════════════════════════════════════
 // Constructor weights (lower = more frequent):
-//   NumLit               weight: 0.0000
-//   Grouping             weight: 0.0000
-//   NegNum               weight: 0.0000
-//   ExprToNum            weight: 0.0000
 //   EqNum                weight: 0.0000
+//   NegNum               weight: 0.0000
 //   PredLit              weight: 0.0000
+//   ExprToNum            weight: 0.0000
+//   Grouping             weight: 0.0000
+//   NumLit               weight: 0.0000
 //   CastPred             weight: 0.5000
 //   CastNum              weight: 0.5000
 //   VarExpr              weight: 2.0000
 //   VarNum               weight: 2.0000
-//   Pred::EqNum          weight: inf
-//   Num::FactNum         weight: inf
-//   Num::ExprToNum       weight: inf
+//   Expr::CastNum        weight: inf
 //   Num::AddNum          weight: inf
-//   Pred::AndPred        weight: inf
+//   Num::FactNum         weight: inf
+//   Pred::EqNum          weight: inf
 //   Expr::CastPred       weight: inf
-//   Expr::EPar           weight: inf
+//   Num::ExprToNum       weight: inf
 //   Num::MulNum          weight: inf
+//   Pred::AndPred        weight: inf
+//   Expr::EPar           weight: inf
 //   Pred::NeNum          weight: inf
-//   Num::NegNum          weight: inf
 //   ... and 1 more
 // Category weights:
 //   Pred                 weight: 0.0833
@@ -104,9 +104,9 @@ fn eval_ledtest_andpred_true_true() {
 }
 
 #[test]
-fn eval_ledtest_nenum_5_neg1() {
+fn eval_ledtest_nenum_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -117,9 +117,9 @@ fn eval_ledtest_nenum_5_neg1() {
 }
 
 #[test]
-fn eval_ledtest_nenum_5_5() {
+fn eval_ledtest_nenum_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -130,9 +130,9 @@ fn eval_ledtest_nenum_5_5() {
 }
 
 #[test]
-fn eval_ledtest_nenum_5_2() {
+fn eval_ledtest_nenum_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -143,9 +143,9 @@ fn eval_ledtest_nenum_5_2() {
 }
 
 #[test]
-fn eval_ledtest_nenum_5_1() {
+fn eval_ledtest_nenum_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -156,22 +156,9 @@ fn eval_ledtest_nenum_5_1() {
 }
 
 #[test]
-fn eval_ledtest_nenum_5_0() {
+fn eval_ledtest_nenum_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_ledtest_nenum_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -185,6 +172,19 @@ fn eval_ledtest_nenum_2_neg1() {
 fn eval_ledtest_nenum_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_ledtest_nenum_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -234,9 +234,9 @@ fn eval_ledtest_nenum_2_0() {
 }
 
 #[test]
-fn eval_ledtest_nenum_1_neg1() {
+fn eval_ledtest_nenum_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -247,9 +247,9 @@ fn eval_ledtest_nenum_1_neg1() {
 }
 
 #[test]
-fn eval_ledtest_nenum_1_5() {
+fn eval_ledtest_nenum_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -299,9 +299,9 @@ fn eval_ledtest_nenum_1_0() {
 }
 
 #[test]
-fn eval_ledtest_nenum_0_neg1() {
+fn eval_ledtest_nenum_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -312,9 +312,9 @@ fn eval_ledtest_nenum_0_neg1() {
 }
 
 #[test]
-fn eval_ledtest_nenum_0_5() {
+fn eval_ledtest_nenum_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -364,9 +364,9 @@ fn eval_ledtest_nenum_0_0() {
 }
 
 #[test]
-fn eval_ledtest_eqnum_5_neg1() {
+fn eval_ledtest_eqnum_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -377,9 +377,9 @@ fn eval_ledtest_eqnum_5_neg1() {
 }
 
 #[test]
-fn eval_ledtest_eqnum_5_5() {
+fn eval_ledtest_eqnum_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -390,9 +390,9 @@ fn eval_ledtest_eqnum_5_5() {
 }
 
 #[test]
-fn eval_ledtest_eqnum_5_2() {
+fn eval_ledtest_eqnum_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -403,9 +403,9 @@ fn eval_ledtest_eqnum_5_2() {
 }
 
 #[test]
-fn eval_ledtest_eqnum_5_1() {
+fn eval_ledtest_eqnum_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -416,22 +416,9 @@ fn eval_ledtest_eqnum_5_1() {
 }
 
 #[test]
-fn eval_ledtest_eqnum_5_0() {
+fn eval_ledtest_eqnum_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_ledtest_eqnum_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -445,6 +432,19 @@ fn eval_ledtest_eqnum_2_neg1() {
 fn eval_ledtest_eqnum_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_ledtest_eqnum_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -494,9 +494,9 @@ fn eval_ledtest_eqnum_2_0() {
 }
 
 #[test]
-fn eval_ledtest_eqnum_1_neg1() {
+fn eval_ledtest_eqnum_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -507,9 +507,9 @@ fn eval_ledtest_eqnum_1_neg1() {
 }
 
 #[test]
-fn eval_ledtest_eqnum_1_5() {
+fn eval_ledtest_eqnum_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -559,9 +559,9 @@ fn eval_ledtest_eqnum_1_0() {
 }
 
 #[test]
-fn eval_ledtest_eqnum_0_neg1() {
+fn eval_ledtest_eqnum_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -572,9 +572,9 @@ fn eval_ledtest_eqnum_0_neg1() {
 }
 
 #[test]
-fn eval_ledtest_eqnum_0_5() {
+fn eval_ledtest_eqnum_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -636,6 +636,18 @@ fn eval_ledtest_factnum_5_smoke() {
 }
 
 #[test]
+fn eval_ledtest_factnum_3_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::FactNum(Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn eval_ledtest_factnum_2_smoke() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::FactNum(Box::new(Num::NumLit(2i32)));
@@ -672,19 +684,6 @@ fn eval_ledtest_factnum_0_smoke() {
 }
 
 #[test]
-fn eval_ledtest_negnum_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_ledtest_negnum_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::NegNum(Box::new(Num::NumLit(5i32)));
@@ -695,6 +694,19 @@ fn eval_ledtest_negnum_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "-5"),
         "{} should evaluate to -5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_ledtest_negnum_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::NegNum(Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-3"),
+        "{} should evaluate to -3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -737,61 +749,61 @@ fn eval_ledtest_negnum_0() {
 }
 
 #[test]
-fn eval_ledtest_mulnum_5_neg1() {
+fn eval_ledtest_mulnum_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Num::MulNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-5"),
-        "{} should evaluate to -5, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "15"),
+        "{} should evaluate to 15, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_ledtest_mulnum_5_5() {
+fn eval_ledtest_mulnum_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::MulNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "25"),
-        "{} should evaluate to 25, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "9"),
+        "{} should evaluate to 9, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_ledtest_mulnum_5_2() {
+fn eval_ledtest_mulnum_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::MulNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "10"),
-        "{} should evaluate to 10, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "6"),
+        "{} should evaluate to 6, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_ledtest_mulnum_5_1() {
+fn eval_ledtest_mulnum_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_ledtest_mulnum_5_0() {
+fn eval_ledtest_mulnum_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::MulNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -799,19 +811,6 @@ fn eval_ledtest_mulnum_5_0() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "0"),
         "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_ledtest_mulnum_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -825,6 +824,19 @@ fn eval_ledtest_mulnum_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "10"),
         "{} should evaluate to 10, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_ledtest_mulnum_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::MulNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "6"),
+        "{} should evaluate to 6, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -867,19 +879,6 @@ fn eval_ledtest_mulnum_2_0() {
 }
 
 #[test]
-fn eval_ledtest_mulnum_1_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_ledtest_mulnum_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
@@ -890,6 +889,19 @@ fn eval_ledtest_mulnum_1_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "5"),
         "{} should evaluate to 5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_ledtest_mulnum_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -932,9 +944,9 @@ fn eval_ledtest_mulnum_1_0() {
 }
 
 #[test]
-fn eval_ledtest_mulnum_0_neg1() {
+fn eval_ledtest_mulnum_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -945,9 +957,9 @@ fn eval_ledtest_mulnum_0_neg1() {
 }
 
 #[test]
-fn eval_ledtest_mulnum_0_5() {
+fn eval_ledtest_mulnum_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -997,48 +1009,22 @@ fn eval_ledtest_mulnum_0_0() {
 }
 
 #[test]
-fn eval_ledtest_addnum_5_neg1() {
+fn eval_ledtest_addnum_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Num::AddNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "8"),
+        "{} should evaluate to 8, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_ledtest_addnum_5_5() {
+fn eval_ledtest_addnum_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(5i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "10"),
-        "{} should evaluate to 10, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_ledtest_addnum_5_2() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "7"),
-        "{} should evaluate to 7, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_ledtest_addnum_5_1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::AddNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1049,9 +1035,9 @@ fn eval_ledtest_addnum_5_1() {
 }
 
 #[test]
-fn eval_ledtest_addnum_5_0() {
+fn eval_ledtest_addnum_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::AddNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1062,16 +1048,29 @@ fn eval_ledtest_addnum_5_0() {
 }
 
 #[test]
-fn eval_ledtest_addnum_2_neg1() {
+fn eval_ledtest_addnum_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Num::AddNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_ledtest_addnum_3_0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::AddNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -1085,6 +1084,19 @@ fn eval_ledtest_addnum_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "7"),
         "{} should evaluate to 7, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_ledtest_addnum_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::AddNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "5"),
+        "{} should evaluate to 5, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -1127,19 +1139,6 @@ fn eval_ledtest_addnum_2_0() {
 }
 
 #[test]
-fn eval_ledtest_addnum_1_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_ledtest_addnum_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::AddNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
@@ -1150,6 +1149,19 @@ fn eval_ledtest_addnum_1_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "6"),
         "{} should evaluate to 6, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_ledtest_addnum_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::AddNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -1192,19 +1204,6 @@ fn eval_ledtest_addnum_1_0() {
 }
 
 #[test]
-fn eval_ledtest_addnum_0_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_ledtest_addnum_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
@@ -1215,6 +1214,19 @@ fn eval_ledtest_addnum_0_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "5"),
         "{} should evaluate to 5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_ledtest_addnum_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -1419,7 +1431,7 @@ fn nested_ledtest_andpred_eqnum_0_0_in_slot0() {
 #[test]
 fn nested_ledtest_nenum_factnum_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(2i32)))));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1431,7 +1443,7 @@ fn nested_ledtest_nenum_factnum_2_in_slot1__smoke() {
 #[test]
 fn nested_ledtest_nenum_factnum_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(1i32)))));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1443,7 +1455,7 @@ fn nested_ledtest_nenum_factnum_1_in_slot1__smoke() {
 #[test]
 fn nested_ledtest_nenum_factnum_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(0i32)))));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1455,7 +1467,7 @@ fn nested_ledtest_nenum_factnum_0_in_slot1__smoke() {
 #[test]
 fn nested_ledtest_nenum_negnum_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(2i32)))));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1468,7 +1480,7 @@ fn nested_ledtest_nenum_negnum_2_in_slot1() {
 #[test]
 fn nested_ledtest_nenum_negnum_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(1i32)))));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1481,7 +1493,7 @@ fn nested_ledtest_nenum_negnum_1_in_slot1() {
 #[test]
 fn nested_ledtest_nenum_negnum_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(0i32)))));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1494,7 +1506,7 @@ fn nested_ledtest_nenum_negnum_0_in_slot1() {
 #[test]
 fn nested_ledtest_nenum_mulnum_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1507,7 +1519,7 @@ fn nested_ledtest_nenum_mulnum_0_2_in_slot1() {
 #[test]
 fn nested_ledtest_nenum_mulnum_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1520,7 +1532,7 @@ fn nested_ledtest_nenum_mulnum_0_1_in_slot1() {
 #[test]
 fn nested_ledtest_nenum_mulnum_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1533,20 +1545,7 @@ fn nested_ledtest_nenum_mulnum_0_0_in_slot1() {
 #[test]
 fn nested_ledtest_nenum_addnum_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_ledtest_nenum_addnum_0_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1557,9 +1556,22 @@ fn nested_ledtest_nenum_addnum_0_1_in_slot1() {
 }
 
 #[test]
+fn nested_ledtest_nenum_addnum_0_1_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn nested_ledtest_nenum_addnum_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1572,7 +1584,7 @@ fn nested_ledtest_nenum_addnum_0_0_in_slot1() {
 #[test]
 fn nested_ledtest_nenum_factnum_2_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::FactNum(Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::FactNum(Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1584,7 +1596,7 @@ fn nested_ledtest_nenum_factnum_2_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_nenum_factnum_1_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::FactNum(Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::FactNum(Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1596,7 +1608,7 @@ fn nested_ledtest_nenum_factnum_1_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_nenum_factnum_0_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::FactNum(Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::FactNum(Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1608,7 +1620,7 @@ fn nested_ledtest_nenum_factnum_0_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_nenum_negnum_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NegNum(Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NegNum(Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1621,7 +1633,7 @@ fn nested_ledtest_nenum_negnum_2_in_slot0() {
 #[test]
 fn nested_ledtest_nenum_negnum_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NegNum(Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NegNum(Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1634,7 +1646,7 @@ fn nested_ledtest_nenum_negnum_1_in_slot0() {
 #[test]
 fn nested_ledtest_nenum_negnum_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NegNum(Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NegNum(Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1647,7 +1659,7 @@ fn nested_ledtest_nenum_negnum_0_in_slot0() {
 #[test]
 fn nested_ledtest_nenum_mulnum_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1660,7 +1672,7 @@ fn nested_ledtest_nenum_mulnum_0_2_in_slot0() {
 #[test]
 fn nested_ledtest_nenum_mulnum_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1673,7 +1685,7 @@ fn nested_ledtest_nenum_mulnum_0_1_in_slot0() {
 #[test]
 fn nested_ledtest_nenum_mulnum_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1686,20 +1698,7 @@ fn nested_ledtest_nenum_mulnum_0_0_in_slot0() {
 #[test]
 fn nested_ledtest_nenum_addnum_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_ledtest_nenum_addnum_0_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1710,9 +1709,22 @@ fn nested_ledtest_nenum_addnum_0_1_in_slot0() {
 }
 
 #[test]
+fn nested_ledtest_nenum_addnum_0_1_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Pred::NeNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn nested_ledtest_nenum_addnum_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1725,7 +1737,7 @@ fn nested_ledtest_nenum_addnum_0_0_in_slot0() {
 #[test]
 fn nested_ledtest_eqnum_factnum_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(2i32)))));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1737,7 +1749,7 @@ fn nested_ledtest_eqnum_factnum_2_in_slot1__smoke() {
 #[test]
 fn nested_ledtest_eqnum_factnum_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(1i32)))));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1749,7 +1761,7 @@ fn nested_ledtest_eqnum_factnum_1_in_slot1__smoke() {
 #[test]
 fn nested_ledtest_eqnum_factnum_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(0i32)))));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1761,7 +1773,7 @@ fn nested_ledtest_eqnum_factnum_0_in_slot1__smoke() {
 #[test]
 fn nested_ledtest_eqnum_negnum_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(2i32)))));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1774,7 +1786,7 @@ fn nested_ledtest_eqnum_negnum_2_in_slot1() {
 #[test]
 fn nested_ledtest_eqnum_negnum_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(1i32)))));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1787,7 +1799,7 @@ fn nested_ledtest_eqnum_negnum_1_in_slot1() {
 #[test]
 fn nested_ledtest_eqnum_negnum_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(0i32)))));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1800,7 +1812,7 @@ fn nested_ledtest_eqnum_negnum_0_in_slot1() {
 #[test]
 fn nested_ledtest_eqnum_mulnum_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1813,7 +1825,7 @@ fn nested_ledtest_eqnum_mulnum_0_2_in_slot1() {
 #[test]
 fn nested_ledtest_eqnum_mulnum_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1826,7 +1838,7 @@ fn nested_ledtest_eqnum_mulnum_0_1_in_slot1() {
 #[test]
 fn nested_ledtest_eqnum_mulnum_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1839,20 +1851,7 @@ fn nested_ledtest_eqnum_mulnum_0_0_in_slot1() {
 #[test]
 fn nested_ledtest_eqnum_addnum_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_ledtest_eqnum_addnum_0_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1863,9 +1862,22 @@ fn nested_ledtest_eqnum_addnum_0_1_in_slot1() {
 }
 
 #[test]
+fn nested_ledtest_eqnum_addnum_0_1_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn nested_ledtest_eqnum_addnum_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1878,7 +1890,7 @@ fn nested_ledtest_eqnum_addnum_0_0_in_slot1() {
 #[test]
 fn nested_ledtest_eqnum_factnum_2_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::FactNum(Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(Box::new(Num::FactNum(Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1890,7 +1902,7 @@ fn nested_ledtest_eqnum_factnum_2_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_eqnum_factnum_1_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::FactNum(Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(Box::new(Num::FactNum(Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1962,7 +1974,7 @@ fn edge_ledtest_andpred_bool_true_true() {
 #[test]
 fn cross_cat_ledtest_cast_castnum_from_num_to_expr() {
     mettail_runtime::clear_var_cache();
-    let input_term = Expr::CastNum(Box::new(Num::NumLit(2i32)));
+    let input_term = Expr::CastNum(Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1986,7 +1998,7 @@ fn cross_cat_ledtest_cast_castpred_from_pred_to_expr() {
 #[test]
 fn cross_cat_ledtest_roundtrip_num_to_expr_via_castnum_exprtonum() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::ExprToNum(Box::new(Expr::CastNum(Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::ExprToNum(Box::new(Expr::CastNum(Box::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2010,7 +2022,7 @@ fn cross_cat_ledtest_chain_castpred_exprtonum() {
 #[test]
 fn cross_cat_ledtest_eval_eqnum() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2023,7 +2035,7 @@ fn cross_cat_ledtest_eval_eqnum() {
 #[test]
 fn cross_cat_ledtest_eval_nenum() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2218,9 +2230,9 @@ fn wpds_ledtest_negnum_2() {
 }
 
 #[test]
-fn wpds_ledtest_negnum_5() {
+fn wpds_ledtest_negnum_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(5i32)));
+    let input_term = Num::NegNum(Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2230,9 +2242,9 @@ fn wpds_ledtest_negnum_5() {
 }
 
 #[test]
-fn wpds_ledtest_negnum_neg1() {
+fn wpds_ledtest_negnum_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(-1i32)));
+    let input_term = Num::NegNum(Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2290,9 +2302,9 @@ fn wpds_ledtest_eqnum_0_2() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_0_5() {
+fn wpds_ledtest_eqnum_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2302,9 +2314,9 @@ fn wpds_ledtest_eqnum_0_5() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_0_neg1() {
+fn wpds_ledtest_eqnum_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2350,9 +2362,9 @@ fn wpds_ledtest_eqnum_1_2() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_1_5() {
+fn wpds_ledtest_eqnum_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2362,9 +2374,9 @@ fn wpds_ledtest_eqnum_1_5() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_1_neg1() {
+fn wpds_ledtest_eqnum_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2410,6 +2422,18 @@ fn wpds_ledtest_eqnum_2_2() {
 }
 
 #[test]
+fn wpds_ledtest_eqnum_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn wpds_ledtest_eqnum_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
@@ -2422,9 +2446,9 @@ fn wpds_ledtest_eqnum_2_5() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_2_neg1() {
+fn wpds_ledtest_eqnum_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2434,9 +2458,9 @@ fn wpds_ledtest_eqnum_2_neg1() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_5_0() {
+fn wpds_ledtest_eqnum_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2446,9 +2470,9 @@ fn wpds_ledtest_eqnum_5_0() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_5_1() {
+fn wpds_ledtest_eqnum_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2458,9 +2482,9 @@ fn wpds_ledtest_eqnum_5_1() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_5_2() {
+fn wpds_ledtest_eqnum_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2470,21 +2494,9 @@ fn wpds_ledtest_eqnum_5_2() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_5_5() {
+fn wpds_ledtest_eqnum_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(5i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpds_ledtest_eqnum_5_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(5i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2530,9 +2542,9 @@ fn wpds_ledtest_nenum_0_2() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_0_5() {
+fn wpds_ledtest_nenum_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2542,9 +2554,9 @@ fn wpds_ledtest_nenum_0_5() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_0_neg1() {
+fn wpds_ledtest_nenum_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2590,9 +2602,9 @@ fn wpds_ledtest_nenum_1_2() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_1_5() {
+fn wpds_ledtest_nenum_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2602,9 +2614,9 @@ fn wpds_ledtest_nenum_1_5() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_1_neg1() {
+fn wpds_ledtest_nenum_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(-1i32)));
+    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2771,5 +2783,5 @@ fn type_pres_ledtest_andpred_true_true() {
 }
 }
 
-// Total operational semantics tests: 207 (P1=93, P2a=50, P2b=4, P3a=6, P3b=0, P4a=7, P4b=4, P5a=36, P5b=7)
+// Total operational semantics tests: 208 (P1=94, P2a=50, P2b=4, P3a=6, P3b=0, P4a=7, P4b=4, P5a=36, P5b=7)
 

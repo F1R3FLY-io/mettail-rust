@@ -93,6 +93,17 @@ pub enum SymbolKind {
     /// marker is ConsumeAndPop'd, firing the rule's action with arity =
     /// 1 + parts.len (LHS already on builder + parts.len inner operands).
     MixfixMarker,
+    /// Opt-Group (2026-04-29): marker for the inner-position walk of a
+    /// taken `OptionalGroup`. The `u8` payload is the `sub_pos` (1..=inner.len()+1)
+    /// indicating which inner position to walk next. Pushed when entering
+    /// a taken optional group at sub_pos=1; replaced via Replace as
+    /// inner positions advance; popped at sub_pos = inner.len()+1 by
+    /// `OptGroupFinalize`. `category_src_idx` and `rule_index_in_category`
+    /// identify the parent rule. `bp` carries the OUTER rule's outer_bp
+    /// (so the parent BinderRule's outer_bp is recoverable on group exit).
+    /// On Unwinding when this is on top, the engine transitions to
+    /// `WpdsState::OptionalGroup { sub_pos: payload }`.
+    OptionalGroupAt(u8),
 }
 
 /// A WPDS stack symbol indexed by integer category and rule position.
@@ -214,6 +225,24 @@ impl StackSymbolV2 {
         }
     }
 
+    /// Opt-Group: construct an `OptionalGroupAt(sub_pos)` marker for the
+    /// inner-position walk of a taken optional group. `outer_bp` is the
+    /// outer rule's outer_bp, preserved across the group so on group exit
+    /// the parent `BinderRule` resumes at the correct precedence level.
+    pub fn optional_group_at(
+        result_src_idx: u16,
+        rule_idx: u16,
+        sub_pos: u8,
+        outer_bp: u8,
+    ) -> Self {
+        StackSymbolV2 {
+            category_src_idx: result_src_idx,
+            rule_index_in_category: rule_idx,
+            bp: Some(outer_bp),
+            kind: SymbolKind::OptionalGroupAt(sub_pos),
+        }
+    }
+
     /// Construct a return symbol (pop pending).
     pub fn return_symbol(category_src_idx: u16, rule_index_in_category: u16) -> Self {
         StackSymbolV2 {
@@ -272,6 +301,14 @@ impl fmt::Display for StackSymbolV2 {
                 f,
                 "⟨cat#{}.rule#{}.mixfix⟩{}",
                 self.category_src_idx, self.rule_index_in_category, bp_suffix
+            ),
+            SymbolKind::OptionalGroupAt(sub_pos) => write!(
+                f,
+                "⟨cat#{}.rule#{}.opt@{}⟩{}",
+                self.category_src_idx,
+                self.rule_index_in_category,
+                sub_pos,
+                bp_suffix
             ),
         }
     }
@@ -372,6 +409,45 @@ pub enum WpdsState {
         /// Body category index — what the body is parsed as.
         body_src_idx: u16,
         /// Outer Pratt cur_bp to restore after the rule completes.
+        outer_bp: u8,
+    },
+    /// Opt-Group (2026-04-29): mid-optional-group dispatch. The engine
+    /// transitioned here from `BinderRule` upon encountering a
+    /// `BinderPosition::OptionalGroup`; on entry (`sub_pos == 0`), it
+    /// peeks the group's FIRST-set:
+    /// - If matched → the group is taken: `sub_pos := 1`, the
+    ///   action accumulator records `is_present := true`, and dispatch
+    ///   walks the inner positions identically to BinderRule (each
+    ///   ParamParse pushes an `ActionArg::Term` to the standard arg
+    ///   collection; at sub-position past the inner positions list,
+    ///   the engine ConsumeAndReplaces back into the OUTER BinderRule
+    ///   at `outer_next_pos` with an `ActionArg::Optional(Some(args))`
+    ///   pushed for the action body to extract).
+    /// - If not matched → the group is skipped: an
+    ///   `ActionArg::Optional(None)` is pushed, and the engine
+    ///   ConsumeAndReplaces back into the OUTER BinderRule at
+    ///   `outer_next_pos` (no token consumed).
+    ///
+    /// `group_idx` indexes into per-rule FIRST-set tables emitted as
+    /// `FIRST_SET_GROUP_<cat>_<rule>_<group_idx>` so the engine can
+    /// look up which tokens trigger entry. Inner positions are stored
+    /// in the rule's `BinderShape.positions` as recursive
+    /// `BinderPosition::OptionalGroup` entries — the engine resolves
+    /// them by indexing into the outer rule's positions list.
+    OptionalGroup {
+        /// Result category index (parent rule's result cat).
+        result_src_idx: u16,
+        /// Rule index within the result category (parent rule).
+        rule_idx: u16,
+        /// Index of this Optional group within the parent rule's
+        /// positions list. Used to look up the per-group FIRST-set
+        /// and inner-position list.
+        group_idx: u8,
+        /// Sub-position within the optional group's inner positions.
+        /// `0` = peek FIRST-set; `1..=inner.len()` = walk inner
+        /// positions (literals, params, guards, nested optionals).
+        sub_pos: u8,
+        /// Outer Pratt cur_bp to restore when the group completes.
         outer_bp: u8,
     },
     /// Phase 5b: mid-binder-list-loop (`^[xs]`). Captures `Ident,
@@ -993,6 +1069,24 @@ pub enum ActionArg {
     /// invoking `parse_predicate_from_tokens`; consumed by the rule's action
     /// to wire the predicate into the constructed AST.
     Predicate(Box<dyn Any + Send>),
+    /// Opt-Group (2026-04-29): a captured optional-group result.
+    ///
+    /// `Some(inner_args)` when the syntax-pattern Opt block matched
+    /// at parse time: `inner_args` is the sequence of `ActionArg`s
+    /// captured inside the group, in the order their corresponding
+    /// inner `BinderPosition` produced them. Each inner Simple param's
+    /// `ActionArg::Term` lives in `inner_args[i]` for the i-th non-
+    /// literal inner param.
+    ///
+    /// `None` when the Opt block was not taken (parser advanced past
+    /// the group without consuming).
+    ///
+    /// The rule's action body extracts `Optional(Option<Vec<ActionArg>>)`
+    /// and produces `Some(...)` / `None` for each inner-bound `Option<T>`
+    /// field of the AST variant. Nested Optional flattens — the engine
+    /// never produces `Some(Some(...))`; nested groups contribute their
+    /// inner args directly to the outer group's inner_args list.
+    Optional(Option<Vec<ActionArg>>),
 }
 
 impl fmt::Debug for ActionArg {
@@ -1020,6 +1114,15 @@ impl fmt::Debug for ActionArg {
                 .finish(),
             ActionArg::CollectionId(id) => f.debug_tuple("CollectionId").field(id).finish(),
             ActionArg::Predicate(_) => f.debug_struct("Predicate").finish(),
+            ActionArg::Optional(Some(args)) => f
+                .debug_struct("Optional")
+                .field("present", &true)
+                .field("len", &args.len())
+                .finish(),
+            ActionArg::Optional(None) => f
+                .debug_struct("Optional")
+                .field("present", &false)
+                .finish(),
         }
     }
 }
@@ -1081,6 +1184,16 @@ impl ActionArg {
             _ => None,
         }
     }
+    /// Opt-Group: consume this `Optional` arg, returning the inner
+    /// `Option<Vec<ActionArg>>` for the action body to destructure.
+    /// Returns `None` if the arg is not an `Optional` variant
+    /// (mismatched action arity / kind would be a codegen bug).
+    pub fn into_optional(self) -> Option<Option<Vec<ActionArg>>> {
+        match self {
+            ActionArg::Optional(value) => Some(value),
+            _ => None,
+        }
+    }
 }
 
 /// Function pointer to a language-specific semantic action.
@@ -1127,6 +1240,21 @@ pub struct SemanticBuilder {
     /// parsing; the collection-finalize action drains the entry and
     /// constructs the final container (HashBag / Vec / etc.).
     collection_stack: Vec<Vec<ActionArg>>,
+    /// Opt-Group (2026-04-29): in-flight inner-arg accumulators for
+    /// taken optional groups. When `start_optional_scope()` is called
+    /// (auto-triggered when the walker pushes an
+    /// `OptionalGroupAt(1)` marker), a fresh `Vec<ActionArg>` is
+    /// pushed onto this stack. While the stack top is non-empty, every
+    /// subsequent `push_xxx` call routes through `push_arg_internal`
+    /// to the top inner Vec instead of `stack`. On
+    /// `finalize_optional_scope_present()`, the inner Vec is popped
+    /// and wrapped as `ActionArg::Optional(Some(inner))` — pushed
+    /// either to `stack` (if no outer optional scope is active) or to
+    /// the next-outer scope's Vec (nested-Optional flattening).
+    ///
+    /// On the skip path, no scope is opened; `push_optional_absent()`
+    /// pushes `ActionArg::Optional(None)` directly via the same routing.
+    optional_stack: Vec<Vec<ActionArg>>,
 }
 
 impl SemanticBuilder {
@@ -1135,32 +1263,93 @@ impl SemanticBuilder {
             stack: Vec::new(),
             binder_scopes: Vec::new(),
             collection_stack: Vec::new(),
+            optional_stack: Vec::new(),
         }
     }
 
-    /// Current stack depth.
-    pub fn len(&self) -> usize {
-        self.stack.len()
+    /// Opt-Group: route an `ActionArg` push to the top of `optional_stack`
+    /// if a scope is open, otherwise to the main `stack`. Nested Optional
+    /// chains correctly because the innermost scope is the routing target.
+    #[inline]
+    fn push_arg_internal(&mut self, arg: ActionArg) {
+        self.active_arg_stack_mut().push(arg);
     }
 
-    /// Whether the stack is empty.
+    /// Opt-Group: routing-aware mutable accessor for the active argument
+    /// cursor. Returns the innermost open optional scope when one is open,
+    /// else the main `stack`. All arg-stack reads/writes during a parse
+    /// MUST funnel through this so push/pop stay symmetric — the original
+    /// bug (TAKE-path EmptyResult) was that pushes routed into the optional
+    /// scope but pops drained `self.stack` directly, so a literal captured
+    /// inside `*opt(...)` was popped from the wrong cursor when its
+    /// `LiteralPatterned` action fired.
+    #[inline]
+    fn active_arg_stack_mut(&mut self) -> &mut Vec<ActionArg> {
+        if let Some(top) = self.optional_stack.last_mut() {
+            top
+        } else {
+            &mut self.stack
+        }
+    }
+
+    /// Read-only counterpart to `active_arg_stack_mut`.
+    #[inline]
+    fn active_arg_stack(&self) -> &Vec<ActionArg> {
+        if let Some(top) = self.optional_stack.last() {
+            top
+        } else {
+            &self.stack
+        }
+    }
+
+    /// Opt-Group: open a new optional-scope inner-arg accumulator. Called
+    /// by the walker when pushing `OptionalGroupAt(1)` (the take-path
+    /// entry into an optional group).
+    pub fn start_optional_scope(&mut self) {
+        self.optional_stack.push(Vec::new());
+    }
+
+    /// Opt-Group: close the innermost optional scope, wrapping its
+    /// inner-arg buffer as `ActionArg::Optional(Some(inner))` and pushing
+    /// to the surrounding scope (next-outer optional scope OR main stack).
+    pub fn finalize_optional_scope_present(&mut self) {
+        let inner = self.optional_stack.pop().unwrap_or_default();
+        let arg = ActionArg::Optional(Some(inner));
+        self.push_arg_internal(arg);
+    }
+
+    /// Opt-Group: skip path — the FIRST set didn't match, no scope was
+    /// opened. Push `ActionArg::Optional(None)` directly via the same
+    /// routing (so a skipped-Optional inside a taken-Optional correctly
+    /// lands in the outer's inner-arg buffer).
+    pub fn push_optional_absent(&mut self) {
+        self.push_arg_internal(ActionArg::Optional(None));
+    }
+
+    /// Current stack depth (of the active argument cursor — the innermost
+    /// open optional scope, or the main stack if no scope is open).
+    pub fn len(&self) -> usize {
+        self.active_arg_stack().len()
+    }
+
+    /// Whether the active argument cursor is empty.
     pub fn is_empty(&self) -> bool {
-        self.stack.is_empty()
+        self.active_arg_stack().is_empty()
     }
 
     /// Push a raw token onto the stack.
     pub fn push_token(&mut self, kind: TokenKind, text: String, pos: usize) {
-        self.stack.push(ActionArg::Token { kind, text, pos });
+        self.push_arg_internal(ActionArg::Token { kind, text, pos });
     }
 
     /// Push an identifier (Ident-token's text canonicalised).
     pub fn push_ident(&mut self, name: String, pos: usize) {
-        self.stack.push(ActionArg::Ident { name, pos });
+        self.push_arg_internal(ActionArg::Ident { name, pos });
     }
 
     /// Push a constructed sub-term.
     pub fn push_term<T: 'static + Send>(&mut self, value: T) {
-        self.stack.push(ActionArg::Term {
+        self.push_arg_internal(ActionArg::Term {
             value: Box::new(value),
             type_name: std::any::type_name::<T>(),
         });
@@ -1169,7 +1358,7 @@ impl SemanticBuilder {
     /// Push a completed collection (already of the language's native
     /// collection type, e.g., `HashBag<Proc>` or `Vec<Int>`).
     pub fn push_collection<T: 'static + Send>(&mut self, value: T) {
-        self.stack.push(ActionArg::Collection {
+        self.push_arg_internal(ActionArg::Collection {
             value: Box::new(value),
             type_name: std::any::type_name::<T>(),
         });
@@ -1177,19 +1366,19 @@ impl SemanticBuilder {
 
     /// Push a completed binder scope.
     pub fn push_binder_scope(&mut self, handle: BinderHandle) {
-        self.stack.push(ActionArg::BinderScope(handle));
+        self.push_arg_internal(ActionArg::BinderScope(handle));
     }
 
     /// Phase 4: push a CollectionId arg onto the stack. Used by the walker
     /// when a `CollectionMarker` symbol is pushed onto the GSS so the
     /// finalize action can identify which accumulator to drain.
     pub fn push_collection_id(&mut self, id: u8) {
-        self.stack.push(ActionArg::CollectionId(id));
+        self.push_arg_internal(ActionArg::CollectionId(id));
     }
 
     /// Phase 6: push a parsed behavioral predicate onto the stack.
     pub fn push_predicate<T: 'static + Send>(&mut self, pred: T) {
-        self.stack.push(ActionArg::Predicate(Box::new(pred)));
+        self.push_arg_internal(ActionArg::Predicate(Box::new(pred)));
     }
 
     /// Cleanup 4 (Option A refinement, 2026-04-28): replay path for an
@@ -1206,7 +1395,7 @@ impl SemanticBuilder {
     /// loudly. Cloning is cheap: predicate ASTs are small.
     pub fn push_predicate_arc(&mut self, pred: Arc<dyn Any + Send + Sync>) {
         if let Some(bp) = pred.downcast_ref::<crate::behavioral_pred::BehavioralPred>() {
-            self.stack.push(ActionArg::Predicate(Box::new(bp.clone())));
+            self.push_arg_internal(ActionArg::Predicate(Box::new(bp.clone())));
             return;
         }
         debug_assert!(
@@ -1220,13 +1409,17 @@ impl SemanticBuilder {
     /// Pop the top N args (returned in push order: result[0] was
     /// pushed first). Panics if fewer than N args are available — a
     /// programming error in the engine's arity table.
+    ///
+    /// Drains from the **active argument cursor** so a sub-rule's action
+    /// firing inside an open optional scope pops the inner-scope args its
+    /// pushes targeted, not the outer main stack.
     pub fn pop_args(&mut self, n: usize) -> Vec<ActionArg> {
-        let start = self
-            .stack
+        let active = self.active_arg_stack_mut();
+        let start = active
             .len()
             .checked_sub(n)
             .expect("SemanticBuilder::pop_args: stack underflow (engine arity bug)");
-        self.stack.drain(start..).collect()
+        active.drain(start..).collect()
     }
 
     /// Begin a binder scope — used by binder rules before parsing the body.
@@ -1236,10 +1429,11 @@ impl SemanticBuilder {
     }
 
     /// End the innermost binder scope and leave a `BinderScope` arg on the
-    /// stack for the surrounding action to consume.
+    /// active argument cursor (so a binder fired inside `*opt(...)` lands
+    /// in the inner scope just like other captures).
     pub fn end_binder_scope(&mut self) {
         if let Some(handle) = self.binder_scopes.pop() {
-            self.stack.push(ActionArg::BinderScope(handle));
+            self.push_arg_internal(ActionArg::BinderScope(handle));
         }
     }
 
@@ -1261,6 +1455,12 @@ impl SemanticBuilder {
     /// parse result. Returns `None` if the stack is empty, has more than
     /// one entry, or the top entry is not a term of type `T`.
     pub fn take_result<T: 'static + Send>(&mut self) -> Option<T> {
+        debug_assert!(
+            self.optional_stack.is_empty(),
+            "take_result: optional_stack is non-empty at Accepted state — \
+             a Push(OptionalGroupAt) was not paired with OptGroupFinalize \
+             or OptGroupAbsent. Engine bug.",
+        );
         if self.stack.len() != 1 {
             return None;
         }
@@ -1280,11 +1480,13 @@ impl SemanticBuilder {
         id
     }
 
-    /// Pop the top of the argument stack (must be a `Term`) and append
-    /// it into the collection identified by `id`. Called by the walker
-    /// when transitioning to `CollectionLoop` after a per-element parse.
+    /// Pop the top of the active argument cursor (must be a `Term`) and
+    /// append it into the collection identified by `id`. Called by the
+    /// walker when transitioning to `CollectionLoop` after a per-element
+    /// parse. Scope-aware so that a `[a, b, c]` collection literal nested
+    /// inside `*opt(...)` correctly drains the inner-scope cursor.
     pub fn push_to_collection(&mut self, id: u8) {
-        if let Some(arg) = self.stack.pop() {
+        if let Some(arg) = self.active_arg_stack_mut().pop() {
             if let Some(acc) = self.collection_stack.get_mut(id as usize) {
                 acc.push(arg);
             }

@@ -143,45 +143,20 @@ impl<'a> TapeReader<'a> {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_bool_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Bool {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapBool(Bool::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapBool(Bool::BoolLit(reader.next_bool())),
-        };
+        let result = AnyTerm::WrapBool(Bool::BoolLit(reader.next_bool()));
         return result.unwrap_bool();
     }
 
-    let choice = (reader.next_byte() as usize) % 5;
+    let choice = (reader.next_byte() as usize) % 4;
     let child_depth = depth - 1;
     match choice {
-        0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapBool(Bool::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-}.unwrap_bool(),
-        1 => AnyTerm::WrapBool(Bool::BoolLit(reader.next_bool())).unwrap_bool(),
-        2 => {
+        0 => AnyTerm::WrapBool(Bool::BoolLit(reader.next_bool())).unwrap_bool(),
+        1 => {
             let f0 = Box::new(build_bool_from_tape(reader, child_depth));
             let f1 = Box::new(build_bool_from_tape(reader, child_depth));
             Bool::And(f0, f1)
         },
-        3 => {
+        2 => {
             let f0 = Box::new(build_bool_from_tape(reader, child_depth));
             let f1 = Box::new(build_bool_from_tape(reader, child_depth));
             Bool::Or(f0, f1)
@@ -201,50 +176,25 @@ fn build_bool_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Bool {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapInt(Int::IVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)),
-        };
+        let result = AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX));
         return result.unwrap_int();
     }
 
-    let choice = (reader.next_byte() as usize) % 6;
+    let choice = (reader.next_byte() as usize) % 5;
     let child_depth = depth - 1;
     match choice {
-        0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapInt(Int::IVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-}.unwrap_int(),
-        1 => AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_int(),
-        2 => {
+        0 => AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_int(),
+        1 => {
             let f0 = Box::new(build_int_from_tape(reader, child_depth));
             let f1 = Box::new(build_int_from_tape(reader, child_depth));
             Int::AddInt(f0, f1)
         },
-        3 => {
+        2 => {
             let f0 = Box::new(build_int_from_tape(reader, child_depth));
             let f1 = Box::new(build_int_from_tape(reader, child_depth));
             Int::SubInt(f0, f1)
         },
-        4 => {
+        3 => {
             let f0 = Box::new(build_int_from_tape(reader, child_depth));
             let f1 = Box::new(build_int_from_tape(reader, child_depth));
             Int::MulInt(f0, f1)

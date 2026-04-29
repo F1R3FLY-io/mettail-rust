@@ -92,7 +92,7 @@ fn rewrite_rhocalc_exec() {
     assert!(!rw.rhs.is_empty(), "Rewrite Exec RHS should be non-empty");
 }
 
-// Concrete execution test: run "* ( 1 )" through SimulationRunner,
+// Concrete execution test: run "* ( 0 )" through SimulationRunner,
 // assert it reaches NormalForm (exercises rewrite rule Exec).
 #[test]
 fn rewrite_rhocalc_exec_exec() {
@@ -108,12 +108,12 @@ fn rewrite_rhocalc_exec_exec() {
     let runner = SimulationRunner::new(lang_ref, config);
     mettail_runtime::clear_var_cache();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runner.run_to_normal_form("* ( 1 )")
+        runner.run_to_normal_form("* ( 0 )")
     }));
     if let Ok(Ok(trace)) = result {
         assert!(
             matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
-            "Rewrite rule Exec: input '* ( 1 )' did not reach NF: {:?}",
+            "Rewrite rule Exec: input '* ( 0 )' did not reach NF: {:?}",
             trace.outcome,
         );
     }

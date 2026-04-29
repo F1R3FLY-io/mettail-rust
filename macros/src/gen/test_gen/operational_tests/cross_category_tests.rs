@@ -258,6 +258,12 @@ pub fn generate_cross_category_tests(
             continue;
         }
 
+        // Opt-Group: append `None` for each Optional inner Simple field
+        // (variant flat-field count includes them after top-level params).
+        for _ in 0..ground_term_enum::count_optional_inner_simples(rule) {
+            parts.push("None".to_string());
+        }
+
         let construction = format!(
             "{}::{}({})",
             cross.result_category, cross.label, parts.join(", ")
@@ -365,6 +371,11 @@ pub fn generate_cross_category_tests(
                     continue;
                 }
 
+                // Opt-Group: append `None` per Optional inner Simple.
+                for _ in 0..ground_term_enum::count_optional_inner_simples(eval_rule) {
+                    eval_parts.push("None".to_string());
+                }
+
                 let construction = format!(
                     "{}::{}({})",
                     result_cat,
@@ -453,10 +464,16 @@ pub fn generate_cross_category_tests(
                 cast.result_category, cast.label, source_leaf.construction
             );
 
+            // Opt-Group: build the optional-None tail once for both lhs/rhs.
+            let optional_tail: String = {
+                let n = ground_term_enum::count_optional_inner_simples(eval_rule);
+                if n == 0 { String::new() } else { ", ".to_string() + &vec!["None"; n].join(", ") }
+            };
+
             // Mixed test: cast value as first param, native as second
             let construction_lhs = format!(
-                "{}::{}(Box::new({}), Box::new({}))",
-                result_cat, eval_rule.label, cast_term, native_leaf.construction
+                "{}::{}(Box::new({}), Box::new({}){})",
+                result_cat, eval_rule.label, cast_term, native_leaf.construction, optional_tail
             );
 
             let test_name_lhs = format!(
@@ -479,8 +496,8 @@ pub fn generate_cross_category_tests(
 
             // Mixed test: native as first param, cast value as second
             let construction_rhs = format!(
-                "{}::{}(Box::new({}), Box::new({}))",
-                result_cat, eval_rule.label, native_leaf.construction, cast_term
+                "{}::{}(Box::new({}), Box::new({}){})",
+                result_cat, eval_rule.label, native_leaf.construction, cast_term, optional_tail
             );
 
             let test_name_rhs = format!(
@@ -547,10 +564,15 @@ pub fn generate_cross_category_tests(
                     cast.result_category, cast.label, leaf.construction
                 );
 
-                let eval_parts: Vec<String> = eval_params
+                let mut eval_parts: Vec<String> = eval_params
                     .iter()
                     .map(|_| format!("Box::new({})", cast_term))
                     .collect();
+
+                // Opt-Group: append `None` per Optional inner Simple.
+                for _ in 0..ground_term_enum::count_optional_inner_simples(eval_rule) {
+                    eval_parts.push("None".to_string());
+                }
 
                 let construction = format!(
                     "{}::{}({})",

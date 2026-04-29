@@ -130,40 +130,15 @@ impl<'a> TapeReader<'a> {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_num_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Num {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapNum(Num::NVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)),
-        };
+        let result = AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX));
         return result.unwrap_num();
     }
 
-    let choice = (reader.next_byte() as usize) % 4;
+    let choice = (reader.next_byte() as usize) % 3;
     let child_depth = depth - 1;
     match choice {
-        0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapNum(Num::NVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-}.unwrap_num(),
-        1 => AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_num(),
-        2 => {
+        0 => AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_num(),
+        1 => {
             let f0 = Box::new(build_num_from_tape(reader, child_depth));
             let f1 = Box::new(build_num_from_tape(reader, child_depth));
             Num::Add(f0, f1)

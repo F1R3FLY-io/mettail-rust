@@ -380,6 +380,45 @@ fn generate_variant_from_term_context(
                     mettail_runtime::BehavioralPred
                 });
             },
+            TermParam::Optional { params: inner } => {
+                // Opt-Group: each inner param contributes its own
+                // `Option<T>` field (separate, not a tuple). At runtime,
+                // when the syntax-pattern Opt block matches, the action
+                // populates each Option with `Some(...)`; when absent,
+                // each is `None`. Nested Optional flattens — the engine
+                // never produces `Some(Some(...))`.
+                fn one_optional_field(p: &TermParam) -> Vec<TokenStream> {
+                    match p {
+                        TermParam::Simple { ty, .. } => {
+                            let inner_ty = type_expr_to_rust_type(ty);
+                            vec![quote! { Option<Box<#inner_ty>> }]
+                        },
+                        TermParam::Abstraction { ty, .. } => {
+                            if let TypeExpr::Arrow { codomain, .. } = ty {
+                                let body = type_expr_to_rust_type(codomain);
+                                vec![quote! { Option<mettail_runtime::Scope<mettail_runtime::Binder<String>, Box<#body>>> }]
+                            } else {
+                                vec![]
+                            }
+                        },
+                        TermParam::MultiAbstraction { ty, .. } => {
+                            if let TypeExpr::Arrow { codomain, .. } = ty {
+                                let body = type_expr_to_rust_type(codomain);
+                                vec![quote! { Option<mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, Box<#body>>> }]
+                            } else {
+                                vec![]
+                            }
+                        },
+                        TermParam::GuardBody { .. } => {
+                            vec![quote! { Option<mettail_runtime::BehavioralPred> }]
+                        },
+                        TermParam::Optional { params: nested } => {
+                            nested.iter().flat_map(one_optional_field).collect()
+                        },
+                    }
+                }
+                fields.extend(inner.iter().flat_map(one_optional_field));
+            },
         }
     }
 

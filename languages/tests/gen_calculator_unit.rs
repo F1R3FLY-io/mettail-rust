@@ -8,7 +8,7 @@ use mettail_languages::calculator::*;
 use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
 
-// Dead rules detected by WFST analysis: {"List::ConcatList", "Float::CosFloat", "BigInt::BigintCast", "Proc::ProcStr", "Str::BoolToStr", "Bool::LtBool", "IntToBigInt", "Float::SinFloat", "Bool::StrToBool", "Int::Tern", "Int::Neg", "Bool::LtEqFixed", "Bool::GtEqStr", "Bool::EqBool", "Fixed::DivFixed", "Float::SubFloat", "Bool::NeStr", "Proc::GetMap", "Proc::ProcFixed", "Fixed::MulFixed", "Float::AddFloat", "Bool::GtEqFixed", "Proc::ProcList", "BigInt::AddBigInt", "Proc::ProcMap", "Bool::GtEqInt", "Float::MulFloat", "ProcMap", "ProcBag", "Bool::And", "Bool::LtStr", "Bool::BoolId", "Int::CountBag", "Int::CustomOp", "Int::AddInt", "BigRat::BitOrBigRat", "UInt32::BitOrUInt32", "Map::MapLit", "Str::StrId", "Bag::DiffBag", "Float::ExpFloat", "Bool::GtStr", "Bool::LtFloat", "Bag::UnionBag", "UInt32::AddUInt32", "ProcInt", "Int::BitOrInt", "Bool::EqStr", "Bool::NeBool", "Proc::ProcInt", "Bool::Or", "Fixed::BitNotFixed", "Bool::GtEqBool", "Float::FloatBin", "List::ValuesMap", "BigInt::SubBigInt", "BigRat::MulBigRat", "Int::SubInt", "Str::Concat", "BigRat::AddBigRat", "BigRat::BitAndBigRat", "BigInt::BitNotBigInt", "Bool::Not", "Bool::LtEqBool", "Bool::NeInt", "Bool::LtFixed", "Int::LenMap", "UInt32::BitAndUInt32", "BigInt::NegBigInt", "List::DeleteList", "Fixed::FixedBin", "Bool::FloatToBool", "Int::StrToInt", "Int::IntId", "Proc::ProcBigRat", "Proc::ProcUInt32", "Fixed::SubFixed", "Int::DivInt", "BigRat::BitNotBigRat", "UInt32::UIntBin", "Int::BoolToInt", "Bag::RemoveBag", "BigRat::DivBigRat", "Bool::LtEqFloat", "Float::LnFloat", "Float::IntToFloat", "Float::NegFloat", "Proc::ElemList", "Proc::ProcFloat", "Proc::ProcBigInt", "BigRat::BigratCast", "Int::MulInt", "Map::DeleteMap", "BigInt::BitAndBigInt", "Bool::NeFixed", "Str::ProcToStr", "ProcBigInt", "Int::IntBin", "Int::BitNotInt", "BigInt::BitOrBigInt", "ProcList", "Fixed::AddFixed", "List::KeysMap", "Str::IntToStr", "ProcStr", "Fixed::BitAndFixed", "Bool::LtInt", "Float::BoolToFloat", "Bool::LtEqInt", "Float::FloatId", "BigRat::Fraction", "Bool::GtFloat", "Map::MergeMap", "Bool::LtEqStr", "Proc::ProcBag", "Bool::EqFixed", "Int::BitAndInt", "Proc::ProcBool", "Bool::GtEqFloat", "Bool::IntToBool", "Int::FloatToInt", "Bag::BagLit", "Int::ModInt", "BigRat::NegBigRat", "ProcUInt32", "Bool::ProcToBool", "Int::PowInt", "Bool::GtInt", "IntToBigRat", "Fixed::BitOrFixed", "ProcBigRat", "Bool::EqFloat", "Float::DivFloat", "ProcBool", "UInt32::BitNotUInt32", "Float::StrToFloat", "Bool::GtFixed", "Int::Len", "Str::AddStr", "List::ListLit", "Fixed::ModFixed", "Map::PutMap", "Float::PowFloat", "Int::Fact", "Bool::HasMap", "Str::FloatToStr", "Bool::EqInt", "Int::LenList", "Fixed::NegFixed", "Bool::Xor", "Bool::GtBool", "Bool::NeFloat"}
+// Dead rules detected by WFST analysis: {"Bool::GtEqFloat", "Float::NegFloat", "Bool::EqStr", "Float::MulFloat", "Fixed::BitAndFixed", "Proc::ProcFixed", "Str::AddStr", "Str::Concat", "Fixed::MulFixed", "Proc::ProcBigRat", "ProcBigInt", "Bool::IntToBool", "Int::StrToInt", "Proc::ProcMap", "Map::MapLit", "Bag::DiffBag", "Bool::GtEqStr", "Proc::ProcBool", "IntToBigInt", "Proc::ProcUInt32", "Int::CountBag", "Float::PowFloat", "Str::IntToStr", "IntToBigRat", "Bool::LtEqStr", "Bool::LtStr", "Bool::StrToBool", "Int::AddInt", "Int::BoolToInt", "Float::FloatBin", "UInt32::BitOrUInt32", "Int::BitOrInt", "ProcBigRat", "Map::DeleteMap", "ProcMap", "Fixed::DivFixed", "Fixed::ModFixed", "BigInt::AddBigInt", "Str::ProcToStr", "BigRat::AddBigRat", "Int::CustomOp", "Float::FloatId", "Fixed::FixedBin", "Bool::GtEqInt", "BigInt::NegBigInt", "ProcUInt32", "Int::PowInt", "Int::LenList", "UInt32::AddUInt32", "Bool::GtEqFixed", "BigRat::BitNotBigRat", "BigInt::BitNotBigInt", "Bool::ProcToBool", "Str::StrId", "Float::DivFloat", "Str::FloatToStr", "Int::BitNotInt", "Fixed::AddFixed", "Bool::GtFloat", "Float::StrToFloat", "Bool::NeStr", "Bool::FloatToBool", "Int::BitAndInt", "Bool::NeInt", "Proc::ProcStr", "Bool::Or", "Int::DivInt", "Float::LnFloat", "UInt32::BitAndUInt32", "Bool::NeBool", "Float::CosFloat", "Bool::EqInt", "Bool::LtFloat", "BigRat::BitAndBigRat", "Float::SinFloat", "Bool::GtFixed", "Proc::ProcBag", "BigInt::BitAndBigInt", "Bool::EqBool", "Proc::ProcInt", "Bool::Not", "ProcInt", "Bool::LtEqBool", "ProcBag", "Int::FloatToInt", "Float::IntToFloat", "List::KeysMap", "BigRat::DivBigRat", "BigRat::Fraction", "Int::SubInt", "ProcBool", "Bool::NeFloat", "Int::Len", "Proc::ProcBigInt", "Bag::BagLit", "Int::Fact", "List::ListLit", "Int::IntId", "Fixed::SubFixed", "Int::MulInt", "Proc::GetMap", "BigRat::BitOrBigRat", "Map::MergeMap", "ProcStr", "Proc::ProcFloat", "Int::Neg", "Float::BoolToFloat", "Bool::HasMap", "Int::LenMap", "BigRat::NegBigRat", "BigInt::BigintCast", "Float::SubFloat", "ProcList", "Fixed::NegFixed", "Bool::GtBool", "Bool::LtEqFloat", "UInt32::UIntBin", "Bool::EqFloat", "Bool::And", "Proc::ElemList", "Bool::LtEqFixed", "BigRat::BigratCast", "Fixed::BitNotFixed", "BigRat::MulBigRat", "Proc::ProcList", "Bool::GtEqBool", "Int::ModInt", "BigInt::SubBigInt", "Bag::UnionBag", "Bool::GtInt", "Map::PutMap", "Bool::EqFixed", "Float::AddFloat", "Bool::BoolId", "Float::ExpFloat", "Bool::LtBool", "BigInt::BitOrBigInt", "Bool::LtEqInt", "UInt32::BitNotUInt32", "Bool::NeFixed", "List::ValuesMap", "Bag::RemoveBag", "Int::Tern", "Bool::Xor", "List::ConcatList", "Str::BoolToStr", "Bool::LtInt", "Bool::GtStr", "List::DeleteList", "Fixed::BitOrFixed", "Bool::LtFixed", "Int::IntBin"}
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -1623,7 +1623,7 @@ fn unit_calculator_fixed_bitnotfixed() {
 #[test]
 fn unit_calculator_bool_proctobool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::ProcToBool(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Bool::ProcToBool(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcToBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -1636,7 +1636,7 @@ fn unit_calculator_bool_proctobool() {
 #[test]
 fn unit_calculator_str_proctostr() {
     mettail_runtime::clear_var_cache();
-    let term = Str::ProcToStr(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Str::ProcToStr(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcToStr");
     if let Ok(parsed) = Str::parse(&displayed) {
@@ -1649,7 +1649,7 @@ fn unit_calculator_str_proctostr() {
 #[test]
 fn unit_calculator_int_intbin() {
     mettail_runtime::clear_var_cache();
-    let term = Int::IntBin(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Int::NumLit(0i32)));
+    let term = Int::IntBin(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntBin");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1662,7 +1662,7 @@ fn unit_calculator_int_intbin() {
 #[test]
 fn unit_calculator_uint32_uintbin() {
     mettail_runtime::clear_var_cache();
-    let term = UInt32::UIntBin(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Int::NumLit(0i32)));
+    let term = UInt32::UIntBin(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UIntBin");
     if let Ok(parsed) = UInt32::parse(&displayed) {
@@ -1675,7 +1675,7 @@ fn unit_calculator_uint32_uintbin() {
 #[test]
 fn unit_calculator_float_floatbin() {
     mettail_runtime::clear_var_cache();
-    let term = Float::FloatBin(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Int::NumLit(0i32)));
+    let term = Float::FloatBin(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatBin");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1688,7 +1688,7 @@ fn unit_calculator_float_floatbin() {
 #[test]
 fn unit_calculator_fixed_fixedbin() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::FixedBin(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Int::NumLit(0i32)));
+    let term = Fixed::FixedBin(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedBin");
     if let Ok(parsed) = Fixed::parse(&displayed) {
@@ -1701,7 +1701,7 @@ fn unit_calculator_fixed_fixedbin() {
 #[test]
 fn unit_calculator_bigint_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::BigintCast(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = BigInt::BigintCast(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BigintCast");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -1714,7 +1714,7 @@ fn unit_calculator_bigint_bigintcast() {
 #[test]
 fn unit_calculator_bigrat_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BigratCast(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = BigRat::BigratCast(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BigratCast");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -1792,7 +1792,7 @@ fn unit_calculator_bag_unionbag() {
 #[test]
 fn unit_calculator_bag_removebag() {
     mettail_runtime::clear_var_cache();
-    let term = Bag::RemoveBag(Box::new(Bag::BagLit(mettail_runtime::HashBag::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Bag::RemoveBag(Box::new(Bag::BagLit(mettail_runtime::HashBag::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for RemoveBag");
     if let Ok(parsed) = Bag::parse(&displayed) {
@@ -1818,7 +1818,7 @@ fn unit_calculator_bag_diffbag() {
 #[test]
 fn unit_calculator_int_countbag() {
     mettail_runtime::clear_var_cache();
-    let term = Int::CountBag(Box::new(Bag::BagLit(mettail_runtime::HashBag::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Int::CountBag(Box::new(Bag::BagLit(mettail_runtime::HashBag::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CountBag");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1844,7 +1844,7 @@ fn unit_calculator_int_lenmap() {
 #[test]
 fn unit_calculator_proc_getmap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::GetMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Proc::GetMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GetMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -1857,7 +1857,7 @@ fn unit_calculator_proc_getmap() {
 #[test]
 fn unit_calculator_map_putmap() {
     mettail_runtime::clear_var_cache();
-    let term = Map::PutMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Map::PutMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PutMap");
     if let Ok(parsed) = Map::parse(&displayed) {
@@ -1870,7 +1870,7 @@ fn unit_calculator_map_putmap() {
 #[test]
 fn unit_calculator_map_deletemap() {
     mettail_runtime::clear_var_cache();
-    let term = Map::DeleteMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Map::DeleteMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DeleteMap");
     if let Ok(parsed) = Map::parse(&displayed) {
@@ -1896,7 +1896,7 @@ fn unit_calculator_map_mergemap() {
 #[test]
 fn unit_calculator_bool_hasmap() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::HasMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Bool::HasMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for HasMap");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -1938,26 +1938,12 @@ fn unit_calculator_auto_proc_pvar() {
     let term = Proc::PVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
+                mettail_runtime::get_or_create_var("a")
             )
         )
     );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PVar");
-}
-
-#[test]
-fn unit_calculator_auto_int_ivar() {
-    mettail_runtime::clear_var_cache();
-    let term = Int::IVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for IVar");
 }
 
 #[test]
@@ -1973,20 +1959,6 @@ fn unit_calculator_auto_int_numlit() {
 }
 
 #[test]
-fn unit_calculator_auto_uint32_uvar() {
-    mettail_runtime::clear_var_cache();
-    let term = UInt32::UVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for UVar");
-}
-
-#[test]
 fn unit_calculator_auto_uint32_numlit() {
     let term = UInt32::NumLit(0u32);
     let displayed = format!("{}", term);
@@ -1996,20 +1968,6 @@ fn unit_calculator_auto_uint32_numlit() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_calculator_auto_bigint_bvar() {
-    mettail_runtime::clear_var_cache();
-    let term = BigInt::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BVar");
 }
 
 #[test]
@@ -2025,20 +1983,6 @@ fn unit_calculator_auto_bigint_numlit() {
 }
 
 #[test]
-fn unit_calculator_auto_bigrat_bvar() {
-    mettail_runtime::clear_var_cache();
-    let term = BigRat::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BVar");
-}
-
-#[test]
 fn unit_calculator_auto_bigrat_ratlit() {
     let term = BigRat::RatLit(mettail_runtime::CanonicalBigRat::default());
     let displayed = format!("{}", term);
@@ -2048,20 +1992,6 @@ fn unit_calculator_auto_bigrat_ratlit() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for RatLit: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_calculator_auto_fixed_fvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Fixed::FVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for FVar");
 }
 
 #[test]
@@ -2077,20 +2007,6 @@ fn unit_calculator_auto_fixed_fixedlit() {
 }
 
 #[test]
-fn unit_calculator_auto_float_fvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Float::FVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for FVar");
-}
-
-#[test]
 fn unit_calculator_auto_float_floatlit() {
     let term = Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64));
     let displayed = format!("{}", term);
@@ -2100,20 +2016,6 @@ fn unit_calculator_auto_float_floatlit() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for FloatLit: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_calculator_auto_bool_bvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Bool::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BVar");
 }
 
 #[test]
@@ -2129,20 +2031,6 @@ fn unit_calculator_auto_bool_boollit() {
 }
 
 #[test]
-fn unit_calculator_auto_str_svar() {
-    mettail_runtime::clear_var_cache();
-    let term = Str::SVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for SVar");
-}
-
-#[test]
 fn unit_calculator_auto_str_stringlit() {
     let term = Str::StringLit(String::new());
     let displayed = format!("{}", term);
@@ -2152,20 +2040,6 @@ fn unit_calculator_auto_str_stringlit() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for StringLit: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_calculator_auto_list_lvar() {
-    mettail_runtime::clear_var_cache();
-    let term = List::LVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for LVar");
 }
 
 #[test]
@@ -2181,20 +2055,6 @@ fn unit_calculator_auto_list_listlit() {
 }
 
 #[test]
-fn unit_calculator_auto_bag_bvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Bag::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BVar");
-}
-
-#[test]
 fn unit_calculator_auto_bag_baglit() {
     let term = Bag::BagLit(mettail_runtime::HashBag::new());
     let displayed = format!("{}", term);
@@ -2204,20 +2064,6 @@ fn unit_calculator_auto_bag_baglit() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for BagLit: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_calculator_auto_map_mvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Map::MVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for MVar");
 }
 
 #[test]

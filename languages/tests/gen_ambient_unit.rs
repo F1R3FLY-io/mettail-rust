@@ -41,7 +41,7 @@ fn unit_ambient_proc_pzero() {
 #[test]
 fn unit_ambient_proc_pin() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PIn(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Proc::PIn(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PIn");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -54,7 +54,7 @@ fn unit_ambient_proc_pin() {
 #[test]
 fn unit_ambient_proc_pout() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::POut(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Proc::POut(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for POut");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -67,7 +67,7 @@ fn unit_ambient_proc_pout() {
 #[test]
 fn unit_ambient_proc_popen() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::POpen(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Proc::POpen(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for POpen");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -80,7 +80,7 @@ fn unit_ambient_proc_popen() {
 #[test]
 fn unit_ambient_proc_pamb() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PAmb(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Proc::PAmb(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PAmb");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -93,7 +93,7 @@ fn unit_ambient_proc_pamb() {
 #[test]
 fn unit_ambient_proc_pnew() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PNew(mettail_runtime::Scope::new(mettail_runtime::Binder(mettail_runtime::get_or_create_var("x")), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x")))))));
+    let term = Proc::PNew(mettail_runtime::Scope::new(mettail_runtime::Binder(mettail_runtime::get_or_create_var("a")), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PNew");
 }
@@ -106,7 +106,7 @@ fn unit_ambient_auto_proc_pvar() {
     let term = Proc::PVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
+                mettail_runtime::get_or_create_var("a")
             )
         )
     );
@@ -120,7 +120,7 @@ fn unit_ambient_auto_name_nvar() {
     let term = Name::NVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
+                mettail_runtime::get_or_create_var("a")
             )
         )
     );

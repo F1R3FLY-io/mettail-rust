@@ -270,9 +270,9 @@ fn generate_tests_for_pattern(
                     param_info, category, language, rule, "exp0",
                     |pi_idx, pi| {
                         if pi_idx == param_count - 1 {
-                            zero_value_for_type(&pi.native_type)
+                            zero_value_for_type(language, &pi.native_type)
                         } else {
-                            safe_value_for_type(&pi.native_type)
+                            safe_value_for_type(language, &pi.native_type)
                         }
                     },
                 );
@@ -490,12 +490,19 @@ fn has_overflow_risk(rule: &GrammarRule) -> bool {
 }
 
 /// Return a zero value for a given native type (raw string form).
-fn zero_value_for_type(nt: &Option<String>) -> Option<String> {
+///
+/// E1: spec-derived. For integer-family native types, consults
+/// `spec_admitted_integer_default(language)` to project zero onto the
+/// language's effective Integer pattern (returns "0" for `[0-9]+`,
+/// "1" for `[1-9][0-9]*`, etc.). For non-integer types the value is
+/// derived from the unique element of the type's value domain (zero
+/// for floats, etc.).
+fn zero_value_for_type(language: &LanguageDef, nt: &Option<String>) -> Option<String> {
     match nt.as_deref()? {
-        "i32" => Some("0i32".to_string()),
-        "i64" => Some("0i64".to_string()),
-        "u32" => Some("0u32".to_string()),
-        "u64" => Some("0u64".to_string()),
+        nt @ ("i32" | "i64" | "u32" | "u64") => {
+            let v = crate::gen::spec_admitted_integer_default(language);
+            Some(format!("{}{}", v, nt))
+        }
         "f32" => Some("0.0f32".to_string()),
         "f64" => Some("0.0f64".to_string()),
         _ => None,
@@ -503,12 +510,17 @@ fn zero_value_for_type(nt: &Option<String>) -> Option<String> {
 }
 
 /// Return a safe (non-zero, non-boundary) value for a given native type.
-fn safe_value_for_type(nt: &Option<String>) -> Option<String> {
+///
+/// E1: spec-derived for integers via `spec_admitted_integer_samples`
+/// with `Safe` purpose, picking the first non-zero sample.
+fn safe_value_for_type(language: &LanguageDef, nt: &Option<String>) -> Option<String> {
     match nt.as_deref()? {
-        "i32" => Some("2i32".to_string()),
-        "i64" => Some("2i64".to_string()),
-        "u32" => Some("2u32".to_string()),
-        "u64" => Some("2u64".to_string()),
+        nt @ ("i32" | "i64" | "u32" | "u64") => {
+            let samples = crate::gen::spec_admitted_integer_samples(
+                language, crate::gen::SamplePurpose::Safe,
+            );
+            samples.first().map(|s| format!("{}{}", s, nt))
+        }
         "f32" => Some("2.0f32".to_string()),
         "f64" => Some("2.0f64".to_string()),
         "bool" => Some("true".to_string()),
@@ -549,12 +561,15 @@ fn generate_edge_values_for_divisor(
 
     for (i, pi) in param_info.iter().enumerate() {
         let raw = if i == param_info.len() - 1 {
-            zero_value_for_type(&pi.native_type)?
+            zero_value_for_type(language, &pi.native_type)?
         } else {
-            safe_value_for_type(&pi.native_type)?
+            safe_value_for_type(language, &pi.native_type)?
         };
         let construction = construct_leaf(category, &pi.category, &raw, &pi.native_type, language);
         parts.push(format!("Box::new({})", construction?));
+    }
+    for _ in 0..super::ground_term_enum::count_optional_inner_simples(rule) {
+        parts.push("None".to_string());
     }
 
     let construction = format!("{}::{}({})", category, label, parts.join(", "));
@@ -608,6 +623,9 @@ where
         let construction = construct_leaf(category, &pi.category, &raw, &pi.native_type, language)?;
         parts.push(format!("Box::new({})", construction));
     }
+    for _ in 0..super::ground_term_enum::count_optional_inner_simples(rule) {
+        parts.push("None".to_string());
+    }
 
     let construction = format!("{}::{}({})", category, label, parts.join(", "));
     Some((construction, hint.to_string()))
@@ -633,10 +651,13 @@ fn generate_bool_combo(
             hint_parts.push(val.to_string());
             val.to_string()
         } else {
-            safe_value_for_type(&pi.native_type)?
+            safe_value_for_type(language, &pi.native_type)?
         };
         let construction = construct_leaf(category, &pi.category, &raw, &pi.native_type, language)?;
         parts.push(format!("Box::new({})", construction));
+    }
+    for _ in 0..super::ground_term_enum::count_optional_inner_simples(rule) {
+        parts.push("None".to_string());
     }
 
     let construction = format!("{}::{}({})", category, label, parts.join(", "));
@@ -659,10 +680,13 @@ fn generate_empty_string_combo(
         let raw = if string_slots.contains(&i) {
             "String::new()".to_string()
         } else {
-            safe_value_for_type(&pi.native_type)?
+            safe_value_for_type(language, &pi.native_type)?
         };
         let construction = construct_leaf(category, &pi.category, &raw, &pi.native_type, language)?;
         parts.push(format!("Box::new({})", construction));
+    }
+    for _ in 0..super::ground_term_enum::count_optional_inner_simples(rule) {
+        parts.push("None".to_string());
     }
 
     let construction = format!("{}::{}({})", category, label, parts.join(", "));
@@ -686,10 +710,13 @@ fn generate_int_boundary(
         let raw = if is_int_slot {
             boundary_value_for_type(&pi.native_type, use_max)?
         } else {
-            safe_value_for_type(&pi.native_type)?
+            safe_value_for_type(language, &pi.native_type)?
         };
         let construction = construct_leaf(category, &pi.category, &raw, &pi.native_type, language)?;
         parts.push(format!("Box::new({})", construction));
+    }
+    for _ in 0..super::ground_term_enum::count_optional_inner_simples(rule) {
+        parts.push("None".to_string());
     }
 
     let construction = format!("{}::{}({})", category, label, parts.join(", "));

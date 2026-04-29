@@ -206,11 +206,22 @@ fn generate_depth_0_cases(
                         .any(|t| t.name == *cat_name && t.native_type.is_some());
 
                     if has_native && is_numlit {
-                        // For NumLit with native types, generate native values
-                        // For i32/i64, generate some sample integers
+                        // For NumLit with native types, generate native
+                        // values whose set is spec-derived from the
+                        // language's effective Integer pattern. The
+                        // helper returns the canonical sample set
+                        // (zero-or-smallest, 1, 2, 3, plus one
+                        // negative for SignedInt patterns).
+                        let samples = crate::gen::spec_admitted_integer_samples(
+                            language,
+                            crate::gen::SamplePurpose::GroundEnum,
+                        );
+                        let sample_lits: Vec<_> = samples.iter().map(|s| {
+                            let lit: i32 = s.parse().unwrap_or(0);
+                            quote! { #lit }
+                        }).collect();
                         cases.push(quote! {
-                            // Generate some sample native values
-                            for val in [0i32, 1i32, 2i32, 42i32] {
+                            for val in [#(#sample_lits),*] {
                                 terms.push(#cat_name::#label(val));
                             }
                         });
@@ -305,7 +316,13 @@ fn generate_depth_d_cases(
     }
 }
 
-/// Generate case for simple constructor (no binders)
+/// Generate case for simple constructor (no binders).
+///
+/// Opt-Group: when the rule has Optional inner positions, those are emitted
+/// as `Option<Box<T>>` fields. Exhaustive enumeration always emits `None` for
+/// optional positions (Some-enumeration is a future enhancement; defaulting
+/// to None is a defensible default since exhaustive testing primarily targets
+/// non-optional constructor shapes).
 fn generate_simple_constructor_case(
     cat_name: &Ident,
     rule: &GrammarRule,
@@ -325,6 +342,93 @@ fn generate_simple_constructor_case(
 
     if arg_cats.is_empty() {
         return quote! {};
+    }
+
+    // Compute the trailing optional count from term_context (mirrors
+    // `convert_term_context_to_items` flattening). For shipped non-Optional
+    // grammars this is 0 — the existing code path runs unchanged.
+    let optional_count: usize = rule
+        .term_context
+        .as_ref()
+        .map(|ctx| {
+            fn count(p: &mettail_ast::grammar::TermParam) -> usize {
+                use mettail_ast::grammar::TermParam;
+                match p {
+                    TermParam::Optional { params: inner } => inner.iter().map(count_one).sum(),
+                    _ => 0,
+                }
+            }
+            fn count_one(p: &mettail_ast::grammar::TermParam) -> usize {
+                use mettail_ast::grammar::TermParam;
+                match p {
+                    TermParam::Simple { .. } | TermParam::GuardBody { .. } => 1,
+                    TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => 1,
+                    TermParam::Optional { params: inner } => inner.iter().map(count_one).sum(),
+                }
+            }
+            ctx.iter().map(count).sum()
+        })
+        .unwrap_or(0);
+
+    if optional_count > 0 {
+        // Optional path: emit a constructor literal with positional
+        // arguments built from the leading non-optional cats and `None`
+        // for trailing optional positions. We don't reuse the existing
+        // unary/binary/nary generators because they emit complete
+        // constructor literals — instead, inline a custom n-ary loop.
+        let positional_cats: Vec<Ident> = arg_cats
+            .iter()
+            .take(arg_cats.len() - optional_count)
+            .cloned()
+            .collect();
+        let none_args: Vec<TokenStream> = (0..optional_count).map(|_| quote! { None }).collect();
+        let n = positional_cats.len();
+        let loop_vars: Vec<Ident> = (0..n).map(|i| quote::format_ident!("d{}", i + 1)).collect();
+        let arg_vars: Vec<Ident> = (0..n)
+            .map(|i| quote::format_ident!("arg{}", i + 1))
+            .collect();
+        let field_lookups: Vec<TokenStream> = positional_cats
+            .iter()
+            .zip(loop_vars.iter())
+            .map(|(cat, dvar)| {
+                let field = category_to_field_name(cat);
+                quote! { self.#field.get(&#dvar) }
+            })
+            .collect();
+        let nested_loops = arg_vars.iter().rev().zip(field_lookups.iter().rev()).fold(
+            quote! {
+                let mut __all = Some(true);
+                #(let __ = (&#arg_vars,);)*
+                terms.push(#cat_name::#label(
+                    #(Box::new(#arg_vars.clone()),)*
+                    #(#none_args),*
+                ));
+                let _ = __all;
+            },
+            |inner, (arg_var, field_lookup)| {
+                quote! {
+                    if let Some(args) = #field_lookup {
+                        for #arg_var in args {
+                            #inner
+                        }
+                    }
+                }
+            },
+        );
+        let depth_loops =
+            loop_vars
+                .iter()
+                .rev()
+                .fold(nested_loops, |inner, dvar| {
+                    quote! {
+                        for #dvar in 0..depth {
+                            #inner
+                        }
+                    }
+                });
+        return quote! {
+            #depth_loops
+        };
     }
 
     // Generate depth loops based on arity
@@ -564,13 +668,15 @@ fn generate_simple_binder_case(
     }
 
     let body_field = category_to_field_name(body_cat);
+    // Spec-derived binder name prefix; replaces hard-coded "x".
+    let var_prefix = crate::gen::spec_admitted_var_name(language);
 
     if is_multi_binder {
         // Multi-binder: generate both 1-binder and 2-binder scopes to test
         // the Vec<Binder> path.
         quote! {
             let current_binding_depth = self.vars.len() - self.initial_var_count;
-            let binder_name = format!("x{}", current_binding_depth);
+            let binder_name = format!("{}{}", #var_prefix, current_binding_depth);
             let binder2_name = format!("y{}", current_binding_depth);
             let mut extended_vars = self.vars.clone();
             extended_vars.push(binder_name.clone());
@@ -612,7 +718,7 @@ fn generate_simple_binder_case(
     } else {
         quote! {
             let current_binding_depth = self.vars.len() - self.initial_var_count;
-            let binder_name = format!("x{}", current_binding_depth);
+            let binder_name = format!("{}{}", #var_prefix, current_binding_depth);
             let mut extended_vars = self.vars.clone();
             extended_vars.push(binder_name.clone());
 
@@ -654,11 +760,13 @@ fn generate_binder_with_one_arg(
 
     let arg_field = category_to_field_name(arg_cat);
     let body_field = category_to_field_name(body_cat);
+    // Spec-derived binder name prefix; replaces hard-coded "x".
+    let var_prefix = crate::gen::spec_admitted_var_name(language);
 
     quote! {
         // Generate bodies WITH unique binder variable
         let current_binding_depth = self.vars.len() - self.initial_var_count;
-        let binder_name = format!("x{}", current_binding_depth);
+        let binder_name = format!("{}{}", #var_prefix, current_binding_depth);
         let mut extended_vars = self.vars.clone();
         extended_vars.push(binder_name.clone());
 
@@ -712,6 +820,8 @@ fn generate_binder_with_multiple_args(
     if !is_lang_type(body_cat, language) {
         return quote! {};
     }
+    // Spec-derived binder name prefix; replaces hard-coded "x".
+    let var_prefix = crate::gen::spec_admitted_var_name(language);
 
     // Bail if any arg is not a language type
     for (_, cat) in other_args {
@@ -772,7 +882,7 @@ fn generate_binder_with_multiple_args(
 
             // Generate bodies WITH unique binder variable
             let current_binding_depth = self.vars.len() - self.initial_var_count;
-            let binder_name = format!("x{}", current_binding_depth);
+            let binder_name = format!("{}{}", #var_prefix, current_binding_depth);
             let mut extended_vars = self.vars.clone();
             extended_vars.push(binder_name.clone());
 

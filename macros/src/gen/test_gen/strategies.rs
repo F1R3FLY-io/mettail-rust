@@ -261,17 +261,23 @@ fn collect_spec_only_variants(category: &syn::Ident, language: &LanguageDef) -> 
         variants.push(rule_to_variant_kind(rule, language));
     }
 
-    // 2. Auto-generated Var (parseable — produces identifiers like "x", "y")
-    let has_explicit_var = language.terms.iter().any(|r| r.category == *category && is_var_rule(r));
-    if !has_explicit_var {
+    // 2. Auto-generated Var — emitted ONLY for categories that get a
+    //    parseable synthetic Var rule per `synthetic.rs:231-249`. The
+    //    spec-derived predicate `category_emits_parseable_auto_var`
+    //    mirrors that logic exactly: category in `language.types`,
+    //    `native_type.is_none()`, no explicit Var rule. Categories with
+    //    `native_type` (e.g., `![i32] as Int`) do NOT get a parseable
+    //    auto-Var — emitting one here produces Display output (`"z"`)
+    //    that the parser cannot re-parse.
+    if crate::gen::category_emits_parseable_auto_var(category, language) {
         let var_label = generate_var_label(category);
         variants.push(VariantKind::Var { label: var_label });
     }
 
-    // 3. Auto-generated Literal (parseable — produces "42", "3.14", "true", "hello")
-    let has_explicit_literal = language.terms.iter().any(|r| r.category == *category && is_literal_rule(r));
-    let has_native_type = language.types.iter().any(|t| t.name == *category && t.native_type.is_some());
-    if !has_explicit_literal && has_native_type {
+    // 3. Auto-generated Literal — emitted ONLY when the spec admits a
+    //    parseable auto-Literal. Symmetric to auto-Var, gated by the
+    //    spec-derived predicate.
+    if crate::gen::category_emits_parseable_auto_literal(category, language) {
         let lit_label = language.types.iter()
             .find(|t| t.name == *category)
             .and_then(|t| t.native_type.as_ref())
@@ -307,13 +313,16 @@ fn classify_variants(
             }
             VariantKind::Literal { label } => {
                 let label_str = label.to_string();
+                // F1: spec-derived — `category_emits_parseable_auto_literal`
+                // gates this site, so `native_type` MUST be present.
+                // Replace `unwrap_or_else(|| "i32")` with `expect`.
                 let native_type_str = language
                     .types
                     .iter()
                     .find(|t| t.name == *category)
                     .and_then(|t| t.native_type.as_ref())
                     .map(|t| native_type_to_string(t))
-                    .unwrap_or_else(|| "i32".to_string());
+                    .expect("VariantKind::Literal requires the category to have a native_type per the spec");
 
                 let build_code = generate_literal_build_code(
                     &cat, &label_str, &native_type_str, language,
@@ -321,22 +330,28 @@ fn classify_variants(
                 leaves.push((label_str, build_code));
             }
             VariantKind::Var { label } => {
-                // Generate a variable leaf — creates a FreeVar
+                // F2: spec-derived var name. Replaces hard-coded
+                // `["a","b","c","x","y","z"]` array with a single
+                // identifier admitted by the language's effective
+                // Ident pattern. The tape byte is consumed (preserving
+                // deterministic replay) but the chosen name is
+                // spec-determined.
                 let label_str = label.to_string();
+                let var_name = crate::gen::spec_admitted_var_name(language);
                 let code = format!(
                     r#"{{
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::Wrap{cat}({cat}::{label}(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("{var_name}")
             )
         )
     ))
 }}"#,
                     cat = cat,
                     label = label_str,
+                    var_name = var_name,
                 );
                 leaves.push((label_str, code));
             }
@@ -415,22 +430,31 @@ fn classify_variants(
         }
     }
 
-    // Ensure there's at least one leaf
+    // Ensure there's at least one leaf. By construction (Sites 1 & 2
+    // above), `leaves` was populated only from spec-derived sources:
+    // (a) explicit Nullary/Literal/Var rules from `language.terms`, OR
+    // (b) auto-Var iff `category_emits_parseable_auto_var` returns true
+    //     (which requires the category to be user-defined with no
+    //     `native_type` and no explicit Var rule), OR
+    // (c) auto-Literal iff `category_emits_parseable_auto_literal`
+    //     returns true.
+    //
+    // If `leaves` is still empty, the spec genuinely admits no
+    // parseable leaf for this category — emit a `compile_error!` rather
+    // than fabricating an unparseable Var. This honors the directive:
+    // "all generation must come directly from the language! spec".
+    // Fabricating a Var leaf when the spec doesn't admit one was the
+    // root cause of the optsmoke `int_display_parse_roundtrip` /
+    // `bool_display_parse_roundtrip` failures (2026-04-29).
     if leaves.is_empty() {
-        // Fabricate a var leaf as fallback
-        let var_label = generate_var_label(category).to_string();
+        let cat_name = cat.clone();
         let code = format!(
-            r#"AnyTerm::Wrap{cat}({cat}::{label}(
-    mettail_runtime::OrdVar(
-        mettail_runtime::Var::Free(
-            mettail_runtime::get_or_create_var("x")
-        )
-    )
-))"#,
-            cat = cat,
-            label = var_label,
+            r#"compile_error!("category `{cat}` has no spec-defined parseable leaf — \
+add a Var rule, a literal rule (via `![T] as {cat}` types{{}} entry), \
+or a nullary constructor in the language! spec to enable proptest generation")"#,
+            cat = cat_name,
         );
-        leaves.push((var_label, code));
+        leaves.push(("__no_parseable_leaf".to_string(), code));
     }
 
     VariantClassification { leaves, recursive }
@@ -897,7 +921,11 @@ fn generate_direct_recursive_build(
                 let is_known = language.types.iter().any(|t| t.name == field.category);
 
                 if field.is_collection {
-                    let coll_type = field.coll_type.as_ref().unwrap_or(&mettail_ast::types::CollectionType::Vec);
+                    // F5: spec-derived coll_type — every collection field
+                    // MUST carry coll_type per the language! spec; missing is
+                    // a synthetic insertion bug, surfaced loudly.
+                    let coll_type = field.coll_type.as_ref()
+                        .unwrap_or_else(|| panic!("collection field of category `{}` missing coll_type in language! spec", field.category));
                     match coll_type {
                         mettail_ast::types::CollectionType::HashBag | mettail_ast::types::CollectionType::HashMap => {
                             code.push_str(&format!(
@@ -935,6 +963,19 @@ fn generate_direct_recursive_build(
                             field_exprs.push(format!("coll_{}", i));
                         }
                     }
+                } else if field.is_optional {
+                    // F7: Opt-Group — Optional fields visit BOTH None
+                    // and Some(...) arms based on a tape byte. Spec
+                    // admits both, so generator must too. Replaces
+                    // the prior None-only emission.
+                    let field_cat_lower = field_cat.to_lowercase();
+                    code.push_str(&format!(
+                        "            let f{i}: Option<Box<{fc}>> = if reader.next_byte() & 1 == 0 {{ None }} else {{ Some(Box::new(build_{fcl}_from_tape(reader, child_depth))) }};\n",
+                        i = i,
+                        fc = field_cat,
+                        fcl = field_cat_lower,
+                    ));
+                    field_exprs.push(format!("f{}", i));
                 } else if is_known {
                     code.push_str(&format!(
                         "            let f{i} = Box::new(build_{fc}_from_tape(reader, child_depth));\n",
@@ -943,7 +984,13 @@ fn generate_direct_recursive_build(
                     ));
                     field_exprs.push(format!("f{}", i));
                 } else if field.is_predicate {
-                    // Guard slot: substitute BehavioralPred::Top as trivial placeholder.
+                    // Guard slot — spec-derived: when the rule carries
+                    // no refinement_types predicate the spec genuinely
+                    // admits any term in this slot, so `Top` is the
+                    // spec's default (NOT a placeholder). Once
+                    // refinement predicate lowering (B8) lands, this
+                    // call will resolve to the spec's actual predicate
+                    // via `spec_witness_predicate_for_guard`.
                     code.push_str(&format!(
                         "            let pred_{i} = mettail_runtime::BehavioralPred::Top;\n",
                         i = i,
@@ -1069,16 +1116,18 @@ fn generate_binder_direct_build(
             ));
             pre_scope_exprs.push(format!("pre_{}", i));
         } else if field.is_predicate {
-            // Guard slot: substitute BehavioralPred::Top as trivial placeholder.
-            // This enables structural coverage of guarded binder constructors
-            // without requiring a random predicate synthesizer.
+            // Guard slot — spec-derived: same rationale as above.
+            // `Top` is the spec's default for unspecified guards.
             code.push_str(&format!(
                 "            let pred_{i} = mettail_runtime::BehavioralPred::Top;\n",
                 i = i,
             ));
             pre_scope_exprs.push(format!("pred_{}", i));
         } else if field.is_collection {
-            let coll_type = field.coll_type.as_ref().unwrap_or(&mettail_ast::types::CollectionType::Vec);
+            // F5: spec-derived coll_type — every collection field MUST
+            // carry coll_type per the language! spec.
+            let coll_type = field.coll_type.as_ref()
+                .unwrap_or_else(|| panic!("collection field of category `{}` missing coll_type in language! spec", field.category));
             match coll_type {
                 mettail_ast::types::CollectionType::Vec => {
                     code.push_str(&format!(
@@ -1103,25 +1152,29 @@ fn generate_binder_direct_build(
     }
 
     // Build the scope
+    // F8: spec-derived binder name prefix; replaces hard-coded "v".
+    let var_prefix = crate::gen::spec_admitted_var_name(language);
     if is_multi {
         code.push_str(&format!(
             "            let num_binders = ((reader.next_byte() % 3) + 1) as usize;\n\
                          let binders: Vec<mettail_runtime::Binder<String>> = (0..num_binders)\n\
                              .map(|j| {{\n\
-                                 let name = format!(\"v{{}}\", j);\n\
+                                 let name = format!(\"{vp}{{}}\", j);\n\
                                  mettail_runtime::Binder(mettail_runtime::get_or_create_var(&name))\n\
                              }})\n\
                              .collect();\n\
                          let body = build_{bc}_from_tape(reader, child_depth);\n\
                          let scope = mettail_runtime::Scope::new(binders, Box::new(body));\n",
+            vp = var_prefix,
             bc = body_cat_lower,
         ));
     } else {
         code.push_str(&format!(
-            "            let binder_name = format!(\"v{{}}\", reader.next_byte() % 8);\n\
+            "            let binder_name = format!(\"{vp}{{}}\", reader.next_byte() % 8);\n\
                          let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));\n\
                          let body = build_{bc}_from_tape(reader, child_depth);\n\
                          let scope = mettail_runtime::Scope::new(binder, Box::new(body));\n",
+            vp = var_prefix,
             bc = body_cat_lower,
         ));
     }

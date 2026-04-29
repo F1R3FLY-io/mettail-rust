@@ -90,7 +90,7 @@ fn build_leaf_bank(language: &LanguageDef) -> HashMap<String, Vec<LeafValue>> {
                 });
 
                 // Derive representative values from the TYPE
-                let representative_values = representative_values_for_type(&type_str, has_prefix_neg);
+                let representative_values = representative_values_for_type(language, &type_str, has_prefix_neg);
 
                 for (raw_val, display_val) in representative_values {
                     let construction = construct_literal_code(
@@ -147,48 +147,37 @@ fn build_leaf_bank(language: &LanguageDef) -> HashMap<String, Vec<LeafValue>> {
 
 /// Derive representative values from a Rust native type.
 /// Returns (raw_value_string, display_hint_string) pairs.
-/// `has_prefix_neg`: if false, negative values are excluded because the language
-/// has no prefix negation rule and the parser can't re-parse negative literals.
-fn representative_values_for_type(type_str: &str, has_prefix_neg: bool) -> Vec<(String, String)> {
+///
+/// G1: spec-derived. Integer-family types route through
+/// `spec_admitted_integer_samples(language, GroundEnum)`. Negative
+/// values are emitted only when both `has_prefix_neg` (rule has prefix
+/// negation) AND the spec's Integer pattern admits the leading dash
+/// (the helper handles this internally).
+///
+/// `has_prefix_neg`: kept for compatibility with the caller, but the
+/// underlying integer-sample helper already gates negatives on the
+/// pattern's signedness — passing `has_prefix_neg=false` filters out
+/// negatives even if the pattern is signed.
+fn representative_values_for_type(language: &LanguageDef, type_str: &str, has_prefix_neg: bool) -> Vec<(String, String)> {
+    let int_samples = |suffix: &str| -> Vec<(String, String)> {
+        crate::gen::spec_admitted_integer_samples(language, crate::gen::SamplePurpose::GroundEnum)
+            .into_iter()
+            .filter(|s| has_prefix_neg || !s.starts_with('-'))
+            .map(|s| {
+                let display_hint = if s.starts_with('-') {
+                    format!("neg{}", &s[1..])
+                } else {
+                    s.clone()
+                };
+                (format!("{}{}", s, suffix), display_hint)
+            })
+            .collect()
+    };
     match type_str {
-        "i32" => {
-            let mut vals = vec![
-                ("0i32".to_string(), "0".to_string()),
-                ("1i32".to_string(), "1".to_string()),
-                ("2i32".to_string(), "2".to_string()),
-                ("5i32".to_string(), "5".to_string()),
-            ];
-            if has_prefix_neg {
-                vals.push(("-1i32".to_string(), "neg1".to_string()));
-            }
-            vals
-        },
-        "i64" => {
-            let mut vals = vec![
-                ("0i64".to_string(), "0".to_string()),
-                ("1i64".to_string(), "1".to_string()),
-                ("2i64".to_string(), "2".to_string()),
-                ("5i64".to_string(), "5".to_string()),
-            ];
-            if has_prefix_neg {
-                vals.push(("-1i64".to_string(), "neg1".to_string()));
-            }
-            vals
-        },
-        "u32" => vec![
-            ("0u32".to_string(), "0".to_string()),
-            ("1u32".to_string(), "1".to_string()),
-            ("2u32".to_string(), "2".to_string()),
-            ("3u32".to_string(), "3".to_string()),
-            ("5u32".to_string(), "5".to_string()),
-        ],
-        "u64" => vec![
-            ("0u64".to_string(), "0".to_string()),
-            ("1u64".to_string(), "1".to_string()),
-            ("2u64".to_string(), "2".to_string()),
-            ("3u64".to_string(), "3".to_string()),
-            ("5u64".to_string(), "5".to_string()),
-        ],
+        "i32" => int_samples("i32"),
+        "i64" => int_samples("i64"),
+        "u32" => int_samples("u32"),
+        "u64" => int_samples("u64"),
         "f32" => vec![
             ("0.0f32".to_string(), "0_0".to_string()),
             ("1.0f32".to_string(), "1_0".to_string()),
@@ -358,10 +347,19 @@ pub fn enumerate_ground_terms(language: &LanguageDef) -> Vec<GroundTerm> {
                 .collect();
 
             // Build construction code: Cat::Label(Box::new(leaf1), Box::new(leaf2), ...)
-            let field_exprs: Vec<String> = selected_leaves
+            let mut field_exprs: Vec<String> = selected_leaves
                 .iter()
                 .map(|leaf| format!("Box::new({})", leaf.construction))
                 .collect();
+
+            // Opt-Group: append `None` for each Optional inner non-terminal
+            // of the rule. `extract_simple_params` only returns top-level
+            // Simple params, so `field_exprs` is short by `optional_count`
+            // when the rule has `*opt(...)` groups. The variant's flat
+            // field count expects `Option<Box<T>>` slots.
+            for _ in 0..count_optional_inner_simples(rule) {
+                field_exprs.push("None".to_string());
+            }
 
             let construction_code = format!(
                 "{}::{}({})",
@@ -392,6 +390,36 @@ pub fn enumerate_ground_terms(language: &LanguageDef) -> Vec<GroundTerm> {
     }
 
     ground_terms
+}
+
+/// Opt-Group: count the number of inner Simple non-terminals nested inside
+/// any `*opt(...)` group in this rule's `term_context`. The variant emission
+/// flattens these inner Simples into `Option<Box<T>>` fields appearing
+/// AFTER all top-level Simple fields, so test-generation construction code
+/// (which gets only the top-level Simples from `extract_simple_params`)
+/// must append exactly `count_optional_inner_simples(rule)` `None` literals
+/// to satisfy the variant's flat field count.
+///
+/// Returns 0 when the rule has no Optional groups (the common case for
+/// shipped grammars), so non-Optional rules pay zero cost.
+pub fn count_optional_inner_simples(rule: &GrammarRule) -> usize {
+    fn count_one(p: &TermParam, in_optional: bool) -> usize {
+        match p {
+            TermParam::Optional { params: inner } => {
+                inner.iter().map(|q| count_one(q, true)).sum()
+            }
+            TermParam::Simple { .. } => {
+                if in_optional { 1 } else { 0 }
+            }
+            TermParam::GuardBody { .. }
+            | TermParam::Abstraction { .. }
+            | TermParam::MultiAbstraction { .. } => 0,
+        }
+    }
+    rule.term_context
+        .as_ref()
+        .map(|ctx| ctx.iter().map(|p| count_one(p, false)).sum())
+        .unwrap_or(0)
 }
 
 /// For a given rule, return the list of parameter names used in the rust_code expression.

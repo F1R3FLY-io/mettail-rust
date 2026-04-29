@@ -146,6 +146,15 @@ pub enum TermParam {
     /// source-parse time (Phase 1B/2G of the predicated-types
     /// implementation plan).
     GuardBody { name: Ident },
+    /// Optional group parameter: `#opt(... e:T ...)`
+    ///
+    /// Mirrors `#opt(...)` in the syntax pattern. Inner params are
+    /// captured ONLY when the syntax-pattern Opt block matches at parse
+    /// time. Each inner Simple/Abstraction/MultiAbstraction param is
+    /// wrapped as `Option<T>` in the generated AST variant and action
+    /// signature. GuardBody and nested Optional inner params are
+    /// supported by the same recursive treatment.
+    Optional { params: Vec<TermParam> },
 }
 
 /// Syntax expression in patterns (can include meta-operations)
@@ -653,6 +662,37 @@ fn parse_term_param(input: ParseStream) -> SynResult<TermParam> {
         return Ok(TermParam::GuardBody { name });
     }
 
+    // Optional group: `*opt(p1: T1, p2: T2, ...)` (Opt-Group, 2026-04-29)
+    //
+    // Mirrors `*opt(...)` in the syntax pattern. Inner params parse
+    // recursively as a comma-separated TermParam list. At codegen time,
+    // each inner Simple/Abstraction is wrapped as `Option<T>` in the
+    // emitted AST variant and action body. The surface uses `*` (not
+    // `#`) for pattern ops to match the rest of the MeTTaIL DSL — see
+    // `parse_pattern_op` for the asterisk convention.
+    if input.peek(Token![*]) {
+        let fork = input.fork();
+        let _ = fork.parse::<Token![*]>()?;
+        let kw = fork.parse::<Ident>()?;
+        if kw == "opt" {
+            let _ = input.parse::<Token![*]>()?;
+            let _ = input.parse::<Ident>()?; // consume "opt"
+            let content;
+            syn::parenthesized!(content in input);
+            let mut params = Vec::new();
+            while !content.is_empty() {
+                let inner = parse_term_param(&content)?;
+                params.push(inner);
+                if content.peek(Token![,]) {
+                    let _ = content.parse::<Token![,]>()?;
+                } else {
+                    break;
+                }
+            }
+            return Ok(TermParam::Optional { params });
+        }
+    }
+
     if input.peek(Token![^]) {
         // Abstraction: ^x.p:Type or ^[xs].p:Type
         let _ = input.parse::<Token![^]>()?;
@@ -1005,6 +1045,52 @@ fn convert_term_context_to_items(
             TermParam::GuardBody { .. } => {
                 // Guard bodies are evaluated by the behavioral guard evaluator
                 // and do not produce traditional grammar items or bindings.
+            },
+            TermParam::Optional { params: inner } => {
+                // Opt-Group (2026-04-29 update): the runtime variant emits
+                // ONE field per inner Simple/Abstraction (wrapped in
+                // `Option<Box<T>>`). Downstream emitters that walk
+                // `rule.items` (Ascent subterm pools, fold-rule generators,
+                // pool-arm constructor patterns) need a matching item per
+                // inner param so the destructure pattern length equals the
+                // variant arity. Recursively flatten and emit synthetic
+                // items mirroring the inner types.
+                fn flatten_optional_items(
+                    inner: &[TermParam],
+                    items: &mut Vec<GrammarItem>,
+                ) {
+                    for p in inner {
+                        match p {
+                            TermParam::Simple { ty, .. } => {
+                                if let TypeExpr::Base(type_name) = ty {
+                                    items.push(GrammarItem::non_terminal(type_name.clone()));
+                                } else if let TypeExpr::Collection { coll_type, element } = ty {
+                                    if let TypeExpr::Base(elem_name) = element.as_ref() {
+                                        items.push(GrammarItem::Collection {
+                                            coll_type: coll_type.clone(),
+                                            element_type: elem_name.clone(),
+                                            separator: "|".to_string(),
+                                            delimiters: None,
+                                        });
+                                    }
+                                }
+                            },
+                            TermParam::Abstraction { ty, .. }
+                            | TermParam::MultiAbstraction { ty, .. } => {
+                                if let TypeExpr::Arrow { codomain, .. } = ty {
+                                    if let TypeExpr::Base(body_type) = codomain.as_ref() {
+                                        items.push(GrammarItem::non_terminal(body_type.clone()));
+                                    }
+                                }
+                            },
+                            TermParam::GuardBody { .. } => {},
+                            TermParam::Optional { params: nested } => {
+                                flatten_optional_items(nested, items);
+                            },
+                        }
+                    }
+                }
+                flatten_optional_items(inner, &mut items);
             },
         }
     }

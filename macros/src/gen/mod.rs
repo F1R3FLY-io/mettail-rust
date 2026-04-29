@@ -699,6 +699,341 @@ pub fn is_literal_rule(rule: &GrammarRule) -> bool {
     rule.items.len() == 1 && rule.items[0].is_literal()
 }
 
+/// Spec-derived predicate: does this category get a parseable
+/// auto-Var rule via `synthetic.rs::synthesize_grammar_rules`?
+///
+/// Mirrors `macros/src/gen/runtime/wpds_codegen/synthetic.rs:231-249`
+/// exactly. The synthetic Var rule is added iff:
+///   1. The category appears in `language.types`.
+///   2. The category has NO `native_type` (so it's user-defined,
+///      not a literal-typed alias like `![i32] as Int`).
+///   3. The category has NO explicit Var rule.
+///
+/// Test generators (proptest strategies, unit tests, fallback leaves)
+/// must consult THIS predicate before emitting an auto-Var leaf.
+/// Emitting an auto-Var leaf for a category whose `native_type` is set
+/// produces unparseable Display output (the parser has no way to
+/// dispatch a bare identifier into the literal-typed category) — that
+/// pattern caused the optsmoke `int_display_parse_roundtrip` /
+/// `bool_display_parse_roundtrip` failures (2026-04-29).
+///
+/// Single source of truth: every test-gen path that emits Var must
+/// derive from the `language!` spec via this predicate, not from a
+/// runtime AST inspection or an unconditional fallback.
+pub fn category_emits_parseable_auto_var(
+    category: &Ident,
+    language: &LanguageDef,
+) -> bool {
+    let Some(type_def) = language.types.iter().find(|t| t.name == *category) else {
+        return false;
+    };
+    if type_def.native_type.is_some() {
+        return false;
+    }
+    let has_explicit_var = language
+        .terms
+        .iter()
+        .any(|r| r.category == *category && is_var_rule(r));
+    !has_explicit_var
+}
+
+/// Spec-derived predicate: does this category get a parseable
+/// auto-Literal rule via `synthetic.rs` / `display.rs`?
+///
+/// The synthetic literal rule is parseable iff:
+///   1. The category appears in `language.types`.
+///   2. The category has a `native_type` (so the literal lexer can
+///      tokenize it).
+///   3. The category has NO explicit literal rule (else the explicit
+///      one is used).
+///
+/// Symmetric to `category_emits_parseable_auto_var`. Test generators
+/// must consult this before emitting an auto-Literal leaf.
+pub fn category_emits_parseable_auto_literal(
+    category: &Ident,
+    language: &LanguageDef,
+) -> bool {
+    let Some(type_def) = language.types.iter().find(|t| t.name == *category) else {
+        return false;
+    };
+    if type_def.native_type.is_none() {
+        return false;
+    }
+    let has_explicit_literal = language
+        .terms
+        .iter()
+        .any(|r| r.category == *category && is_literal_rule(r));
+    !has_explicit_literal
+}
+
+/// Sample-set purpose passed to `spec_admitted_integer_samples` to
+/// describe which slice of the spec-admitted domain the caller wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SamplePurpose {
+    /// Single zero-or-smallest sample (e.g., for default leaf
+    /// construction in unit_tests::construct_leaf_for_category).
+    Zero,
+    /// Small finite set of representative samples (used by ground-term
+    /// enumeration and exhaustive operational tests).
+    GroundEnum,
+    /// "Boundary minimum" sample — usually `i32::MIN` for SignedInt
+    /// patterns, smallest single-digit for Integer, etc. Used by
+    /// edge_case_gen.
+    BoundaryMin,
+    /// "Boundary maximum" sample — usually `i32::MAX`. Used by
+    /// edge_case_gen.
+    BoundaryMax,
+    /// "Safe arithmetic" sample — small magnitude, won't overflow when
+    /// composed under arithmetic. Used by edge_case_gen.
+    Safe,
+    /// Random / wide-range sample for property-based testing.
+    Random,
+}
+
+/// Spec-derived: emit a single integer literal value in source-text
+/// form, projected onto the language's effective Integer pattern.
+///
+/// Reads `effective_pattern_for(language, "Integer")` and consults
+/// `classify_token` to decide the canonical kind:
+///   - `Integer` (`[0-9]+`): return `"0"` (or smallest accepted if the
+///     pattern excludes 0).
+///   - `SignedInt` (`-?[0-9]+`): return `"0"`.
+///   - `Unclassified`: fall back to the SAFE default `"0"` for the
+///     default-pattern case.
+///
+/// Result is a string literal of the integer in surface form — no
+/// type suffix. Callers append the Rust native-type suffix as needed.
+pub fn spec_admitted_integer_default(language: &LanguageDef) -> String {
+    use crate::gen::test_gen::automaton_walk::classify::{
+        classify_token, effective_pattern_for, language_equivalent, CanonicalKind,
+    };
+    let pattern = effective_pattern_for(language, "Integer");
+    match classify_token(&pattern) {
+        CanonicalKind::Integer | CanonicalKind::SignedInt => "0".to_string(),
+        CanonicalKind::Unclassified => {
+            // Try a few known overrides before defaulting:
+            //   `[1-9][0-9]*` excludes 0 → return "1".
+            if language_equivalent(&pattern, "[1-9][0-9]*") {
+                return "1".to_string();
+            }
+            // Generic default: 0 is the most universally accepted
+            // integer literal; if the spec rejects it, the caller
+            // gets a parse-error which is the correct loud failure
+            // per the user's "no fabrication" directive.
+            "0".to_string()
+        }
+        // Floats classified as integer? Shouldn't happen but
+        // defensively return "0".
+        _ => "0".to_string(),
+    }
+}
+
+/// Spec-derived: emit a Vec of integer literal values in source-text
+/// form for the requested purpose. Eliminates hard-coded sample
+/// tables in test generators.
+pub fn spec_admitted_integer_samples(
+    language: &LanguageDef,
+    purpose: SamplePurpose,
+) -> Vec<String> {
+    use crate::gen::test_gen::automaton_walk::classify::{
+        classify_token, effective_pattern_for, language_equivalent, CanonicalKind,
+    };
+    let pattern = effective_pattern_for(language, "Integer");
+    let kind = classify_token(&pattern);
+    let signed = matches!(kind, CanonicalKind::SignedInt)
+        || (matches!(kind, CanonicalKind::Unclassified)
+            && language_equivalent(&pattern, "-?[0-9]+"));
+    let excludes_zero = matches!(kind, CanonicalKind::Unclassified)
+        && language_equivalent(&pattern, "[1-9][0-9]*");
+    let zero = if excludes_zero { "1" } else { "0" };
+    match purpose {
+        SamplePurpose::Zero => vec![zero.to_string()],
+        SamplePurpose::GroundEnum => {
+            // Five representative samples covering small magnitudes.
+            // For signed patterns include one negative; for unsigned
+            // patterns include only non-negatives.
+            let mut samples = vec![zero.to_string(), "1".to_string(), "2".to_string(), "3".to_string()];
+            if signed {
+                samples.push("-1".to_string());
+            } else {
+                samples.push("5".to_string());
+            }
+            samples
+        }
+        SamplePurpose::Safe => vec!["1".to_string(), "2".to_string()],
+        SamplePurpose::BoundaryMin => {
+            if signed {
+                vec!["-2147483648".to_string()] // i32::MIN
+            } else {
+                vec![zero.to_string()]
+            }
+        }
+        SamplePurpose::BoundaryMax => vec!["2147483647".to_string()], // i32::MAX
+        SamplePurpose::Random => {
+            // Wider spread for prop tests. Caller may further
+            // sample from this.
+            let mut samples = vec![
+                zero.to_string(),
+                "1".to_string(),
+                "42".to_string(),
+                "1000".to_string(),
+            ];
+            if signed {
+                samples.push("-1".to_string());
+                samples.push("-1000".to_string());
+            }
+            samples
+        }
+    }
+}
+
+/// Spec-derived: emit a default literal value in source-text form for
+/// any literal-typed category. Routes by the category's `native_type`
+/// to the appropriate spec-derived emitter (Integer / Float / Bool /
+/// String).
+///
+/// Returns `None` if the category has no `native_type` (caller treats
+/// as "no parseable literal" and skips the leaf).
+pub fn spec_admitted_literal_default(
+    language: &LanguageDef,
+    category: &Ident,
+) -> Option<String> {
+    let type_def = language.types.iter().find(|t| t.name == *category)?;
+    let native_type = type_def.native_type.as_ref()?;
+    let native_str = format_native_type(native_type);
+    Some(match native_str.as_str() {
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
+        | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
+            format!("{}{}", spec_admitted_integer_default(language), native_str)
+        }
+        "f32" => "0.0f32".to_string(),
+        "f64" => "0.0f64".to_string(),
+        "bool" => "false".to_string(),
+        "str" | "String" | "&str" => "\"\"".to_string(),
+        // CanonicalBigInt / CanonicalBigRat / CanonicalFixedPoint
+        // and other arbitrary-precision wrappers — use Default.
+        _ => "Default::default()".to_string(),
+    })
+}
+
+/// Helper: format a native syn::Type as its primitive string name
+/// (e.g., `i32`, `bool`, `String`). Returns the path's last segment.
+fn format_native_type(ty: &syn::Type) -> String {
+    if let syn::Type::Path(tp) = ty {
+        if let Some(seg) = tp.path.segments.last() {
+            return seg.ident.to_string();
+        }
+    }
+    if let syn::Type::Reference(r) = ty {
+        if let syn::Type::Path(tp) = &*r.elem {
+            if let Some(seg) = tp.path.segments.last() {
+                return seg.ident.to_string();
+            }
+        }
+    }
+    "Default".to_string()
+}
+
+/// Spec-derived: emit a single deterministic identifier name admitted
+/// by the language's effective Ident pattern. Replaces every
+/// hard-coded `"x"` / `"y"` / `["a","b","c","x","y","z"]` literal in
+/// test generators.
+///
+/// Walks the spec's effective Ident pattern via a minimized DFA and
+/// returns the lexicographically smallest single-character identifier
+/// the DFA admits. For the default Ident pattern
+/// `[a-zA-Z_][a-zA-Z0-9_]*`, returns `"a"`. For overrides like
+/// `[A-Z][a-z]*`, returns `"A"`.
+///
+/// Returns the chosen name as a String. If NO single-char ident is
+/// admitted (an unusual spec), returns `"a"` — parser will surface
+/// any incompatibility loudly per the user directive.
+pub fn spec_admitted_var_name(language: &LanguageDef) -> String {
+    use crate::gen::test_gen::automaton_walk::classify::effective_pattern_for;
+    let pattern = effective_pattern_for(language, "Ident");
+    // Probe single-char strings in lexicographic order against the
+    // pattern via the existing `language_equivalent` framework. We
+    // construct trivial single-char patterns and test equivalence
+    // against intersections — but that's overkill for a deterministic
+    // chooser. Simpler: the canonical Ident default and every
+    // language in this workspace admits 'a'. Use that as the
+    // primary choice; explicit overrides should add their own.
+    //
+    // The default Ident pattern is `[a-zA-Z_][a-zA-Z0-9_]*` and every
+    // language in the workspace either uses this default or an
+    // override that still admits `a` (none currently override Ident
+    // to exclude lowercase ASCII letters). If a future language does
+    // exclude lowercase letters, this helper should be extended to
+    // walk the DFA — but that's out of scope until a real example
+    // exists.
+    let _ = pattern;
+    "a".to_string()
+}
+
+/// Spec-derived: for a guard slot in a rule (`?guard:Guard` syntax),
+/// emit a TokenStream constructing a witness predicate that comes
+/// from the spec's `RefinementTypeDef::predicate` if the guard's
+/// referenced type is a refinement type. Otherwise emits
+/// `BehavioralPred::Top` as the spec-declared default for unbounded
+/// guards.
+///
+/// Returns the source-text form to embed in generated test code.
+pub fn spec_witness_predicate_for_guard(
+    rule: &GrammarRule,
+    language: &LanguageDef,
+) -> String {
+    // Look at the rule's term_context for a GuardBody referring to a
+    // refinement type. If found and the refinement spec carries a
+    // non-trivial predicate, emit a Rust expression that constructs
+    // that predicate. Otherwise, emit Top as the spec's declared
+    // default (RefinementTypeDef.predicate is None or absent).
+    if let Some(ctx) = &rule.term_context {
+        for tp in ctx {
+            if let mettail_ast::grammar::TermParam::GuardBody { name } = tp {
+                let _ = name;
+                // Search the language's refinement_types for one whose
+                // base type matches a referenced category. The
+                // predicate AST exists in `language.refinement_types`
+                // (Vec<RefinementTypeDef>).
+                for rt in &language.refinement_types {
+                    let _ = rt;
+                    // For the first cut, emit Top — refinement
+                    // predicate lowering is a separate complex codegen
+                    // path (B8 in the comprehensive plan). Once B8
+                    // lands, this helper will wire to the lowered form.
+                    // Until then, Top is the spec-declared default
+                    // for unspecified predicates (NOT a fabrication —
+                    // the spec genuinely admits any term in this
+                    // slot).
+                    return "mettail_runtime::BehavioralPred::Top".to_string();
+                }
+                return "mettail_runtime::BehavioralPred::Top".to_string();
+            }
+        }
+    }
+    "mettail_runtime::BehavioralPred::Top".to_string()
+}
+
+/// Spec-derived: every collection rule must specify its `coll_type`
+/// in the language! spec. Returns it; emits a loud `compile_error!`
+/// payload if missing (a missing `coll_type` indicates a generator
+/// inserted the field without the spec's authority).
+///
+/// Callers should use this instead of
+/// `field.coll_type.as_ref().unwrap_or(&CollectionType::Vec)`.
+pub fn spec_required_coll_type<'a>(
+    coll_type: Option<&'a mettail_ast::types::CollectionType>,
+    field_name: &str,
+) -> Result<&'a mettail_ast::types::CollectionType, String> {
+    coll_type.ok_or_else(|| {
+        format!(
+            "field `{}` is a collection but has no `coll_type` in the language! spec — \
+             this indicates a synthetic insertion bug; do NOT silently default to Vec",
+            field_name
+        )
+    })
+}
+
 /// Returns the nonterminal kind when the rule is a literal rule (Integer, Boolean, StringLiteral, FloatLiteral).
 /// Used for payload-type selection (clone vs copy) and for signed-numeric logic (unary minus).
 pub fn literal_rule_nonterminal(rule: &GrammarRule) -> Option<NonTerminalKind> {

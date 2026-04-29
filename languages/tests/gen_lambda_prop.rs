@@ -131,12 +131,11 @@ impl<'a> TapeReader<'a> {
 fn build_term_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Term {
     if depth == 0 {
         let result = {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapTerm(Term::TVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
@@ -148,18 +147,17 @@ fn build_term_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Term {
     let child_depth = depth - 1;
     match choice {
         0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapTerm(Term::TVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
 }.unwrap_term(),
         1 => {
-            let binder_name = format!("v{}", reader.next_byte() % 8);
+            let binder_name = format!("a{}", reader.next_byte() % 8);
 let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));
 let body = build_term_from_tape(reader, child_depth);
 let scope = mettail_runtime::Scope::new(binder, Box::new(body));
@@ -304,7 +302,7 @@ fn sim_lambda_normal_form_reachability() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["lam  1 . 1", "( 1 , 1 )"];
+    let test_inputs: Vec<&str> = vec!["lam  0 . 0", "( 0 , 0 )"];
 
     let mut tested = 0usize;
     let mut reached_nf = 0usize;
@@ -356,7 +354,7 @@ fn sim_lambda_roundtrip_under_rewrite() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     // Test a set of concrete expressions for rewrite roundtrip.
-    let test_inputs: Vec<&str> = vec!["lam  1 . 1", "( 1 , 1 )"];
+    let test_inputs: Vec<&str> = vec!["lam  0 . 0", "( 0 , 0 )"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -418,7 +416,7 @@ fn sim_lambda_morphology_bounded() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["lam  1 . 1", "( 1 , 1 )"];
+    let test_inputs: Vec<&str> = vec!["lam  0 . 0", "( 0 , 0 )"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -453,7 +451,7 @@ fn sim_lambda_eval_determinism() {
     let lang = LambdaLanguage;
     let lang_ref: &dyn mettail_runtime::Language = &lang;
 
-    let test_inputs: Vec<&str> = vec!["lam  1 . 1", "( 1 , 1 )"];
+    let test_inputs: Vec<&str> = vec!["lam  0 . 0", "( 0 , 0 )"];
 
     for input in &test_inputs {
         let config1 = SimulationConfig {

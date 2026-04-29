@@ -42,41 +42,41 @@ use mettail_runtime::BehavioralPred;
 //   - Proc::UIntBinProc
 //   - Proc::UnionBag
 // Constructor weights (lower = more frequent):
-//   Grouping             weight: 0.0000
-//   IntBinProc           weight: 0.0000
-//   GetMap               weight: 0.0000
-//   PInputs              weight: 0.0000
-//   KeysMap              weight: 0.0000
+//   DiffBag              weight: 0.0000
+//   RemoveBag            weight: 0.0000
 //   BagLit               weight: 0.0000
-//   CountBag             weight: 0.0000
-//   Len                  weight: 0.0000
-//   PZero                weight: 0.0000
-//   StrLit               weight: 0.0000
-//   NQuote               weight: 0.0000
-//   UIntBinProc          weight: 0.0000
-//   BigRatLit            weight: 0.0000
-//   MergeMap             weight: 0.0000
-//   NegProc              weight: 0.0000
 //   DeleteList           weight: 0.0000
-//   ToStr                weight: 0.0000
-//   ConcatList           weight: 0.0000
-//   HasMap               weight: 0.0000
 //   FractionProc         weight: 0.0000
+//   ConcatList           weight: 0.0000
+//   ElemList             weight: 0.0000
+//   PutMap               weight: 0.0000
+//   NegInt               weight: 0.0000
+//   UnionBag             weight: 0.0000
+//   BigratCastProc       weight: 0.0000
+//   FloatBinProc         weight: 0.0000
+//   StrLit               weight: 0.0000
+//   IntBinProc           weight: 0.0000
+//   Len                  weight: 0.0000
+//   ToStr                weight: 0.0000
+//   HasMap               weight: 0.0000
+//   PPar                 weight: 0.0000
+//   UIntBinProc          weight: 0.0000
+//   ListLit              weight: 0.0000
 //   ... and 112 more
 // Category weights:
 //   Proc                 weight: 0.1375
 //   Int                  weight: 0.4000
-//   Map                  weight: 0.6667
-//   Float                weight: 0.6667
-//   List                 weight: 0.6667
-//   Name                 weight: 0.6667
-//   BigRat               weight: 0.6667
-//   BigInt               weight: 0.6667
-//   Bag                  weight: 0.6667
 //   Bool                 weight: 0.6667
-//   Fixed                weight: 0.6667
-//   UInt32               weight: 0.6667
+//   List                 weight: 0.6667
+//   Bag                  weight: 0.6667
+//   Float                weight: 0.6667
+//   BigInt               weight: 0.6667
+//   Map                  weight: 0.6667
+//   BigRat               weight: 0.6667
+//   Name                 weight: 0.6667
 //   Str                  weight: 0.6667
+//   UInt32               weight: 0.6667
+//   Fixed                weight: 0.6667
 //
 
 // ─────────────────────────────────────────────────────────
@@ -1686,19 +1686,6 @@ fn eval_rhocalc_fractionproc_pzero_pzero_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_negint_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(Box::new(Int::NumLit(-1i64)));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_rhocalc_negint_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::NegInt(Box::new(Int::NumLit(5i64)));
@@ -1709,6 +1696,19 @@ fn eval_rhocalc_negint_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "-5"),
         "{} should evaluate to -5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_rhocalc_negint_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::NegInt(Box::new(Int::NumLit(3i64)));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-3"),
+        "{} should evaluate to -3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -1799,9 +1799,9 @@ fn eval_rhocalc_bigintcastproc_pzero_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_fixedbinproc_err_neg1_smoke() {
+fn eval_rhocalc_fixedbinproc_err_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(-1i64)));
+    let input_term = Proc::FixedBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1811,9 +1811,9 @@ fn eval_rhocalc_fixedbinproc_err_neg1_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_fixedbinproc_err_5_smoke() {
+fn eval_rhocalc_fixedbinproc_err_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::FixedBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1859,9 +1859,9 @@ fn eval_rhocalc_fixedbinproc_err_0_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_fixedbinproc_pzero_neg1_smoke() {
+fn eval_rhocalc_fixedbinproc_pzero_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(-1i64)));
+    let input_term = Proc::FixedBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1871,9 +1871,9 @@ fn eval_rhocalc_fixedbinproc_pzero_neg1_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_fixedbinproc_pzero_5_smoke() {
+fn eval_rhocalc_fixedbinproc_pzero_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::FixedBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1919,9 +1919,9 @@ fn eval_rhocalc_fixedbinproc_pzero_0_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_floatbinproc_err_neg1_smoke() {
+fn eval_rhocalc_floatbinproc_err_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(-1i64)));
+    let input_term = Proc::FloatBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1931,9 +1931,9 @@ fn eval_rhocalc_floatbinproc_err_neg1_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_floatbinproc_err_5_smoke() {
+fn eval_rhocalc_floatbinproc_err_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::FloatBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1979,9 +1979,9 @@ fn eval_rhocalc_floatbinproc_err_0_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_floatbinproc_pzero_neg1_smoke() {
+fn eval_rhocalc_floatbinproc_pzero_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(-1i64)));
+    let input_term = Proc::FloatBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1991,9 +1991,9 @@ fn eval_rhocalc_floatbinproc_pzero_neg1_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_floatbinproc_pzero_5_smoke() {
+fn eval_rhocalc_floatbinproc_pzero_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::FloatBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2039,9 +2039,9 @@ fn eval_rhocalc_floatbinproc_pzero_0_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_uintbinproc_err_neg1_smoke() {
+fn eval_rhocalc_uintbinproc_err_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(-1i64)));
+    let input_term = Proc::UIntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2051,9 +2051,9 @@ fn eval_rhocalc_uintbinproc_err_neg1_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_uintbinproc_err_5_smoke() {
+fn eval_rhocalc_uintbinproc_err_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::UIntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2099,9 +2099,9 @@ fn eval_rhocalc_uintbinproc_err_0_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_uintbinproc_pzero_neg1_smoke() {
+fn eval_rhocalc_uintbinproc_pzero_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(-1i64)));
+    let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2111,9 +2111,9 @@ fn eval_rhocalc_uintbinproc_pzero_neg1_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_uintbinproc_pzero_5_smoke() {
+fn eval_rhocalc_uintbinproc_pzero_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2159,9 +2159,9 @@ fn eval_rhocalc_uintbinproc_pzero_0_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_intbinproc_err_neg1_smoke() {
+fn eval_rhocalc_intbinproc_err_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(-1i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2171,9 +2171,9 @@ fn eval_rhocalc_intbinproc_err_neg1_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_intbinproc_err_5_smoke() {
+fn eval_rhocalc_intbinproc_err_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2219,9 +2219,9 @@ fn eval_rhocalc_intbinproc_err_0_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_intbinproc_pzero_neg1_smoke() {
+fn eval_rhocalc_intbinproc_pzero_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(-1i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2231,9 +2231,9 @@ fn eval_rhocalc_intbinproc_pzero_neg1_smoke() {
 }
 
 #[test]
-fn eval_rhocalc_intbinproc_pzero_5_smoke() {
+fn eval_rhocalc_intbinproc_pzero_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2937,7 +2937,7 @@ fn cross_cat_rhocalc_cast_castbigint_from_bigint_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_castuint32_from_uint32_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)));
+    let input_term = Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2949,7 +2949,7 @@ fn cross_cat_rhocalc_cast_castuint32_from_uint32_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_castint_from_int_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastInt(Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::CastInt(Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3069,7 +3069,7 @@ fn cross_cat_rhocalc_chain_castbigint_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_castuint32_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = Name::NQuote(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3081,7 +3081,7 @@ fn cross_cat_rhocalc_chain_castuint32_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_castint_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastInt(Box::new(Int::NumLit(2i64)))));
+    let input_term = Name::NQuote(Box::new(Proc::CastInt(Box::new(Int::NumLit(1i64)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3153,7 +3153,7 @@ fn cross_cat_rhocalc_chain_castmap_nquote() {
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3165,7 +3165,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::UIntBinProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3177,7 +3177,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FloatBinProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3189,7 +3189,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FixedBinProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3645,7 +3645,7 @@ fn cross_cat_rhocalc_castop_tostr_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3657,7 +3657,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::UIntBinProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3669,7 +3669,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FloatBinProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3681,7 +3681,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FixedBinProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4137,7 +4137,7 @@ fn cross_cat_rhocalc_castop_tostr_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4149,7 +4149,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::UIntBinProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4161,7 +4161,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FloatBinProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4173,7 +4173,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FixedBinProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4629,7 +4629,7 @@ fn cross_cat_rhocalc_castop_tostr_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4641,7 +4641,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::UIntBinProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4653,7 +4653,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FloatBinProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4665,7 +4665,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FixedBinProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5121,7 +5121,7 @@ fn cross_cat_rhocalc_castop_tostr_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5133,7 +5133,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::UIntBinProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5145,7 +5145,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FloatBinProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5157,7 +5157,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FixedBinProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5169,7 +5169,7 @@ fn cross_cat_rhocalc_castop_fixedbinproc_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bigintcastproc_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = Proc::BigintCastProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5181,7 +5181,7 @@ fn cross_cat_rhocalc_castop_bigintcastproc_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bigratcastproc_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = Proc::BigratCastProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5193,7 +5193,7 @@ fn cross_cat_rhocalc_castop_bigratcastproc_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fractionproc_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = Proc::FractionProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5205,7 +5205,7 @@ fn cross_cat_rhocalc_castop_fractionproc_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_or_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = Proc::Or(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5217,7 +5217,7 @@ fn cross_cat_rhocalc_castop_or_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_and_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = Proc::And(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5229,7 +5229,7 @@ fn cross_cat_rhocalc_castop_and_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitor_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = Proc::BitOr(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5241,7 +5241,7 @@ fn cross_cat_rhocalc_castop_bitor_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitand_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = Proc::BitAnd(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5253,7 +5253,7 @@ fn cross_cat_rhocalc_castop_bitand_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitnot_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = Proc::BitNot(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5265,7 +5265,7 @@ fn cross_cat_rhocalc_castop_bitnot_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_eq_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = Proc::Eq(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5277,7 +5277,7 @@ fn cross_cat_rhocalc_castop_eq_castuint32_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_ne_castuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = Proc::Ne(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5847,9 +5847,9 @@ fn wpds_rhocalc_intbinproc_pzero_2() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_pzero_5() {
+fn wpds_rhocalc_intbinproc_pzero_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5859,9 +5859,9 @@ fn wpds_rhocalc_intbinproc_pzero_5() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_pzero_neg1() {
+fn wpds_rhocalc_intbinproc_pzero_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(-1i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5907,9 +5907,9 @@ fn wpds_rhocalc_intbinproc_err_2() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_err_5() {
+fn wpds_rhocalc_intbinproc_err_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5919,9 +5919,9 @@ fn wpds_rhocalc_intbinproc_err_5() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_err_neg1() {
+fn wpds_rhocalc_intbinproc_err_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(-1i64)));
+    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5979,9 +5979,9 @@ fn wpds_rhocalc_negint_2() {
 }
 
 #[test]
-fn wpds_rhocalc_negint_5() {
+fn wpds_rhocalc_negint_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(Box::new(Int::NumLit(5i64)));
+    let input_term = Int::NegInt(Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");

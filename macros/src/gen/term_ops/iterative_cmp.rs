@@ -357,6 +357,24 @@ fn generate_eq_regular_arm(
                     if #lname != #rname { return false; }
                 };
             }
+            if field.is_optional {
+                // Opt-Group: equality on `Option<Box<Cat>>`. Push CmpTask
+                // recursively if both Some; mismatched Some/None or
+                // mismatched values short-circuit to false.
+                let task_variant = format_ident!("Cmp{}", field.category);
+                return quote! {
+                    match (#lname.as_ref(), #rname.as_ref()) {
+                        (None, None) => {}
+                        (Some(__l), Some(__r)) => {
+                            stack.push(CmpTask::#task_variant(
+                                __l.as_ref() as *const _,
+                                __r.as_ref() as *const _,
+                            ));
+                        }
+                        _ => return false,
+                    }
+                };
+            }
             if field.is_collection {
                 // Collection field: delegate to collection's own PartialEq (re-entrant)
                 quote! {
@@ -881,6 +899,25 @@ fn generate_cmp_regular_arm(
             });
             continue;
         }
+        if field.is_optional {
+            // Opt-Group: order Option<Box<Cat>>. None < Some(_); Some(a)
+            // vs Some(b) compares inner via re-entrant trampolined cmp.
+            stmts.push(quote! {
+                {
+                    let ord = match (#lname.as_ref(), #rname.as_ref()) {
+                        (None, None) => std::cmp::Ordering::Equal,
+                        (None, Some(_)) => std::cmp::Ordering::Less,
+                        (Some(_), None) => std::cmp::Ordering::Greater,
+                        (Some(__l), Some(__r)) => (**__l).cmp(&**__r),
+                    };
+                    if ord != std::cmp::Ordering::Equal {
+                        stack.clear();
+                        return ord;
+                    }
+                }
+            });
+            continue;
+        }
         if field.is_collection {
             stmts.push(quote! {
                 {
@@ -958,6 +995,26 @@ fn generate_cmp_regular_arm(
             stmts.push(quote! {
                 {
                     let ord = #lname.cmp(#rname);
+                    if ord != std::cmp::Ordering::Equal {
+                        stack.clear();
+                        return ord;
+                    }
+                }
+            });
+            continue;
+        }
+        if field.is_optional {
+            // Opt-Group: same eager Optional-cmp as the eager-loop
+            // branch (deferred-trailing semantics don't help here
+            // because Some/None is a tag-discriminant compare).
+            stmts.push(quote! {
+                {
+                    let ord = match (#lname.as_ref(), #rname.as_ref()) {
+                        (None, None) => std::cmp::Ordering::Equal,
+                        (None, Some(_)) => std::cmp::Ordering::Less,
+                        (Some(_), None) => std::cmp::Ordering::Greater,
+                        (Some(__l), Some(__r)) => (**__l).cmp(&**__r),
+                    };
                     if ord != std::cmp::Ordering::Equal {
                         stack.clear();
                         return ord;

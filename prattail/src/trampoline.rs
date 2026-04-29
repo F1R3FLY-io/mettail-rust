@@ -5165,7 +5165,22 @@ fn write_rd_constructor_inline(buf: &mut String, rule: &RDRuleInfo, segments: &[
             write!(buf, "break 'prefix {}::{};", cat, label).unwrap();
         }
     } else if all_captures.is_empty() {
-        write!(buf, "break 'prefix {}::{};", cat, label).unwrap();
+        // Opt-Group: even nullary patterns may have Optional inner items
+        // that the trampoline doesn't capture. Append `None` for each
+        // inner non-terminal of each top-level Optional in items.
+        let optional_inner_count = count_optional_inner_nonterminals(&rule.items);
+        if optional_inner_count > 0 {
+            write!(buf, "break 'prefix {}::{}(", cat, label).unwrap();
+            for i in 0..optional_inner_count {
+                if i > 0 {
+                    buf.push(',');
+                }
+                buf.push_str("None");
+            }
+            buf.push_str(");");
+        } else {
+            write!(buf, "break 'prefix {}::{};", cat, label).unwrap();
+        }
     } else {
         write!(buf, "break 'prefix {}::{}(", cat, label).unwrap();
         for (i, c) in all_captures.iter().enumerate() {
@@ -5174,8 +5189,43 @@ fn write_rd_constructor_inline(buf: &mut String, rule: &RDRuleInfo, segments: &[
             }
             write_segment_capture_as_arg(buf, c);
         }
+        // Opt-Group: append `None` per inner non-terminal of each top-level
+        // Optional in items. The trampoline parser doesn't currently
+        // recognize `*opt(...)` syntax in syntax patterns, so all rules
+        // are emitted as if the Optional was always skipped.
+        let optional_inner_count = count_optional_inner_nonterminals(&rule.items);
+        for _ in 0..optional_inner_count {
+            buf.push(',');
+            buf.push_str("None");
+        }
         buf.push_str(");");
     }
+}
+
+/// Opt-Group: count the number of non-terminal items inside top-level
+/// `RDSyntaxItem::Optional` groups in the rule. Each contributes one
+/// `Option<Box<Cat>>` field to the AST variant.
+fn count_optional_inner_nonterminals(items: &[RDSyntaxItem]) -> usize {
+    let mut count = 0;
+    for item in items {
+        if let RDSyntaxItem::Optional { inner } = item {
+            for inner_item in inner {
+                match inner_item {
+                    RDSyntaxItem::NonTerminal { .. }
+                    | RDSyntaxItem::IdentCapture { .. }
+                    | RDSyntaxItem::Binder { .. }
+                    | RDSyntaxItem::GuardExpression { .. } => {
+                        count += 1;
+                    }
+                    RDSyntaxItem::Optional { inner: nested } => {
+                        count += count_optional_inner_nonterminals(&nested.iter().cloned().collect::<Vec<_>>());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    count
 }
 
 /// Write native literal match arms.
@@ -6792,7 +6842,23 @@ fn write_rd_constructor_from_segments(
             .unwrap();
         }
     } else if unique_captures.is_empty() {
-        write!(buf, "lhs = {cat}::{label};").unwrap();
+        // Opt-Group: append `None` per inner non-terminal of each top-level
+        // Optional in items. The trampoline parser doesn't currently
+        // recognize `*opt(...)` syntax, so all rules emit as if Optional
+        // was always skipped.
+        let optional_inner_count = count_optional_inner_nonterminals(&rule.items);
+        if optional_inner_count > 0 {
+            write!(buf, "lhs = {cat}::{label}(").unwrap();
+            for i in 0..optional_inner_count {
+                if i > 0 {
+                    buf.push(',');
+                }
+                buf.push_str("None");
+            }
+            buf.push_str(");");
+        } else {
+            write!(buf, "lhs = {cat}::{label};").unwrap();
+        }
     } else {
         write!(buf, "lhs = {cat}::{label}(").unwrap();
         for (i, c) in unique_captures.iter().enumerate() {
@@ -6800,6 +6866,13 @@ fn write_rd_constructor_from_segments(
                 buf.push(',');
             }
             write_segment_capture_as_arg(buf, c);
+        }
+        // Opt-Group: append `None` per inner non-terminal of each top-level
+        // Optional in items.
+        let optional_inner_count = count_optional_inner_nonterminals(&rule.items);
+        for _ in 0..optional_inner_count {
+            buf.push(',');
+            buf.push_str("None");
         }
         buf.push_str(");");
     }

@@ -8,7 +8,7 @@ use mettail_languages::rhocalc::*;
 use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
 
-// Dead rules detected by WFST analysis: {"Proc::MergeMap", "Proc::POutput", "Proc::RemoveBag", "Proc::UnionBag", "CastInt", "CastStr", "CastList", "Proc::FractionProc", "Proc::PInputs", "Proc::HasMap", "Proc::IntBinProc", "Proc::FixedBinProc", "Proc::ConcatList", "Proc::UIntBinProc", "CastBigInt", "CastBigRat", "Int::CountBag", "Proc::DeleteMap", "Proc::ElemList", "Proc::PNew", "Proc::DeleteList", "CastBag", "CastBool", "Proc::FloatBinProc", "Proc::PutMap", "CastMap", "Proc::DiffBag", "Proc::GetMap", "CastUInt32"}
+// Dead rules detected by WFST analysis: {"Proc::DeleteMap", "Proc::HasMap", "CastBool", "CastList", "Proc::FloatBinProc", "Proc::RemoveBag", "CastInt", "Proc::UIntBinProc", "Proc::MergeMap", "Proc::GetMap", "Proc::ConcatList", "CastBigRat", "Proc::PInputs", "Proc::DiffBag", "CastUInt32", "Proc::IntBinProc", "CastMap", "Proc::ElemList", "Proc::PNew", "CastBigInt", "Proc::UnionBag", "Proc::PutMap", "Proc::FractionProc", "Int::CountBag", "CastStr", "CastBag", "Proc::FixedBinProc", "Proc::POutput", "Proc::DeleteList"}
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -43,7 +43,7 @@ fn unit_rhocalc_proc_pzero() {
 #[test]
 fn unit_rhocalc_proc_pdrop() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PDrop(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Proc::PDrop(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PDrop");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -58,7 +58,7 @@ fn unit_rhocalc_proc_pdrop() {
 #[test]
 fn unit_rhocalc_proc_poutput() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::POutput(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Proc::PZero));
+    let term = Proc::POutput(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for POutput");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -805,7 +805,7 @@ fn unit_rhocalc_auto_proc_pvar() {
     let term = Proc::PVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
+                mettail_runtime::get_or_create_var("a")
             )
         )
     );
@@ -819,26 +819,12 @@ fn unit_rhocalc_auto_name_nvar() {
     let term = Name::NVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
+                mettail_runtime::get_or_create_var("a")
             )
         )
     );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NVar");
-}
-
-#[test]
-fn unit_rhocalc_auto_int_ivar() {
-    mettail_runtime::clear_var_cache();
-    let term = Int::IVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for IVar");
 }
 
 #[test]
@@ -854,20 +840,6 @@ fn unit_rhocalc_auto_int_numlit() {
 }
 
 #[test]
-fn unit_rhocalc_auto_uint32_uvar() {
-    mettail_runtime::clear_var_cache();
-    let term = UInt32::UVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for UVar");
-}
-
-#[test]
 fn unit_rhocalc_auto_uint32_numlit() {
     let term = UInt32::NumLit(0u32);
     let displayed = format!("{}", term);
@@ -877,20 +849,6 @@ fn unit_rhocalc_auto_uint32_numlit() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_rhocalc_auto_bigint_bvar() {
-    mettail_runtime::clear_var_cache();
-    let term = BigInt::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BVar");
 }
 
 #[test]
@@ -906,20 +864,6 @@ fn unit_rhocalc_auto_bigint_numlit() {
 }
 
 #[test]
-fn unit_rhocalc_auto_bigrat_bvar() {
-    mettail_runtime::clear_var_cache();
-    let term = BigRat::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BVar");
-}
-
-#[test]
 fn unit_rhocalc_auto_bigrat_ratlit() {
     let term = BigRat::RatLit(mettail_runtime::CanonicalBigRat::default());
     let displayed = format!("{}", term);
@@ -929,20 +873,6 @@ fn unit_rhocalc_auto_bigrat_ratlit() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for RatLit: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_rhocalc_auto_fixed_fvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Fixed::FVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for FVar");
 }
 
 #[test]
@@ -958,20 +888,6 @@ fn unit_rhocalc_auto_fixed_fixedlit() {
 }
 
 #[test]
-fn unit_rhocalc_auto_float_fvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Float::FVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for FVar");
-}
-
-#[test]
 fn unit_rhocalc_auto_float_floatlit() {
     let term = Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64));
     let displayed = format!("{}", term);
@@ -981,20 +897,6 @@ fn unit_rhocalc_auto_float_floatlit() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for FloatLit: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_rhocalc_auto_bool_bvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Bool::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BVar");
 }
 
 #[test]
@@ -1010,20 +912,6 @@ fn unit_rhocalc_auto_bool_boollit() {
 }
 
 #[test]
-fn unit_rhocalc_auto_str_svar() {
-    mettail_runtime::clear_var_cache();
-    let term = Str::SVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for SVar");
-}
-
-#[test]
 fn unit_rhocalc_auto_str_stringlit() {
     let term = Str::StringLit(String::new());
     let displayed = format!("{}", term);
@@ -1033,20 +921,6 @@ fn unit_rhocalc_auto_str_stringlit() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for StringLit: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_rhocalc_auto_list_lvar() {
-    mettail_runtime::clear_var_cache();
-    let term = List::LVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for LVar");
 }
 
 #[test]
@@ -1062,20 +936,6 @@ fn unit_rhocalc_auto_list_listlit() {
 }
 
 #[test]
-fn unit_rhocalc_auto_bag_bvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Bag::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BVar");
-}
-
-#[test]
 fn unit_rhocalc_auto_bag_baglit() {
     let term = Bag::BagLit(mettail_runtime::HashBag::new());
     let displayed = format!("{}", term);
@@ -1085,20 +945,6 @@ fn unit_rhocalc_auto_bag_baglit() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for BagLit: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_rhocalc_auto_map_mvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Map::MVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for MVar");
 }
 
 #[test]

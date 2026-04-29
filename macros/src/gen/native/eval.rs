@@ -25,33 +25,46 @@ use crate::gen::{
 fn classify_hol_rule_for_pda<'a>(
     rule: &'a GrammarRule,
     category: &syn::Ident,
-) -> Option<Vec<(syn::Ident, &'a syn::Ident, bool)>> {
+) -> Option<Vec<(syn::Ident, &'a syn::Ident, bool, bool)>> {
     // Zero-ary rules (no term_context) are PDA-compatible: they have no
-    // children to recurse into. The caller emits a Visit arm that pushes the
-    // rust_code's value directly (no Reduce frame needed for the
-    // eager-cross-eval pattern). Returning `Some(Vec::new())` rather than
+    // children to recurse into. Returning `Some(Vec::new())` rather than
     // `None` is the critical difference: `None` disables PDA for the WHOLE
     // category, while an empty vec just means this particular rule has no
     // same-cat children.
+    //
+    // Opt-Group: a TermParam::Optional with inner Simple/Base params is
+    // PDA-compatible — each inner becomes a tuple entry with
+    // `is_optional: true`. Inner non-Simple/non-Base params still fall
+    // back to recursive eval.
     let Some(ctx) = rule.term_context.as_ref() else {
         return Some(Vec::new());
     };
-    let mut out = Vec::with_capacity(ctx.len());
-    for p in ctx {
-        match p {
-            TermParam::Simple { name, ty } => {
-                let base = match ty {
-                    TypeExpr::Base(id) => id,
-                    _ => return None, // Non-base type: fall back to recursive form.
-                };
-                let same_cat = base == category;
-                out.push((name.clone(), base, same_cat));
+    fn collect<'a>(
+        params: &'a [TermParam],
+        category: &syn::Ident,
+        in_opt: bool,
+        out: &mut Vec<(syn::Ident, &'a syn::Ident, bool, bool)>,
+    ) -> Option<()> {
+        for p in params {
+            match p {
+                TermParam::Simple { name, ty } => {
+                    let base = match ty {
+                        TypeExpr::Base(id) => id,
+                        _ => return None,
+                    };
+                    let same_cat = base == category;
+                    out.push((name.clone(), base, same_cat, in_opt));
+                }
+                TermParam::Optional { params: inner } => {
+                    collect(inner, category, true, out)?;
+                }
+                _ => return None,
             }
-            // Abstractions, multi-abstractions, and guard bodies aren't modelled
-            // by the simple work-stack PDA. Fall back.
-            _ => return None,
         }
+        Some(())
     }
+    let mut out = Vec::with_capacity(ctx.len());
+    collect(ctx, category, false, &mut out)?;
     Some(out)
 }
 
@@ -59,24 +72,28 @@ fn classify_hol_rule_for_pda<'a>(
 /// Used for rust_code eval arms: param names match constructor field names.
 fn term_context_param_names(term_context: &[TermParam]) -> Vec<syn::Ident> {
     let mut names = Vec::new();
-    for p in term_context {
-        match p {
-            TermParam::Simple { name, .. } => names.push(name.clone()),
-            TermParam::Abstraction { binder, body, .. } => {
-                names.push(binder.clone());
-                names.push(body.clone());
-            },
-            TermParam::MultiAbstraction { binder, body, .. } => {
-                names.push(binder.clone());
-                names.push(body.clone());
-            },
-            TermParam::GuardBody { name, .. } => {
-                // Guard bodies are not constructor fields; they are evaluated
-                // separately by the behavioral guard evaluator.
-                let _ = name;
-            },
+    fn collect(params: &[TermParam], names: &mut Vec<syn::Ident>) {
+        for p in params {
+            match p {
+                TermParam::Simple { name, .. } => names.push(name.clone()),
+                TermParam::Abstraction { binder, body, .. } => {
+                    names.push(binder.clone());
+                    names.push(body.clone());
+                },
+                TermParam::MultiAbstraction { binder, body, .. } => {
+                    names.push(binder.clone());
+                    names.push(body.clone());
+                },
+                TermParam::GuardBody { name, .. } => {
+                    let _ = name;
+                },
+                TermParam::Optional { params: inner } => {
+                    collect(inner, names);
+                },
+            }
         }
     }
+    collect(term_context, &mut names);
     names
 }
 
@@ -101,27 +118,40 @@ fn type_has_native_eval(ty: &TypeExpr, language: &LanguageDef) -> bool {
 fn term_context_params_with_eval(
     term_context: &[TermParam],
     language: &LanguageDef,
-) -> Vec<(syn::Ident, bool)> {
+) -> Vec<(syn::Ident, bool, bool)> {
     let mut out = Vec::new();
-    for p in term_context {
-        match p {
-            TermParam::Simple { name, ty } => {
-                let use_eval = type_has_native_eval(ty, language);
-                out.push((name.clone(), use_eval));
-            },
-            TermParam::Abstraction { binder, body, .. } => {
-                out.push((binder.clone(), false));
-                out.push((body.clone(), false));
-            },
-            TermParam::MultiAbstraction { binder, body, .. } => {
-                out.push((binder.clone(), false));
-                out.push((body.clone(), false));
-            },
-            TermParam::GuardBody { name, .. } => {
-                let _ = name;
-            },
+    fn collect(
+        params: &[TermParam],
+        language: &LanguageDef,
+        in_opt: bool,
+        out: &mut Vec<(syn::Ident, bool, bool)>,
+    ) {
+        for p in params {
+            match p {
+                TermParam::Simple { name, ty } => {
+                    let use_eval = type_has_native_eval(ty, language);
+                    out.push((name.clone(), use_eval, in_opt));
+                },
+                TermParam::Abstraction { binder, body, .. } => {
+                    out.push((binder.clone(), false, in_opt));
+                    out.push((body.clone(), false, in_opt));
+                },
+                TermParam::MultiAbstraction { binder, body, .. } => {
+                    out.push((binder.clone(), false, in_opt));
+                    out.push((body.clone(), false, in_opt));
+                },
+                TermParam::GuardBody { name, .. } => {
+                    let _ = name;
+                },
+                TermParam::Optional { params: inner } => {
+                    // Inner params are tagged `in_opt: true` so the
+                    // emitter wraps their bindings in `Option<T>` map.
+                    collect(inner, language, true, out);
+                },
+            }
         }
     }
+    collect(term_context, language, false, &mut out);
     out
 }
 
@@ -370,12 +400,23 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     .map(|ctx| term_context_params_with_eval(ctx, language))
                     .unwrap_or_default();
                 let param_names: Vec<syn::Ident> =
-                    params_with_eval.iter().map(|(n, _)| n.clone()).collect();
+                    params_with_eval.iter().map(|(n, _, _)| n.clone()).collect();
                 let param_count = param_names.len();
+                // Opt-Group: when `is_optional`, the variant field is
+                // `Option<Box<Cat>>` (not `Box<Cat>`). The user's eval
+                // code expects the param bound to `Option<NativeT>`
+                // (when use_eval) or `Option<&Cat>` (when !use_eval).
+                // Map each binding accordingly.
                 let param_bindings: Vec<_> = params_with_eval
                     .iter()
-                    .map(|(name, use_eval)| {
-                        if *use_eval {
+                    .map(|(name, use_eval, is_optional)| {
+                        if *is_optional {
+                            if *use_eval {
+                                quote! { let #name = #name.as_ref().map(|__b| __b.as_ref().eval()); }
+                            } else {
+                                quote! { let #name = #name.as_ref().map(|__b| __b.as_ref()); }
+                            }
+                        } else if *use_eval {
                             quote! { let #name = #name.as_ref().eval(); }
                         } else {
                             // Non-native categories (Proc, List, Bag, Map) must
@@ -390,8 +431,19 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     .collect();
                 let try_param_bindings: Vec<_> = params_with_eval
                     .iter()
-                    .map(|(name, use_eval)| {
-                        if *use_eval {
+                    .map(|(name, use_eval, is_optional)| {
+                        if *is_optional {
+                            if *use_eval {
+                                quote! {
+                                    let #name: Option<_> = match #name.as_ref() {
+                                        Some(__b) => Some(__b.as_ref().try_eval()?),
+                                        None => None,
+                                    };
+                                }
+                            } else {
+                                quote! { let #name = #name.as_ref().map(|__b| __b.as_ref()); }
+                            }
+                        } else if *use_eval {
                             quote! { let #name = #name.as_ref().try_eval()?; }
                         } else {
                             quote! { let #name = #name.as_ref(); }
@@ -523,38 +575,45 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                             //     the user's rust_code at Reduce time — the
                             //     recursive fallback does exactly the same
                             //     via `let #n = #n.as_ref();`.
+                            // Opt-Group: `Optional(storage_ty, use_eval)` represents
+                            // an `Option<storage_ty>` field; visit emits
+                            // `Option::map` over `try_eval()` (Native) or
+                            // `Option::clone()` (Borrow). Optional same-cat
+                            // children are routed through cross_kinds (not the
+                            // same-cat Visit-push path) because the `Some(_)`/
+                            // `None` branching doesn't fit the unconditional
+                            // Visit-frame push.
                             enum CrossKind {
                                 Native(TokenStream),
                                 Borrow(TokenStream),
+                                OptionalNative(TokenStream),
+                                OptionalBorrow(TokenStream),
                             }
                             let mut cross_kinds: Vec<(syn::Ident, CrossKind)> = Vec::new();
-                            for (name, ty_id, same) in &classified {
-                                if *same { continue; }
+                            for (name, ty_id, same, is_optional) in &classified {
+                                if *same && !*is_optional { continue; }
                                 let target_native = language
                                     .types
                                     .iter()
                                     .find(|t| t.name == **ty_id)
                                     .and_then(|t| t.native_type.as_ref());
-                                let kind = match target_native {
-                                    Some(nt) => {
-                                        // Map native type → storage type, mirroring
-                                        // the `try_eval` return type. `str` must be
-                                        // stored as `String`, `f32`/`f64` as the
-                                        // canonicalised wrappers.
-                                        let storage_ty = match NativeType::from_syn_type(nt) {
-                                            NativeType::Str => quote! { std::string::String },
-                                            NativeType::Float32 => quote! { ::mettail_runtime::CanonicalFloat32 },
-                                            NativeType::Float64 => quote! { ::mettail_runtime::CanonicalFloat64 },
-                                            _ => quote! { #nt },
-                                        };
-                                        CrossKind::Native(storage_ty)
-                                    }
+                                let storage_ty: TokenStream = match target_native {
+                                    Some(nt) => match NativeType::from_syn_type(nt) {
+                                        NativeType::Str => quote! { std::string::String },
+                                        NativeType::Float32 => quote! { ::mettail_runtime::CanonicalFloat32 },
+                                        NativeType::Float64 => quote! { ::mettail_runtime::CanonicalFloat64 },
+                                        _ => quote! { #nt },
+                                    },
                                     None => {
-                                        // Cross-cat has no native_type (e.g. Proc):
-                                        // borrow-clone the child term into the frame.
                                         let ty_ident = *ty_id;
-                                        CrossKind::Borrow(quote! { ::std::boxed::Box<#ty_ident> })
+                                        quote! { ::std::boxed::Box<#ty_ident> }
                                     }
+                                };
+                                let kind = match (target_native.is_some(), *is_optional) {
+                                    (true, false) => CrossKind::Native(storage_ty),
+                                    (false, false) => CrossKind::Borrow(storage_ty),
+                                    (true, true) => CrossKind::OptionalNative(storage_ty),
+                                    (false, true) => CrossKind::OptionalBorrow(storage_ty),
                                 };
                                 cross_kinds.push((name.clone(), kind));
                             }
@@ -564,6 +623,9 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                 .map(|(n, k)| match k {
                                     CrossKind::Native(ty) | CrossKind::Borrow(ty) => {
                                         quote! { #n: #ty }
+                                    }
+                                    CrossKind::OptionalNative(ty) | CrossKind::OptionalBorrow(ty) => {
+                                        quote! { #n: ::std::option::Option<#ty> }
                                     }
                                 })
                                 .collect();
@@ -585,7 +647,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                             // Pattern: #category::#label(p0, p1, ...).
                             let param_pat: Vec<_> = classified
                                 .iter()
-                                .map(|(n, _, _)| quote! { #n })
+                                .map(|(n, _, _, _)| quote! { #n })
                                 .collect();
                             let eager_cross_evals: Vec<TokenStream> = cross_kinds
                                 .iter()
@@ -601,6 +663,21 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                         // receives `&Cat` after deref at Reduce time.
                                         let #n = #n.clone();
                                     },
+                                    CrossKind::OptionalNative(_) => quote! {
+                                        // Opt-Group: Option<Box<Cat>> with native eval.
+                                        // Map over Some, propagating `?` for try_eval failure.
+                                        let #n: ::std::option::Option<_> = match #n.as_ref() {
+                                            ::std::option::Option::Some(__b) => {
+                                                ::std::option::Option::Some(__b.as_ref().try_eval()?)
+                                            }
+                                            ::std::option::Option::None => ::std::option::Option::None,
+                                        };
+                                    },
+                                    CrossKind::OptionalBorrow(_) => quote! {
+                                        // Opt-Group: Option<Box<Cat>> with borrow.
+                                        // Clone the inner Box if Some.
+                                        let #n: ::std::option::Option<_> = #n.clone();
+                                    },
                                 })
                                 .collect();
                             let reduce_push = if cross_field_names.is_empty() {
@@ -614,11 +691,15 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                             };
                             // Same-category children: push in REVERSE so the left-
                             // most child is processed first (LIFO stack).
+                            // Opt-Group: Optional same-cat children are routed
+                            // through cross_kinds (with OptionalBorrow), NOT
+                            // through this Visit-push path — they're captured
+                            // unconditionally and unwrapped at Reduce time.
                             let same_cat_pushes: Vec<TokenStream> = classified
                                 .iter()
                                 .rev()
-                                .filter(|(_, _, same)| *same)
-                                .map(|(n, _, _)| quote! {
+                                .filter(|(_, _, same, is_opt)| *same && !*is_opt)
+                                .map(|(n, _, _, _)| quote! {
                                     work.push(__EvalFrame::Visit(#n.as_ref()));
                                 })
                                 .collect();
@@ -651,11 +732,15 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                     __EvalFrame::#reduce_variant { #(#cross_field_names),* }
                                 }
                             };
+                            // Opt-Group: Optional same-cat children are NOT
+                            // popped from values (they were captured into the
+                            // frame as `Option<Box<Cat>>`); only pure-same-cat
+                            // children are pushed/popped via Visit frames.
                             let pops: Vec<TokenStream> = classified
                                 .iter()
                                 .rev()
-                                .filter(|(_, _, same)| *same)
-                                .map(|(n, _, _)| quote! {
+                                .filter(|(_, _, same, is_opt)| *same && !*is_opt)
+                                .map(|(n, _, _, _)| quote! {
                                     // Pops are in reverse param order; since we
                                     // push in reverse earlier (so leftmost is
                                     // visited first = processed first = pushed to
@@ -674,6 +759,12 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                         let #n = &*#n;
                                     }),
                                     CrossKind::Native(_) => None,
+                                    CrossKind::OptionalBorrow(_) => Some(quote! {
+                                        // Opt-Group: Frame owns Option<Box<Cat>>.
+                                        // Give user `Option<&Cat>` via map deref.
+                                        let #n: ::std::option::Option<&_> = #n.as_ref().map(|__b| &**__b);
+                                    }),
+                                    CrossKind::OptionalNative(_) => None,
                                 })
                                 .collect();
                             pda_reduce_arms.push(quote! {

@@ -291,12 +291,11 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
             0 => AnyTerm::WrapProc(Proc::PZero),
             1 => AnyTerm::WrapProc(Proc::Err),
             _ => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapProc(Proc::PVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
@@ -311,12 +310,11 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
         0 => AnyTerm::WrapProc(Proc::PZero).unwrap_proc(),
         1 => AnyTerm::WrapProc(Proc::Err).unwrap_proc(),
         2 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapProc(Proc::PVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
@@ -344,7 +342,7 @@ let pre_0: Vec<_> = (0..n_0).map(|_| build_name_from_tape(reader, child_depth)).
             let num_binders = ((reader.next_byte() % 3) + 1) as usize;
 let binders: Vec<mettail_runtime::Binder<String>> = (0..num_binders)
 .map(|j| {
-let name = format!("v{}", j);
+let name = format!("a{}", j);
 mettail_runtime::Binder(mettail_runtime::get_or_create_var(&name))
 })
 .collect();
@@ -356,7 +354,7 @@ let scope = mettail_runtime::Scope::new(binders, Box::new(body));
             let num_binders = ((reader.next_byte() % 3) + 1) as usize;
 let binders: Vec<mettail_runtime::Binder<String>> = (0..num_binders)
 .map(|j| {
-let name = format!("v{}", j);
+let name = format!("a{}", j);
 mettail_runtime::Binder(mettail_runtime::get_or_create_var(&name))
 })
 .collect();
@@ -616,12 +614,11 @@ let scope = mettail_runtime::Scope::new(binders, Box::new(body));
 fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     if depth == 0 {
         let result = {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapName(Name::NVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
@@ -633,12 +630,11 @@ fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     let child_depth = depth - 1;
     match choice {
         0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapName(Name::NVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
@@ -658,40 +654,15 @@ fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapInt(Int::IVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX)),
-        };
+        let result = AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX));
         return result.unwrap_int();
     }
 
-    let choice = (reader.next_byte() as usize) % 4;
+    let choice = (reader.next_byte() as usize) % 3;
     let child_depth = depth - 1;
     match choice {
-        0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapInt(Int::IVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-}.unwrap_int(),
-        1 => AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX)).unwrap_int(),
-        2 => {
+        0 => AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX)).unwrap_int(),
+        1 => {
             let f0 = Box::new(build_int_from_tape(reader, child_depth));
             Int::NegInt(f0)
         },
@@ -711,21 +682,7 @@ fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_uint32_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> UInt32 {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapUInt32(UInt32::UVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapUInt32(UInt32::NumLit(reader.next_u32())),
-        };
+        let result = AnyTerm::WrapUInt32(UInt32::NumLit(reader.next_u32()));
         return result.unwrap_uint32();
     }
 
@@ -741,21 +698,7 @@ fn build_uint32_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> UInt32 {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_bigint_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigInt {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapBigInt(BigInt::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapBigInt(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(num_bigint::BigInt::from(reader.next_i32())))),
-        };
+        let result = AnyTerm::WrapBigInt(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(num_bigint::BigInt::from(reader.next_i32()))));
         return result.unwrap_bigint();
     }
 
@@ -771,21 +714,7 @@ fn build_bigint_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigInt {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_bigrat_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigRat {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapBigRat(BigRat::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapBigRat(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32()))))),
-        };
+        let result = AnyTerm::WrapBigRat(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32())))));
         return result.unwrap_bigrat();
     }
 
@@ -801,21 +730,7 @@ fn build_bigrat_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigRat {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_fixed_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Fixed {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapFixed(Fixed::FVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapFixed(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(reader.next_i32()), 0))),
-        };
+        let result = AnyTerm::WrapFixed(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(reader.next_i32()), 0)));
         return result.unwrap_fixed();
     }
 
@@ -831,21 +746,7 @@ fn build_fixed_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Fixed {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_float_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Float {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapFloat(Float::FVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapFloat(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(reader.next_f64().abs()))),
-        };
+        let result = AnyTerm::WrapFloat(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(reader.next_f64().abs())));
         return result.unwrap_float();
     }
 
@@ -861,21 +762,7 @@ fn build_float_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Float {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_bool_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Bool {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapBool(Bool::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapBool(Bool::BoolLit(reader.next_bool())),
-        };
+        let result = AnyTerm::WrapBool(Bool::BoolLit(reader.next_bool()));
         return result.unwrap_bool();
     }
 
@@ -891,21 +778,7 @@ fn build_bool_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Bool {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_str_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Str {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapStr(Str::SVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapStr(Str::StringLit(reader.next_string())),
-        };
+        let result = AnyTerm::WrapStr(Str::StringLit(reader.next_string()));
         return result.unwrap_str();
     }
 
@@ -921,21 +794,7 @@ fn build_str_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Str {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_list_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> List {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapList(List::LVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapList(List::ListLit(Vec::new())),
-        };
+        let result = AnyTerm::WrapList(List::ListLit(Vec::new()));
         return result.unwrap_list();
     }
 
@@ -951,21 +810,7 @@ fn build_list_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> List {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_bag_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Bag {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapBag(Bag::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapBag(Bag::BagLit(mettail_runtime::HashBag::new())),
-        };
+        let result = AnyTerm::WrapBag(Bag::BagLit(mettail_runtime::HashBag::new()));
         return result.unwrap_bag();
     }
 
@@ -981,21 +826,7 @@ fn build_bag_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Bag {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_map_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Map {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 2;
-        let result = match choice {
-            0 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
-    AnyTerm::WrapMap(Map::MVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
-            )
-        )
-    ))
-},
-            _ => AnyTerm::WrapMap(Map::MapLit(mettail_runtime::HashMapLit::new())),
-        };
+        let result = AnyTerm::WrapMap(Map::MapLit(mettail_runtime::HashMapLit::new()));
         return result.unwrap_map();
     }
 
@@ -2502,7 +2333,7 @@ fn sim_rhocalc_normal_form_reachability() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["int ( 1 , 1 )", "uint ( 1 , 1 )", "float ( 1 , 1 )", "fixed ( 1 , 1 )", "bigint ( 1 )", "bigrat ( 1 )", "- 1", "fraction ( 1 , 1 )", "1 or 1", "1 and 1", "1 bitor 1", "1 bitand 1", "1", "1.0", "true", "\"hello\""];
+    let test_inputs: Vec<&str> = vec!["int ( 0 , 1 )", "uint ( 0 , 1 )", "float ( 0 , 1 )", "fixed ( 0 , 1 )", "bigint ( 0 )", "bigrat ( 0 )", "- 1", "fraction ( 0 , 0 )", "0 or 0", "0 and 0", "0 bitor 0", "0 bitand 0", "1", "1.0", "true", "\"hello\""];
 
     let mut tested = 0usize;
     let mut reached_nf = 0usize;
@@ -2554,7 +2385,7 @@ fn sim_rhocalc_roundtrip_under_rewrite() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     // Test a set of concrete expressions for rewrite roundtrip.
-    let test_inputs: Vec<&str> = vec!["int ( 1 , 1 )", "uint ( 1 , 1 )", "float ( 1 , 1 )", "fixed ( 1 , 1 )", "bigint ( 1 )", "bigrat ( 1 )", "- 1", "fraction ( 1 , 1 )", "1 or 1", "1 and 1", "1 bitor 1", "1 bitand 1", "1", "1.0", "true", "\"hello\""];
+    let test_inputs: Vec<&str> = vec!["int ( 0 , 1 )", "uint ( 0 , 1 )", "float ( 0 , 1 )", "fixed ( 0 , 1 )", "bigint ( 0 )", "bigrat ( 0 )", "- 1", "fraction ( 0 , 0 )", "0 or 0", "0 and 0", "0 bitor 0", "0 bitand 0", "1", "1.0", "true", "\"hello\""];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -2616,7 +2447,7 @@ fn sim_rhocalc_morphology_bounded() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["int ( 1 , 1 )", "uint ( 1 , 1 )", "float ( 1 , 1 )", "fixed ( 1 , 1 )", "bigint ( 1 )", "bigrat ( 1 )", "- 1", "fraction ( 1 , 1 )", "1 or 1", "1 and 1", "1 bitor 1", "1 bitand 1", "1", "1.0", "true", "\"hello\""];
+    let test_inputs: Vec<&str> = vec!["int ( 0 , 1 )", "uint ( 0 , 1 )", "float ( 0 , 1 )", "fixed ( 0 , 1 )", "bigint ( 0 )", "bigrat ( 0 )", "- 1", "fraction ( 0 , 0 )", "0 or 0", "0 and 0", "0 bitor 0", "0 bitand 0", "1", "1.0", "true", "\"hello\""];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -2651,7 +2482,7 @@ fn sim_rhocalc_eval_determinism() {
     let lang = RhoCalcLanguage;
     let lang_ref: &dyn mettail_runtime::Language = &lang;
 
-    let test_inputs: Vec<&str> = vec!["int ( 1 , 1 )", "uint ( 1 , 1 )", "float ( 1 , 1 )", "fixed ( 1 , 1 )", "bigint ( 1 )", "bigrat ( 1 )", "- 1", "fraction ( 1 , 1 )", "1 or 1", "1 and 1", "1 bitor 1", "1 bitand 1", "1", "1.0", "true", "\"hello\""];
+    let test_inputs: Vec<&str> = vec!["int ( 0 , 1 )", "uint ( 0 , 1 )", "float ( 0 , 1 )", "fixed ( 0 , 1 )", "bigint ( 0 )", "bigrat ( 0 )", "- 1", "fraction ( 0 , 0 )", "0 or 0", "0 and 0", "0 bitor 0", "0 bitand 0", "1", "1.0", "true", "\"hello\""];
 
     for input in &test_inputs {
         let config1 = SimulationConfig {

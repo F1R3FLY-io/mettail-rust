@@ -417,6 +417,11 @@ fn emit_reg_field_decl(i: usize, field: &FieldInfo) -> TokenStream {
         let pred_name = format_ident!("f{}_pred", i);
         return quote! { #pred_name: mettail_runtime::BehavioralPred };
     }
+    if field.is_optional {
+        let slot_name = format_ident!("f{}_slot", i);
+        let some_flag = format_ident!("f{}_some", i);
+        return quote! { #slot_name: usize, #some_flag: bool };
+    }
     if field.is_collection {
         let start_name = format_ident!("f{}_start", i);
         let count_name = format_ident!("f{}_count", i);
@@ -721,6 +726,30 @@ fn emit_reg_field_visit_alloc(
                 let #pred_name = #name.clone();
             });
             assemble_fields.push(quote! { #pred_name });
+            continue;
+        }
+
+        if field.is_optional {
+            // Opt-Group: slot+some_flag pattern. Push VisitTask only if
+            // Some; assemble reconstructs Option<Box<Cat>>.
+            let field_cat = &field.category;
+            let visit_task = format_ident!("Visit{}", field_cat);
+            let slot_name = format_ident!("f{}_slot", i);
+            let some_flag = format_ident!("f{}_some", i);
+            alloc_stmts.push(quote! {
+                let #some_flag: bool = #name.is_some();
+                let #slot_name = results.len();
+                if #some_flag { results.push(None); }
+            });
+            push_stmts.push(quote! {
+                if let Some(__b) = #name.as_ref() {
+                    stack.push(NormTask::#visit_task {
+                        src: __b.as_ref() as *const _,
+                        slot: #slot_name,
+                    });
+                }
+            });
+            assemble_fields.push(quote! { #slot_name, #some_flag });
             continue;
         }
 
@@ -1297,6 +1326,17 @@ fn generate_regular_assemble_arm(
     let mut decl_flat: Vec<TokenStream> = Vec::new();
     let mut call_flat: Vec<TokenStream> = Vec::new();
     for (i, field) in fields.iter().enumerate() {
+        if field.is_optional {
+            let slot_name = format_ident!("f{}_slot", i);
+            let some_flag = format_ident!("f{}_some", i);
+            pat_flat.push(quote! { #slot_name });
+            pat_flat.push(quote! { #some_flag });
+            decl_flat.push(quote! { #slot_name: usize });
+            decl_flat.push(quote! { #some_flag: bool });
+            call_flat.push(quote! { #slot_name });
+            call_flat.push(quote! { #some_flag });
+            continue;
+        }
         if field.is_collection {
             let start_name = format_ident!("f{}_start", i);
             let count_name = format_ident!("f{}_count", i);
@@ -1369,6 +1409,11 @@ fn emit_reg_slot_pattern(i: usize, field: &FieldInfo) -> TokenStream {
         let pred_name = format_ident!("f{}_pred", i);
         return quote! { #pred_name };
     }
+    if field.is_optional {
+        let slot_name = format_ident!("f{}_slot", i);
+        let some_flag = format_ident!("f{}_some", i);
+        return quote! { #slot_name, #some_flag };
+    }
     if field.is_collection {
         let start_name = format_ident!("f{}_start", i);
         let count_name = format_ident!("f{}_count", i);
@@ -1392,6 +1437,24 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
     }
     let result_ident = format_ident!("field_{}", i);
     let wrap = format_ident!("Wrap{}", field.category);
+
+    if field.is_optional {
+        // Opt-Group: extract Option<Box<Cat>> from slot+some_flag.
+        let slot_name = format_ident!("f{}_slot", i);
+        let some_flag = format_ident!("f{}_some", i);
+        return quote! {
+            let #result_ident: Option<Box<_>> = if #some_flag {
+                match results[#slot_name].take()
+                    .expect("normalize: missing optional inner")
+                {
+                    AnyNormalizedTerm::#wrap(v) => Some(Box::new(v)),
+                    _ => unreachable!("normalize: wrong category in optional slot"),
+                }
+            } else {
+                None
+            };
+        };
+    }
 
     if field.is_collection {
         let start_name = format_ident!("f{}_start", i);
@@ -1470,7 +1533,10 @@ fn emit_reg_field_construct(i: usize, field: &FieldInfo) -> TokenStream {
         return quote! { #pred_name };
     }
     let result_ident = format_ident!("field_{}", i);
-    if field.is_collection {
+    if field.is_optional {
+        // Already Option<Box<Cat>> from extract; pass through.
+        quote! { #result_ident }
+    } else if field.is_collection {
         quote! { #result_ident }
     } else {
         quote! { Box::new(#result_ident) }

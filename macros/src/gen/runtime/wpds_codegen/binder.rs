@@ -78,6 +78,28 @@ pub enum BinderPosition {
     /// `Param(guard)` for `?guard:Guard` — parse predicate inline via
     /// `parse_predicate_from_tokens`. Advance position.
     GuardSlot,
+    /// Opt-Group (2026-04-29): `Op(Opt { inner })` — recursive
+    /// optional-group lowering. The engine transitions into
+    /// `WpdsState::OptionalGroup { sub_pos: 0 }`; on entry it peeks
+    /// the FIRST-set of `inner_positions[0]` to decide whether to take
+    /// the group (push inner args + advance into group) or skip (push
+    /// `ActionArg::Optional(None)` + advance past group). The
+    /// `first_token_set` is a list of literal-text predicates that
+    /// trigger entry into the group (computed at codegen from the
+    /// inner positions' types).
+    OptionalGroup {
+        positions: Vec<BinderPosition>,
+        action_args: Vec<ActionArgKind>,
+        /// Sequence index of THIS group within its parent rule's
+        /// positions list (used to disambiguate FIRST-set tables when
+        /// a rule has multiple groups).
+        group_idx: u8,
+        /// Tokens that, when peeked at group entry, indicate the group
+        /// should be taken. Strings are the literal text from the first
+        /// inner Literal; if the first inner is a ParamParse the
+        /// FIRST-set is computed from the param's category.
+        first_token_set: Vec<String>,
+    },
 }
 
 /// What kind of arg the action body extracts at each position (in push order).
@@ -92,6 +114,12 @@ pub enum ActionArgKind {
     /// Multi-binder list: a `BinderHandle` pushed by the binder-list-loop
     /// finalize step. Action body wraps as `Scope<Vec<Binder>, ...>`.
     BinderList,
+    /// Opt-Group: a captured optional group's inner action args.
+    /// `inner` mirrors the inner positions' action_args layout. At
+    /// runtime the action body extracts `ActionArg::Optional(Option<
+    /// Vec<ActionArg>>)` and produces `Some(...)` / `None` for each
+    /// `Option<T>` field of the AST variant in inner-args order.
+    Optional(Vec<ActionArgKind>),
 }
 
 /// Try to classify a `GrammarRule` as a multi-step rule (binder, multi-Param,
@@ -122,36 +150,98 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
     let mut has_binder = false;
     let mut body_cat: Option<String> = None;
     let mut param_cats: Vec<String> = Vec::new();
-    for p in tc {
-        match p {
-            TermParam::Simple { name, ty } => match ty {
-                TypeExpr::Base(ident) => {
-                    let cat = ident.to_string();
-                    param_cats.push(cat.clone());
-                    param_map.insert(name.to_string(), ParamKind::Simple { cat });
+
+    // Opt-Group: track which param names are inside an `#opt(...)` group
+    // so action emission knows to wrap them as `Option<T>`. Inner params
+    // are registered in param_map identically to top-level params; the
+    // `optional_params` set lets later code distinguish the two.
+    let mut optional_params: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+
+    fn walk_params(
+        params: &[TermParam],
+        in_optional: bool,
+        param_map: &mut std::collections::HashMap<String, ParamKind>,
+        optional_params: &mut std::collections::HashSet<String>,
+        is_multi: &mut bool,
+        has_binder: &mut bool,
+        body_cat: &mut Option<String>,
+        param_cats: &mut Vec<String>,
+    ) -> Option<()> {
+        for p in params {
+            if in_optional {
+                match p {
+                    TermParam::Simple { name, .. }
+                    | TermParam::Abstraction { binder: name, .. }
+                    | TermParam::MultiAbstraction { binder: name, .. }
+                    | TermParam::GuardBody { name } => {
+                        optional_params.insert(name.to_string());
+                    },
+                    TermParam::Optional { .. } => {}
                 }
-                _ => return None,
-            },
-            TermParam::Abstraction { binder, body, ty } => {
-                let bcat = arrow_codomain_name(ty)?;
-                body_cat = Some(bcat.clone());
-                has_binder = true;
-                param_map.insert(binder.to_string(), ParamKind::Binder);
-                param_map.insert(body.to_string(), ParamKind::Body { cat: bcat });
             }
-            TermParam::MultiAbstraction { binder, body, ty } => {
-                let bcat = arrow_codomain_name(ty)?;
-                body_cat = Some(bcat.clone());
-                has_binder = true;
-                is_multi = true;
-                param_map.insert(binder.to_string(), ParamKind::BinderList);
-                param_map.insert(body.to_string(), ParamKind::Body { cat: bcat });
-            }
-            TermParam::GuardBody { name } => {
-                param_map.insert(name.to_string(), ParamKind::Guard);
+            match p {
+                TermParam::Simple { name, ty } => match ty {
+                    TypeExpr::Base(ident) => {
+                        let cat = ident.to_string();
+                        param_cats.push(cat.clone());
+                        param_map.insert(name.to_string(), ParamKind::Simple { cat });
+                    }
+                    _ => return None,
+                },
+                TermParam::Abstraction { binder, body, ty } => {
+                    let bcat = arrow_codomain_name(ty)?;
+                    *body_cat = Some(bcat.clone());
+                    *has_binder = true;
+                    param_map.insert(binder.to_string(), ParamKind::Binder);
+                    param_map
+                        .insert(body.to_string(), ParamKind::Body { cat: bcat });
+                    if in_optional {
+                        optional_params.insert(body.to_string());
+                    }
+                }
+                TermParam::MultiAbstraction { binder, body, ty } => {
+                    let bcat = arrow_codomain_name(ty)?;
+                    *body_cat = Some(bcat.clone());
+                    *has_binder = true;
+                    *is_multi = true;
+                    param_map.insert(binder.to_string(), ParamKind::BinderList);
+                    param_map
+                        .insert(body.to_string(), ParamKind::Body { cat: bcat });
+                    if in_optional {
+                        optional_params.insert(body.to_string());
+                    }
+                }
+                TermParam::GuardBody { name } => {
+                    param_map.insert(name.to_string(), ParamKind::Guard);
+                }
+                TermParam::Optional { params: inner } => {
+                    walk_params(
+                        inner,
+                        true,
+                        param_map,
+                        optional_params,
+                        is_multi,
+                        has_binder,
+                        body_cat,
+                        param_cats,
+                    )?;
+                }
             }
         }
+        Some(())
     }
+
+    walk_params(
+        tc,
+        false,
+        &mut param_map,
+        &mut optional_params,
+        &mut is_multi,
+        &mut has_binder,
+        &mut body_cat,
+        &mut param_cats,
+    )?;
 
     // Walk syntax_pattern (skipping index 0 = trigger) building positions
     // + action_args in encountered-order (push order).
@@ -211,7 +301,79 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     _ => return None, // Phase 5b doesn't yet handle Sep over a Simple param (collection-style).
                 }
             }
-            // Op(Map/Zip/Opt) or chained ops — Phase 5c (PInputs) territory; skip for now.
+            SyntaxExpr::Op(PatternOp::Opt { inner }) => {
+                // Opt-Group: recursively classify inner SyntaxExprs.
+                // Reuses param_map (inner Param references resolve against
+                // the same TermContext entries — including any TermParam::Optional
+                // already registered by walk_params). For the pilot, the
+                // inner positions support Literal, ParamParse (Simple/Body),
+                // BinderIdent, GuardSlot. Nested Optional and Sep are out
+                // of pilot scope.
+                let group_idx = positions.iter().filter(|p| {
+                    matches!(p, BinderPosition::OptionalGroup { .. })
+                }).count() as u8;
+
+                let mut inner_positions: Vec<BinderPosition> = Vec::new();
+                let mut inner_action_args: Vec<ActionArgKind> = Vec::new();
+
+                for inner_item in inner {
+                    match inner_item {
+                        SyntaxExpr::Literal(text) => {
+                            inner_positions.push(BinderPosition::Literal(text.clone()));
+                        }
+                        SyntaxExpr::Param(name) => {
+                            let n = name.to_string();
+                            let kind = param_map.get(&n)?;
+                            match kind {
+                                ParamKind::Binder => {
+                                    inner_positions.push(BinderPosition::BinderIdent);
+                                    inner_action_args.push(ActionArgKind::BinderName);
+                                }
+                                ParamKind::Body { cat } | ParamKind::Simple { cat } => {
+                                    inner_positions.push(BinderPosition::ParamParse {
+                                        cat: cat.clone(),
+                                    });
+                                    inner_action_args.push(ActionArgKind::Term(cat.clone()));
+                                }
+                                ParamKind::Guard => {
+                                    inner_positions.push(BinderPosition::GuardSlot);
+                                    inner_action_args.push(ActionArgKind::Predicate);
+                                }
+                                ParamKind::BinderList => {
+                                    return None;
+                                }
+                            }
+                        }
+                        SyntaxExpr::Op(_) => {
+                            return None;
+                        }
+                    }
+                }
+
+                if inner_positions.is_empty() {
+                    return None;
+                }
+
+                // Compute first_token_set: the literal-text predicates that
+                // trigger entry into the group. For BinderPosition::Literal,
+                // first_token_set = vec![text]. ParamParse-leading inner
+                // positions are out of pilot scope (would require threading
+                // language access through classify_binder to compute
+                // first_set_of_category).
+                let first_token_set: Vec<String> = match &inner_positions[0] {
+                    BinderPosition::Literal(text) => vec![text.clone()],
+                    _ => return None,
+                };
+
+                positions.push(BinderPosition::OptionalGroup {
+                    positions: inner_positions,
+                    action_args: inner_action_args.clone(),
+                    group_idx,
+                    first_token_set,
+                });
+                action_args.push(ActionArgKind::Optional(inner_action_args));
+            }
+            // Op(Map/Zip) or chained ops — Phase 5c territory; skip for now.
             SyntaxExpr::Op(_) => return None,
         }
     }
@@ -570,6 +732,30 @@ pub(crate) fn emit_binder_rule_body(
                             };
                         }
                     },
+                    BinderPosition::OptionalGroup { group_idx, .. } => {
+                        // Opt-Group: outer rule reached an `#opt(...)` group
+                        // at this position. Transition to OptionalGroup state
+                        // with sub_pos=0; the engine's OptionalGroup arm
+                        // peeks the FIRST set, decides take-or-skip, and
+                        // (on the take path) walks inner positions until
+                        // OptGroupFinalize advances the outer marker to
+                        // next_pos. On the skip path, OptGroupAbsent
+                        // advances directly to next_pos.
+                        let group_idx_byte = *group_idx;
+                        quote! {
+                            (#result_src_idx, #rule_idx, #pos) => {
+                                return WpdsStepAction::Advance(
+                                    WpdsState::OptionalGroup {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        group_idx: #group_idx_byte,
+                                        sub_pos: 0,
+                                        outer_bp: *outer_bp,
+                                    },
+                                );
+                            }
+                        }
+                    }
                 };
                 arms.push(arm);
             }
@@ -685,6 +871,230 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
     }
 }
 
+/// Opt-Group (2026-04-29): emit the body of `WpdsState::OptionalGroup`.
+/// Dispatches on `(*result_src_idx, *rule_idx, *group_idx, *sub_pos)` to:
+///   - sub_pos == 0: peek FIRST set, emit `Push(OptionalGroupAt(1))` (take)
+///     or `OptGroupAbsent` (skip).
+///   - sub_pos in 1..=inner.len(): walk inner positions (Literal,
+///     ParamParse, BinderIdent, GuardSlot) — each step replaces
+///     OptionalGroupAt(sub_pos) with OptionalGroupAt(sub_pos+1).
+///   - sub_pos == inner.len() + 1: emit `OptGroupFinalize` to pop the
+///     OptionalGroupAt marker, finalize the inner-arg scope, and advance
+///     the outer RuleAt to next_outer_pos.
+pub(crate) fn emit_optional_group_body(
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+) -> TokenStream {
+    let mut arms: Vec<TokenStream> = Vec::new();
+
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        for (rule_i, rule) in rules.iter().enumerate() {
+            let Some(shape) = classify_binder(rule) else {
+                continue;
+            };
+            let result_src_idx = cat_i as u16;
+            let rule_idx = rule_i as u16;
+
+            for (outer_idx, outer_pos) in shape.positions.iter().enumerate() {
+                let outer_pos_byte = (outer_idx + 1) as u8;
+                let outer_next_pos_byte = outer_pos_byte + 1;
+                let BinderPosition::OptionalGroup {
+                    positions: inner,
+                    first_token_set,
+                    group_idx,
+                    ..
+                } = outer_pos
+                else {
+                    continue;
+                };
+
+                let group_idx_byte = *group_idx;
+                let inner_len_byte = inner.len() as u8;
+                let final_sub_pos = inner_len_byte + 1;
+
+                // sub_pos == 0: peek FIRST, take or skip.
+                let first_match_arms: Vec<TokenStream> = first_token_set
+                    .iter()
+                    .map(|t| quote! { Some(#t) => true, })
+                    .collect();
+                arms.push(quote! {
+                    (#result_src_idx, #rule_idx, #group_idx_byte, 0u8) => {
+                        let token_text = tokens.peek_text(_pos);
+                        let matches_first: bool = match token_text {
+                            #(#first_match_arms)*
+                            _ => false,
+                        };
+                        if matches_first {
+                            // TAKE: push OptionalGroupAt(1). Walker
+                            // auto-triggers `start_optional_scope()` on
+                            // pushing OptionalGroupAt(1).
+                            return WpdsStepAction::Push {
+                                symbol: StackSymbolV2::optional_group_at(
+                                    #result_src_idx, #rule_idx, 1u8, *outer_bp,
+                                ),
+                                weight: LexicographicWeight::one(),
+                                new_state: WpdsState::OptionalGroup {
+                                    result_src_idx: #result_src_idx,
+                                    rule_idx: #rule_idx,
+                                    group_idx: #group_idx_byte,
+                                    sub_pos: 1,
+                                    outer_bp: *outer_bp,
+                                },
+                            };
+                        }
+                        // SKIP: OptGroupAbsent pushes Optional(None) and
+                        // replaces the (top) outer RuleAt with rule_at(next_outer).
+                        return WpdsStepAction::OptGroupAbsent {
+                            replace_symbol: StackSymbolV2::rule_at(
+                                #result_src_idx, #rule_idx,
+                                #outer_next_pos_byte, Some(*outer_bp),
+                            ),
+                            weight: LexicographicWeight::one(),
+                            new_state: WpdsState::BinderRule {
+                                result_src_idx: #result_src_idx,
+                                rule_idx: #rule_idx,
+                                body_src_idx: #result_src_idx,
+                                outer_bp: *outer_bp,
+                            },
+                        };
+                    }
+                });
+
+                // sub_pos in 1..=inner_len: walk inner positions.
+                for (i, ipos) in inner.iter().enumerate() {
+                    let sp = (i + 1) as u8;
+                    let next_sp = sp + 1;
+                    let inner_arm = match ipos {
+                        BinderPosition::Literal(text) => quote! {
+                            (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                                let token_text = tokens.peek_text(_pos).unwrap_or("");
+                                if token_text != #text {
+                                    return WpdsStepAction::Error(format!(
+                                        "expected '{}' inside optional group at sub_pos {}, got '{}'",
+                                        #text, #sp, token_text,
+                                    ));
+                                }
+                                return WpdsStepAction::ConsumeAndReplace {
+                                    symbol: StackSymbolV2::optional_group_at(
+                                        #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                    ),
+                                    weight: LexicographicWeight::one(),
+                                    new_state: WpdsState::OptionalGroup {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        group_idx: #group_idx_byte,
+                                        sub_pos: #next_sp,
+                                        outer_bp: *outer_bp,
+                                    },
+                                };
+                            }
+                        },
+                        BinderPosition::ParamParse { cat } => {
+                            let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
+                            quote! {
+                                (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                                    return WpdsStepAction::ReplaceAndPush {
+                                        replace_symbol: StackSymbolV2::optional_group_at(
+                                            #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                        ),
+                                        push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
+                                        weight: LexicographicWeight::one(),
+                                        new_state: WpdsState::PrefixDispatch {
+                                            pos: _pos,
+                                            cur_bp: 0,
+                                        },
+                                    };
+                                }
+                            }
+                        }
+                        BinderPosition::BinderIdent => quote! {
+                            (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                                match tokens.peek_kind(_pos) {
+                                    Some(mettail_prattail::automata::TokenKind::Ident) => {}
+                                    _ => return WpdsStepAction::Error(format!(
+                                        "expected identifier inside optional group at sub_pos {}", #sp,
+                                    )),
+                                }
+                                return WpdsStepAction::ConsumeIdentAndReplace {
+                                    symbol: StackSymbolV2::optional_group_at(
+                                        #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                    ),
+                                    weight: LexicographicWeight::one(),
+                                    new_state: WpdsState::OptionalGroup {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        group_idx: #group_idx_byte,
+                                        sub_pos: #next_sp,
+                                        outer_bp: *outer_bp,
+                                    },
+                                    start_scope: true,
+                                };
+                            }
+                        },
+                        BinderPosition::GuardSlot => quote! {
+                            (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                                return WpdsStepAction::ParsePredicate {
+                                    replace_symbol: StackSymbolV2::optional_group_at(
+                                        #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                    ),
+                                    weight: LexicographicWeight::one(),
+                                    new_state: WpdsState::OptionalGroup {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        group_idx: #group_idx_byte,
+                                        sub_pos: #next_sp,
+                                        outer_bp: *outer_bp,
+                                    },
+                                };
+                            }
+                        },
+                        BinderPosition::OptionalGroup { .. }
+                        | BinderPosition::BinderListLoop { .. } => {
+                            // Nested Optional / BinderListLoop inside Optional
+                            // are out of pilot scope. Emit no arm so the
+                            // catch-all `_` returns Idle, which causes the
+                            // walker's saturation loop to surface the bug.
+                            quote! {}
+                        }
+                    };
+                    arms.push(inner_arm);
+                }
+
+                // sub_pos == final_sub_pos: finalize.
+                arms.push(quote! {
+                    (#result_src_idx, #rule_idx, #group_idx_byte, #final_sub_pos) => {
+                        return WpdsStepAction::OptGroupFinalize {
+                            replace_symbol: StackSymbolV2::rule_at(
+                                #result_src_idx, #rule_idx,
+                                #outer_next_pos_byte, Some(*outer_bp),
+                            ),
+                            weight: LexicographicWeight::one(),
+                            new_state: WpdsState::BinderRule {
+                                result_src_idx: #result_src_idx,
+                                rule_idx: #rule_idx,
+                                body_src_idx: #result_src_idx,
+                                outer_bp: *outer_bp,
+                            },
+                        };
+                    }
+                });
+            }
+        }
+    }
+
+    if arms.is_empty() {
+        return quote! { WpdsStepAction::Idle };
+    }
+    quote! {
+        {
+            match (*result_src_idx, *rule_idx, *group_idx, *sub_pos) {
+                #(#arms)*
+                _ => WpdsStepAction::Idle,
+            }
+        }
+    }
+}
+
 /// Phase 5: emit the action_for arm for a multi-step rule.
 pub(crate) fn emit_binder_action_entry(
     src_idx: u16,
@@ -748,6 +1158,87 @@ pub(crate) fn emit_binder_action_entry(
                     };
                 });
                 binder_list_holder = Some(var.clone());
+            }
+            ActionArgKind::Optional(inner_kinds) => {
+                // Opt-Group: extract the Optional arg, exposing each inner
+                // field as `Option<Box<T>>` (or Option<...> per inner kind).
+                // The runtime pushes ActionArg::Optional(Some(inner_args))
+                // when taken, Optional(None) when skipped. Inner args are
+                // ordered identically to inner_kinds (matches enums.rs's
+                // flat field emission).
+                let opt_var = format_ident!("opt_{}", i);
+                let mut inner_ext: Vec<TokenStream> = Vec::new();
+                let mut inner_idents: Vec<Ident> = Vec::new();
+                for (j, k) in inner_kinds.iter().enumerate() {
+                    let inner_var = format_ident!("inner_{}_{}", i, j);
+                    inner_idents.push(inner_var.clone());
+                    let extract_inner = match k {
+                        ActionArgKind::Term(cat) => {
+                            let cat_id = format_ident!("{}", cat);
+                            quote! {
+                                let #inner_var: Option<Box<#cat_id>> =
+                                    match #opt_var.as_mut() {
+                                        Some(inner_iter) => inner_iter.next()
+                                            .and_then(|a| a.into_term::<#cat_id>())
+                                            .map(Box::new),
+                                        None => None,
+                                    };
+                            }
+                        }
+                        ActionArgKind::BinderName => quote! {
+                            let #inner_var: Option<String> =
+                                match #opt_var.as_mut() {
+                                    Some(inner_iter) => match inner_iter.next() {
+                                        Some(mettail_prattail::wpds_runtime::ActionArg::Ident { name, .. }) => Some(name),
+                                        _ => None,
+                                    },
+                                    None => None,
+                                };
+                        },
+                        ActionArgKind::Predicate => quote! {
+                            let #inner_var: Option<mettail_runtime::BehavioralPred> =
+                                match #opt_var.as_mut() {
+                                    Some(inner_iter) => inner_iter.next()
+                                        .and_then(|a| a.into_predicate::<mettail_runtime::BehavioralPred>()),
+                                    None => None,
+                                };
+                        },
+                        ActionArgKind::BinderList => quote! {
+                            let #inner_var: Option<Vec<String>> =
+                                match #opt_var.as_mut() {
+                                    Some(inner_iter) => match inner_iter.next() {
+                                        Some(mettail_prattail::wpds_runtime::ActionArg::BinderScope(h)) => Some(h.names),
+                                        _ => None,
+                                    },
+                                    None => None,
+                                };
+                        },
+                        ActionArgKind::Optional(_) => quote! {
+                            // Nested Optional: pilot scope omits this — the
+                            // inner is consumed-and-dropped but doesn't
+                            // contribute a field. classify_binder rejects
+                            // nested Optional today, so this arm is
+                            // unreachable. If the rejection lifts, extract
+                            // the nested ActionArg::Optional and recursively
+                            // unwrap.
+                            let #inner_var: () = ();
+                        },
+                    };
+                    inner_ext.push(extract_inner);
+                }
+                extracts.push(quote! {
+                    let mut #opt_var: Option<std::vec::IntoIter<mettail_prattail::wpds_runtime::ActionArg>> =
+                        match iter.next() {
+                            Some(arg) => arg.into_optional()
+                                .flatten()
+                                .map(|v| v.into_iter()),
+                            _ => return,
+                        };
+                    #(#inner_ext)*
+                });
+                for ident in inner_idents {
+                    field_names.push(quote! { #ident });
+                }
             }
         }
     }

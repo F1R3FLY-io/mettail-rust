@@ -1377,10 +1377,19 @@ fn generate_var_collection_impl(
             continue;
         }
 
-        // Use term_context if available for accurate field count
-        // Each TermParam becomes one field (abstractions become Scope fields)
+        // Use term_context if available for accurate field count.
+        // Each TermParam becomes one field (abstractions become Scope fields).
+        // Opt-Group: an Optional contributes `inner.len()` fields (each
+        // wrapped as `Option<...>`), not 1 — flatten recursively.
+        fn flat_field_count(params: &[mettail_ast::grammar::TermParam]) -> usize {
+            use mettail_ast::grammar::TermParam;
+            params.iter().map(|p| match p {
+                TermParam::Optional { params: inner } => flat_field_count(inner),
+                _ => 1,
+            }).sum()
+        }
         let field_count = if let Some(ctx) = &rule.term_context {
-            ctx.len()
+            flat_field_count(ctx)
         } else {
             // Old syntax - count non-terminals but combine binder+body pairs
             let mut count = 0;
@@ -1419,102 +1428,87 @@ fn generate_var_collection_impl(
             let mut recurse_calls: Vec<TokenStream> = Vec::new();
 
             if let Some(ctx) = &rule.term_context {
-                for (i, param) in ctx.iter().enumerate() {
-                    let field_name = &field_names[i];
-                    use mettail_ast::grammar::TermParam;
-                    use mettail_ast::types::TypeExpr;
+                use mettail_ast::grammar::TermParam;
+                use mettail_ast::types::TypeExpr;
 
-                    match param {
-                        TermParam::Simple { ty, .. } => {
-                            // Check if type is primary type or contains it
-                            match ty {
-                                TypeExpr::Base(ident)
-                                    if ident.to_string() == primary_type.to_string() =>
-                                {
-                                    recurse_calls.push(quote! {
-                                        Self::#impl_fn_name(root_term, #field_name.as_ref(), result, seen);
-                                    });
-                                },
-                                TypeExpr::Collection { element, .. } => {
-                                    if let TypeExpr::Base(ident) = element.as_ref() {
-                                        if ident.to_string() == primary_type.to_string() {
-                                            recurse_calls.push(quote! {
-                                                for (elem, _) in #field_name.iter() {
-                                                    Self::#impl_fn_name(root_term, elem, result, seen);
-                                                }
-                                            });
-                                        }
-                                    }
-                                },
-                                _ => {},
-                            }
-                        },
-                        TermParam::Abstraction { ty, .. } => {
-                            // Scope field with single binder - recurse into body
-                            if let TypeExpr::Arrow { codomain, .. } = ty {
-                                if let TypeExpr::Base(ident) = codomain.as_ref() {
-                                    if ident.to_string() == primary_type.to_string() {
-                                        // Also extract binder info from scope
-                                        let domain_str = if let TypeExpr::Arrow { domain, .. } = ty
-                                        {
-                                            if let TypeExpr::Base(d) = domain.as_ref() {
-                                                d.to_string()
+                // Opt-Group: emit recursion calls for a flat parallel-array
+                // view of the term context. Each TermParam is consumed in
+                // order (advancing field_idx by 1 for non-Optional params).
+                // Optional descends into inner params with `optional_wrap=true`,
+                // which gates each recursion in `if let Some(__v) = #field { ... }`.
+                fn emit_recursion(
+                    params: &[TermParam],
+                    field_names: &[syn::Ident],
+                    field_idx: &mut usize,
+                    optional_wrap: bool,
+                    primary_type: &syn::Ident,
+                    impl_fn_name: &syn::Ident,
+                    recurse_calls: &mut Vec<TokenStream>,
+                ) {
+                    for param in params {
+                        match param {
+                            TermParam::Simple { ty, .. } => {
+                                let field_name = &field_names[*field_idx];
+                                *field_idx += 1;
+                                let inner_body: Option<TokenStream> = match ty {
+                                    TypeExpr::Base(ident)
+                                        if ident.to_string() == primary_type.to_string() =>
+                                    {
+                                        Some(quote! {
+                                            Self::#impl_fn_name(root_term, __v.as_ref(), result, seen);
+                                        })
+                                    },
+                                    TypeExpr::Collection { element, .. } => {
+                                        if let TypeExpr::Base(id) = element.as_ref() {
+                                            if id.to_string() == primary_type.to_string() {
+                                                Some(quote! {
+                                                    for (elem, _) in __v.iter() {
+                                                        Self::#impl_fn_name(root_term, elem, result, seen);
+                                                    }
+                                                })
                                             } else {
-                                                "Name".to_string()
+                                                None
                                             }
                                         } else {
-                                            "Name".to_string()
-                                        };
-                                        let domain_lit =
-                                            LitStr::new(&domain_str, Span::call_site());
-
+                                            None
+                                        }
+                                    },
+                                    _ => None,
+                                };
+                                if let Some(body) = inner_body {
+                                    if optional_wrap {
                                         recurse_calls.push(quote! {
-                                            // Extract binder from scope using unbind
-                                            let (binder, body) = #field_name.clone().unbind();
-                                            if let Some(name) = &binder.0.pretty_name {
-                                                if !seen.contains(name) {
-                                                    seen.insert(name.clone());
-                                                    let var_type = body.infer_var_type(name)
-                                                        .map(|t| Self::inferred_to_term_type(&t))
-                                                        .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()));
-                                                    result.push(mettail_runtime::VarTypeInfo {
-                                                        name: name.clone(),
-                                                        ty: var_type,
-                                                    });
-                                                }
+                                            if let Some(__v) = #field_name.as_ref() {
+                                                #body
                                             }
-                                            Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
+                                        });
+                                    } else {
+                                        recurse_calls.push(quote! {
+                                            { let __v = #field_name; #body }
                                         });
                                     }
                                 }
-                            }
-                        },
-                        TermParam::MultiAbstraction { ty, .. } => {
-                            // Scope field with multi-binder - recurse into body
-                            if let TypeExpr::Arrow { codomain, .. } = ty {
-                                if let TypeExpr::Base(ident) = codomain.as_ref() {
-                                    if ident.to_string() == primary_type.to_string() {
-                                        let domain_str = if let TypeExpr::Arrow { domain, .. } = ty
-                                        {
-                                            if let TypeExpr::MultiBinder(inner) = domain.as_ref() {
-                                                if let TypeExpr::Base(d) = inner.as_ref() {
-                                                    d.to_string()
+                            },
+                            TermParam::Abstraction { ty, .. } => {
+                                let field_name = &field_names[*field_idx];
+                                *field_idx += 1;
+                                if let TypeExpr::Arrow { codomain, .. } = ty {
+                                    if let TypeExpr::Base(ident) = codomain.as_ref() {
+                                        if ident.to_string() == primary_type.to_string() {
+                                            let domain_str =
+                                                if let TypeExpr::Arrow { domain, .. } = ty {
+                                                    if let TypeExpr::Base(d) = domain.as_ref() {
+                                                        d.to_string()
+                                                    } else {
+                                                        "Name".to_string()
+                                                    }
                                                 } else {
                                                     "Name".to_string()
-                                                }
-                                            } else {
-                                                "Name".to_string()
-                                            }
-                                        } else {
-                                            "Name".to_string()
-                                        };
-                                        let domain_lit =
-                                            LitStr::new(&domain_str, Span::call_site());
-
-                                        recurse_calls.push(quote! {
-                                            // Extract binders from multi-scope using unbind
-                                            let (binders, body) = #field_name.clone().unbind();
-                                            for binder in &binders {
+                                                };
+                                            let domain_lit =
+                                                LitStr::new(&domain_str, Span::call_site());
+                                            let body_block = quote! {
+                                                let (binder, body) = __scope.clone().unbind();
                                                 if let Some(name) = &binder.0.pretty_name {
                                                     if !seen.contains(name) {
                                                         seen.insert(name.clone());
@@ -1527,19 +1521,110 @@ fn generate_var_collection_impl(
                                                         });
                                                     }
                                                 }
+                                                Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
+                                            };
+                                            if optional_wrap {
+                                                recurse_calls.push(quote! {
+                                                    if let Some(__scope) = #field_name.as_ref() {
+                                                        #body_block
+                                                    }
+                                                });
+                                            } else {
+                                                recurse_calls.push(quote! {
+                                                    { let __scope = #field_name; #body_block }
+                                                });
                                             }
-                                            Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
-                                        });
+                                        }
                                     }
                                 }
-                            }
-                        },
-                        TermParam::GuardBody { .. } => {
-                            // Guard bodies do not contribute constructor fields;
-                            // they are evaluated by the behavioral guard evaluator.
-                        },
+                            },
+                            TermParam::MultiAbstraction { ty, .. } => {
+                                let field_name = &field_names[*field_idx];
+                                *field_idx += 1;
+                                if let TypeExpr::Arrow { codomain, .. } = ty {
+                                    if let TypeExpr::Base(ident) = codomain.as_ref() {
+                                        if ident.to_string() == primary_type.to_string() {
+                                            let domain_str =
+                                                if let TypeExpr::Arrow { domain, .. } = ty {
+                                                    if let TypeExpr::MultiBinder(inner) =
+                                                        domain.as_ref()
+                                                    {
+                                                        if let TypeExpr::Base(d) = inner.as_ref() {
+                                                            d.to_string()
+                                                        } else {
+                                                            "Name".to_string()
+                                                        }
+                                                    } else {
+                                                        "Name".to_string()
+                                                    }
+                                                } else {
+                                                    "Name".to_string()
+                                                };
+                                            let domain_lit =
+                                                LitStr::new(&domain_str, Span::call_site());
+                                            let body_block = quote! {
+                                                let (binders, body) = __scope.clone().unbind();
+                                                for binder in &binders {
+                                                    if let Some(name) = &binder.0.pretty_name {
+                                                        if !seen.contains(name) {
+                                                            seen.insert(name.clone());
+                                                            let var_type = body.infer_var_type(name)
+                                                                .map(|t| Self::inferred_to_term_type(&t))
+                                                                .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()));
+                                                            result.push(mettail_runtime::VarTypeInfo {
+                                                                name: name.clone(),
+                                                                ty: var_type,
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                                Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
+                                            };
+                                            if optional_wrap {
+                                                recurse_calls.push(quote! {
+                                                    if let Some(__scope) = #field_name.as_ref() {
+                                                        #body_block
+                                                    }
+                                                });
+                                            } else {
+                                                recurse_calls.push(quote! {
+                                                    { let __scope = #field_name; #body_block }
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            TermParam::GuardBody { .. } => {
+                                *field_idx += 1;
+                                // Guard bodies are passive runtime data; no
+                                // recursion needed for VarTypeInfo collection.
+                            },
+                            TermParam::Optional { params: inner } => {
+                                emit_recursion(
+                                    inner,
+                                    field_names,
+                                    field_idx,
+                                    true, // wrap inner recursions in `if let Some(...)`
+                                    primary_type,
+                                    impl_fn_name,
+                                    recurse_calls,
+                                );
+                            },
+                        }
                     }
                 }
+
+                let mut idx = 0usize;
+                emit_recursion(
+                    ctx,
+                    &field_names,
+                    &mut idx,
+                    false,
+                    primary_type,
+                    &impl_fn_name,
+                    &mut recurse_calls,
+                );
             } else {
                 // Old-style syntax - iterate through items directly
                 // For old syntax, fields are paired: Binder + NonTerminal = one Scope field
@@ -3479,19 +3564,18 @@ fn classify_rule_for_cek(rule: &GrammarRule) -> CekRuleKind {
 /// This is the number of positional fields in the generated enum variant.
 fn rule_field_count(rule: &GrammarRule) -> usize {
     if let Some(ref tc) = rule.term_context {
-        tc.iter()
-            .filter(|p| {
-                !matches!(
-                    p,
-                    mettail_ast::grammar::TermParam::GuardBody { .. }
-                )
-            })
-            .map(|p| match p {
-                mettail_ast::grammar::TermParam::Simple { .. } => 1,
-                mettail_ast::grammar::TermParam::MultiAbstraction { .. } => 1,
-                _ => 0,
-            })
-            .sum()
+        // Opt-Group: count flat fields (each Optional inner contributes
+        // one Option<Box<T>> field). Mirrors `convert_term_context_to_items`
+        // and enums.rs flattening.
+        fn count_one(p: &mettail_ast::grammar::TermParam) -> usize {
+            use mettail_ast::grammar::TermParam;
+            match p {
+                TermParam::Simple { .. } | TermParam::MultiAbstraction { .. } | TermParam::Abstraction { .. } => 1,
+                TermParam::GuardBody { .. } => 0,
+                TermParam::Optional { params: inner } => inner.iter().map(count_one).sum(),
+            }
+        }
+        tc.iter().map(count_one).sum()
     } else {
         rule.items
             .iter()

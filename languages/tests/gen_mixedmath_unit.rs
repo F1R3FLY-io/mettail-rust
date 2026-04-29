@@ -118,20 +118,6 @@ fn unit_mixedmath_int_neg() {
 }
 
 #[test]
-fn unit_mixedmath_auto_bool_bvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Bool::BVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BVar");
-}
-
-#[test]
 fn unit_mixedmath_auto_bool_boollit() {
     let term = Bool::BoolLit(false);
     let displayed = format!("{}", term);
@@ -141,20 +127,6 @@ fn unit_mixedmath_auto_bool_boollit() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for BoolLit: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_mixedmath_auto_int_ivar() {
-    mettail_runtime::clear_var_cache();
-    let term = Int::IVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for IVar");
 }
 
 #[test]

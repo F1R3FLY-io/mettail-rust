@@ -268,6 +268,27 @@ fn generate_congruence_rules(
             continue;
         }
 
+        // Opt-Group (2026-04-29): skip rules with `TermParam::Optional`
+        // fields. Equality congruence for `Option<Box<Cat>>` requires
+        // None/Some discrimination + recursive eq on Some-wrapped inner.
+        // The current pool-based group emission doesn't handle this
+        // shape; defer until a shipped grammar exercises eq-cong on
+        // Optional-bearing constructors. Synthetic test grammars (like
+        // optsmoke) use no equations, so this skip has no observable
+        // effect on the smoke tests.
+        if let Some(ref tc) = grammar_rule.term_context {
+            fn has_optional(params: &[mettail_ast::grammar::TermParam]) -> bool {
+                use mettail_ast::grammar::TermParam;
+                params.iter().any(|p| match p {
+                    TermParam::Optional { .. } => true,
+                    _ => false,
+                })
+            }
+            if has_optional(tc) {
+                continue;
+            }
+        }
+
         // Collect non-terminal argument categories (skip built-in types like Var, Integer)
         let arg_cats: Vec<String> = grammar_rule
             .items

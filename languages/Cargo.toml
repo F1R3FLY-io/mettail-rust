@@ -105,6 +105,11 @@ name = "simulate_refinementsmoke"
 path = "src/bin/simulate_refinementsmoke.rs"
 required-features = ["strategies"]
 
+[[bin]]
+name = "simulate_optsmoke"
+path = "src/bin/simulate_optsmoke.rs"
+required-features = ["strategies"]
+
 
 
 [[bench]]

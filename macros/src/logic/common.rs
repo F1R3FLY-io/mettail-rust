@@ -245,17 +245,31 @@ pub fn compute_category_reachability(language: &LanguageDef) -> BTreeSet<(String
 
         // Extract field types from new-syntax term_context
         if let Some(ref term_context) = rule.term_context {
-            for param in term_context {
-                match param {
-                    TermParam::Simple { ty, .. } => {
-                        collect_type_refs(&src, ty, &categories, &mut edges);
-                    },
-                    TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
-                        collect_type_refs(&src, ty, &categories, &mut edges);
-                    },
-                    TermParam::GuardBody { .. } => {},
+            // Opt-Group: recursively walk through Optional groups so
+            // category-edge graph captures Option<T> as referencing T.
+            fn walk(
+                params: &[TermParam],
+                src: &str,
+                categories: &[String],
+                edges: &mut BTreeMap<String, BTreeSet<String>>,
+            ) {
+                for param in params {
+                    match param {
+                        TermParam::Simple { ty, .. } => {
+                            collect_type_refs(src, ty, categories, edges);
+                        },
+                        TermParam::Abstraction { ty, .. }
+                        | TermParam::MultiAbstraction { ty, .. } => {
+                            collect_type_refs(src, ty, categories, edges);
+                        },
+                        TermParam::GuardBody { .. } => {},
+                        TermParam::Optional { params: inner } => {
+                            walk(inner, src, categories, edges);
+                        },
+                    }
                 }
             }
+            walk(term_context, &src, &categories, &mut edges);
         } else {
             // Old-syntax: inspect items
             for item in &rule.items {
@@ -430,21 +444,38 @@ pub fn compute_demanded_categories(language: &LanguageDef) -> BTreeSet<String> {
     // 4. Categories referenced by HOL step rules (rust_code constructors)
     // These are constructors with rust_code that reference categories via their field types.
     // The constructor's own category and all field categories are demanded.
+    fn walk_term_params_for_demand(
+        params: &[TermParam],
+        all_categories: &BTreeSet<String>,
+        demanded: &mut BTreeSet<String>,
+    ) {
+        for param in params {
+            match param {
+                TermParam::Simple { ty, .. } => {
+                    collect_type_expr_categories(ty, all_categories, demanded);
+                },
+                TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
+                    collect_type_expr_categories(ty, all_categories, demanded);
+                },
+                TermParam::GuardBody { .. } => {},
+                TermParam::Optional { params: inner } => {
+                    // Opt-Group: an Option<T>-wrapped field still references
+                    // category T at the type level — the Some(x) branch
+                    // produces a value of category T, which must be
+                    // demanded by HOL step rules that destructure the
+                    // optional. Recursing matches the structural
+                    // contribution of the inner params identically to
+                    // top-level params.
+                    walk_term_params_for_demand(inner, all_categories, demanded);
+                },
+            }
+        }
+    }
     for rule in &language.terms {
         if rule.rust_code.is_some() {
             demanded.insert(rule.category.to_string());
             if let Some(ref term_ctx) = rule.term_context {
-                for param in term_ctx {
-                    match param {
-                        TermParam::Simple { ty, .. } => {
-                            collect_type_expr_categories(ty, &all_categories, &mut demanded);
-                        },
-                        TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
-                            collect_type_expr_categories(ty, &all_categories, &mut demanded);
-                        },
-                        TermParam::GuardBody { .. } => {},
-                    }
-                }
+                walk_term_params_for_demand(term_ctx, &all_categories, &mut demanded);
             }
         }
     }
@@ -671,17 +702,30 @@ fn collect_constructor_field_categories(
     demanded: &mut BTreeSet<String>,
 ) {
     if let Some(ref term_ctx) = rule.term_context {
-        for param in term_ctx {
-            match param {
-                TermParam::Simple { ty, .. } => {
-                    collect_type_expr_categories(ty, all_categories, demanded);
-                },
-                TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
-                    collect_type_expr_categories(ty, all_categories, demanded);
-                },
-                TermParam::GuardBody { .. } => {},
+        // Opt-Group: same recursive walk as walk_term_params_for_demand.
+        // Inner Option<T> fields still demand category T.
+        fn walk(
+            params: &[TermParam],
+            all_categories: &BTreeSet<String>,
+            demanded: &mut BTreeSet<String>,
+        ) {
+            for param in params {
+                match param {
+                    TermParam::Simple { ty, .. } => {
+                        collect_type_expr_categories(ty, all_categories, demanded);
+                    },
+                    TermParam::Abstraction { ty, .. }
+                    | TermParam::MultiAbstraction { ty, .. } => {
+                        collect_type_expr_categories(ty, all_categories, demanded);
+                    },
+                    TermParam::GuardBody { .. } => {},
+                    TermParam::Optional { params: inner } => {
+                        walk(inner, all_categories, demanded);
+                    },
+                }
             }
         }
+        walk(term_ctx, all_categories, demanded);
     } else {
         // Old-syntax: inspect items directly
         for item in &rule.items {

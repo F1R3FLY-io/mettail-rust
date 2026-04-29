@@ -994,29 +994,49 @@ fn generate_engine_syntax_pattern_arm(
     // Map from param name -> TypeExpr for looking up category
     let mut param_types: HashMap<String, &TypeExpr> = HashMap::new();
 
-    for param in term_context {
+    // Opt-Group: flatten the term context so inner params of `#opt(...)`
+    // are visible to the display generator with the same name resolution
+    // as top-level params. The display impl handles Option<T> wrapping
+    // by emitting inner literals/params only when the Option is Some.
+    fn flatten_params<'a>(params: &'a [TermParam], out: &mut Vec<&'a TermParam>) {
+        for p in params {
+            match p {
+                TermParam::Optional { params: inner } => flatten_params(inner, out),
+                _ => out.push(p),
+            }
+        }
+    }
+    let mut flat: Vec<&TermParam> = Vec::new();
+    flatten_params(term_context, &mut flat);
+
+    for param in flat {
         match param {
             TermParam::Simple { name, ty } => {
                 param_names.push(name.to_string());
                 param_types.insert(name.to_string(), ty);
             },
-            TermParam::Abstraction { binder, body, ty, .. } => {
+            TermParam::Abstraction { binder, body, ty: _ } => {
                 has_abstraction = true;
                 abstraction_binder = Some(binder.to_string());
                 abstraction_body = Some(body.to_string());
+                let _ = body;
             },
-            TermParam::MultiAbstraction { binder, body, ty, .. } => {
+            TermParam::MultiAbstraction { binder, body, ty: _ } => {
                 has_abstraction = true;
                 is_multi_binder = true;
                 abstraction_binder = Some(binder.to_string());
                 abstraction_body = Some(body.to_string());
+                let _ = body;
             },
             TermParam::GuardBody { name } => {
                 // Phase 2E: register the guard slot's name so the
-                // syntax pattern's reference (e.g., `... where guard
-                // ...`) resolves and the per-instance BehavioralPred
-                // field is rendered via its Display impl.
+                // syntax pattern's reference resolves and the
+                // per-instance BehavioralPred field is rendered.
                 param_names.push(name.to_string());
+            },
+            TermParam::Optional { .. } => {
+                // Already flattened — unreachable.
+                unreachable!("Optional should have been flattened");
             },
         }
     }
@@ -1365,6 +1385,36 @@ fn generate_engine_pattern_op(
             }
         },
         PatternOp::Opt { inner } => {
+            // Opt-Group: emit the inner segment GATED on the first
+            // Param's `is_some()`. By WPDS Opt-Group invariant, all
+            // inner Param fields share the same Some/None fate (the
+            // walker's optional-scope finalize/skip is atomic). Gating
+            // on the first Param's discriminant suffices.
+            //
+            // Inside the gated block, each inner Param's variant field
+            // is `Option<Box<Cat>>`; rebind to `&Cat` via
+            // `unwrap_or_unchecked`-style on `as_ref().unwrap()` (safe
+            // because the gating ensures Some).
+            let gating_ident: Option<syn::Ident> = inner.iter().find_map(|expr| {
+                if let SyntaxExpr::Param(id) = expr {
+                    Some(syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site()))
+                } else {
+                    None
+                }
+            });
+            let inner_bindings: Vec<TokenStream> = inner.iter().filter_map(|expr| {
+                if let SyntaxExpr::Param(id) = expr {
+                    let id_ident = syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
+                    let inner_var = quote::format_ident!("__opt_{}", id);
+                    Some(quote! {
+                        let #inner_var: &_ = #id_ident.as_ref()
+                            .map(|__b| __b.as_ref())
+                            .expect("Opt-Group: inner display ran with None");
+                    })
+                } else {
+                    None
+                }
+            }).collect();
             let inner_parts: Vec<TokenStream> = inner
                 .iter()
                 .map(|expr| match expr {
@@ -1372,20 +1422,34 @@ fn generate_engine_pattern_op(
                         quote! { result.push_str(#s); }
                     },
                     SyntaxExpr::Param(id) => {
-                        let ident = syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
-                        quote! { result.push_str(&format!("{}", #ident)); }
+                        let inner_var = quote::format_ident!("__opt_{}", id);
+                        quote! { result.push_str(&format!("{}", #inner_var)); }
                     },
-                    SyntaxExpr::Op(op) => {
-                        // Nested ops in optional - format inline
-                        quote! { /* nested op in optional */ }
+                    SyntaxExpr::Op(_op) => {
+                        quote! { /* nested op in optional — flattened by classify_binder */ }
                     },
                 })
                 .collect();
-            quote! {
-                {
-                    let mut result = String::new();
-                    #(#inner_parts)*
-                    stack.push(DisplayTask::WriteString(result));
+            if let Some(gating) = gating_ident {
+                quote! {
+                    {
+                        if #gating.is_some() {
+                            let mut result = String::new();
+                            #(#inner_bindings)*
+                            #(#inner_parts)*
+                            stack.push(DisplayTask::WriteString(result));
+                        }
+                    }
+                }
+            } else {
+                // No Param inside the optional — emit unconditional
+                // (literal-only optional groups are unusual but valid).
+                quote! {
+                    {
+                        let mut result = String::new();
+                        #(#inner_parts)*
+                        stack.push(DisplayTask::WriteString(result));
+                    }
                 }
             }
         },

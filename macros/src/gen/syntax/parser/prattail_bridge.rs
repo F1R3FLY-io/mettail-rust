@@ -522,6 +522,46 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
     }
 }
 
+/// Opt-Group: find a TermParam by name, recursing into Optional groups
+/// so inner-param references inside `#opt(...)` resolve. Returns the
+/// INNERMOST matching TermParam (e.g., the `Simple { name: e, ty: Int }`
+/// inside an `Optional { params: [Simple{e,Int}] }`).
+fn find_param_by_name<'a>(
+    context: &'a [TermParam],
+    name_str: &str,
+) -> Option<&'a TermParam> {
+    for p in context {
+        match p {
+            TermParam::Simple { name: n, .. } => {
+                if n.to_string() == name_str {
+                    return Some(p);
+                }
+            },
+            TermParam::Abstraction { binder, body, .. } => {
+                if binder.to_string() == name_str || body.to_string() == name_str {
+                    return Some(p);
+                }
+            },
+            TermParam::MultiAbstraction { binder, body, .. } => {
+                if binder.to_string() == name_str || body.to_string() == name_str {
+                    return Some(p);
+                }
+            },
+            TermParam::GuardBody { name } => {
+                if name.to_string() == name_str {
+                    return Some(p);
+                }
+            },
+            TermParam::Optional { params: inner } => {
+                if let Some(found) = find_param_by_name(inner, name_str) {
+                    return Some(found);
+                }
+            },
+        }
+    }
+    None
+}
+
 /// Convert new-style syntax pattern to SyntaxItemSpec list.
 fn convert_syntax_pattern(
     pattern: &[SyntaxExpr],
@@ -537,18 +577,9 @@ fn convert_syntax_pattern(
             },
             SyntaxExpr::Param(name) => {
                 let name_str = name.to_string();
-                // Look up the parameter type from context
-                if let Some(param) = context.iter().find(|p| match p {
-                    TermParam::Simple { name: n, .. } => n.to_string() == name_str,
-                    TermParam::Abstraction { binder, body, .. } => {
-                        binder.to_string() == name_str || body.to_string() == name_str
-                    },
-                    TermParam::MultiAbstraction { binder, body, .. } => {
-                        binder.to_string() == name_str || body.to_string() == name_str
-                    },
-                    // Phase 2F: guard slot references match their slot name.
-                    TermParam::GuardBody { name } => name.to_string() == name_str,
-                }) {
+                // Look up the parameter type from context (recursing into
+                // any Optional groups so inner-param references resolve).
+                if let Some(param) = find_param_by_name(context, &name_str) {
                     match param {
                         TermParam::Simple { ty, .. } => {
                             let base_cat = extract_base_category(ty);
@@ -599,6 +630,15 @@ fn convert_syntax_pattern(
                                 param_name: name.to_string(),
                             });
                         },
+                        TermParam::Optional { .. } => {
+                            // Opt-Group: an Optional itself is never directly
+                            // referenced by name in syntax_pattern — only its
+                            // INNER params are. find_param_by_name unwraps
+                            // through Optional, so reaching this arm means the
+                            // lookup found the wrapper itself, which indicates
+                            // a malformed lookup. Fall through to ident capture.
+                            items.push(SyntaxItemSpec::IdentCapture { param_name: name_str });
+                        },
                     }
                 } else {
                     // Unknown parameter — treat as ident capture
@@ -624,17 +664,7 @@ fn classify_param_from_context(
     context: &[TermParam],
     cat_names: &[String],
 ) -> SyntaxItemSpec {
-    if let Some(param) = context.iter().find(|p| match p {
-        TermParam::Simple { name, .. } => name.to_string() == name_str,
-        TermParam::Abstraction { binder, body, .. } => {
-            binder.to_string() == name_str || body.to_string() == name_str
-        },
-        TermParam::MultiAbstraction { binder, body, .. } => {
-            binder.to_string() == name_str || body.to_string() == name_str
-        },
-        // Phase 2F: guard slot references match their slot name.
-        TermParam::GuardBody { name } => name.to_string() == name_str,
-    }) {
+    if let Some(param) = find_param_by_name(context, name_str) {
         match param {
             TermParam::Abstraction { binder, ty, .. } if binder.to_string() == name_str => {
                 SyntaxItemSpec::Binder {
@@ -673,6 +703,12 @@ fn classify_param_from_context(
                 // Phase 2F: emit GuardExpression; the parser switches
                 // to the predicate sublanguage parser here.
                 SyntaxItemSpec::GuardExpression { param_name: name.to_string() }
+            },
+            TermParam::Optional { .. } => {
+                // Opt-Group: find_param_by_name unwraps Optional, so an
+                // outer Optional should never be returned. Conservative
+                // fallback: ident capture.
+                SyntaxItemSpec::IdentCapture { param_name: name_str.to_string() }
             },
         }
     } else {

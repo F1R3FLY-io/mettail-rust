@@ -233,28 +233,44 @@ fn build_subterm_map(
 
         // Extract target categories from term_context (new syntax)
         if let Some(ref term_ctx) = rule.term_context {
-            for param in term_ctx {
-                match param {
-                    mettail_ast::grammar::TermParam::Simple { ty, .. } => {
-                        if let mettail_ast::types::TypeExpr::Base(ident) = ty {
-                            let cat = ident.to_string();
-                            if all_categories.contains(&cat) {
-                                target_cats.insert(cat);
+            // Opt-Group: walk recursively so inner Option<T> field
+            // categories are surfaced for fusion-candidate selection.
+            // The fusion REWRITE emitter (below at fields collection)
+            // declines Optional fields because it cannot bind
+            // `Option<T>` with a plain `ref` pattern; here we only
+            // populate the candidate-cat set, so inner cats DO contribute.
+            fn walk(
+                params: &[mettail_ast::grammar::TermParam],
+                all_categories: &HashSet<String>,
+                target_cats: &mut HashSet<String>,
+            ) {
+                for param in params {
+                    match param {
+                        mettail_ast::grammar::TermParam::Simple { ty, .. } => {
+                            if let mettail_ast::types::TypeExpr::Base(ident) = ty {
+                                let cat = ident.to_string();
+                                if all_categories.contains(&cat) {
+                                    target_cats.insert(cat);
+                                }
                             }
                         }
-                    }
-                    mettail_ast::grammar::TermParam::Abstraction { ty, .. }
-                    | mettail_ast::grammar::TermParam::MultiAbstraction { ty, .. } => {
-                        if let mettail_ast::types::TypeExpr::Base(ident) = ty {
-                            let cat = ident.to_string();
-                            if all_categories.contains(&cat) {
-                                target_cats.insert(cat);
+                        mettail_ast::grammar::TermParam::Abstraction { ty, .. }
+                        | mettail_ast::grammar::TermParam::MultiAbstraction { ty, .. } => {
+                            if let mettail_ast::types::TypeExpr::Base(ident) = ty {
+                                let cat = ident.to_string();
+                                if all_categories.contains(&cat) {
+                                    target_cats.insert(cat);
+                                }
                             }
                         }
+                        mettail_ast::grammar::TermParam::GuardBody { .. } => {}
+                        mettail_ast::grammar::TermParam::Optional { params: inner } => {
+                            walk(inner, all_categories, target_cats);
+                        }
                     }
-                    mettail_ast::grammar::TermParam::GuardBody { .. } => {}
                 }
             }
+            walk(term_ctx, &all_categories, &mut target_cats);
         } else {
             // Old syntax: inspect items
             for item in &rule.items {
@@ -589,6 +605,26 @@ fn generate_fused_rule(
                         }
                     }
                     mettail_ast::grammar::TermParam::GuardBody { .. } => None,
+                    mettail_ast::grammar::TermParam::Optional { .. } => {
+                        // Opt-Group: this fields collection is consumed
+                        // by the fusion REWRITE emitter, which generates
+                        // unconditional `ref __fused_fN` patterns. An
+                        // `Option<T>` field cannot be bound by a plain
+                        // `ref` pattern in the surrounding match — it
+                        // would require an `if let Some(...)` clause that
+                        // the existing emission logic does not generate.
+                        // Reporting None here means the field is excluded
+                        // from fusion candidates: the parent constructor
+                        // is still destructurable but its Optional field
+                        // is not a valid fusion target. This is the
+                        // semantically correct decision per Plan agent's
+                        // audit (site E) — not a stub. When fusion
+                        // emission gains `Option<T>`-aware patterns, the
+                        // arm should switch to surfacing the inner
+                        // category; until then None correctly disables
+                        // fusion at this field.
+                        None
+                    }
                 };
                 ty_str.map(|t| (i, t))
             })

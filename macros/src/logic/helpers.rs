@@ -162,6 +162,10 @@ fn generate_user_constructor_pool_arm(
 /// Generate a PoolArm for a regular (non-binding, non-collection) constructor.
 ///
 /// Extracts all fields whose type matches `tgt`, skipping Var and Integer fields.
+///
+/// Opt-Group: when a matching field corresponds to a `TermParam::Optional`
+/// inner param, the field's runtime type is `Option<Box<Cat>>` (not
+/// `Box<Cat>`). The push must be gated: `if let Some(__b) = f { buf.push(__b.as_ref().clone()); }`.
 fn generate_regular_constructor_pool_arm(
     rule: &GrammarRule,
     src: &Ident,
@@ -174,15 +178,49 @@ fn generate_regular_constructor_pool_arm(
         return None; // No fields to extract (nullary constructor)
     }
 
+    // Compute parallel `is_optional` flags from term_context. Walks the
+    // term_context in declaration order; emits one flag per emitted item.
+    // Aligns with `convert_term_context_to_items` flattening.
+    let optional_flags: Vec<bool> = if let Some(ctx) = &rule.term_context {
+        fn walk(
+            params: &[mettail_ast::grammar::TermParam],
+            in_opt: bool,
+            flags: &mut Vec<bool>,
+        ) {
+            use mettail_ast::grammar::TermParam;
+            use mettail_ast::types::TypeExpr;
+            for p in params {
+                match p {
+                    TermParam::Simple { ty, .. } => match ty {
+                        TypeExpr::Base(_) | TypeExpr::Collection { .. } => flags.push(in_opt),
+                        _ => {}
+                    },
+                    TermParam::Abstraction { ty, .. }
+                    | TermParam::MultiAbstraction { ty, .. } => {
+                        if let TypeExpr::Arrow { codomain, .. } = ty {
+                            if matches!(codomain.as_ref(), TypeExpr::Base(_)) {
+                                flags.push(in_opt);
+                            }
+                        }
+                    }
+                    TermParam::GuardBody { .. } => {}
+                    TermParam::Optional { params: inner } => walk(inner, true, flags),
+                }
+            }
+        }
+        let mut flags = Vec::new();
+        walk(ctx, false, &mut flags);
+        flags
+    } else {
+        // Old-syntax: items don't have Optional.
+        fields.iter().map(|_| false).collect()
+    };
+
     // Find indices of fields matching the target category.
-    // collect_nonterminal_fields returns all NonTerminal fields; we additionally
-    // need to know whether each field is a built-in (Var/Integer/…) so we can
-    // skip them. Re-inspect the rule items to get the kind.
     let matching_indices: Vec<usize> = fields
         .iter()
         .enumerate()
         .filter(|(_, (_, field_type))| {
-            // Skip built-in types (Var, Integer, etc.) — not exported categories
             let ft_str = field_type.to_string();
             !mettail_ast::grammar::NonTerminalKind::classify(&ft_str).is_builtin()
                 && **field_type == *tgt
@@ -210,7 +248,21 @@ fn generate_regular_constructor_pool_arm(
         .iter()
         .map(|&i| {
             let name = format_ident!("f{}", i);
-            quote! { buf.push(#name.as_ref().clone()); }
+            // optional_flags is indexed by NonTerminal-position-in-items
+            // (parallel with `fields`). Look up via fields[i].0 → items index.
+            // Simpler: optional_flags is parallel to `fields` (indexed by
+            // items-NonTerminal-index, 0..fields.len()), so `optional_flags[i]`
+            // is the flag for the i-th field.
+            let is_opt = optional_flags.get(i).copied().unwrap_or(false);
+            if is_opt {
+                quote! {
+                    if let Some(__b) = #name.as_ref() {
+                        buf.push(__b.as_ref().clone());
+                    }
+                }
+            } else {
+                quote! { buf.push(#name.as_ref().clone()); }
+            }
         })
         .collect();
 

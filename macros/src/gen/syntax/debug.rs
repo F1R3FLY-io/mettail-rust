@@ -265,6 +265,29 @@ fn generate_debug_regular_arm(
             push_stmts.push(quote! { stack.push(DebugTask::WriteStr(", ")); });
         }
 
+        if field.is_optional {
+            // Opt-Group: emit "Some(...)" with inner Debug-recursive, or
+            // bare "None". Push order is reverse of output order (LIFO).
+            let is_known_category = language.types.iter().any(|t| t.name == field.category);
+            if is_known_category {
+                let task_variant = format_ident!("Debug{}", field.category);
+                push_stmts.push(quote! {
+                    if let Some(__b) = #fname.as_ref() {
+                        // Output order: "Some(" then inner then ")"
+                        stack.push(DebugTask::WriteStr(")"));
+                        stack.push(DebugTask::#task_variant(__b.as_ref() as *const _));
+                        stack.push(DebugTask::WriteStr("Some("));
+                    } else {
+                        stack.push(DebugTask::WriteStr("None"));
+                    }
+                });
+            } else {
+                push_stmts.push(quote! {
+                    stack.push(DebugTask::WriteString(format!("{:?}", #fname)));
+                });
+            }
+            continue;
+        }
         if field.is_collection {
             // Collection fields (Vec<T>, HashBag<T>, HashSet<T>): format inline via Debug
             push_stmts.push(quote! {

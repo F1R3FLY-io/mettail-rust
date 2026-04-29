@@ -272,6 +272,98 @@ enum InferFieldKind {
     MultiBinder, // Scope with multiple binders
 }
 
+/// Opt-Group: whether a field is wrapped in `Option<T>`. Inner params of
+/// `#opt(...)` produce `Option<...>` fields on the AST variant; the
+/// generated recursion must gate on `if let Some(__v) = #name.as_ref()`
+/// so the recursion only fires when the optional was matched. Top-level
+/// (non-optional) fields use `Direct` and bind unconditionally.
+#[derive(Clone, Copy)]
+enum InferFieldWrap {
+    Direct,
+    Optional,
+}
+
+/// Opt-Group: build the flat field list from a term context, expanding
+/// `TermParam::Optional { params }` into its inner params (each contributing
+/// its own field at a flat index, matching the variant emission in
+/// `enums.rs::generate_variant_from_term_context`). Non-recursive fields
+/// (those whose category is not in `all_cats`) are skipped from the
+/// returned list — they need no recursion call. Field name = `f{flat_idx}`.
+fn collect_inference_fields(
+    params: &[TermParam],
+    all_cats: &[&syn::Ident],
+    flat_idx: &mut usize,
+    wrap: InferFieldWrap,
+    out: &mut Vec<(syn::Ident, syn::Ident, InferFieldKind, InferFieldWrap)>,
+) {
+    for param in params {
+        match param {
+            TermParam::Simple { ty, .. } => {
+                let i = *flat_idx;
+                *flat_idx += 1;
+                let field_cat = extract_base_cat(ty);
+                if all_cats.iter().any(|c| c.to_string() == field_cat.to_string()) {
+                    let kind = match ty {
+                        TypeExpr::Collection { coll_type: CollectionType::HashBag, .. } => {
+                            InferFieldKind::HashBag
+                        }
+                        TypeExpr::Collection { coll_type: CollectionType::Vec, .. } => {
+                            InferFieldKind::Vec
+                        }
+                        TypeExpr::Collection { coll_type: CollectionType::HashSet, .. } => {
+                            InferFieldKind::Vec
+                        }
+                        _ => InferFieldKind::Simple,
+                    };
+                    let name = syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
+                    out.push((name, field_cat, kind, wrap));
+                }
+            }
+            TermParam::Abstraction { ty, .. } => {
+                let i = *flat_idx;
+                *flat_idx += 1;
+                let body_cat = extract_base_cat(ty);
+                if all_cats.iter().any(|c| c.to_string() == body_cat.to_string()) {
+                    let name = syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
+                    out.push((name, body_cat, InferFieldKind::Binder, wrap));
+                }
+            }
+            TermParam::MultiAbstraction { ty, .. } => {
+                let i = *flat_idx;
+                *flat_idx += 1;
+                let body_cat = extract_base_cat(ty);
+                if all_cats.iter().any(|c| c.to_string() == body_cat.to_string()) {
+                    let name = syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
+                    out.push((name, body_cat, InferFieldKind::MultiBinder, wrap));
+                }
+            }
+            TermParam::GuardBody { .. } => {
+                *flat_idx += 1;
+            }
+            TermParam::Optional { params: inner } => {
+                // Inner params each consume their own flat slot. Mark
+                // recursion as Optional-wrapped so the emitter gates the
+                // sub-call on `if let Some(__v) = field.as_ref() { ... }`.
+                collect_inference_fields(inner, all_cats, flat_idx, InferFieldWrap::Optional, out);
+            }
+        }
+    }
+}
+
+/// Opt-Group: total flat field count for the term context, accounting for
+/// Optional flattening. Used to compute `total` in the destructure-pattern
+/// emission so positional `_` placeholders match the variant's actual
+/// field layout.
+fn flat_term_param_count(params: &[TermParam]) -> usize {
+    params
+        .iter()
+        .map(|p| match p {
+            TermParam::Optional { params: inner } => flat_term_param_count(inner),
+            _ => 1,
+        })
+        .sum()
+}
+
 /// Generate a match arm for variable inference in a constructor
 fn generate_var_inference_arm(
     rule: &GrammarRule,
@@ -293,65 +385,13 @@ fn generate_var_inference_arm(
     // match the variant's actual field layout. Predicate slots are
     // skipped from the field list but tracked separately so the
     // destructure pattern can use `_` placeholders at their positions.
-    let fields: Vec<(syn::Ident, syn::Ident, InferFieldKind)> = if let Some(ctx) =
+    let fields: Vec<(syn::Ident, syn::Ident, InferFieldKind, InferFieldWrap)> = if let Some(ctx) =
         &rule.term_context
     {
-        ctx.iter()
-            .enumerate()
-            .filter_map(|(i, param)| {
-                let field_name =
-                    syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
-                match param {
-                    TermParam::Simple { ty, .. } => {
-                        let field_cat = extract_base_cat(ty);
-                        if all_cats
-                            .iter()
-                            .any(|c| c.to_string() == field_cat.to_string())
-                        {
-                            let kind = match ty {
-                                TypeExpr::Collection {
-                                    coll_type: CollectionType::HashBag, ..
-                                } => InferFieldKind::HashBag,
-                                TypeExpr::Collection { coll_type: CollectionType::Vec, .. } => {
-                                    InferFieldKind::Vec
-                                },
-                                TypeExpr::Collection {
-                                    coll_type: CollectionType::HashSet, ..
-                                } => InferFieldKind::Vec, // HashSet iter is like Vec
-                                _ => InferFieldKind::Simple,
-                            };
-                            Some((field_name, field_cat, kind))
-                        } else {
-                            None
-                        }
-                    },
-                    TermParam::Abstraction { ty, .. } => {
-                        // For binders, we need to check the body inside the scope
-                        let body_cat = extract_base_cat(ty);
-                        if all_cats
-                            .iter()
-                            .any(|c| c.to_string() == body_cat.to_string())
-                        {
-                            Some((field_name, body_cat, InferFieldKind::Binder))
-                        } else {
-                            None
-                        }
-                    },
-                    TermParam::MultiAbstraction { ty, .. } => {
-                        let body_cat = extract_base_cat(ty);
-                        if all_cats
-                            .iter()
-                            .any(|c| c.to_string() == body_cat.to_string())
-                        {
-                            Some((field_name, body_cat, InferFieldKind::MultiBinder))
-                        } else {
-                            None
-                        }
-                    },
-                    TermParam::GuardBody { .. } => None,
-                }
-            })
-            .collect()
+        let mut out = Vec::new();
+        let mut idx = 0usize;
+        collect_inference_fields(ctx, all_cats, &mut idx, InferFieldWrap::Direct, &mut out);
+        out
     } else {
         // Old syntax - use items
         rule.items
@@ -363,7 +403,7 @@ fn generate_var_inference_arm(
                 match item {
                     GrammarItem::NonTerminal { ident: nt, .. } => {
                         if all_cats.iter().any(|c| c.to_string() == nt.to_string()) {
-                            Some((field_name, nt.clone(), InferFieldKind::Simple))
+                            Some((field_name, nt.clone(), InferFieldKind::Simple, InferFieldWrap::Direct))
                         } else {
                             None
                         }
@@ -378,7 +418,7 @@ fn generate_var_inference_arm(
                                 CollectionType::Vec => InferFieldKind::Vec,
                                 CollectionType::HashSet => InferFieldKind::Vec,
                             };
-                            Some((field_name, element_type.clone(), kind))
+                            Some((field_name, element_type.clone(), kind, InferFieldWrap::Direct))
                         } else {
                             None
                         }
@@ -388,7 +428,7 @@ fn generate_var_inference_arm(
                             .iter()
                             .any(|c| c.to_string() == category.to_string())
                         {
-                            Some((field_name, category.clone(), InferFieldKind::Binder))
+                            Some((field_name, category.clone(), InferFieldKind::Binder, InferFieldWrap::Direct))
                         } else {
                             None
                         }
@@ -425,22 +465,52 @@ fn generate_var_inference_arm(
     // destructure positions match the actual variant layout. For
     // old-syntax rules and new-syntax rules without predicates,
     // use the original pattern (one bound pattern per kept field).
+    //
+    // Opt-Group: `total` uses the FLAT field count (Optional inner
+    // params each contribute one slot to the variant) so positional
+    // `_` placeholders match the actual variant layout.
     let has_guard_slot = rule
         .term_context
         .as_ref()
-        .map(|ctx| ctx.iter().any(|p| matches!(p, TermParam::GuardBody { .. })))
+        .map(|ctx| {
+            fn has_guard(params: &[TermParam]) -> bool {
+                params.iter().any(|p| match p {
+                    TermParam::GuardBody { .. } => true,
+                    TermParam::Optional { params: inner } => has_guard(inner),
+                    _ => false,
+                })
+            }
+            has_guard(ctx)
+        })
         .unwrap_or(false);
 
-    let field_patterns: Vec<TokenStream> = if has_guard_slot {
-        // New syntax with predicate slots: use positional binding.
+    // Three cases for destructure pattern:
+    //   1. New syntax (term_context): variant arity =
+    //      flat_term_param_count(ctx). Use positional `_` placeholders
+    //      at unbound positions (predicate slots, non-recursive
+    //      Simples, non-recursive inner-of-Optional fields), and
+    //      `ref f{i}` at bound positions. Field name `f{i}` is the
+    //      flat field index, matching the variant's emitted layout.
+    //   2. Old syntax (items): field names f{N} come from the items
+    //      index (skipping terminals), so they don't correspond to
+    //      variant positions. Emit one `ref f{name}` per kept field,
+    //      relying on positional binding by pattern length matching
+    //      variant arity (= count of non-terminals).
+    let _ = has_guard_slot; // new-syntax path is uniform regardless
+    let is_new_syntax = rule.term_context.is_some();
+    let field_patterns: Vec<TokenStream> = if is_new_syntax {
+        let total = rule
+            .term_context
+            .as_ref()
+            .map(|c| flat_term_param_count(c))
+            .unwrap_or(0);
         let bound_indices: std::collections::HashSet<usize> = fields
             .iter()
-            .filter_map(|(name, _, _)| {
+            .filter_map(|(name, _, _, _)| {
                 let s = name.to_string();
                 s.strip_prefix('f').and_then(|n| n.parse::<usize>().ok())
             })
             .collect();
-        let total = rule.term_context.as_ref().map(|c| c.len()).unwrap_or(0);
         (0..total)
             .map(|i| {
                 if bound_indices.contains(&i) {
@@ -452,60 +522,46 @@ fn generate_var_inference_arm(
             })
             .collect()
     } else {
-        // Old syntax or no predicate slots: positional patterns
-        // bind by position, with the field names being arbitrary.
+        // Old syntax: emit one bound pattern per kept field.
         fields
             .iter()
-            .map(|(name, _, _)| quote! { ref #name })
+            .map(|(name, _, _, _)| quote! { ref #name })
             .collect()
     };
 
     let recursive_calls: Vec<TokenStream> = fields
         .iter()
-        .map(|(name, _field_cat, kind)| {
-            match kind {
-                InferFieldKind::HashBag => {
-                    // HashBag.iter() returns (&T, usize), need to extract element
-                    quote! {
-                        for (item, _count) in #name.iter() {
-                            if let Some(cat) = item.infer_var_category(var_name) {
-                                return Some(cat);
-                            }
-                        }
-                    }
-                },
-                InferFieldKind::Vec => {
-                    // Vec.iter() returns &T
-                    quote! {
-                        for item in #name.iter() {
-                            if let Some(cat) = item.infer_var_category(var_name) {
-                                return Some(cat);
-                            }
-                        }
-                    }
-                },
-                InferFieldKind::Binder => {
-                    // Scope - access the body via unsafe_body()
-                    quote! {
-                        if let Some(cat) = #name.unsafe_body().infer_var_category(var_name) {
+        .map(|(name, _field_cat, kind, wrap)| {
+            let inner = match kind {
+                InferFieldKind::HashBag => quote! {
+                    for (item, _count) in __v.iter() {
+                        if let Some(cat) = item.infer_var_category(var_name) {
                             return Some(cat);
                         }
                     }
                 },
-                InferFieldKind::MultiBinder => {
-                    // Same as Binder
-                    quote! {
-                        if let Some(cat) = #name.unsafe_body().infer_var_category(var_name) {
+                InferFieldKind::Vec => quote! {
+                    for item in __v.iter() {
+                        if let Some(cat) = item.infer_var_category(var_name) {
                             return Some(cat);
                         }
                     }
                 },
-                InferFieldKind::Simple => {
-                    quote! {
-                        if let Some(cat) = #name.infer_var_category(var_name) {
-                            return Some(cat);
-                        }
+                InferFieldKind::Binder | InferFieldKind::MultiBinder => quote! {
+                    if let Some(cat) = __v.unsafe_body().infer_var_category(var_name) {
+                        return Some(cat);
                     }
+                },
+                InferFieldKind::Simple => quote! {
+                    if let Some(cat) = __v.infer_var_category(var_name) {
+                        return Some(cat);
+                    }
+                },
+            };
+            match wrap {
+                InferFieldWrap::Direct => quote! { { let __v = #name; #inner } },
+                InferFieldWrap::Optional => quote! {
+                    if let Some(__v) = #name.as_ref() { #inner }
                 },
             }
         })
@@ -543,64 +599,13 @@ fn generate_var_type_inference_arm(
     }
 
     // Get field info from term_context or bindings
-    let fields: Vec<(syn::Ident, syn::Ident, InferFieldKind)> = if let Some(ctx) =
+    let fields: Vec<(syn::Ident, syn::Ident, InferFieldKind, InferFieldWrap)> = if let Some(ctx) =
         &rule.term_context
     {
-        ctx.iter()
-            .enumerate()
-            .filter_map(|(i, param)| {
-                let field_name =
-                    syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
-                match param {
-                    TermParam::Simple { ty, .. } => {
-                        let field_cat = extract_base_cat(ty);
-                        if all_cats
-                            .iter()
-                            .any(|c| c.to_string() == field_cat.to_string())
-                        {
-                            let kind = match ty {
-                                TypeExpr::Collection {
-                                    coll_type: CollectionType::HashBag, ..
-                                } => InferFieldKind::HashBag,
-                                TypeExpr::Collection { coll_type: CollectionType::Vec, .. } => {
-                                    InferFieldKind::Vec
-                                },
-                                TypeExpr::Collection {
-                                    coll_type: CollectionType::HashSet, ..
-                                } => InferFieldKind::Vec,
-                                _ => InferFieldKind::Simple,
-                            };
-                            Some((field_name, field_cat, kind))
-                        } else {
-                            None
-                        }
-                    },
-                    TermParam::Abstraction { ty, .. } => {
-                        let body_cat = extract_base_cat(ty);
-                        if all_cats
-                            .iter()
-                            .any(|c| c.to_string() == body_cat.to_string())
-                        {
-                            Some((field_name, body_cat, InferFieldKind::Binder))
-                        } else {
-                            None
-                        }
-                    },
-                    TermParam::MultiAbstraction { ty, .. } => {
-                        let body_cat = extract_base_cat(ty);
-                        if all_cats
-                            .iter()
-                            .any(|c| c.to_string() == body_cat.to_string())
-                        {
-                            Some((field_name, body_cat, InferFieldKind::MultiBinder))
-                        } else {
-                            None
-                        }
-                    },
-                    TermParam::GuardBody { .. } => None,
-                }
-            })
-            .collect()
+        let mut out = Vec::new();
+        let mut idx = 0usize;
+        collect_inference_fields(ctx, all_cats, &mut idx, InferFieldWrap::Direct, &mut out);
+        out
     } else {
         // Old syntax - use items
         rule.items
@@ -612,7 +617,7 @@ fn generate_var_type_inference_arm(
                 match item {
                     GrammarItem::NonTerminal { ident: nt, .. } => {
                         if all_cats.iter().any(|c| c.to_string() == nt.to_string()) {
-                            Some((field_name, nt.clone(), InferFieldKind::Simple))
+                            Some((field_name, nt.clone(), InferFieldKind::Simple, InferFieldWrap::Direct))
                         } else {
                             None
                         }
@@ -627,7 +632,7 @@ fn generate_var_type_inference_arm(
                                 CollectionType::Vec => InferFieldKind::Vec,
                                 CollectionType::HashSet => InferFieldKind::Vec,
                             };
-                            Some((field_name, element_type.clone(), kind))
+                            Some((field_name, element_type.clone(), kind, InferFieldWrap::Direct))
                         } else {
                             None
                         }
@@ -637,7 +642,7 @@ fn generate_var_type_inference_arm(
                             .iter()
                             .any(|c| c.to_string() == category.to_string())
                         {
-                            Some((field_name, category.clone(), InferFieldKind::Binder))
+                            Some((field_name, category.clone(), InferFieldKind::Binder, InferFieldWrap::Direct))
                         } else {
                             None
                         }
@@ -670,21 +675,40 @@ fn generate_var_type_inference_arm(
     //
     // Phase 3A-C4: positional `_` placeholders for predicate slots
     // (see `infer_var_category` for the rationale).
+    //
+    // Opt-Group: `total` uses flat field count (Optional inner params
+    // contribute one slot each), and recursive calls use Optional-wrap
+    // gating when the field is `Option<T>`.
     let has_guard_slot = rule
         .term_context
         .as_ref()
-        .map(|ctx| ctx.iter().any(|p| matches!(p, TermParam::GuardBody { .. })))
+        .map(|ctx| {
+            fn has_guard(params: &[TermParam]) -> bool {
+                params.iter().any(|p| match p {
+                    TermParam::GuardBody { .. } => true,
+                    TermParam::Optional { params: inner } => has_guard(inner),
+                    _ => false,
+                })
+            }
+            has_guard(ctx)
+        })
         .unwrap_or(false);
 
-    let field_patterns: Vec<TokenStream> = if has_guard_slot {
+    let _ = has_guard_slot;
+    let is_new_syntax = rule.term_context.is_some();
+    let field_patterns: Vec<TokenStream> = if is_new_syntax {
+        let total = rule
+            .term_context
+            .as_ref()
+            .map(|c| flat_term_param_count(c))
+            .unwrap_or(0);
         let bound_indices: std::collections::HashSet<usize> = fields
             .iter()
-            .filter_map(|(name, _, _)| {
+            .filter_map(|(name, _, _, _)| {
                 let s = name.to_string();
                 s.strip_prefix('f').and_then(|n| n.parse::<usize>().ok())
             })
             .collect();
-        let total = rule.term_context.as_ref().map(|c| c.len()).unwrap_or(0);
         (0..total)
             .map(|i| {
                 if bound_indices.contains(&i) {
@@ -696,54 +720,48 @@ fn generate_var_type_inference_arm(
             })
             .collect()
     } else {
+        // Old syntax: emit one bound pattern per kept field.
         fields
             .iter()
-            .map(|(name, _, _)| quote! { ref #name })
+            .map(|(name, _, _, _)| quote! { ref #name })
             .collect()
     };
 
     let recursive_calls: Vec<TokenStream> = fields
         .iter()
-        .map(|(name, _field_cat, kind)| match kind {
-            InferFieldKind::HashBag => {
-                quote! {
-                    for (item, _count) in #name.iter() {
+        .map(|(name, _field_cat, kind, wrap)| {
+            let inner = match kind {
+                InferFieldKind::HashBag => quote! {
+                    for (item, _count) in __v.iter() {
                         if let Some(t) = item.infer_var_type(var_name) {
                             return Some(t);
                         }
                     }
-                }
-            },
-            InferFieldKind::Vec => {
-                quote! {
-                    for item in #name.iter() {
+                },
+                InferFieldKind::Vec => quote! {
+                    for item in __v.iter() {
                         if let Some(t) = item.infer_var_type(var_name) {
                             return Some(t);
                         }
                     }
-                }
-            },
-            InferFieldKind::Binder => {
-                quote! {
-                    if let Some(t) = #name.unsafe_body().infer_var_type(var_name) {
+                },
+                InferFieldKind::Binder | InferFieldKind::MultiBinder => quote! {
+                    if let Some(t) = __v.unsafe_body().infer_var_type(var_name) {
                         return Some(t);
                     }
-                }
-            },
-            InferFieldKind::MultiBinder => {
-                quote! {
-                    if let Some(t) = #name.unsafe_body().infer_var_type(var_name) {
+                },
+                InferFieldKind::Simple => quote! {
+                    if let Some(t) = __v.infer_var_type(var_name) {
                         return Some(t);
                     }
-                }
-            },
-            InferFieldKind::Simple => {
-                quote! {
-                    if let Some(t) = #name.infer_var_type(var_name) {
-                        return Some(t);
-                    }
-                }
-            },
+                },
+            };
+            match wrap {
+                InferFieldWrap::Direct => quote! { { let __v = #name; #inner } },
+                InferFieldWrap::Optional => quote! {
+                    if let Some(__v) = #name.as_ref() { #inner }
+                },
+            }
         })
         .collect();
 

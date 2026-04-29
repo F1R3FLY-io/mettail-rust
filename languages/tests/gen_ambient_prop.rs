@@ -147,12 +147,11 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
         let result = match choice {
             0 => AnyTerm::WrapProc(Proc::PZero),
             _ => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapProc(Proc::PVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
@@ -166,12 +165,11 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     match choice {
         0 => AnyTerm::WrapProc(Proc::PZero).unwrap_proc(),
         1 => {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapProc(Proc::PVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
@@ -197,7 +195,7 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
             Proc::PAmb(f0, f1)
         },
         6 => {
-            let binder_name = format!("v{}", reader.next_byte() % 8);
+            let binder_name = format!("a{}", reader.next_byte() % 8);
 let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));
 let body = build_proc_from_tape(reader, child_depth);
 let scope = mettail_runtime::Scope::new(binder, Box::new(body));
@@ -223,12 +221,11 @@ Proc::PPar(bag)
 fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     if depth == 0 {
         let result = {
-    let var_names = ["a", "b", "c", "x", "y", "z"];
-    let idx = (reader.next_byte() as usize) % var_names.len();
+    let _ = reader.next_byte(); // consume tape byte for replay determinism
     AnyTerm::WrapName(Name::NVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var(var_names[idx])
+                mettail_runtime::get_or_create_var("a")
             )
         )
     ))
@@ -485,7 +482,7 @@ fn sim_ambient_normal_form_reachability() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["0", "in( 1 , 1 )", "out( 1 , 1 )", "open( 1 , 1 )", "1 [ 1 ]", "new ( 1 , 1 )"];
+    let test_inputs: Vec<&str> = vec!["0", "in( 0 , 0 )", "out( 0 , 0 )", "open( 0 , 0 )", "0 [ 0 ]", "new ( 0 , 0 )"];
 
     let mut tested = 0usize;
     let mut reached_nf = 0usize;
@@ -537,7 +534,7 @@ fn sim_ambient_roundtrip_under_rewrite() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     // Test a set of concrete expressions for rewrite roundtrip.
-    let test_inputs: Vec<&str> = vec!["0", "in( 1 , 1 )", "out( 1 , 1 )", "open( 1 , 1 )", "1 [ 1 ]", "new ( 1 , 1 )"];
+    let test_inputs: Vec<&str> = vec!["0", "in( 0 , 0 )", "out( 0 , 0 )", "open( 0 , 0 )", "0 [ 0 ]", "new ( 0 , 0 )"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -599,7 +596,7 @@ fn sim_ambient_morphology_bounded() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["0", "in( 1 , 1 )", "out( 1 , 1 )", "open( 1 , 1 )", "1 [ 1 ]", "new ( 1 , 1 )"];
+    let test_inputs: Vec<&str> = vec!["0", "in( 0 , 0 )", "out( 0 , 0 )", "open( 0 , 0 )", "0 [ 0 ]", "new ( 0 , 0 )"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -634,7 +631,7 @@ fn sim_ambient_eval_determinism() {
     let lang = AmbientLanguage;
     let lang_ref: &dyn mettail_runtime::Language = &lang;
 
-    let test_inputs: Vec<&str> = vec!["0", "in( 1 , 1 )", "out( 1 , 1 )", "open( 1 , 1 )", "1 [ 1 ]", "new ( 1 , 1 )"];
+    let test_inputs: Vec<&str> = vec!["0", "in( 0 , 0 )", "out( 0 , 0 )", "open( 0 , 0 )", "0 [ 0 ]", "new ( 0 , 0 )"];
 
     for input in &test_inputs {
         let config1 = SimulationConfig {

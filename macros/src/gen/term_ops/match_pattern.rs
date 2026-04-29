@@ -446,6 +446,23 @@ fn generate_iterative_regular_arm(
         .rev() // reverse for correct processing order
         .map(|(field, (gname, pname))| {
             let task_variant = format_ident!("Match{}", field.category);
+            if field.is_optional {
+                // Opt-Group: matching on `Option<Box<Cat>>`. Same Some/None
+                // discriminant requirement; if both Some, push MatchTask
+                // recursively; if mismatched, return None.
+                return quote! {
+                    match (#gname.as_ref(), #pname.as_ref()) {
+                        (None, None) => {}
+                        (Some(__g), Some(__p)) => {
+                            stack.push(MatchTask::#task_variant(
+                                (**__g).clone(),
+                                (**__p).clone(),
+                            ));
+                        }
+                        _ => return None,
+                    }
+                };
+            }
             quote! {
                 stack.push(MatchTask::#task_variant(
                     (**#gname).clone(),

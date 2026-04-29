@@ -53,20 +53,6 @@ fn unit_basemath_num_sub() {
 }
 
 #[test]
-fn unit_basemath_auto_num_nvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Num::NVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for NVar");
-}
-
-#[test]
 fn unit_basemath_auto_num_numlit() {
     let term = Num::NumLit(0i32);
     let displayed = format!("{}", term);

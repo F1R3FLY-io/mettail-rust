@@ -444,15 +444,22 @@ fn generate_test_input_literals(language: &LanguageDef, pipeline: &PipelineAnaly
         }
     }
 
-    // Always include simple literals if the language has native types.
-    // Use non-zero values to avoid division-by-zero in native eval rules.
+    // S1: spec-derived simple literals projected onto each native
+    // type's spec patterns. Integer values come from
+    // `spec_admitted_integer_samples(language, Safe)` (avoids zero
+    // for `[1-9][0-9]*` patterns). Float/bool/string use known-safe
+    // values from the universally-admitted domain of their patterns.
     for lang_type in &language.types {
         if let Some(ref native) = lang_type.native_type {
-            let lit = match crate::gen::native::native_type_to_string(native).as_str() {
-                "i32" => "1".to_string(),
-                "i64" => "1".to_string(),
-                "f64" => "1.0".to_string(),
-                "f32" => "1.0".to_string(),
+            let native_str = crate::gen::native::native_type_to_string(native);
+            let lit = match native_str.as_str() {
+                "i32" | "i64" | "u32" | "u64" | "i8" | "i16" | "i128"
+                | "u8" | "u16" | "u128" | "isize" | "usize" => {
+                    crate::gen::spec_admitted_integer_samples(
+                        language, crate::gen::SamplePurpose::Safe,
+                    ).into_iter().next().unwrap_or_else(|| "1".to_string())
+                }
+                "f64" | "f32" => "1.0".to_string(),
                 "bool" => "true".to_string(),
                 "String" | "str" => "\"hello\"".to_string(),
                 _ => continue,
@@ -464,8 +471,10 @@ fn generate_test_input_literals(language: &LanguageDef, pipeline: &PipelineAnaly
     }
 
     if inputs.is_empty() {
-        // Fallback: try to find any parseable term from the language's grammar.
-        // Look for nullary (terminal-only) constructors first.
+        // S2: fallback to nullary spec rules. If none exist, the
+        // generator emits an empty input list — caller will skip
+        // simulation. NOT a "0" string fabrication, which the spec
+        // may not admit.
         for rule in &language.terms {
             let has_non_terminals = rule.items.iter().any(|item| {
                 !matches!(item, mettail_ast::grammar::GrammarItem::Terminal(_))
@@ -485,11 +494,8 @@ fn generate_test_input_literals(language: &LanguageDef, pipeline: &PipelineAnaly
             }
         }
     }
-
-    if inputs.is_empty() {
-        // Last resort fallback.
-        inputs.push("0".to_string());
-    }
+    // No "0" last-resort fallback — if the spec admits no input the
+    // generator emits an empty literal list.
 
     inputs
         .iter()
@@ -522,12 +528,21 @@ pub(crate) fn construct_test_expression(
                     parts.push(lit.clone());
                 }
                 SyntaxExpr::Param(param_name) => {
-                    // Look up the param's type in the term_context.
+                    // S3: spec-derived. If the param category is found
+                    // in the term_context, route through
+                    // `default_value_for_category` (which itself
+                    // consults the spec). If not found, surface via
+                    // `spec_admitted_integer_default` — NOT a "0"
+                    // fabrication. Missing param category in
+                    // term_context indicates a malformed rule; using
+                    // an integer default is the safest cross-type
+                    // input that any well-formed grammar with a
+                    // numeric category would accept.
                     let cat = find_param_category(param_name, ctx);
                     if let Some(cat_str) = cat {
                         parts.push(default_value_for_category(&cat_str, language));
                     } else {
-                        parts.push("0".to_string());
+                        parts.push(crate::gen::spec_admitted_integer_default(language));
                     }
                 }
                 SyntaxExpr::Op(_) => {
@@ -604,6 +619,17 @@ pub(crate) fn find_param_category(
                     return Some("Bool".to_string());
                 }
             }
+            TermParam::Optional { params: inner } => {
+                // Opt-Group: simulation-test parser-input synthesis uses
+                // this lookup to pick a category for each named param. A
+                // syntax-pattern reference to an inner-of-Optional param
+                // resolves to the inner's category — when the syntax
+                // emits the Opt block, the synthesizer needs to know the
+                // inner category to generate a valid token. Recurse.
+                if let Some(found) = find_param_category(name, inner) {
+                    return Some(found);
+                }
+            }
         }
     }
     None
@@ -624,22 +650,33 @@ pub(crate) fn type_expr_to_category(ty: &mettail_ast::types::TypeExpr) -> Option
 
 /// Return a simple default value string for a language category.
 ///
-/// Uses `1` instead of `0` for numeric types to avoid division-by-zero panics
-/// in languages with `![a / b]` native eval rules.
+/// S4: spec-derived. Integer-family categories route through
+/// `spec_admitted_integer_samples(language, Safe)` to avoid both
+/// division-by-zero (in languages with `![a / b]` rules) and
+/// pattern-rejected literals (e.g., `[1-9][0-9]*` excludes 0).
+/// Float/Bool/String use values from the universally-admitted domain.
 pub(crate) fn default_value_for_category(category: &str, language: &LanguageDef) -> String {
     // Look up the native type for this category.
     for lang_type in &language.types {
         if lang_type.name.to_string() == category {
             if let Some(ref native) = lang_type.native_type {
                 return match crate::gen::native::native_type_to_string(native).as_str() {
-                    "i32" | "i64" => "1".to_string(),
+                    "i32" | "i64" | "u32" | "u64" | "i8" | "i16" | "i128"
+                    | "u8" | "u16" | "u128" | "isize" | "usize" => {
+                        crate::gen::spec_admitted_integer_samples(
+                            language, crate::gen::SamplePurpose::Safe,
+                        ).into_iter().next().unwrap_or_else(|| "1".to_string())
+                    }
                     "f64" | "f32" => "1.0".to_string(),
                     "bool" => "true".to_string(),
                     "String" | "str" => "\"a\"".to_string(),
-                    _ => "1".to_string(),
+                    // Spec-derived fallback for unknown native types.
+                    _ => crate::gen::spec_admitted_integer_default(language),
                 };
             }
         }
     }
-    "1".to_string()
+    // Category not found — emit spec-admitted integer default (NOT
+    // a hard-coded "1").
+    crate::gen::spec_admitted_integer_default(language)
 }

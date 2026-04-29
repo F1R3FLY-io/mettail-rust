@@ -165,26 +165,26 @@ use mettail_runtime::BehavioralPred;
 //   - UInt32::BitOrUInt32
 //   - UInt32::UIntBin
 // Constructor weights (lower = more frequent):
-//   NegFixed             weight: 0.0000
-//   ListLit              weight: 0.0000
-//   Grouping             weight: 0.0000
-//   BitNotUInt32         weight: 0.0000
-//   HasMap               weight: 0.0000
-//   BigratCast           weight: 0.0000
-//   EqStr                weight: 0.0000
-//   Not                  weight: 0.0000
-//   ElemList             weight: 0.0000
-//   DeleteMap            weight: 0.0000
-//   CastErrUInt32        weight: 0.0000
-//   IntToFloat           weight: 0.0000
-//   BoolToStr            weight: 0.0000
+//   UInt32Lit            weight: 0.0000
 //   Fraction             weight: 0.0000
-//   SinFloat             weight: 0.0000
-//   UnionBag             weight: 0.0000
+//   CountBag             weight: 0.0000
+//   IntToBool            weight: 0.0000
+//   EqFloat              weight: 0.0000
+//   FixedLit             weight: 0.0000
+//   GetMap               weight: 0.0000
+//   ExpFloat             weight: 0.0000
+//   RemoveBag            weight: 0.0000
 //   ValuesMap            weight: 0.0000
-//   BitNotBigInt         weight: 0.0000
-//   DiffBag              weight: 0.0000
-//   LenList              weight: 0.0000
+//   HasMap               weight: 0.0000
+//   KeysMap              weight: 0.0000
+//   DeleteList           weight: 0.0000
+//   ListLit              weight: 0.0000
+//   NegBigInt            weight: 0.0000
+//   EqInt                weight: 0.0000
+//   ElemList             weight: 0.0000
+//   SinFloat             weight: 0.0000
+//   CastErrFloat         weight: 0.0000
+//   CastErrInt           weight: 0.0000
 //   ... and 213 more
 // Category weights:
 //   Bool                 weight: 0.0179
@@ -194,9 +194,9 @@ use mettail_runtime::BehavioralPred;
 //   List                 weight: 0.2857
 //   Fixed                weight: 0.2857
 //   BigInt               weight: 0.3125
-//   Map                  weight: 0.3333
-//   UInt32               weight: 0.3333
 //   Bag                  weight: 0.3333
+//   UInt32               weight: 0.3333
+//   Map                  weight: 0.3333
 //   Proc                 weight: 0.5000
 //   Str                  weight: 0.5000
 //
@@ -295,9 +295,9 @@ fn eval_calculator_unionbag_default_default_smoke() {
 }
 
 #[test]
-fn eval_calculator_deletelist_default_neg1_smoke() {
+fn eval_calculator_deletelist_default_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(-1i32)));
+    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -307,9 +307,9 @@ fn eval_calculator_deletelist_default_neg1_smoke() {
 }
 
 #[test]
-fn eval_calculator_deletelist_default_5_smoke() {
+fn eval_calculator_deletelist_default_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(5i32)));
+    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -355,9 +355,9 @@ fn eval_calculator_deletelist_default_0_smoke() {
 }
 
 #[test]
-fn eval_calculator_elemlist_default_neg1_smoke() {
+fn eval_calculator_elemlist_default_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(-1i32)));
+    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -367,9 +367,9 @@ fn eval_calculator_elemlist_default_neg1_smoke() {
 }
 
 #[test]
-fn eval_calculator_elemlist_default_5_smoke() {
+fn eval_calculator_elemlist_default_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(5i32)));
+    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -823,81 +823,68 @@ fn eval_calculator_addfixed_default_default_smoke() {
 }
 
 #[test]
-fn eval_calculator_customop_5_neg1() {
+fn eval_calculator_customop_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::CustomOp(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "7"),
-        "{} should evaluate to 7, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "21"),
+        "{} should evaluate to 21, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_customop_5_5() {
+fn eval_calculator_customop_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::CustomOp(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "25"),
-        "{} should evaluate to 25, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "15"),
+        "{} should evaluate to 15, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_customop_5_2() {
+fn eval_calculator_customop_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::CustomOp(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "16"),
-        "{} should evaluate to 16, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "12"),
+        "{} should evaluate to 12, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_customop_5_1() {
+fn eval_calculator_customop_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::CustomOp(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "13"),
-        "{} should evaluate to 13, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "9"),
+        "{} should evaluate to 9, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_customop_5_0() {
+fn eval_calculator_customop_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::CustomOp(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "10"),
-        "{} should evaluate to 10, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_customop_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "6"),
+        "{} should evaluate to 6, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -911,6 +898,19 @@ fn eval_calculator_customop_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "19"),
         "{} should evaluate to 19, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_customop_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::CustomOp(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "13"),
+        "{} should evaluate to 13, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -953,19 +953,6 @@ fn eval_calculator_customop_2_0() {
 }
 
 #[test]
-fn eval_calculator_customop_1_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_customop_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::CustomOp(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
@@ -976,6 +963,19 @@ fn eval_calculator_customop_1_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "17"),
         "{} should evaluate to 17, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_customop_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::CustomOp(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "11"),
+        "{} should evaluate to 11, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -1018,19 +1018,6 @@ fn eval_calculator_customop_1_0() {
 }
 
 #[test]
-fn eval_calculator_customop_0_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-3"),
-        "{} should evaluate to -3, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_customop_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::CustomOp(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
@@ -1041,6 +1028,19 @@ fn eval_calculator_customop_0_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "15"),
         "{} should evaluate to 15, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_customop_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::CustomOp(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "9"),
+        "{} should evaluate to 9, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -2651,9 +2651,9 @@ fn eval_calculator_addfloat_0_0_0_0() {
 }
 
 #[test]
-fn eval_calculator_fact_neg1_smoke() {
+fn eval_calculator_fact_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Fact(Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::Fact(Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2663,9 +2663,9 @@ fn eval_calculator_fact_neg1_smoke() {
 }
 
 #[test]
-fn eval_calculator_fact_5_smoke() {
+fn eval_calculator_fact_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Fact(Box::new(Int::NumLit(5i32)));
+    let input_term = Int::Fact(Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2711,19 +2711,6 @@ fn eval_calculator_fact_0_smoke() {
 }
 
 #[test]
-fn eval_calculator_neg_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_neg_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Neg(Box::new(Int::NumLit(5i32)));
@@ -2734,6 +2721,19 @@ fn eval_calculator_neg_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "-5"),
         "{} should evaluate to -5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_neg_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::Neg(Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-3"),
+        "{} should evaluate to -3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -2776,19 +2776,6 @@ fn eval_calculator_neg_0() {
 }
 
 #[test]
-fn eval_calculator_bitnotint_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitNotInt(Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_bitnotint_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::BitNotInt(Box::new(Int::NumLit(5i32)));
@@ -2799,6 +2786,19 @@ fn eval_calculator_bitnotint_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "-6"),
         "{} should evaluate to -6, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_bitnotint_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::BitNotInt(Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-4"),
+        "{} should evaluate to -4, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -2841,35 +2841,9 @@ fn eval_calculator_bitnotint_0() {
 }
 
 #[test]
-fn eval_calculator_bitorint_5_neg1() {
+fn eval_calculator_bitorint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_bitorint_5_5() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_bitorint_5_2() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::BitOrInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2880,42 +2854,55 @@ fn eval_calculator_bitorint_5_2() {
 }
 
 #[test]
-fn eval_calculator_bitorint_5_1() {
+fn eval_calculator_bitorint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::BitOrInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_bitorint_5_0() {
+fn eval_calculator_bitorint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::BitOrInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_bitorint_2_neg1() {
+fn eval_calculator_bitorint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::BitOrInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_bitorint_3_0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::BitOrInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -2929,6 +2916,19 @@ fn eval_calculator_bitorint_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "7"),
         "{} should evaluate to 7, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_bitorint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::BitOrInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -2971,19 +2971,6 @@ fn eval_calculator_bitorint_2_0() {
 }
 
 #[test]
-fn eval_calculator_bitorint_1_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_bitorint_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::BitOrInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
@@ -2994,6 +2981,19 @@ fn eval_calculator_bitorint_1_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "5"),
         "{} should evaluate to 5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_bitorint_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::BitOrInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -3036,19 +3036,6 @@ fn eval_calculator_bitorint_1_0() {
 }
 
 #[test]
-fn eval_calculator_bitorint_0_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_bitorint_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::BitOrInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
@@ -3059,6 +3046,19 @@ fn eval_calculator_bitorint_0_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "5"),
         "{} should evaluate to 5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_bitorint_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::BitOrInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -3101,48 +3101,9 @@ fn eval_calculator_bitorint_0_0() {
 }
 
 #[test]
-fn eval_calculator_bitandint_5_neg1() {
+fn eval_calculator_bitandint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_bitandint_5_5() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_bitandint_5_2() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_bitandint_5_1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::BitAndInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3153,22 +3114,22 @@ fn eval_calculator_bitandint_5_1() {
 }
 
 #[test]
-fn eval_calculator_bitandint_5_0() {
+fn eval_calculator_bitandint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::BitAndInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_bitandint_2_neg1() {
+fn eval_calculator_bitandint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::BitAndInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3176,6 +3137,32 @@ fn eval_calculator_bitandint_2_neg1() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "2"),
         "{} should evaluate to 2, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_bitandint_3_1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::BitAndInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_bitandint_3_0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::BitAndInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -3189,6 +3176,19 @@ fn eval_calculator_bitandint_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "0"),
         "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_bitandint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::BitAndInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -3231,9 +3231,9 @@ fn eval_calculator_bitandint_2_0() {
 }
 
 #[test]
-fn eval_calculator_bitandint_1_neg1() {
+fn eval_calculator_bitandint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::BitAndInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3244,9 +3244,9 @@ fn eval_calculator_bitandint_1_neg1() {
 }
 
 #[test]
-fn eval_calculator_bitandint_1_5() {
+fn eval_calculator_bitandint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::BitAndInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3296,9 +3296,9 @@ fn eval_calculator_bitandint_1_0() {
 }
 
 #[test]
-fn eval_calculator_bitandint_0_neg1() {
+fn eval_calculator_bitandint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3309,9 +3309,9 @@ fn eval_calculator_bitandint_0_neg1() {
 }
 
 #[test]
-fn eval_calculator_bitandint_0_5() {
+fn eval_calculator_bitandint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3361,48 +3361,61 @@ fn eval_calculator_bitandint_0_0() {
 }
 
 #[test]
-fn eval_calculator_powint_5_5() {
+fn eval_calculator_powint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::PowInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3125"),
-        "{} should evaluate to 3125, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "243"),
+        "{} should evaluate to 243, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_powint_5_2() {
+fn eval_calculator_powint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::PowInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "25"),
-        "{} should evaluate to 25, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "27"),
+        "{} should evaluate to 27, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_powint_5_1() {
+fn eval_calculator_powint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::PowInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "9"),
+        "{} should evaluate to 9, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_powint_5_0() {
+fn eval_calculator_powint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::PowInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_powint_3_0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::PowInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3423,6 +3436,19 @@ fn eval_calculator_powint_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "32"),
         "{} should evaluate to 32, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_powint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::PowInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "8"),
+        "{} should evaluate to 8, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -3468,6 +3494,19 @@ fn eval_calculator_powint_2_0() {
 fn eval_calculator_powint_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::PowInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_powint_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::PowInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3530,6 +3569,19 @@ fn eval_calculator_powint_0_5() {
 }
 
 #[test]
+fn eval_calculator_powint_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::PowInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
 fn eval_calculator_powint_0_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::PowInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
@@ -3569,9 +3621,22 @@ fn eval_calculator_powint_0_0() {
 }
 
 #[test]
-fn eval_calculator_modint_5_neg1() {
+fn eval_calculator_modint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::ModInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_modint_3_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::ModInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3582,22 +3647,9 @@ fn eval_calculator_modint_5_neg1() {
 }
 
 #[test]
-fn eval_calculator_modint_5_5() {
+fn eval_calculator_modint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_modint_5_2() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::ModInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3608,22 +3660,9 @@ fn eval_calculator_modint_5_2() {
 }
 
 #[test]
-fn eval_calculator_modint_5_1() {
+fn eval_calculator_modint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_modint_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::ModInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3637,6 +3676,19 @@ fn eval_calculator_modint_2_neg1() {
 fn eval_calculator_modint_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::ModInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_modint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::ModInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3673,22 +3725,22 @@ fn eval_calculator_modint_2_1() {
 }
 
 #[test]
-fn eval_calculator_modint_1_neg1() {
+fn eval_calculator_modint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::ModInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_modint_1_5() {
+fn eval_calculator_modint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::ModInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3725,9 +3777,9 @@ fn eval_calculator_modint_1_1() {
 }
 
 #[test]
-fn eval_calculator_modint_0_neg1() {
+fn eval_calculator_modint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::ModInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3738,9 +3790,9 @@ fn eval_calculator_modint_0_neg1() {
 }
 
 #[test]
-fn eval_calculator_modint_0_5() {
+fn eval_calculator_modint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::ModInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3777,22 +3829,22 @@ fn eval_calculator_modint_0_1() {
 }
 
 #[test]
-fn eval_calculator_divint_5_neg1() {
+fn eval_calculator_divint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::DivInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-5"),
-        "{} should evaluate to -5, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_divint_5_5() {
+fn eval_calculator_divint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::DivInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3803,48 +3855,48 @@ fn eval_calculator_divint_5_5() {
 }
 
 #[test]
-fn eval_calculator_divint_5_2() {
+fn eval_calculator_divint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::DivInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_divint_5_1() {
+fn eval_calculator_divint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::DivInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_divint_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
 fn eval_calculator_divint_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::DivInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_divint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::DivInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3881,22 +3933,22 @@ fn eval_calculator_divint_2_1() {
 }
 
 #[test]
-fn eval_calculator_divint_1_neg1() {
+fn eval_calculator_divint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::DivInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_divint_1_5() {
+fn eval_calculator_divint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::DivInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3933,9 +3985,9 @@ fn eval_calculator_divint_1_1() {
 }
 
 #[test]
-fn eval_calculator_divint_0_neg1() {
+fn eval_calculator_divint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::DivInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3946,9 +3998,9 @@ fn eval_calculator_divint_0_neg1() {
 }
 
 #[test]
-fn eval_calculator_divint_0_5() {
+fn eval_calculator_divint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::DivInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3985,61 +4037,61 @@ fn eval_calculator_divint_0_1() {
 }
 
 #[test]
-fn eval_calculator_mulint_5_neg1() {
+fn eval_calculator_mulint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-5"),
-        "{} should evaluate to -5, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "15"),
+        "{} should evaluate to 15, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_mulint_5_5() {
+fn eval_calculator_mulint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "25"),
-        "{} should evaluate to 25, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "9"),
+        "{} should evaluate to 9, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_mulint_5_2() {
+fn eval_calculator_mulint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "10"),
-        "{} should evaluate to 10, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "6"),
+        "{} should evaluate to 6, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_mulint_5_1() {
+fn eval_calculator_mulint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_mulint_5_0() {
+fn eval_calculator_mulint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4047,19 +4099,6 @@ fn eval_calculator_mulint_5_0() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "0"),
         "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_mulint_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -4073,6 +4112,19 @@ fn eval_calculator_mulint_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "10"),
         "{} should evaluate to 10, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_mulint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "6"),
+        "{} should evaluate to 6, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -4115,19 +4167,6 @@ fn eval_calculator_mulint_2_0() {
 }
 
 #[test]
-fn eval_calculator_mulint_1_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_mulint_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
@@ -4138,6 +4177,19 @@ fn eval_calculator_mulint_1_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "5"),
         "{} should evaluate to 5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_mulint_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -4180,9 +4232,9 @@ fn eval_calculator_mulint_1_0() {
 }
 
 #[test]
-fn eval_calculator_mulint_0_neg1() {
+fn eval_calculator_mulint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4193,9 +4245,9 @@ fn eval_calculator_mulint_0_neg1() {
 }
 
 #[test]
-fn eval_calculator_mulint_0_5() {
+fn eval_calculator_mulint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4245,22 +4297,22 @@ fn eval_calculator_mulint_0_0() {
 }
 
 #[test]
-fn eval_calculator_subint_5_neg1() {
+fn eval_calculator_subint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "6"),
-        "{} should evaluate to 6, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "-2"),
+        "{} should evaluate to -2, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_subint_5_5() {
+fn eval_calculator_subint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4271,48 +4323,35 @@ fn eval_calculator_subint_5_5() {
 }
 
 #[test]
-fn eval_calculator_subint_5_2() {
+fn eval_calculator_subint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_subint_5_1() {
+fn eval_calculator_subint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_subint_5_0() {
+fn eval_calculator_subint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_subint_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4333,6 +4372,19 @@ fn eval_calculator_subint_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "-3"),
         "{} should evaluate to -3, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_subint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -4375,19 +4427,6 @@ fn eval_calculator_subint_2_0() {
 }
 
 #[test]
-fn eval_calculator_subint_1_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_subint_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
@@ -4398,6 +4437,19 @@ fn eval_calculator_subint_1_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "-4"),
         "{} should evaluate to -4, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_subint_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-2"),
+        "{} should evaluate to -2, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -4440,19 +4492,6 @@ fn eval_calculator_subint_1_0() {
 }
 
 #[test]
-fn eval_calculator_subint_0_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_subint_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
@@ -4463,6 +4502,19 @@ fn eval_calculator_subint_0_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "-5"),
         "{} should evaluate to -5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_subint_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-3"),
+        "{} should evaluate to -3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -4505,48 +4557,22 @@ fn eval_calculator_subint_0_0() {
 }
 
 #[test]
-fn eval_calculator_addint_5_neg1() {
+fn eval_calculator_addint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "8"),
+        "{} should evaluate to 8, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_addint_5_5() {
+fn eval_calculator_addint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "10"),
-        "{} should evaluate to 10, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_addint_5_2() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "7"),
-        "{} should evaluate to 7, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_addint_5_1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4557,9 +4583,9 @@ fn eval_calculator_addint_5_1() {
 }
 
 #[test]
-fn eval_calculator_addint_5_0() {
+fn eval_calculator_addint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4570,16 +4596,29 @@ fn eval_calculator_addint_5_0() {
 }
 
 #[test]
-fn eval_calculator_addint_2_neg1() {
+fn eval_calculator_addint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_addint_3_0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -4593,6 +4632,19 @@ fn eval_calculator_addint_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "7"),
         "{} should evaluate to 7, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_addint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "5"),
+        "{} should evaluate to 5, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -4635,19 +4687,6 @@ fn eval_calculator_addint_2_0() {
 }
 
 #[test]
-fn eval_calculator_addint_1_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_addint_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
@@ -4658,6 +4697,19 @@ fn eval_calculator_addint_1_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "6"),
         "{} should evaluate to 6, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_addint_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -4700,19 +4752,6 @@ fn eval_calculator_addint_1_0() {
 }
 
 #[test]
-fn eval_calculator_addint_0_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_addint_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
@@ -4723,6 +4762,19 @@ fn eval_calculator_addint_0_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "5"),
         "{} should evaluate to 5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_addint_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -7002,9 +7054,9 @@ fn eval_calculator_nefloat_0_0_0_0() {
 }
 
 #[test]
-fn eval_calculator_neint_5_neg1() {
+fn eval_calculator_neint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::NeInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7015,9 +7067,9 @@ fn eval_calculator_neint_5_neg1() {
 }
 
 #[test]
-fn eval_calculator_neint_5_5() {
+fn eval_calculator_neint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::NeInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7028,9 +7080,9 @@ fn eval_calculator_neint_5_5() {
 }
 
 #[test]
-fn eval_calculator_neint_5_2() {
+fn eval_calculator_neint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::NeInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7041,9 +7093,9 @@ fn eval_calculator_neint_5_2() {
 }
 
 #[test]
-fn eval_calculator_neint_5_1() {
+fn eval_calculator_neint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::NeInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7054,22 +7106,9 @@ fn eval_calculator_neint_5_1() {
 }
 
 #[test]
-fn eval_calculator_neint_5_0() {
+fn eval_calculator_neint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_neint_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::NeInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7083,6 +7122,19 @@ fn eval_calculator_neint_2_neg1() {
 fn eval_calculator_neint_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::NeInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_neint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::NeInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7132,9 +7184,9 @@ fn eval_calculator_neint_2_0() {
 }
 
 #[test]
-fn eval_calculator_neint_1_neg1() {
+fn eval_calculator_neint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::NeInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7145,9 +7197,9 @@ fn eval_calculator_neint_1_neg1() {
 }
 
 #[test]
-fn eval_calculator_neint_1_5() {
+fn eval_calculator_neint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::NeInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7197,9 +7249,9 @@ fn eval_calculator_neint_1_0() {
 }
 
 #[test]
-fn eval_calculator_neint_0_neg1() {
+fn eval_calculator_neint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::NeInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7210,9 +7262,9 @@ fn eval_calculator_neint_0_neg1() {
 }
 
 #[test]
-fn eval_calculator_neint_0_5() {
+fn eval_calculator_neint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::NeInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7691,9 +7743,22 @@ fn eval_calculator_gteqfloat_0_0_0_0() {
 }
 
 #[test]
-fn eval_calculator_gteqint_5_neg1() {
+fn eval_calculator_gteqint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_gteqint_3_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7704,9 +7769,9 @@ fn eval_calculator_gteqint_5_neg1() {
 }
 
 #[test]
-fn eval_calculator_gteqint_5_5() {
+fn eval_calculator_gteqint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7717,9 +7782,9 @@ fn eval_calculator_gteqint_5_5() {
 }
 
 #[test]
-fn eval_calculator_gteqint_5_2() {
+fn eval_calculator_gteqint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7730,35 +7795,9 @@ fn eval_calculator_gteqint_5_2() {
 }
 
 #[test]
-fn eval_calculator_gteqint_5_1() {
+fn eval_calculator_gteqint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_gteqint_5_0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_gteqint_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7772,6 +7811,19 @@ fn eval_calculator_gteqint_2_neg1() {
 fn eval_calculator_gteqint_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::GtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_gteqint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7821,22 +7873,22 @@ fn eval_calculator_gteqint_2_0() {
 }
 
 #[test]
-fn eval_calculator_gteqint_1_neg1() {
+fn eval_calculator_gteqint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_gteqint_1_5() {
+fn eval_calculator_gteqint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7886,22 +7938,22 @@ fn eval_calculator_gteqint_1_0() {
 }
 
 #[test]
-fn eval_calculator_gteqint_0_neg1() {
+fn eval_calculator_gteqint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_gteqint_0_5() {
+fn eval_calculator_gteqint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8380,22 +8432,9 @@ fn eval_calculator_lteqfloat_0_0_0_0() {
 }
 
 #[test]
-fn eval_calculator_lteqint_5_neg1() {
+fn eval_calculator_lteqint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_lteqint_5_5() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8406,9 +8445,22 @@ fn eval_calculator_lteqint_5_5() {
 }
 
 #[test]
-fn eval_calculator_lteqint_5_2() {
+fn eval_calculator_lteqint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_lteqint_3_2() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8419,9 +8471,9 @@ fn eval_calculator_lteqint_5_2() {
 }
 
 #[test]
-fn eval_calculator_lteqint_5_1() {
+fn eval_calculator_lteqint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8432,22 +8484,9 @@ fn eval_calculator_lteqint_5_1() {
 }
 
 #[test]
-fn eval_calculator_lteqint_5_0() {
+fn eval_calculator_lteqint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_lteqint_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8461,6 +8500,19 @@ fn eval_calculator_lteqint_2_neg1() {
 fn eval_calculator_lteqint_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::LtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_lteqint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8510,22 +8562,22 @@ fn eval_calculator_lteqint_2_0() {
 }
 
 #[test]
-fn eval_calculator_lteqint_1_neg1() {
+fn eval_calculator_lteqint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_lteqint_1_5() {
+fn eval_calculator_lteqint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8575,22 +8627,22 @@ fn eval_calculator_lteqint_1_0() {
 }
 
 #[test]
-fn eval_calculator_lteqint_0_neg1() {
+fn eval_calculator_lteqint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_lteqint_0_5() {
+fn eval_calculator_lteqint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9069,9 +9121,22 @@ fn eval_calculator_ltfloat_0_0_0_0() {
 }
 
 #[test]
-fn eval_calculator_ltint_5_neg1() {
+fn eval_calculator_ltint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::LtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_ltint_3_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::LtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9082,9 +9147,9 @@ fn eval_calculator_ltint_5_neg1() {
 }
 
 #[test]
-fn eval_calculator_ltint_5_5() {
+fn eval_calculator_ltint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9095,9 +9160,9 @@ fn eval_calculator_ltint_5_5() {
 }
 
 #[test]
-fn eval_calculator_ltint_5_2() {
+fn eval_calculator_ltint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::LtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9108,35 +9173,9 @@ fn eval_calculator_ltint_5_2() {
 }
 
 #[test]
-fn eval_calculator_ltint_5_1() {
+fn eval_calculator_ltint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_ltint_5_0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_ltint_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::LtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9150,6 +9189,19 @@ fn eval_calculator_ltint_2_neg1() {
 fn eval_calculator_ltint_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::LtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_ltint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::LtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9199,22 +9251,22 @@ fn eval_calculator_ltint_2_0() {
 }
 
 #[test]
-fn eval_calculator_ltint_1_neg1() {
+fn eval_calculator_ltint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::LtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_ltint_1_5() {
+fn eval_calculator_ltint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9264,22 +9316,22 @@ fn eval_calculator_ltint_1_0() {
 }
 
 #[test]
-fn eval_calculator_ltint_0_neg1() {
+fn eval_calculator_ltint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::LtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_ltint_0_5() {
+fn eval_calculator_ltint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9758,22 +9810,9 @@ fn eval_calculator_gtfloat_0_0_0_0() {
 }
 
 #[test]
-fn eval_calculator_gtint_5_neg1() {
+fn eval_calculator_gtint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_gtint_5_5() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9784,9 +9823,22 @@ fn eval_calculator_gtint_5_5() {
 }
 
 #[test]
-fn eval_calculator_gtint_5_2() {
+fn eval_calculator_gtint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::GtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_gtint_3_2() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::GtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9797,9 +9849,9 @@ fn eval_calculator_gtint_5_2() {
 }
 
 #[test]
-fn eval_calculator_gtint_5_1() {
+fn eval_calculator_gtint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::GtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9810,22 +9862,9 @@ fn eval_calculator_gtint_5_1() {
 }
 
 #[test]
-fn eval_calculator_gtint_5_0() {
+fn eval_calculator_gtint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_gtint_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::GtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9839,6 +9878,19 @@ fn eval_calculator_gtint_2_neg1() {
 fn eval_calculator_gtint_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::GtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_gtint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::GtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9888,22 +9940,22 @@ fn eval_calculator_gtint_2_0() {
 }
 
 #[test]
-fn eval_calculator_gtint_1_neg1() {
+fn eval_calculator_gtint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::GtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_gtint_1_5() {
+fn eval_calculator_gtint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9953,22 +10005,22 @@ fn eval_calculator_gtint_1_0() {
 }
 
 #[test]
-fn eval_calculator_gtint_0_neg1() {
+fn eval_calculator_gtint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::GtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
 }
 
 #[test]
-fn eval_calculator_gtint_0_5() {
+fn eval_calculator_gtint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10447,9 +10499,9 @@ fn eval_calculator_eqfloat_0_0_0_0() {
 }
 
 #[test]
-fn eval_calculator_eqint_5_neg1() {
+fn eval_calculator_eqint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10460,9 +10512,9 @@ fn eval_calculator_eqint_5_neg1() {
 }
 
 #[test]
-fn eval_calculator_eqint_5_5() {
+fn eval_calculator_eqint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10473,9 +10525,9 @@ fn eval_calculator_eqint_5_5() {
 }
 
 #[test]
-fn eval_calculator_eqint_5_2() {
+fn eval_calculator_eqint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10486,9 +10538,9 @@ fn eval_calculator_eqint_5_2() {
 }
 
 #[test]
-fn eval_calculator_eqint_5_1() {
+fn eval_calculator_eqint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10499,22 +10551,9 @@ fn eval_calculator_eqint_5_1() {
 }
 
 #[test]
-fn eval_calculator_eqint_5_0() {
+fn eval_calculator_eqint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_eqint_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10528,6 +10567,19 @@ fn eval_calculator_eqint_2_neg1() {
 fn eval_calculator_eqint_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_eqint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10577,9 +10629,9 @@ fn eval_calculator_eqint_2_0() {
 }
 
 #[test]
-fn eval_calculator_eqint_1_neg1() {
+fn eval_calculator_eqint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10590,9 +10642,9 @@ fn eval_calculator_eqint_1_neg1() {
 }
 
 #[test]
-fn eval_calculator_eqint_1_5() {
+fn eval_calculator_eqint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10642,9 +10694,9 @@ fn eval_calculator_eqint_1_0() {
 }
 
 #[test]
-fn eval_calculator_eqint_0_neg1() {
+fn eval_calculator_eqint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10655,9 +10707,9 @@ fn eval_calculator_eqint_0_neg1() {
 }
 
 #[test]
-fn eval_calculator_eqint_0_5() {
+fn eval_calculator_eqint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10707,22 +10759,9 @@ fn eval_calculator_eqint_0_0() {
 }
 
 #[test]
-fn eval_calculator_tern_0_5_neg1() {
+fn eval_calculator_tern_0_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_tern_0_5_5() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10733,9 +10772,22 @@ fn eval_calculator_tern_0_5_5() {
 }
 
 #[test]
-fn eval_calculator_tern_0_5_2() {
+fn eval_calculator_tern_0_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_tern_0_3_2() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10746,9 +10798,9 @@ fn eval_calculator_tern_0_5_2() {
 }
 
 #[test]
-fn eval_calculator_tern_0_5_1() {
+fn eval_calculator_tern_0_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10759,9 +10811,9 @@ fn eval_calculator_tern_0_5_1() {
 }
 
 #[test]
-fn eval_calculator_tern_0_5_0() {
+fn eval_calculator_tern_0_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10769,19 +10821,6 @@ fn eval_calculator_tern_0_5_0() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "0"),
         "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_calculator_tern_0_2_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -10795,6 +10834,19 @@ fn eval_calculator_tern_0_2_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "5"),
         "{} should evaluate to 5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_tern_0_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -10837,19 +10889,6 @@ fn eval_calculator_tern_0_2_0() {
 }
 
 #[test]
-fn eval_calculator_tern_0_1_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_tern_0_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
@@ -10860,6 +10899,19 @@ fn eval_calculator_tern_0_1_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "5"),
         "{} should evaluate to 5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_tern_0_1_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -10902,19 +10954,6 @@ fn eval_calculator_tern_0_1_0() {
 }
 
 #[test]
-fn eval_calculator_tern_0_0_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
 fn eval_calculator_tern_0_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
@@ -10925,6 +10964,19 @@ fn eval_calculator_tern_0_0_5() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "5"),
         "{} should evaluate to 5, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_calculator_tern_0_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -12198,7 +12250,7 @@ fn edge_calculator_addstr_empty_str_empty() {
 #[test]
 fn edge_calculator_powint_exp0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::PowInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12228,7 +12280,7 @@ fn edge_calculator_powfloat_exp0() {
 #[test]
 fn cross_cat_calculator_cast_procint_from_int_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcInt(Box::new(Int::NumLit(2i32)));
+    let input_term = Proc::ProcInt(Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12312,7 +12364,7 @@ fn cross_cat_calculator_cast_procmap_from_map_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_procuint32_from_uint32_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcUInt32(Box::new(UInt32::NumLit(2u32)));
+    let input_term = Proc::ProcUInt32(Box::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12360,7 +12412,7 @@ fn cross_cat_calculator_cast_procfixed_from_fixed_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_inttobigint_from_int_to_bigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)));
+    let input_term = BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12372,7 +12424,7 @@ fn cross_cat_calculator_cast_inttobigint_from_int_to_bigint() {
 #[test]
 fn cross_cat_calculator_cast_inttobigrat_from_int_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)));
+    let input_term = BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12469,7 +12521,7 @@ fn cross_cat_calculator_roundtrip_bigrat_to_proc_via_procbigrat_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_procint_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::BigintCast(Box::new(Proc::ProcInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12481,7 +12533,7 @@ fn cross_cat_calculator_chain_procint_bigintcast() {
 #[test]
 fn cross_cat_calculator_chain_procint_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::BigratCast(Box::new(Proc::ProcInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12637,7 +12689,7 @@ fn cross_cat_calculator_chain_procmap_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_procuint32_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = BigInt::BigintCast(Box::new(Proc::ProcUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12649,7 +12701,7 @@ fn cross_cat_calculator_chain_procuint32_bigintcast() {
 #[test]
 fn cross_cat_calculator_chain_procuint32_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = BigRat::BigratCast(Box::new(Proc::ProcUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12709,7 +12761,7 @@ fn cross_cat_calculator_chain_procfixed_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_inttobigint_procbigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = Proc::ProcBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12721,7 +12773,7 @@ fn cross_cat_calculator_chain_inttobigint_procbigint() {
 #[test]
 fn cross_cat_calculator_chain_inttobigrat_procbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = Proc::ProcBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12877,7 +12929,7 @@ fn cross_cat_calculator_eval_fraction_smoke() {
 #[test]
 fn cross_cat_calculator_eval_eqint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12916,7 +12968,7 @@ fn cross_cat_calculator_eval_eqstr() {
 #[test]
 fn cross_cat_calculator_eval_gtint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::GtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12955,7 +13007,7 @@ fn cross_cat_calculator_eval_gtstr() {
 #[test]
 fn cross_cat_calculator_eval_ltint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::LtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12994,7 +13046,7 @@ fn cross_cat_calculator_eval_ltstr() {
 #[test]
 fn cross_cat_calculator_eval_lteqint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13033,7 +13085,7 @@ fn cross_cat_calculator_eval_lteqstr() {
 #[test]
 fn cross_cat_calculator_eval_gteqint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13072,7 +13124,7 @@ fn cross_cat_calculator_eval_gteqstr() {
 #[test]
 fn cross_cat_calculator_eval_neint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::NeInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13208,7 +13260,7 @@ fn cross_cat_calculator_eval_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_eval_elemlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(2i32)));
+    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13220,7 +13272,7 @@ fn cross_cat_calculator_eval_elemlist_smoke() {
 #[test]
 fn cross_cat_calculator_eval_deletelist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(2i32)));
+    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13268,7 +13320,7 @@ fn cross_cat_calculator_eval_valuesmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_procint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13352,7 +13404,7 @@ fn cross_cat_calculator_castop_getmap_procmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_procuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcUInt32(Box::new(UInt32::NumLit(2u32)))));
+    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13400,7 +13452,7 @@ fn cross_cat_calculator_castop_getmap_procfixed_smoke() {
 #[test]
 fn cross_cat_calculator_castop_addbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::AddBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13412,7 +13464,7 @@ fn cross_cat_calculator_castop_addbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_subbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::SubBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::SubBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13424,7 +13476,7 @@ fn cross_cat_calculator_castop_subbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_negbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::NegBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::NegBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13436,7 +13488,7 @@ fn cross_cat_calculator_castop_negbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitandbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13448,7 +13500,7 @@ fn cross_cat_calculator_castop_bitandbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitorbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13460,7 +13512,7 @@ fn cross_cat_calculator_castop_bitorbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitnotbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13472,7 +13524,7 @@ fn cross_cat_calculator_castop_bitnotbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_addbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::AddBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13484,7 +13536,7 @@ fn cross_cat_calculator_castop_addbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_mulbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::MulBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::MulBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13496,7 +13548,7 @@ fn cross_cat_calculator_castop_mulbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_divbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::DivBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::DivBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13508,7 +13560,7 @@ fn cross_cat_calculator_castop_divbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_negbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::NegBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::NegBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13520,7 +13572,7 @@ fn cross_cat_calculator_castop_negbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitandbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13532,7 +13584,7 @@ fn cross_cat_calculator_castop_bitandbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitorbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13544,7 +13596,7 @@ fn cross_cat_calculator_castop_bitorbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitnotbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitNotBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::BitNotBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14036,7 +14088,7 @@ fn cross_cat_calculator_castop_concatlist_keysmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_deletelist_keysmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::KeysMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::NumLit(2i32)));
+    let input_term = List::DeleteList(Box::new(List::KeysMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14060,7 +14112,7 @@ fn cross_cat_calculator_castop_concatlist_valuesmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_deletelist_valuesmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ValuesMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::NumLit(2i32)));
+    let input_term = List::DeleteList(Box::new(List::ValuesMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14072,7 +14124,7 @@ fn cross_cat_calculator_castop_deletelist_valuesmap_smoke() {
 #[test]
 fn cross_cat_calculator_mixed_addbigint_cast_inttobigint_lhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::AddBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14084,7 +14136,7 @@ fn cross_cat_calculator_mixed_addbigint_cast_inttobigint_lhs_smoke() {
 #[test]
 fn cross_cat_calculator_mixed_addbigint_cast_inttobigint_rhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::AddBigInt(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14096,7 +14148,7 @@ fn cross_cat_calculator_mixed_addbigint_cast_inttobigint_rhs_smoke() {
 #[test]
 fn cross_cat_calculator_mixed_addbigrat_cast_inttobigrat_lhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::AddBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14108,7 +14160,7 @@ fn cross_cat_calculator_mixed_addbigrat_cast_inttobigrat_lhs_smoke() {
 #[test]
 fn cross_cat_calculator_mixed_addbigrat_cast_inttobigrat_rhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::AddBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14120,7 +14172,7 @@ fn cross_cat_calculator_mixed_addbigrat_cast_inttobigrat_rhs_smoke() {
 #[test]
 fn cross_cat_calculator_mixed_addint_cast_len_lhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14132,7 +14184,7 @@ fn cross_cat_calculator_mixed_addint_cast_len_lhs_smoke() {
 #[test]
 fn cross_cat_calculator_mixed_addint_cast_len_rhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14144,7 +14196,7 @@ fn cross_cat_calculator_mixed_addint_cast_len_rhs_smoke() {
 #[test]
 fn cross_cat_calculator_mixed_addint_cast_lenlist_lhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14156,7 +14208,7 @@ fn cross_cat_calculator_mixed_addint_cast_lenlist_lhs_smoke() {
 #[test]
 fn cross_cat_calculator_mixed_addint_cast_lenlist_rhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14168,7 +14220,7 @@ fn cross_cat_calculator_mixed_addint_cast_lenlist_rhs_smoke() {
 #[test]
 fn cross_cat_calculator_mixed_addint_cast_lenmap_lhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14180,7 +14232,7 @@ fn cross_cat_calculator_mixed_addint_cast_lenmap_lhs_smoke() {
 #[test]
 fn cross_cat_calculator_mixed_addint_cast_lenmap_rhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14240,7 +14292,7 @@ fn cross_cat_calculator_mixed_concatlist_cast_valuesmap_rhs_smoke() {
 #[test]
 fn cross_cat_calculator_composite_addbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::AddBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14252,7 +14304,7 @@ fn cross_cat_calculator_composite_addbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_composite_subbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::SubBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::SubBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14264,7 +14316,7 @@ fn cross_cat_calculator_composite_subbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_composite_negbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::NegBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::NegBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14276,7 +14328,7 @@ fn cross_cat_calculator_composite_negbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_composite_bitandbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14288,7 +14340,7 @@ fn cross_cat_calculator_composite_bitandbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_composite_bitorbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14300,7 +14352,7 @@ fn cross_cat_calculator_composite_bitorbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_composite_bitnotbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14312,7 +14364,7 @@ fn cross_cat_calculator_composite_bitnotbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_composite_addbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::AddBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14324,7 +14376,7 @@ fn cross_cat_calculator_composite_addbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_composite_mulbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::MulBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::MulBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14336,7 +14388,7 @@ fn cross_cat_calculator_composite_mulbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_composite_divbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::DivBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::DivBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14348,7 +14400,7 @@ fn cross_cat_calculator_composite_divbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_composite_negbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::NegBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::NegBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14360,7 +14412,7 @@ fn cross_cat_calculator_composite_negbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_composite_bitandbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14372,7 +14424,7 @@ fn cross_cat_calculator_composite_bitandbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_composite_bitorbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14384,7 +14436,7 @@ fn cross_cat_calculator_composite_bitorbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_composite_bitnotbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitNotBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(2i32)))));
+    let input_term = BigRat::BitNotBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15374,123 +15426,6 @@ fn wfst_calculator_dispatch_ltfixed_eval() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn prec_calculator_bitoruint32_bitanduint32_tighter_than_1_bitand_2_bitor_3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: BitOrUInt32 binds tighter than BitAndUInt32
-    let input_str = "1 bitand 2 bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_bitanduint32_bitoruint32__1_bitand_2__bitor_3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (BitAndUInt32) BitOrUInt32
-    let input_str = "(1 bitand 2) bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_bitoruint32_adduint32_tighter_than_1___2_bitor_3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: BitOrUInt32 binds tighter than AddUInt32
-    let input_str = "1 + 2 bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_adduint32_bitoruint32__1___2__bitor_3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (AddUInt32) BitOrUInt32
-    let input_str = "(1 + 2) bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_bitanduint32_adduint32_tighter_than_1___2_bitand_3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: BitAndUInt32 binds tighter than AddUInt32
-    let input_str = "1 + 2 bitand 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_adduint32_bitanduint32__1___2__bitand_3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (AddUInt32) BitAndUInt32
-    let input_str = "(1 + 2) bitand 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn assoc_calculator_adduint32_left() {
-    mettail_runtime::clear_var_cache();
-    { // Associativity test: AddUInt32 is left-associative
-    let input_str = "1 + 2 + 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "6"),
-        "{} (left-assoc) should evaluate to 6, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn assoc_calculator_bitanduint32_left() {
-    mettail_runtime::clear_var_cache();
-    { // Associativity test: BitAndUInt32 is left-associative
-    let input_str = "1 bitand 2 bitand 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} (left-assoc) should evaluate to 0, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn assoc_calculator_bitoruint32_left() {
-    mettail_runtime::clear_var_cache();
-    { // Associativity test: BitOrUInt32 is left-associative
-    let input_str = "1 bitor 2 bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} (left-assoc) should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
 fn prec_calculator_divfloat_mulfloat_tighter_than_1_0___2_0___3_0() {
     mettail_runtime::clear_var_cache();
     { // Precedence test: DivFloat binds tighter than MulFloat
@@ -15906,6 +15841,110 @@ fn prec_calculator_paren_override_divint_bitorint__1___2__bitor_3() {
         "{} should evaluate to 3, got {:?}", input_str, nfs);}
 }
 
+#[test]
+fn prec_calculator_bitandint_divint_tighter_than_1___2_bitand_3() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: BitAndInt binds tighter than DivInt
+    let input_str = "1 / 2 bitand 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_divint_bitandint__1___2__bitand_3() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (DivInt) BitAndInt
+    let input_str = "(1 / 2) bitand 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_modint_divint_tighter_than_1___2___3() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: ModInt binds tighter than DivInt
+    let input_str = "1 / 2 % 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_divint_modint__1___2____3() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (DivInt) ModInt
+    let input_str = "(1 / 2) % 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_customop_mulint_tighter_than_1___2___3() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: CustomOp binds tighter than MulInt
+    let input_str = "1 * 2 ~ 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "13"),
+        "{} should evaluate to 13, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_mulint_customop__1___2____3() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (MulInt) CustomOp
+    let input_str = "(1 * 2) ~ 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "13"),
+        "{} should evaluate to 13, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_bitorint_mulint_tighter_than_1___2_bitor_3() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: BitOrInt binds tighter than MulInt
+    let input_str = "1 * 2 bitor 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_mulint_bitorint__1___2__bitor_3() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (MulInt) BitOrInt
+    let input_str = "(1 * 2) bitor 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);}
+}
+
 // ═══════════════════════════════════════════════════════════
 // Phase 5a: WPDS-guided path coverage tests
 // ═══════════════════════════════════════════════════════════
@@ -16079,9 +16118,9 @@ fn wpds_calculator_eqint_0_2() {
 }
 
 #[test]
-fn wpds_calculator_eqint_0_5() {
+fn wpds_calculator_eqint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16091,9 +16130,9 @@ fn wpds_calculator_eqint_0_5() {
 }
 
 #[test]
-fn wpds_calculator_eqint_0_neg1() {
+fn wpds_calculator_eqint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16139,9 +16178,9 @@ fn wpds_calculator_eqint_1_2() {
 }
 
 #[test]
-fn wpds_calculator_eqint_1_5() {
+fn wpds_calculator_eqint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16151,9 +16190,9 @@ fn wpds_calculator_eqint_1_5() {
 }
 
 #[test]
-fn wpds_calculator_eqint_1_neg1() {
+fn wpds_calculator_eqint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16199,6 +16238,18 @@ fn wpds_calculator_eqint_2_2() {
 }
 
 #[test]
+fn wpds_calculator_eqint_2_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn wpds_calculator_eqint_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
@@ -16211,9 +16262,9 @@ fn wpds_calculator_eqint_2_5() {
 }
 
 #[test]
-fn wpds_calculator_eqint_2_neg1() {
+fn wpds_calculator_eqint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16223,9 +16274,9 @@ fn wpds_calculator_eqint_2_neg1() {
 }
 
 #[test]
-fn wpds_calculator_eqint_5_0() {
+fn wpds_calculator_eqint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16235,9 +16286,9 @@ fn wpds_calculator_eqint_5_0() {
 }
 
 #[test]
-fn wpds_calculator_eqint_5_1() {
+fn wpds_calculator_eqint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16247,9 +16298,9 @@ fn wpds_calculator_eqint_5_1() {
 }
 
 #[test]
-fn wpds_calculator_eqint_5_2() {
+fn wpds_calculator_eqint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16259,21 +16310,9 @@ fn wpds_calculator_eqint_5_2() {
 }
 
 #[test]
-fn wpds_calculator_eqint_5_5() {
+fn wpds_calculator_eqint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(5i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpds_calculator_eqint_5_neg1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(5i32)), Box::new(Int::NumLit(-1i32)));
+    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17482,5 +17521,5 @@ fn type_pres_calculator_bitnotuint32_0() {
 }
 }
 
-// Total operational semantics tests: 1328 (P1=864, P2a=50, P2b=24, P3a=200, P3b=0, P4a=60, P4b=41, P5a=39, P5b=50)
+// Total operational semantics tests: 1331 (P1=868, P2a=50, P2b=24, P3a=200, P3b=0, P4a=60, P4b=40, P5a=39, P5b=50)
 

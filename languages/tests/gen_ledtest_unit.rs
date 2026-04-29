@@ -146,7 +146,7 @@ fn unit_ledtest_expr_castpred() {
 #[test]
 fn unit_ledtest_num_exprtonum() {
     mettail_runtime::clear_var_cache();
-    let term = Num::ExprToNum(Box::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Num::ExprToNum(Box::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ExprToNum");
     if let Ok(parsed) = Num::parse(&displayed) {
@@ -159,7 +159,7 @@ fn unit_ledtest_num_exprtonum() {
 #[test]
 fn unit_ledtest_expr_epar() {
     mettail_runtime::clear_var_cache();
-    let term = Expr::EPar(Box::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))), Box::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x"))))));
+    let term = Expr::EPar(Box::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EPar");
     if let Ok(parsed) = Expr::parse(&displayed) {
@@ -167,20 +167,6 @@ fn unit_ledtest_expr_epar() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for EPar: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_ledtest_auto_num_nvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Num::NVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for NVar");
 }
 
 #[test]
@@ -193,20 +179,6 @@ fn unit_ledtest_auto_num_numlit() {
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
     }
-}
-
-#[test]
-fn unit_ledtest_auto_pred_pvar() {
-    mettail_runtime::clear_var_cache();
-    let term = Pred::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
-            )
-        )
-    );
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for PVar");
 }
 
 #[test]
@@ -227,7 +199,7 @@ fn unit_ledtest_auto_expr_evar() {
     let term = Expr::EVar(
         mettail_runtime::OrdVar(
             mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("x")
+                mettail_runtime::get_or_create_var("a")
             )
         )
     );
