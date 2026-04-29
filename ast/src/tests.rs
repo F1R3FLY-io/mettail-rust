@@ -1150,10 +1150,110 @@ mod tests {
 
     /// Two integer-typed categories sharing the standard `Token::Integer`
     /// variant must coexist — only `(name, pattern)` pairs are unique.
+    /// `Int` (i32) and `UInt32` (u32) both have
+    /// `NativeKind::standard_token_variant() == Some("Integer")` and so
+    /// collapse onto the same unified family variant.
     #[test]
     fn parse_literals_block_shared_family_variant_allowed() {
         let input = r#"
-            name: TestSharedFamily,
+            name: TestSharedFamilyI32U32,
+            types { ![i32] as Int ![u32] as UInt32 }
+            literals {
+                Int {
+                    pattern: r"[0-9]+i32";
+                    eval: ![ 0_i32 ]
+                }
+                UInt32 {
+                    pattern: r"[0-9]+u32";
+                    eval: ![ 0_u32 ]
+                }
+            }
+            terms { }
+        "#;
+
+        let language = syn::parse_str::<LanguageDef>(input)
+            .expect("Int + UInt32 sharing Token::Integer should parse");
+        assert_eq!(language.token_defs.len(), 2);
+        // Both share the standard Integer family variant.
+        assert!(
+            language.token_defs.iter().all(|td| td.name.to_string() == "Integer"),
+            "both literals should map to Token::Integer family"
+        );
+        // The original block names are recoverable via `category`.
+        let cats: Vec<String> = language
+            .token_defs
+            .iter()
+            .filter_map(|td| td.category.as_ref().map(|c| c.to_string()))
+            .collect();
+        assert!(cats.contains(&"Int".to_string()));
+        assert!(cats.contains(&"UInt32".to_string()));
+    }
+
+    /// Same shared-family invariant exercised across two distinct signed
+    /// widths: `Int` (i32) and `Long` (i64). Both have
+    /// `NativeKind::standard_token_variant() == Some("Integer")`.
+    #[test]
+    fn parse_literals_block_shared_family_variant_allowed_i32_i64() {
+        let input = r#"
+            name: TestSharedFamilyI32I64,
+            types { ![i32] as Int ![i64] as Long }
+            literals {
+                Int {
+                    pattern: r"[0-9]+i32";
+                    eval: ![ 0_i32 ]
+                }
+                Long {
+                    pattern: r"[0-9]+i64";
+                    eval: ![ 0_i64 ]
+                }
+            }
+            terms { }
+        "#;
+
+        let language = syn::parse_str::<LanguageDef>(input)
+            .expect("Int + Long sharing Token::Integer should parse");
+        assert_eq!(language.token_defs.len(), 2);
+        assert!(
+            language.token_defs.iter().all(|td| td.name.to_string() == "Integer"),
+            "both literals should map to Token::Integer family"
+        );
+        let cats: Vec<String> = language
+            .token_defs
+            .iter()
+            .filter_map(|td| td.category.as_ref().map(|c| c.to_string()))
+            .collect();
+        assert!(cats.contains(&"Int".to_string()));
+        assert!(cats.contains(&"Long".to_string()));
+    }
+
+    /// `CanonicalBigInt` does NOT collapse onto `Token::Integer` — its
+    /// `Token::BigInt(&'a str)` variant carries the full lexeme so that
+    /// arbitrary-precision literals like `32478132567813256718n` are
+    /// preserved losslessly. This invariant is load-bearing: the WPDS
+    /// backend at `wpds_codegen/prefix.rs:1129-1190` and the trampoline
+    /// at `trampoline.rs:5266-5288` BOTH dispatch on `Token::BigInt(text)`
+    /// for category `BigInt` and call `parse_int_lit(text, None)` to
+    /// reconstruct the full-precision value. See the comment at
+    /// `ast/src/language.rs:927-934` for design rationale.
+    #[test]
+    fn parse_literals_block_canonical_bigint_keeps_own_variant() {
+        // Direct invariant pin: the two predicates `is_integer` and
+        // `standard_token_variant` are semantically distinct for BigInt.
+        assert!(
+            crate::language::NativeKind::CanonicalBigInt.is_integer(),
+            "CanonicalBigInt is semantically an integer (covered by is_integer)"
+        );
+        assert_eq!(
+            crate::language::NativeKind::CanonicalBigInt.standard_token_variant(),
+            None,
+            "CanonicalBigInt does NOT collapse onto Token::Integer (preserves precision)"
+        );
+
+        // End-to-end: a literals{} block with Int + BigInt produces TWO
+        // distinct token_defs — Int collapses to "Integer", BigInt keeps
+        // its category-named variant.
+        let input = r#"
+            name: TestBigIntKeepsOwnVariant,
             types { ![i32] as Int ![mettail_runtime::CanonicalBigInt] as BigInt }
             literals {
                 Int {
@@ -1169,21 +1269,24 @@ mod tests {
         "#;
 
         let language = syn::parse_str::<LanguageDef>(input)
-            .expect("Int + BigInt sharing Token::Integer should parse");
+            .expect("Int + BigInt should parse");
         assert_eq!(language.token_defs.len(), 2);
-        // Both share the standard Integer family variant.
-        assert!(
-            language.token_defs.iter().all(|td| td.name.to_string() == "Integer"),
-            "both literals should map to Token::Integer family"
+
+        let int_td = language.token_defs.iter()
+            .find(|td| td.category.as_ref().map(|c| c.to_string()) == Some("Int".to_string()))
+            .expect("Int token_def present");
+        assert_eq!(
+            int_td.name.to_string(), "Integer",
+            "Int collapses onto the unified Token::Integer family"
         );
-        // The original block names are recoverable via `category`.
-        let cats: Vec<String> = language
-            .token_defs
-            .iter()
-            .filter_map(|td| td.category.as_ref().map(|c| c.to_string()))
-            .collect();
-        assert!(cats.contains(&"Int".to_string()));
-        assert!(cats.contains(&"BigInt".to_string()));
+
+        let bigint_td = language.token_defs.iter()
+            .find(|td| td.category.as_ref().map(|c| c.to_string()) == Some("BigInt".to_string()))
+            .expect("BigInt token_def present");
+        assert_eq!(
+            bigint_td.name.to_string(), "BigInt",
+            "BigInt keeps its OWN Token::BigInt(&'a str) variant for precision preservation"
+        );
     }
 
     #[test]
