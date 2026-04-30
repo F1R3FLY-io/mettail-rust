@@ -1374,6 +1374,39 @@ mod parsing {
     }
 
     #[test]
+    fn empty_receiver_plain_runtime_with_int_payload() {
+        assert_reduces_to("{for(<- x){ok} | x!(1)}", "ok");
+    }
+
+    #[test]
+    fn empty_receiver_plain_runtime_with_list_payload() {
+        assert_reduces_to("{for(<- x){ok} | x!([1,2,3])}", "ok");
+    }
+
+    #[test]
+    fn empty_receiver_plain_join_with_bound_var() {
+        assert_reduces_to("{for(<- x & q <- c){q} | x!(ignored) | c!(ok)}", "ok");
+    }
+
+    #[test]
+    fn empty_receiver_plain_where_on_other_bind_true() {
+        assert_reduces_to("{for(<- x & q <- c where q == ok){q} | x!(ignored) | c!(ok)}", "ok");
+    }
+
+    #[test]
+    fn empty_receiver_plain_where_on_other_bind_false_blocks() {
+        assert_never_produces(
+            "{for(<- x & q <- c where q == ok){q} | x!(ignored) | c!(bad)}",
+            "{bad}",
+        );
+    }
+
+    #[test]
+    fn empty_receiver_plain_later_row_preserves_order() {
+        assert_reduces_to("{for(z <- c; <- x){z} | c!(ok) | x!(ignored)}", "ok");
+    }
+
+    #[test]
     fn old_receive_syntax_rejected() {
         let lang = RhoCalcLanguage;
         assert!(lang.parse_term("(c?x).{x!(0)}").is_err());
