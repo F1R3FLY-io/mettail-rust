@@ -1058,6 +1058,15 @@ mod parsing {
     }
 
     #[test]
+    fn query_receive_sugar_empty_receiver() {
+        assert_query_desugars(
+            "for(<- x!?(a, b)){p}",
+            "new(r) in { { x!(*r, a, b) | for(<- r){p} } }",
+            "expected empty receiver query bind to desugar via private return channel",
+        );
+    }
+
+    #[test]
     fn query_receive_sugar_single_with_where() {
         assert_query_desugars(
             "for(p <- x!?(a, b) where p == ok){p}",
@@ -1323,6 +1332,33 @@ mod parsing {
             "expected multi-row ordering with two queries to be preserved",
         );
     }
+
+    #[test]
+    fn query_receive_sugar_empty_receiver_in_join() {
+        assert_query_desugars(
+            "for(<- x!?(a) & q <- c){q}",
+            "new(r) in { { x!(*r, a) | for(<- r & q <- c){q} } }",
+            "expected empty receiver query bind to compose with join binds",
+        );
+    }
+
+    #[test]
+    fn query_receive_sugar_empty_receiver_later_row() {
+        assert_query_desugars(
+            "for(z <- c; <- x!?()){z}",
+            "new(r) in { { x!(*r) | for(z <- c; <- r){z} } }",
+            "expected empty receiver query bind in later row to preserve row order",
+        );
+    }
+
+    #[test]
+    fn query_receive_sugar_empty_receiver_where_uses_other_bind() {
+        assert_query_desugars(
+            "for(<- x!?(a) & q <- c where q == ok){q}",
+            "new(r) in { { x!(*r, a) | for(<- r & q <- c where q == ok){q} } }",
+            "expected where guard with other bind to remain after empty receiver desugar",
+        );
+    }
     #[test]
     fn receive() {
         let _ = run("for(y <- x){y!(0)}");
@@ -1330,6 +1366,11 @@ mod parsing {
     #[test]
     fn multi_input() {
         let _ = run("{for(x <- c1 & y <- c2){*(x)} | c1!(p) | c2!(q)}");
+    }
+
+    #[test]
+    fn empty_receiver_plain_runtime_ignores_payload() {
+        assert_reduces_to("{for(<- c){ok} | c!(any)}", "ok");
     }
 
     #[test]
