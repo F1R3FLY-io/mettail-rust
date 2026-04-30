@@ -77,18 +77,23 @@ language! {
 
         POutput . n:Name, q:Proc
         |- n "!" "(" q ")" : Proc ;
+        // Sugar for polyadic send: `x!(a, b, c)` is parsed as `x!([a, b, c])`.
+        //
+        // Placing this rule after unary keeps existing unary send parsing stable.
+        POutput2Plus . n:Name, a:Proc, bs:Vec(Proc)
+        |- n "!" "(" a "," bs.*sep(",") ")" : Proc ![{
+            let mut items = Vec::with_capacity(1 + bs.len());
+            items.push(a.clone());
+            items.extend(bs.clone());
+            Proc::POutput(
+                Box::new(n.clone()),
+                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+            )
+        }] fold;
         POutputQuoted . n:Name, q:Proc
         |- "@" n "!" "(" q ")" : Proc ![{
             Proc::POutput(Box::new(Name::NQuote(Box::new(crate::rhocalc::receive::name_pattern_to_proc(&n)))), Box::new(q.clone()))
         }] fold;
-
-        // Internal constructor for single-input receive with optional where-guard.
-        PForWhere . pat:Proc, n:Name, cond:Proc, body:Proc
-        |- "__for_where" "(" pat "<-" n "where" cond ")" "{" body "}" : Proc;
-
-        // Internal constructor for single-input receive used by guarded COMM.
-        PFor . pat:Proc, n:Name, body:Proc
-        |- "__for" "(" pat "<-" n ")" "{" body "}" : Proc;
 
         // Internal guard gate used by where-clause gating.
         GuardThen . cond:Proc, body:Proc
@@ -105,6 +110,41 @@ language! {
         }] fold;
 
         // Single pattern/channel binding.
+        //
+        // Query bind sugar: `ptrn <- x!?(a1, ..., ak)` means "send a request to `x` and
+        // bind `ptrn` from a private return channel". This is desugared by `for (...) { ... }`
+        // folding in `receive::desugar_for_rows`.
+        InputBindQuery . lhs:Name, n:Name, args:Vec(Proc)
+        |- lhs "<-" n "!" "?" "(" args.*sep(",") ")" : InputBind ![{
+            InputBind::InputBindQuery(
+                Box::new(lhs.clone()),
+                Box::new(n.clone()),
+                args.clone(),
+            )
+        }] fold;
+        InputBindEmptyQuery . n:Name, args:Vec(Proc)
+        |- "<-" n "!" "?" "(" args.*sep(",") ")" : InputBind ![{
+            InputBind::InputBindEmptyQuery(
+                Box::new(n.clone()),
+                args.clone(),
+            )
+        }] fold;
+        InputBindQuotedQuery . pat:Proc, n:Name, args:Vec(Proc)
+        |- "@" pat "<-" n "!" "?" "(" args.*sep(",") ")" : InputBind ![{
+            InputBind::InputBindQuotedQuery(
+                Box::new(pat.clone()),
+                Box::new(n.clone()),
+                args.clone(),
+            )
+        }] fold;
+
+        InputBindQuoted . pat:Proc, n:Name
+        |- "@" pat "<-" n : InputBind ![{
+            InputBind::InputBindQuoted(
+                Box::new(pat.clone()),
+                Box::new(n.clone()),
+            )
+        }] fold;
         InputBind . lhs:Name, n:Name
         |- lhs "<-" n : InputBind ![{
             InputBind::InputBind(
@@ -112,12 +152,9 @@ language! {
                 Box::new(n.clone()),
             )
         }] fold;
-        InputBindQuoted . pat:Proc, n:Name
-        |- "@" pat "<-" n : InputBind ![{
-            InputBind::InputBindQuoted(
-                Box::new(pat.clone()),
-                Box::new(n.clone()),
-            )
+        InputBindEmpty . n:Name
+        |- "<-" n : InputBind ![{
+            InputBind::InputBindEmpty(Box::new(n.clone()))
         }] fold;
 
         // A ForRow is one row of a multi-row for: one or more & binds with an optional where guard.
@@ -134,13 +171,10 @@ language! {
         ForRowSingleNoWhere . b:InputBind
         |- b : ForRow;
 
-        // Internal multi-channel receive created by PForRows desugaring.
-        // Not user-facing; uses __ prefix to avoid collision with user syntax.
-        PForJoin . b:InputBind, bs:Vec(InputBind), cond:Proc, body:Proc
-        |- "__for_join" "(" b "&" bs.*sep("&") "where" cond ")" "{" body "}" : Proc;
-
-        // User-facing `for` syntax: rows joined by `;` are nested (right fold), and each row
-        // can contain `&`-joined binds with optional `where`.
+        // `for` syntax: semicolon rows nest conceptually (outer = first row); `&` with optional
+        // `where` in one row is one receive surface. All parse to a single `PForUser` term; query
+        // `!?(...)` and COMM semantics are handled in `receive` + rewrites, not desugared
+        // into extra Proc constructors.
         PForUser . rows:Vec(ForRow), body:Proc
         |- "for" "(" rows.*sep(";") ")" "{" body "}" : Proc ![{
             crate::rhocalc::receive::desugar_for_rows(rows, body)
@@ -917,20 +951,8 @@ language! {
 
     rewrites {
 
-        // Pattern-based communication (single channel): if payload matches pattern, apply substitution into body.
-        CommPattern . | unifies(pat, q) |- (PPar {(PFor pat n body), (POutput n q), ...rest})
-            ~> (PPar {(apply_pattern pat q body), ...rest});
-
-        // Pattern communication with optional where-guard:
-        // reduce only when pattern unifies and substituted guard is true;
-        // otherwise keep the receive/send pair unchanged (blocked communication).
-        CommPatternWhere . | unifies(pat, q)
-            |- (PPar {(PForWhere pat n cond body), (POutput n q), ...rest})
-            ~> (PPar {(CommWhere pat n q cond body), ...rest});
-
-        // Zip+Map codegen derives `ns` from `b`/`bs` (see `pattern.rs` + `receive::channel_names_from_row`).
-        Comm . |- (PPar {(PForJoin b bs cond body), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest})
-            ~> (PPar {(comm_join b bs ns qs cond body), ...rest});
+        // Communication for `PForUser` (single- and multi-`&` receive rows) lives in
+        // `receive::try_comm_rw_proc` plus a custom `rw_proc` rule in the logic block below.
 
         Exec . |- (PDrop (NQuote P)) ~> P;
         ExecParenQuote . |- (PDrop (NParen (NQuote P))) ~> P;
@@ -1046,6 +1068,20 @@ language! {
     },
 
     logic {
+        // Normalize polyadic send sugar `x!(a, b, ...)` to unary send with list payload.
+        fold_proc(s.clone(), res) <--
+            proc(s),
+            if let Proc::POutput2Plus(ref n, ref a, ref bs) = s,
+            let res = {
+                let mut items = Vec::with_capacity(1 + bs.len());
+                items.push(a.as_ref().clone());
+                items.extend(bs.iter().cloned());
+                Proc::POutput(
+                    Box::new(n.as_ref().clone()),
+                    Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                )
+            };
+
         // fold *(@(P)) to P so that remove(*(@(bag)), *(@(elem))) can reduce (Exec semantics in fold)
         fold_proc(s.clone(), res) <--
             proc(s),
@@ -1068,15 +1104,23 @@ language! {
                 body.as_ref(),
             );
 
-        // Desugar user-facing `for (...) { ... }` into internal receive forms so
-        // COMM/Extrusion rewrites (which match `PFor` / `PForJoin`) can fire.
+        // Desugar `!?` query binds inside `PForUser` (parse may leave `InputBindQuery` in rows; idempotent).
         fold_proc(s.clone(), res) <--
             proc(s),
             if let Proc::PForUser(ref rows, ref body) = s,
+            if crate::rhocalc::receive::pfor_user_still_has_query_rows(rows),
             let res = crate::rhocalc::receive::desugar_for_rows(rows.clone(), body.as_ref());
+
+        // `PForUser` communication (replaces declarative Comm* rewrites on `PFor` / `PForWhere` / `PForJoin`).
+        rw_proc(s0.clone(), res) <--
+            eq_proc(s0, s),
+            if let Some(rewritten) = crate::rhocalc::receive::try_comm_rw_proc(&s),
+            if rewritten != *s,
+            let res = rewritten;
 
         // many-step to a result
         relation path(Proc, Proc);
+        path(p0, p1) <-- fold_proc(p0, p1);
         path(p0, p1) <-- rw_proc(p0, p1);
         path(p0, p2) <-- path(p0, p1), path(p1, p2);
 
@@ -1136,4 +1180,55 @@ language! {
         //     proc(p),name(n),
         //     !(proc(k), trans(p,k,q), can_comm(q,n));
     },
+}
+
+fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {
+    match p {
+        Proc::POutput2Plus(n, a, bs) => {
+            let a_norm = normalize_query_send_sugar_proc(a.as_ref());
+            let bs_norm: Vec<Proc> = bs.iter().map(normalize_query_send_sugar_proc).collect();
+            let mut items = Vec::with_capacity(1 + bs_norm.len());
+            items.push(a_norm);
+            items.extend(bs_norm);
+            Proc::POutput(
+                Box::new(n.as_ref().clone()),
+                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+            )
+        },
+        Proc::PForUser(rows, body) => {
+            let body_norm = normalize_query_send_sugar_proc(body.as_ref());
+            if crate::rhocalc::receive::pfor_user_still_has_query_rows(rows) {
+                normalize_query_send_sugar_proc(&crate::rhocalc::receive::desugar_for_rows(
+                    rows.clone(),
+                    &body_norm,
+                ))
+            } else {
+                Proc::PForUser(rows.clone(), Box::new(body_norm))
+            }
+        },
+        Proc::PPar(ps) => {
+            let mut out = mettail_runtime::HashBag::new();
+            for (elem, count) in ps.iter() {
+                let norm_elem = normalize_query_send_sugar_proc(elem);
+                for _ in 0..count {
+                    out.insert(norm_elem.clone());
+                }
+            }
+            Proc::PPar(out)
+        },
+        Proc::PNew(scope) => {
+            let (binders, body) = scope.clone().unbind();
+            let norm_body = normalize_query_send_sugar_proc(&body);
+            Proc::PNew(mettail_runtime::Scope::new(binders, Box::new(norm_body)))
+        },
+        _ => p.clone(),
+    }
+}
+
+impl Proc {
+    pub fn term_eq(&self, other: &Self) -> bool {
+        let lhs = normalize_query_send_sugar_proc(self);
+        let rhs = normalize_query_send_sugar_proc(other);
+        mettail_runtime::BoundTerm::term_eq(&lhs, &rhs)
+    }
 }
