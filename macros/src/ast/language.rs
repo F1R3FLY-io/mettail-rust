@@ -380,15 +380,6 @@ impl LanguageDef {
             .map(|t| &t.name)
     }
 
-    /// Type name for the Map category (e.g. "Map") if present.
-    #[allow(dead_code)]
-    pub fn map_type_name(&self) -> Option<&Ident> {
-        self.types
-            .iter()
-            .find(|t| matches!(t.collection_kind.as_ref(), Some(CollectionCategory::Map(_))))
-            .map(|t| &t.name)
-    }
-
     /// Label of the term that injects a collection type (List, Bag, Map) into the primary category.
     /// E.g. for RhoCalc with CastList . l:List |- l : Proc, returns CastList for "List".
     pub fn injection_term_label_for_collection(&self, collection_type: &str) -> Option<Ident> {
