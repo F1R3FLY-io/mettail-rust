@@ -1,5 +1,6 @@
 use super::{
-    Bag, InputBind, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner,
+    Bag, Bool, ForRow, InputBind, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm,
+    RhoCalcTermInner,
 };
 use crate::rhocalc::receive;
 use mettail_runtime::{Language, Term, TermType, VarTypeInfo};
@@ -57,6 +58,17 @@ fn input_bind_uses_name_var(bind: &InputBind, var_name: &str) -> bool {
         InputBind::InputBindQuoted(pat, n) => {
             proc_uses_name_var(pat, var_name) || name_uses_var(n, var_name)
         },
+        InputBind::InputBindQuery(lhs, n, args) => {
+            let pat = receive::name_pattern_to_proc(lhs.as_ref());
+            proc_uses_name_var(&pat, var_name)
+                || name_uses_var(n, var_name)
+                || args.iter().any(|a| proc_uses_name_var(a, var_name))
+        },
+        InputBind::InputBindQuotedQuery(pat, n, args) => {
+            proc_uses_name_var(pat, var_name)
+                || name_uses_var(n, var_name)
+                || args.iter().any(|a| proc_uses_name_var(a, var_name))
+        },
         _ => false,
     }
 }
@@ -70,6 +82,55 @@ fn input_bind_uses_proc_var(bind: &InputBind, var_name: &str) -> bool {
         InputBind::InputBindQuoted(pat, n) => {
             proc_uses_proc_var(pat, var_name) || name_uses_var(n, var_name)
         },
+        InputBind::InputBindQuery(lhs, n, args) => {
+            let pat = receive::name_pattern_to_proc(lhs.as_ref());
+            proc_uses_proc_var(&pat, var_name)
+                || name_uses_var(n, var_name)
+                || args.iter().any(|a| proc_uses_proc_var(a, var_name))
+        },
+        InputBind::InputBindQuotedQuery(pat, n, args) => {
+            proc_uses_proc_var(pat, var_name)
+                || name_uses_var(n, var_name)
+                || args.iter().any(|a| proc_uses_proc_var(a, var_name))
+        },
+        _ => false,
+    }
+}
+
+fn for_row_uses_name_var(row: &ForRow, var_name: &str) -> bool {
+    match row {
+        ForRow::ForRowSingleNoWhere(b) => input_bind_uses_name_var(b.as_ref(), var_name),
+        ForRow::ForRowSingleWhere(b, cond) => {
+            input_bind_uses_name_var(b.as_ref(), var_name) || proc_uses_name_var(cond, var_name)
+        },
+        ForRow::ForRowNoWhere(b, bs) => {
+            input_bind_uses_name_var(b.as_ref(), var_name)
+                || bs.iter().any(|ib| input_bind_uses_name_var(ib, var_name))
+        },
+        ForRow::ForRowWhere(b, bs, cond) => {
+            input_bind_uses_name_var(b.as_ref(), var_name)
+                || bs.iter().any(|ib| input_bind_uses_name_var(ib, var_name))
+                || proc_uses_name_var(cond, var_name)
+        },
+        _ => false,
+    }
+}
+
+fn for_row_uses_proc_var(row: &ForRow, var_name: &str) -> bool {
+    match row {
+        ForRow::ForRowSingleNoWhere(b) => input_bind_uses_proc_var(b.as_ref(), var_name),
+        ForRow::ForRowSingleWhere(b, cond) => {
+            input_bind_uses_proc_var(b.as_ref(), var_name) || proc_uses_proc_var(cond, var_name)
+        },
+        ForRow::ForRowNoWhere(b, bs) => {
+            input_bind_uses_proc_var(b.as_ref(), var_name)
+                || bs.iter().any(|ib| input_bind_uses_proc_var(ib, var_name))
+        },
+        ForRow::ForRowWhere(b, bs, cond) => {
+            input_bind_uses_proc_var(b.as_ref(), var_name)
+                || bs.iter().any(|ib| input_bind_uses_proc_var(ib, var_name))
+                || proc_uses_proc_var(cond, var_name)
+        },
         _ => false,
     }
 }
@@ -79,21 +140,9 @@ fn proc_uses_name_var(term: &Proc, var_name: &str) -> bool {
         Proc::PPar(ps) => ps.iter().any(|(p, _)| proc_uses_name_var(p, var_name)),
         Proc::POutput(n, q) => name_uses_var(n, var_name) || proc_uses_name_var(q, var_name),
         Proc::PDrop(n) => name_uses_var(n, var_name),
-        Proc::PFor(_, n, body) => name_uses_var(n, var_name) || proc_uses_name_var(body, var_name),
-        Proc::PForWhere(_, n, cond, body) => {
-            name_uses_var(n, var_name)
-                || proc_uses_name_var(cond, var_name)
-                || proc_uses_name_var(body, var_name)
-        },
-        Proc::PForJoin(b, bs, cond, body) => {
-            input_bind_uses_name_var(b, var_name)
-                || bs.iter().any(|ib| input_bind_uses_name_var(ib, var_name))
-                || proc_uses_name_var(cond, var_name)
-                || proc_uses_name_var(body, var_name)
-        },
         Proc::PForUser(rows, body) => {
-            let d = receive::desugar_for_rows(rows.clone(), body);
-            proc_uses_name_var(&d, var_name)
+            rows.iter().any(|r| for_row_uses_name_var(r, var_name))
+                || proc_uses_name_var(body, var_name)
         },
         Proc::GuardThen(cond, body) => {
             proc_uses_name_var(cond, var_name) || proc_uses_name_var(body, var_name)
@@ -111,26 +160,9 @@ fn proc_uses_proc_var(term: &Proc, var_name: &str) -> bool {
         Proc::PPar(ps) => ps.iter().any(|(p, _)| proc_uses_proc_var(p, var_name)),
         Proc::POutput(n, q) => name_uses_var(n, var_name) || proc_uses_proc_var(q, var_name),
         Proc::PDrop(n) => name_uses_var(n, var_name),
-        Proc::PFor(pat, n, body) => {
-            proc_uses_proc_var(pat, var_name)
-                || name_uses_var(n, var_name)
-                || proc_uses_proc_var(body, var_name)
-        },
-        Proc::PForWhere(pat, n, cond, body) => {
-            proc_uses_proc_var(pat, var_name)
-                || name_uses_var(n, var_name)
-                || proc_uses_proc_var(cond, var_name)
-                || proc_uses_proc_var(body, var_name)
-        },
-        Proc::PForJoin(b, bs, cond, body) => {
-            input_bind_uses_proc_var(b, var_name)
-                || bs.iter().any(|ib| input_bind_uses_proc_var(ib, var_name))
-                || proc_uses_proc_var(cond, var_name)
-                || proc_uses_proc_var(body, var_name)
-        },
         Proc::PForUser(rows, body) => {
-            let d = receive::desugar_for_rows(rows.clone(), body);
-            proc_uses_proc_var(&d, var_name)
+            rows.iter().any(|r| for_row_uses_proc_var(r, var_name))
+                || proc_uses_proc_var(body, var_name)
         },
         Proc::GuardThen(cond, body) => {
             proc_uses_proc_var(cond, var_name) || proc_uses_proc_var(body, var_name)
@@ -138,6 +170,61 @@ fn proc_uses_proc_var(term: &Proc, var_name: &str) -> bool {
         Proc::PNew(scope) => proc_uses_proc_var(scope.unsafe_body(), var_name),
         _ => false,
     }
+}
+
+fn infer_var_type_pfor_user(proc: &Proc, var_name: &str) -> Option<TermType> {
+    let Proc::PForUser(rows, body) = proc else {
+        return None;
+    };
+    infer_var_type_in_receive_rows(rows, body, var_name)
+}
+
+fn infer_var_type_in_receive_rows(
+    rows: &[ForRow],
+    body: &Proc,
+    var_name: &str,
+) -> Option<TermType> {
+    if rows.is_empty() {
+        return None;
+    }
+    let cont = receive::pfor_continuation_after_first_row(rows, body);
+    match &rows[0] {
+        ForRow::ForRowSingleNoWhere(b) => {
+            if let Some(pat) = receive::bind_pattern_proc(b.as_ref()) {
+                let mut names = Vec::new();
+                infer_receive_pattern_names(&pat, &mut names);
+                if names.iter().any(|n| n == var_name) {
+                    return Some(infer_receive_var_type(&cont, None, var_name));
+                }
+            }
+        },
+        ForRow::ForRowSingleWhere(b, cond) => {
+            if let Some(pat) = receive::bind_pattern_proc(b.as_ref()) {
+                let mut names = Vec::new();
+                infer_receive_pattern_names(&pat, &mut names);
+                if names.iter().any(|n| n == var_name) {
+                    return Some(infer_receive_var_type(&cont, Some(cond.as_ref()), var_name));
+                }
+            }
+        },
+        ForRow::ForRowNoWhere(b, bs) => {
+            let mut names = Vec::new();
+            names_from_binds(b.as_ref(), bs, &mut names);
+            if names.iter().any(|n| n == var_name) {
+                let true_lit = Proc::CastBool(Box::new(Bool::BoolLit(true)));
+                return Some(infer_receive_var_type(&cont, Some(&true_lit), var_name));
+            }
+        },
+        ForRow::ForRowWhere(b, bs, cond) => {
+            let mut names = Vec::new();
+            names_from_binds(b.as_ref(), bs, &mut names);
+            if names.iter().any(|n| n == var_name) {
+                return Some(infer_receive_var_type(&cont, Some(cond.as_ref()), var_name));
+            }
+        },
+        _ => {},
+    }
+    infer_var_type_in_receive_rows(&rows[1..], body, var_name)
 }
 
 fn infer_receive_var_type(body: &Proc, cond: Option<&Proc>, var_name: &str) -> TermType {
@@ -154,6 +241,90 @@ fn infer_receive_var_type(body: &Proc, cond: Option<&Proc>, var_name: &str) -> T
     }
 }
 
+fn names_from_binds(b: &InputBind, bs: &[InputBind], out: &mut Vec<String>) {
+    if let Some(pat) = receive::bind_pattern_proc(b) {
+        infer_receive_pattern_names(&pat, out);
+    }
+    for bind in bs {
+        if let Some(pat) = receive::bind_pattern_proc(bind) {
+            infer_receive_pattern_names(&pat, out);
+        }
+    }
+}
+
+/// Collect receive-bound names from a `PForUser` the same way we did for nested `PFor*`.
+fn collect_pfor_user_receive_vars(
+    rows: &[ForRow],
+    body: &Proc,
+    result: &mut Vec<VarTypeInfo>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    if rows.is_empty() {
+        collect_rhocalc_var_types(body, result, seen);
+        return;
+    }
+    let cont = receive::pfor_continuation_after_first_row(rows, body);
+    match &rows[0] {
+        ForRow::ForRowSingleNoWhere(b) => {
+            if let Some(pat) = receive::bind_pattern_proc(b.as_ref()) {
+                let mut names = Vec::new();
+                infer_receive_pattern_names(&pat, &mut names);
+                for name in names {
+                    if seen.insert(name.clone()) {
+                        result.push(VarTypeInfo {
+                            name: name.clone(),
+                            ty: infer_receive_var_type(&cont, None, &name),
+                        });
+                    }
+                }
+            }
+        },
+        ForRow::ForRowSingleWhere(b, cond) => {
+            if let Some(pat) = receive::bind_pattern_proc(b.as_ref()) {
+                let mut names = Vec::new();
+                infer_receive_pattern_names(&pat, &mut names);
+                for name in names {
+                    if seen.insert(name.clone()) {
+                        result.push(VarTypeInfo {
+                            name: name.clone(),
+                            ty: infer_receive_var_type(&cont, Some(cond.as_ref()), &name),
+                        });
+                    }
+                }
+            }
+            collect_rhocalc_var_types(cond.as_ref(), result, seen);
+        },
+        ForRow::ForRowNoWhere(b, bs) => {
+            let mut names = Vec::new();
+            names_from_binds(b.as_ref(), bs, &mut names);
+            let true_lit = Proc::CastBool(Box::new(Bool::BoolLit(true)));
+            for name in names {
+                if seen.insert(name.clone()) {
+                    result.push(VarTypeInfo {
+                        name: name.clone(),
+                        ty: infer_receive_var_type(&cont, Some(&true_lit), &name),
+                    });
+                }
+            }
+        },
+        ForRow::ForRowWhere(b, bs, cond) => {
+            let mut names = Vec::new();
+            names_from_binds(b.as_ref(), bs, &mut names);
+            for name in names {
+                if seen.insert(name.clone()) {
+                    result.push(VarTypeInfo {
+                        name: name.clone(),
+                        ty: infer_receive_var_type(&cont, Some(cond.as_ref()), &name),
+                    });
+                }
+            }
+            collect_rhocalc_var_types(cond.as_ref(), result, seen);
+        },
+        _ => {},
+    }
+    collect_pfor_user_receive_vars(&rows[1..], body, result, seen);
+}
+
 fn collect_rhocalc_var_types(
     term: &Proc,
     result: &mut Vec<VarTypeInfo>,
@@ -161,62 +332,7 @@ fn collect_rhocalc_var_types(
 ) {
     match term {
         Proc::PForUser(rows, body) => {
-            let desugared = receive::desugar_for_rows(rows.clone(), body);
-            collect_rhocalc_var_types(&desugared, result, seen);
-        },
-        Proc::PFor(pat, _n, body) => {
-            let mut names = Vec::new();
-            infer_receive_pattern_names(pat, &mut names);
-            for name in names {
-                if seen.insert(name.clone()) {
-                    result.push(VarTypeInfo {
-                        name: name.clone(),
-                        ty: infer_receive_var_type(body, None, &name),
-                    });
-                }
-            }
-            collect_rhocalc_var_types(body, result, seen);
-        },
-        Proc::PForWhere(pat, _n, cond, body) => {
-            let mut names = Vec::new();
-            infer_receive_pattern_names(pat, &mut names);
-            for name in names {
-                if seen.insert(name.clone()) {
-                    result.push(VarTypeInfo {
-                        name: name.clone(),
-                        ty: infer_receive_var_type(body, Some(cond), &name),
-                    });
-                }
-            }
-            collect_rhocalc_var_types(cond, result, seen);
-            collect_rhocalc_var_types(body, result, seen);
-        },
-        Proc::PForJoin(b, bs, cond, body) => {
-            let mut names = Vec::new();
-            if let InputBind::InputBind(lhs, _) = b.as_ref() {
-                let pat = receive::name_pattern_to_proc(lhs.as_ref());
-                infer_receive_pattern_names(&pat, &mut names)
-            } else if let InputBind::InputBindQuoted(pat, _) = b.as_ref() {
-                infer_receive_pattern_names(pat, &mut names)
-            }
-            for bind in bs {
-                if let InputBind::InputBind(lhs, _) = bind {
-                    let pat = receive::name_pattern_to_proc(lhs.as_ref());
-                    infer_receive_pattern_names(&pat, &mut names)
-                } else if let InputBind::InputBindQuoted(pat, _) = bind {
-                    infer_receive_pattern_names(pat, &mut names)
-                }
-            }
-            for name in names {
-                if seen.insert(name.clone()) {
-                    result.push(VarTypeInfo {
-                        name: name.clone(),
-                        ty: infer_receive_var_type(body, Some(cond), &name),
-                    });
-                }
-            }
-            collect_rhocalc_var_types(cond, result, seen);
-            collect_rhocalc_var_types(body, result, seen);
+            collect_pfor_user_receive_vars(rows, body, result, seen);
         },
         Proc::PPar(ps) => {
             for (p, _) in ps.iter() {
@@ -255,47 +371,8 @@ impl RhoCalcLanguage {
             return <RhoCalcLanguage as Language>::infer_var_type(self, term, var_name);
         };
         if let RhoCalcTermInner::Proc(proc) = &typed_term.0 {
-            let desugared = match proc {
-                Proc::PForUser(rows, body) => Some(receive::desugar_for_rows(rows.clone(), body)),
-                _ => None,
-            };
-            let proc = desugared.as_ref().unwrap_or(proc);
-            match proc {
-                Proc::PFor(pat, _n, body) => {
-                    let mut names = Vec::new();
-                    infer_receive_pattern_names(pat, &mut names);
-                    if names.iter().any(|n| n == var_name) {
-                        return Some(infer_receive_var_type(body, None, var_name));
-                    }
-                },
-                Proc::PForWhere(pat, _n, cond, body) => {
-                    let mut names = Vec::new();
-                    infer_receive_pattern_names(pat, &mut names);
-                    if names.iter().any(|n| n == var_name) {
-                        return Some(infer_receive_var_type(body, Some(cond), var_name));
-                    }
-                },
-                Proc::PForJoin(b, bs, cond, body) => {
-                    let mut names = Vec::new();
-                    if let InputBind::InputBind(lhs, _) = b.as_ref() {
-                        let pat = receive::name_pattern_to_proc(lhs.as_ref());
-                        infer_receive_pattern_names(&pat, &mut names)
-                    } else if let InputBind::InputBindQuoted(pat, _) = b.as_ref() {
-                        infer_receive_pattern_names(pat, &mut names)
-                    }
-                    for bind in bs {
-                        if let InputBind::InputBind(lhs, _) = bind {
-                            let pat = receive::name_pattern_to_proc(lhs.as_ref());
-                            infer_receive_pattern_names(&pat, &mut names)
-                        } else if let InputBind::InputBindQuoted(pat, _) = bind {
-                            infer_receive_pattern_names(pat, &mut names)
-                        }
-                    }
-                    if names.iter().any(|n| n == var_name) {
-                        return Some(infer_receive_var_type(body, Some(cond), var_name));
-                    }
-                },
-                _ => {},
+            if let Some(t) = infer_var_type_pfor_user(proc, var_name) {
+                return Some(t);
             }
             if let Some(t) = proc.infer_var_type(var_name) {
                 return Some(RhoCalcLanguage::inferred_to_term_type(&t));

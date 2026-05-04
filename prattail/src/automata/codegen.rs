@@ -366,26 +366,6 @@ fn write_transition_arms(buf: &mut String, dfa: &Dfa) {
     buf.push_str("_ => u32::MAX }");
 }
 
-/// Write the flat transition table to a string buffer (for table-driven lexer).
-///
-/// Superseded by `write_comb_tables()` — preserved for reference and testing.
-#[allow(dead_code)]
-fn write_transition_table(buf: &mut String, dfa: &Dfa, num_classes: usize) {
-    let table_size = dfa.states.len() * num_classes;
-    write!(buf, "static TRANSITIONS: [u32; {}] = [", table_size).unwrap();
-    let mut first = true;
-    for state in &dfa.states {
-        for &target in &state.transitions {
-            if !first {
-                buf.push(',');
-            }
-            first = false;
-            write!(buf, "{}", target).unwrap();
-        }
-    }
-    buf.push_str("];");
-}
-
 /// Write a TokenKind constructor expression to a string buffer.
 ///
 /// Zero-copy: string-carrying variants borrow from the input `text` slice
@@ -718,100 +698,6 @@ fn write_lex_weighted_function_direct_coded(buf: &mut String) {
          tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id }, 0.0_f64)); \
          Ok(tokens) }",
     );
-}
-
-/// Write a complete table-driven lexer to a string buffer (flat transition table).
-///
-/// Superseded by `write_comb_driven_lexer()` and `write_bitmap_driven_lexer()`
-/// — preserved for reference and testing.
-#[allow(dead_code)]
-fn write_table_driven_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPartition) {
-    let num_classes = partition.num_classes;
-
-    write_class_table(buf, partition);
-    write_transition_table(buf, dfa, num_classes);
-    write_lex_accept_priority_table(buf, dfa);
-
-    write!(
-        buf,
-        "const NUM_STATES: usize = {}; const NUM_CLASSES: usize = {}; const DEAD: u32 = u32::MAX;",
-        dfa.states.len(),
-        num_classes
-    )
-    .unwrap();
-
-    buf.push_str(
-        "fn is_whitespace(b: u8) -> bool { matches!(b, b' ' | b'\\t' | b'\\n' | b'\\r') }",
-    );
-
-    // lex() function with line/column tracking — zero-copy: Token<'a> borrows from input
-    buf.push_str(
-        "pub fn lex<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range)>, String> { \
-         lex_with_file_id(input, None) \
-         }\n\
-         pub fn lex_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range)>, String> { \
-         let bytes = input.as_bytes(); \
-         let mut pos: usize = 0; \
-         let mut line: usize = 0; \
-         let mut col: usize = 0; \
-         let mut tokens: Vec<(Token<'a>, Range)> = Vec::with_capacity(input.len() / 2); \
-         while pos < bytes.len() { \
-         while pos < bytes.len() && is_whitespace(bytes[pos]) { \
-         if bytes[pos] == b'\\n' { line += 1; col = 0; } else { col += 1; } \
-         pos += 1; } \
-         if pos >= bytes.len() { break; } \
-         let start = pos; \
-         let start_line = line; \
-         let start_col = col; \
-         let mut state: u32 = 0; \
-         let mut last_accept: Option<(u32, usize, usize, usize, f64)> = None; \
-         if accept_token(0, &input[start..start]).is_some() { \
-         let w0 = LEX_ACCEPT_PRIORITY[0]; \
-         last_accept = Some((0, pos, line, col, w0)); \
-         } \
-         while pos < bytes.len() { \
-         let class = CHAR_CLASS[bytes[pos] as usize] as usize; \
-         let next = TRANSITIONS[state as usize * NUM_CLASSES + class]; \
-         if next == DEAD { break; } \
-         state = next; \
-         if bytes[pos] == b'\\n' { line += 1; col = 0; } \
-         else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
-         pos += 1; \
-         if accept_token(state, &input[start..pos]).is_some() { \
-         let w = LEX_ACCEPT_PRIORITY[state as usize]; \
-         let replace = match last_accept { \
-         None => true, \
-         Some((_, old_end, _, _, old_w)) => pos > old_end || (pos == old_end && w < old_w), \
-         }; \
-         if replace { last_accept = Some((state, pos, line, col, w)); } \
-         } \
-         } \
-         match last_accept { \
-         Some((accept_state, end, end_line, end_col, _)) => { \
-         pos = end; line = end_line; col = end_col; \
-         let text = &input[start..end]; \
-         if let Some(token) = accept_token(accept_state, text) { \
-         tokens.push((token, Range { \
-         start: Position { byte_offset: start, line: start_line, column: start_col }, \
-         end: Position { byte_offset: end, line: end_line, column: end_col }, \
-         file_id })); } } \
-         None => { return Err(format!(\"{}:{}: unexpected character '{}'\", \
-         line + 1, col + 1, bytes[start] as char)); } \
-         } } \
-         let eof_pos = Position { byte_offset: pos, line, column: col }; \
-         tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id })); \
-         Ok(tokens) }",
-    );
-
-    // accept_token() function — returns Token<'a> borrowing from text
-    buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
-    write_accept_arms(
-        buf,
-        dfa,
-        &std::collections::HashMap::new(),
-        &std::collections::HashMap::new(),
-    );
-    buf.push('}');
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

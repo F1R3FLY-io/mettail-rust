@@ -1299,26 +1299,67 @@ fn write_prefix_match_arms(
             })
             .collect();
 
-        let mut seen: std::collections::HashSet<String> = ident_lookahead_cases
-            .iter()
-            .map(|(t, _)| t.clone())
-            .collect();
-        for (term, fn_name) in rd_fallback {
-            if seen.insert(term.clone()) {
-                ident_lookahead_cases.push((term, fn_name));
-            }
-        }
+        // Keep all candidates, including multiple parse fns for the same lookahead terminal.
+        // Ambiguous lookahead terminals are disambiguated below via backtracking + longest match.
+        ident_lookahead_cases.extend(rd_fallback);
 
         if !ident_lookahead_cases.is_empty() {
             let mut arm =
                 String::from("Token::Ident(name) => { match peek_ahead(tokens, *pos, 1) {");
+            let mut grouped_cases: std::collections::BTreeMap<String, Vec<String>> =
+                std::collections::BTreeMap::new();
             for (terminal, parse_fn_name) in &ident_lookahead_cases {
+                grouped_cases
+                    .entry(terminal.clone())
+                    .or_default()
+                    .push(parse_fn_name.clone());
+            }
+            for (terminal, parse_fns) in &grouped_cases {
                 let variant = terminal_to_variant_name(terminal);
-                write!(arm, "Some(Token::{}) => {{ match {}(tokens, pos) {{ Ok(v) => break 'prefix v, Err(e) => {{ match stack.pop() {{ None => return Err(e),",
-                    variant, parse_fn_name).unwrap();
-                // Collection catch on error
-                write_collection_error_catch_inline(&mut arm, config, rd_rules, frame_info);
-                arm.push_str("Some(_) => return Err(e), } } } },");
+                if parse_fns.len() == 1 {
+                    write!(arm, "Some(Token::{}) => {{ match {}(tokens, pos) {{ Ok(v) => break 'prefix v, Err(e) => {{ match stack.pop() {{ None => return Err(e),",
+                        variant, parse_fns[0]).unwrap();
+                    // Collection catch on error
+                    write_collection_error_catch_inline(&mut arm, config, rd_rules, frame_info);
+                    arm.push_str("Some(_) => return Err(e), } } } },");
+                } else {
+                    write!(
+                        arm,
+                        "Some(Token::{}) => {{ \
+                            let __saved = *pos; \
+                            let mut __best_pos = __saved; \
+                            let mut __best_val: Option<{cat}> = None; \
+                            let mut __first_err: Option<ParseError> = None;",
+                        variant
+                    )
+                    .unwrap();
+                    for parse_fn_name in parse_fns {
+                        write!(
+                            arm,
+                            "*pos = __saved; \
+                             match {}(tokens, pos) {{ \
+                                 Ok(v) => {{ if __best_val.is_none() || *pos > __best_pos {{ __best_pos = *pos; __best_val = Some(v); }} }}, \
+                                 Err(e) => {{ if __first_err.is_none() {{ __first_err = Some(e); }} }}, \
+                             }}",
+                            parse_fn_name
+                        )
+                        .unwrap();
+                    }
+                    arm.push_str(
+                        "if let Some(v) = __best_val { \
+                            *pos = __best_pos; \
+                            break 'prefix v; \
+                        } \
+                        let e = __first_err.unwrap_or(ParseError::UnexpectedToken { \
+                            expected: \"identifier lookahead parse\", \
+                            found: format!(\"{:?}\", tokens.get(__saved + 1).map(|(t, _)| t).unwrap_or(&Token::Eof)), \
+                            range: tokens.get(__saved).map(|(_, r)| *r).unwrap_or(Range::zero()), \
+                        }); \
+                        match stack.pop() { None => return Err(e),",
+                    );
+                    write_collection_error_catch_inline(&mut arm, config, rd_rules, frame_info);
+                    arm.push_str("Some(_) => return Err(e), } },");
+                }
             }
             // Default: variable fallback
             write!(

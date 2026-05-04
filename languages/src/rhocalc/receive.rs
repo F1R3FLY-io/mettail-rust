@@ -2,7 +2,7 @@ use super::{
     Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Proc, Str,
     UInt32,
 };
-use mettail_runtime::{FreeVar, HashBag, OrdVar, Var};
+use mettail_runtime::{Binder, FreeVar, HashBag, OrdVar, Scope, Var};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -14,10 +14,12 @@ pub(crate) fn name_pattern_to_proc(name_pat: &Name) -> Proc {
     }
 }
 
-fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
+pub(crate) fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
     match bind {
         InputBind::InputBind(lhs, _) => Some(name_pattern_to_proc(lhs.as_ref())),
+        InputBind::InputBindQuery(lhs, _, _) => Some(name_pattern_to_proc(lhs.as_ref())),
         InputBind::InputBindQuoted(pat, _) => Some(pat.as_ref().clone()),
+        InputBind::InputBindQuotedQuery(pat, _, _) => Some(pat.as_ref().clone()),
         _ => None,
     }
 }
@@ -25,7 +27,9 @@ fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
 fn bind_channel_name(bind: &InputBind) -> Option<&Name> {
     match bind {
         InputBind::InputBind(_, n) => Some(n.as_ref()),
+        InputBind::InputBindQuery(_, n, _) => Some(n.as_ref()),
         InputBind::InputBindQuoted(_, n) => Some(n.as_ref()),
+        InputBind::InputBindQuotedQuery(_, n, _) => Some(n.as_ref()),
         _ => None,
     }
 }
@@ -236,32 +240,105 @@ pub fn comm_pforwhere_subst(pat: &Proc, n: &Name, q: &Proc, cond: &Proc, body: &
     }
 }
 
-fn apply_row(row: ForRow, inner: Proc) -> Proc {
-    match row {
-        ForRow::ForRowSingleNoWhere(b) => match *b {
-            InputBind::InputBind(lhs, n) => {
-                Proc::PFor(Box::new(name_pattern_to_proc(lhs.as_ref())), n, Box::new(inner))
-            },
-            InputBind::InputBindQuoted(pat, n) => Proc::PFor(pat, n, Box::new(inner)),
-            _ => Proc::Err,
+fn fresh_query_return(counter: &mut usize) -> (Binder<String>, Name) {
+    let idx = *counter;
+    *counter += 1;
+    let fv: FreeVar<String> = FreeVar::fresh_named(format!("__r{}", idx));
+    let binder = Binder(fv.clone());
+    let name = Name::NVar(OrdVar(Var::Free(fv)));
+    (binder, name)
+}
+
+fn mk_query_send(channel: &Name, ret: &Name, args: &[Proc]) -> Proc {
+    if args.is_empty() {
+        return Proc::POutput(
+            Box::new(channel.clone()),
+            Box::new(Proc::PDrop(Box::new(ret.clone()))),
+        );
+    }
+    Proc::POutput2Plus(
+        Box::new(channel.clone()),
+        Box::new(Proc::PDrop(Box::new(ret.clone()))),
+        args.to_vec(),
+    )
+}
+
+fn desugar_query_bind(
+    bind: InputBind,
+    counter: &mut usize,
+) -> (InputBind, Vec<(Binder<String>, Proc)>) {
+    match bind {
+        InputBind::InputBindQuery(lhs, channel, args) => {
+            let (binder, ret_name) = fresh_query_return(counter);
+            let recv_bind = InputBind::InputBind(lhs, Box::new(ret_name.clone()));
+            let send = mk_query_send(channel.as_ref(), &ret_name, &args);
+            (recv_bind, vec![(binder, send)])
         },
-        ForRow::ForRowSingleWhere(b, cond) => match *b {
-            InputBind::InputBind(lhs, n) => Proc::PForWhere(
-                Box::new(name_pattern_to_proc(lhs.as_ref())),
-                n,
-                cond,
-                Box::new(inner),
-            ),
-            InputBind::InputBindQuoted(pat, n) => Proc::PForWhere(pat, n, cond, Box::new(inner)),
-            _ => Proc::Err,
+        other => (other, vec![]),
+    }
+}
+
+fn desugar_row_query_binds(
+    row: ForRow,
+    counter: &mut usize,
+) -> (ForRow, Vec<(Binder<String>, Proc)>) {
+    match row {
+        ForRow::ForRowSingleNoWhere(b) => {
+            let (b2, sends) = desugar_query_bind(*b, counter);
+            (ForRow::ForRowSingleNoWhere(Box::new(b2)), sends)
+        },
+        ForRow::ForRowSingleWhere(b, cond) => {
+            let (b2, sends) = desugar_query_bind(*b, counter);
+            (ForRow::ForRowSingleWhere(Box::new(b2), cond), sends)
         },
         ForRow::ForRowNoWhere(b, bs) => {
-            let true_cond = Box::new(Proc::CastBool(Box::new(Bool::BoolLit(true))));
-            Proc::PForJoin(b, bs, true_cond, Box::new(inner))
+            let mut acc_sends = Vec::new();
+            let (b2, mut sends0) = desugar_query_bind(*b, counter);
+            acc_sends.append(&mut sends0);
+            let mut bs2 = Vec::with_capacity(bs.len());
+            for ib in bs {
+                let (ib2, mut sends_i) = desugar_query_bind(ib, counter);
+                acc_sends.append(&mut sends_i);
+                bs2.push(ib2);
+            }
+            (ForRow::ForRowNoWhere(Box::new(b2), bs2), acc_sends)
         },
-        ForRow::ForRowWhere(b, bs, cond) => Proc::PForJoin(b, bs, cond, Box::new(inner)),
-        _ => Proc::Err,
+        ForRow::ForRowWhere(b, bs, cond) => {
+            let mut acc_sends = Vec::new();
+            let (b2, mut sends0) = desugar_query_bind(*b, counter);
+            acc_sends.append(&mut sends0);
+            let mut bs2 = Vec::with_capacity(bs.len());
+            for ib in bs {
+                let (ib2, mut sends_i) = desugar_query_bind(ib, counter);
+                acc_sends.append(&mut sends_i);
+                bs2.push(ib2);
+            }
+            (ForRow::ForRowWhere(Box::new(b2), bs2, cond), acc_sends)
+        },
+        _ => (row, vec![]),
     }
+}
+
+/// True if any `ForRow` still uses `InputBindQuery` / `InputBindQuotedQuery` (parse-time
+/// fold should have removed these; this supports a `fold_proc` idempotent pass).
+pub fn pfor_user_still_has_query_rows(rows: &[ForRow]) -> bool {
+    rows.iter().any(|row| match row {
+        ForRow::ForRowSingleNoWhere(b) => matches!(b.as_ref(), InputBind::InputBindQuery(_, _, _)),
+        ForRow::ForRowSingleWhere(b, _) => matches!(b.as_ref(), InputBind::InputBindQuery(_, _, _)),
+        ForRow::ForRowNoWhere(b, bs) => {
+            matches!(b.as_ref(), InputBind::InputBindQuery(_, _, _))
+                || bs
+                    .iter()
+                    .any(|ib| matches!(ib, InputBind::InputBindQuery(_, _, _)))
+        },
+        ForRow::ForRowWhere(b, bs, _) => {
+            matches!(b.as_ref(), InputBind::InputBindQuery(_, _, _))
+                || bs
+                    .iter()
+                    .any(|ib| matches!(ib, InputBind::InputBindQuery(_, _, _)))
+        },
+        _ => false,
+    })
 }
 
 /// Desugar a list of ForRows into nested `for` calls (right-to-left folding so
@@ -270,9 +347,31 @@ fn apply_row(row: ForRow, inner: Proc) -> Proc {
 /// The `body` parameter is taken by reference because Ascent binds fold-relation
 /// results as references in its generated rule code.
 pub fn desugar_for_rows(rows: Vec<ForRow>, body: &Proc) -> Proc {
-    rows.into_iter()
-        .rev()
-        .fold((*body).clone(), |inner, row| apply_row(row, inner))
+    let mut counter = 0usize;
+    let mut rewritten_rows = Vec::with_capacity(rows.len());
+    let mut query_binders_and_sends: Vec<(Binder<String>, Proc)> = Vec::new();
+    for row in rows {
+        let (rewritten_row, mut sends) = desugar_row_query_binds(row, &mut counter);
+        rewritten_rows.push(rewritten_row);
+        query_binders_and_sends.append(&mut sends);
+    }
+
+    let receive_proc = Proc::PForUser(rewritten_rows, Box::new((*body).clone()));
+    if query_binders_and_sends.is_empty() {
+        return receive_proc;
+    }
+
+    let mut bag = HashBag::new();
+    for (_, send) in &query_binders_and_sends {
+        Proc::insert_into_ppar(&mut bag, send.clone());
+    }
+    Proc::insert_into_ppar(&mut bag, receive_proc);
+
+    let binders: Vec<Binder<String>> = query_binders_and_sends
+        .into_iter()
+        .map(|(b, _)| b)
+        .collect();
+    Proc::PNew(Scope::new(binders, Box::new(Proc::PPar(bag))))
 }
 
 pub(crate) fn channel_names_from_row(b: &InputBind, bs: &[InputBind]) -> Option<Vec<Name>> {
@@ -284,7 +383,8 @@ pub(crate) fn channel_names_from_row(b: &InputBind, bs: &[InputBind]) -> Option<
     Some(out)
 }
 
-/// Multi-channel COMM reduction for `PForJoin` (replaces old `PInputs` + `eval` on scopes).
+/// Multi-channel COMM reduction for a single join row inside `PForUser` (replaces old
+/// `PInputs` + `eval` on scopes).
 ///
 /// `ns` / `qs` come from the same `zip` as the `POutput` premises; we require they align with
 /// the channel names in `b` / `bs`. Applies each `(pattern, payload)` like `CommPatternWhere`.
@@ -295,32 +395,10 @@ pub fn comm_pforjoin_subst(
     qs: &[Proc],
     cond: &Proc,
     body: &Proc,
-) -> Proc {
-    let blocked = || {
-        let mut bag = HashBag::new();
-        Proc::insert_into_ppar(
-            &mut bag,
-            Proc::PForJoin(
-                Box::new(b.clone()),
-                bs.to_vec(),
-                Box::new(cond.clone()),
-                Box::new(body.clone()),
-            ),
-        );
-        for (n, q) in ns.iter().zip(qs.iter()) {
-            Proc::insert_into_ppar(
-                &mut bag,
-                Proc::POutput(Box::new(n.clone()), Box::new(q.clone())),
-            );
-        }
-        Proc::PPar(bag)
-    };
-
-    let Some(expected_ns) = channel_names_from_row(b, bs) else {
-        return blocked();
-    };
+) -> Option<Proc> {
+    let expected_ns = channel_names_from_row(b, bs)?;
     if expected_ns.len() != ns.len() || expected_ns.len() != qs.len() {
-        return blocked();
+        return None;
     }
     // PPar is a bag; output order in `ns/qs` is not stable. Align payloads to expected channels.
     let mut used = vec![false; ns.len()];
@@ -333,9 +411,7 @@ pub fn comm_pforjoin_subst(
                 break;
             }
         }
-        let Some(idx) = found else {
-            return blocked();
-        };
+        let idx = found?;
         used[idx] = true;
         aligned_qs.push(&qs[idx]);
     }
@@ -343,21 +419,172 @@ pub fn comm_pforjoin_subst(
     let mut acc_body = body.clone();
     let mut acc_cond = cond.clone();
     for (ib, q) in binds.iter().zip(aligned_qs.iter()) {
-        let Some(pat) = bind_pattern_proc(ib) else {
-            return blocked();
-        };
-        let Some(nb) = receive_apply(&pat, q, &acc_body) else {
-            return blocked();
-        };
+        let pat = bind_pattern_proc(ib)?;
+        let nb = receive_apply(&pat, q, &acc_body)?;
         acc_body = nb;
-        let Some(nc) = receive_apply(&pat, q, &acc_cond) else {
-            return blocked();
-        };
+        let nc = receive_apply(&pat, q, &acc_cond)?;
         acc_cond = nc;
     }
 
     match eval_guard_bool(&acc_cond) {
-        Some(true) => acc_body,
-        _ => blocked(),
+        Some(true) => Some(acc_body),
+        _ => None,
     }
+}
+
+/// Continuation process inside the outer `for` row: either the parsed body or
+/// a `PForUser` for the remaining rows. Used for COMM, type inference, and analysis.
+pub(crate) fn pfor_continuation_after_first_row(rows: &[ForRow], body: &Proc) -> Proc {
+    if rows.len() <= 1 {
+        body.clone()
+    } else {
+        Proc::PForUser(rows[1..].to_vec(), Box::new(body.clone()))
+    }
+}
+
+/// One-step `PForUser` communication reduction on a `PPar`, mirroring the former
+/// `CommPattern` / `CommPatternWhere` / `Comm` rewrite rules.
+pub fn try_comm_rw_proc(s: &Proc) -> Option<Proc> {
+    let Proc::PPar(bag) = s else {
+        return None;
+    };
+    for (cand, _) in bag.iter() {
+        if let Proc::PForUser(rows, body) = cand {
+            if !rows.is_empty() {
+                if let Some(p) = try_comm_on_pfor_user(bag, cand, rows, body.as_ref()) {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn try_comm_on_pfor_user(
+    whole_bag: &HashBag<Proc>,
+    for_key: &Proc,
+    rows: &[ForRow],
+    body: &Proc,
+) -> Option<Proc> {
+    if rows.is_empty() {
+        return None;
+    }
+    let cont = pfor_continuation_after_first_row(rows, body);
+    match &rows[0] {
+        ForRow::ForRowSingleNoWhere(b) => {
+            try_comm_single(b.as_ref(), whole_bag, for_key, &cont, None)
+        },
+        ForRow::ForRowSingleWhere(b, cond) => {
+            try_comm_single(b.as_ref(), whole_bag, for_key, &cont, Some(cond.as_ref()))
+        },
+        ForRow::ForRowNoWhere(b, bs) => {
+            let true_c = Proc::CastBool(Box::new(Bool::BoolLit(true)));
+            try_comm_join(b.as_ref(), bs, &true_c, whole_bag, for_key, &cont)
+        },
+        ForRow::ForRowWhere(b, bs, cond) => {
+            try_comm_join(b.as_ref(), bs, cond.as_ref(), whole_bag, for_key, &cont)
+        },
+        _ => None,
+    }
+}
+
+fn try_comm_single(
+    b: &InputBind,
+    whole_bag: &HashBag<Proc>,
+    for_key: &Proc,
+    cont: &Proc,
+    where_cond: Option<&Proc>,
+) -> Option<Proc> {
+    let n_for_output = bind_channel_name(b)?;
+    let pat = bind_pattern_proc(b)?;
+    for (cand, _) in whole_bag.iter() {
+        if let Proc::POutput(n_out, _) = cand {
+            if n_out.as_ref() == n_for_output {
+                return finish_single_comm(whole_bag, for_key, cand, &pat, cont, where_cond);
+            }
+        }
+    }
+    None
+}
+
+fn finish_single_comm(
+    whole_bag: &HashBag<Proc>,
+    for_key: &Proc,
+    output_key: &Proc,
+    pat: &Proc,
+    cont: &Proc,
+    where_cond: Option<&Proc>,
+) -> Option<Proc> {
+    let Proc::POutput(n_out, q) = output_key else {
+        return None;
+    };
+    if !pat.pattern_matches(q) {
+        return None;
+    }
+    let new_center = if let Some(c) = where_cond {
+        Proc::CommWhere(
+            Box::new(pat.clone()),
+            Box::new(n_out.as_ref().clone()),
+            Box::new(q.as_ref().clone()),
+            Box::new(c.clone()),
+            Box::new(cont.clone()),
+        )
+    } else {
+        cont.apply_pattern(pat, q.as_ref())?
+    };
+    ppar_remove_two_insert(whole_bag, for_key, output_key, new_center)
+}
+
+/// Remove exactly one `key1`, one `key2`, and insert one `ins` in a new `PPar`.
+fn ppar_remove_two_insert(
+    whole_bag: &HashBag<Proc>,
+    key1: &Proc,
+    key2: &Proc,
+    ins: Proc,
+) -> Option<Proc> {
+    let mut b = whole_bag.clone();
+    if !b.remove(key1) || !b.remove(key2) {
+        return None;
+    }
+    b.insert(ins);
+    Some(Proc::PPar(b))
+}
+
+fn try_comm_join(
+    b: &InputBind,
+    bs: &[InputBind],
+    cond: &Proc,
+    whole_bag: &HashBag<Proc>,
+    for_key: &Proc,
+    cont: &Proc,
+) -> Option<Proc> {
+    let expected_ns = channel_names_from_row(b, bs)?;
+    let mut work = whole_bag.clone();
+    if !work.remove(for_key) {
+        return None;
+    }
+    let mut ns_collected: Vec<Name> = Vec::new();
+    let mut qs: Vec<Proc> = Vec::new();
+    for n in expected_ns {
+        let to_remove = work.iter().find_map(|(p, _)| {
+            if let Proc::POutput(n_out, _q) = p {
+                if n_out.as_ref() == &n {
+                    return Some(p.clone());
+                }
+            }
+            None
+        })?;
+        if !work.remove(&to_remove) {
+            return None;
+        }
+        if let Proc::POutput(n_out, q) = &to_remove {
+            ns_collected.push(n_out.as_ref().clone());
+            qs.push(q.as_ref().clone());
+        } else {
+            return None;
+        }
+    }
+    let res = comm_pforjoin_subst(b, bs, &ns_collected, &qs, cond, cont)?;
+    work.insert(res);
+    Some(Proc::PPar(work))
 }

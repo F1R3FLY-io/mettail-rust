@@ -954,7 +954,7 @@ pub fn detect_grammar_warnings(
     let mut warnings = Vec::new();
 
     // 1. Ambiguous prefix dispatch
-    detect_ambiguous_prefix(rules, categories, &mut warnings);
+    detect_ambiguous_prefix(rules, categories, all_syntax, &mut warnings);
 
     // 2. Left-recursion
     detect_left_recursion(all_syntax, &mut warnings);
@@ -970,9 +970,28 @@ pub fn detect_grammar_warnings(
 fn detect_ambiguous_prefix(
     rules: &[RuleInfo],
     categories: &[String],
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
     warnings: &mut Vec<GrammarWarning>,
 ) {
     use std::collections::BTreeMap;
+
+    // (category, label) -> terminal skeleton
+    let terminal_skeletons: BTreeMap<(String, String), Vec<String>> = all_syntax
+        .iter()
+        .map(|(label, category, syntax)| {
+            let terminals = syntax
+                .iter()
+                .filter_map(|item| {
+                    if let crate::SyntaxItemSpec::Terminal(t) = item {
+                        Some(t.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            ((category.clone(), label.clone()), terminals)
+        })
+        .collect();
 
     for cat in categories {
         // Collect non-infix, non-var, non-literal rules for this category
@@ -998,6 +1017,24 @@ fn detect_ambiguous_prefix(
         // Report ambiguities (2+ rules for the same terminal)
         for (token, rule_labels) in &terminal_to_rules {
             if rule_labels.len() > 1 {
+                // If all matching rules have distinct terminal skeletons, dispatch can
+                // usually be resolved by deeper lookahead after shared prefix tokens.
+                // Keep the warning only when at least two rules are terminal-equivalent
+                // (or syntax metadata is unavailable).
+                let mut sig_count: BTreeMap<Vec<String>, usize> = BTreeMap::new();
+                let mut missing_sig = false;
+                for label in rule_labels {
+                    if let Some(sig) = terminal_skeletons.get(&(cat.clone(), label.clone())) {
+                        *sig_count.entry(sig.clone()).or_default() += 1;
+                    } else {
+                        missing_sig = true;
+                    }
+                }
+                let has_equivalent_signatures = sig_count.values().any(|count| *count > 1);
+                if !missing_sig && !has_equivalent_signatures {
+                    continue;
+                }
+
                 warnings.push(GrammarWarning::AmbiguousPrefix {
                     token: token.clone(),
                     category: cat.clone(),

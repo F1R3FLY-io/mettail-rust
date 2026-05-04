@@ -134,7 +134,18 @@ pub fn write_category_dispatch(
                                 }} \
                                 match nfa_results.len() {{ \
                                     0 => Err(nfa_first_err.expect(\"at least one parse attempted\")), \
-                                    _ => {{ *pos = nfa_positions[0]; Ok(nfa_results.into_iter().next().expect(\"nfa_results non-empty\")) }}, \
+                                    _ => {{ \
+                                        let mut best_idx = 0usize; \
+                                        for i in 1..nfa_positions.len() {{ \
+                                            if nfa_positions[i] > nfa_positions[best_idx] {{ \
+                                                best_idx = i; \
+                                            }} \
+                                        }} \
+                                        *pos = nfa_positions[best_idx]; \
+                                        let mut it = nfa_results.into_iter(); \
+                                        let chosen = it.nth(best_idx).expect(\"best_idx in bounds\"); \
+                                        Ok(chosen) \
+                                    }}, \
                                 }} \
                             }}",
                             category = category,
@@ -431,7 +442,18 @@ pub fn write_category_dispatch_weighted(
                     }} \
                     match nfa_results.len() {{ \
                         0 => Err(nfa_first_err.expect(\"at least one parse attempted\")), \
-                        _ => {{ *pos = nfa_positions[0]; Ok(nfa_results.into_iter().next().expect(\"nfa_results non-empty\")) }}, \
+                        _ => {{ \
+                            let mut best_idx = 0usize; \
+                            for i in 1..nfa_positions.len() {{ \
+                                if nfa_positions[i] > nfa_positions[best_idx] {{ \
+                                    best_idx = i; \
+                                }} \
+                            }} \
+                            *pos = nfa_positions[best_idx]; \
+                            let mut it = nfa_results.into_iter(); \
+                            let chosen = it.nth(best_idx).expect(\"best_idx in bounds\"); \
+                            Ok(chosen) \
+                        }}, \
                     }} \
                 }}",
                 category = category,
