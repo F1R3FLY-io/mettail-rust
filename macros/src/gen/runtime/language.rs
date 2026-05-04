@@ -972,9 +972,22 @@ fn generate_language_struct(
                 .map(|(t,)| t.clone())
                 .collect();
 
-            // Phase 2: Main fixpoint seeded with ground results
+            // Phase 2: Main fixpoint seeded with ground results.
+            //
+            // Stage 3.13d (2026-05-01) — Bug B fix: the direct
+            // `prog.#primary_relation.push((initial.clone(),))` is
+            // suppressed because `initial` is ALREADY in `ground_terms`
+            // (pre-stratum seeded `pre.#primary_relation` with `initial`
+            // at line ~961, then `ground_terms` collected from
+            // `pre.#primary_relation.iter()`). The carry-over loop
+            // `for t in &ground_terms { prog.#primary_relation.push(...) }`
+            // therefore covers seeding for the input.
+            //
+            // `prog.step_term.push((initial.clone(),))` is RETAINED:
+            // there is no `step_term` carry-over from pre to prog (only
+            // `ground_terms` and `ground_rw` are carried). Dropping it
+            // would leave `prog.step_term` empty.
             let mut prog = #prog_struct_name::default();
-            prog.#primary_relation.push((initial.clone(),));
             prog.step_term.push((initial.clone(),));
             for t in &ground_terms {
                 prog.#primary_relation.push((t.clone(),));
@@ -1828,71 +1841,36 @@ fn generate_language_struct_multi(
         .iter()
         .map(|cat| {
             let variant = format_ident!("{}", cat);
-            let cat_upper = cat.to_string().to_uppercase();
-            let spill_name = format_ident!("NFA_PREFIX_SPILL_{}", cat_upper);
-            let forced_name = format_ident!("NFA_FORCED_PREFIX_{}", cat_upper);
-            let primary_weight_name = format_ident!("NFA_PRIMARY_WEIGHT_{}", cat_upper);
+            // Stage 10b (2026-05-03): NFA spillover infrastructure excised.
+            //
+            // Pre-Stage-10b emitted per-cat thread-local references
+            // (`NFA_PREFIX_SPILL_<CAT>`, `NFA_FORCED_PREFIX_<CAT>`,
+            // `NFA_PRIMARY_WEIGHT_<CAT>`) plus an F3 lazy-spillover replay
+            // loop. Under WPDS-only operation (post-Stage-3.12 atomic
+            // swap), `Cat::parse → parse_<Cat>_via_wpds → walker` —
+            // never reaches the trampoline NFA emitter that populates
+            // `NFA_PREFIX_SPILL_<CAT>`. The replay loop iterated an
+            // always-empty Vec, dead code that only added cognitive
+            // load and a maintenance hazard.
+            //
+            // Stage 10c/d/e excise the trampoline-side NFA emitter,
+            // `DispatchStrategy::NfaTryAll`, lints W10/W11/P02, and
+            // `SpilloverTrainer` separately — those are independent
+            // follow-ups. This stage is local to language.rs codegen.
+            //
+            // `success_weights` retained with default `0.5` so
+            // `from_alternatives` (via `AMBIGUOUS_WEIGHTS`) keeps its
+            // length-equal invariant. WeightCorrection emissions are
+            // now quiescent (all weights tie); future Stage 10b-prime
+            // can wire real per-cat WPDS weights via
+            // `parse_<Cat>_via_wpds_with_weight`.
             let try_block = quote! {
                 match #cat::parse(input) {
                     Ok(t) => {
                         successes.push(#inner_enum_name::#variant(t));
-                        /* Record the primary result's WFST weight for disambiguation.
-                           Default 0.5 if no NFA ambiguity occurred (NFA_PRIMARY_WEIGHT
-                           is only set when nfa_results.len() > 1). */
-                        success_weights.push(#primary_weight_name.with(|cell| {
-                            let w = cell.get();
-                            cell.set(0.5); /* reset for next parse */
-                            w
-                        }));
-                        /* F3: Lazy spillover — demand-driven replay.
-                           When the primary result is accepting (concrete/ground), skip
-                           replay entirely: a ground term is semantically unambiguous, so
-                           no alternative can produce a better result.
-                           Only trigger forced-prefix replay when the primary is NOT
-                           accepting (contains free variables that need resolution). */
-                        let spilled: Vec<(#cat, usize, f64)> = #spill_name.with(|cell| cell.take());
-                        let primary_is_accepting = successes.last()
-                            .map_or(false, |s| s.is_accepting());
-                        if !primary_is_accepting {
-                            /* F3: Demand-driven replay with weight threshold and
-                               acceptance short-circuit. The spill buffer is weight-sorted
-                               (ascending) by the push site, so:
-                               1. Threshold pruning: once alt_weight > primary + SLACK,
-                                  all remaining are worse — break early.
-                               2. Short-circuit: the first accepting replay is the
-                                  weight-best accepting candidate — no further replay needed. */
-                            let primary_w = #primary_weight_name.with(|cell| cell.get());
-                            const REPLAY_WEIGHT_SLACK: f64 = 2.0;
-                            let weight_threshold = primary_w + REPLAY_WEIGHT_SLACK;
-                            for (alt_prefix, alt_pos, alt_weight) in spilled {
-                                /* F3: Threshold pruning — buffer is weight-sorted ascending,
-                                   so once we exceed the threshold, all remaining are worse. */
-                                if alt_weight > weight_threshold {
-                                    break;
-                                }
-                                #forced_name.with(|cell| cell.set(Some((alt_prefix, alt_pos, alt_weight))));
-                                if let Ok(alt_term) = #cat::parse(input) {
-                                    let wrapped = #inner_enum_name::#variant(alt_term);
-                                    let alt_accepting = wrapped.is_accepting();
-                                    successes.push(wrapped);
-                                    success_weights.push(alt_weight);
-                                    /* F3: Demand-driven short-circuit — if this alternative is
-                                       accepting, it's the weight-best accepting one (spill buffer
-                                       is weight-sorted). No further replay needed. */
-                                    if alt_accepting {
-                                        #spill_name.with(|cell| { cell.take(); });
-                                        break;
-                                    }
-                                }
-                                /* Clear any nested spillover from forced-prefix replay */
-                                #spill_name.with(|cell| { cell.take(); });
-                            }
-                        }
-                        /* else: F3 skipped replay — primary is ground, N-1 alternatives discarded */
+                        success_weights.push(0.5);
                     },
                     Err(e) => {
-                        /* Clear spillover on error to prevent leaking across categories */
-                        #spill_name.with(|cell| { cell.take(); });
                         if first_err.is_none() { first_err = Some(e); }
                     },
                 }
@@ -1957,6 +1935,37 @@ fn generate_language_struct_multi(
             }
         })
         .collect();
+
+    // Stage 3.13d (2026-05-01) — Bug B fix: WPDS double-seed avoidance.
+    //
+    // When the pre-stratum is present, `seed_from_pre_stratum` (built below
+    // at ~:2113) unconditionally pushes every `pre.<cat>` entry into
+    // `prog.<cat>` via the carry-over loop:
+    //   `for (t,) in pre.<cat>.iter() { prog.<cat>.push((t.clone(),)); }`
+    // The pre-stratum itself is seeded with `initial` for the input
+    // category at the `#pre_seed_arms` match (~:2148). So the input
+    // arrives in `prog.<cat>` via pre + carry-over with NO need for the
+    // direct `match term_ref { #(#seed_arms)* … }` push that follows
+    // each `#pre_stratum_block`.
+    //
+    // Pre-3.13d both pushes ran, depositing two byte-identical tuples
+    // into Ascent's `Vec`-backed `relation foo(T)` storage (which does
+    // NOT dedup at push-time — only at rule-application via index
+    // hashing). Result: `AscentResults.all_terms` contained 2 entries
+    // with identical `term_id`.
+    //
+    // Post-3.13d: when pre-stratum is present, suppress the direct
+    // match. When it's absent (no carry-over), keep the direct match.
+    let prog_seed_match: TokenStream = if pre_stratum_content.is_some() {
+        quote! {}
+    } else {
+        quote! {
+            match term_ref {
+                #(#seed_arms)*
+                #inner_enum_name::Ambiguous(_) => unreachable!(),
+            }
+        }
+    };
 
     // Extract arms: read results from the appropriate relation after Ascent fixpoint.
     // Term IDs must match the wrapper's term_id() which hashes the inner enum (e.g. CalculatorTermInner::Str(t)),
@@ -2389,6 +2398,21 @@ fn generate_language_struct_multi(
             })
             .collect();
 
+        // Stage 3.13d (2026-05-01) — Bug B fix: parallel of `prog_seed_match`
+        // for the SCC-split core struct. Same rationale: when pre-stratum
+        // is present, the `seed_from_pre_stratum` carry-over loop covers
+        // seeding for core categories too; suppress the direct match.
+        let core_prog_seed_match: TokenStream = if pre_stratum_content.is_some() {
+            quote! {}
+        } else {
+            quote! {
+                match term_ref {
+                    #(#core_seed_arms)*
+                    _ => unreachable!(),
+                }
+            }
+        };
+
         let core_extract_arms: Vec<TokenStream> = language
             .types
             .iter()
@@ -2497,10 +2521,7 @@ fn generate_language_struct_multi(
                     #pre_stratum_block
                     #stratum_run_block
                     let mut prog = #core_prog_name::default();
-                    match term_ref {
-                        #(#core_seed_arms)*
-                        _ => unreachable!(),
-                    }
+                    #core_prog_seed_match
                     #seed_from_pre_stratum
                     #seed_main_from_strata
                     #ground_seed_block_multi
@@ -2517,10 +2538,7 @@ fn generate_language_struct_multi(
                     #pre_stratum_block
                     #stratum_run_block
                     let mut prog = #prog_struct_name::default();
-                    match term_ref {
-                        #(#seed_arms)*
-                        #inner_enum_name::Ambiguous(_) => unreachable!(),
-                    }
+                    #prog_seed_match
                     #seed_from_pre_stratum
                     #seed_main_from_strata
                     #ground_seed_block_multi
@@ -2560,10 +2578,7 @@ fn generate_language_struct_multi(
                     #pre_stratum_block
                     #stratum_run_block
                     let mut prog = #prog_struct_name::default();
-                    match term_ref {
-                        #(#seed_arms)*
-                        #inner_enum_name::Ambiguous(_) => unreachable!(),
-                    }
+                    #prog_seed_match
                     #seed_from_pre_stratum
                     #seed_main_from_strata
                     #ground_seed_block_multi
@@ -2648,6 +2663,32 @@ fn generate_language_struct_multi(
                 let mut success_weights: Vec<f64> = Vec::new();
                 let mut first_err = None;
                 #(#parse_tries)*
+                // Stage 3.12.8 M2 (2026-05-03): post-parse spurious cross-cat
+                // alternative filter. Drop alternatives whose AST is uniformly
+                // auto-injected (auto-inj wrappers + no same-cat native literal)
+                // ONLY when at least one non-uniformly-auto-injected alternative
+                // exists. This preserves single-alt parses that legitimately
+                // use auto-injected wrappers (e.g., optsmoke's user-input
+                // `Int::IfElse(BoolLit, BoolToInt(BoolLit), None)` which is the
+                // ONLY Int parse, even though BoolToInt is auto-injected). For
+                // multi-alt parses like `(1.0+2.0)/3.0` (Float + spurious BigRat),
+                // drop the BigRat alt because Float alt is non-spurious.
+                if successes.len() > 1 {
+                    let any_non_spurious = successes.iter()
+                        .any(|s| !s.is_uniformly_auto_injected());
+                    if any_non_spurious {
+                        let mut filtered = Vec::with_capacity(successes.len());
+                        let mut filtered_weights = Vec::with_capacity(success_weights.len());
+                        for (s, w) in successes.into_iter().zip(success_weights.into_iter()) {
+                            if !s.is_uniformly_auto_injected() {
+                                filtered.push(s);
+                                filtered_weights.push(w);
+                            }
+                        }
+                        successes = filtered;
+                        success_weights = filtered_weights;
+                    }
+                }
                 match successes.len() {
                     0 => Err(first_err.unwrap_or_else(|| "Parse error".to_string())),
                     1 => Ok(#term_name(successes.into_iter().next().expect("checked len == 1"))),

@@ -118,6 +118,19 @@ fn unit_mixedmath_int_neg() {
 }
 
 #[test]
+fn unit_mixedmath_int_booltoint() {
+    mettail_runtime::clear_var_cache();
+    let term = Int::BoolToInt(Box::new(Bool::BoolLit(false)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToInt");
+    if let Ok(parsed) = Int::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for BoolToInt: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
 fn unit_mixedmath_auto_bool_boollit() {
     let term = Bool::BoolLit(false);
     let displayed = format!("{}", term);

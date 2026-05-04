@@ -1309,4 +1309,102 @@ mod tests {
             "expected error for literals{{Missing}} without matching types entry"
         );
     }
+
+    // ─── Stage 3.27a (2026-05-04): doc-comment description tests ──────
+
+    #[test]
+    fn parse_doc_comment_single_line() {
+        let input = quote! {
+            name: DocLang,
+            types { ![i32] as Int }
+            terms {
+                /// Adds two integers.
+                Add . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        assert_eq!(
+            language.terms[0].doc_comment.as_deref(),
+            Some("Adds two integers."),
+            "single-line /// should produce one line of doc text",
+        );
+    }
+
+    #[test]
+    fn parse_doc_comment_multi_line() {
+        let input = quote! {
+            name: DocLang,
+            types { ![i32] as Int }
+            terms {
+                /// Adds two integers.
+                ///
+                /// Folded eagerly when both operands are constants.
+                Add . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        assert_eq!(
+            language.terms[0].doc_comment.as_deref(),
+            Some("Adds two integers.\n\nFolded eagerly when both operands are constants."),
+            "multi-line /// should be joined with \\n preserving blank lines",
+        );
+    }
+
+    #[test]
+    fn parse_doc_comment_with_tier_directive() {
+        let input = quote! {
+            name: DocTierLang,
+            types { ![i32] as Int }
+            terms {
+                /// Stuck term.
+                #[tier(t1)]
+                Err . |- "stuck" : Int ;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        assert_eq!(language.terms[0].doc_comment.as_deref(), Some("Stuck term."));
+        assert!(
+            language.terms[0].tier_directive.is_some(),
+            "tier directive must survive doc-comment consumption",
+        );
+    }
+
+    #[test]
+    fn rules_without_doc_comment_have_none() {
+        let input = quote! {
+            name: NoDoc,
+            types { ![i32] as Int }
+            terms {
+                Add . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        assert!(
+            language.terms[0].doc_comment.is_none(),
+            "rules without /// must have doc_comment == None",
+        );
+    }
+
+    #[test]
+    fn doc_comment_does_not_swallow_tier_directive() {
+        // Regression test: ensure parse_doc_comment uses fork-peek and
+        // never accidentally consumes #[tier(...)].
+        let input = quote! {
+            name: DocOnlyLang,
+            types { ![i32] as Int }
+            terms {
+                #[tier(t2)]
+                Plain . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        assert!(
+            language.terms[0].doc_comment.is_none(),
+            "no /// → doc_comment should be None",
+        );
+        assert!(
+            language.terms[0].tier_directive.is_some(),
+            "tier directive must be parsed when no doc comment precedes it",
+        );
+    }
 }

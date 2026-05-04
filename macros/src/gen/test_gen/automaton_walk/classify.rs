@@ -244,7 +244,7 @@ pub fn extract_constraints(pattern: &str) -> Constraints {
     // like `-?[0-9]+` has the start state transitioning on `-` to a
     // non-dead state; `[0-9]+` does not.
     if let Some(dfa) = compile_to_minimized_dfa(pattern) {
-        out.signed = has_dash_from_start(&dfa);
+        out.signed = has_dash_from_start(pattern, &dfa);
     }
 
     out
@@ -258,13 +258,26 @@ pub fn extract_constraints(pattern: &str) -> Constraints {
 ///
 /// This is slightly wasteful (re-compile), but constraint extraction
 /// runs once per token kind at codegen time, not in a hot loop.
-fn has_dash_from_start(_dfa: &Dfa) -> bool {
-    // TODO: implement via pattern recompile → partition lookup.
-    // For the MVP, approximate by recompiling and checking whether
-    // the pattern recognises a single "-" character using a quick
-    // byte-level walk. Accurate enough for the Integer/SignedInt
-    // distinction which is the only consumer today.
-    false
+///
+/// **Stage 3.27b (2026-05-04):** the recompiled partition's
+/// `byte_to_class` array is bit-identical to the one used to build
+/// `dfa` because (a) `compile_regex` is deterministic on a fresh
+/// `Nfa::new()` for the same pattern string, and (b)
+/// `compute_equivalence_classes` (`prattail/src/automata/partition.rs`)
+/// is iteration-driven over `0u8..=255` with deterministic signature
+/// computation per byte. So `partition.classify(b'-')` returns a
+/// `ClassId` valid as an index into `dfa.states[dfa.start].transitions`.
+fn has_dash_from_start(pattern: &str, dfa: &Dfa) -> bool {
+    let mut nfa = Nfa::new();
+    let frag = match compile_regex(pattern, &mut nfa, TokenKind::Integer) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    nfa.add_epsilon(nfa.start, frag.start);
+    let partition = compute_equivalence_classes(&nfa);
+    let class = partition.classify(b'-');
+    let target = dfa.transition(dfa.start, class);
+    target != DEAD_STATE
 }
 
 /// Look up the effective regex pattern for a built-in lexer token
@@ -357,7 +370,43 @@ mod tests {
     fn extract_constraints_unbounded_default() {
         let c = extract_constraints("[0-9]+");
         assert_eq!(c.max_len, None);
-        // signed extraction is stubbed in the MVP; will be filled
-        // in once the signed-detection helper is implemented.
+        // Stage 3.27b (2026-05-04): signed extraction is now wired;
+        // this test still covers the unbounded-default path. The
+        // signed=false case is asserted explicitly in
+        // extract_constraints_unsigned_for_plain_int_pattern below.
+    }
+
+    // ─── Stage 3.27b (2026-05-04): signed-detection coverage ──────────
+
+    #[test]
+    fn extract_constraints_signed_for_signed_int_pattern() {
+        let c = extract_constraints("-?[0-9]+");
+        assert!(c.signed, "pattern -?[0-9]+ should have signed=true");
+    }
+
+    #[test]
+    fn extract_constraints_unsigned_for_plain_int_pattern() {
+        let c = extract_constraints("[0-9]+");
+        assert!(!c.signed, "pattern [0-9]+ should have signed=false");
+    }
+
+    #[test]
+    fn extract_constraints_signed_for_signed_float_pattern() {
+        let c = extract_constraints(r"-?[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?");
+        assert!(c.signed, "signed float pattern should have signed=true");
+    }
+
+    #[test]
+    fn extract_constraints_unsigned_for_plain_float_pattern() {
+        let c = extract_constraints(r"[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?");
+        assert!(!c.signed, "plain float pattern should have signed=false");
+    }
+
+    #[test]
+    fn extract_constraints_invalid_pattern_returns_unbounded() {
+        // Smoke: bad regex doesn't panic; returns the unbounded default.
+        let c = extract_constraints("[");
+        assert!(!c.signed);
+        assert_eq!(c.max_len, None);
     }
 }

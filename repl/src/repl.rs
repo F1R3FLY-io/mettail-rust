@@ -506,6 +506,15 @@ impl Repl {
                         };
 
                         println!("    {} {}", label, judgement.green());
+
+                        // Stage 3.27a (2026-05-04): surface doc-comment
+                        // text from `///` lines preceding the rule. Multi-line
+                        // descriptions are indented to align under the term row.
+                        if let Some(desc) = term.description {
+                            for line in desc.lines() {
+                                println!("      {}", line.dimmed());
+                            }
+                        }
                     }
                 }
             }

@@ -475,6 +475,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }
     }
 
@@ -491,6 +493,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }
     }
 

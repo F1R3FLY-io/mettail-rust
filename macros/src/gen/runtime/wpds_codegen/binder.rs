@@ -21,10 +21,49 @@
 //!   `?guard:Guard` parameter parsed via `parse_predicate_from_tokens`.
 
 use mettail_ast::grammar::{GrammarRule, PatternOp, SyntaxExpr, TermParam};
+use mettail_ast::language::LanguageDef;
 use mettail_ast::types::TypeExpr;
+use mettail_prattail::binding_power::compute_prefix_bp;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::HashMap;
 use syn::Ident;
+
+use super::builtin_metadata::classify_unary_prefix_shape;
+
+/// Stage 3.27d (G-PREFIX-BP, 2026-04-30): map from `(category_src_idx,
+/// rule_idx)` to the unary-prefix binding power, for rules whose shape
+/// matches `Label . a:T |- "literal" a : T;` (single-Simple-param,
+/// `[Literal, Param]` pattern, T == result_cat). Used by ParamParse
+/// arms in `emit_binder_rule_body` and `emit_optional_group_body` to
+/// install `cur_bp = prefix_bp` for the operand sub-parse, preventing
+/// lower-precedence trailing infix from "stealing" the prefix's child.
+///
+/// Computed via `compute_prefix_bp()` (single source of truth at
+/// `prattail::binding_power::compute_prefix_bp`), so Display + lint +
+/// WPDS parser all agree on `prefix_bp = max_infix_bp + 2`.
+///
+/// Empty entry => non-unary-prefix rule, ParamParse uses `cur_bp: 0`.
+pub(crate) fn build_prefix_bp_map(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> HashMap<(u16, u16), u8> {
+    let bp_table = super::infix::build_bp_table(language);
+    let mut map: HashMap<(u16, u16), u8> = HashMap::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        for (rule_i, rule) in rules.iter().enumerate() {
+            if classify_unary_prefix_shape(rule).is_some() {
+                let bp = compute_prefix_bp(
+                    &rule.category.to_string(),
+                    rule.prefix_bp,
+                    &bp_table,
+                );
+                map.insert((cat_i as u16, rule_i as u16), bp);
+            }
+        }
+    }
+    map
+}
 
 /// Classification of a multi-step rule.
 #[derive(Debug, Clone)]
@@ -538,6 +577,8 @@ pub(crate) fn emit_binder_prefix_arms(
                             body_src_idx: #body_src_idx,
                             outer_bp: _outer_bp,
                         },
+                        // Stage 3.12 / Class A.i (2026-05-01): default Push action.
+                        action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
                     }
                 }
             })
@@ -558,9 +599,16 @@ pub(crate) fn emit_binder_prefix_arms(
 
 /// Phase 5: emit the body of `WpdsState::BinderRule`. Reads the marker's
 /// `RuleAt(position)` from frontier_top, dispatches per-rule-per-position.
+///
+/// Stage 3.27d (G-PREFIX-BP, 2026-04-30): `prefix_bp_map` carries the
+/// unary-prefix BP for rules whose shape matches the unary-prefix pattern.
+/// ParamParse arms install `cur_bp = prefix_bp` for the operand sub-parse,
+/// preventing lower-precedence trailing infix from stealing the prefix's
+/// child. Non-prefix rules continue to use `cur_bp: 0`.
 pub(crate) fn emit_binder_rule_body(
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
+    prefix_bp_map: &HashMap<(u16, u16), u8>,
 ) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
@@ -693,6 +741,13 @@ pub(crate) fn emit_binder_rule_body(
                     }
                     BinderPosition::ParamParse { cat } => {
                         let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
+                        // Stage 3.27d (G-PREFIX-BP, 2026-04-30): for unary-prefix
+                        // rules, install `cur_bp = prefix_bp` so the operand sub-parse
+                        // cannot be stolen by lower-precedence trailing infix.
+                        let cur_bp_lit: u8 = prefix_bp_map
+                            .get(&(result_src_idx, rule_idx))
+                            .copied()
+                            .unwrap_or(0u8);
                         quote! {
                             (#result_src_idx, #rule_idx, #pos) => {
                                 // Replace marker to next_pos so when the
@@ -707,7 +762,7 @@ pub(crate) fn emit_binder_rule_body(
                                     weight: LexicographicWeight::one(),
                                     new_state: WpdsState::PrefixDispatch {
                                         pos: _pos,
-                                        cur_bp: 0,
+                                        cur_bp: #cur_bp_lit,
                                     },
                                 };
                             }
@@ -884,6 +939,7 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
 pub(crate) fn emit_optional_group_body(
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
+    prefix_bp_map: &HashMap<(u16, u16), u8>,
 ) -> TokenStream {
     let mut arms: Vec<TokenStream> = Vec::new();
 
@@ -912,50 +968,80 @@ pub(crate) fn emit_optional_group_body(
                 let inner_len_byte = inner.len() as u8;
                 let final_sub_pos = inner_len_byte + 1;
 
-                // sub_pos == 0: peek FIRST, take or skip.
-                let first_match_arms: Vec<TokenStream> = first_token_set
+                // Stage 3.12 / Class A.i (2026-05-01): replace the
+                // deterministic FIRST-set if/else with a Fork over
+                // [TAKE, SKIP] branches. Right-associative dangling-else:
+                //   - TAKE branch: weight from_cost(0.0, ..) — preferred when
+                //     it succeeds.
+                //   - SKIP branch: weight from_cost(EPSILON_OPT_SKIP, ..) —
+                //     small floor penalty so SKIP wins only when TAKE fails.
+                //   - Tie at primary cost (TAKE-succeeds with following SKIP
+                //     vs SKIP-then-TAKE in nested case) breaks via cursor-
+                //     allocation order: TAKE first per `vec![take, skip]`.
+                //
+                // FIRST-set classification is preserved on
+                // BinderPosition::OptionalGroup.first_token_set for Display
+                // and diagnostic uses; the runtime peek is gone.
+                //
+                // The unused `first_token_set` variable below silences the
+                // dead-code warning while documenting the source of intent.
+                let _first_set_for_diagnostics_only: Vec<&str> = first_token_set
                     .iter()
-                    .map(|t| quote! { Some(#t) => true, })
+                    .map(|s| s.as_str())
                     .collect();
                 arms.push(quote! {
                     (#result_src_idx, #rule_idx, #group_idx_byte, 0u8) => {
-                        let token_text = tokens.peek_text(_pos);
-                        let matches_first: bool = match token_text {
-                            #(#first_match_arms)*
-                            _ => false,
-                        };
-                        if matches_first {
-                            // TAKE: push OptionalGroupAt(1). Walker
-                            // auto-triggers `start_optional_scope()` on
-                            // pushing OptionalGroupAt(1).
-                            return WpdsStepAction::Push {
-                                symbol: StackSymbolV2::optional_group_at(
-                                    #result_src_idx, #rule_idx, 1u8, *outer_bp,
-                                ),
-                                weight: LexicographicWeight::one(),
-                                new_state: WpdsState::OptionalGroup {
-                                    result_src_idx: #result_src_idx,
-                                    rule_idx: #rule_idx,
-                                    group_idx: #group_idx_byte,
-                                    sub_pos: 1,
-                                    outer_bp: *outer_bp,
+                        // Stage 3.12 / Class A.i (2026-05-01): Opt-Group Fork.
+                        return WpdsStepAction::Fork {
+                            branches: vec![
+                                // TAKE branch (push OptionalGroupAt(1) →
+                                // walker auto-opens optional scope via
+                                // emit_push_side_effects).
+                                mettail_prattail::wpds_walker::ForkBranch {
+                                    symbol: StackSymbolV2::optional_group_at(
+                                        #result_src_idx, #rule_idx, 1u8, *outer_bp,
+                                    ),
+                                    weight: LexicographicWeight::from_cost(
+                                        0.0, #result_src_idx, #rule_idx,
+                                    ),
+                                    new_state: WpdsState::OptionalGroup {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        group_idx: #group_idx_byte,
+                                        sub_pos: 1,
+                                        outer_bp: *outer_bp,
+                                    },
+                                    action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
                                 },
-                            };
-                        }
-                        // SKIP: OptGroupAbsent pushes Optional(None) and
-                        // replaces the (top) outer RuleAt with rule_at(next_outer).
-                        return WpdsStepAction::OptGroupAbsent {
-                            replace_symbol: StackSymbolV2::rule_at(
-                                #result_src_idx, #rule_idx,
-                                #outer_next_pos_byte, Some(*outer_bp),
-                            ),
-                            weight: LexicographicWeight::one(),
-                            new_state: WpdsState::BinderRule {
-                                result_src_idx: #result_src_idx,
-                                rule_idx: #rule_idx,
-                                body_src_idx: #result_src_idx,
-                                outer_bp: *outer_bp,
-                            },
+                                // SKIP branch (mirror OptGroupAbsent: log
+                                // PushOptionalAbsent + pop outer RuleAt +
+                                // push advanced outer RuleAt).
+                                mettail_prattail::wpds_walker::ForkBranch {
+                                    // `symbol` is unused for OptGroupAbsent
+                                    // action_kind — the cursor-side Fork
+                                    // arm uses `replace_symbol` from
+                                    // `action_kind`. We supply a stable
+                                    // sentinel to satisfy the field.
+                                    symbol: StackSymbolV2::category_entry(0),
+                                    weight: LexicographicWeight::from_cost(
+                                        mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                                        #result_src_idx, #rule_idx,
+                                    ),
+                                    new_state: WpdsState::BinderRule {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        body_src_idx: #result_src_idx,
+                                        outer_bp: *outer_bp,
+                                    },
+                                    action_kind: mettail_prattail::wpds_walker::ForkActionKind::OptGroupAbsent {
+                                        replace_symbol: StackSymbolV2::rule_at(
+                                            #result_src_idx, #rule_idx,
+                                            #outer_next_pos_byte, Some(*outer_bp),
+                                        ),
+                                    },
+                                },
+                            ],
+                            consume_trigger: false,
                         };
                     }
                 });
@@ -1001,7 +1087,15 @@ pub(crate) fn emit_optional_group_body(
                                         weight: LexicographicWeight::one(),
                                         new_state: WpdsState::PrefixDispatch {
                                             pos: _pos,
-                                            cur_bp: 0,
+                                            // Stage 3.27d (G-PREFIX-BP, 2026-04-30):
+                                            // opt-group inner ParamParse always uses
+                                            // cur_bp:0 because the outer rule's shape
+                                            // (`[Literal, Optional, ...]`) cannot match
+                                            // the unary-prefix predicate (which requires
+                                            // `[Literal, Param]` positions.len()==2).
+                                            // `prefix_bp_map` is plumbed through for
+                                            // symmetry; lookup will always miss here.
+                                            cur_bp: 0u8,
                                         },
                                     };
                                 }
@@ -1341,6 +1435,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }
     }
 
@@ -1373,6 +1469,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }
     }
 
@@ -1439,7 +1537,8 @@ mod tests {
     fn emits_binder_rule_body_for_lambda() {
         let categories = vec!["Term".to_string()];
         let per_cat = vec![vec![lambda_lam_rule()]];
-        let ts = emit_binder_rule_body(&categories, &per_cat);
+        let prefix_bp_map = std::collections::HashMap::new();
+        let ts = emit_binder_rule_body(&categories, &per_cat, &prefix_bp_map);
         let s = ts.to_string();
         assert!(s.contains("ConsumeIdentAndReplace"));
         assert!(s.contains("ConsumeAndReplace"));
@@ -1450,7 +1549,8 @@ mod tests {
     fn emits_binder_rule_body_for_fraction() {
         let categories = vec!["BigInt".to_string(), "BigRat".to_string()];
         let per_cat = vec![Vec::new(), vec![fraction_rule()]];
-        let ts = emit_binder_rule_body(&categories, &per_cat);
+        let prefix_bp_map = std::collections::HashMap::new();
+        let ts = emit_binder_rule_body(&categories, &per_cat, &prefix_bp_map);
         let s = ts.to_string();
         // "fraction" is the trigger consumed at open; positions 1+ are
         // "(", a (ParamParse), ",", b (ParamParse), ")". Verify the

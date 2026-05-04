@@ -16,7 +16,8 @@ export const categoryInfo = {
 			"MulNum",
 			"NegNum",
 			"FactNum",
-			"ExprToNum"
+			"ExprToNum",
+			"PredToNum"
 		],
 		colour: "6be051",
 	},

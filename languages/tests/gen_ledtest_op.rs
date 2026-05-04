@@ -11,28 +11,30 @@ use mettail_runtime::BehavioralPred;
 // ═══════════════════════════════════════════════════════════
 // WFST-derived test coverage plan
 // ═══════════════════════════════════════════════════════════
+// Dead rules (skipped):
+//   - PredToNum
 // Constructor weights (lower = more frequent):
-//   EqNum                weight: 0.0000
-//   NegNum               weight: 0.0000
-//   PredLit              weight: 0.0000
+//   NumLit               weight: 0.0000
 //   ExprToNum            weight: 0.0000
 //   Grouping             weight: 0.0000
-//   NumLit               weight: 0.0000
+//   PredLit              weight: 0.0000
+//   NegNum               weight: 0.0000
+//   EqNum                weight: 0.0000
 //   CastPred             weight: 0.5000
 //   CastNum              weight: 0.5000
 //   VarExpr              weight: 2.0000
 //   VarNum               weight: 2.0000
-//   Expr::CastNum        weight: inf
-//   Num::AddNum          weight: inf
-//   Num::FactNum         weight: inf
-//   Pred::EqNum          weight: inf
-//   Expr::CastPred       weight: inf
-//   Num::ExprToNum       weight: inf
-//   Num::MulNum          weight: inf
+//   Num::NegNum          weight: inf
 //   Pred::AndPred        weight: inf
 //   Expr::EPar           weight: inf
+//   Expr::CastNum        weight: inf
+//   Num::FactNum         weight: inf
+//   Num::AddNum          weight: inf
+//   Pred::EqNum          weight: inf
 //   Pred::NeNum          weight: inf
-//   ... and 1 more
+//   Num::ExprToNum       weight: inf
+//   Num::MulNum          weight: inf
+//   ... and 2 more
 // Category weights:
 //   Pred                 weight: 0.0833
 //   Num                  weight: 0.4000
@@ -1996,6 +1998,18 @@ fn cross_cat_ledtest_cast_castpred_from_pred_to_expr() {
 }
 
 #[test]
+fn cross_cat_ledtest_cast_predtonum_from_pred_to_num() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::PredToNum(Box::new(Pred::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn cross_cat_ledtest_roundtrip_num_to_expr_via_castnum_exprtonum() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::ExprToNum(Box::new(Expr::CastNum(Box::new(Num::NumLit(1i32)))));
@@ -2011,6 +2025,18 @@ fn cross_cat_ledtest_roundtrip_num_to_expr_via_castnum_exprtonum() {
 fn cross_cat_ledtest_chain_castpred_exprtonum() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::ExprToNum(Box::new(Expr::CastPred(Box::new(Pred::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_ledtest_chain_predtonum_castnum() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Expr::CastNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2043,6 +2069,126 @@ fn cross_cat_ledtest_eval_nenum() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "false"),
         "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn cross_cat_ledtest_castop_addnum_predtonum_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::AddNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))), Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_ledtest_castop_mulnum_predtonum_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::MulNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))), Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_ledtest_castop_negnum_predtonum_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::NegNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_ledtest_castop_factnum_predtonum_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::FactNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_ledtest_mixed_addnum_cast_predtonum_lhs_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::AddNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))), Box::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_ledtest_mixed_addnum_cast_predtonum_rhs_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::AddNum(Box::new(Num::NumLit(1i32)), Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_ledtest_composite_addnum_predtonum_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::AddNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))), Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_ledtest_composite_mulnum_predtonum_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::MulNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))), Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_ledtest_composite_negnum_predtonum_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::NegNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_ledtest_composite_factnum_predtonum_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::FactNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2783,5 +2929,5 @@ fn type_pres_ledtest_andpred_true_true() {
 }
 }
 
-// Total operational semantics tests: 208 (P1=94, P2a=50, P2b=4, P3a=6, P3b=0, P4a=7, P4b=4, P5a=36, P5b=7)
+// Total operational semantics tests: 220 (P1=94, P2a=50, P2b=4, P3a=18, P3b=0, P4a=7, P4b=4, P5a=36, P5b=7)
 

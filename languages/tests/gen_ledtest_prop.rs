@@ -160,7 +160,7 @@ fn build_num_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Num {
         return result.unwrap_num();
     }
 
-    let choice = (reader.next_byte() as usize) % 6;
+    let choice = (reader.next_byte() as usize) % 7;
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_num(),
@@ -182,9 +182,13 @@ fn build_num_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Num {
             let f0 = Box::new(build_num_from_tape(reader, child_depth));
             Num::FactNum(f0)
         },
-        _ => {
+        5 => {
             let f0 = Box::new(build_expr_from_tape(reader, child_depth));
             Num::ExprToNum(f0)
+        },
+        _ => {
+            let f0 = Box::new(build_pred_from_tape(reader, child_depth));
+            Num::PredToNum(f0)
         },
     }
 }

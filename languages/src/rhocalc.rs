@@ -793,16 +793,47 @@ language! {
             }}
         ] fold;
 
+        // Stage 3.12.9 α-3 (2026-05-04): use fallible `try_eval()` instead of
+        // panicking `eval()` for each `Proc::Cast<X>` arm. Combined with β's
+        // extended `try_eval` (which handles auto-injection wrappers like
+        // `BigRat::FloatToBigRat(FloatLit(_))`), this preserves functionality
+        // for lossless wrappers (`str(2.0)` → `"2"`) while gracefully falling
+        // to `Proc::Err` for unevaluable inputs (Var, partially-reduced).
+        // Mirrors `ToBool`'s defensive pattern (above, lines 761-794) but uses
+        // `try_eval()` instead of literal-pattern-match — strictly more
+        // capable since β-extended `try_eval` covers both literals and
+        // auto-injection wrappers around literals.
         ToStr . p:Proc |- "str" "(" p ")" : Proc ![
             { match &p {
                 Proc::CastStr(x) => Proc::CastStr(x.clone()),
-                Proc::CastInt(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
-                Proc::CastUInt32(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
-                Proc::CastBigInt(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
-                Proc::CastBigRat(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
-                Proc::CastFloat(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
-                Proc::CastFixed(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
-                Proc::CastBool(x) => Proc::CastStr(Box::new(Str::StringLit(x.as_ref().eval().to_string()))),
+                Proc::CastInt(x) => match x.as_ref().try_eval() {
+                    Some(v) => Proc::CastStr(Box::new(Str::StringLit(v.to_string()))),
+                    None => Proc::Err,
+                },
+                Proc::CastUInt32(x) => match x.as_ref().try_eval() {
+                    Some(v) => Proc::CastStr(Box::new(Str::StringLit(v.to_string()))),
+                    None => Proc::Err,
+                },
+                Proc::CastBigInt(x) => match x.as_ref().try_eval() {
+                    Some(v) => Proc::CastStr(Box::new(Str::StringLit(v.to_string()))),
+                    None => Proc::Err,
+                },
+                Proc::CastBigRat(x) => match x.as_ref().try_eval() {
+                    Some(v) => Proc::CastStr(Box::new(Str::StringLit(v.to_string()))),
+                    None => Proc::Err,
+                },
+                Proc::CastFloat(x) => match x.as_ref().try_eval() {
+                    Some(v) => Proc::CastStr(Box::new(Str::StringLit(v.to_string()))),
+                    None => Proc::Err,
+                },
+                Proc::CastFixed(x) => match x.as_ref().try_eval() {
+                    Some(v) => Proc::CastStr(Box::new(Str::StringLit(v.to_string()))),
+                    None => Proc::Err,
+                },
+                Proc::CastBool(x) => match x.as_ref().try_eval() {
+                    Some(v) => Proc::CastStr(Box::new(Str::StringLit(v.to_string()))),
+                    None => Proc::Err,
+                },
                 _ => Proc::Err,
             }}
         ] fold;

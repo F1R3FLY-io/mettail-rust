@@ -166,8 +166,18 @@ fn generate_term_def(rule: &GrammarRule, language: &LanguageDef) -> TokenStream 
     // Generate field definitions
     let fields = generate_field_defs(rule);
 
-    // TODO: Extract description from doc comments
-    let description = quote! { None };
+    // Stage 3.27a (2026-05-04): emit description from doc-comment text
+    // captured by `parse_doc_comment` (ast/src/grammar.rs). The text is
+    // wrapped via `LitStr::new` which handles all Rust string escaping
+    // automatically, so multi-line and special-character doc comments
+    // round-trip safely through `quote!` interpolation.
+    let description = match &rule.doc_comment {
+        Some(text) => {
+            let lit = LitStr::new(text, rule.label.span());
+            quote! { Some(#lit) }
+        },
+        None => quote! { None },
+    };
 
     quote! {
         mettail_runtime::TermDef {
@@ -1007,11 +1017,24 @@ fn generate_logic_relation_defs(language: &LanguageDef) -> TokenStream {
             let name = rel.name.to_string();
             let param_types = &rel.param_types;
 
+            // Stage 3.27a (2026-05-04): emit description from RelationDecl
+            // doc-comment when present. ascent_syntax_export currently does
+            // not surface relation-level doc comments, so all paths route
+            // through the `None` arm — but the wiring is in place for
+            // when that gets extended.
+            let description = match &rel.doc_comment {
+                Some(text) => {
+                    let lit = LitStr::new(text, rel.name.span());
+                    quote! { Some(#lit) }
+                },
+                None => quote! { None },
+            };
+
             quote! {
                 mettail_runtime::LogicRelationDef {
                     name: #name,
                     param_types: &[#(#param_types),*],
-                    description: None,
+                    description: #description,
                 }
             }
         })

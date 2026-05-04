@@ -3,9 +3,11 @@ use quote::{format_ident, quote};
 
 /// Generate eval() method for native types
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam};
-use mettail_ast::language::LanguageDef;
+use mettail_ast::language::{LanguageDef, NativeKind};
 use mettail_ast::types::TypeExpr;
+use crate::gen::native::lossless_coercion::build_lossless_coercion;
 use crate::gen::native::{native_type_to_string, NativeType};
+use crate::gen::runtime::wpds_codegen::builtin_metadata::classify_simple_projection_shape;
 use crate::gen::{
     generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
 };
@@ -386,6 +388,85 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     });
                     pda_visit_arms.push(quote! {
                         #category::#label(n) => values.push(*n),
+                    });
+                }
+            }
+            // Stage 3.12.9 β-2 (2026-05-04): synthetic auto-injection wrapper.
+            //
+            // Stage 3.13's auto_inject.rs::make_injection_rule emits
+            // `<Source>To<Target> . v:Source |- v : Target ;` constructors
+            // with `is_auto_injected = true`. Pre-Stage-3.12.9 these
+            // synthetic variants fell through `try_eval`'s catch-all
+            // `_ => None` arm, which made `eval()` panic when the rewrite
+            // pipeline didn't collapse the wrapper before evaluation —
+            // surfacing as the 7 `cross_cat_rhocalc_castop_*` failures.
+            //
+            // β-2 closes the gap: detect the synthetic rule via
+            // `classify_simple_projection_shape`, look up source/target
+            // NativeKinds, and (if the lattice declares the edge as
+            // lossless) emit a `try_eval` arm that recursively evaluates
+            // the inner term and applies the lossless coercion.
+            //
+            // Cross-category recursion: same idiom as calc's existing
+            // `BigRat::Fraction(a, b)` arm at
+            // `target/generated/calculator/eval.rs:1002-1009`. Bounded by
+            // lossless-lattice depth (≤ 4 hops in practice).
+            else if rule.is_auto_injected
+                && classify_simple_projection_shape(rule).is_some()
+            {
+                let shape = classify_simple_projection_shape(rule)
+                    .expect("just checked classify_simple_projection_shape");
+                let source_native_kind = language
+                    .types
+                    .iter()
+                    .find(|t| t.name.to_string() == shape.source_category)
+                    .and_then(|t| t.native_type.as_ref())
+                    .map(NativeKind::from_syn_type);
+                let target_native_kind = NativeKind::from_syn_type(native_type);
+
+                // Coercion only emits for declared lossless edges. Lossy
+                // auto-injection (gated behind `auto_inject_lossy`) and
+                // edges with no Rust-level coercion fall through to the
+                // existing catch-all `_ => None`.
+                let coercion = source_native_kind.and_then(|src| {
+                    let v_ident = format_ident!("__v");
+                    let v_expr = quote! { #v_ident };
+                    build_lossless_coercion(src, target_native_kind, &v_expr)
+                });
+
+                if let Some(coercion_expr) = coercion {
+                    let v_ident = format_ident!("__v");
+                    // match_arms is the gate that decides whether
+                    // `eval()` / `try_eval()` impls are emitted (line
+                    // ~837: `if !match_arms.is_empty()`). The body here
+                    // is unused — `eval()` delegates to `try_eval()` —
+                    // but the gate needs at least one arm, so we push a
+                    // placeholder that mirrors the try_eval semantics.
+                    match_arms.push(quote! {
+                        #category::#label(__v_box) => {
+                            let #v_ident = __v_box.as_ref().eval();
+                            (#coercion_expr)
+                        },
+                    });
+
+                    // try_eval arm (recursive form): bubbles `None` on
+                    // either inner failure (e.g., source contains a Var)
+                    // or fallible coercion (NaN→Float→BigRat).
+                    try_eval_arms.push(quote! {
+                        #category::#label(__v_box) => {
+                            let #v_ident = __v_box.as_ref().try_eval()?;
+                            Some(#coercion_expr)
+                        }
+                    });
+
+                    // PDA Visit arm: cross-category recursion via the
+                    // inner type's `try_eval`. Bounded by lossless-lattice
+                    // depth (≤ 4-hop chain like Int → BigInt → BigRat).
+                    pda_visit_arms.push(quote! {
+                        #category::#label(__v_box) => {
+                            let #v_ident = __v_box.as_ref().try_eval()?;
+                            values.push(#coercion_expr);
+                        }
                     });
                 }
             }

@@ -21,7 +21,9 @@ use crate::gen::native::has_native_type;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
-use mettail_prattail::binding_power::{analyze_binding_powers, InfixRuleInfo, MixfixPart as BpMixfixPart};
+use mettail_prattail::binding_power::{
+    analyze_binding_powers, compute_prefix_bp, InfixRuleInfo, MixfixPart as BpMixfixPart,
+};
 use mettail_prattail::SyntaxItemSpec;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -111,15 +113,9 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
 
     let bp_table = analyze_binding_powers(&infix_rules);
 
-    // Compute max infix bp per category (exclude postfix) for prefix_bp
-    let mut max_infix_bp: HashMap<String, u8> = HashMap::new();
-    for op in &bp_table.operators {
-        if op.is_postfix {
-            continue;
-        }
-        let max_val = max_infix_bp.entry(op.category.clone()).or_insert(0u8);
-        *max_val = (*max_val).max(op.left_bp).max(op.right_bp);
-    }
+    // Stage 3.27d-pre (2026-04-30): prefix_bp now derives from
+    // `compute_prefix_bp()` (single source of truth, queries bp_table directly).
+    // The local max_infix_bp HashMap was removed.
 
     let mut lookup = BpLookup::empty();
 
@@ -164,15 +160,14 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
         );
     }
 
-    // Add unary prefix operators
+    // Add unary prefix operators (Stage 3.27d-pre standardized helper)
     for rule in &spec.rules {
         if rule.is_unary_prefix {
-            let prefix_bp = if let Some(explicit_bp) = rule.prefix_precedence {
-                explicit_bp
-            } else {
-                let cat_max = max_infix_bp.get(&rule.category).copied().unwrap_or(0);
-                cat_max + 2
-            };
+            let prefix_bp = compute_prefix_bp(
+                &rule.category,
+                rule.prefix_precedence,
+                &bp_table,
+            );
             lookup.prefix.insert(
                 rule.label.clone(),
                 DisplayPrefixBpInfo { prefix_bp },
@@ -1129,7 +1124,18 @@ fn generate_engine_syntax_pattern_arm(
                     .map(|e| matches!(e, SyntaxExpr::Param(_)));
                 let prev_param =
                     i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
-                let is_word = s.chars().all(|c| c.is_alphabetic());
+                // Stage 3.3 (2026-04-30): broaden `is_word` to mirror the
+                // lexer's keyword-recognition rule
+                // (`prattail/src/lexer.rs:523`): `is_alphanumeric() || '_'`,
+                // not just `is_alphabetic()`. A literal like `"r2d2"` IS an
+                // identifier-like keyword to the lexer; failing to space it
+                // from adjacent ident-char text would re-lex into a single
+                // glommed Ident. Guard against empty literals (vacuously
+                // true) and digit-leading literals (those parse as Integer,
+                // not as keywords).
+                let is_word = !s.is_empty()
+                    && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+                    && !s.chars().next().unwrap().is_numeric();
                 let (prefix, suffix) = if prev_param && next_param.unwrap_or(false) {
                     (" ", " ")
                 } else if next_param == Some(true) && is_word {
@@ -1195,12 +1201,26 @@ fn generate_engine_syntax_pattern_arm(
                 }
             },
             SyntaxExpr::Op(op) => {
+                // Stage 3.3 (2026-04-30): pass outer-adjacent Param flags so
+                // PatternOp::Opt can apply the same word-literal spacing rules
+                // the outer SyntaxExpr::Literal arm uses. Without this, an
+                // optional group like `*opt("else" e)` placed after a Param
+                // emits `<param><else>` with no separator → re-lex glomming
+                // into Ident("<value>else").
+                let prev_outer_is_param = i > 0
+                    && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
+                let next_outer_is_param = matches!(
+                    syntax_pattern.get(i + 1),
+                    Some(SyntaxExpr::Param(_))
+                );
                 let op_code = generate_engine_pattern_op(
                     op,
                     &abstraction_binder,
                     &abstraction_body,
                     &body_cat_ident,
                     &param_types,
+                    prev_outer_is_param,
+                    next_outer_is_param,
                 );
                 forward_ops.push(op_code);
             },
@@ -1336,13 +1356,27 @@ fn generate_engine_syntax_pattern_arm(
 /// Generate push operations for a pattern operation (Sep, Var, Opt, etc.)
 /// These produce inline write-to-formatter code (since they involve loops/conditionals
 /// that don't recurse deeply) and push the result as a WriteString.
+///
+/// `prev_outer_is_param` / `next_outer_is_param` (Stage 3.3, 2026-04-30):
+/// whether the immediately-adjacent OUTER syntax-pattern position is a
+/// `SyntaxExpr::Param`. Used by `PatternOp::Opt` to embed leading/trailing
+/// spaces in its emitted `result` string when its first/last inner element
+/// is a word-literal abutting an outer Param. The space MUST be embedded
+/// (not pushed as a separate `WriteLiteral` task) so it's atomically gated
+/// on the optional-group's Some/None discriminant — emitting outer-side
+/// would produce trailing whitespace when the group is absent.
 fn generate_engine_pattern_op(
     op: &PatternOp,
     abstraction_binder: &Option<String>,
     _abstraction_body: &Option<String>,
     _body_cat_ident: &Option<syn::Ident>,
     _param_types: &HashMap<String, &TypeExpr>,
+    prev_outer_is_param: bool,
+    next_outer_is_param: bool,
 ) -> TokenStream {
+    // Sep / Var ignore the outer flags; their emission already produces
+    // self-contained spacing or atomic ident formatting.
+    let _ = (prev_outer_is_param, next_outer_is_param);
     match op {
         PatternOp::Sep { collection, separator, source } => {
             if let Some(chain_source) = source {
@@ -1415,19 +1449,104 @@ fn generate_engine_pattern_op(
                     None
                 }
             }).collect();
+            // Stage 3.3 (2026-04-30): mirror the outer SyntaxExpr::Literal
+            // spacing heuristic for inner positions, plus inject leading /
+            // trailing spaces at inner edges when the OUTER neighbour is a
+            // Param. This guarantees the Display→Parse roundtrip for any
+            // optional-group position whose word-literals would otherwise
+            // glom together with adjacent Param-formatted text under the
+            // lexer's maximal-munch keyword recognition.
+            //
+            // Rules (per inner index `j`):
+            //  * `is_word`: same lexer-aligned predicate as the outer arm —
+            //    non-empty, ident-class chars only, non-numeric leading.
+            //  * `inner_3case_force`: when the inner position is between two
+            //    Params, force `(" ", " ")` — matches outer behaviour for
+            //    `["a", "+", "b"]` shapes.
+            //  * Leading-space sources: (a) inner-prev is a Param + is_word;
+            //    (b) is_first AND outer-prev is a Param + is_word;
+            //    (c) inner_3case_force.
+            //  * Trailing-space sources: (a) is_word AND any inner-next exists
+            //    (covers Lit→Lit-word AND Lit→Param);
+            //    (b) is_last AND outer-next is a Param + is_word;
+            //    (c) inner_3case_force.
+            //  * Param at inner-edge with outer-adjacent Param: emit an
+            //    explicit `result.push_str(" ");` because Param widths are
+            //    unbounded and adjacency would re-lex into a single token.
+            //  * Nested Op inside Opt: emit `compile_error!` — the parser side
+            //    rejects this construction at `binder.rs:347`, so the Display
+            //    side must as well, surfaced at language! macro expansion.
             let inner_parts: Vec<TokenStream> = inner
                 .iter()
-                .map(|expr| match expr {
-                    SyntaxExpr::Literal(s) => {
-                        quote! { result.push_str(#s); }
-                    },
-                    SyntaxExpr::Param(id) => {
-                        let inner_var = quote::format_ident!("__opt_{}", id);
-                        quote! { result.push_str(&format!("{}", #inner_var)); }
-                    },
-                    SyntaxExpr::Op(_op) => {
-                        quote! { /* nested op in optional — flattened by classify_binder */ }
-                    },
+                .enumerate()
+                .map(|(j, expr)| {
+                    let inner_prev_is_param = j > 0
+                        && matches!(inner.get(j - 1), Some(SyntaxExpr::Param(_)));
+                    let inner_next_is_param = inner
+                        .get(j + 1)
+                        .map(|e| matches!(e, SyntaxExpr::Param(_)));
+                    let is_first = j == 0;
+                    let is_last = j + 1 == inner.len();
+                    match expr {
+                        SyntaxExpr::Literal(s) => {
+                            let is_word = !s.is_empty()
+                                && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+                                && !s.chars().next().unwrap().is_numeric();
+                            let inner_3case_force = inner_prev_is_param
+                                && inner_next_is_param.unwrap_or(false);
+                            let need_prefix = (inner_prev_is_param && is_word)
+                                || (is_first && prev_outer_is_param && is_word)
+                                || inner_3case_force;
+                            let need_suffix = (is_word && !is_last)
+                                || (is_last && next_outer_is_param && is_word)
+                                || inner_3case_force;
+                            let prefix = if need_prefix { " " } else { "" };
+                            let suffix = if need_suffix { " " } else { "" };
+                            let raw = format!("{}{}{}", prefix, s, suffix);
+                            quote! { result.push_str(#raw); }
+                        },
+                        SyntaxExpr::Param(id) => {
+                            let inner_var = quote::format_ident!("__opt_{}", id);
+                            let leading = if is_first && prev_outer_is_param {
+                                quote! { result.push_str(" "); }
+                            } else {
+                                quote! {}
+                            };
+                            let trailing = if is_last && next_outer_is_param {
+                                quote! { result.push_str(" "); }
+                            } else {
+                                quote! {}
+                            };
+                            quote! {
+                                #leading
+                                result.push_str(&format!("{}", #inner_var));
+                                #trailing
+                            }
+                        },
+                        SyntaxExpr::Op(_inner_op) => {
+                            // Per binder.rs:347, the WPDS classifier returns
+                            // None for `SyntaxExpr::Op` inside another op's
+                            // inner pattern — the parser refuses such
+                            // grammars. Display generation must refuse them
+                            // too; silent emission would produce text the
+                            // parser cannot accept. Surface at macro
+                            // expansion so grammar authors get a clear
+                            // diagnostic instead of a runtime
+                            // Display→Parse roundtrip failure.
+                            quote! {
+                                compile_error!(
+                                    "nested PatternOp inside #opt(...) is not \
+                                     supported: the WPDS binder classifier (see \
+                                     macros/.../wpds_codegen/binder.rs:347) \
+                                     returns None for nested-op shapes, so the \
+                                     parser side cannot accept them. Rewrite the \
+                                     grammar to flatten the inner ops, or open an \
+                                     issue if your grammar genuinely needs nested \
+                                     optionality."
+                                );
+                            }
+                        },
+                    }
                 })
                 .collect();
             if let Some(gating) = gating_ident {

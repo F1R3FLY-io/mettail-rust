@@ -499,7 +499,7 @@ fn build_uint32_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> UInt32 {
         return result.unwrap_uint32();
     }
 
-    let choice = (reader.next_byte() as usize) % 7;
+    let choice = (reader.next_byte() as usize) % 8;
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapUInt32(UInt32::CastErrUInt32).unwrap_uint32(),
@@ -523,10 +523,14 @@ fn build_uint32_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> UInt32 {
             let f0 = Box::new(build_uint32_from_tape(reader, child_depth));
             UInt32::BitNotUInt32(f0)
         },
-        _ => {
+        6 => {
             let f0 = Box::new(build_proc_from_tape(reader, child_depth));
             let f1 = Box::new(build_int_from_tape(reader, child_depth));
             UInt32::UIntBin(f0, f1)
+        },
+        _ => {
+            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            UInt32::BoolToUInt32(f0)
         },
     }
 }
@@ -547,7 +551,7 @@ fn build_bigint_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigInt {
         return result.unwrap_bigint();
     }
 
-    let choice = (reader.next_byte() as usize) % 10;
+    let choice = (reader.next_byte() as usize) % 12;
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapBigInt(BigInt::CastErrBigInt).unwrap_bigint(),
@@ -584,9 +588,17 @@ fn build_bigint_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigInt {
             let f0 = Box::new(build_bigint_from_tape(reader, child_depth));
             BigInt::BitNotBigInt(f0)
         },
-        _ => {
+        9 => {
             let f0 = Box::new(build_proc_from_tape(reader, child_depth));
             BigInt::BigintCast(f0)
+        },
+        10 => {
+            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            BigInt::BoolToBigInt(f0)
+        },
+        _ => {
+            let f0 = Box::new(build_uint32_from_tape(reader, child_depth));
+            BigInt::UInt32ToBigInt(f0)
         },
     }
 }
@@ -607,7 +619,7 @@ fn build_bigrat_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigRat {
         return result.unwrap_bigrat();
     }
 
-    let choice = (reader.next_byte() as usize) % 12;
+    let choice = (reader.next_byte() as usize) % 17;
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapBigRat(BigRat::Err).unwrap_bigrat(),
@@ -654,9 +666,29 @@ fn build_bigrat_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigRat {
             let f0 = Box::new(build_bigrat_from_tape(reader, child_depth));
             BigRat::BitNotBigRat(f0)
         },
-        _ => {
+        11 => {
             let f0 = Box::new(build_proc_from_tape(reader, child_depth));
             BigRat::BigratCast(f0)
+        },
+        12 => {
+            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            BigRat::BoolToBigRat(f0)
+        },
+        13 => {
+            let f0 = Box::new(build_uint32_from_tape(reader, child_depth));
+            BigRat::UInt32ToBigRat(f0)
+        },
+        14 => {
+            let f0 = Box::new(build_float_from_tape(reader, child_depth));
+            BigRat::FloatToBigRat(f0)
+        },
+        15 => {
+            let f0 = Box::new(build_bigint_from_tape(reader, child_depth));
+            BigRat::BigIntToBigRat(f0)
+        },
+        _ => {
+            let f0 = Box::new(build_fixed_from_tape(reader, child_depth));
+            BigRat::FixedToBigRat(f0)
         },
     }
 }

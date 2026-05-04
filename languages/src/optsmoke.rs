@@ -35,6 +35,10 @@ language! {
     },
 
     terms {
+        /// Branches on a Boolean condition.
+        ///
+        /// When `cond` is true, evaluates `t`; otherwise evaluates `e`
+        /// (or 0 if the else-branch is omitted via `*opt(...)`).
         IfElse . cond:Bool, t:Int, *opt(e:Int)
             |- "if" cond "then" t *opt("else" e) : Int
             ![{

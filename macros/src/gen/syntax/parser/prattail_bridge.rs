@@ -130,6 +130,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
             rust_code: None,
             eval_mode: None,
             source_location: None,
+            is_auto_injected: false,
         });
     }
 
@@ -519,6 +520,8 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
         }),
         eval_mode: rule.eval_mode.as_ref().map(|e| format!("{:?}", e)),
         source_location,
+        // Stage 3.13b (2026-05-01): propagate provenance flag from the AST.
+        is_auto_injected: rule.is_auto_injected,
     }
 }
 

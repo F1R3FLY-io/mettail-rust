@@ -8,7 +8,7 @@ use mettail_languages::calculator::*;
 use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
 
-// Dead rules detected by WFST analysis: {"Bool::GtEqFloat", "Float::NegFloat", "Bool::EqStr", "Float::MulFloat", "Fixed::BitAndFixed", "Proc::ProcFixed", "Str::AddStr", "Str::Concat", "Fixed::MulFixed", "Proc::ProcBigRat", "ProcBigInt", "Bool::IntToBool", "Int::StrToInt", "Proc::ProcMap", "Map::MapLit", "Bag::DiffBag", "Bool::GtEqStr", "Proc::ProcBool", "IntToBigInt", "Proc::ProcUInt32", "Int::CountBag", "Float::PowFloat", "Str::IntToStr", "IntToBigRat", "Bool::LtEqStr", "Bool::LtStr", "Bool::StrToBool", "Int::AddInt", "Int::BoolToInt", "Float::FloatBin", "UInt32::BitOrUInt32", "Int::BitOrInt", "ProcBigRat", "Map::DeleteMap", "ProcMap", "Fixed::DivFixed", "Fixed::ModFixed", "BigInt::AddBigInt", "Str::ProcToStr", "BigRat::AddBigRat", "Int::CustomOp", "Float::FloatId", "Fixed::FixedBin", "Bool::GtEqInt", "BigInt::NegBigInt", "ProcUInt32", "Int::PowInt", "Int::LenList", "UInt32::AddUInt32", "Bool::GtEqFixed", "BigRat::BitNotBigRat", "BigInt::BitNotBigInt", "Bool::ProcToBool", "Str::StrId", "Float::DivFloat", "Str::FloatToStr", "Int::BitNotInt", "Fixed::AddFixed", "Bool::GtFloat", "Float::StrToFloat", "Bool::NeStr", "Bool::FloatToBool", "Int::BitAndInt", "Bool::NeInt", "Proc::ProcStr", "Bool::Or", "Int::DivInt", "Float::LnFloat", "UInt32::BitAndUInt32", "Bool::NeBool", "Float::CosFloat", "Bool::EqInt", "Bool::LtFloat", "BigRat::BitAndBigRat", "Float::SinFloat", "Bool::GtFixed", "Proc::ProcBag", "BigInt::BitAndBigInt", "Bool::EqBool", "Proc::ProcInt", "Bool::Not", "ProcInt", "Bool::LtEqBool", "ProcBag", "Int::FloatToInt", "Float::IntToFloat", "List::KeysMap", "BigRat::DivBigRat", "BigRat::Fraction", "Int::SubInt", "ProcBool", "Bool::NeFloat", "Int::Len", "Proc::ProcBigInt", "Bag::BagLit", "Int::Fact", "List::ListLit", "Int::IntId", "Fixed::SubFixed", "Int::MulInt", "Proc::GetMap", "BigRat::BitOrBigRat", "Map::MergeMap", "ProcStr", "Proc::ProcFloat", "Int::Neg", "Float::BoolToFloat", "Bool::HasMap", "Int::LenMap", "BigRat::NegBigRat", "BigInt::BigintCast", "Float::SubFloat", "ProcList", "Fixed::NegFixed", "Bool::GtBool", "Bool::LtEqFloat", "UInt32::UIntBin", "Bool::EqFloat", "Bool::And", "Proc::ElemList", "Bool::LtEqFixed", "BigRat::BigratCast", "Fixed::BitNotFixed", "BigRat::MulBigRat", "Proc::ProcList", "Bool::GtEqBool", "Int::ModInt", "BigInt::SubBigInt", "Bag::UnionBag", "Bool::GtInt", "Map::PutMap", "Bool::EqFixed", "Float::AddFloat", "Bool::BoolId", "Float::ExpFloat", "Bool::LtBool", "BigInt::BitOrBigInt", "Bool::LtEqInt", "UInt32::BitNotUInt32", "Bool::NeFixed", "List::ValuesMap", "Bag::RemoveBag", "Int::Tern", "Bool::Xor", "List::ConcatList", "Str::BoolToStr", "Bool::LtInt", "Bool::GtStr", "List::DeleteList", "Fixed::BitOrFixed", "Bool::LtFixed", "Int::IntBin"}
+// Dead rules detected by WFST analysis: {"ProcUInt32", "ProcBigInt", "Int::CountBag", "Fixed::ModFixed", "Int::ModInt", "List::KeysMap", "Bool::StrToBool", "Float::FloatId", "Bag::DiffBag", "UInt32ToBigInt", "Bool::GtEqFloat", "Fixed::BitOrFixed", "FloatToBigRat", "Float::ExpFloat", "Float::MulFloat", "Bool::LtFixed", "Float::StrToFloat", "Bool::FloatToBool", "Proc::ProcUInt32", "UInt32::BitAndUInt32", "Bag::RemoveBag", "Bool::GtBool", "ProcList", "Int::Fact", "BigRat::Fraction", "Int::Len", "BigRat::FixedToBigRat", "BigInt::UInt32ToBigInt", "BigInt::BitOrBigInt", "Int::Neg", "Bool::LtFloat", "Float::IntToFloat", "Proc::ProcStr", "Bool::GtEqInt", "Bool::LtEqBool", "Bool::LtEqFloat", "Bool::EqFixed", "IntToBigInt", "Int::BitOrInt", "Fixed::MulFixed", "Bool::ProcToBool", "Bool::GtInt", "Bool::Xor", "List::ValuesMap", "Str::AddStr", "Proc::ProcBigInt", "Int::IntId", "Int::Tern", "Proc::ProcBigRat", "Proc::GetMap", "Proc::ProcBool", "Str::Concat", "Bool::NeStr", "ProcBag", "Int::CustomOp", "BigRat::BoolToBigRat", "Int::SubInt", "Float::AddFloat", "List::DeleteList", "Int::BitNotInt", "BigRat::BigratCast", "Float::PowFloat", "Bool::GtEqFixed", "Bool::GtFloat", "UInt32::BoolToUInt32", "ProcInt", "Int::BoolToInt", "Fixed::NegFixed", "Fixed::DivFixed", "Bag::BagLit", "BigRat::IntToBigRat", "Str::StrId", "BigRat::Err", "BigIntToBigRat", "BoolToBigInt", "Proc::ProcBag", "BigRat::BigIntToBigRat", "Bool::LtBool", "BoolToBigRat", "Bool::NeFixed", "Bool::EqInt", "Proc::ProcFloat", "Float::SubFloat", "Int::MulInt", "Bool::EqFloat", "Fixed::AddFixed", "BoolToUInt32", "Int::DivInt", "Int::LenList", "Proc::ElemList", "Str::ProcToStr", "IntToBigRat", "Bool::GtFixed", "Bool::LtEqStr", "BigRat::FloatToBigRat", "ProcStr", "Int::BitAndInt", "Bool::LtInt", "UInt32::AddUInt32", "Bool::NeInt", "Int::LenMap", "Int::FloatToInt", "Fixed::FixedBin", "Proc::ProcInt", "Fixed::BitAndFixed", "Bool::GtStr", "Map::PutMap", "BigRat::MulBigRat", "Bool::LtStr", "Bag::UnionBag", "Proc::ProcFixed", "Map::MergeMap", "UInt32ToBigRat", "BigInt::BitNotBigInt", "Bool::Not", "UInt32::CastErrUInt32", "Str::FloatToStr", "Int::StrToInt", "BigRat::DivBigRat", "Int::AddInt", "Bool::Or", "BigRat::NegBigRat", "Bool::EqBool", "ProcBool", "BigInt::BitAndBigInt", "Bool::NeFloat", "BigRat::BitAndBigRat", "Bool::EqStr", "BigRat::UInt32ToBigRat", "Float::DivFloat", "BigRat::BitOrBigRat", "Bool::BoolId", "BigRat::BitNotBigRat", "Bool::GtEqBool", "Float::CosFloat", "Proc::ProcMap", "ProcBigRat", "Bool::NeBool", "BigInt::CastErrBigInt", "Bool::LtEqInt", "Float::LnFloat", "BigRat::AddBigRat", "BigInt::IntToBigInt", "Proc::ProcList", "Float::NegFloat", "Float::SinFloat", "Str::BoolToStr", "UInt32::UIntBin", "UInt32::BitNotUInt32", "Map::MapLit", "ProcMap", "BigInt::BigintCast", "Bool::LtEqFixed", "Float::BoolToFloat", "Bool::GtEqStr", "Int::PowInt", "BigInt::NegBigInt", "List::ListLit", "Fixed::BitNotFixed", "BigInt::BoolToBigInt", "BigInt::AddBigInt", "List::ConcatList", "FixedToBigRat", "Map::DeleteMap", "Fixed::SubFixed", "UInt32::BitOrUInt32", "BigInt::SubBigInt", "Bool::HasMap", "Int::IntBin", "Bool::And", "Bool::IntToBool", "Str::IntToStr", "Float::FloatBin"}
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -1929,6 +1929,110 @@ fn unit_calculator_list_valuesmap() {
         let re_displayed = format!("{}", parsed);
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for ValuesMap: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_calculator_uint32_booltouint32() {
+    mettail_runtime::clear_var_cache();
+    let term = UInt32::BoolToUInt32(Box::new(Bool::BoolLit(false)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToUInt32");
+    if let Ok(parsed) = UInt32::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for BoolToUInt32: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_calculator_bigint_booltobigint() {
+    mettail_runtime::clear_var_cache();
+    let term = BigInt::BoolToBigInt(Box::new(Bool::BoolLit(false)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToBigInt");
+    if let Ok(parsed) = BigInt::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for BoolToBigInt: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_calculator_bigrat_booltobigrat() {
+    mettail_runtime::clear_var_cache();
+    let term = BigRat::BoolToBigRat(Box::new(Bool::BoolLit(false)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToBigRat");
+    if let Ok(parsed) = BigRat::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for BoolToBigRat: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_calculator_bigint_uint32tobigint() {
+    mettail_runtime::clear_var_cache();
+    let term = BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(0u32)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToBigInt");
+    if let Ok(parsed) = BigInt::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for UInt32ToBigInt: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_calculator_bigrat_uint32tobigrat() {
+    mettail_runtime::clear_var_cache();
+    let term = BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(0u32)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToBigRat");
+    if let Ok(parsed) = BigRat::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for UInt32ToBigRat: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_calculator_bigrat_floattobigrat() {
+    mettail_runtime::clear_var_cache();
+    let term = BigRat::FloatToBigRat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatToBigRat");
+    if let Ok(parsed) = BigRat::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for FloatToBigRat: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_calculator_bigrat_biginttobigrat() {
+    mettail_runtime::clear_var_cache();
+    let term = BigRat::BigIntToBigRat(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BigIntToBigRat");
+    if let Ok(parsed) = BigRat::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for BigIntToBigRat: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_calculator_bigrat_fixedtobigrat() {
+    mettail_runtime::clear_var_cache();
+    let term = BigRat::FixedToBigRat(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedToBigRat");
+    if let Ok(parsed) = BigRat::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for FixedToBigRat: {} != {}", displayed, re_displayed);
     }
 }
 

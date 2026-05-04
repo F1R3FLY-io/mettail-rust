@@ -174,7 +174,11 @@ pub(crate) fn calc_try_float_bin<W: CastWidth>(
     }
     if let CalcProc::ProcBigRat(r) = a {
         // Allow casts from computed BigRat expressions (e.g. 1r/4r), not only RatLit payloads.
-        let rat = r.as_ref().eval();
+        // Stage 3.12.9 α-1 (2026-05-04): use fallible `try_eval()?` so wrappers around
+        // unevaluable subterms (Var, partially-reduced parses) yield `None` instead of
+        // panicking. Combined with β's wrapper arms, lossless wrappers around literals
+        // evaluate cleanly; truly unevaluable inputs propagate as `Proc::Err` upstream.
+        let rat = r.as_ref().try_eval()?;
         return float_bin_pipeline(NumericInput::BigRat(rat.get()), width);
     }
     let input = calculator_proc_to_numeric_input(a)?;
@@ -343,7 +347,12 @@ pub(crate) fn rho_try_float_bin<W: CastWidth>(
     }
     if let RhoProc::CastBigRat(r) = a {
         // Symmetry with Calculator: support casts from computed rational expressions.
-        let rat = r.as_ref().eval();
+        // Stage 3.12.9 α-2 (2026-05-04): use fallible `try_eval()?` so wrappers around
+        // unevaluable subterms yield `None` instead of panicking. Combined with β's
+        // wrapper arms in BigRat::try_eval, lossless wrappers around literals (e.g.,
+        // `BigRat::FloatToBigRat(FloatLit(2.0))`) now evaluate cleanly; truly
+        // unevaluable inputs propagate as `Proc::Err` upstream.
+        let rat = r.as_ref().try_eval()?;
         return float_bin_pipeline(NumericInput::BigRat(rat.get()), width);
     }
     if let RhoProc::FloatBinProc(inner_a, inner_w) = a {

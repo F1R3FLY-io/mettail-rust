@@ -246,6 +246,64 @@ impl Default for BindingPowerTable {
     }
 }
 
+/// Standardized offset for unary-prefix binding power above the maximum
+/// non-postfix infix binding power in a category.
+///
+/// **Stage 3.27d-pre standardization (user-approved 2026-04-30):** the
+/// unary-prefix binding power is `max_infix_bp + PREFIX_BP_OFFSET = max_infix_bp + 2`.
+/// This places prefix in the upper half of the 2-slot gap that
+/// `analyze_binding_powers` reserves between max-infix and first-postfix
+/// (postfix starts at `max_infix_bp + 4`).
+///
+/// **Why +2 (not +1):** matches the existing Display behavior at
+/// `macros/src/gen/syntax/display.rs:174` and the legacy recursive-descent
+/// path at `prattail/src/pipeline.rs:1259` — both already use `+2`.
+/// Standardizing to `+2` is zero-regression. Margin above max-infix also
+/// provides defense-in-depth against off-by-one bugs in BP comparisons.
+///
+/// **Consumers:**
+/// - `prattail/src/pipeline.rs::generate_parser` — RDRuleInfo emission
+/// - `macros/src/gen/syntax/display.rs::build_bp_lookup` — Display paren elision
+/// - `macros/src/gen/runtime/wpds_codegen/binder.rs:708,1004` — WPDS ParamParse arms
+///   (Stage 3.27d G-PREFIX-BP installs `cur_bp = compute_prefix_bp(...)` here)
+pub const PREFIX_BP_OFFSET: u8 = 2;
+
+/// Compute the binding power for a unary-prefix rule's operand sub-parse.
+///
+/// **Algorithm:**
+/// - If `explicit_prefix_precedence` is `Some(bp)`, return that (user-supplied).
+/// - Otherwise compute `max_infix_bp(category) + PREFIX_BP_OFFSET`, where
+///   `max_infix_bp(category)` is the maximum of `(left_bp, right_bp)` across
+///   all non-postfix operators with `op.category == rule_category`.
+/// - Returns 0 + PREFIX_BP_OFFSET = 2 when the category has no infix operators
+///   (cleanly handles empty-infix categories without a special case).
+///
+/// **Filtering rationale:** the operand-category filter (`op.category ==
+/// rule_category`) is the right scope because the operand sub-parse is at
+/// `cur_bp = prefix_bp`; only operators producing in the operand category
+/// (i.e., that could fire on the operand) need to be dominated. Cross-cat
+/// operators with `result_category != category` are correctly EXCLUDED.
+///
+/// **Use in WPDS, Display, and pipeline:** all three paths must call this
+/// function rather than duplicating the formula. See module-level docs.
+pub fn compute_prefix_bp(
+    rule_category: &str,
+    explicit_prefix_precedence: Option<u8>,
+    bp_table: &BindingPowerTable,
+) -> u8 {
+    if let Some(explicit) = explicit_prefix_precedence {
+        return explicit;
+    }
+    let cat_max: u8 = bp_table
+        .operators
+        .iter()
+        .filter(|op| op.category == rule_category && !op.is_postfix)
+        .map(|op| op.left_bp.max(op.right_bp))
+        .max()
+        .unwrap_or(0);
+    cat_max.saturating_add(PREFIX_BP_OFFSET)
+}
+
 /// Analyze grammar rules to build the binding power table.
 ///
 /// Rules are classified as infix if:
@@ -313,7 +371,11 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
         }
 
         // Second pass: postfix operators start above non-postfix + prefix gap.
-        // Layout: [infix at 2..precedence-1] [prefix at precedence+0..+1] [postfix at precedence+2..]
+        // Layout (Stage 3.27d-pre standardized 2026-04-30, PREFIX_BP_OFFSET=2):
+        //   [infix at 2..max_infix_bp] [prefix at max_infix_bp+2] [postfix at max_infix_bp+4..]
+        // where `precedence` after the infix loop = max_infix_bp + 1.
+        // Prefix BP is computed by `compute_prefix_bp()` and installed at codegen
+        // time in WPDS binder.rs:708,1004 ParamParse arms (Stage 3.27d work).
         let mut postfix_prec = precedence + 2;
         for rule in cat_rules.iter().filter(|r| r.is_postfix) {
             table.operators.push(InfixOperator {
@@ -623,5 +685,112 @@ mod tests {
             mixfix_parts: Vec::new(),
         };
         assert_eq!(equal_op.associativity(), Associativity::Right);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Stage 3.27d-pre (2026-04-30): compute_prefix_bp tests
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_compute_prefix_bp_default_is_max_infix_bp_plus_offset() {
+        // Three left-assoc infix operators in Int: +, *, ^.
+        // analyze_binding_powers assigns precedences 2-3, 4-5, 6-7.
+        // max_infix_bp = 7, so prefix_bp = 7 + PREFIX_BP_OFFSET = 9.
+        let rules = vec![
+            make_rule("Add", "+", "Int", Associativity::Left),
+            make_rule("Mul", "*", "Int", Associativity::Left),
+            make_rule("Pow", "^", "Int", Associativity::Left),
+        ];
+        let table = analyze_binding_powers(&rules);
+        let bp = compute_prefix_bp("Int", None, &table);
+        assert_eq!(
+            bp,
+            7 + PREFIX_BP_OFFSET,
+            "default prefix_bp should be max_infix_bp ({}) + PREFIX_BP_OFFSET ({}) = {}",
+            7, PREFIX_BP_OFFSET, 7 + PREFIX_BP_OFFSET,
+        );
+    }
+
+    #[test]
+    fn test_compute_prefix_bp_explicit_overrides_auto() {
+        // Even with infix operators present, explicit takes precedence.
+        let rules = vec![make_rule("Add", "+", "Int", Associativity::Left)];
+        let table = analyze_binding_powers(&rules);
+        assert_eq!(
+            compute_prefix_bp("Int", Some(42), &table),
+            42,
+            "explicit prefix_precedence should override auto-computed",
+        );
+    }
+
+    #[test]
+    fn test_compute_prefix_bp_empty_infix_returns_offset() {
+        // Category with no infix operators: max defaults to 0, so prefix_bp = 0 + offset.
+        let table = BindingPowerTable::new();
+        assert_eq!(
+            compute_prefix_bp("Int", None, &table),
+            PREFIX_BP_OFFSET,
+            "empty-infix category should yield prefix_bp = PREFIX_BP_OFFSET",
+        );
+    }
+
+    #[test]
+    fn test_compute_prefix_bp_below_min_postfix_bp() {
+        // Layout invariant: postfix should bind tighter than prefix.
+        // With infix at 2-3 and postfix injected at max+4 (analyze_binding_powers
+        // pattern), the lowest postfix_l_bp must exceed compute_prefix_bp's output.
+        let rules = vec![
+            make_rule("Add", "+", "Int", Associativity::Left),
+            InfixRuleInfo {
+                label: "Fact".to_string(),
+                terminal: "!".to_string(),
+                category: "Int".to_string(),
+                result_category: "Int".to_string(),
+                associativity: Associativity::Left,
+                is_cross_category: false,
+                is_postfix: true,
+                is_mixfix: false,
+                mixfix_parts: Vec::new(),
+            },
+        ];
+        let table = analyze_binding_powers(&rules);
+        let prefix = compute_prefix_bp("Int", None, &table);
+        let postfix_min = table
+            .postfix_operators_for_category("Int")
+            .iter()
+            .map(|op| op.left_bp)
+            .min()
+            .expect("at least one postfix op");
+        assert!(
+            postfix_min > prefix,
+            "postfix l_bp {} must exceed prefix_bp {} so `-x!` parses as `-(x!)`",
+            postfix_min, prefix,
+        );
+    }
+
+    #[test]
+    fn test_compute_prefix_bp_filters_by_operand_category() {
+        // Cross-cat operator with operand=Int, result=Bool should NOT contribute
+        // to Bool's prefix_bp computation (it's filtered by operand category).
+        let mut table = BindingPowerTable::new();
+        table.operators.push(make_op("Lt", "<", "Int", "Bool", 4, 5, true, false, false));
+        table.operators.push(make_op("And", "&&", "Bool", "Bool", 2, 3, false, false, false));
+
+        // For Bool's prefix_bp: only `&&` (operand=Bool) contributes; `<` (operand=Int) is filtered.
+        // max from Bool ops = 3, so prefix_bp = 3 + 2 = 5.
+        let bool_prefix = compute_prefix_bp("Bool", None, &table);
+        assert_eq!(
+            bool_prefix,
+            3 + PREFIX_BP_OFFSET,
+            "Bool's prefix_bp should derive from Bool-operand operators only",
+        );
+
+        // For Int's prefix_bp: only `<` (operand=Int) contributes.
+        let int_prefix = compute_prefix_bp("Int", None, &table);
+        assert_eq!(
+            int_prefix,
+            5 + PREFIX_BP_OFFSET,
+            "Int's prefix_bp should derive from Int-operand operators only",
+        );
     }
 }

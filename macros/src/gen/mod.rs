@@ -64,6 +64,7 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     use term_gen::{generate_random_generation, generate_term_generation};
     use term_ops::depth::generate_term_depth_methods;
     use term_ops::ground::generate_is_ground_methods;
+    use term_ops::parse_alt_filter::generate_parse_alt_filter_methods;
     use term_ops::iterative_clone::generate_iterative_clone;
     use term_ops::iterative_cmp::generate_iterative_cmp;
     use term_ops::iterative_drop::generate_iterative_drop;
@@ -119,6 +120,11 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     let eval_impl = spill_and_include(&lang_name, "eval", generate_eval_method(language));
     let is_ground_impl =
         spill_and_include(&lang_name, "is_ground", generate_is_ground_methods(language));
+    let parse_alt_filter_impl = spill_and_include(
+        &lang_name,
+        "parse_alt_filter",
+        generate_parse_alt_filter_methods(language),
+    );
     let term_depth_impl = spill_and_include(
         &lang_name,
         "term_depth",
@@ -196,6 +202,8 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
         #eval_impl
 
         #is_ground_impl
+
+        #parse_alt_filter_impl
 
         #term_depth_impl
 

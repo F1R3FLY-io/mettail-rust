@@ -12,6 +12,7 @@ use mettail_runtime::BehavioralPred;
 // WFST-derived test coverage plan
 // ═══════════════════════════════════════════════════════════
 // Dead rules (skipped):
+//   - BoolToInt
 //   - CastBag
 //   - CastBigInt
 //   - CastBigRat
@@ -22,6 +23,8 @@ use mettail_runtime::BehavioralPred;
 //   - CastStr
 //   - CastUInt32
 //   - Int::CountBag
+//   - Proc::BigintCastProc
+//   - Proc::BigratCastProc
 //   - Proc::ConcatList
 //   - Proc::DeleteList
 //   - Proc::DeleteMap
@@ -33,49 +36,56 @@ use mettail_runtime::BehavioralPred;
 //   - Proc::GetMap
 //   - Proc::HasMap
 //   - Proc::IntBinProc
+//   - Proc::KeysMap
+//   - Proc::Len
 //   - Proc::MergeMap
+//   - Proc::PDrop
 //   - Proc::PInputs
 //   - Proc::PNew
 //   - Proc::POutput
 //   - Proc::PutMap
 //   - Proc::RemoveBag
+//   - Proc::ToBool
+//   - Proc::ToStr
 //   - Proc::UIntBinProc
 //   - Proc::UnionBag
+//   - Proc::ValuesMap
+//   - UInt32ToInt
 // Constructor weights (lower = more frequent):
-//   DiffBag              weight: 0.0000
-//   RemoveBag            weight: 0.0000
-//   BagLit               weight: 0.0000
-//   DeleteList           weight: 0.0000
-//   FractionProc         weight: 0.0000
-//   ConcatList           weight: 0.0000
-//   ElemList             weight: 0.0000
-//   PutMap               weight: 0.0000
-//   NegInt               weight: 0.0000
-//   UnionBag             weight: 0.0000
-//   BigratCastProc       weight: 0.0000
-//   FloatBinProc         weight: 0.0000
-//   StrLit               weight: 0.0000
-//   IntBinProc           weight: 0.0000
-//   Len                  weight: 0.0000
-//   ToStr                weight: 0.0000
-//   HasMap               weight: 0.0000
-//   PPar                 weight: 0.0000
-//   UIntBinProc          weight: 0.0000
+//   FixedBinProc         weight: 0.0000
+//   ValuesMap            weight: 0.0000
+//   Err                  weight: 0.0000
+//   MapLit               weight: 0.0000
+//   NegProc              weight: 0.0000
 //   ListLit              weight: 0.0000
-//   ... and 112 more
+//   ConcatList           weight: 0.0000
+//   BigRatLit            weight: 0.0000
+//   BigratCastProc       weight: 0.0000
+//   RemoveBag            weight: 0.0000
+//   PZero                weight: 0.0000
+//   PInputs              weight: 0.0000
+//   ToStr                weight: 0.0000
+//   ToBool               weight: 0.0000
+//   PDrop                weight: 0.0000
+//   NegInt               weight: 0.0000
+//   NQuote               weight: 0.0000
+//   DeleteList           weight: 0.0000
+//   FloatLit             weight: 0.0000
+//   FloatBinProc         weight: 0.0000
+//   ... and 124 more
 // Category weights:
 //   Proc                 weight: 0.1375
 //   Int                  weight: 0.4000
-//   Bool                 weight: 0.6667
-//   List                 weight: 0.6667
-//   Bag                  weight: 0.6667
-//   Float                weight: 0.6667
-//   BigInt               weight: 0.6667
-//   Map                  weight: 0.6667
-//   BigRat               weight: 0.6667
-//   Name                 weight: 0.6667
-//   Str                  weight: 0.6667
 //   UInt32               weight: 0.6667
+//   Bag                  weight: 0.6667
+//   Map                  weight: 0.6667
+//   BigInt               weight: 0.6667
+//   Name                 weight: 0.6667
+//   BigRat               weight: 0.6667
+//   Float                weight: 0.6667
+//   List                 weight: 0.6667
+//   Bool                 weight: 0.6667
+//   Str                  weight: 0.6667
 //   Fixed                weight: 0.6667
 //
 
@@ -3019,6 +3029,150 @@ fn cross_cat_rhocalc_cast_castmap_from_map_to_proc() {
 }
 
 #[test]
+fn cross_cat_rhocalc_cast_booltoint_from_bool_to_int() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::BoolToInt(Box::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_cast_booltouint32_from_bool_to_uint32() {
+    mettail_runtime::clear_var_cache();
+    let input_term = UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_cast_booltobigint_from_bool_to_bigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_cast_booltobigrat_from_bool_to_bigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_cast_inttobigint_from_int_to_bigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigInt::IntToBigInt(Box::new(Int::NumLit(1i64)));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_cast_inttobigrat_from_int_to_bigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::IntToBigRat(Box::new(Int::NumLit(1i64)));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_cast_uint32toint_from_uint32_to_int() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::UInt32ToInt(Box::new(UInt32::NumLit(1u32)));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_cast_uint32tobigint_from_uint32_to_bigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_cast_uint32tobigrat_from_uint32_to_bigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_cast_floattobigrat_from_float_to_bigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::FloatToBigRat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_cast_biginttobigrat_from_bigint_to_bigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::NumLit(Default::default())));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_cast_fixedtobigrat_from_fixed_to_bigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::FixedToBigRat(Box::new(Fixed::FixedLit(Default::default())));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn cross_cat_rhocalc_chain_castbigrat_nquote() {
     mettail_runtime::clear_var_cache();
     let input_term = Name::NQuote(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
@@ -3142,6 +3296,270 @@ fn cross_cat_rhocalc_chain_castbag_nquote() {
 fn cross_cat_rhocalc_chain_castmap_nquote() {
     mettail_runtime::clear_var_cache();
     let input_term = Name::NQuote(Box::new(Proc::CastMap(Box::new(Map::MapLit(Default::default())))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_booltoint_castint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::CastInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_booltoint_inttobigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigInt::IntToBigInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_booltoint_inttobigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::IntToBigRat(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_booltouint32_castuint32() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::CastUInt32(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_booltouint32_uint32toint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::UInt32ToInt(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_booltouint32_uint32tobigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigInt::UInt32ToBigInt(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_booltouint32_uint32tobigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::UInt32ToBigRat(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_booltobigint_castbigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::CastBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_booltobigint_biginttobigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_booltobigrat_castbigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::CastBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_inttobigint_castbigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::CastBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i64)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_inttobigint_biginttobigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i64)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_inttobigrat_castbigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::CastBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i64)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_uint32toint_castint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::CastInt(Box::new(Int::UInt32ToInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_uint32toint_inttobigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigInt::IntToBigInt(Box::new(Int::UInt32ToInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_uint32toint_inttobigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::IntToBigRat(Box::new(Int::UInt32ToInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_uint32tobigint_castbigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::CastBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_uint32tobigint_biginttobigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_uint32tobigrat_castbigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::CastBigRat(Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_floattobigrat_castbigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::CastBigRat(Box::new(BigRat::FloatToBigRat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_biginttobigrat_castbigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::CastBigRat(Box::new(BigRat::BigIntToBigRat(Box::new(BigInt::NumLit(Default::default())))));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_rhocalc_chain_fixedtobigrat_castbigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::CastBigRat(Box::new(BigRat::FixedToBigRat(Box::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4870,414 +5288,6 @@ fn cross_cat_rhocalc_castop_sub_castbigint_smoke() {
 fn cross_cat_rhocalc_castop_mul_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::Mul(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_div_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::Div(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_mod_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mod(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_negproc_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::NegProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_concatlist_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_elemlist_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_deletelist_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_unionbag_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_removebag_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_diffbag_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_getmap_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_putmap_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_deletemap_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_mergemap_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_hasmap_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_keysmap_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::KeysMap(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_valuesmap_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::ValuesMap(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_not_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::Not(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_len_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::Len(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_tobool_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToBool(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_tostr_castbigint_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_intbinproc_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Int::NumLit(1i64)));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_uintbinproc_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Int::NumLit(1i64)));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_floatbinproc_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Int::NumLit(1i64)));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_fixedbinproc_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Int::NumLit(1i64)));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_bigintcastproc_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_bigratcastproc_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_fractionproc_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_or_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_and_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_bitor_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_bitand_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_bitnot_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_eq_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_rhocalc_castop_ne_castuint32_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))), Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");

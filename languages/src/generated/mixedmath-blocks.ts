@@ -147,6 +147,23 @@ const definitions = [
 		inputsInline: true,
 		output: "Int",
 		colour: "51b0e0",
+	},
+
+	// Bool To Int: ...
+	{
+		type: "int_bool_to_int",
+		tooltip: "Bool To Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
 	}
 ];
 

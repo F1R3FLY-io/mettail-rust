@@ -1236,7 +1236,184 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigrat_infix_plus_0055()
+} #[test] fn parity_calculator_uint32_cross_cat_bool_0055()
+{
+    let input = "true"; let legacy = calculator :: UInt32 :: parse(input); let
+    wpds = calculator :: UInt32 :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_calculator_bigint_cross_cat_bool_0056()
+{
+    let input = "true"; let legacy = calculator :: BigInt :: parse(input); let
+    wpds = calculator :: BigInt :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_calculator_bigrat_cross_cat_bool_0057()
+{
+    let input = "true"; let legacy = calculator :: BigRat :: parse(input); let
+    wpds = calculator :: BigRat :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_calculator_bigint_cross_cat_uint32_0058()
+{
+    let input = "0u32"; let legacy = calculator :: BigInt :: parse(input); let
+    wpds = calculator :: BigInt :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_calculator_bigrat_cross_cat_uint32_0059()
+{
+    let input = "0u32"; let legacy = calculator :: BigRat :: parse(input); let
+    wpds = calculator :: BigRat :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_calculator_bigrat_cross_cat_float_0060()
+{
+    let input = "0.0"; let legacy = calculator :: BigRat :: parse(input); let
+    wpds = calculator :: BigRat :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_calculator_bigrat_cross_cat_bigint_0061()
+{
+    let input = "0n"; let legacy = calculator :: BigRat :: parse(input); let
+    wpds = calculator :: BigRat :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_calculator_bigrat_cross_cat_fixed_0062()
+{
+    let input = "1.5p2"; let legacy = calculator :: BigRat :: parse(input);
+    let wpds = calculator :: BigRat :: parse_via_wpds(input); match
+    (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_calculator_bigrat_infix_plus_0063()
 {
     let input = "0r + 0r"; let legacy = calculator :: BigRat :: parse(input);
     let wpds = calculator :: BigRat :: parse_via_wpds(input); match
@@ -1259,7 +1436,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigrat_infix_star_0056()
+} #[test] fn parity_calculator_bigrat_infix_star_0064()
 {
     let input = "0r * 0r"; let legacy = calculator :: BigRat :: parse(input);
     let wpds = calculator :: BigRat :: parse_via_wpds(input); match
@@ -1282,7 +1459,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigrat_infix_slash_0057()
+} #[test] fn parity_calculator_bigrat_infix_slash_0065()
 {
     let input = "0r / 0r"; let legacy = calculator :: BigRat :: parse(input);
     let wpds = calculator :: BigRat :: parse_via_wpds(input); match
@@ -1305,7 +1482,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigrat_infix_bitand_0058()
+} #[test] fn parity_calculator_bigrat_infix_bitand_0066()
 {
     let input = "0r bitand 0r"; let legacy = calculator :: BigRat ::
     parse(input); let wpds = calculator :: BigRat :: parse_via_wpds(input);
@@ -1328,7 +1505,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigrat_infix_bitor_0059()
+} #[test] fn parity_calculator_bigrat_infix_bitor_0067()
 {
     let input = "0r bitor 0r"; let legacy = calculator :: BigRat ::
     parse(input); let wpds = calculator :: BigRat :: parse_via_wpds(input);
@@ -1351,7 +1528,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_eqeq_0060()
+} #[test] fn parity_calculator_bool_infix_eqeq_0068()
 {
     let input = "0 == 0"; let legacy = calculator :: Bool :: parse(input); let
     wpds = calculator :: Bool :: parse_via_wpds(input); match (legacy, wpds)
@@ -1373,7 +1550,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_eqeq_0061()
+} #[test] fn parity_calculator_bool_infix_eqeq_0069()
 {
     let input = "0.0 == 0.0"; let legacy = calculator :: Bool :: parse(input);
     let wpds = calculator :: Bool :: parse_via_wpds(input); match
@@ -1396,7 +1573,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_eqeq_0062()
+} #[test] fn parity_calculator_bool_infix_eqeq_0070()
 {
     let input = "true == true"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1419,7 +1596,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_eqeq_0063()
+} #[test] fn parity_calculator_bool_infix_eqeq_0071()
 {
     let input = "\"hello\" == \"hello\""; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1442,7 +1619,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_gt_0064()
+} #[test] fn parity_calculator_bool_infix_gt_0072()
 {
     let input = "0 > 0"; let legacy = calculator :: Bool :: parse(input); let
     wpds = calculator :: Bool :: parse_via_wpds(input); match (legacy, wpds)
@@ -1464,7 +1641,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_gt_0065()
+} #[test] fn parity_calculator_bool_infix_gt_0073()
 {
     let input = "0.0 > 0.0"; let legacy = calculator :: Bool :: parse(input);
     let wpds = calculator :: Bool :: parse_via_wpds(input); match
@@ -1487,7 +1664,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_gt_0066()
+} #[test] fn parity_calculator_bool_infix_gt_0074()
 {
     let input = "true > true"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1510,7 +1687,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_gt_0067()
+} #[test] fn parity_calculator_bool_infix_gt_0075()
 {
     let input = "\"hello\" > \"hello\""; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1533,7 +1710,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_lt_0068()
+} #[test] fn parity_calculator_bool_infix_lt_0076()
 {
     let input = "0 < 0"; let legacy = calculator :: Bool :: parse(input); let
     wpds = calculator :: Bool :: parse_via_wpds(input); match (legacy, wpds)
@@ -1555,7 +1732,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_lt_0069()
+} #[test] fn parity_calculator_bool_infix_lt_0077()
 {
     let input = "0.0 < 0.0"; let legacy = calculator :: Bool :: parse(input);
     let wpds = calculator :: Bool :: parse_via_wpds(input); match
@@ -1578,7 +1755,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_lt_0070()
+} #[test] fn parity_calculator_bool_infix_lt_0078()
 {
     let input = "true < true"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1601,7 +1778,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_lt_0071()
+} #[test] fn parity_calculator_bool_infix_lt_0079()
 {
     let input = "\"hello\" < \"hello\""; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1624,7 +1801,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_lteq_0072()
+} #[test] fn parity_calculator_bool_infix_lteq_0080()
 {
     let input = "0 <= 0"; let legacy = calculator :: Bool :: parse(input); let
     wpds = calculator :: Bool :: parse_via_wpds(input); match (legacy, wpds)
@@ -1646,7 +1823,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_lteq_0073()
+} #[test] fn parity_calculator_bool_infix_lteq_0081()
 {
     let input = "0.0 <= 0.0"; let legacy = calculator :: Bool :: parse(input);
     let wpds = calculator :: Bool :: parse_via_wpds(input); match
@@ -1669,7 +1846,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_lteq_0074()
+} #[test] fn parity_calculator_bool_infix_lteq_0082()
 {
     let input = "true <= true"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1692,7 +1869,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_lteq_0075()
+} #[test] fn parity_calculator_bool_infix_lteq_0083()
 {
     let input = "\"hello\" <= \"hello\""; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1715,7 +1892,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_gteq_0076()
+} #[test] fn parity_calculator_bool_infix_gteq_0084()
 {
     let input = "0 >= 0"; let legacy = calculator :: Bool :: parse(input); let
     wpds = calculator :: Bool :: parse_via_wpds(input); match (legacy, wpds)
@@ -1737,7 +1914,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_gteq_0077()
+} #[test] fn parity_calculator_bool_infix_gteq_0085()
 {
     let input = "0.0 >= 0.0"; let legacy = calculator :: Bool :: parse(input);
     let wpds = calculator :: Bool :: parse_via_wpds(input); match
@@ -1760,7 +1937,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_gteq_0078()
+} #[test] fn parity_calculator_bool_infix_gteq_0086()
 {
     let input = "true >= true"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1783,7 +1960,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_gteq_0079()
+} #[test] fn parity_calculator_bool_infix_gteq_0087()
 {
     let input = "\"hello\" >= \"hello\""; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1806,7 +1983,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_bangeq_0080()
+} #[test] fn parity_calculator_bool_infix_bangeq_0088()
 {
     let input = "0 != 0"; let legacy = calculator :: Bool :: parse(input); let
     wpds = calculator :: Bool :: parse_via_wpds(input); match (legacy, wpds)
@@ -1828,7 +2005,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_bangeq_0081()
+} #[test] fn parity_calculator_bool_infix_bangeq_0089()
 {
     let input = "0.0 != 0.0"; let legacy = calculator :: Bool :: parse(input);
     let wpds = calculator :: Bool :: parse_via_wpds(input); match
@@ -1851,7 +2028,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_bangeq_0082()
+} #[test] fn parity_calculator_bool_infix_bangeq_0090()
 {
     let input = "true != true"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1874,7 +2051,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_bangeq_0083()
+} #[test] fn parity_calculator_bool_infix_bangeq_0091()
 {
     let input = "\"hello\" != \"hello\""; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1897,7 +2074,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_eqeq_0084()
+} #[test] fn parity_calculator_bool_infix_eqeq_0092()
 {
     let input = "1.5p2 == 1.5p2"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1920,7 +2097,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_gt_0085()
+} #[test] fn parity_calculator_bool_infix_gt_0093()
 {
     let input = "1.5p2 > 1.5p2"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1943,7 +2120,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_lt_0086()
+} #[test] fn parity_calculator_bool_infix_lt_0094()
 {
     let input = "1.5p2 < 1.5p2"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1966,7 +2143,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_lteq_0087()
+} #[test] fn parity_calculator_bool_infix_lteq_0095()
 {
     let input = "1.5p2 <= 1.5p2"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -1989,7 +2166,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_gteq_0088()
+} #[test] fn parity_calculator_bool_infix_gteq_0096()
 {
     let input = "1.5p2 >= 1.5p2"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -2012,7 +2189,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_bangeq_0089()
+} #[test] fn parity_calculator_bool_infix_bangeq_0097()
 {
     let input = "1.5p2 != 1.5p2"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -2035,7 +2212,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_and_0090()
+} #[test] fn parity_calculator_bool_infix_and_0098()
 {
     let input = "true and true"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -2058,7 +2235,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_or_0091()
+} #[test] fn parity_calculator_bool_infix_or_0099()
 {
     let input = "true or true"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -2081,7 +2258,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_infix_xor_0092()
+} #[test] fn parity_calculator_bool_infix_xor_0100()
 {
     let input = "true xor true"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -2104,7 +2281,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_str_infix_plusplus_0093()
+} #[test] fn parity_calculator_str_infix_plusplus_0101()
 {
     let input = "\"hello\" ++ \"hello\""; let legacy = calculator :: Str ::
     parse(input); let wpds = calculator :: Str :: parse_via_wpds(input); match
@@ -2127,7 +2304,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_str_infix_plus_0094()
+} #[test] fn parity_calculator_str_infix_plus_0102()
 {
     let input = "\"hello\" + \"hello\""; let legacy = calculator :: Str ::
     parse(input); let wpds = calculator :: Str :: parse_via_wpds(input); match
@@ -2150,7 +2327,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_uint32_infix_plus_0095()
+} #[test] fn parity_calculator_uint32_infix_plus_0103()
 {
     let input = "0u32 + 0u32"; let legacy = calculator :: UInt32 ::
     parse(input); let wpds = calculator :: UInt32 :: parse_via_wpds(input);
@@ -2173,7 +2350,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_uint32_infix_bitand_0096()
+} #[test] fn parity_calculator_uint32_infix_bitand_0104()
 {
     let input = "0u32 bitand 0u32"; let legacy = calculator :: UInt32 ::
     parse(input); let wpds = calculator :: UInt32 :: parse_via_wpds(input);
@@ -2196,7 +2373,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_uint32_infix_bitor_0097()
+} #[test] fn parity_calculator_uint32_infix_bitor_0105()
 {
     let input = "0u32 bitor 0u32"; let legacy = calculator :: UInt32 ::
     parse(input); let wpds = calculator :: UInt32 :: parse_via_wpds(input);
@@ -2219,7 +2396,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigint_infix_plus_0098()
+} #[test] fn parity_calculator_bigint_infix_plus_0106()
 {
     let input = "0n + 0n"; let legacy = calculator :: BigInt :: parse(input);
     let wpds = calculator :: BigInt :: parse_via_wpds(input); match
@@ -2242,7 +2419,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigint_infix_minus_0099()
+} #[test] fn parity_calculator_bigint_infix_minus_0107()
 {
     let input = "0n - 0n"; let legacy = calculator :: BigInt :: parse(input);
     let wpds = calculator :: BigInt :: parse_via_wpds(input); match
@@ -2265,7 +2442,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigint_infix_bitand_0100()
+} #[test] fn parity_calculator_bigint_infix_bitand_0108()
 {
     let input = "0n bitand 0n"; let legacy = calculator :: BigInt ::
     parse(input); let wpds = calculator :: BigInt :: parse_via_wpds(input);
@@ -2288,7 +2465,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigint_infix_bitor_0101()
+} #[test] fn parity_calculator_bigint_infix_bitor_0109()
 {
     let input = "0n bitor 0n"; let legacy = calculator :: BigInt ::
     parse(input); let wpds = calculator :: BigInt :: parse_via_wpds(input);
@@ -2311,7 +2488,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_infix_plus_0102()
+} #[test] fn parity_calculator_int_infix_plus_0110()
 {
     let input = "0 + 0"; let legacy = calculator :: Int :: parse(input); let
     wpds = calculator :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -2333,7 +2510,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_infix_minus_0103()
+} #[test] fn parity_calculator_int_infix_minus_0111()
 {
     let input = "0 - 0"; let legacy = calculator :: Int :: parse(input); let
     wpds = calculator :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -2355,7 +2532,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_infix_star_0104()
+} #[test] fn parity_calculator_int_infix_star_0112()
 {
     let input = "0 * 0"; let legacy = calculator :: Int :: parse(input); let
     wpds = calculator :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -2377,7 +2554,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_infix_slash_0105()
+} #[test] fn parity_calculator_int_infix_slash_0113()
 {
     let input = "0 / 0"; let legacy = calculator :: Int :: parse(input); let
     wpds = calculator :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -2399,7 +2576,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_infix_percent_0106()
+} #[test] fn parity_calculator_int_infix_percent_0114()
 {
     let input = "0 % 0"; let legacy = calculator :: Int :: parse(input); let
     wpds = calculator :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -2421,7 +2598,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_infix_caret_0107()
+} #[test] fn parity_calculator_int_infix_caret_0115()
 {
     let input = "0 ^ 0"; let legacy = calculator :: Int :: parse(input); let
     wpds = calculator :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -2443,7 +2620,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_infix_bitand_0108()
+} #[test] fn parity_calculator_int_infix_bitand_0116()
 {
     let input = "0 bitand 0"; let legacy = calculator :: Int :: parse(input);
     let wpds = calculator :: Int :: parse_via_wpds(input); match
@@ -2466,7 +2643,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_infix_bitor_0109()
+} #[test] fn parity_calculator_int_infix_bitor_0117()
 {
     let input = "0 bitor 0"; let legacy = calculator :: Int :: parse(input);
     let wpds = calculator :: Int :: parse_via_wpds(input); match
@@ -2489,7 +2666,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_infix_plus_0110()
+} #[test] fn parity_calculator_float_infix_plus_0118()
 {
     let input = "0.0 + 0.0"; let legacy = calculator :: Float :: parse(input);
     let wpds = calculator :: Float :: parse_via_wpds(input); match
@@ -2512,7 +2689,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_infix_minus_0111()
+} #[test] fn parity_calculator_float_infix_minus_0119()
 {
     let input = "0.0 - 0.0"; let legacy = calculator :: Float :: parse(input);
     let wpds = calculator :: Float :: parse_via_wpds(input); match
@@ -2535,7 +2712,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_infix_star_0112()
+} #[test] fn parity_calculator_float_infix_star_0120()
 {
     let input = "0.0 * 0.0"; let legacy = calculator :: Float :: parse(input);
     let wpds = calculator :: Float :: parse_via_wpds(input); match
@@ -2558,7 +2735,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_infix_slash_0113()
+} #[test] fn parity_calculator_float_infix_slash_0121()
 {
     let input = "0.0 / 0.0"; let legacy = calculator :: Float :: parse(input);
     let wpds = calculator :: Float :: parse_via_wpds(input); match
@@ -2581,7 +2758,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_infix_caret_0114()
+} #[test] fn parity_calculator_float_infix_caret_0122()
 {
     let input = "0.0 ^ 0.0"; let legacy = calculator :: Float :: parse(input);
     let wpds = calculator :: Float :: parse_via_wpds(input); match
@@ -2604,7 +2781,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_infix_tilde_0115()
+} #[test] fn parity_calculator_int_infix_tilde_0123()
 {
     let input = "0 ~ 0"; let legacy = calculator :: Int :: parse(input); let
     wpds = calculator :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -2626,7 +2803,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_fixed_infix_plus_0116()
+} #[test] fn parity_calculator_fixed_infix_plus_0124()
 {
     let input = "1.5p2 + 1.5p2"; let legacy = calculator :: Fixed ::
     parse(input); let wpds = calculator :: Fixed :: parse_via_wpds(input);
@@ -2649,7 +2826,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_fixed_infix_minus_0117()
+} #[test] fn parity_calculator_fixed_infix_minus_0125()
 {
     let input = "1.5p2 - 1.5p2"; let legacy = calculator :: Fixed ::
     parse(input); let wpds = calculator :: Fixed :: parse_via_wpds(input);
@@ -2672,7 +2849,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_fixed_infix_star_0118()
+} #[test] fn parity_calculator_fixed_infix_star_0126()
 {
     let input = "1.5p2 * 1.5p2"; let legacy = calculator :: Fixed ::
     parse(input); let wpds = calculator :: Fixed :: parse_via_wpds(input);
@@ -2695,7 +2872,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_fixed_infix_slash_0119()
+} #[test] fn parity_calculator_fixed_infix_slash_0127()
 {
     let input = "1.5p2 / 1.5p2"; let legacy = calculator :: Fixed ::
     parse(input); let wpds = calculator :: Fixed :: parse_via_wpds(input);
@@ -2718,7 +2895,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_fixed_infix_percent_0120()
+} #[test] fn parity_calculator_fixed_infix_percent_0128()
 {
     let input = "1.5p2 % 1.5p2"; let legacy = calculator :: Fixed ::
     parse(input); let wpds = calculator :: Fixed :: parse_via_wpds(input);
@@ -2741,7 +2918,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_fixed_infix_bitand_0121()
+} #[test] fn parity_calculator_fixed_infix_bitand_0129()
 {
     let input = "1.5p2 bitand 1.5p2"; let legacy = calculator :: Fixed ::
     parse(input); let wpds = calculator :: Fixed :: parse_via_wpds(input);
@@ -2764,7 +2941,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_fixed_infix_bitor_0122()
+} #[test] fn parity_calculator_fixed_infix_bitor_0130()
 {
     let input = "1.5p2 bitor 1.5p2"; let legacy = calculator :: Fixed ::
     parse(input); let wpds = calculator :: Fixed :: parse_via_wpds(input);
@@ -2787,7 +2964,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigrat_unary_minus_0123()
+} #[test] fn parity_calculator_bigrat_unary_minus_0131()
 {
     let input = "- 0r"; let legacy = calculator :: BigRat :: parse(input); let
     wpds = calculator :: BigRat :: parse_via_wpds(input); match (legacy, wpds)
@@ -2809,7 +2986,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigrat_unary_bitnot_0124()
+} #[test] fn parity_calculator_bigrat_unary_bitnot_0132()
 {
     let input = "bitnot 0r"; let legacy = calculator :: BigRat ::
     parse(input); let wpds = calculator :: BigRat :: parse_via_wpds(input);
@@ -2832,7 +3009,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_unary_not_0125()
+} #[test] fn parity_calculator_bool_unary_not_0133()
 {
     let input = "not true"; let legacy = calculator :: Bool :: parse(input);
     let wpds = calculator :: Bool :: parse_via_wpds(input); match
@@ -2855,7 +3032,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_uint32_unary_bitnot_0126()
+} #[test] fn parity_calculator_uint32_unary_bitnot_0134()
 {
     let input = "bitnot 0u32"; let legacy = calculator :: UInt32 ::
     parse(input); let wpds = calculator :: UInt32 :: parse_via_wpds(input);
@@ -2878,7 +3055,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigint_unary_minus_0127()
+} #[test] fn parity_calculator_bigint_unary_minus_0135()
 {
     let input = "- 0n"; let legacy = calculator :: BigInt :: parse(input); let
     wpds = calculator :: BigInt :: parse_via_wpds(input); match (legacy, wpds)
@@ -2900,7 +3077,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigint_unary_bitnot_0128()
+} #[test] fn parity_calculator_bigint_unary_bitnot_0136()
 {
     let input = "bitnot 0n"; let legacy = calculator :: BigInt ::
     parse(input); let wpds = calculator :: BigInt :: parse_via_wpds(input);
@@ -2923,7 +3100,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_unary_bitnot_0129()
+} #[test] fn parity_calculator_int_unary_bitnot_0137()
 {
     let input = "bitnot 0"; let legacy = calculator :: Int :: parse(input);
     let wpds = calculator :: Int :: parse_via_wpds(input); match
@@ -2946,7 +3123,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_unary_minus_0130()
+} #[test] fn parity_calculator_int_unary_minus_0138()
 {
     let input = "- 0"; let legacy = calculator :: Int :: parse(input); let
     wpds = calculator :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -2968,7 +3145,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_unary_minus_0131()
+} #[test] fn parity_calculator_float_unary_minus_0139()
 {
     let input = "- 0.0"; let legacy = calculator :: Float :: parse(input); let
     wpds = calculator :: Float :: parse_via_wpds(input); match (legacy, wpds)
@@ -2990,7 +3167,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_fixed_unary_minus_0132()
+} #[test] fn parity_calculator_fixed_unary_minus_0140()
 {
     let input = "- 1.5p2"; let legacy = calculator :: Fixed :: parse(input);
     let wpds = calculator :: Fixed :: parse_via_wpds(input); match
@@ -3013,7 +3190,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_fixed_unary_bitnot_0133()
+} #[test] fn parity_calculator_fixed_unary_bitnot_0141()
 {
     let input = "bitnot 1.5p2"; let legacy = calculator :: Fixed ::
     parse(input); let wpds = calculator :: Fixed :: parse_via_wpds(input);
@@ -3036,7 +3213,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigrat_call_fraction_0134()
+} #[test] fn parity_calculator_bigrat_call_fraction_0142()
 {
     let input = "fraction(0n, 0n)"; let legacy = calculator :: BigRat ::
     parse(input); let wpds = calculator :: BigRat :: parse_via_wpds(input);
@@ -3059,7 +3236,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_call_sin_0135()
+} #[test] fn parity_calculator_float_call_sin_0143()
 {
     let input = "sin(0.0)"; let legacy = calculator :: Float :: parse(input);
     let wpds = calculator :: Float :: parse_via_wpds(input); match
@@ -3082,7 +3259,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_call_cos_0136()
+} #[test] fn parity_calculator_float_call_cos_0144()
 {
     let input = "cos(0.0)"; let legacy = calculator :: Float :: parse(input);
     let wpds = calculator :: Float :: parse_via_wpds(input); match
@@ -3105,7 +3282,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_call_exp_0137()
+} #[test] fn parity_calculator_float_call_exp_0145()
 {
     let input = "exp(0.0)"; let legacy = calculator :: Float :: parse(input);
     let wpds = calculator :: Float :: parse_via_wpds(input); match
@@ -3128,7 +3305,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_call_ln_0138()
+} #[test] fn parity_calculator_float_call_ln_0146()
 {
     let input = "ln(0.0)"; let legacy = calculator :: Float :: parse(input);
     let wpds = calculator :: Float :: parse_via_wpds(input); match
@@ -3151,7 +3328,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_call_float_0139()
+} #[test] fn parity_calculator_float_call_float_0147()
 {
     let input = "float(0)"; let legacy = calculator :: Float :: parse(input);
     let wpds = calculator :: Float :: parse_via_wpds(input); match
@@ -3174,7 +3351,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_call_float_0140()
+} #[test] fn parity_calculator_float_call_float_0148()
 {
     let input = "float(true)"; let legacy = calculator :: Float ::
     parse(input); let wpds = calculator :: Float :: parse_via_wpds(input);
@@ -3197,7 +3374,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_call_float_0141()
+} #[test] fn parity_calculator_float_call_float_0149()
 {
     let input = "float(\"hello\")"; let legacy = calculator :: Float ::
     parse(input); let wpds = calculator :: Float :: parse_via_wpds(input);
@@ -3220,7 +3397,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_call_int_0142()
+} #[test] fn parity_calculator_int_call_int_0150()
 {
     let input = "int(0.0)"; let legacy = calculator :: Int :: parse(input);
     let wpds = calculator :: Int :: parse_via_wpds(input); match
@@ -3243,7 +3420,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_call_int_0143()
+} #[test] fn parity_calculator_int_call_int_0151()
 {
     let input = "int(true)"; let legacy = calculator :: Int :: parse(input);
     let wpds = calculator :: Int :: parse_via_wpds(input); match
@@ -3266,7 +3443,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_call_int_0144()
+} #[test] fn parity_calculator_int_call_int_0152()
 {
     let input = "int(\"hello\")"; let legacy = calculator :: Int ::
     parse(input); let wpds = calculator :: Int :: parse_via_wpds(input); match
@@ -3289,7 +3466,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_str_call_str_0145()
+} #[test] fn parity_calculator_str_call_str_0153()
 {
     let input = "str(true)"; let legacy = calculator :: Str :: parse(input);
     let wpds = calculator :: Str :: parse_via_wpds(input); match
@@ -3312,7 +3489,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_str_call_str_0146()
+} #[test] fn parity_calculator_str_call_str_0154()
 {
     let input = "str(0)"; let legacy = calculator :: Str :: parse(input); let
     wpds = calculator :: Str :: parse_via_wpds(input); match (legacy, wpds)
@@ -3334,7 +3511,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_str_call_str_0147()
+} #[test] fn parity_calculator_str_call_str_0155()
 {
     let input = "str(0.0)"; let legacy = calculator :: Str :: parse(input);
     let wpds = calculator :: Str :: parse_via_wpds(input); match
@@ -3357,7 +3534,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_call_bool_0148()
+} #[test] fn parity_calculator_bool_call_bool_0156()
 {
     let input = "bool(0)"; let legacy = calculator :: Bool :: parse(input);
     let wpds = calculator :: Bool :: parse_via_wpds(input); match
@@ -3380,7 +3557,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_call_bool_0149()
+} #[test] fn parity_calculator_bool_call_bool_0157()
 {
     let input = "bool(0.0)"; let legacy = calculator :: Bool :: parse(input);
     let wpds = calculator :: Bool :: parse_via_wpds(input); match
@@ -3403,7 +3580,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_call_bool_0150()
+} #[test] fn parity_calculator_bool_call_bool_0158()
 {
     let input = "bool(\"hello\")"; let legacy = calculator :: Bool ::
     parse(input); let wpds = calculator :: Bool :: parse_via_wpds(input);
@@ -3426,7 +3603,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_call_int_0151()
+} #[test] fn parity_calculator_int_call_int_0159()
 {
     let input = "int(0)"; let legacy = calculator :: Int :: parse(input); let
     wpds = calculator :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -3448,7 +3625,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_call_float_0152()
+} #[test] fn parity_calculator_float_call_float_0160()
 {
     let input = "float(0.0)"; let legacy = calculator :: Float ::
     parse(input); let wpds = calculator :: Float :: parse_via_wpds(input);
@@ -3471,7 +3648,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_call_bool_0153()
+} #[test] fn parity_calculator_bool_call_bool_0161()
 {
     let input = "bool(true)"; let legacy = calculator :: Bool :: parse(input);
     let wpds = calculator :: Bool :: parse_via_wpds(input); match
@@ -3494,7 +3671,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_str_call_str_0154()
+} #[test] fn parity_calculator_str_call_str_0162()
 {
     let input = "str(\"hello\")"; let legacy = calculator :: Str ::
     parse(input); let wpds = calculator :: Str :: parse_via_wpds(input); match
@@ -3517,7 +3694,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bool_call_bool_0155()
+} #[test] fn parity_calculator_bool_call_bool_0163()
 {
     let input = "bool(0)"; let legacy = calculator :: Bool :: parse(input);
     let wpds = calculator :: Bool :: parse_via_wpds(input); match
@@ -3540,7 +3717,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_str_call_str_0156()
+} #[test] fn parity_calculator_str_call_str_0164()
 {
     let input = "str(0)"; let legacy = calculator :: Str :: parse(input); let
     wpds = calculator :: Str :: parse_via_wpds(input); match (legacy, wpds)
@@ -3562,7 +3739,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_int_call_int_0157()
+} #[test] fn parity_calculator_int_call_int_0165()
 {
     let input = "int(0, 0)"; let legacy = calculator :: Int :: parse(input);
     let wpds = calculator :: Int :: parse_via_wpds(input); match
@@ -3585,7 +3762,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_uint32_call_uint_0158()
+} #[test] fn parity_calculator_uint32_call_uint_0166()
 {
     let input = "uint(0, 0)"; let legacy = calculator :: UInt32 ::
     parse(input); let wpds = calculator :: UInt32 :: parse_via_wpds(input);
@@ -3608,7 +3785,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_float_call_float_0159()
+} #[test] fn parity_calculator_float_call_float_0167()
 {
     let input = "float(0, 0)"; let legacy = calculator :: Float ::
     parse(input); let wpds = calculator :: Float :: parse_via_wpds(input);
@@ -3631,7 +3808,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_fixed_call_fixed_0160()
+} #[test] fn parity_calculator_fixed_call_fixed_0168()
 {
     let input = "fixed(0, 0)"; let legacy = calculator :: Fixed ::
     parse(input); let wpds = calculator :: Fixed :: parse_via_wpds(input);
@@ -3654,7 +3831,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigint_call_bigint_0161()
+} #[test] fn parity_calculator_bigint_call_bigint_0169()
 {
     let input = "bigint(0)"; let legacy = calculator :: BigInt ::
     parse(input); let wpds = calculator :: BigInt :: parse_via_wpds(input);
@@ -3677,7 +3854,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bigrat_call_bigrat_0162()
+} #[test] fn parity_calculator_bigrat_call_bigrat_0170()
 {
     let input = "bigrat(0)"; let legacy = calculator :: BigRat ::
     parse(input); let wpds = calculator :: BigRat :: parse_via_wpds(input);
@@ -3700,7 +3877,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bag_coll_empty_0163()
+} #[test] fn parity_calculator_bag_coll_empty_0171()
 {
     let input = "{}"; let legacy = calculator :: Bag :: parse(input); let wpds
     = calculator :: Bag :: parse_via_wpds(input); match (legacy, wpds)
@@ -3722,7 +3899,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bag_coll_single_0164()
+} #[test] fn parity_calculator_bag_coll_single_0172()
 {
     let input = "{ 0 }"; let legacy = calculator :: Bag :: parse(input); let
     wpds = calculator :: Bag :: parse_via_wpds(input); match (legacy, wpds)
@@ -3744,7 +3921,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_bag_coll_multi_0165()
+} #[test] fn parity_calculator_bag_coll_multi_0173()
 {
     let input = "{ 0 | 0 }"; let legacy = calculator :: Bag :: parse(input);
     let wpds = calculator :: Bag :: parse_via_wpds(input); match
@@ -3767,7 +3944,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_map_coll_empty_0166()
+} #[test] fn parity_calculator_map_coll_empty_0174()
 {
     let input = "{}"; let legacy = calculator :: Map :: parse(input); let wpds
     = calculator :: Map :: parse_via_wpds(input); match (legacy, wpds)
@@ -3789,7 +3966,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_map_coll_single_0167()
+} #[test] fn parity_calculator_map_coll_single_0175()
 {
     let input = "{ 0 }"; let legacy = calculator :: Map :: parse(input); let
     wpds = calculator :: Map :: parse_via_wpds(input); match (legacy, wpds)
@@ -3811,7 +3988,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_calculator_map_coll_multi_0168()
+} #[test] fn parity_calculator_map_coll_multi_0176()
 {
     let input = "{ 0 , 0 }"; let legacy = calculator :: Map :: parse(input);
     let wpds = calculator :: Map :: parse_via_wpds(input); match

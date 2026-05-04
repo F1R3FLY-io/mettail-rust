@@ -48,6 +48,7 @@ pub mod lexer_types;
 pub mod pipeline;
 pub mod pratt;
 pub mod prediction;
+pub mod rd_analysis;
 pub mod recursive;
 pub mod token_id;
 pub mod trampoline;
@@ -773,6 +774,16 @@ pub struct RuleSpec {
     /// Source location of the rule label in the `language!` macro invocation.
     /// Extracted from proc-macro span data; `None` when unavailable.
     pub source_location: Option<SourceLocation>,
+    /// Stage 3.13b (2026-05-01): provenance flag distinguishing user-written
+    /// rules (false) from synthetic auto-injection rules emitted by
+    /// `macros/src/gen/runtime/wpds_codegen/auto_inject.rs::make_injection_rule`
+    /// (true). Used by:
+    /// - Stage 3.13c routing filter (`pipeline.rs:1316`) to exclude synthetic
+    ///   rules from legacy unified-trampoline cast_rules.
+    /// - Stage 3.13b W05 lint refinement (future) to distinguish synthetic-
+    ///   induced ambiguity (Note severity) from user-authored ambiguity
+    ///   (Warning severity).
+    pub is_auto_injected: bool,
 }
 
 /// A syntax item in a rule.
@@ -875,6 +886,10 @@ pub struct RuleSpecInput {
     /// Source location of the rule label in the `language!` macro invocation.
     /// Extracted from proc-macro span data; `None` when unavailable.
     pub source_location: Option<SourceLocation>,
+    /// Stage 3.13b (2026-05-01): provenance flag — see RuleSpec.is_auto_injected.
+    /// Default false for parsed user rules; bridge sets true only for synthetic
+    /// auto-injection rules emitted by `auto_inject.rs::make_injection_rule`.
+    pub is_auto_injected: bool,
 }
 
 impl LanguageSpec {
@@ -937,6 +952,7 @@ impl LanguageSpec {
                     rust_code: input.rust_code,
                     eval_mode: input.eval_mode,
                     source_location: input.source_location,
+                    is_auto_injected: input.is_auto_injected,
                 }
             })
             .collect();
@@ -997,6 +1013,7 @@ impl RuleSpec {
             rust_code: None,
             eval_mode: None,
             source_location: None,
+            is_auto_injected: false,
         }
     }
 }

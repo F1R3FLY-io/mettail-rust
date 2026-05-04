@@ -117,3 +117,103 @@ fn int_atom_parses_directly() {
         other => panic!("expected IntLit(42), got {:?}", other),
     }
 }
+
+// Stage 3.3 (2026-04-30): nested IfElse + Display→Parse roundtrip
+// regressions. The proptest `gen_optsmoke_prop::int_display_parse_roundtrip`
+// previously failed at two distinct boundaries:
+//   (1) Display tokenization — `<int>else` glommed into Ident `<int>else`
+//       because the optional group's "else" word-literal lacked a leading
+//       space. Fixed in `display.rs::generate_engine_pattern_op` by
+//       embedding spacing inside the gated WriteString. The tests below
+//       pin the spacing invariant.
+//   (2) Engine-side: nested IfElse with mixed has-else / no-else
+//       branches (dangling-else binding) reaches `WpdsState::Incomplete`
+//       at end-of-input. Tracked separately if these tests fail.
+
+#[test]
+fn nested_ifelse_inner_else_dangling() {
+    // Right-associative dangling-else: the `else` binds to the INNER IfElse.
+    // Outer A = IfElse(false, B, None); Inner B = IfElse(false, 1, 2).
+    let input = "if false then if false then 1 else 2";
+    let term = parse_int(input).unwrap_or_else(|e| {
+        panic!("nested-IfElse with dangling else should parse: {:?}", e)
+    });
+    // Display→Parse roundtrip: re-displaying must produce a re-parseable
+    // string equivalent under canonicalization.
+    let displayed = format!("{}", term);
+    let reparsed = parse_int(&displayed).unwrap_or_else(|e| {
+        panic!("re-parsing Display output should succeed: {:?}\nDisplay: {:?}", e, displayed)
+    });
+    assert_eq!(format!("{}", reparsed), displayed,
+        "Display must be idempotent; first={:?}, second={:?}",
+        displayed, format!("{}", reparsed));
+}
+
+#[test]
+fn nested_ifelse_both_have_else() {
+    // Both outer and inner have else. With right-associative else binding,
+    // the closer else binds to the inner first.
+    //   Tokens: if false then if false then 1 else 2 else 3
+    //   Tree:   A = IfElse(false, B, 3)
+    //           B = IfElse(false, 1, 2)
+    let input = "if false then if false then 1 else 2 else 3";
+    let term = parse_int(input).unwrap_or_else(|e| {
+        panic!("doubly-elsed nested IfElse should parse: {:?}", e)
+    });
+    let displayed = format!("{}", term);
+    let reparsed = parse_int(&displayed).unwrap_or_else(|e| {
+        panic!("re-parsing should succeed: {:?}\nDisplay: {:?}", e, displayed)
+    });
+    assert_eq!(format!("{}", reparsed), displayed);
+}
+
+#[test]
+fn display_int_abuts_else_keyword_separated() {
+    // Direct construction (bypass parsing): IfElse with else=Some(N)
+    // where N abuts "else" in the displayed form. The fix should
+    // insert a space between t-Param and the optional group's "else"
+    // literal, AND between the literal and the e-Param.
+    let inner = Int::IfElse(
+        Box::new(Bool::BoolLit(true)),
+        Box::new(Int::NumLit(456913875)),
+        None,
+    );
+    let outer = Int::IfElse(
+        Box::new(Bool::BoolLit(false)),
+        Box::new(inner),
+        Some(Box::new(Int::NumLit(1894040589))),
+    );
+    let displayed = format!("{}", outer);
+    // The displayed string must contain " else " with both flanking
+    // spaces; the lexer-aligned `is_word` rule should also separate
+    // any word-literal prefix from adjacent ident-class text.
+    assert!(
+        displayed.contains(" else "),
+        "Display must space-separate 'else' from adjacent ident-like text; got: {:?}",
+        displayed
+    );
+    // And: re-parse must succeed.
+    let reparsed = parse_int(&displayed).unwrap_or_else(|e| {
+        panic!("Display→Parse roundtrip for direct construction failed: {:?}\nDisplay: {:?}",
+            e, displayed)
+    });
+    assert_eq!(format!("{}", reparsed), displayed);
+}
+
+#[test]
+fn display_int_no_else_no_trailing_whitespace() {
+    // None-branch: Opt emits nothing — output must NOT end with whitespace
+    // and must re-parse.
+    let term = Int::IfElse(
+        Box::new(Bool::BoolLit(false)),
+        Box::new(Int::NumLit(42)),
+        None,
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.ends_with(' '),
+        "Opt-absent must not leave trailing whitespace; got: {:?}",
+        displayed
+    );
+    let _ = parse_int(&displayed).expect("re-parse must succeed for opt-absent");
+}

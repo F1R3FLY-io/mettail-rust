@@ -21,17 +21,29 @@ use mettail_runtime::BehavioralPred;
 //   - BigInt::BitAndBigInt
 //   - BigInt::BitNotBigInt
 //   - BigInt::BitOrBigInt
+//   - BigInt::BoolToBigInt
+//   - BigInt::CastErrBigInt
+//   - BigInt::IntToBigInt
 //   - BigInt::NegBigInt
 //   - BigInt::SubBigInt
+//   - BigInt::UInt32ToBigInt
+//   - BigIntToBigRat
 //   - BigRat::AddBigRat
+//   - BigRat::BigIntToBigRat
 //   - BigRat::BigratCast
 //   - BigRat::BitAndBigRat
 //   - BigRat::BitNotBigRat
 //   - BigRat::BitOrBigRat
+//   - BigRat::BoolToBigRat
 //   - BigRat::DivBigRat
+//   - BigRat::Err
+//   - BigRat::FixedToBigRat
+//   - BigRat::FloatToBigRat
 //   - BigRat::Fraction
+//   - BigRat::IntToBigRat
 //   - BigRat::MulBigRat
 //   - BigRat::NegBigRat
+//   - BigRat::UInt32ToBigRat
 //   - Bool::And
 //   - Bool::BoolId
 //   - Bool::EqBool
@@ -72,6 +84,9 @@ use mettail_runtime::BehavioralPred;
 //   - Bool::ProcToBool
 //   - Bool::StrToBool
 //   - Bool::Xor
+//   - BoolToBigInt
+//   - BoolToBigRat
+//   - BoolToUInt32
 //   - Fixed::AddFixed
 //   - Fixed::BitAndFixed
 //   - Fixed::BitNotFixed
@@ -82,6 +97,7 @@ use mettail_runtime::BehavioralPred;
 //   - Fixed::MulFixed
 //   - Fixed::NegFixed
 //   - Fixed::SubFixed
+//   - FixedToBigRat
 //   - Float::AddFloat
 //   - Float::BoolToFloat
 //   - Float::CosFloat
@@ -97,6 +113,7 @@ use mettail_runtime::BehavioralPred;
 //   - Float::SinFloat
 //   - Float::StrToFloat
 //   - Float::SubFloat
+//   - FloatToBigRat
 //   - Int::AddInt
 //   - Int::BitAndInt
 //   - Int::BitNotInt
@@ -163,42 +180,46 @@ use mettail_runtime::BehavioralPred;
 //   - UInt32::BitAndUInt32
 //   - UInt32::BitNotUInt32
 //   - UInt32::BitOrUInt32
+//   - UInt32::BoolToUInt32
+//   - UInt32::CastErrUInt32
 //   - UInt32::UIntBin
+//   - UInt32ToBigInt
+//   - UInt32ToBigRat
 // Constructor weights (lower = more frequent):
-//   UInt32Lit            weight: 0.0000
-//   Fraction             weight: 0.0000
-//   CountBag             weight: 0.0000
-//   IntToBool            weight: 0.0000
+//   UIntBin              weight: 0.0000
+//   BigratCast           weight: 0.0000
+//   UnionBag             weight: 0.0000
+//   IntToFloat           weight: 0.0000
+//   ConcatList           weight: 0.0000
+//   NegFloat             weight: 0.0000
 //   EqFloat              weight: 0.0000
-//   FixedLit             weight: 0.0000
-//   GetMap               weight: 0.0000
-//   ExpFloat             weight: 0.0000
-//   RemoveBag            weight: 0.0000
+//   Neg                  weight: 0.0000
+//   BitNotInt            weight: 0.0000
 //   ValuesMap            weight: 0.0000
-//   HasMap               weight: 0.0000
-//   KeysMap              weight: 0.0000
-//   DeleteList           weight: 0.0000
-//   ListLit              weight: 0.0000
+//   LenList              weight: 0.0000
+//   ExpFloat             weight: 0.0000
+//   CastErrFixed         weight: 0.0000
+//   BigIntLit            weight: 0.0000
 //   NegBigInt            weight: 0.0000
-//   EqInt                weight: 0.0000
-//   ElemList             weight: 0.0000
-//   SinFloat             weight: 0.0000
+//   FloatLit             weight: 0.0000
+//   PutMap               weight: 0.0000
+//   Len                  weight: 0.0000
+//   KeysMap              weight: 0.0000
 //   CastErrFloat         weight: 0.0000
-//   CastErrInt           weight: 0.0000
-//   ... and 213 more
+//   ... and 221 more
 // Category weights:
 //   Bool                 weight: 0.0179
 //   Int                  weight: 0.1667
 //   Float                weight: 0.2000
 //   BigRat               weight: 0.2778
-//   List                 weight: 0.2857
 //   Fixed                weight: 0.2857
+//   List                 weight: 0.2857
 //   BigInt               weight: 0.3125
-//   Bag                  weight: 0.3333
-//   UInt32               weight: 0.3333
 //   Map                  weight: 0.3333
-//   Proc                 weight: 0.5000
+//   UInt32               weight: 0.3333
+//   Bag                  weight: 0.3333
 //   Str                  weight: 0.5000
+//   Proc                 weight: 0.5000
 //
 
 // ─────────────────────────────────────────────────────────
@@ -12495,6 +12516,102 @@ fn cross_cat_calculator_cast_valuesmap_from_map_to_list() {
 }
 
 #[test]
+fn cross_cat_calculator_cast_booltouint32_from_bool_to_uint32() {
+    mettail_runtime::clear_var_cache();
+    let input_term = UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_cast_booltobigint_from_bool_to_bigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_cast_booltobigrat_from_bool_to_bigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_cast_uint32tobigint_from_uint32_to_bigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_cast_uint32tobigrat_from_uint32_to_bigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_cast_floattobigrat_from_float_to_bigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::FloatToBigRat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_cast_biginttobigrat_from_bigint_to_bigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::NumLit(Default::default())));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_cast_fixedtobigrat_from_fixed_to_bigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::FixedToBigRat(Box::new(Fixed::FixedLit(Default::default())));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn cross_cat_calculator_roundtrip_bigint_to_proc_via_procbigint_bigintcast() {
     mettail_runtime::clear_var_cache();
     let input_term = BigInt::BigintCast(Box::new(Proc::ProcBigInt(Box::new(BigInt::NumLit(Default::default())))));
@@ -12771,6 +12888,18 @@ fn cross_cat_calculator_chain_inttobigint_procbigint() {
 }
 
 #[test]
+fn cross_cat_calculator_chain_inttobigint_biginttobigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn cross_cat_calculator_chain_inttobigrat_procbigrat() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::ProcBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
@@ -12906,6 +13035,150 @@ fn cross_cat_calculator_chain_keysmap_proclist() {
 fn cross_cat_calculator_chain_keysmap_lenlist() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::LenList(Box::new(List::KeysMap(Box::new(Map::MapLit(Default::default())))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_chain_booltouint32_procuint32() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::ProcUInt32(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_chain_booltouint32_uint32tobigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigInt::UInt32ToBigInt(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_chain_booltouint32_uint32tobigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::UInt32ToBigRat(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_chain_booltobigint_procbigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::ProcBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_chain_booltobigint_biginttobigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_chain_booltobigrat_procbigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::ProcBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_chain_uint32tobigint_procbigint() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::ProcBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_chain_uint32tobigint_biginttobigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_chain_uint32tobigrat_procbigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::ProcBigRat(Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_chain_floattobigrat_procbigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::ProcBigRat(Box::new(BigRat::FloatToBigRat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_chain_biginttobigrat_procbigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::ProcBigRat(Box::new(BigRat::BigIntToBigRat(Box::new(BigInt::NumLit(Default::default())))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_calculator_chain_fixedtobigrat_procbigrat() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::ProcBigRat(Box::new(BigRat::FixedToBigRat(Box::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14122,9 +14395,9 @@ fn cross_cat_calculator_castop_deletelist_valuesmap_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_addbigint_cast_inttobigint_lhs_smoke() {
+fn cross_cat_calculator_castop_adduint32_booltouint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = UInt32::AddUInt32(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))), Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14134,9 +14407,9 @@ fn cross_cat_calculator_mixed_addbigint_cast_inttobigint_lhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_addbigint_cast_inttobigint_rhs_smoke() {
+fn cross_cat_calculator_castop_bitanduint32_booltouint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))), Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14146,9 +14419,9 @@ fn cross_cat_calculator_mixed_addbigint_cast_inttobigint_rhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_addbigrat_cast_inttobigrat_lhs_smoke() {
+fn cross_cat_calculator_castop_bitoruint32_booltouint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))), Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14158,9 +14431,9 @@ fn cross_cat_calculator_mixed_addbigrat_cast_inttobigrat_lhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_addbigrat_cast_inttobigrat_rhs_smoke() {
+fn cross_cat_calculator_castop_bitnotuint32_booltouint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = UInt32::BitNotUInt32(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14170,9 +14443,9 @@ fn cross_cat_calculator_mixed_addbigrat_cast_inttobigrat_rhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_addint_cast_len_lhs_smoke() {
+fn cross_cat_calculator_castop_addbigint_booltobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::NumLit(1i32)));
+    let input_term = BigInt::AddBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))), Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14182,9 +14455,9 @@ fn cross_cat_calculator_mixed_addint_cast_len_lhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_addint_cast_len_rhs_smoke() {
+fn cross_cat_calculator_castop_subbigint_booltobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = BigInt::SubBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))), Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14194,9 +14467,9 @@ fn cross_cat_calculator_mixed_addint_cast_len_rhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_addint_cast_lenlist_lhs_smoke() {
+fn cross_cat_calculator_castop_negbigint_booltobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::NumLit(1i32)));
+    let input_term = BigInt::NegBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14206,9 +14479,9 @@ fn cross_cat_calculator_mixed_addint_cast_lenlist_lhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_addint_cast_lenlist_rhs_smoke() {
+fn cross_cat_calculator_castop_bitandbigint_booltobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))), Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14218,9 +14491,9 @@ fn cross_cat_calculator_mixed_addint_cast_lenlist_rhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_addint_cast_lenmap_lhs_smoke() {
+fn cross_cat_calculator_castop_bitorbigint_booltobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::NumLit(1i32)));
+    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))), Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14230,9 +14503,9 @@ fn cross_cat_calculator_mixed_addint_cast_lenmap_lhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_addint_cast_lenmap_rhs_smoke() {
+fn cross_cat_calculator_castop_bitnotbigint_booltobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14242,9 +14515,9 @@ fn cross_cat_calculator_mixed_addint_cast_lenmap_rhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_concatlist_cast_keysmap_lhs_smoke() {
+fn cross_cat_calculator_castop_addbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ConcatList(Box::new(List::KeysMap(Box::new(Map::MapLit(Default::default())))), Box::new(List::ListLit(Default::default())));
+    let input_term = BigRat::AddBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))), Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14254,9 +14527,9 @@ fn cross_cat_calculator_mixed_concatlist_cast_keysmap_lhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_concatlist_cast_keysmap_rhs_smoke() {
+fn cross_cat_calculator_castop_mulbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ConcatList(Box::new(List::ListLit(Default::default())), Box::new(List::KeysMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = BigRat::MulBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))), Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14266,9 +14539,9 @@ fn cross_cat_calculator_mixed_concatlist_cast_keysmap_rhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_concatlist_cast_valuesmap_lhs_smoke() {
+fn cross_cat_calculator_castop_divbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ConcatList(Box::new(List::ValuesMap(Box::new(Map::MapLit(Default::default())))), Box::new(List::ListLit(Default::default())));
+    let input_term = BigRat::DivBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))), Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14278,9 +14551,9 @@ fn cross_cat_calculator_mixed_concatlist_cast_valuesmap_lhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_mixed_concatlist_cast_valuesmap_rhs_smoke() {
+fn cross_cat_calculator_castop_negbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ConcatList(Box::new(List::ListLit(Default::default())), Box::new(List::ValuesMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = BigRat::NegBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14290,9 +14563,9 @@ fn cross_cat_calculator_mixed_concatlist_cast_valuesmap_rhs_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_addbigint_inttobigint_smoke() {
+fn cross_cat_calculator_castop_bitandbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))), Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14302,9 +14575,9 @@ fn cross_cat_calculator_composite_addbigint_inttobigint_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_subbigint_inttobigint_smoke() {
+fn cross_cat_calculator_castop_bitorbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::SubBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))), Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14314,9 +14587,9 @@ fn cross_cat_calculator_composite_subbigint_inttobigint_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_negbigint_inttobigint_smoke() {
+fn cross_cat_calculator_castop_bitnotbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::NegBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::BitNotBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14326,9 +14599,9 @@ fn cross_cat_calculator_composite_negbigint_inttobigint_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_bitandbigint_inttobigint_smoke() {
+fn cross_cat_calculator_castop_addbigint_uint32tobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::AddBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))), Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14338,9 +14611,9 @@ fn cross_cat_calculator_composite_bitandbigint_inttobigint_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_bitorbigint_inttobigint_smoke() {
+fn cross_cat_calculator_castop_subbigint_uint32tobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::SubBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))), Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14350,9 +14623,9 @@ fn cross_cat_calculator_composite_bitorbigint_inttobigint_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_bitnotbigint_inttobigint_smoke() {
+fn cross_cat_calculator_castop_negbigint_uint32tobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::NegBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14362,9 +14635,9 @@ fn cross_cat_calculator_composite_bitnotbigint_inttobigint_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_addbigrat_inttobigrat_smoke() {
+fn cross_cat_calculator_castop_bitandbigint_uint32tobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))), Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14374,9 +14647,9 @@ fn cross_cat_calculator_composite_addbigrat_inttobigrat_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_mulbigrat_inttobigrat_smoke() {
+fn cross_cat_calculator_castop_bitorbigint_uint32tobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::MulBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))), Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14386,9 +14659,9 @@ fn cross_cat_calculator_composite_mulbigrat_inttobigrat_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_divbigrat_inttobigrat_smoke() {
+fn cross_cat_calculator_castop_bitnotbigint_uint32tobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::DivBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14398,9 +14671,9 @@ fn cross_cat_calculator_composite_divbigrat_inttobigrat_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_negbigrat_inttobigrat_smoke() {
+fn cross_cat_calculator_castop_addbigrat_uint32tobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::NegBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::AddBigRat(Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))), Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14410,9 +14683,9 @@ fn cross_cat_calculator_composite_negbigrat_inttobigrat_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_bitandbigrat_inttobigrat_smoke() {
+fn cross_cat_calculator_castop_mulbigrat_uint32tobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::MulBigRat(Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))), Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14422,9 +14695,9 @@ fn cross_cat_calculator_composite_bitandbigrat_inttobigrat_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_bitorbigrat_inttobigrat_smoke() {
+fn cross_cat_calculator_castop_divbigrat_uint32tobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::DivBigRat(Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))), Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14434,261 +14707,9 @@ fn cross_cat_calculator_composite_bitorbigrat_inttobigrat_smoke() {
 }
 
 #[test]
-fn cross_cat_calculator_composite_bitnotbigrat_inttobigrat_smoke() {
+fn cross_cat_calculator_castop_negbigrat_uint32tobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitNotBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_tern_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_addint_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_subint_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_mulint_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_divint_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_modint_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_powint_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_bitandint_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_bitorint_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_bitnotint_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitNotInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_neg_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_fact_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Fact(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_customop_len_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_tern_lenlist_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_addint_lenlist_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_subint_lenlist_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_mulint_lenlist_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_divint_lenlist_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_modint_lenlist_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_powint_lenlist_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn cross_cat_calculator_composite_bitandint_lenlist_smoke() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = BigRat::NegBigRat(Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15426,6 +15447,123 @@ fn wfst_calculator_dispatch_ltfixed_eval() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
+fn prec_calculator_bitoruint32_bitanduint32_tighter_than_1_bitand_2_bitor_3() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: BitOrUInt32 binds tighter than BitAndUInt32
+    let input_str = "1 bitand 2 bitor 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_bitanduint32_bitoruint32__1_bitand_2__bitor_3() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (BitAndUInt32) BitOrUInt32
+    let input_str = "(1 bitand 2) bitor 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_bitoruint32_adduint32_tighter_than_1___2_bitor_3() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: BitOrUInt32 binds tighter than AddUInt32
+    let input_str = "1 + 2 bitor 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_adduint32_bitoruint32__1___2__bitor_3() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (AddUInt32) BitOrUInt32
+    let input_str = "(1 + 2) bitor 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_bitanduint32_adduint32_tighter_than_1___2_bitand_3() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: BitAndUInt32 binds tighter than AddUInt32
+    let input_str = "1 + 2 bitand 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_adduint32_bitanduint32__1___2__bitand_3() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (AddUInt32) BitAndUInt32
+    let input_str = "(1 + 2) bitand 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn assoc_calculator_adduint32_left() {
+    mettail_runtime::clear_var_cache();
+    { // Associativity test: AddUInt32 is left-associative
+    let input_str = "1 + 2 + 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "6"),
+        "{} (left-assoc) should evaluate to 6, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn assoc_calculator_bitanduint32_left() {
+    mettail_runtime::clear_var_cache();
+    { // Associativity test: BitAndUInt32 is left-associative
+    let input_str = "1 bitand 2 bitand 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} (left-assoc) should evaluate to 0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn assoc_calculator_bitoruint32_left() {
+    mettail_runtime::clear_var_cache();
+    { // Associativity test: BitOrUInt32 is left-associative
+    let input_str = "1 bitor 2 bitor 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} (left-assoc) should evaluate to 3, got {:?}", input_str, nfs);}
+}
+
+#[test]
 fn prec_calculator_divfloat_mulfloat_tighter_than_1_0___2_0___3_0() {
     mettail_runtime::clear_var_cache();
     { // Precedence test: DivFloat binds tighter than MulFloat
@@ -15833,110 +15971,6 @@ fn prec_calculator_paren_override_divint_bitorint__1___2__bitor_3() {
     mettail_runtime::clear_var_cache();
     { // Parenthesization override: (DivInt) BitOrInt
     let input_str = "(1 / 2) bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_bitandint_divint_tighter_than_1___2_bitand_3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: BitAndInt binds tighter than DivInt
-    let input_str = "1 / 2 bitand 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_divint_bitandint__1___2__bitand_3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (DivInt) BitAndInt
-    let input_str = "(1 / 2) bitand 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_modint_divint_tighter_than_1___2___3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: ModInt binds tighter than DivInt
-    let input_str = "1 / 2 % 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_divint_modint__1___2____3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (DivInt) ModInt
-    let input_str = "(1 / 2) % 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_customop_mulint_tighter_than_1___2___3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: CustomOp binds tighter than MulInt
-    let input_str = "1 * 2 ~ 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "13"),
-        "{} should evaluate to 13, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_mulint_customop__1___2____3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (MulInt) CustomOp
-    let input_str = "(1 * 2) ~ 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "13"),
-        "{} should evaluate to 13, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_bitorint_mulint_tighter_than_1___2_bitor_3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: BitOrInt binds tighter than MulInt
-    let input_str = "1 * 2 bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_mulint_bitorint__1___2__bitor_3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (MulInt) BitOrInt
-    let input_str = "(1 * 2) bitor 3";
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
@@ -17521,5 +17555,5 @@ fn type_pres_calculator_bitnotuint32_0() {
 }
 }
 
-// Total operational semantics tests: 1331 (P1=868, P2a=50, P2b=24, P3a=200, P3b=0, P4a=60, P4b=40, P5a=39, P5b=50)
+// Total operational semantics tests: 1332 (P1=868, P2a=50, P2b=24, P3a=200, P3b=0, P4a=60, P4b=41, P5a=39, P5b=50)
 

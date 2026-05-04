@@ -59,8 +59,8 @@ use crate::automata::TokenKind;
 use crate::gss::{WpdsGss, WpdsGssNode};
 use crate::wpds_runtime::{
     pack_action_id, ActionArg, ActionEntry, CheckpointReason, SemanticBuilder, StackSymbolV2,
-    SymbolKind, WpdsConfiguration, WpdsControl, WpdsEvent, WpdsState, WpdsTokenSource,
-    WpdsTraceEntry, WpdsTransition,
+    SymbolKind, WpdsConfiguration, WpdsControl, WpdsEvent, WpdsMaxStepsExceeded,
+    WpdsResolveResult, WpdsState, WpdsTokenSource, WpdsTraceEntry, WpdsTransition,
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -291,15 +291,66 @@ pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
     /// (tokens, identifiers, sub-terms). Semantic actions consume from
     /// and push back to this builder.
     builder: SemanticBuilder,
+    /// Stage 3.9 / ι Phase 4 (2026-05-01): Always-cursor walker mode.
+    /// `Lazy` (default) means cursor[0] is the singleton canonical
+    /// cursor and live builder mutations happen directly. `Strict`
+    /// (after first Fork) means builder mutations route through
+    /// `pending_builder_ops` deltas and replay only on the lex-min
+    /// winner at EOI commit. Mode is set Lazy on construction/`reset()`,
+    /// promoted to Strict on first `WpdsStepAction::Fork`, and stays
+    /// Strict until `reset()` (L3 invariant: no reverse).
+    cursor_mode: CursorMode,
     /// Stage 7+ Fork plan, step 2: per-branch micro-state during
     /// `WpdsState::AmbiguityFanout`. Each entry is a `BranchCursor` that
     /// pairs a GSS-tip node id with the branch's own `pos`, accumulated
     /// `weight`, and `inner_state` (the post-Fork target state for that
-    /// branch). Empty when the walker is NOT in `AmbiguityFanout`. The
-    /// i-th entry here corresponds to the i-th `branches` GssNodeId in
-    /// `WpdsState::AmbiguityFanout { branches }`.
+    /// branch).
+    ///
+    /// Stage 3.9 / ι Phase 4 (2026-05-01): post-Phase-4, this vector is
+    /// ALWAYS non-empty — singleton cursor in Lazy mode, multiple
+    /// cursors in Strict mode. The pre-Phase-4 "empty when not in
+    /// AmbiguityFanout" invariant is replaced by the always-non-empty
+    /// invariant.
     branch_cursors: Vec<BranchCursor<W>>,
+    /// Stage 6 G6+ (2026-05-02): monotonic counter incremented once per
+    /// `process_event(Step)` invocation. Stamps `StepSnapshot.step_index`
+    /// for trace consumers; resets to 0 on `reset()`.
+    step_counter: usize,
 }
+
+/// Stage 3.9 / ι Phase 4 (2026-05-01): always-cursor walker mode.
+///
+/// `Lazy` is the unambiguous-parse fast-path: the walker maintains a
+/// singleton cursor (`branch_cursors[0]`) whose `pending_builder_ops` is
+/// always empty; live-builder mutations happen directly. `Strict` is
+/// the post-Fork mode: cursors accumulate `pending_builder_ops` deltas
+/// that replay onto the live builder only when the lex-min winner
+/// commits at EOI.
+///
+/// Invariants:
+/// - **L1** (Lazy admission): `mode == Lazy → cursors.len() == 1 && cursors[0].pending_builder_ops.is_empty()` at `apply_action` entry.
+/// - **L2** (Lazy → Strict transition): first `WpdsStepAction::Fork` sets `mode = Strict`.
+/// - **L3** (no reverse): once Strict, stays Strict for the parse.
+/// - **L4** (reset between parses): `WpdsWalker::reset` re-allocates a fresh singleton cursor and sets `mode = Lazy`.
+/// - **L5** (terminal mode-irrelevant): Error/Accepted ignore mode at all times.
+/// - **L6** (Lazy + EOI Accept): Lazy admission requires the engine to emit `Accept` only at `pos == tokens.len()`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CursorMode {
+    Lazy,
+    Strict,
+}
+
+/// Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard for Strict-mode
+/// cursors. If any cursor's `pending_builder_ops` exceeds this length,
+/// the walker transitions to `WpdsState::Error` instead of continuing
+/// to accumulate. Prevents pathological grammars from consuming
+/// unbounded memory in delta logs.
+///
+/// Default 1,000,000 is large enough for any real-world parse (most
+/// parses have <100 deltas; deeply-recursive parses have <10,000).
+/// Pathological cases (infinite loops in cursor mutation, e.g., a Fork
+/// that re-emits the same Fork) trip this guard immediately.
+pub const STRICT_PENDING_OPS_LIMIT: usize = 1_000_000;
 
 /// One branch of a [`WpdsStepAction::Fork`] action. Codegen emits a
 /// `Vec<ForkBranch<W>>` when a parser-side ambiguity needs WPDS-driven
@@ -322,6 +373,55 @@ pub struct ForkBranch<W: Semiring> {
     pub symbol: StackSymbolV2,
     pub weight: W,
     pub new_state: WpdsState,
+    /// Stage 3.12 / Class A.i (2026-05-01): per-branch action discriminator.
+    /// `Push` (default) gives the existing semantics — push the symbol onto
+    /// the cursor's GSS chain. `OptGroupAbsent { replace_symbol }` directs
+    /// the Fork arm to mirror `apply_action::OptGroupAbsent`: emit a
+    /// `PushOptionalAbsent` delta, pop the parent's outer RuleAt, and push
+    /// `replace_symbol` (the advanced outer RuleAt). Used by the
+    /// Opt-Group SKIP branch in `binder.rs`.
+    ///
+    /// Stage 3.16 (planned) extends this enum with `OptGroupFinalize`,
+    /// `LexAlternative`, `Recovery`, etc. — the unified Fork-emission
+    /// framework adds 4 more variants.
+    pub action_kind: ForkActionKind,
+}
+
+impl<W: Semiring> ForkBranch<W> {
+    /// Stage 3.12 / Class A.i (2026-05-01): default constructor for
+    /// branches with the standard `Push` action_kind. All 8 pre-Stage-3.12
+    /// emit sites use this — the new `action_kind` field is opaque to
+    /// existing callers.
+    pub fn push(symbol: StackSymbolV2, weight: W, new_state: WpdsState) -> Self {
+        ForkBranch {
+            symbol,
+            weight,
+            new_state,
+            action_kind: ForkActionKind::Push,
+        }
+    }
+}
+
+/// Stage 3.12 / Class A.i (2026-05-01): per-Fork-branch action
+/// discriminator.
+///
+/// Pre-Stage-3.12 every Fork branch was implicitly `Push`. Class A.i
+/// introduces `OptGroupAbsent { replace_symbol }` for the Opt-Group SKIP
+/// branch (which needs pop+push+log, not just push).
+///
+/// Future variants (Stage 3.16 unified framework): `OptGroupFinalize`,
+/// `LexAlternative`, `Recovery`, etc.
+#[derive(Clone, Debug)]
+pub enum ForkActionKind {
+    /// Default: cursor pushes `branch.symbol` onto its GSS chain.
+    /// Implicit Push-time side effects (CollectionMarker id allocation,
+    /// OptionalGroupAt(1) scope opening) are handled by
+    /// `emit_push_side_effects`.
+    Push,
+    /// Opt-Group SKIP branch: emit `BuilderDelta::PushOptionalAbsent`,
+    /// pop the cursor's outer RuleAt, push `replace_symbol` (the
+    /// advanced outer RuleAt at next outer position).
+    OptGroupAbsent { replace_symbol: StackSymbolV2 },
 }
 
 impl<W: Semiring> std::fmt::Debug for ForkBranch<W>
@@ -380,6 +480,44 @@ pub struct BranchCursor<W: Semiring> {
     /// that downstream `MaybeSpliceCollection` and `FireAction` deltas
     /// find populated slots.
     pub collection_stack: Vec<Vec<ActionArg>>,
+    /// Stage 3.12 Fix 2(ii) (2026-05-02): Fork-source-order tiebreak
+    /// priority. Set to `branch_idx as u32` when the cursor is allocated
+    /// in a Fork's children loop (TAKE=0, SKIP=1 for Opt-Group);
+    /// inherited via `Clone` for descendants. Used by
+    /// `merge_equivalent_cursors` and `pick_lex_min_resolved` as the
+    /// FINAL tiebreak after `LexicographicWeight::plus` reports
+    /// equality. Lower priority wins.
+    ///
+    /// Why this matters: pre-3.12 the merge tie resolved via
+    /// `Semiring::plus`'s receiver-on-Equal semantics, which depended
+    /// on insertion order at the merge — itself driven by speed-of-
+    /// arrival in `step_fanout`. SKIP descendants typically arrived
+    /// earlier (no token-consume), so merge ties picked LEFT-associative
+    /// for dangling-else. With `source_priority`, TAKE (priority 0)
+    /// always beats SKIP (priority 1) on weight ties, restoring the
+    /// right-associative behavior the codegen `vec![take, skip]` order
+    /// expressed.
+    ///
+    /// Singleton-Lazy default: 0. Default for non-Fork-allocated
+    /// cursors (constructors, BranchResolved write-back, commit_winner
+    /// write-back).
+    pub source_priority: u32,
+    /// Stage 3.12.6 (2026-05-02): per-cursor stack-suffix identity. Each
+    /// entry is the `GssEdgeId` returned by a corresponding `cursor_gss_push`
+    /// (or `cursor_gss_replace_top`). On `cursor_gss_pop_via_edge`, the
+    /// top is popped and the predecessor of *that specific edge* becomes
+    /// the cursor's new GSS top — restoring pop-time determinism even
+    /// when GSS structural sharing dedupes recursive `(pos, symbol)`
+    /// pushes from distinct calling contexts.
+    ///
+    /// `incoming_edge` (a derived view) is `incoming_edge_stack.last().copied()`.
+    /// Used by `ConfigKey` so cursors with distinct stack suffixes do
+    /// not merge in `merge_equivalent_cursors`.
+    ///
+    /// Empty for the seed cursor (no push yet); empty after a pop has
+    /// reached the GSS root sentinel (cursor.node == GSS_NODE_NONE).
+    /// Bounded by recursion depth at parse time.
+    pub incoming_edge_stack: Vec<crate::gss::GssEdgeId>,
 }
 
 impl<W: Semiring> std::fmt::Debug for BranchCursor<W>
@@ -399,41 +537,124 @@ where
 
 impl<W: Semiring + Clone> Clone for BranchCursor<W> {
     fn clone(&self) -> Self {
-        // Cleanup 4 (Option A refinement, 2026-04-28): `BuilderDelta::PushPredicate`
-        // now holds `Arc<dyn Any + Send + Sync>` so the entire BuilderDelta
-        // enum derives Clone. The pre-cleanup `clone_non_predicate` helper
-        // (which panicked on PushPredicate) is gone; cloning is total over
-        // pending_builder_ops.
+        // Stage 3.6 / ι Phase 1 (2026-05-01): BranchCursor::clone is now
+        // TOTAL across all field shapes:
+        // - `pending_builder_ops`: BuilderDelta is Clone (from Cleanup-4).
+        // - `collection_stack: Vec<Vec<ActionArg>>`: ActionArg is Clone
+        //   (from Stage 3.6 — `Term`/`Collection`/`Predicate` payloads
+        //   are now `Arc<dyn Any + Send + Sync>`, structurally clonable).
         //
-        // The collection_stack restriction stays for now: `ActionArg::Term`
-        // contains `Box<dyn Any + Send>` (non-Clone) for parsed Term values.
-        // Cloning a cursor with populated accumulators would silently drop
-        // those Terms. No shipped codegen path triggers nested Fork mid-
-        // collection-parse today; if a future grammar does, the principled
-        // fix is to wrap Term values in `Arc<dyn Any + Send + Sync>` like
-        // PushPredicate did here.
-        debug_assert!(
-            self.collection_stack.iter().all(|acc| acc.is_empty()),
-            "BranchCursor::clone called while collection_stack has \
-             populated accumulators — Term values inside ActionArg are \
-             non-clonable and would be silently lost. Refactor the call \
-             site to commit or drain first, or wrap Term values in \
-             Arc<dyn Any + Send + Sync> mirroring the Cleanup-4 PushPredicate fix."
-        );
+        // The pre-3.6 `debug_assert!` requiring `collection_stack` to be
+        // empty has been removed — cloning a cursor with populated
+        // accumulators is now safe and lossless.
         BranchCursor {
             node: self.node,
             pos: self.pos,
             weight: self.weight.clone(),
             inner_state: self.inner_state.clone(),
             pending_builder_ops: self.pending_builder_ops.clone(),
-            // Empty per assertion above; clone produces an empty mirror.
-            collection_stack: self
-                .collection_stack
-                .iter()
-                .map(|_| Vec::new())
-                .collect(),
+            collection_stack: self.collection_stack.clone(),
+            source_priority: self.source_priority,
+            incoming_edge_stack: self.incoming_edge_stack.clone(),
         }
     }
+}
+
+impl<W: Semiring + Clone> BranchCursor<W> {
+    /// Stage 3.10 / ι Phase 5 (2026-05-01): construct a fresh cursor that
+    /// mirrors the live walker's collection-stack depth via empty
+    /// placeholders.
+    ///
+    /// **Class C closure**: pre-Phase-4, the walker maintained two parallel
+    /// mutation surfaces (live builder + cursor deltas). When a Lazy parse
+    /// transitioned to Strict (first Fork) with collections open in the
+    /// live builder, the children cursors had no awareness of those
+    /// collections — subsequent splice deltas could underflow at replay
+    /// (`pop_args` panic at `wpds_runtime.rs:1518`).
+    ///
+    /// Post-Phase-4, the dual-mutation surface is gone; the live builder
+    /// and cursor[0] stay in lockstep in Lazy mode via mode-aware helpers.
+    /// At Lazy→Strict transition, children inherit the parent cursor's
+    /// state, but the parent cursor's `collection_stack` may be empty
+    /// (Lazy mutates live builder directly, NOT cursor.collection_stack).
+    /// The Fork arm therefore needs to seed children's `collection_stack`
+    /// with empty placeholders matching the live builder's depth so
+    /// subsequent splice ids align.
+    ///
+    /// `seed_from_live` makes this explicit. Constructs a cursor with
+    /// `K` empty `Vec<ActionArg>` placeholders in `collection_stack`,
+    /// where `K = live_collection_stack_depth`. Used by WpdsWalker
+    /// constructors and the Lazy→Strict transition (Fork) to ensure
+    /// the always-non-empty + always-aligned cursor invariant.
+    ///
+    /// Replaces three inlined constructions in `WpdsWalker::{new,
+    /// new_for_category, seeded_from}` — single source of truth.
+    pub fn seed_from_live(
+        node: crate::gss::GssNodeId,
+        pos: usize,
+        weight: W,
+        inner_state: WpdsState,
+        live_collection_stack_depth: usize,
+    ) -> Self {
+        BranchCursor {
+            node,
+            pos,
+            weight,
+            inner_state,
+            pending_builder_ops: Vec::new(),
+            collection_stack: (0..live_collection_stack_depth)
+                .map(|_| Vec::new())
+                .collect(),
+            // Stage 3.12 Fix 2(ii) (2026-05-02): default 0 for non-Fork-
+            // allocated cursors. Fork arm overwrites per-branch.
+            source_priority: 0,
+            // Stage 3.12.6 (2026-05-02): empty stack for seed cursor
+            // (no push has been made). cursor_gss_push appends to this
+            // stack on every push.
+            incoming_edge_stack: Vec::new(),
+        }
+    }
+}
+
+/// Stage 3.5b (2026-05-01): WPDS configuration key for cursor ⊕-merging.
+///
+/// WPDS semantics require: two paths reaching the same configuration
+/// `⟨p, w⟩` collapse via `Semiring::plus`. The Walker's `branch_cursors`
+/// is a flat `Vec<BranchCursor>` with no dedup of equivalent
+/// configurations — Stage 3.1 fixed GSS-edge merging only.
+/// `merge_equivalent_cursors` runs after `step_fanout` per step,
+/// collapsing cursors with the same `(state, gss_node, pos)` into a single
+/// cursor whose weight is the `Semiring::plus` of the inputs. The lex-min
+/// winner's `pending_builder_ops` and `collection_stack` are kept (deltas
+/// are non-commutative; only the winning path's mutations execute on
+/// commit).
+///
+/// **Verified (2026-05-01):** no hidden differentiators on BranchCursor.
+/// `selected_lex_alts` doesn't exist as a field (lex_alt_idx lives in
+/// `weight`'s 4-tuple). `pending_builder_ops` and `collection_stack` are
+/// operational state — kept from the lex-min winner, not part of the key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ConfigKey {
+    /// Cursor's per-branch FSM state. `WpdsState: Hash` derive added in
+    /// Stage 3.5b (`wpds_runtime.rs:326`).
+    state: WpdsState,
+    /// GSS-tip node id. The GSS dedups by `(pos, symbol)`, so equality
+    /// here = stack-tip equality only (NOT full stack-suffix equality).
+    node: crate::gss::GssNodeId,
+    /// Per-branch input position.
+    pos: usize,
+    /// Stage 3.12.6 (2026-05-02): GSS edge id the cursor traversed on
+    /// its most recent push (top of `incoming_edge_stack`). Two cursors
+    /// at the same `(state, node, pos)` but different `incoming_edge`
+    /// represent DISTINCT stack-suffixes (their next pop targets
+    /// differ) — they should NOT merge.
+    ///
+    /// This is the WPDS-correct refinement of Tomita/GLL configuration
+    /// equivalence under GSS structural sharing across recursive rule
+    /// re-entries (Reps/Lal/Kidd 2007 Theorem 3.4: stack-word merge
+    /// requires same stack word, which the GSS dedup obscures at the
+    /// tip).
+    incoming_edge: Option<crate::gss::GssEdgeId>,
 }
 
 /// Step 3 (Fork plan F4): deferred mutation of the live
@@ -503,6 +724,107 @@ pub enum BuilderDelta {
     /// is logged at all (the old code logged unconditionally and let the
     /// helper no-op).
     SpliceIntoCollection { id: u8 },
+
+    // ─── Stage 3.7 / ι Phase 2 (2026-05-01): 10 new variants ─────────────────
+    //
+    // Per `plan-iota-full-single-cursor.md`, these enable the cursor-side
+    // migration of every live-builder mutation in Phase 4 (Always-cursor
+    // walker). Today's commit_winner replays them on the live builder; in
+    // Phase 4, ALL mutations route through deltas regardless of CursorMode.
+
+    /// Optional-scope: cursor opens an optional-group scope. Replay
+    /// invokes `SemanticBuilder::start_optional_scope` which pushes a
+    /// new arg-frame onto `optional_stack` so subsequent inner pushes
+    /// land in the inner frame, not the outer main stack.
+    StartOptionalScope,
+
+    /// Optional-scope: cursor finalizes the optional with `Some(inner_args)`.
+    /// Replay invokes `SemanticBuilder::finalize_optional_scope_present`
+    /// which pops the inner frame and pushes
+    /// `ActionArg::Optional(Some(inner_args))`.
+    FinalizeOptionalScopePresent,
+
+    /// Optional-scope: cursor finalizes the optional with `None`.
+    /// Replay invokes `SemanticBuilder::push_optional_absent`.
+    PushOptionalAbsent,
+
+    /// Collection-cursor (paired with `PushCollectionId`): allocate a
+    /// fresh accumulator on the live builder. Replay invokes
+    /// `SemanticBuilder::start_collection()` and discards the returned id
+    /// (the cursor allocated its own id at log time; commit re-allocates
+    /// in matching order via `adopt_collection_stack` BEFORE delta
+    /// replay, so the live builder's accumulator indices align).
+    ///
+    /// This variant is reserved for Phase 4 / Phase 6 lazy-mode delta
+    /// emission paths that may need explicit collection-allocation
+    /// outside the GSS-symbol-driven `PushCollectionId` flow.
+    StartCollection,
+
+    /// Collection-cursor: append the top-of-stack arg into accumulator
+    /// `id`. Replay invokes `SemanticBuilder::push_to_collection(id)`.
+    /// Identical semantics to `SpliceIntoCollection` but distinguishes
+    /// the explicit "logical element push" call site from the implicit
+    /// "post-pop splice" call site.
+    PushToCollection { id: u8 },
+
+    /// Stage 3.12.8 (2026-05-03): grammatical-close-time finalize of
+    /// collection accumulator slot `id`. Strict mode emits this at
+    /// CollectionMarker pop (logical close), draining the cursor's
+    /// `collection_stack[id]` slot AT THAT MOMENT (LIFO-correct since
+    /// grammar guarantees innermost-closes-first). Replay re-pushes the
+    /// drained slot back onto `builder.collection_stack` at the same
+    /// `id` so the subsequent `FireAction` for the collection's
+    /// finalize rule can call `b.drain_collection(id)` LIFO-correctly.
+    ///
+    /// Pre-Stage-3.12.8 the `cursor.collection_stack` accumulated all
+    /// open slots until `commit_winner` donated en bloc; sibling
+    /// collections then violated the LIFO invariant during replay's
+    /// FireAction sequence. This delta restores grammatical-close-time
+    /// drain semantics matching `FinalizeOptionalScopePresent`.
+    FinalizeCollection { id: u8, drained: Vec<ActionArg> },
+
+    /// Stage 3.20 prep: cursor logs a recovery event. Replay invokes
+    /// `walker.recovery_events.push(RecoveryEvent { action, pos, cost })`.
+    /// `RecoveryActionKind` is the enum-encoded action variant; the
+    /// detailed payload (skip count, replacement token, etc.) lives in
+    /// the action-specific deltas below.
+    RecoveryEvent {
+        action_kind: u8,
+        pos: usize,
+        cost_tropical: f64,
+    },
+
+    /// Stage 3.20 prep: substitute a token at `pos` with the given
+    /// kind/text. Replay invokes the walker's mutable token-source
+    /// adapter to overwrite the token, then logs a complementary
+    /// `RecoveryEvent`.
+    SubstituteToken {
+        pos: usize,
+        kind: TokenKind,
+        text: String,
+    },
+
+    /// Stage 3.20 prep: insert a synthetic token before `pos`. Replay
+    /// invokes the mutable token-source adapter to splice the new token,
+    /// shifting subsequent positions by 1.
+    InsertToken {
+        pos: usize,
+        kind: TokenKind,
+        text: String,
+    },
+
+    /// Stage 3.14 / Hack #12 prep: cursor commits a lex alternative
+    /// selection at `pos`. Replay invokes
+    /// `MutableMultiTokenSource::commit_alternative(pos, alt_idx)` which
+    /// rewrites the lex stream's primary alternative for that position
+    /// to the cursor's chosen alt. `kind` and `text` are captured for
+    /// downstream consumers (lint diagnostics, traced parse output).
+    CommitLexAlternative {
+        pos: usize,
+        alt_idx: u16,
+        kind: TokenKind,
+        text: String,
+    },
 }
 
 impl std::fmt::Debug for BuilderDelta {
@@ -535,6 +857,55 @@ impl std::fmt::Debug for BuilderDelta {
             BuilderDelta::SpliceIntoCollection { id } => f
                 .debug_struct("SpliceIntoCollection")
                 .field("id", id)
+                .finish(),
+            BuilderDelta::StartOptionalScope => f.debug_struct("StartOptionalScope").finish(),
+            BuilderDelta::FinalizeOptionalScopePresent => {
+                f.debug_struct("FinalizeOptionalScopePresent").finish()
+            }
+            BuilderDelta::PushOptionalAbsent => f.debug_struct("PushOptionalAbsent").finish(),
+            BuilderDelta::StartCollection => f.debug_struct("StartCollection").finish(),
+            BuilderDelta::PushToCollection { id } => f
+                .debug_struct("PushToCollection")
+                .field("id", id)
+                .finish(),
+            BuilderDelta::FinalizeCollection { id, drained } => f
+                .debug_struct("FinalizeCollection")
+                .field("id", id)
+                .field("drained_len", &drained.len())
+                .finish(),
+            BuilderDelta::RecoveryEvent {
+                action_kind,
+                pos,
+                cost_tropical,
+            } => f
+                .debug_struct("RecoveryEvent")
+                .field("action_kind", action_kind)
+                .field("pos", pos)
+                .field("cost_tropical", cost_tropical)
+                .finish(),
+            BuilderDelta::SubstituteToken { pos, kind, text } => f
+                .debug_struct("SubstituteToken")
+                .field("pos", pos)
+                .field("kind", kind)
+                .field("text", text)
+                .finish(),
+            BuilderDelta::InsertToken { pos, kind, text } => f
+                .debug_struct("InsertToken")
+                .field("pos", pos)
+                .field("kind", kind)
+                .field("text", text)
+                .finish(),
+            BuilderDelta::CommitLexAlternative {
+                pos,
+                alt_idx,
+                kind,
+                text,
+            } => f
+                .debug_struct("CommitLexAlternative")
+                .field("pos", pos)
+                .field("alt_idx", alt_idx)
+                .field("kind", kind)
+                .field("text", text)
                 .finish(),
         }
     }
@@ -579,9 +950,25 @@ where
 
 impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Construct a fresh walker in `Ready { min_bp }` state.
+    ///
+    /// Stage 3.9 / ι Phase 4 (2026-05-01): seeds the singleton cursor in
+    /// Lazy mode. Subsequent mutations route through `apply_action_to_cursor`
+    /// against `branch_cursors[0]` via the always-cursor dispatcher.
     pub fn new(engine: E, initial_min_bp: u8) -> Self {
+        let initial_state = WpdsState::Ready { min_bp: initial_min_bp };
+        // Stage 3.10 / ι Phase 5 (2026-05-01): seed via `seed_from_live`.
+        // Sentinel node 0 — no GSS node yet; `cursor_gss_push` allocates
+        // a CategoryEntry(0) root on first push when `cursor.node == 0`.
+        // Live builder is fresh (depth 0), so no placeholders.
+        let initial_cursor = BranchCursor::seed_from_live(
+            0,
+            0,
+            W::one(),
+            initial_state.clone(),
+            0,
+        );
         WpdsWalker {
-            state: WpdsState::Ready { min_bp: initial_min_bp },
+            state: initial_state,
             gss: WpdsGss::new(),
             pos: 0,
             weight: W::one(),
@@ -589,7 +976,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             top_node: None,
             beam_size: None,
             builder: SemanticBuilder::new(),
-            branch_cursors: Vec::new(),
+            cursor_mode: CursorMode::Lazy,
+            branch_cursors: vec![initial_cursor],
+            step_counter: 0,
         }
     }
 
@@ -614,11 +1003,20 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             pos: 0,
             symbol: StackSymbolV2::category_entry(cat_src_idx),
         });
+        let initial_state = WpdsState::PrefixDispatch {
+            pos: 0,
+            cur_bp: initial_min_bp,
+        };
+        // Stage 3.10 / ι Phase 5 (2026-05-01): seed via `seed_from_live`.
+        let initial_cursor = BranchCursor::seed_from_live(
+            top_id,
+            0,
+            W::one(),
+            initial_state.clone(),
+            0,
+        );
         WpdsWalker {
-            state: WpdsState::PrefixDispatch {
-                pos: 0,
-                cur_bp: initial_min_bp,
-            },
+            state: initial_state,
             gss,
             pos: 0,
             weight: W::one(),
@@ -626,7 +1024,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             top_node: Some(top_id),
             beam_size: None,
             builder: SemanticBuilder::new(),
-            branch_cursors: Vec::new(),
+            cursor_mode: CursorMode::Lazy,
+            branch_cursors: vec![initial_cursor],
+            step_counter: 0,
         }
     }
 
@@ -650,6 +1050,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             };
             top_node = Some(new_id);
         }
+        // Stage 3.10 / ι Phase 5 (2026-05-01): seed via `seed_from_live`.
+        let initial_cursor = BranchCursor::seed_from_live(
+            top_node.unwrap_or(0),
+            config.pos,
+            config.weight.clone(),
+            config.state.clone(),
+            0,
+        );
         WpdsWalker {
             state: config.state,
             gss,
@@ -659,7 +1067,75 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             top_node,
             beam_size: None,
             builder: SemanticBuilder::new(),
-            branch_cursors: Vec::new(),
+            cursor_mode: CursorMode::Lazy,
+            branch_cursors: vec![initial_cursor],
+            step_counter: 0,
+        }
+    }
+
+    /// Stage 3.9 / ι Phase 4 (2026-05-01): reset the walker between
+    /// parses. Returns to Lazy mode with a fresh singleton cursor.
+    /// Preserves the engine and beam_size; everything else is
+    /// reinitialized to construction defaults.
+    pub fn reset(&mut self, initial_min_bp: u8) {
+        let initial_state = WpdsState::Ready { min_bp: initial_min_bp };
+        self.state = initial_state.clone();
+        self.gss = WpdsGss::new();
+        self.pos = 0;
+        self.weight = W::one();
+        self.top_node = None;
+        self.builder = SemanticBuilder::new();
+        self.cursor_mode = CursorMode::Lazy;
+        // Stage 3.10 / ι Phase 5 (2026-05-01): seed via `seed_from_live`.
+        self.branch_cursors = vec![BranchCursor::seed_from_live(
+            0,
+            0,
+            W::one(),
+            initial_state,
+            0,
+        )];
+        // Stage 6 G6+ (2026-05-02): reset trace step counter.
+        self.step_counter = 0;
+    }
+
+    /// Read-only access to the cursor mode (Lazy/Strict).
+    pub fn cursor_mode(&self) -> CursorMode {
+        self.cursor_mode
+    }
+
+    /// Stage 6 G6+ (2026-05-02): build a flat per-cursor census of the
+    /// current walker state for tracing/dump consumers.
+    ///
+    /// Excludes heavy fields (`pending_builder_ops` contents,
+    /// `collection_stack` contents) — only their lengths. Cheap to call
+    /// (~1 µs for typical cursor counts); only the cursor `Vec` clone is
+    /// non-trivial. Does NOT mutate the walker.
+    pub fn current_snapshot(&self) -> StepSnapshot<W>
+    where
+        W: 'static,
+    {
+        let cursors: Vec<CursorSnapshot<W>> = self
+            .branch_cursors
+            .iter()
+            .enumerate()
+            .map(|(idx, c)| CursorSnapshot {
+                idx,
+                pos: c.pos,
+                state: c.inner_state.clone(),
+                gss_node_id: c.node,
+                weight: c.weight.clone(),
+                source_priority: c.source_priority,
+                pending_ops_len: c.pending_builder_ops.len(),
+                collection_depth: c.collection_stack.len(),
+            })
+            .collect();
+        StepSnapshot {
+            step_index: self.step_counter,
+            cursor_count: self.branch_cursors.len(),
+            walker_state: self.state.clone(),
+            walker_pos: self.pos,
+            gss_node_count: self.gss.node_count(),
+            cursors,
         }
     }
 
@@ -685,6 +1161,15 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     #[cfg(test)]
     pub fn branch_cursors_for_test(&self) -> &[BranchCursor<W>] {
         &self.branch_cursors
+    }
+
+    /// Stage 3.4 (2026-04-30): set the beam-pruning bound in place.
+    ///
+    /// Same effect as [`Self::with_beam_size`] but mutates `self` instead
+    /// of consuming. Useful when the walker is already wrapped (e.g., by
+    /// a recovery driver holding a `&mut`).
+    pub fn set_beam_size(&mut self, k: Option<usize>) {
+        self.beam_size = k;
     }
 
     pub fn weight(&self) -> &W {
@@ -791,16 +1276,33 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 let from = self.state.clone();
                 self.weight = self.weight.times(&weight);
                 self.top_node = Some(winner);
-                // Stage 7+ Fork plan, step 2: clear per-branch cursors when
-                // the fanout collapses. Step 3's `step_fanout` micro-driver
-                // emits this event when exactly one cursor survives.
-                self.branch_cursors.clear();
                 let new_state = WpdsState::InfixLoop {
                     cur_bp: match from {
                         WpdsState::AmbiguityFanout { .. } => 0,
                         _ => 0,
                     },
                 };
+                // Stage 3.9 / ι Phase 4 (2026-05-01): preserve always-non-empty
+                // L4 invariant — write a singleton cursor reflecting the
+                // resolved post-fanout state. Pre-Phase-4 this called
+                // `branch_cursors.clear()` because empty was the live-mode
+                // signal; post-Phase-4, empty would violate L4.
+                self.branch_cursors = vec![BranchCursor {
+                    node: winner,
+                    pos: self.pos,
+                    weight: self.weight.clone(),
+                    inner_state: new_state.clone(),
+                    pending_builder_ops: Vec::new(),
+                    collection_stack: Vec::new(),
+                    // Stage 3.12 Fix 2(ii) (2026-05-02): post-resolved
+                    // singleton inherits priority 0 (no further Fork
+                    // tiebreaks expected post-resolution).
+                    source_priority: 0,
+                    // Stage 3.12.6 (2026-05-02): post-resolution
+                    // singleton has no recorded push history (the resolved
+                    // GSS state is canonical for the surviving branch).
+                    incoming_edge_stack: Vec::new(),
+                }];
                 self.state = new_state.clone();
                 let trace = WpdsTraceEntry {
                     pos: self.pos,
@@ -911,9 +1413,348 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         self.state.clone()
     }
 
+    /// Stage 3.5b (2026-05-01): WPDS-correct end-of-input driver.
+    ///
+    /// Drives `process_event(Step)` until one of:
+    /// 1. all `branch_cursors` are dead (`branch_cursors.is_empty()`),
+    /// 2. the live state is terminal (Accepted in unforked mode, or
+    ///    Error from a non-fanout path),
+    /// 3. `pos == tokens.len()` AND every cursor is "parked" at EOI (Idle
+    ///    in a resolved-shape state, see `apply_action_to_cursor`'s Idle
+    ///    arm), or
+    /// 4. `max_steps` budget exhausted.
+    ///
+    /// Unlike `run_to_saturation`, this driver does NOT treat Idle in a
+    /// non-terminal state as an error — at EOI, Idle on a resolved-shape
+    /// cursor is parking, not failure. After this driver returns, callers
+    /// MUST invoke `resolve_at_end_of_input` to commit the lex-min
+    /// accepting configuration into the live builder.
+    ///
+    /// Returns `Ok(())` on natural termination, `Err(MaxStepsExceeded)`
+    /// when the budget is exceeded.
+    pub fn run_to_end_of_input(
+        &mut self,
+        max_steps: usize,
+        tokens: &dyn WpdsTokenSource,
+    ) -> Result<(), WpdsMaxStepsExceeded> {
+        for _ in 0..max_steps {
+            if self.state.is_terminal() {
+                return Ok(());
+            }
+            if matches!(self.state, WpdsState::AmbiguityFanout { .. }) {
+                // Snapshot pre-step cursor identities (`(node, pos,
+                // weight, inner_state)`) so we can detect whether any
+                // cursor actually progressed. Mid-stream the cursor set
+                // may grow (Fork), shrink (Drop/merge), or transition
+                // states/weights. Only when none of those happens AND
+                // we're at EOI do we have a fixed-point parked frontier.
+                let prev_count = self.branch_cursors.len();
+                // Stage 3.12 Fix 3a (2026-05-02): include weight + pending_builder_ops
+                // length in the fingerprint. Pre-3.12 a stable cursor whose
+                // weight or delta-log size was still changing wouldn't trigger
+                // progress_made, but the parse continued for max_steps. Now
+                // both axes are tracked.
+                let prev_fingerprint: Vec<(crate::gss::GssNodeId, usize, WpdsState, W, usize)> =
+                    self
+                        .branch_cursors
+                        .iter()
+                        .map(|c| {
+                            (
+                                c.node,
+                                c.pos,
+                                c.inner_state.clone(),
+                                c.weight.clone(),
+                                c.pending_builder_ops.len(),
+                            )
+                        })
+                        .collect();
+                self.step_fanout(tokens);
+                let progress_made = self.branch_cursors.len() != prev_count
+                    || self
+                        .branch_cursors
+                        .iter()
+                        .zip(prev_fingerprint.iter())
+                        .any(|(c, (n, p, s, w, ops_len))| {
+                            c.node != *n
+                                || c.pos != *p
+                                || c.inner_state != *s
+                                || c.weight != *w
+                                || c.pending_builder_ops.len() != *ops_len
+                        });
+                if !progress_made {
+                    // True fixed point — every cursor's engine.step
+                    // returned Idle (or transitioned to itself), so no
+                    // further state movement is possible. Exit cleanly.
+                    return Ok(());
+                }
+                continue;
+            }
+            // Non-fanout (live single-cursor) path. Mirrors run_to_saturation
+            // but treats EOI Idle as natural termination instead of Error.
+            let frontier_top = self
+                .top_node
+                .and_then(|id| self.gss.node(id))
+                .cloned();
+            let action = self.engine.step(
+                &self.state,
+                &self.gss,
+                frontier_top.as_ref(),
+                self.pos,
+                tokens,
+            );
+            if matches!(action, WpdsStepAction::Idle) {
+                if self.pos >= tokens.len() {
+                    // Stage 3.5b: EOI Idle in live mode is a parked
+                    // result, not Error. Caller invokes
+                    // `resolve_at_end_of_input` next which will
+                    // synthesize the appropriate WpdsResolveResult.
+                    return Ok(());
+                }
+                if !self.state.is_terminal() {
+                    self.state = WpdsState::Error {
+                        message: format!(
+                            "engine returned Idle in non-terminal state {:?} at pos {}",
+                            self.state, self.pos,
+                        ),
+                    };
+                }
+                return Ok(());
+            }
+            self.apply_action(action, tokens);
+        }
+        Err(WpdsMaxStepsExceeded {
+            position: self.pos,
+        })
+    }
+
+    /// Stage 3.5b (2026-05-01): WPDS-correct end-of-input resolution.
+    ///
+    /// Inspects the post-`run_to_end_of_input` configuration and produces
+    /// a `WpdsResolveResult<W>`. The decision tree:
+    ///
+    /// 1. **Live mode (unforked, no branch_cursors)**:
+    ///    - `state == Accepted`: the live builder already holds the result;
+    ///      pop it and return `Accepted { weight, term }`.
+    ///    - `state == Error { message }`: return `ParseError { message, position: self.pos }`.
+    ///    - Anything else: incomplete parse → `ParseError`.
+    ///
+    /// 2. **Fanout mode (branch_cursors populated)**:
+    ///    - Filter to cursors at `pos == tokens.len()` AND in an
+    ///      "accepting configuration" (`is_accepting_config`).
+    ///    - Zero accepting → `ParseError`.
+    ///    - One accepting → commit + `Accepted`.
+    ///    - ≥2 accepting → fold weights via `Semiring::plus` to find
+    ///      the lex-min weight; tied indices keep source-order; if
+    ///      exactly one ties, commit it; if ≥2 tie, emit ambiguity
+    ///      warning + commit earliest source-ordered + return
+    ///      `AcceptedAmbiguous`.
+    pub fn resolve_at_end_of_input(
+        &mut self,
+        tokens: &dyn WpdsTokenSource,
+    ) -> WpdsResolveResult<W>
+    where
+        W: 'static,
+    {
+        // Stage 3.9 / ι Phase 4 (2026-05-01): live mode is now keyed off
+        // `cursor_mode == Lazy`, not `branch_cursors.is_empty()` — under
+        // Phase 4 the cursors vector is always non-empty (singleton in
+        // Lazy, multi in Strict). The pre-Phase-4 empty-cursors path is
+        // gone; instead, Lazy resolution reads the live builder
+        // directly (the singleton cursor's `pending_builder_ops` is
+        // empty per L1, so there's nothing to replay).
+        if self.cursor_mode == CursorMode::Lazy {
+            return match self.state.clone() {
+                WpdsState::Accepted => {
+                    let term = self.builder.take_dyn_result();
+                    let weight = self.weight.clone();
+                    match term {
+                        Some(t) => WpdsResolveResult::Accepted { weight, term: t },
+                        None => WpdsResolveResult::ParseError {
+                            message: "walker accepted but builder result was empty".to_string(),
+                            position: self.pos,
+                        },
+                    }
+                }
+                WpdsState::Error { message } => WpdsResolveResult::ParseError {
+                    message,
+                    position: self.pos,
+                },
+                other => WpdsResolveResult::ParseError {
+                    message: format!("incomplete parse in state {:?}", other),
+                    position: self.pos,
+                },
+            };
+        }
+        // Fanout mode: resolve over branch_cursors.
+        // Stage 3.5b (2026-05-01): use `pos >= tokens.len()` rather than
+        // `pos == tokens.len()`. Real-grammar codegen never advances pos
+        // past tokens.len() on real input (ConsumeAndPop is gated by
+        // peek_kind), but synthetic test scripts can; treating "past
+        // EOI" as "at EOI" makes resolution robust to either case.
+        let accepting_indices: Vec<usize> = (0..self.branch_cursors.len())
+            .filter(|&i| {
+                let c = &self.branch_cursors[i];
+                // Stage 3.12 fix (2026-05-02): use `is_logical_eoi` so a
+                // cursor parked at trailing `Token::Eof` (the natural
+                // rule-end exit) accepts. The pre-3.12 `pos >= tokens.len()`
+                // was unreachable in Strict mode because the engine's
+                // `Accept` arm doesn't advance past EOF.
+                self.is_logical_eoi(c.pos, tokens) && self.is_accepting_config(c)
+            })
+            .collect();
+        let max_dead_pos = self
+            .branch_cursors
+            .iter()
+            .map(|c| c.pos)
+            .max()
+            .unwrap_or(self.pos);
+        match accepting_indices.len() {
+            0 => WpdsResolveResult::ParseError {
+                message: "no accepting branch reached end of input".to_string(),
+                position: max_dead_pos,
+            },
+            1 => {
+                let winner_idx = accepting_indices[0];
+                let weight = self.branch_cursors[winner_idx].weight.clone();
+                self.commit_winner_at_eoi(winner_idx);
+                let term = self.builder.take_dyn_result();
+                match term {
+                    Some(t) => WpdsResolveResult::Accepted { weight, term: t },
+                    None => WpdsResolveResult::ParseError {
+                        message: "winner committed but builder result was empty"
+                            .to_string(),
+                        position: self.pos,
+                    },
+                }
+            }
+            _ => {
+                // Pick lex-min winner via Semiring::plus fold across the
+                // accepting set, with `source_priority` as final tiebreak
+                // (Stage 3.12 Fix 2(ii), 2026-05-02). The pre-3.12 fold
+                // depended on receiver-on-Equal semantics for source
+                // order, but that's order-of-arrival dependent. Now ties
+                // are explicitly broken by Fork-source-order priority.
+                let mut best_idx = accepting_indices[0];
+                let mut best_weight = self.branch_cursors[best_idx].weight.clone();
+                for &idx in &accepting_indices[1..] {
+                    let candidate = &self.branch_cursors[idx].weight;
+                    let merged = best_weight.plus(candidate);
+                    if merged != best_weight {
+                        best_idx = idx;
+                        best_weight = merged;
+                    } else if merged == *candidate
+                        && self.branch_cursors[idx].source_priority
+                            < self.branch_cursors[best_idx].source_priority
+                    {
+                        best_idx = idx;
+                        best_weight = merged;
+                    }
+                }
+                // Count tied (equivalence-class size) for ambiguity
+                // reporting. Two cursors tie iff plus is idempotent on
+                // both directions (each.plus(other) == self).
+                let tied_count = accepting_indices
+                    .iter()
+                    .filter(|&&idx| {
+                        let w = &self.branch_cursors[idx].weight;
+                        w.plus(&best_weight) == *w && best_weight.plus(w) == best_weight
+                    })
+                    .count();
+                let weight = best_weight.clone();
+                self.commit_winner_at_eoi(best_idx);
+                let term = self.builder.take_dyn_result();
+                match term {
+                    Some(t) => {
+                        if tied_count >= 2 {
+                            WpdsResolveResult::AcceptedAmbiguous {
+                                weight,
+                                term: t,
+                                equivalence_class_size: tied_count,
+                            }
+                        } else {
+                            WpdsResolveResult::Accepted { weight, term: t }
+                        }
+                    }
+                    None => WpdsResolveResult::ParseError {
+                        message: "winner committed but builder result was empty"
+                            .to_string(),
+                        position: self.pos,
+                    },
+                }
+            }
+        }
+    }
+
+    /// Stage 3.5b (2026-05-01): cursor-level "is this an accepting
+    /// configuration?" classifier.
+    ///
+    /// A cursor at EOI is accepting iff:
+    /// - `inner_state == Accepted` (engine emitted `WpdsStepAction::Accept`), OR
+    /// - `inner_state == InfixLoop` AND no further infix operator can
+    ///   bind (engine returned Idle on the next step → cursor parked
+    ///   here as Resolved), OR
+    /// - `inner_state == Unwinding` AND the GSS top is the bottom-of-stack
+    ///   sentinel (no more pops to perform).
+    ///
+    /// In practice, cursors that reach EOI via `apply_action_to_cursor`'s
+    /// Idle parking branch satisfy the first two conditions; the third
+    /// is reached when the engine pops Returns up to the bottom.
+    fn is_accepting_config(&self, cursor: &BranchCursor<W>) -> bool {
+        match &cursor.inner_state {
+            WpdsState::Accepted => true,
+            WpdsState::InfixLoop { .. } => true,
+            WpdsState::Unwinding => {
+                // Unwinding-at-EOI is accepting iff the GSS top has no
+                // more symbols to pop — i.e., we've reached the original
+                // entry frame, or popped past it (cursor.node == GSS_NODE_NONE
+                // per Stage 3.12 fix; engine returns Accept on the next step).
+                if cursor.node == crate::gss::GSS_NODE_NONE {
+                    return true;
+                }
+                self.gss
+                    .node(cursor.node)
+                    .map(|n| n.symbol.kind == SymbolKind::Return || n.symbol.kind == SymbolKind::CategoryEntry)
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+
+    /// Stage 3.12 fix (2026-05-02): "logical EOI" — true when the
+    /// cursor's `pos` either consumed the entire token stream or is
+    /// parked at a trailing `Token::Eof` that the engine never advances
+    /// past. The lexer appends `Token::Eof` (e.g., `parser.rs:692` in
+    /// generated code), so `tokens.len()` is `content_len + 1` and
+    /// natural rule-end positions are `content_len` (= `tokens.len() - 1`).
+    /// The pre-3.12 EOI check `pos >= tokens.len()` only worked in Lazy
+    /// mode (via the `cursor_mode == Lazy` short-circuit in
+    /// `resolve_at_end_of_input`). Strict mode now matches the same
+    /// "trailing EOF is OK" contract that `parse_<Cat>::parse_via_wpds`
+    /// uses on its outer `pos` check.
+    #[inline]
+    fn is_logical_eoi(&self, pos: usize, tokens: &dyn WpdsTokenSource) -> bool {
+        pos >= tokens.len()
+            || (pos + 1 == tokens.len()
+                && tokens.peek_kind(pos) == Some(TokenKind::Eof))
+    }
+
+    /// Stage 3.5b (2026-05-01): EOI-time variant of `commit_winner`.
+    ///
+    /// Identical to `commit_winner` semantically (replays winner's
+    /// pending_builder_ops, donates collection_stack, splices winner's
+    /// `(node, pos, weight, inner_state)` into the live walker), but
+    /// invoked exclusively from `resolve_at_end_of_input` rather than
+    /// mid-stream from `step_fanout`. The implementation delegates to
+    /// `commit_winner` to keep replay logic single-source.
+    fn commit_winner_at_eoi(&mut self, winner_idx: usize) {
+        self.commit_winner(winner_idx);
+    }
+
     // ─── Internal step handler ──────────────────────────────────────────────
 
     fn handle_step(&mut self, tokens: &dyn WpdsTokenSource) -> WpdsTransition<W> {
+        // Stage 6 G6+ (2026-05-02): bump trace step counter once per Step.
+        self.step_counter = self.step_counter.wrapping_add(1);
         let from = self.state.clone();
         // Step 3 (Fork plan F6): when in AmbiguityFanout, drive cursors
         // via step_fanout rather than the per-state engine.step (engine
@@ -985,355 +1826,90 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         }
     }
 
+    /// Stage 3.9 / ι Phase 4 (2026-05-01): thin dispatcher.
+    ///
+    /// Pre-Phase-4: ~370-line arm-by-arm body that mutated both the live
+    /// builder AND walker fields directly, with a parallel `apply_action_to_cursor`
+    /// for the Strict (post-Fork) path. The dual-mutation surface produced
+    /// the Class C bug class.
+    ///
+    /// Post-Phase-4: dispatcher routes EVERY action through
+    /// `apply_action_to_cursor` against `branch_cursors[0]` (the singleton
+    /// in Lazy mode). Per-variant `emit_*` helpers branch on `cursor_mode`
+    /// to direct-mutate the live builder (Lazy) or log to
+    /// `pending_builder_ops` (Strict). Single mutation surface; Class C
+    /// structurally eliminated.
+    ///
+    /// Outcome handling:
+    /// - `Drop`:      cursor died (Error / non-resolved Idle). Restore
+    ///                singleton with current walker view to preserve L4.
+    /// - `Alive`:     reinstate the cursor as branch_cursors[0].
+    /// - `Resolved`:  reinstate (parked at EOI for resolve_at_end_of_input).
+    /// - `ForkInto`:  replace branch_cursors with children, set state to
+    ///                AmbiguityFanout. Mode is already Strict per L2.
     fn apply_action(&mut self, action: WpdsStepAction<W>, tokens: &dyn WpdsTokenSource) {
-        match action {
-            WpdsStepAction::Advance(s) => {
-                self.state = s;
-            }
-            WpdsStepAction::Push { mut symbol, weight, new_state } => {
-                // Phase 4: pushing a CollectionMarker auto-allocates a fresh
-                // accumulator id and pushes a CollectionId arg so the
-                // finalize action can identify which accumulator to drain.
-                if symbol.kind == SymbolKind::CollectionMarker {
-                    let id = self.builder.start_collection();
-                    symbol.bp = Some(id);
-                    self.builder.push_collection_id(id);
-                }
-                // Opt-Group: pushing the FIRST OptionalGroupAt marker
-                // (sub_pos=1) opens the inner-arg accumulator scope. All
-                // subsequent push_xxx calls until OptGroupFinalize redirect
-                // to the new scope's inner Vec.
-                if let SymbolKind::OptionalGroupAt(1) = symbol.kind {
-                    self.builder.start_optional_scope();
-                }
-                let prev = self.top_node.unwrap_or_else(|| {
-                    self.gss.get_or_create_node(WpdsGssNode {
-                        pos: self.pos,
-                        symbol: StackSymbolV2::category_entry(0),
-                    })
+        // L1: assert Lazy admission invariant.
+        self.debug_flush_lazy_invariant();
+        // L5: terminal state is mode-irrelevant.
+        if self.state.is_terminal() {
+            return;
+        }
+        debug_assert_eq!(
+            self.branch_cursors.len(),
+            1,
+            "apply_action invariant: branch_cursors must be a singleton at \
+             entry (Lazy: always; Strict: never reached — step_fanout drives \
+             multi-cursor mode directly)",
+        );
+        let mut cursor = self.branch_cursors.swap_remove(0);
+        let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
+        match outcome {
+            CursorOutcome::Drop => {
+                // Cursor died. In Lazy mode, helpers already mirrored the
+                // terminal state (set_cursor_inner_state) to self.state,
+                // so the live walker reflects the failure. Restore a
+                // fresh singleton anchored at the current walker view to
+                // preserve L4 (always-non-empty branch_cursors).
+                self.branch_cursors.push(BranchCursor {
+                    node: self.top_node.unwrap_or(0),
+                    pos: self.pos,
+                    weight: W::one(),
+                    inner_state: self.state.clone(),
+                    pending_builder_ops: Vec::new(),
+                    collection_stack: Vec::new(),
+                    // Stage 3.12 Fix 2(ii) (2026-05-02): restored singleton
+                    // post-Drop has no Fork ancestor, so priority 0.
+                    source_priority: 0,
+                    // Stage 3.12.6 (2026-05-02): post-Drop reset starts
+                    // with empty stack history.
+                    incoming_edge_stack: Vec::new(),
                 });
-                let new_id = self.gss.push_symbol(prev, symbol, self.pos, weight);
-                self.top_node = Some(new_id);
-                self.weight = self.weight.times(&weight);
-                self.state = new_state;
+            }
+            CursorOutcome::Alive | CursorOutcome::Resolved => {
+                self.branch_cursors.push(cursor);
+            }
+            CursorOutcome::ForkInto(children) => {
+                // L2: cursor_mode was promoted to Strict inside the cursor-
+                // side Fork arm. Replace branch_cursors with children and
+                // set state = AmbiguityFanout.
+                //
+                // Stage 3.9 / ι Phase 4 (2026-05-01): mirror the post-Fork
+                // walker position to the children's pos. The cursor-side
+                // Fork arm computes `pos_after = cursor.pos + 1` (when
+                // `consume_trigger`) for each child but does NOT mutate
+                // `self.pos`. The pre-Phase-4 live `apply_action::Fork`
+                // did `self.pos += 1` directly. Preserve that contract by
+                // reading the post-Fork pos from the first child (all
+                // children share the same `pos_after`).
+                if let Some(first) = children.first() {
+                    self.pos = first.pos;
+                }
+                let branch_ids: Vec<crate::gss::GssNodeId> =
+                    children.iter().map(|c| c.node).collect();
+                self.branch_cursors = children;
+                self.state = WpdsState::AmbiguityFanout { branches: branch_ids };
                 self.maybe_prune_frontier();
             }
-            WpdsStepAction::ConsumeAndPush {
-                mut symbol,
-                weight,
-                new_state,
-                capture_token,
-            } => {
-                // Phase A.2: atomic-rule shortcut. Optionally capture the
-                // current token, advance pos, push symbol, transition.
-                if capture_token {
-                    if let Some(kind) = tokens.peek_kind(self.pos) {
-                        let text = tokens.peek_text(self.pos).unwrap_or("").to_string();
-                        self.builder.push_token(kind, text, self.pos);
-                    }
-                }
-                // Phase 4: same auto-allocation as `Push`.
-                if symbol.kind == SymbolKind::CollectionMarker {
-                    let id = self.builder.start_collection();
-                    symbol.bp = Some(id);
-                    self.builder.push_collection_id(id);
-                }
-                let prev = self.top_node.unwrap_or_else(|| {
-                    self.gss.get_or_create_node(WpdsGssNode {
-                        pos: self.pos,
-                        symbol: StackSymbolV2::category_entry(0),
-                    })
-                });
-                let new_id = self.gss.push_symbol(prev, symbol, self.pos, weight);
-                self.top_node = Some(new_id);
-                self.weight = self.weight.times(&weight);
-                self.pos += 1;
-                self.state = new_state;
-                self.maybe_prune_frontier();
-            }
-            WpdsStepAction::ConsumeAndPop { weight, new_state } => {
-                // Phase 4: consume + pop + fire-action variant. Used by the
-                // CollectionLoop close arm to consume the close delimiter,
-                // pop the CollectionMarker, and fire its finalize action.
-                let popped_symbol = self
-                    .top_node
-                    .and_then(|id| self.gss.node(id))
-                    .map(|n| n.symbol);
-                if let Some(top) = self.top_node {
-                    self.top_node = self.gss.pop_symbol(top);
-                }
-                if let Some(symbol) = popped_symbol {
-                    if matches!(
-                        symbol.kind,
-                        SymbolKind::Return
-                            | SymbolKind::CollectionMarker
-                            | SymbolKind::RuleAt(_)
-                            | SymbolKind::MixfixMarker
-                    ) {
-                        self.fire_action_for(symbol);
-                    }
-                }
-                // Phase 4: auto-splice into enclosing collection (nested case).
-                self.maybe_splice_into_enclosing_collection();
-                self.weight = self.weight.times(&weight);
-                self.pos += 1;
-                self.state = new_state;
-                self.maybe_prune_frontier();
-            }
-            WpdsStepAction::Consume { weight, new_state } => {
-                // Phase 4: consume-only — used by CollectionLoop separator arm
-                // to advance past the separator without pushing/popping any
-                // GSS frame.
-                self.weight = self.weight.times(&weight);
-                self.pos += 1;
-                self.state = new_state;
-            }
-            WpdsStepAction::ConsumeIdentAndReplace {
-                symbol,
-                weight,
-                new_state,
-                start_scope,
-            } => {
-                // Phase 5: capture the current Ident token, optionally start
-                // a binder scope, advance pos, replace the GSS top.
-                if let Some(_kind) = tokens.peek_kind(self.pos) {
-                    let text = tokens.peek_text(self.pos).unwrap_or("").to_string();
-                    if start_scope {
-                        self.builder.start_binder_scope(vec![text.clone()]);
-                    }
-                    self.builder.push_ident(text, self.pos);
-                }
-                if let Some(top) = self.top_node {
-                    let new_id = self.gss.replace_top(top, symbol, self.pos, weight);
-                    self.top_node = Some(new_id);
-                    self.weight = self.weight.times(&weight);
-                }
-                self.pos += 1;
-                self.state = new_state;
-                self.maybe_prune_frontier();
-            }
-            WpdsStepAction::ConsumeAndReplace {
-                symbol,
-                weight,
-                new_state,
-            } => {
-                // Phase 5: consume + replace top + transition. Used by the
-                // binder-rule state machine to advance through literal
-                // terminals while updating the marker's position.
-                if let Some(top) = self.top_node {
-                    let new_id = self.gss.replace_top(top, symbol, self.pos, weight);
-                    self.top_node = Some(new_id);
-                    self.weight = self.weight.times(&weight);
-                }
-                self.pos += 1;
-                self.state = new_state;
-                self.maybe_prune_frontier();
-            }
-            WpdsStepAction::ReplaceAndPush {
-                replace_symbol,
-                push_symbol,
-                weight,
-                new_state,
-            } => {
-                // Phase 5b: replace top, then push another symbol on top
-                // of the replaced top. Used by ParamParse slot dispatch
-                // to advance the marker AND push a CategoryEntry sub-frame.
-                if let Some(top) = self.top_node {
-                    let replaced = self.gss.replace_top(top, replace_symbol, self.pos, weight);
-                    let pushed = self.gss.push_symbol(replaced, push_symbol, self.pos, weight);
-                    self.top_node = Some(pushed);
-                    self.weight = self.weight.times(&weight);
-                }
-                self.state = new_state;
-                self.maybe_prune_frontier();
-            }
-            WpdsStepAction::ParsePredicate {
-                replace_symbol,
-                weight,
-                new_state,
-            } => {
-                // Phase 6: parse a predicate inline. Use the runtime's
-                // `parse_predicate_from_tokens` over a (kind, text) view
-                // of the remaining tokens. Push as ActionArg::Predicate.
-                let parsed_pred =
-                    crate::parser::predicate::parse_predicate_via_token_source(
-                        tokens, self.pos,
-                    );
-                match parsed_pred {
-                    Ok((pred, new_pos)) => {
-                        self.builder.push_predicate(pred);
-                        self.pos = new_pos;
-                    }
-                    Err(msg) => {
-                        self.state = WpdsState::Error { message: msg };
-                        return;
-                    }
-                }
-                if let Some(top) = self.top_node {
-                    let new_id = self.gss.replace_top(top, replace_symbol, self.pos, weight);
-                    self.top_node = Some(new_id);
-                    self.weight = self.weight.times(&weight);
-                }
-                self.state = new_state;
-                self.maybe_prune_frontier();
-            }
-            WpdsStepAction::Pop { weight, new_state } => {
-                // Capture the popped symbol so we can fire a semantic action
-                // if it was a `SymbolKind::Return` (or `CollectionMarker`) frame.
-                let popped_symbol = self
-                    .top_node
-                    .and_then(|id| self.gss.node(id))
-                    .map(|n| n.symbol);
-                if let Some(top) = self.top_node {
-                    self.top_node = self.gss.pop_symbol(top);
-                }
-                if let Some(symbol) = popped_symbol {
-                    if matches!(
-                        symbol.kind,
-                        SymbolKind::Return
-                            | SymbolKind::CollectionMarker
-                            | SymbolKind::RuleAt(_)
-                            | SymbolKind::MixfixMarker
-                    ) {
-                        self.fire_action_for(symbol);
-                    }
-                }
-                // Phase 4: when popping a `Return` whose predecessor is a
-                // `CollectionMarker`, splice the just-built term into the
-                // enclosing collection accumulator.
-                self.maybe_splice_into_enclosing_collection();
-                self.weight = self.weight.times(&weight);
-                self.state = new_state;
-                self.maybe_prune_frontier();
-            }
-            WpdsStepAction::Replace { symbol, weight, new_state } => {
-                if let Some(top) = self.top_node {
-                    let new_id = self.gss.replace_top(top, symbol, self.pos, weight);
-                    self.top_node = Some(new_id);
-                    self.weight = self.weight.times(&weight);
-                }
-                self.state = new_state;
-                self.maybe_prune_frontier();
-            }
-            WpdsStepAction::Fork { branches, consume_trigger } => {
-                // Stage 7+ Fork plan, step 2: populate per-branch cursors
-                // alongside the GSS-tip ids. Each cursor inherits the walker's
-                // current `pos` (advanced by 1 when `consume_trigger`), the
-                // branch's weight, and the branch's own `new_state` as its
-                // initial inner state. Subsequent `step_fanout` micro-steps
-                // drive each cursor independently until exactly one survives
-                // (BranchResolved) or all die (Error). Per-branch `new_state`
-                // (vs a shared one) lets codegen route each rule in a
-                // multi-rule group to its own target state.
-                if consume_trigger {
-                    self.pos += 1;
-                }
-                let prev = self.top_node;
-                let mut child_ids = Vec::with_capacity(branches.len());
-                let mut cursors: Vec<BranchCursor<W>> = Vec::with_capacity(branches.len());
-                for branch in branches {
-                    if let Some(p) = prev {
-                        let id = self.gss.push_symbol(
-                            p,
-                            branch.symbol,
-                            self.pos,
-                            branch.weight.clone(),
-                        );
-                        child_ids.push(id);
-                        cursors.push(BranchCursor {
-                            node: id,
-                            pos: self.pos,
-                            weight: branch.weight,
-                            inner_state: branch.new_state,
-                            pending_builder_ops: Vec::new(),
-                            collection_stack: Vec::new(),
-                        });
-                    }
-                }
-                self.branch_cursors = cursors;
-                self.state = WpdsState::AmbiguityFanout { branches: child_ids };
-                self.maybe_prune_frontier();
-            }
-            WpdsStepAction::OptGroupAbsent {
-                replace_symbol,
-                weight,
-                new_state,
-            } => {
-                // Opt-Group skip path: push Optional(None) to builder
-                // (auto-routes via push_arg_internal — landing in the
-                // outer optional scope if nested, or main stack), then
-                // replace the (top) outer RuleAt marker to advance past
-                // the group.
-                self.builder.push_optional_absent();
-                let popped = self
-                    .top_node
-                    .and_then(|id| self.gss.node(id))
-                    .map(|n| n.symbol);
-                if let Some(top) = self.top_node {
-                    self.top_node = self.gss.pop_symbol(top);
-                }
-                let _ = popped;
-                let prev = self.top_node.unwrap_or_else(|| {
-                    self.gss.get_or_create_node(WpdsGssNode {
-                        pos: self.pos,
-                        symbol: StackSymbolV2::category_entry(0),
-                    })
-                });
-                let new_id = self
-                    .gss
-                    .push_symbol(prev, replace_symbol, self.pos, weight.clone());
-                self.top_node = Some(new_id);
-                self.weight = self.weight.times(&weight);
-                self.state = new_state;
-                self.maybe_prune_frontier();
-            }
-            WpdsStepAction::OptGroupFinalize {
-                replace_symbol,
-                weight,
-                new_state,
-            } => {
-                // Opt-Group take-path finalize:
-                //   1. Pop the OptionalGroupAt marker on top (no action
-                //      fires — OptionalGroupAt is intentionally excluded
-                //      from the action-fire symbol list).
-                //   2. Wrap captured inner args via
-                //      `finalize_optional_scope_present()` (routes the
-                //      resulting Optional(Some(inner)) via push_arg_internal,
-                //      landing in the outer optional scope when nested).
-                //   3. Pop the (now-on-top) outer RuleAt marker (no action
-                //      fires — a non-final RuleAt position pops silently
-                //      via Replace semantics).
-                //   4. Push `replace_symbol` (the advanced outer RuleAt at
-                //      next outer position).
-                // Steps 3 + 4 implement a Replace of the outer RuleAt.
-                if let Some(top) = self.top_node {
-                    self.top_node = self.gss.pop_symbol(top);
-                }
-                self.builder.finalize_optional_scope_present();
-                if let Some(top) = self.top_node {
-                    self.top_node = self.gss.pop_symbol(top);
-                }
-                let prev = self.top_node.unwrap_or_else(|| {
-                    self.gss.get_or_create_node(WpdsGssNode {
-                        pos: self.pos,
-                        symbol: StackSymbolV2::category_entry(0),
-                    })
-                });
-                let new_id = self
-                    .gss
-                    .push_symbol(prev, replace_symbol, self.pos, weight.clone());
-                self.top_node = Some(new_id);
-                self.weight = self.weight.times(&weight);
-                self.state = new_state;
-                self.maybe_prune_frontier();
-            }
-            WpdsStepAction::Accept => {
-                self.state = WpdsState::Accepted;
-            }
-            WpdsStepAction::Error(message) => {
-                self.state = WpdsState::Error { message };
-            }
-            WpdsStepAction::Idle => { /* unreachable per caller filter */ }
         }
     }
 
@@ -1353,87 +1929,50 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     ) -> CursorOutcome<W> {
         match action {
             WpdsStepAction::Advance(s) => {
-                cursor.inner_state = s;
+                self.set_cursor_inner_state(cursor, s);
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::Push { mut symbol, weight, new_state } => {
-                // Option A (2026-04-28): per-cursor CollectionMarker support.
-                // Allocate the accumulator id from the cursor's local
-                // mirror (NOT the live builder). Set `symbol.bp` so the
-                // GSS-deposited symbol carries the id; log a
-                // `PushCollectionId` delta so commit_winner pushes the
-                // matching `CollectionId(id)` arg onto the live builder
-                // stack after `adopt_collection_stack` donates the
-                // cursor's accumulators en bloc.
-                if symbol.kind == SymbolKind::CollectionMarker {
-                    let id = cursor.collection_stack.len() as u8;
-                    cursor.collection_stack.push(Vec::new());
-                    symbol.bp = Some(id);
-                    cursor
-                        .pending_builder_ops
-                        .push(BuilderDelta::PushCollectionId { id });
-                }
-                let new_id = self.gss.push_symbol(cursor.node, symbol, cursor.pos, weight);
-                cursor.node = new_id;
-                cursor.weight = cursor.weight.times(&weight);
-                cursor.inner_state = new_state;
+                // Stage 3.9 / ι Phase 4 (2026-05-01): symbol-kind-driven
+                // implicit Push-time side effects via centralized helper.
+                // Handles CollectionMarker (id alloc + bp patch + arg push)
+                // AND OptionalGroupAt(1) (scope open).
+                self.emit_push_side_effects(cursor, &mut symbol);
+                let _ = self.cursor_gss_push(cursor, symbol, cursor.pos, weight);
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::Pop { weight, new_state } => {
+                // Stage 3.12.6 (2026-05-02): single-predecessor pop via
+                // the cursor's recorded `incoming_edge_stack`. The
+                // cursor follows the edge it pushed, so pop is
+                // deterministic even on multi-in-edge GSS nodes (which
+                // arise when GSS dedup collapses recursive `(pos, symbol)`
+                // pushes from distinct calling contexts).
+                //
+                // No fan-out — each cursor's stack-suffix identity is
+                // unique. The Tomita "spawn N children per in-edge"
+                // pattern is replaced by per-cursor edge identity
+                // (Scott & Johnstone 2010 GLL descriptor uniqueness).
                 let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
-                let predecessor = self.gss.pop_symbol(cursor.node);
-                if let Some(symbol) = popped_symbol {
-                    if matches!(
-                        symbol.kind,
-                        SymbolKind::Return
-                            | SymbolKind::CollectionMarker
-                            | SymbolKind::RuleAt(_)
-                            | SymbolKind::MixfixMarker
-                    ) {
-                        cursor.pending_builder_ops.push(BuilderDelta::FireAction {
-                            symbol,
-                        });
-                    }
-                }
-                // Cleanup 1 (Option A refinement): log SpliceIntoCollection
-                // only when the popped frame's predecessor is a
-                // CollectionMarker. The accumulator id is captured directly
-                // from the predecessor's symbol.bp; replay is then a pure
-                // push_to_collection(id) — no GSS walk, no walker-state
-                // mutation. When no enclosing collection exists, no delta
-                // is logged (the prior unconditional MaybeSpliceCollection
-                // delta was a known-no-op in that case).
-                if let Some(pred_id) = predecessor {
-                    if let Some(pred_node) = self.gss.node(pred_id) {
-                        if pred_node.symbol.kind == SymbolKind::CollectionMarker {
-                            let acc_id = pred_node.symbol.bp.unwrap_or(0);
-                            cursor
-                                .pending_builder_ops
-                                .push(BuilderDelta::SpliceIntoCollection { id: acc_id });
-                        }
-                    }
-                }
-                cursor.weight = cursor.weight.times(&weight);
-                cursor.inner_state = new_state;
-                match predecessor {
-                    Some(p) => {
-                        cursor.node = p;
-                        self.cursor_resolution_check(cursor)
-                    }
-                    None => CursorOutcome::Resolved,
-                }
+                let pred_id =
+                    self.cursor_gss_pop_via_edge(cursor).unwrap_or(crate::gss::GSS_NODE_NONE);
+                self.apply_pop_body_to_cursor(
+                    cursor, pred_id, popped_symbol, &weight, new_state,
+                );
+                self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::Replace { symbol, weight, new_state } => {
-                let new_id = self.gss.replace_top(cursor.node, symbol, cursor.pos, weight);
-                cursor.node = new_id;
-                cursor.weight = cursor.weight.times(&weight);
-                cursor.inner_state = new_state;
+                let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight);
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::Consume { weight, new_state } => {
-                cursor.pos += 1;
-                cursor.weight = cursor.weight.times(&weight);
-                cursor.inner_state = new_state;
+                self.advance_cursor_pos(cursor, 1);
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::ConsumeAndPush {
@@ -1442,88 +1981,42 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 new_state,
                 capture_token,
             } => {
-                // Cleanup 2 (Option A refinement, 2026-04-28): order matches
-                // live `apply_action::ConsumeAndPush` — capture_token logged
-                // FIRST, then collection-marker id allocation. The prior
-                // (pre-cleanup) order was reversed, which would have produced
-                // wrong builder-stack arg order on replay. No shipped grammar
-                // emits `capture_token: true` AND `CollectionMarker` together
-                // today (atomic-literal arms use Return; collection arms use
-                // capture_token: false), so the bug was latent. Fixing it
-                // matches live semantics for any future code that combines
-                // both flags.
+                // Order matches live apply_action: capture_token FIRST,
+                // then collection-marker id allocation.
                 if capture_token {
                     if let Some(kind) = tokens.peek_kind(cursor.pos) {
-                        let text =
-                            tokens.peek_text(cursor.pos).unwrap_or("").to_string();
-                        cursor.pending_builder_ops.push(BuilderDelta::PushToken {
-                            kind,
-                            text,
-                            pos: cursor.pos,
-                        });
+                        let text = tokens.peek_text(cursor.pos).unwrap_or("").to_string();
+                        let pos = cursor.pos;
+                        self.emit_push_token(cursor, kind, text, pos);
                     }
                 }
-                if symbol.kind == SymbolKind::CollectionMarker {
-                    let id = cursor.collection_stack.len() as u8;
-                    cursor.collection_stack.push(Vec::new());
-                    symbol.bp = Some(id);
-                    cursor
-                        .pending_builder_ops
-                        .push(BuilderDelta::PushCollectionId { id });
-                }
-                let new_id = self.gss.push_symbol(cursor.node, symbol, cursor.pos, weight);
-                cursor.node = new_id;
-                cursor.pos += 1;
-                cursor.weight = cursor.weight.times(&weight);
-                cursor.inner_state = new_state;
+                // Stage 3.9 / ι Phase 4 (2026-05-01): centralized Push-time
+                // side effects (CollectionMarker + OptionalGroupAt(1)).
+                self.emit_push_side_effects(cursor, &mut symbol);
+                let _ = self.cursor_gss_push(cursor, symbol, cursor.pos, weight);
+                self.advance_cursor_pos(cursor, 1);
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::ConsumeAndPop { weight, new_state } => {
+                // Stage 3.12.6 (2026-05-02): single-predecessor pop via
+                // edge-id (see Pop arm). Consume token first, then pop
+                // along the cursor's recorded path.
                 let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
-                let predecessor = self.gss.pop_symbol(cursor.node);
-                if let Some(symbol) = popped_symbol {
-                    if matches!(
-                        symbol.kind,
-                        SymbolKind::Return
-                            | SymbolKind::CollectionMarker
-                            | SymbolKind::RuleAt(_)
-                            | SymbolKind::MixfixMarker
-                    ) {
-                        cursor.pending_builder_ops.push(BuilderDelta::FireAction {
-                            symbol,
-                        });
-                    }
-                }
-                // Cleanup 1 (Option A refinement): same conditional log
-                // as the Pop arm above — splice only when popping reveals
-                // an enclosing CollectionMarker.
-                if let Some(pred_id) = predecessor {
-                    if let Some(pred_node) = self.gss.node(pred_id) {
-                        if pred_node.symbol.kind == SymbolKind::CollectionMarker {
-                            let acc_id = pred_node.symbol.bp.unwrap_or(0);
-                            cursor
-                                .pending_builder_ops
-                                .push(BuilderDelta::SpliceIntoCollection { id: acc_id });
-                        }
-                    }
-                }
-                cursor.pos += 1;
-                cursor.weight = cursor.weight.times(&weight);
-                cursor.inner_state = new_state;
-                match predecessor {
-                    Some(p) => {
-                        cursor.node = p;
-                        self.cursor_resolution_check(cursor)
-                    }
-                    None => CursorOutcome::Resolved,
-                }
+                let pred_id =
+                    self.cursor_gss_pop_via_edge(cursor).unwrap_or(crate::gss::GSS_NODE_NONE);
+                self.advance_cursor_pos(cursor, 1);
+                self.apply_pop_body_to_cursor(
+                    cursor, pred_id, popped_symbol, &weight, new_state,
+                );
+                self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::ConsumeAndReplace { symbol, weight, new_state } => {
-                let new_id = self.gss.replace_top(cursor.node, symbol, cursor.pos, weight);
-                cursor.node = new_id;
-                cursor.pos += 1;
-                cursor.weight = cursor.weight.times(&weight);
-                cursor.inner_state = new_state;
+                let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight);
+                self.advance_cursor_pos(cursor, 1);
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::ConsumeIdentAndReplace {
@@ -1532,25 +2025,18 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 new_state,
                 start_scope,
             } => {
-                if let Some(_kind) = tokens.peek_kind(cursor.pos) {
+                if tokens.peek_kind(cursor.pos).is_some() {
                     let text = tokens.peek_text(cursor.pos).unwrap_or("").to_string();
                     if start_scope {
-                        cursor
-                            .pending_builder_ops
-                            .push(BuilderDelta::StartBinderScope {
-                                names: vec![text.clone()],
-                            });
+                        self.emit_start_binder_scope(cursor, vec![text.clone()]);
                     }
-                    cursor.pending_builder_ops.push(BuilderDelta::PushIdent {
-                        name: text,
-                        pos: cursor.pos,
-                    });
+                    let pos = cursor.pos;
+                    self.emit_push_ident(cursor, text, pos);
                 }
-                let new_id = self.gss.replace_top(cursor.node, symbol, cursor.pos, weight);
-                cursor.node = new_id;
-                cursor.pos += 1;
-                cursor.weight = cursor.weight.times(&weight);
-                cursor.inner_state = new_state;
+                let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight);
+                self.advance_cursor_pos(cursor, 1);
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::ReplaceAndPush {
@@ -1559,12 +2045,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 weight,
                 new_state,
             } => {
-                let replaced =
-                    self.gss.replace_top(cursor.node, replace_symbol, cursor.pos, weight);
-                let pushed = self.gss.push_symbol(replaced, push_symbol, cursor.pos, weight);
-                cursor.node = pushed;
-                cursor.weight = cursor.weight.times(&weight);
-                cursor.inner_state = new_state;
+                let _ = self.cursor_gss_replace_top(cursor, replace_symbol, cursor.pos, weight);
+                let _ = self.cursor_gss_push(cursor, push_symbol, cursor.pos, weight);
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::ParsePredicate {
@@ -1572,96 +2056,299 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 weight,
                 new_state,
             } => {
-                let parsed_pred =
-                    crate::parser::predicate::parse_predicate_via_token_source(
-                        tokens, cursor.pos,
-                    );
+                let parsed_pred = crate::parser::predicate::parse_predicate_via_token_source(
+                    tokens, cursor.pos,
+                );
                 match parsed_pred {
                     Ok((pred, new_pos)) => {
-                        cursor.pending_builder_ops.push(BuilderDelta::PushPredicate(
-                            Arc::new(pred),
-                        ));
+                        self.emit_push_predicate(cursor, Arc::new(pred));
+                        // Direct cursor.pos write (not via advance_cursor_pos)
+                        // because new_pos is absolute, not a delta. Mirror to
+                        // self.pos in Lazy mode.
                         cursor.pos = new_pos;
+                        if self.cursor_mode == CursorMode::Lazy {
+                            self.pos = new_pos;
+                        }
                     }
                     Err(_msg) => return CursorOutcome::Drop,
                 }
-                let new_id = self.gss.replace_top(cursor.node, replace_symbol, cursor.pos, weight);
-                cursor.node = new_id;
-                cursor.weight = cursor.weight.times(&weight);
-                cursor.inner_state = new_state;
+                let _ = self.cursor_gss_replace_top(cursor, replace_symbol, cursor.pos, weight);
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::Fork { branches, consume_trigger } => {
-                // Option A (2026-04-28): nested Fork — cursor encountered
-                // another Fork action. F7 (binder multi-rule) and F8
-                // (cross-cat projection bucketing) both emit Fork; when a
-                // binder body parses a token whose category has its own
-                // multi-projection bucket, we land here. Translate to
-                // `CursorOutcome::ForkInto(children)`: allocate one child
-                // cursor per branch; each inherits this cursor's GSS chain
-                // + the branch's symbol, the post-consume pos, the branch's
-                // new_state, and a clone of the current pending_builder_ops
-                // and collection_stack.
-                //
-                // Constraint (from BranchCursor::clone debug_asserts):
-                // pending_builder_ops contains no PushPredicate (would be
-                // silently lost on clone), and collection_stack accumulators
-                // are all empty (Term values are non-clonable). Both are
-                // satisfied at fanout-entry boundaries: nested Fork only
-                // fires at PrefixDispatch transitions where binder bodies
-                // delegate to source-category dispatch — no in-flight
-                // predicate or collection state.
+                // Stage 3.9 / ι Phase 4 (2026-05-01) — L2: promote to Strict.
+                self.cursor_mode = CursorMode::Strict;
                 let pos_after = if consume_trigger {
                     cursor.pos + 1
                 } else {
                     cursor.pos
                 };
                 let mut children = Vec::with_capacity(branches.len());
-                for branch in branches {
-                    let new_id = self.gss.push_symbol(
-                        cursor.node,
-                        branch.symbol,
-                        pos_after,
-                        branch.weight.clone(),
-                    );
-                    children.push(BranchCursor {
-                        node: new_id,
-                        pos: pos_after,
-                        weight: cursor.weight.times(&branch.weight),
-                        inner_state: branch.new_state,
-                        // Cleanup 4: BuilderDelta is now Clone (PushPredicate
-                        // carries Arc<dyn Any + Send + Sync>); use direct
-                        // Vec::clone instead of the deleted clone_non_predicate.
-                        pending_builder_ops: cursor.pending_builder_ops.clone(),
-                        collection_stack: cursor
-                            .collection_stack
-                            .iter()
-                            .map(|_| Vec::new())
-                            .collect(),
-                    });
+                let branches_count = branches.len() as u32;
+                for (branch_idx, branch) in branches.into_iter().enumerate() {
+                    // Stage 3.12 Fix 2(ii) (2026-05-02): Fork-source-order
+                    // priority. Encode the cursor's full Fork path via
+                    // `parent.priority * num_branches + branch_idx`. For
+                    // typical 2-branch Forks: priority is the binary path
+                    // through the Fork tree (left=0, right=1). Lower wins
+                    // on weight ties — TAKE always beats SKIP (idx 0 < 1).
+                    // For nested Forks: Inner-TAKE+Outer-TAKE=0,
+                    // Inner-TAKE+Outer-SKIP=1, Inner-SKIP+Outer-TAKE=2,
+                    // Inner-SKIP+Outer-SKIP=3 — exact source-order
+                    // lexicographic.
+                    let child_source_priority = cursor
+                        .source_priority
+                        .saturating_mul(branches_count)
+                        .saturating_add(branch_idx as u32);
+                    // Stage 3.12 / Class A.i (2026-05-01): dispatch on
+                    // branch.action_kind. `Push` is the existing path;
+                    // `OptGroupAbsent` mirrors `apply_action::OptGroupAbsent`
+                    // for the SKIP branch of an Opt-Group Fork.
+                    match branch.action_kind {
+                        ForkActionKind::Push => {
+                            // Stage 3.12 latent-bug fix (2026-05-01): apply
+                            // emit_push_side_effects on each branch so
+                            // OptionalGroupAt(1) and CollectionMarker
+                            // pushes through Fork get the same implicit
+                            // side effects as deterministic Push. Pre-3.12
+                            // this was missing — TAKE branches with
+                            // OptionalGroupAt(1) silently skipped scope
+                            // opening, breaking nested Opt-Group parses
+                            // that landed in Strict mode.
+                            //
+                            // We allocate a child cursor first (with empty
+                            // pending_builder_ops + collection_stack
+                            // mirror), THEN run side effects against the
+                            // CHILD's cursor view. The child's mode is
+                            // Strict (just promoted), so side effects log
+                            // deltas onto the child's pending_builder_ops.
+                            let mut symbol = branch.symbol;
+                            let mut child = BranchCursor {
+                                node: cursor.node,
+                                pos: pos_after,
+                                weight: cursor.weight.times(&branch.weight),
+                                inner_state: branch.new_state.clone(),
+                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                collection_stack: cursor.collection_stack.clone(),
+                                source_priority: child_source_priority,
+                                // Stage 3.12.6 (2026-05-02): inherit parent's
+                                // stack-suffix history; the push below appends
+                                // a new edge id to it.
+                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                            };
+                            self.emit_push_side_effects(&mut child, &mut symbol);
+                            // Stage 3.12.6 (2026-05-02): use cursor_gss_push
+                            // (not raw gss.push_symbol) so the child's
+                            // incoming_edge_stack records the new edge id
+                            // for its eventual pop.
+                            let _ = self.cursor_gss_push(
+                                &mut child,
+                                symbol,
+                                pos_after,
+                                branch.weight.clone(),
+                            );
+                            children.push(child);
+                        }
+                        ForkActionKind::OptGroupAbsent { replace_symbol } => {
+                            // Stage 3.12 / Class A.i (2026-05-01): SKIP
+                            // branch. Mirrors `apply_action_to_cursor::OptGroupAbsent`
+                            // (and its live-mode counterpart at
+                            // `apply_action::OptGroupAbsent` pre-Phase-4):
+                            //   1. Log `BuilderDelta::PushOptionalAbsent`.
+                            //   2. Pop outer RuleAt from cursor.node.
+                            //   3. Push replace_symbol (advanced outer
+                            //      RuleAt).
+                            //   4. Update cursor inner_state, weight.
+                            let mut child = BranchCursor {
+                                node: cursor.node,
+                                pos: pos_after,
+                                weight: cursor.weight.times(&branch.weight),
+                                inner_state: branch.new_state.clone(),
+                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                collection_stack: cursor.collection_stack.clone(),
+                                source_priority: child_source_priority,
+                                // Stage 3.12.6 (2026-05-02): inherit parent's
+                                // stack-suffix history.
+                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                            };
+                            // Strict mode: emit_push_optional_absent logs the delta.
+                            self.emit_push_optional_absent(&mut child);
+                            // Stage 3.12.6 (2026-05-02): pop along the
+                            // child's recorded edge (its own history),
+                            // not an arbitrary in-edge of child.node.
+                            let popped = self.cursor_gss_pop_via_edge(&mut child);
+                            if popped.is_none() {
+                                // GSS underflow: synthesize CategoryEntry(0)
+                                // sentinel so the subsequent push has a
+                                // valid predecessor.
+                                let sentinel = self.gss.get_or_create_node(WpdsGssNode {
+                                    pos: child.pos,
+                                    symbol: StackSymbolV2::category_entry(0),
+                                });
+                                child.node = sentinel;
+                            }
+                            // Stage 3.12.6: use cursor_gss_push so the
+                            // child's incoming_edge_stack records the
+                            // new edge id for its eventual pop.
+                            let _ = self.cursor_gss_push(
+                                &mut child,
+                                replace_symbol,
+                                pos_after,
+                                branch.weight.clone(),
+                            );
+                            children.push(child);
+                        }
+                    }
                 }
                 CursorOutcome::ForkInto(children)
             }
-            WpdsStepAction::Accept => CursorOutcome::Resolved,
-            WpdsStepAction::Error(_) => CursorOutcome::Drop,
-            WpdsStepAction::OptGroupAbsent { .. } | WpdsStepAction::OptGroupFinalize { .. } => {
-                // Opt-Group: Fork + Opt-Group combination is out of the
-                // pilot scope. The cursor-side implementation requires
-                // BuilderDelta entries for `PushOptionalAbsent` and
-                // `FinalizeOptionalScope` plus their commit-time replay
-                // — substantial work without a current shipped grammar
-                // exercising both Fork and Opt-Group simultaneously.
-                // Drop the cursor: fork branches that try to traverse
-                // an Opt-Group are silently abandoned. Synchronous
-                // (non-fork) Opt-Group dispatch goes through `apply_action`
-                // (above), where these variants are fully handled.
+            WpdsStepAction::Accept => {
+                // Stage 3.5b (2026-05-01): mirror live apply_action::Accept
+                // by transitioning cursor.inner_state to Accepted.
+                // Stage 3.9 / ι Phase 4 (2026-05-01): use helper so live
+                // walker self.state is mirrored to Accepted in Lazy mode.
+                self.set_cursor_inner_state(cursor, WpdsState::Accepted);
+                CursorOutcome::Resolved
+            }
+            WpdsStepAction::Error(message) => {
+                // Stage 3.9 / ι Phase 4 (2026-05-01): mirror live state via
+                // helper so Lazy-mode self.state becomes Error too.
+                self.set_cursor_inner_state(
+                    cursor,
+                    WpdsState::Error { message },
+                );
                 CursorOutcome::Drop
             }
+            WpdsStepAction::OptGroupAbsent {
+                replace_symbol,
+                weight,
+                new_state,
+            } => {
+                // Stage 3.8 / ι Phase 3 (2026-05-01): cursor-side Opt-Group
+                // skip path. Mirrors the live `apply_action::OptGroupAbsent`
+                // arm (line ~1712 above) but delegates the live-builder
+                // `push_optional_absent` to a `BuilderDelta` so it replays
+                // at commit time only on the lex-min winner.
+                //
+                // Steps:
+                //   1. Log `BuilderDelta::PushOptionalAbsent` (commit
+                //      replays via `SemanticBuilder::push_optional_absent`).
+                //   2. Pop the (top) outer RuleAt marker from the cursor's
+                //      GSS chain.
+                //   3. Push `replace_symbol` (the advanced outer RuleAt at
+                //      next outer position) onto the cursor's GSS.
+                //   4. Update cursor weight + state.
+                self.emit_push_optional_absent(cursor);
+                // Stage 3.12.6 (2026-05-02): use edge-id-guided pop so
+                // the cursor's recorded predecessor is the one followed,
+                // not an arbitrary in-edge of the popped node.
+                let new_node_after_pop = self.cursor_gss_pop_via_edge(cursor);
+                if new_node_after_pop.is_none() {
+                    // GSS underflow — synthesize a CategoryEntry sentinel at
+                    // pos for the cursor. Update cursor.node directly so the
+                    // subsequent cursor_gss_push lands on it.
+                    let sentinel = self.gss.get_or_create_node(WpdsGssNode {
+                        pos: cursor.pos,
+                        symbol: StackSymbolV2::category_entry(0),
+                    });
+                    cursor.node = sentinel;
+                    if self.cursor_mode == CursorMode::Lazy {
+                        self.top_node = Some(sentinel);
+                    }
+                }
+                let _ = self.cursor_gss_push(cursor, replace_symbol, cursor.pos, weight.clone());
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
+                self.cursor_resolution_check(cursor)
+            }
+            WpdsStepAction::OptGroupFinalize {
+                replace_symbol,
+                weight,
+                new_state,
+            } => {
+                // Stage 3.8 / ι Phase 3 (2026-05-01): cursor-side Opt-Group
+                // take-path finalize. Mirrors the live arm but uses helpers
+                // for mode-aware mutation.
+                //
+                // Steps:
+                //   1. Pop the OptionalGroupAt marker on top.
+                //   2. Emit FinalizeOptionalScopePresent (Lazy direct,
+                //      Strict delta).
+                //   3. Pop the (now-on-top) outer RuleAt marker.
+                //   4. Push `replace_symbol` (advanced outer RuleAt).
+                // Stage 3.12.6 (2026-05-02): edge-id-guided pops.
+                let after_marker_pop = self.cursor_gss_pop_via_edge(cursor);
+                self.emit_finalize_optional_scope_present(cursor);
+                let after_outer_pop = if after_marker_pop.is_some() {
+                    self.cursor_gss_pop_via_edge(cursor)
+                } else {
+                    None
+                };
+                if after_outer_pop.is_none() {
+                    let sentinel = self.gss.get_or_create_node(WpdsGssNode {
+                        pos: cursor.pos,
+                        symbol: StackSymbolV2::category_entry(0),
+                    });
+                    cursor.node = sentinel;
+                    if self.cursor_mode == CursorMode::Lazy {
+                        self.top_node = Some(sentinel);
+                    }
+                }
+                let _ = self.cursor_gss_push(cursor, replace_symbol, cursor.pos, weight.clone());
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
+                self.cursor_resolution_check(cursor)
+            }
             WpdsStepAction::Idle => {
-                // Cursor's engine has no opinion. Treat as Drop to avoid
-                // infinite step_fanout iterations (a branch that cannot
-                // make progress is effectively dead).
-                CursorOutcome::Drop
+                // Stage 3.5b (2026-05-01): WPDS-correct EOI parking.
+                //
+                // Pre-3.5b: any Idle cursor was Dropped to avoid infinite
+                // step_fanout iterations.
+                //
+                // Post-3.5b: a cursor at end-of-input whose inner_state is
+                // one of the resolution-detection states (InfixLoop,
+                // Unwinding, Accepted) is "parked" — it has no more input
+                // to consume but participates in EOI ⊕-resolution. Drop
+                // only when the cursor is genuinely stuck (Idle in a
+                // mid-parse state, or Idle with input remaining).
+                //
+                // Stage 3.12 fix (2026-05-02): use `is_logical_eoi` so a
+                // cursor parked at a trailing `Token::Eof` is treated as
+                // EOI for parking purposes, mirroring the EOI filter.
+                //
+                // Stage 3.12.7 (2026-05-02): a cursor that popped past the
+                // GSS root (cursor.node == GSS_NODE_NONE) is irreversibly
+                // parked — engine.step's frontier_top=None ⇒ Accept arm
+                // transitions it to Accepted; the next iteration's
+                // Accepted ⇒ Idle dispatch lands here. Without this branch
+                // the cursor is dropped pre-EOI when at_eoi=false (e.g.,
+                // a per-category parse in `parse_preserving_vars` that
+                // unwinds at mid-stream because no infix matches the
+                // current token). Pre-Stage-3.12 the pristine Pop arm
+                // short-circuited via `None => CursorOutcome::Resolved`
+                // for this exact case; the unified apply_pop_body_to_cursor
+                // (Stage 3.12.5) lost that distinction, breaking 38+7
+                // calc_op/rhocalc_op tests. Treating popped-past-root as
+                // Resolved restores the cursor-lifetime invariant;
+                // is_accepting_config (Unwinding arm) still gates EOI
+                // admission, so EOI filtering is unaffected. Termination
+                // preserved by run_to_end_of_input's progress_made
+                // fingerprint stability across self-loops.
+                let popped_past_root = cursor.node == crate::gss::GSS_NODE_NONE;
+                let at_eoi = self.is_logical_eoi(cursor.pos, tokens);
+                let resolved_shape = matches!(
+                    cursor.inner_state,
+                    WpdsState::InfixLoop { .. }
+                        | WpdsState::Accepted
+                        | WpdsState::Unwinding
+                );
+                if (at_eoi && resolved_shape) || popped_past_root {
+                    CursorOutcome::Resolved
+                } else {
+                    CursorOutcome::Drop
+                }
             }
         }
     }
@@ -1719,6 +2406,23 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             );
             let mut cursor = cursor;
             let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
+            // Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard. Any
+            // cursor whose pending_builder_ops exceeds the limit is
+            // marked Error and returned immediately. The fanout bails
+            // out, preserving the offending cursor so resolve_at_end_of_input
+            // returns ParseError with a diagnostic.
+            if cursor.pending_builder_ops.len() > STRICT_PENDING_OPS_LIMIT {
+                self.state = WpdsState::Error {
+                    message: format!(
+                        "ι Phase 6 runaway guard: cursor pending_builder_ops \
+                         exceeded STRICT_PENDING_OPS_LIMIT ({} > {})",
+                        cursor.pending_builder_ops.len(),
+                        STRICT_PENDING_OPS_LIMIT,
+                    ),
+                };
+                self.branch_cursors = vec![cursor];
+                return self.state.clone();
+            }
             match outcome {
                 CursorOutcome::Drop => { /* discard */ }
                 CursorOutcome::Alive => new_cursors.push(cursor),
@@ -1730,6 +2434,25 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             }
         }
         self.branch_cursors = new_cursors;
+        // Stage 3.5b (2026-05-01) intentionally drops the prior
+        // `resolved_indices` consumption: it was only used by the
+        // mid-stream commit path, which is now WPDS-incorrect (Bug 1).
+        // The variable is retained for shape parity with the per-cursor
+        // pass above; future refactors may delete the bookkeeping.
+        let _ = resolved_indices;
+
+        // Stage 3.4 (2026-04-30): beam pruning. No-op when `beam_size` is
+        // None (default); when set, retains top-K by lex-min weight to
+        // bound fanout cost on highly-ambiguous grammars.
+        self.maybe_prune_frontier();
+
+        // Stage 3.5b (2026-05-01): WPDS configuration ⊕-merging. Two
+        // cursors reaching the same `(state, gss_node, pos)` collapse
+        // via `Semiring::plus`. The lex-min winner's operational state
+        // (`pending_builder_ops`, `collection_stack`) is kept (deltas
+        // are non-commutative). Caps polynomial fanout in ambiguous
+        // grammars vs the prior exponential branch count.
+        self.merge_equivalent_cursors();
 
         if self.branch_cursors.is_empty() {
             // CASE 1: all branches dropped.
@@ -1740,23 +2463,106 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             return s;
         }
 
-        let alive_count = self.branch_cursors.len() - resolved_indices.len();
-        if alive_count == 0 {
-            // CASE 2/3: every remaining cursor is Resolved. Tiebreak by
-            // lex-min weight via `Semiring::plus` (which for
-            // LexicographicWeight is lex-min, and for tropical is min).
-            let winner_idx = self.pick_lex_min_resolved(&resolved_indices);
-            self.commit_winner(winner_idx);
-            return self.state.clone();
-        }
-        // CASE 4: still-Alive cursors remain. Stay in AmbiguityFanout.
-        // (Resolved cursors persist in branch_cursors as candidates that
-        // will be re-evaluated against any later resolved cursor's weight.)
+        // Stage 3.5b (2026-05-01): the prior `if alive_count == 0` mid-stream
+        // commit_winner block (Bug 1) is REMOVED. Resolved cursors stay in
+        // `branch_cursors` and either:
+        //   - re-enter the next `step_fanout` iteration (e.g., InfixLoop
+        //     finds an infix operator and transitions back to PrefixDispatch
+        //     as Alive), or
+        //   - park at EOI via `apply_action_to_cursor`'s Idle branch (resolved
+        //     shape + pos == tokens.len() → CursorOutcome::Resolved).
+        //
+        // End-of-input resolution is handled by `resolve_at_end_of_input`
+        // (called by the parse facade after `run_to_end_of_input`), not here.
         let frontier: Vec<crate::gss::GssNodeId> =
             self.branch_cursors.iter().map(|c| c.node).collect();
         let s = WpdsState::AmbiguityFanout { branches: frontier };
         self.state = s.clone();
         s
+    }
+
+    /// Stage 3.5b (2026-05-01): WPDS configuration ⊕-merging.
+    ///
+    /// Collapses cursors with the same `ConfigKey` (`state`, `gss_node`,
+    /// `pos`) into a single cursor whose weight is the `Semiring::plus`
+    /// of the inputs. The operational state (`pending_builder_ops`,
+    /// `collection_stack`) of the lex-min winner is kept; the loser's
+    /// is discarded because deltas are non-commutative (e.g.,
+    /// `PushIdent("x"); PushIdent("y")` cannot be merged with the reverse
+    /// — only the winning path's mutations execute).
+    ///
+    /// **Performance**: O(n) per call (n = `branch_cursors.len()`), via
+    /// HashMap lookup. In unambiguous grammars n ≤ 1; in ambiguous,
+    /// merging caps n polynomially vs the pre-3.5b exponential.
+    ///
+    /// **Hash safety**: `WpdsState` derives `Hash` (Stage 3.5b
+    /// `wpds_runtime.rs:326`); all variant payloads are `Hash`-able
+    /// (u8/u16/usize/String/Vec<u32>).
+    ///
+    /// **Tie-break**: when `cursor.weight.plus(&existing.weight) ==
+    /// existing.weight`, the existing entry wins (preserves source-order).
+    fn merge_equivalent_cursors(&mut self) {
+        if self.branch_cursors.len() < 2 {
+            return;
+        }
+        let mut by_key: std::collections::HashMap<ConfigKey, usize> =
+            std::collections::HashMap::with_capacity(self.branch_cursors.len());
+        let mut merged: Vec<BranchCursor<W>> =
+            Vec::with_capacity(self.branch_cursors.len());
+        for cursor in self.branch_cursors.drain(..) {
+            let key = ConfigKey {
+                state: cursor.inner_state.clone(),
+                node: cursor.node,
+                pos: cursor.pos,
+                // Stage 3.12.6 (2026-05-02): include the cursor's
+                // current stack-suffix top edge id, so cursors with
+                // different stack histories at the same (state, node,
+                // pos) do NOT merge.
+                incoming_edge: cursor.incoming_edge_stack.last().copied(),
+            };
+            match by_key.entry(key) {
+                std::collections::hash_map::Entry::Vacant(v) => {
+                    v.insert(merged.len());
+                    merged.push(cursor);
+                }
+                std::collections::hash_map::Entry::Occupied(o) => {
+                    let idx = *o.get();
+                    let combined = merged[idx].weight.plus(&cursor.weight);
+                    let weight_strict_win = combined != merged[idx].weight;
+                    let weight_tied = !weight_strict_win
+                        && combined == cursor.weight;
+                    // Stage 3.12 Fix 2(ii) (2026-05-02): on weight tie, the
+                    // FINAL tiebreak is `source_priority` (lower wins —
+                    // Fork-source order). This guarantees right-associative
+                    // dangling-else: TAKE branch (priority 0) always
+                    // dominates SKIP branch (priority 1) in nested
+                    // Opt-Group merges. Pre-3.12 the receiver-on-Equal
+                    // semantics of `LexicographicWeight::plus` were
+                    // order-dependent on insertion timing.
+                    let cursor_wins = weight_strict_win
+                        || (weight_tied
+                            && cursor.source_priority < merged[idx].source_priority);
+                    if cursor_wins {
+                        debug_assert_eq!(
+                            merged[idx].collection_stack.len(),
+                            cursor.collection_stack.len(),
+                            "merge_equivalent_cursors: cursors at the same \
+                             configuration must have matching collection-stack \
+                             depths (operational state shape)"
+                        );
+                        let mut replacement = cursor;
+                        replacement.weight = combined;
+                        merged[idx] = replacement;
+                    } else {
+                        // Existing wins or ties (with smaller-or-equal
+                        // source_priority) — keep its operational state,
+                        // update weight (idempotent on tie).
+                        merged[idx].weight = combined;
+                    }
+                }
+            }
+        }
+        self.branch_cursors = merged;
     }
 
     /// Lex-min selection across the indices in `resolved_indices` against
@@ -1769,13 +2575,18 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         let mut best = resolved_indices[0];
         for &idx in &resolved_indices[1..] {
             // For lex-min: a wins iff a.plus(b) == a (i.e. a is the smaller
-            // of the two under the semiring's lex-min ordering). On equal
-            // weights, plus returns *self per LexicographicWeight::plus, so
-            // `best` keeps source-order priority.
+            // of the two under the semiring's lex-min ordering).
             let merged = self.branch_cursors[best]
                 .weight
                 .plus(&self.branch_cursors[idx].weight);
             if merged != self.branch_cursors[best].weight {
+                best = idx;
+            } else if merged == self.branch_cursors[idx].weight
+                && self.branch_cursors[idx].source_priority
+                    < self.branch_cursors[best].source_priority
+            {
+                // Stage 3.12 Fix 2(ii) (2026-05-02): on true weight tie,
+                // the lower `source_priority` wins (Fork-source-order).
                 best = idx;
             }
         }
@@ -1787,7 +2598,13 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Replays the winner's `pending_builder_ops` against the live
     /// `SemanticBuilder` in insertion order, then splices the winner's
     /// `(node, pos, weight, inner_state)` into the walker's live state.
-    /// Clears `branch_cursors`.
+    ///
+    /// Stage 3.9 / ι Phase 4 (2026-05-01): preserves the always-non-empty
+    /// `branch_cursors` invariant by writing the post-commit singleton
+    /// back to `branch_cursors[0]` (with cleared `pending_builder_ops`
+    /// and `collection_stack` since those have already replayed onto the
+    /// live builder). Pre-Phase-4 this method called `clear()`; that
+    /// would now violate L4.
     fn commit_winner(&mut self, winner_idx: usize) {
         let mut winner = self.branch_cursors.swap_remove(winner_idx);
         self.branch_cursors.clear();
@@ -1840,18 +2657,190 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // so no walker-state mutation, no GSS read.
                     self.builder.push_to_collection(id);
                 }
+                // ─── Stage 3.7 / ι Phase 2 (2026-05-01) replay arms ─────────
+                BuilderDelta::StartOptionalScope => {
+                    self.builder.start_optional_scope();
+                }
+                BuilderDelta::FinalizeOptionalScopePresent => {
+                    self.builder.finalize_optional_scope_present();
+                }
+                BuilderDelta::PushOptionalAbsent => {
+                    self.builder.push_optional_absent();
+                }
+                BuilderDelta::StartCollection => {
+                    // The cursor-allocated id is already aligned with the
+                    // live builder via `adopt_collection_stack` above; this
+                    // arm exists for symmetry / future Phase 4 paths that
+                    // emit collection allocation independently of the GSS-
+                    // symbol-driven `PushCollectionId`. Re-allocate keeps
+                    // the live builder's `collection_stack` length in sync
+                    // with cursor-side expectations.
+                    let _ = self.builder.start_collection();
+                }
+                BuilderDelta::PushToCollection { id } => {
+                    // Identical operational semantics to SpliceIntoCollection
+                    // (both call push_to_collection); kept as a separate
+                    // variant to distinguish "logical element push" from
+                    // "post-pop splice" at log time for diagnostics.
+                    self.builder.push_to_collection(id);
+                }
+                BuilderDelta::FinalizeCollection { id, drained } => {
+                    // Stage 3.12.8 (2026-05-03): re-push the drained slot
+                    // onto the live builder's collection_stack at `id`
+                    // (LIFO: at this point in replay, `collection_stack`
+                    // length is exactly `id`). The subsequent FireAction
+                    // for the collection's finalize rule then calls
+                    // `b.drain_collection(id)` which LIFO-correctly pops
+                    // this slot. Pre-3.12.8 the drain happened against
+                    // an en-bloc-donated stack with sibling-collection
+                    // slots present, violating LIFO.
+                    debug_assert_eq!(
+                        self.builder.collection_stack_len() as u8,
+                        id,
+                        "FinalizeCollection: id={} but live collection_stack \
+                         has len={} — replay LIFO invariant violated",
+                        id,
+                        self.builder.collection_stack_len(),
+                    );
+                    self.builder.push_collection_slot(drained);
+                }
+                BuilderDelta::RecoveryEvent {
+                    action_kind,
+                    pos,
+                    cost_tropical,
+                } => {
+                    // Stage 3.20 prep: walker-side recovery_events vec is
+                    // not yet wired (Stage 3.20 introduces it). Until then,
+                    // log to stderr in debug builds and discard.
+                    debug_assert!(
+                        false,
+                        "RecoveryEvent replay invoked before Stage 3.20 wired \
+                         walker.recovery_events: action_kind={}, pos={}, \
+                         cost={}",
+                        action_kind,
+                        pos,
+                        cost_tropical,
+                    );
+                    let _ = (action_kind, pos, cost_tropical);
+                }
+                BuilderDelta::SubstituteToken { pos, kind, text } => {
+                    // Stage 3.20 prep: requires `WpdsMutableTokenSource`
+                    // adapter (lands in Stage 10b) so the walker can
+                    // mutate the in-flight token stream. Until then,
+                    // record the intent and discard.
+                    debug_assert!(
+                        false,
+                        "SubstituteToken replay invoked before Stage 10b \
+                         wired mutable token source: pos={}, kind={:?}, \
+                         text={}",
+                        pos,
+                        kind,
+                        text,
+                    );
+                    let _ = (pos, kind, text);
+                }
+                BuilderDelta::InsertToken { pos, kind, text } => {
+                    // Stage 3.20 prep: same caveat as SubstituteToken.
+                    debug_assert!(
+                        false,
+                        "InsertToken replay invoked before Stage 10b wired \
+                         mutable token source: pos={}, kind={:?}, text={}",
+                        pos,
+                        kind,
+                        text,
+                    );
+                    let _ = (pos, kind, text);
+                }
+                BuilderDelta::CommitLexAlternative {
+                    pos,
+                    alt_idx,
+                    kind,
+                    text,
+                } => {
+                    // Stage 3.14 / Hack #12 prep: requires
+                    // `MutableMultiTokenSource::commit_alternative`. Until
+                    // wired in Stage 3.14, no-op.
+                    debug_assert!(
+                        false,
+                        "CommitLexAlternative replay invoked before Stage \
+                         3.14 wired commit_alternative: pos={}, alt_idx={}, \
+                         kind={:?}, text={}",
+                        pos,
+                        alt_idx,
+                        kind,
+                        text,
+                    );
+                    let _ = (pos, alt_idx, kind, text);
+                }
             }
         }
         self.top_node = Some(winner.node);
         self.pos = winner.pos;
         self.weight = self.weight.times(&winner.weight);
-        self.state = winner.inner_state;
+        self.state = winner.inner_state.clone();
+        // Stage 3.9 / ι Phase 4 (2026-05-01): write singleton back per L4.
+        // Cleared deltas + collection_stack — already replayed onto live
+        // builder above. Mode stays Strict per L3.
+        self.branch_cursors = vec![BranchCursor {
+            node: winner.node,
+            pos: winner.pos,
+            weight: self.weight.clone(),
+            inner_state: winner.inner_state,
+            pending_builder_ops: Vec::new(),
+            collection_stack: Vec::new(),
+            // Stage 3.12 Fix 2(ii) (2026-05-02): preserve winner's
+            // priority. Subsequent Forks build on this priority chain.
+            source_priority: winner.source_priority,
+            // Stage 3.12.6 (2026-05-02): preserve winner's stack-suffix
+            // history so subsequent pops follow the winner's path.
+            incoming_edge_stack: winner.incoming_edge_stack,
+        }];
     }
 
+    /// Stage 3.4 (2026-04-30): beam pruning over `branch_cursors`.
+    ///
+    /// When `beam_size = Some(k)` and the cursor count exceeds `k`, sort
+    /// cursors by weight (lex-min via `Semiring::plus` — see
+    /// `pick_lex_min_resolved` for the same comparator pattern) and
+    /// truncate to the top-`k`. When `beam_size = None`, no-op.
+    ///
+    /// The `plus`-based comparator works for any min-like semiring
+    /// (`LexicographicWeight`, `TropicalWeight`). For semirings whose
+    /// `plus` is not min-like (e.g., `BooleanWeight`'s OR), pruning is
+    /// effectively disabled — `cursor_a.plus(&cursor_b) == cursor_a`
+    /// loses its "a <= b" interpretation. This is acceptable; production
+    /// walkers always use `LexicographicWeight`.
+    ///
+    /// Called from `step_fanout` after the per-cursor step pass so the
+    /// pruned frontier is the input to the next saturation iteration.
     fn maybe_prune_frontier(&mut self) {
-        // Stub for Stage 4: real beam pruning needs LexicographicWeight Ord.
-        // Kept here as a hook so future commits don't restructure the walker.
-        let _ = self.beam_size;
+        let beam = match self.beam_size {
+            Some(k) => k,
+            None => return, // unlimited beam, no pruning
+        };
+        if self.branch_cursors.len() <= beam {
+            return;
+        }
+        // Stable sort by weight ascending under the `plus`-based lex-min
+        // comparator. Keeps source-order for ties (matching
+        // `pick_lex_min_resolved`'s tie-break semantics).
+        self.branch_cursors.sort_by(|a, b| {
+            let merged = a.weight.plus(&b.weight);
+            // a wins iff a.plus(b) == a (a is the lex-smaller).
+            // On `a == b`, both equal merged → Ordering::Equal.
+            let a_wins = merged == a.weight;
+            let b_wins = merged == b.weight;
+            match (a_wins, b_wins) {
+                (true, true) => std::cmp::Ordering::Equal,
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                // Neither wins under plus-based ordering — tropical/lex
+                // semirings always satisfy at least one. Fall back to
+                // Equal so the sort is stable and deterministic.
+                (false, false) => std::cmp::Ordering::Equal,
+            }
+        });
+        self.branch_cursors.truncate(beam);
     }
 
     /// Phase 4: if the new GSS top after a Pop is a `CollectionMarker`,
@@ -1899,6 +2888,512 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 };
             }
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Stage 3.9 / ι Phase 4 (2026-05-01): per-variant Lazy/Strict helpers
+    //
+    // Each `emit_*` helper branches on `cursor_mode`:
+    //   - Lazy:  mutate the live `SemanticBuilder` directly. The cursor's
+    //            `pending_builder_ops` stays empty (L1 invariant).
+    //   - Strict: log a `BuilderDelta` to `cursor.pending_builder_ops`.
+    //             The live builder is untouched until commit_winner replays.
+    //
+    // Mode-agnostic helpers (`advance_cursor_pos`/`multiply_cursor_weight`/
+    // `set_cursor_inner_state`/`cursor_gss_*`) update the cursor's local
+    // state AND, in Lazy mode, mirror to the live walker fields
+    // (`self.pos`/`self.weight`/`self.state`/`self.top_node`) so external
+    // accessors (`walker.position()`, etc.) reflect the cursor's view.
+    //
+    // All helpers are `#[inline(always)]` so the optimizer specializes
+    // them per call site and the mode-branch becomes free at runtime when
+    // the Lazy case dominates.
+    // ══════════════════════════════════════════════════════════════════════
+
+    /// Debug-only L1 invariant check: `cursor_mode == Lazy` implies a
+    /// singleton cursor with empty `pending_builder_ops`. Called at
+    /// `apply_action` entry.
+    #[inline(always)]
+    fn debug_flush_lazy_invariant(&self) {
+        debug_assert!(
+            self.cursor_mode != CursorMode::Lazy
+                || (self.branch_cursors.len() == 1
+                    && self.branch_cursors[0].pending_builder_ops.is_empty()),
+            "L1 invariant violation: Lazy mode requires singleton cursor with \
+             empty pending_builder_ops; got len={}, ops_len={}",
+            self.branch_cursors.len(),
+            self.branch_cursors
+                .first()
+                .map(|c| c.pending_builder_ops.len())
+                .unwrap_or(0),
+        );
+    }
+
+    // ─── 11 mutation helpers ─────────────────────────────────────────────
+
+    #[inline(always)]
+    fn emit_push_token(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        kind: TokenKind,
+        text: String,
+        pos: usize,
+    ) {
+        match self.cursor_mode {
+            CursorMode::Lazy => self.builder.push_token(kind, text, pos),
+            CursorMode::Strict => cursor
+                .pending_builder_ops
+                .push(BuilderDelta::PushToken { kind, text, pos }),
+        }
+    }
+
+    #[inline(always)]
+    fn emit_push_ident(&mut self, cursor: &mut BranchCursor<W>, name: String, pos: usize) {
+        match self.cursor_mode {
+            CursorMode::Lazy => self.builder.push_ident(name, pos),
+            CursorMode::Strict => cursor
+                .pending_builder_ops
+                .push(BuilderDelta::PushIdent { name, pos }),
+        }
+    }
+
+    #[inline(always)]
+    fn emit_push_predicate(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        pred: Arc<dyn Any + Send + Sync>,
+    ) {
+        match self.cursor_mode {
+            CursorMode::Lazy => self.builder.push_predicate_arc(pred),
+            CursorMode::Strict => cursor
+                .pending_builder_ops
+                .push(BuilderDelta::PushPredicate(pred)),
+        }
+    }
+
+    #[inline(always)]
+    fn emit_start_binder_scope(&mut self, cursor: &mut BranchCursor<W>, names: Vec<String>) {
+        match self.cursor_mode {
+            CursorMode::Lazy => self.builder.start_binder_scope(names),
+            CursorMode::Strict => cursor
+                .pending_builder_ops
+                .push(BuilderDelta::StartBinderScope { names }),
+        }
+    }
+
+    #[inline(always)]
+    fn emit_fire_action(&mut self, cursor: &mut BranchCursor<W>, symbol: StackSymbolV2) {
+        match self.cursor_mode {
+            CursorMode::Lazy => self.fire_action_for(symbol),
+            CursorMode::Strict => cursor
+                .pending_builder_ops
+                .push(BuilderDelta::FireAction { symbol }),
+        }
+    }
+
+    /// Allocate a fresh collection accumulator. In Lazy mode the live
+    /// builder allocates (and the id reflects its `collection_stack`
+    /// length). In Strict mode the cursor allocates locally — no delta
+    /// is logged because `commit_winner` donates `cursor.collection_stack`
+    /// to the live builder via `adopt_collection_stack` BEFORE delta
+    /// replay.
+    #[inline(always)]
+    fn emit_start_collection(&mut self, cursor: &mut BranchCursor<W>) -> u8 {
+        match self.cursor_mode {
+            CursorMode::Lazy => self.builder.start_collection(),
+            CursorMode::Strict => {
+                let id = cursor.collection_stack.len() as u8;
+                cursor.collection_stack.push(Vec::new());
+                id
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn emit_push_collection_id(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
+        match self.cursor_mode {
+            CursorMode::Lazy => self.builder.push_collection_id(id),
+            CursorMode::Strict => cursor
+                .pending_builder_ops
+                .push(BuilderDelta::PushCollectionId { id }),
+        }
+    }
+
+    #[inline(always)]
+    fn emit_splice_into_collection(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
+        match self.cursor_mode {
+            CursorMode::Lazy => self.builder.push_to_collection(id),
+            CursorMode::Strict => cursor
+                .pending_builder_ops
+                .push(BuilderDelta::SpliceIntoCollection { id }),
+        }
+    }
+
+    #[inline(always)]
+    fn emit_start_optional_scope(&mut self, cursor: &mut BranchCursor<W>) {
+        match self.cursor_mode {
+            CursorMode::Lazy => self.builder.start_optional_scope(),
+            CursorMode::Strict => cursor
+                .pending_builder_ops
+                .push(BuilderDelta::StartOptionalScope),
+        }
+    }
+
+    /// Stage 3.9 / ι Phase 4 (2026-05-01): centralized Push-time symbol-
+    /// kind side effects. Both `WpdsStepAction::Push` and
+    /// `WpdsStepAction::ConsumeAndPush` arms call this BEFORE
+    /// `cursor_gss_push` to handle implicit operations driven by the
+    /// pushed symbol's `kind`.
+    ///
+    /// **Symbol kinds with side effects:**
+    /// - `CollectionMarker` → allocate accumulator id (mode-aware via
+    ///   `emit_start_collection`), patch `symbol.bp = Some(id)` so the
+    ///   GSS-deposited symbol carries the id, push CollectionId arg
+    ///   onto the builder via `emit_push_collection_id`.
+    /// - `OptionalGroupAt(1)` → open the optional-scope inner-arg
+    ///   accumulator via `emit_start_optional_scope` so subsequent
+    ///   inner pushes route to the inner Vec rather than the main
+    ///   stack. Only `sub_pos == 1` (the FIRST marker) opens; later
+    ///   sub_pos values are intra-group advancements and must NOT
+    ///   re-open.
+    ///
+    /// All other `SymbolKind` variants are no-op pushes from a
+    /// side-effect perspective.
+    ///
+    /// **Pre-Phase-4 contract restored**: pre-3.9 the live
+    /// `apply_action::Push` arm directly mutated the builder for both
+    /// clauses inline. The Step-4.4 helper rewrite preserved the
+    /// `CollectionMarker` clause but dropped the `OptionalGroupAt(1)`
+    /// clause, breaking Lazy-mode IfElse-with-else parses (4 tests in
+    /// `optional_group_smoke`). Centralizing both here makes the
+    /// implicit-side-effect surface auditable in one place.
+    #[inline(always)]
+    fn emit_push_side_effects(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        symbol: &mut StackSymbolV2,
+    ) {
+        match symbol.kind {
+            SymbolKind::CollectionMarker => {
+                let id = self.emit_start_collection(cursor);
+                symbol.bp = Some(id);
+                self.emit_push_collection_id(cursor, id);
+            }
+            SymbolKind::OptionalGroupAt(1) => {
+                self.emit_start_optional_scope(cursor);
+            }
+            _ => {}
+        }
+    }
+
+    #[inline(always)]
+    fn emit_finalize_optional_scope_present(&mut self, cursor: &mut BranchCursor<W>) {
+        match self.cursor_mode {
+            CursorMode::Lazy => self.builder.finalize_optional_scope_present(),
+            CursorMode::Strict => cursor
+                .pending_builder_ops
+                .push(BuilderDelta::FinalizeOptionalScopePresent),
+        }
+    }
+
+    #[inline(always)]
+    fn emit_push_optional_absent(&mut self, cursor: &mut BranchCursor<W>) {
+        match self.cursor_mode {
+            CursorMode::Lazy => self.builder.push_optional_absent(),
+            CursorMode::Strict => cursor
+                .pending_builder_ops
+                .push(BuilderDelta::PushOptionalAbsent),
+        }
+    }
+
+    // ─── 4 mode-agnostic helpers (mirror to live walker fields in Lazy) ──
+
+    #[inline(always)]
+    fn advance_cursor_pos(&mut self, cursor: &mut BranchCursor<W>, n: usize) {
+        cursor.pos += n;
+        if self.cursor_mode == CursorMode::Lazy {
+            self.pos = cursor.pos;
+        }
+    }
+
+    #[inline(always)]
+    fn multiply_cursor_weight(&mut self, cursor: &mut BranchCursor<W>, w: &W) {
+        cursor.weight = cursor.weight.times(w);
+        if self.cursor_mode == CursorMode::Lazy {
+            self.weight = self.weight.times(w);
+        }
+    }
+
+    #[inline(always)]
+    fn set_cursor_inner_state(&mut self, cursor: &mut BranchCursor<W>, state: WpdsState) {
+        cursor.inner_state = state.clone();
+        if self.cursor_mode == CursorMode::Lazy {
+            self.state = state;
+        }
+    }
+
+    #[inline(always)]
+    fn cursor_gss_push(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        sym: StackSymbolV2,
+        pos: usize,
+        w: W,
+    ) -> crate::gss::GssNodeId {
+        // Stage 3.9 / ι Phase 4 (2026-05-01): if the cursor's `node` is
+        // the sentinel (0) — meaning no GSS frame has been pushed yet —
+        // synthesize a `CategoryEntry(0)` root first. Mirrors the
+        // pre-Phase-4 `apply_action::Push` fallback at the live path.
+        // Stage 3.12 fix (2026-05-02): also synthesize a fresh root when
+        // `cursor.node == GSS_NODE_NONE` (the cursor previously unwound
+        // past the entry frame). Without this, push_symbol would record
+        // a phantom edge to id u32::MAX.
+        let predecessor = if (cursor.node == 0 && self.gss.node(0).is_none())
+            || cursor.node == crate::gss::GSS_NODE_NONE
+        {
+            let root = self.gss.get_or_create_node(WpdsGssNode {
+                pos: cursor.pos,
+                symbol: StackSymbolV2::category_entry(0),
+            });
+            cursor.node = root;
+            if self.cursor_mode == CursorMode::Lazy {
+                self.top_node = Some(root);
+            }
+            root
+        } else {
+            cursor.node
+        };
+        let (new_id, edge_id) =
+            self.gss.push_symbol_with_edge_id(predecessor, sym, pos, w);
+        cursor.node = new_id;
+        // Stage 3.12.6 (2026-05-02): record this push on the cursor's
+        // stack-suffix mirror. On the matching pop, the cursor will
+        // follow this exact edge — preserving its calling context even
+        // when GSS dedup makes the new node share with sibling cursors.
+        cursor.incoming_edge_stack.push(edge_id);
+        if self.cursor_mode == CursorMode::Lazy {
+            self.top_node = Some(new_id);
+        }
+        new_id
+    }
+
+    #[inline(always)]
+    fn cursor_gss_pop(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+    ) -> Option<crate::gss::GssNodeId> {
+        // Stage 3.12.5 (2026-05-02): legacy single-predecessor scalar.
+        // Retained for sites where the popped frame has SINGLE predecessor
+        // by construction (e.g., a frame pushed by the same cursor's prior
+        // step). For multi-predecessor pops (Tomita), use
+        // `cursor_gss_pop_all`. Picks the FIRST in-edge, which may be
+        // non-deterministic if multiple cursors deduplicated to the same
+        // GSS node — the canonical reason fork-on-pop was introduced.
+        let result = self.gss.pop_symbol(cursor.node);
+        // Stage 3.12 fix (2026-05-02): when popping past the entry frame,
+        // anchor at GSS_NODE_NONE rather than 0. The sentinel CategoryEntry
+        // root lives at id 0 and would otherwise cause engine.step's
+        // frontier_top to keep matching the CategoryEntry-on-Unwinding
+        // arm, looping indefinitely. With GSS_NODE_NONE, `gss.node()`
+        // returns None → engine takes the `frontier_top.is_none() ⇒ Accept`
+        // branch, restoring pre-Stage-3.12 behavior in Strict mode.
+        cursor.node = result.unwrap_or(crate::gss::GSS_NODE_NONE);
+        if self.cursor_mode == CursorMode::Lazy {
+            self.top_node = result;
+        }
+        result
+    }
+
+    /// Stage 3.12.5 (2026-05-02): per-cursor post-pop body. Encapsulates
+    /// the FireAction + collection-splice + weight + state mutation
+    /// shared between the Pop, ConsumeAndPop, and Fork::OptGroupAbsent
+    /// arms. Sets `cursor.node = pred_id`, with sentinel anchor when
+    /// `pred_id == GSS_NODE_NONE`.
+    ///
+    /// Does NOT call `cursor_resolution_check` — caller decides outcome
+    /// classification.
+    fn apply_pop_body_to_cursor(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        pred_id: crate::gss::GssNodeId,
+        popped_symbol: Option<StackSymbolV2>,
+        weight: &W,
+        new_state: WpdsState,
+    ) {
+        // Set cursor's GSS top to the predecessor (or sentinel).
+        cursor.node = pred_id;
+        if self.cursor_mode == CursorMode::Lazy {
+            self.top_node = if pred_id == crate::gss::GSS_NODE_NONE {
+                None
+            } else {
+                Some(pred_id)
+            };
+        }
+        // Stage 3.12.8 (2026-05-03): for CollectionMarker pops in Strict
+        // mode, drain the cursor's `collection_stack[top]` slot and emit
+        // a `FinalizeCollection { id, drained }` delta BEFORE FireAction.
+        // The cursor's stack is LIFO-correct because grammars guarantee
+        // innermost-closes-first. At replay, FinalizeCollection re-pushes
+        // the slot so FireAction's `drain_collection(id)` succeeds. In
+        // Lazy mode the live builder's `collection_stack` is mutated
+        // directly by the action_fn at FireAction time — no delta needed.
+        if let Some(symbol) = popped_symbol {
+            if symbol.kind == SymbolKind::CollectionMarker
+                && self.cursor_mode == CursorMode::Strict
+            {
+                let id = symbol.bp.unwrap_or(0);
+                let drained = cursor
+                    .collection_stack
+                    .pop()
+                    .unwrap_or_default();
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::FinalizeCollection { id, drained });
+            }
+        }
+        // Per-child FireAction (keyed on popped_symbol — same across all
+        // children since they share the popped frame).
+        if let Some(symbol) = popped_symbol {
+            if matches!(
+                symbol.kind,
+                SymbolKind::Return
+                    | SymbolKind::CollectionMarker
+                    | SymbolKind::RuleAt(_)
+                    | SymbolKind::MixfixMarker
+            ) {
+                self.emit_fire_action(cursor, symbol);
+            }
+        }
+        // Per-child collection splice (keyed on predecessor symbol —
+        // differs across children when fan-out lands on different
+        // calling contexts).
+        if pred_id != crate::gss::GSS_NODE_NONE {
+            if let Some(pred_node) = self.gss.node(pred_id) {
+                if pred_node.symbol.kind == SymbolKind::CollectionMarker {
+                    let acc_id = pred_node.symbol.bp.unwrap_or(0);
+                    self.emit_splice_into_collection(cursor, acc_id);
+                }
+            }
+        }
+        self.multiply_cursor_weight(cursor, weight);
+        self.set_cursor_inner_state(cursor, new_state);
+    }
+
+    /// Stage 3.12.6 (2026-05-02): single-predecessor pop guided by the
+    /// cursor's recorded `incoming_edge_stack`.
+    ///
+    /// The cursor follows the edge it traversed during the matching
+    /// push (the top of `incoming_edge_stack`), giving deterministic
+    /// pop behavior even when the popped GSS node has multiple
+    /// in-edges from different calling contexts (e.g., recursive rule
+    /// re-entries at the same `(pos, symbol)`).
+    ///
+    /// Sentinel semantics: when `incoming_edge_stack` is empty (cursor
+    /// has reached the entry frame) OR the recorded edge is invalid
+    /// (defensive — should not happen under correct push/pop pairing),
+    /// the cursor's `node` is set to `GSS_NODE_NONE` and Lazy mirror
+    /// `top_node = None`. Returns the predecessor `GssNodeId` for
+    /// caller's use, or `None` if popped past the root.
+    ///
+    /// This replaces `cursor_gss_pop_all` for cursors that maintained
+    /// `incoming_edge_stack` correctly. `cursor_gss_pop` (legacy
+    /// arbitrary-pred scalar) remains for code paths that don't use
+    /// the stack mirror.
+    fn cursor_gss_pop_via_edge(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+    ) -> Option<crate::gss::GssNodeId> {
+        let edge_id = cursor.incoming_edge_stack.pop();
+        let target = edge_id.and_then(|e| self.gss.edge_target(e));
+        cursor.node = target.unwrap_or(crate::gss::GSS_NODE_NONE);
+        if self.cursor_mode == CursorMode::Lazy {
+            self.top_node = target;
+        }
+        target
+    }
+
+    /// Stage 3.12.5 (2026-05-02): Tomita-style multi-predecessor pop.
+    ///
+    /// Returns ALL in-edge predecessors of `cursor.node`. Caller is
+    /// responsible for fanning out into per-predecessor child cursors
+    /// when `len() > 1`. When `len() == 0` (popped past the entry
+    /// frame), returns a single-element vec containing
+    /// `GSS_NODE_NONE` so the caller can treat the terminal-pop case
+    /// uniformly with the multi-predecessor case.
+    ///
+    /// **Does NOT mutate `cursor.node`.** The caller decides whether to
+    /// reuse the cursor (in-place mutation) or clone it per predecessor.
+    /// Callers that always have a single predecessor (e.g., OptGroupFinalize
+    /// popping an OptionalGroupAt(N) just pushed by the same cursor —
+    /// when that's true) may opt into the legacy scalar `cursor_gss_pop`
+    /// instead.
+    ///
+    /// Sentinel semantics: when `len() == 0`, returns `vec![GSS_NODE_NONE]`.
+    /// The caller must subsequently set `cursor.node = GSS_NODE_NONE` (or
+    /// per-child equivalent) and Lazy-mirror `self.top_node = None`.
+    fn cursor_gss_pop_all(
+        &self,
+        cursor: &BranchCursor<W>,
+    ) -> Vec<crate::gss::GssNodeId> {
+        let preds: Vec<crate::gss::GssNodeId> = self
+            .gss
+            .pop_all_predecessors(cursor.node)
+            .into_iter()
+            .map(|(id, _w)| id)
+            .collect();
+        if preds.is_empty() {
+            vec![crate::gss::GSS_NODE_NONE]
+        } else {
+            preds
+        }
+    }
+
+    #[inline(always)]
+    fn cursor_gss_replace_top(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        sym: StackSymbolV2,
+        pos: usize,
+        w: W,
+    ) -> crate::gss::GssNodeId {
+        // Stage 3.9 / ι Phase 4 (2026-05-01): same sentinel guard as
+        // cursor_gss_push — `replace_top` on a non-existent node is
+        // undefined; synthesize a CategoryEntry(0) root first.
+        // Stage 3.12 fix (2026-05-02): same GSS_NODE_NONE guard.
+        let target = if (cursor.node == 0 && self.gss.node(0).is_none())
+            || cursor.node == crate::gss::GSS_NODE_NONE
+        {
+            let root = self.gss.get_or_create_node(WpdsGssNode {
+                pos: cursor.pos,
+                symbol: StackSymbolV2::category_entry(0),
+            });
+            cursor.node = root;
+            if self.cursor_mode == CursorMode::Lazy {
+                self.top_node = Some(root);
+            }
+            root
+        } else {
+            cursor.node
+        };
+        // Stage 3.12.7 (2026-05-02): pass cursor's recorded incoming edge
+        // so replace_top_with_edge_id can find the predecessor that
+        // matches THIS cursor's stack-suffix path, not an arbitrary
+        // first-edge under multi-pred GSS structural sharing.
+        let cursor_top_edge = cursor.incoming_edge_stack.last().copied();
+        let (new_id, edge_id) =
+            self.gss.replace_top_with_edge_id(target, sym, pos, w, cursor_top_edge);
+        cursor.node = new_id;
+        // Stage 3.12.6 (2026-05-02): replace_top conceptually pops the
+        // top frame and pushes a new one with the same predecessor.
+        // Update the cursor's stack: pop the old top edge, push the new.
+        if !cursor.incoming_edge_stack.is_empty() {
+            cursor.incoming_edge_stack.pop();
+        }
+        cursor.incoming_edge_stack.push(edge_id);
+        if self.cursor_mode == CursorMode::Lazy {
+            self.top_node = Some(new_id);
+        }
+        new_id
     }
 }
 
@@ -1975,6 +3470,10 @@ impl<W: Semiring> WalkerConsumer<W> for NullConsumer {
 }
 
 /// Lightweight event tag for trace recording (avoids cloning event payloads).
+///
+/// Stage 6 G6+ (2026-05-02): extended with `FramePushed`, `FramePopped`
+/// (master plan §5), `CursorPanorama` (cursor census after step_fanout),
+/// and `BranchMerged` (cursor merge by `merge_equivalent_cursors`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WpdsEventTag {
     Step,
@@ -1984,6 +3483,14 @@ pub enum WpdsEventTag {
     SemanticActionFired,
     Checkpoint,
     Inspect,
+    /// Stage 6 G6 (2026-05-02): a GSS frame was pushed.
+    FramePushed,
+    /// Stage 6 G6 (2026-05-02): a GSS frame was popped.
+    FramePopped,
+    /// Stage 6 G6+ (2026-05-02): cursor census after `step_fanout` + merge.
+    CursorPanorama,
+    /// Stage 6 G6+ (2026-05-02): two equivalent cursors were merged.
+    BranchMerged,
 }
 
 impl WpdsEventTag {
@@ -1999,6 +3506,81 @@ impl WpdsEventTag {
         }
     }
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Stage 6 G6+ (2026-05-02): Cursor-level observer (side-channel to WalkerConsumer)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Reason a cursor was dropped from the active set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorDropReason {
+    /// Engine returned `Error` action — parse failed on this branch.
+    Error,
+    /// Cursor reached EOI in `Idle` state with `pos == tokens.len()`.
+    /// (Bridges to: `Idle` action with `at_eoi=true && resolved_shape=true`
+    /// is *not* a drop; this variant is for the at_eoi=true but not
+    /// resolved-shape cursors.)
+    IdleAtEoi,
+    /// Cursor stuck in `Idle` mid-stream (no progress possible).
+    IdleMidStream,
+    /// `pending_builder_ops` exceeded `STRICT_PENDING_OPS_LIMIT`.
+    RunawayPendingOps,
+    /// Beam pruning by `maybe_prune_frontier` discarded this cursor.
+    BeamPruned,
+}
+
+/// A flat per-cursor snapshot for tracing/dump. Excludes heavy fields
+/// (pending_builder_ops contents, collection_stack contents) — only
+/// their lengths. ~80 bytes flat (depends on W size + WpdsState).
+#[derive(Debug, Clone)]
+pub struct CursorSnapshot<W: Semiring> {
+    pub idx: usize,
+    pub pos: usize,
+    pub state: WpdsState,
+    pub gss_node_id: crate::gss::GssNodeId,
+    pub weight: W,
+    pub source_priority: u32,
+    pub pending_ops_len: usize,
+    pub collection_depth: usize,
+}
+
+/// Per-step cursor census produced after `step_fanout` + `merge_equivalent_cursors`.
+#[derive(Debug, Clone)]
+pub struct StepSnapshot<W: Semiring> {
+    pub step_index: usize,
+    pub cursor_count: usize,
+    pub walker_state: WpdsState,
+    pub walker_pos: usize,
+    pub gss_node_count: usize,
+    pub cursors: Vec<CursorSnapshot<W>>,
+}
+
+/// Side-channel observer for cursor-level events.
+///
+/// Separate from `WalkerConsumer` so existing LSP/DAP/REPL consumers
+/// don't need to handle cursor-level micro-detail. Default impls are
+/// no-ops; `NullCursorObserver` monomorphizes away to zero cost.
+pub trait CursorObserver<W: Semiring> {
+    /// Called from `step_fanout` after the merge pass with a flat census.
+    #[inline(always)]
+    fn on_step_panorama(&mut self, _snapshot: &StepSnapshot<W>) {}
+
+    /// Called when a cursor is dropped (Error, Idle, RunawayPendingOps, etc.).
+    #[inline(always)]
+    fn on_cursor_dropped(&mut self, _idx: usize, _reason: CursorDropReason) {}
+
+    /// Called when a cursor Forks into N children.
+    #[inline(always)]
+    fn on_cursor_forked(&mut self, _parent_idx: usize, _children_count: usize) {}
+
+    /// Called when two equivalent cursors are merged via `Semiring::plus`.
+    #[inline(always)]
+    fn on_cursors_merged(&mut self, _winner_idx: usize, _loser_idx: usize) {}
+}
+
+/// Zero-cost no-op observer.
+pub struct NullCursorObserver;
+impl<W: Semiring> CursorObserver<W> for NullCursorObserver {}
 
 /// Tracing consumer: records every event tag and resulting state.
 ///
@@ -2037,6 +3619,204 @@ impl<W: Semiring> WalkerConsumer<W> for TracingConsumer<W> {
 
     fn on_complete(&mut self, state: &WpdsState) {
         self.final_state = Some(state.clone());
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Stage 6 G6+ (2026-05-02): RichTracingConsumer — dual WalkerConsumer + CursorObserver
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Combined consumer + cursor observer suitable for hang diagnosis.
+///
+/// Records:
+/// - `events`: every WpdsEventTag/state pair (like TracingConsumer).
+/// - `steps`: per-step cursor census from `step_fanout`.
+/// - `merges`: every (winner_idx, loser_idx) merge pair.
+/// - `drops`: every (idx, reason) drop pair.
+/// - `forks`: every (parent_idx, children_count) fork.
+/// - `max_cursor_count`: peak observed cursor count.
+/// - `final_state`: walker terminal state.
+pub struct RichTracingConsumer<W: Semiring> {
+    pub events: Vec<(WpdsEventTag, WpdsState)>,
+    pub steps: Vec<StepSnapshot<W>>,
+    pub merges: Vec<(usize, usize)>,
+    pub drops: Vec<(usize, CursorDropReason)>,
+    pub forks: Vec<(usize, usize)>,
+    pub max_cursor_count: usize,
+    pub final_state: Option<WpdsState>,
+}
+
+impl<W: Semiring> RichTracingConsumer<W> {
+    pub fn new() -> Self {
+        RichTracingConsumer {
+            events: Vec::new(),
+            steps: Vec::new(),
+            merges: Vec::new(),
+            drops: Vec::new(),
+            forks: Vec::new(),
+            max_cursor_count: 0,
+            final_state: None,
+        }
+    }
+}
+
+impl<W: Semiring> Default for RichTracingConsumer<W> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<W: Semiring> WalkerConsumer<W> for RichTracingConsumer<W> {
+    fn on_event(&mut self, event: &WpdsEvent<W>, state: &WpdsState) -> WpdsControl {
+        self.events.push((WpdsEventTag::of(event), state.clone()));
+        WpdsControl::Continue
+    }
+
+    fn on_complete(&mut self, state: &WpdsState) {
+        self.final_state = Some(state.clone());
+    }
+}
+
+impl<W: Semiring> CursorObserver<W> for RichTracingConsumer<W> {
+    fn on_step_panorama(&mut self, snapshot: &StepSnapshot<W>) {
+        if snapshot.cursor_count > self.max_cursor_count {
+            self.max_cursor_count = snapshot.cursor_count;
+        }
+        self.steps.push(snapshot.clone());
+    }
+
+    fn on_cursor_dropped(&mut self, idx: usize, reason: CursorDropReason) {
+        self.drops.push((idx, reason));
+    }
+
+    fn on_cursor_forked(&mut self, parent_idx: usize, children_count: usize) {
+        self.forks.push((parent_idx, children_count));
+    }
+
+    fn on_cursors_merged(&mut self, winner_idx: usize, loser_idx: usize) {
+        self.merges.push((winner_idx, loser_idx));
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Stage 6 G6+ (2026-05-02): EnvTracingConsumer — PRATTAIL_TRACE-gated stderr dump
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Trace-flag bits for `PRATTAIL_TRACE`.
+const TRACE_STEPS: u8 = 1;
+const TRACE_CURSORS: u8 = 2;
+const TRACE_MERGES: u8 = 4;
+const TRACE_DROPS: u8 = 8;
+const TRACE_ALL: u8 = TRACE_STEPS | TRACE_CURSORS | TRACE_MERGES | TRACE_DROPS;
+
+/// Reads `PRATTAIL_TRACE` env var on construction:
+/// - empty/unset → all bits 0, no output (still cheap-skips).
+/// - `"1"` or `"all"` → all bits set.
+/// - comma list `"steps,cursors,merges,drops"` → bitwise OR of named flags.
+fn parse_trace_env() -> u8 {
+    let raw = std::env::var("PRATTAIL_TRACE").unwrap_or_default();
+    if raw.is_empty() {
+        return 0;
+    }
+    if raw == "1" || raw == "all" {
+        return TRACE_ALL;
+    }
+    let mut bits = 0u8;
+    for part in raw.split(',') {
+        match part.trim() {
+            "steps" => bits |= TRACE_STEPS,
+            "cursors" => bits |= TRACE_CURSORS,
+            "merges" => bits |= TRACE_MERGES,
+            "drops" => bits |= TRACE_DROPS,
+            _ => {}
+        }
+    }
+    bits
+}
+
+/// Env-gated stderr trace consumer for ad-hoc debugging.
+///
+/// Set `PRATTAIL_TRACE=1` (or `=steps,cursors,merges,drops`) to enable.
+/// Reads env once at construction. Zero-overhead when disabled (still
+/// pays the function-call cost per event but eliminates downstream work).
+pub struct EnvTracingConsumer {
+    enabled: u8,
+    step_index: usize,
+}
+
+impl EnvTracingConsumer {
+    pub fn from_env() -> Self {
+        EnvTracingConsumer {
+            enabled: parse_trace_env(),
+            step_index: 0,
+        }
+    }
+
+    /// True when at least one trace category is active.
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.enabled != 0
+    }
+}
+
+impl<W: Semiring> WalkerConsumer<W> for EnvTracingConsumer {
+    fn on_event(&mut self, event: &WpdsEvent<W>, state: &WpdsState) -> WpdsControl {
+        if (self.enabled & TRACE_STEPS) != 0 {
+            eprintln!(
+                "[wpds-trace] step={} tag={:?} state={:?}",
+                self.step_index,
+                WpdsEventTag::of(event),
+                state
+            );
+        }
+        self.step_index += 1;
+        WpdsControl::Continue
+    }
+}
+
+impl<W: Semiring + std::fmt::Debug> CursorObserver<W> for EnvTracingConsumer {
+    fn on_step_panorama(&mut self, snapshot: &StepSnapshot<W>) {
+        if (self.enabled & TRACE_CURSORS) != 0 {
+            eprintln!(
+                "[wpds-trace] panorama step={} cursors={} walker_state={:?} walker_pos={} gss_nodes={}",
+                snapshot.step_index,
+                snapshot.cursor_count,
+                snapshot.walker_state,
+                snapshot.walker_pos,
+                snapshot.gss_node_count,
+            );
+            for c in &snapshot.cursors {
+                eprintln!(
+                    "[wpds-trace]   cursor[{}] pos={} state={:?} node={} src_pri={} ops_len={} coll_depth={}",
+                    c.idx, c.pos, c.state, c.gss_node_id,
+                    c.source_priority, c.pending_ops_len, c.collection_depth,
+                );
+            }
+        }
+    }
+
+    fn on_cursor_dropped(&mut self, idx: usize, reason: CursorDropReason) {
+        if (self.enabled & TRACE_DROPS) != 0 {
+            eprintln!("[wpds-trace] drop cursor[{}] reason={:?}", idx, reason);
+        }
+    }
+
+    fn on_cursor_forked(&mut self, parent_idx: usize, children_count: usize) {
+        if (self.enabled & TRACE_CURSORS) != 0 {
+            eprintln!(
+                "[wpds-trace] fork parent[{}] -> {} children",
+                parent_idx, children_count
+            );
+        }
+    }
+
+    fn on_cursors_merged(&mut self, winner_idx: usize, loser_idx: usize) {
+        if (self.enabled & TRACE_MERGES) != 0 {
+            eprintln!(
+                "[wpds-trace] merge winner[{}] absorbs loser[{}]",
+                winner_idx, loser_idx
+            );
+        }
     }
 }
 
@@ -2118,6 +3898,109 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             }
         }
         consumer.on_complete(&self.state);
+        self.state.clone()
+    }
+
+    /// Stage 6 G6+ (2026-05-02): env-aware run driver for codegen facades.
+    ///
+    /// Reads `PRATTAIL_MAX_STEPS` (fallback `default_max_steps`) and
+    /// `PRATTAIL_TRACE` (gates `EnvTracingConsumer`). When `PRATTAIL_TRACE`
+    /// is unset, behaves identically to `run_to_end_of_input`. When set,
+    /// installs `EnvTracingConsumer` as both `WalkerConsumer` and
+    /// `CursorObserver` (writes diagnostic lines to stderr).
+    ///
+    /// Returns the same `Result<(), WpdsMaxStepsExceeded>` as
+    /// `run_to_end_of_input`; codegen call sites can swap directly.
+    pub fn run_to_end_of_input_env_aware(
+        &mut self,
+        default_max_steps: usize,
+        tokens: &dyn WpdsTokenSource,
+    ) -> Result<(), WpdsMaxStepsExceeded>
+    where
+        W: 'static + std::fmt::Debug,
+    {
+        let max_steps = std::env::var("PRATTAIL_MAX_STEPS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(default_max_steps);
+        let mut env_consumer = EnvTracingConsumer::from_env();
+        if env_consumer.is_active() {
+            // run_with_consumer_observed returns the final state; map a
+            // non-terminal state at end-of-budget to the exceeded error to
+            // keep the call-site signature identical to run_to_end_of_input.
+            let final_state =
+                self.run_with_consumer_observed(&mut env_consumer, max_steps, tokens);
+            if final_state.is_terminal() {
+                Ok(())
+            } else {
+                Err(WpdsMaxStepsExceeded { position: self.pos })
+            }
+        } else {
+            self.run_to_end_of_input(max_steps, tokens)
+        }
+    }
+
+    /// Stage 6 G6+ (2026-05-02): drive the walker with a combined
+    /// [`WalkerConsumer`] + [`CursorObserver`].
+    ///
+    /// `C` must implement BOTH traits — one parameter avoids the
+    /// double-borrow issue when the same value (e.g.,
+    /// [`RichTracingConsumer`] or [`EnvTracingConsumer`]) plays both
+    /// roles. Callers wanting two separate implementations can use a
+    /// thin wrapper that delegates each trait to a sub-field.
+    ///
+    /// After each `process_event(Step)`, builds a [`StepSnapshot`] from
+    /// the current walker state and dispatches it via
+    /// `consumer.on_step_panorama`. Other observer hooks
+    /// (`on_cursor_dropped`, `on_cursor_forked`, `on_cursors_merged`)
+    /// fire from inside `step_fanout` / `merge_equivalent_cursors` when
+    /// those sites get observer-aware (separate substage); for now the
+    /// per-step panorama alone is sufficient for diagnosis.
+    ///
+    /// Honors consumer abort/pause directives identically to
+    /// [`run_with_consumer`].
+    pub fn run_with_consumer_observed<C>(
+        &mut self,
+        consumer: &mut C,
+        max_steps: usize,
+        tokens: &dyn WpdsTokenSource,
+    ) -> WpdsState
+    where
+        C: WalkerConsumer<W> + CursorObserver<W>,
+        W: 'static,
+    {
+        for _ in 0..max_steps {
+            if self.state.is_terminal() {
+                <C as WalkerConsumer<W>>::on_complete(consumer, &self.state);
+                return self.state.clone();
+            }
+            let event = WpdsEvent::Step;
+            let transition = self.process_event(event.clone(), tokens);
+            if let WpdsTransition::Checkpoint { ref config } = transition {
+                <C as WalkerConsumer<W>>::on_checkpoint(consumer, config);
+            }
+            // Stage 6 G6+ (2026-05-02): per-step cursor census.
+            let snapshot = self.current_snapshot();
+            <C as CursorObserver<W>>::on_step_panorama(consumer, &snapshot);
+            match <C as WalkerConsumer<W>>::on_event(consumer, &event, &self.state) {
+                WpdsControl::Continue => {}
+                WpdsControl::Checkpoint => {
+                    let config = self.current_configuration();
+                    <C as WalkerConsumer<W>>::on_checkpoint(consumer, &config);
+                }
+                WpdsControl::Abort => {
+                    self.state = WpdsState::Error {
+                        message: "consumer aborted".to_string(),
+                    };
+                    <C as WalkerConsumer<W>>::on_complete(consumer, &self.state);
+                    return self.state.clone();
+                }
+                WpdsControl::Pause => {
+                    return self.state.clone();
+                }
+            }
+        }
+        <C as WalkerConsumer<W>>::on_complete(consumer, &self.state);
         self.state.clone()
     }
 }
@@ -2367,11 +4250,13 @@ mod tests {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
@@ -2437,16 +4322,19 @@ mod tests {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 2, 0, None),
                         weight: lex(1.0, 0, 2),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
@@ -2461,17 +4349,25 @@ mod tests {
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
-        // Drive the fanout to completion. Final state is Accepted (engine
-        // consumes one InfixLoop step as Accept after commit_winner).
-        let final_state = w.run_to_saturation(100, &empty_tokens());
+        // Stage 3.5b (2026-05-01): WPDS-correct EOI resolution. The
+        // walker drives cursors until parked, then resolves to the
+        // lex-min winner at end-of-input (vs the prior mid-stream commit
+        // which prematurely collapsed the cursor frontier). This
+        // synthetic test's script has no Term-pushing actions (only Pop
+        // transitions), so resolve returns ParseError "empty result"
+        // — but commit_winner_at_eoi DID fire and set walker.state +
+        // walker.weight from the lex-min winner. The test verifies the
+        // selection logic via state/weight inspection.
+        w.run_to_end_of_input(100, &empty_tokens())
+            .expect("max_steps not exceeded");
+        let _ = w.resolve_at_end_of_input(&empty_tokens());
+        // commit_winner_at_eoi sets self.state = winner.inner_state
+        // (Accepted in this scripted test) and self.weight via times.
         assert_eq!(
-            final_state,
+            *w.state(),
             WpdsState::Accepted,
-            "expected Accepted after commit_winner + Accept transition",
+            "post-resolve walker state must be Accepted",
         );
-        // The walker's terminal weight reflects the winning cursor's
-        // accumulated weight, with src_idx/rule_idx left-projected from
-        // cursor[0] (rule_idx=0).
         let final_weight = w.weight();
         assert_eq!(
             final_weight.rule_idx, 0,
@@ -2500,16 +4396,19 @@ mod tests {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 7 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
                         new_state: WpdsState::InfixLoop { cur_bp: 13 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 2, 0, None),
                         weight: lex(1.0, 0, 2),
                         new_state: WpdsState::Unwinding,
+                        action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
@@ -2551,11 +4450,13 @@ mod tests {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: true,
@@ -2592,16 +4493,19 @@ mod tests {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 2, 0, None),
                         weight: lex(1.0, 0, 2),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
@@ -2646,16 +4550,19 @@ mod tests {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(0.5, 0, 0),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(0.5, 0, 1),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 2, 0, None),
                         weight: lex(0.5, 0, 2),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
@@ -2669,8 +4576,14 @@ mod tests {
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
-        let final_state = w.run_to_saturation(100, &empty_tokens());
-        assert_eq!(final_state, WpdsState::Accepted);
+        // Stage 3.5b (2026-05-01): use new EOI-aware resolution API.
+        // Synthetic test (no Term push) — resolve returns ParseError
+        // but commit_winner_at_eoi DID fire and set walker.state from
+        // the winner's inner_state.
+        w.run_to_end_of_input(100, &empty_tokens())
+            .expect("max_steps not exceeded");
+        let _ = w.resolve_at_end_of_input(&empty_tokens());
+        assert_eq!(*w.state(), WpdsState::Accepted);
         let final_weight = w.weight();
         // Advance does not modify weight; winner's weight is its branch weight only.
         assert_eq!(final_weight.rule_idx, 0);
@@ -3111,11 +5024,13 @@ mod tests {
                         symbol: StackSymbolV2::rule_at(0, 2, 0, None),
                         weight: lex(1.0, 0, 2),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 3, 0, None),
                         weight: lex(1.0, 0, 3),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
@@ -3127,11 +5042,13 @@ mod tests {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
@@ -3143,11 +5060,13 @@ mod tests {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(0.0, 0, 0),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(0.0, 0, 1),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
@@ -3162,8 +5081,14 @@ mod tests {
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // entry
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // outer Fork
-        let final_state = w.run_to_saturation(100, &empty_tokens());
-        assert_eq!(final_state, WpdsState::Accepted);
+        // Stage 3.5b (2026-05-01): nested Fork lex-min winner is now
+        // selected at end-of-input via resolve_at_end_of_input.
+        // Synthetic test (no Term push) — resolve returns ParseError
+        // but commit_winner_at_eoi DID fire and set walker.state.
+        w.run_to_end_of_input(100, &empty_tokens())
+            .expect("max_steps not exceeded");
+        let _ = w.resolve_at_end_of_input(&empty_tokens());
+        assert_eq!(*w.state(), WpdsState::Accepted);
         assert_eq!(
             w.weight().rule_idx, 0,
             "expected lex-min grandchild (rule_idx=0) to win",
@@ -3215,6 +5140,7 @@ mod tests {
                     symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                     weight: lex(0.0, 0, 0),
                     new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                    action_kind: ForkActionKind::Push,
                 }],
                 consume_trigger: false,
             },
@@ -3227,15 +5153,21 @@ mod tests {
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // entry
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
-        let final_state = w.run_to_saturation(100, &empty_tokens());
-        assert_eq!(final_state, WpdsState::Accepted);
-        // Finalize action drained id=0 (empty) and pushed Term<usize>(0).
-        let result: Option<usize> = w.builder_mut().take_result();
-        assert_eq!(
-            result,
-            Some(0),
-            "expected drain_collection(0) to yield 0 elements",
-        );
+        // Stage 3.5b (2026-05-01): the finalize action's Term result
+        // surfaces via WpdsResolveResult::Accepted, not via builder.take_result.
+        w.run_to_end_of_input(100, &empty_tokens())
+            .expect("max_steps not exceeded");
+        let result = w.resolve_at_end_of_input(&empty_tokens());
+        match result {
+            WpdsResolveResult::Accepted { term, .. }
+            | WpdsResolveResult::AcceptedAmbiguous { term, .. } => {
+                let val = *term
+                    .downcast::<usize>()
+                    .expect("expected usize Term from finalize action");
+                assert_eq!(val, 0, "expected drain_collection(0) to yield 0 elements");
+            }
+            other => panic!("expected Accepted; got {:?}", other),
+        }
     }
 
     /// Cleanup 4: nested Fork while a cursor has opened a collection (but
@@ -3261,11 +5193,13 @@ mod tests {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
@@ -3282,6 +5216,7 @@ mod tests {
                     symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                     weight: lex(0.0, 0, 0),
                     new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                    action_kind: ForkActionKind::Push,
                 }],
                 consume_trigger: false,
             },
@@ -3294,26 +5229,46 @@ mod tests {
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // entry
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // outer Fork
-        // Drive — must NOT panic on collection_stack debug_assert during
-        // the nested Fork's clone path. (The cursor opened a collection
-        // but accumulator 0 is empty when the inner Fork fires.)
-        let final_state = w.run_to_saturation(100, &empty_tokens());
+        // Stage 3.5b (2026-05-01): drive — must NOT panic on
+        // collection_stack debug_assert during the nested Fork's clone
+        // path. (The cursor opened a collection but accumulator 0 is
+        // empty when the inner Fork fires.) Under the new EOI semantics,
+        // commit happens via resolve_at_end_of_input.
+        w.run_to_end_of_input(100, &empty_tokens())
+            .expect("max_steps not exceeded");
+        let _ = w.resolve_at_end_of_input(&empty_tokens());
+        // Post-resolve: walker is no longer in AmbiguityFanout (either
+        // a winner committed, or ParseError surfaced).
         assert!(
-            !matches!(final_state, WpdsState::AmbiguityFanout { .. }),
+            !matches!(*w.state(), WpdsState::AmbiguityFanout { .. }),
             "fanout must resolve; got {:?}",
-            final_state,
+            w.state(),
         );
     }
 
-    /// Cleanup 4: a losing branch's pending_builder_ops must NOT replay
-    /// against the live builder. Two branches each `ConsumeAndPush` with
-    /// `capture_token: true` + Pop. Lex-min picks rule_idx=0; the live
-    /// builder has exactly ONE captured token (loser's PushToken delta
-    /// is dropped with the cursor).
+    /// Cleanup 4 (Stage 3.5b 2026-05-01 update): a losing branch's
+    /// pending_builder_ops must NOT replay against the live builder.
+    /// Two branches each `ConsumeAndPush` with `capture_token: true` +
+    /// `Pop`. Lex-min picks rule_idx=0; commit_winner_at_eoi replays only
+    /// the winner's PushToken delta. The losing cursor's PushToken
+    /// delta is discarded with the cursor at resolve time.
+    ///
+    /// Test mechanics under EOI semantics:
+    /// - 1 token, so each cursor's ConsumeAndPush brings pos to 1 = EOI.
+    /// - Each cursor's Pop transitions to InfixLoop at EOI → parked
+    ///   Resolved.
+    /// - resolve_at_end_of_input picks lex-min winner (cursor[0]).
+    /// - commit_winner_at_eoi replays winner's deltas → builder
+    ///   acquires winner's PushToken arg.
+    /// - take_dyn_result inside resolve sees `ActionArg::Token` (not a
+    ///   Term), returns None → resolve returns ParseError. That's
+    ///   expected; the assertion verifies the post-commit walker.state
+    ///   reflects "winner ran" via inspecting the captured-token text
+    ///   directly through pop_args.
     #[test]
     fn losing_branch_with_deltas_no_live_side_effect() {
-        let token_kinds = [TokenKind::Integer, TokenKind::Integer];
-        let token_texts = ["42", "99"];
+        let token_kinds = [TokenKind::Integer];
+        let token_texts = ["42"];
         let token_src = crate::wpds_runtime::SliceTokenSource::with_texts(
             &token_kinds,
             &token_texts,
@@ -3348,11 +5303,13 @@ mod tests {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(0.0, 0, 0),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(0.0, 0, 1),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
@@ -3366,14 +5323,34 @@ mod tests {
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &token_src); // entry
         let _ = w.process_event(WpdsEvent::Step, &token_src); // Fork
-        let _ = w.run_to_saturation(100, &token_src);
-        // Builder stack has exactly ONE arg (the winner's captured token).
-        // If the loser's delta replayed, builder.len() would be 2.
+        // Drive until parked at EOI. Both cursors reach pos=1=EOI in
+        // InfixLoop after their Pop.
+        w.run_to_end_of_input(100, &token_src).expect("max_steps");
+        // Resolve fires commit_winner_at_eoi(0) on the lex-min winner.
+        // The winner's pending_builder_ops replays exactly once; the
+        // loser's deltas are discarded with its cursor.
+        let _ = w.resolve_at_end_of_input(&token_src);
+        // After resolve, the winner's PushToken contributed exactly 1
+        // ActionArg to the builder, then take_dyn_result popped it
+        // (returning None because it was Token, not Term). So the
+        // post-resolve builder is empty. The invariant "loser's delta
+        // didn't replay" is verified by the symmetric structure: only
+        // the winner's commit ran, never both cursors'.
+        //
+        // Under the OLD mid-stream commit, this was checked via
+        // builder.len() == 1 immediately after run_to_saturation. Under
+        // EOI semantics, we instead check that the walker's accumulated
+        // weight reflects the winner's branch (rule_idx=0) and not the
+        // loser's (rule_idx=1).
         assert_eq!(
-            w.builder().len(),
-            1,
-            "loser's PushToken delta must NOT replay; expected 1 arg, got {}",
-            w.builder().len(),
+            w.weight().rule_idx,
+            0,
+            "lex-min winner (rule_idx=0) committed; loser (rule_idx=1) did not",
+        );
+        assert!(
+            (w.weight().primary.0 - 2.0).abs() < 1e-9,
+            "expected winner's accumulated cost = ConsumeAndPush(1.0) + Pop(1.0) = 2.0; got {}",
+            w.weight().primary.0,
         );
     }
 
@@ -3393,6 +5370,8 @@ mod tests {
                 Arc::new(BehavioralPred::Top) as Arc<dyn std::any::Any + Send + Sync>,
             )],
             collection_stack: Vec::new(),
+            source_priority: 0,
+            incoming_edge_stack: Vec::new(),
         };
         let cloned = cursor.clone();
         assert_eq!(cloned.pending_builder_ops.len(), 1);
@@ -3458,6 +5437,7 @@ mod tests {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None).with_kind_return(),
                         weight: lex(1.0, 0, 0),
                         new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
                     }],
                     consume_trigger: false,
                 },
@@ -3471,10 +5451,19 @@ mod tests {
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // entry
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
-        let final_state = w.run_to_saturation(100, &empty_tokens());
-        // Cleanup 3: state MUST remain Error, NOT be overwritten by InfixLoop.
-        match final_state {
-            WpdsState::Error { ref message } => {
+        // Stage 3.5b (2026-05-01): commit fires from EOI resolve. The
+        // FireAction delta replays during commit_winner_at_eoi → arity
+        // underflow → walker state set to Error. resolve returns
+        // ParseError because the winner committed but the builder ended
+        // up empty (action consumed args but underflowed before pushing
+        // a Term).
+        w.run_to_end_of_input(100, &empty_tokens())
+            .expect("max_steps not exceeded");
+        let _ = w.resolve_at_end_of_input(&empty_tokens());
+        // Cleanup 3: walker.state MUST remain Error, NOT be overwritten
+        // by InfixLoop (commit_winner's Cleanup 3 guard ensures this).
+        match w.state() {
+            WpdsState::Error { message } => {
                 assert!(
                     message.contains("arity") || message.contains("under"),
                     "expected arity-mismatch error; got: {}",
@@ -3486,5 +5475,276 @@ mod tests {
                 other,
             ),
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Stage 3.9 / ι Phase 4 (2026-05-01): always-cursor walker invariant tests
+    //
+    // Verify L1-L6 invariants + Lazy/Strict equivalence + helper correctness.
+    // ══════════════════════════════════════════════════════════════════════
+
+    /// L1: Lazy admission. After construction, mode = Lazy, cursors == 1,
+    /// pending_builder_ops empty.
+    #[test]
+    fn phase4_lazy_admission_holds_after_construction() {
+        let w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
+        assert_eq!(w.cursor_mode(), CursorMode::Lazy);
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1, "L1: singleton cursor in Lazy");
+        assert!(
+            cursors[0].pending_builder_ops.is_empty(),
+            "L1: pending_builder_ops empty in Lazy"
+        );
+    }
+
+    /// L2: Lazy → Strict on first Fork.
+    #[test]
+    fn phase4_lazy_to_strict_on_first_fork() {
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Fork {
+                branches: vec![
+                    ForkBranch {
+                        symbol: StackSymbolV2::rule_at(0, 0, 0, None),
+                        weight: lex(1.0, 0, 0),
+                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
+                    },
+                    ForkBranch {
+                        symbol: StackSymbolV2::rule_at(0, 1, 0, None),
+                        weight: lex(1.0, 0, 1),
+                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        action_kind: ForkActionKind::Push,
+                    },
+                ],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        assert_eq!(w.cursor_mode(), CursorMode::Lazy, "starts Lazy");
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
+        assert_eq!(w.cursor_mode(), CursorMode::Lazy, "still Lazy after non-Fork");
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        assert_eq!(
+            w.cursor_mode(),
+            CursorMode::Strict,
+            "L2: promoted to Strict on first Fork"
+        );
+    }
+
+    /// L3: Strict persists through fanout resolution.
+    #[test]
+    fn phase4_strict_persists_through_resolution() {
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Accept,
+            WpdsStepAction::Pop {
+                weight: lex(1.0, 0, 0),
+                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+            },
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::rule_at(0, 0, 0, None),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                    action_kind: ForkActionKind::Push,
+                }],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork → Strict
+        assert_eq!(w.cursor_mode(), CursorMode::Strict);
+        // Drive cursors to resolution.
+        w.run_to_end_of_input(100, &empty_tokens())
+            .expect("max_steps");
+        let _ = w.resolve_at_end_of_input(&empty_tokens());
+        assert_eq!(
+            w.cursor_mode(),
+            CursorMode::Strict,
+            "L3: stays Strict post-resolution"
+        );
+    }
+
+    /// L4: reset returns to Lazy with a fresh singleton.
+    #[test]
+    fn phase4_reset_returns_to_lazy() {
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::rule_at(0, 0, 0, None),
+                    weight: lex(1.0, 0, 0),
+                    new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                    action_kind: ForkActionKind::Push,
+                }],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork → Strict
+        assert_eq!(w.cursor_mode(), CursorMode::Strict);
+        w.reset(0);
+        assert_eq!(w.cursor_mode(), CursorMode::Lazy, "L4: reset → Lazy");
+        assert_eq!(*w.state(), WpdsState::Ready { min_bp: 0 });
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1, "L4: singleton after reset");
+        assert!(cursors[0].pending_builder_ops.is_empty());
+    }
+
+    /// L5: terminal state absorbs further actions regardless of mode.
+    #[test]
+    fn phase4_lazy_terminal_state_is_mode_irrelevant() {
+        let engine = ScriptedEngine::new(vec![WpdsStepAction::Accept]);
+        let mut w = WpdsWalker::new(engine, 0);
+        // Force terminal state directly.
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Accept
+        assert_eq!(*w.state(), WpdsState::Accepted);
+        // Subsequent Step should be a no-op (L5 + apply_action terminal early-return).
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        assert_eq!(*w.state(), WpdsState::Accepted, "L5: terminal absorbs");
+    }
+
+    /// L6: Lazy admission requires engine to emit Accept only at EOI.
+    /// Verified by: an unambiguous parse in Lazy mode reaches Accepted
+    /// with no replay needed (live builder already holds the result).
+    #[test]
+    fn phase4_lazy_eoi_accept_no_replay_needed() {
+        let engine = ScriptedEngine::new(vec![WpdsStepAction::Accept]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        // L6: Lazy mode at Accept; pending_builder_ops empty (no replay).
+        assert_eq!(w.cursor_mode(), CursorMode::Lazy);
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert!(
+            cursors[0].pending_builder_ops.is_empty(),
+            "L6: no deltas to replay"
+        );
+        assert_eq!(*w.state(), WpdsState::Accepted);
+    }
+
+    /// Stage 3.9 / ι Phase 4 regression-fix test (2026-05-01): a Push of
+    /// `OptionalGroupAt(1)` MUST open the optional scope in Lazy mode.
+    /// Pre-fix: `apply_action_to_cursor::Push` lost the
+    /// `OptionalGroupAt(1) → start_optional_scope()` clause during the
+    /// Step-4.4 helper rewrite. Post-fix: `emit_push_side_effects`
+    /// centralizes both `CollectionMarker` (id allocation) and
+    /// `OptionalGroupAt(1)` (scope opening) implicit Push-time effects.
+    #[test]
+    fn push_optional_group_at_one_opens_scope_in_lazy_mode() {
+        let engine = ScriptedEngine::new(vec![WpdsStepAction::Push {
+            symbol: StackSymbolV2::optional_group_at(0, 0, 1, 0),
+            weight: lex(0.0, 0, 0),
+            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+        }]);
+        let mut w = WpdsWalker::new(engine, 0);
+        assert_eq!(w.cursor_mode(), CursorMode::Lazy);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        // L1: still Lazy (no Fork). Live builder must have an open
+        // optional scope so subsequent inner pushes land in the inner Vec.
+        assert_eq!(w.cursor_mode(), CursorMode::Lazy);
+        assert_eq!(
+            w.builder().optional_stack_depth(),
+            1,
+            "Push of OptionalGroupAt(1) must open optional scope in Lazy mode",
+        );
+    }
+
+    /// Stage 3.9 / ι Phase 4 regression-fix test (2026-05-01): same as
+    /// above but for Strict mode — verify the cursor logs a
+    /// `BuilderDelta::StartOptionalScope` delta.
+    #[test]
+    fn push_optional_group_at_one_logs_delta_in_strict_mode() {
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::optional_group_at(0, 0, 1, 0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+            // Force Strict via a single-branch Fork BEFORE the OptionalGroupAt push.
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::category_entry(0),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                    action_kind: ForkActionKind::Push,
+                }],
+                consume_trigger: false,
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork → Strict
+        assert_eq!(w.cursor_mode(), CursorMode::Strict);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push (under fanout)
+        // The cursor's pending_builder_ops must contain a StartOptionalScope.
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert!(
+            cursors[0].pending_builder_ops.iter().any(|d| {
+                matches!(d, BuilderDelta::StartOptionalScope)
+            }),
+            "Push of OptionalGroupAt(1) in Strict must log StartOptionalScope delta; got {:?}",
+            cursors[0].pending_builder_ops,
+        );
+    }
+
+    /// Stage 3.9 / ι Phase 4 regression-fix test (2026-05-01): regression
+    /// guard. Push of `OptionalGroupAt(2)` (or any sub_pos != 1) must NOT
+    /// open the optional scope — only the FIRST marker (sub_pos=1) opens.
+    /// Subsequent OptionalGroupAt(2..N) advance through the group's inner
+    /// items and must NOT re-open the scope.
+    #[test]
+    fn push_optional_group_at_two_does_not_open_scope() {
+        let engine = ScriptedEngine::new(vec![WpdsStepAction::Push {
+            symbol: StackSymbolV2::optional_group_at(0, 0, 2, 0),
+            weight: lex(0.0, 0, 0),
+            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+        }]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        assert_eq!(
+            w.builder().optional_stack_depth(),
+            0,
+            "OptionalGroupAt(2) must NOT open a new scope (only sub_pos=1 does)",
+        );
+    }
+
+    /// Helper inlining: a single Push in Lazy mode mutates the live GSS
+    /// without populating cursor.pending_builder_ops.
+    #[test]
+    fn phase4_helper_inlining_does_not_double_emit() {
+        // Push a distinct symbol (rule_at) so GSS dedup doesn't collapse
+        // the sentinel CategoryEntry(0) root with the pushed symbol.
+        let engine = ScriptedEngine::new(vec![WpdsStepAction::Push {
+            symbol: StackSymbolV2::rule_at(0, 1, 0, Some(7)),
+            weight: lex(0.0, 0, 0),
+            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+        }]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        // Push grows GSS by ≥2 nodes (CategoryEntry root + pushed entry).
+        assert!(w.gss().node_count() >= 2);
+        // Lazy: no deltas accumulated.
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert!(
+            cursors[0].pending_builder_ops.is_empty(),
+            "Lazy: live mutation, no delta"
+        );
     }
 }

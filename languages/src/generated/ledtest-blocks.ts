@@ -220,6 +220,23 @@ const definitions = [
 		inputsInline: true,
 		output: "Expr",
 		colour: "51cde0",
+	},
+
+	// Pred To Num: ...
+	{
+		type: "num_pred_to_num",
+		tooltip: "Pred To Num: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Pred",
+			},
+		],
+		inputsInline: true,
+		output: "Num",
+		colour: "6be051",
 	}
 ];
 

@@ -21,7 +21,9 @@ use std::fmt;
 
 use proc_macro2::TokenStream;
 
-use crate::binding_power::{analyze_binding_powers, BindingPowerTable, InfixRuleInfo, MixfixPart};
+use crate::binding_power::{
+    analyze_binding_powers, compute_prefix_bp, BindingPowerTable, InfixRuleInfo, MixfixPart,
+};
 use crate::dispatch::{
     categories_needing_dispatch, write_category_dispatch, CastRule, CrossCategoryRule,
 };
@@ -40,9 +42,9 @@ use crate::recursive::{
     make_prefix_handler_metadata, write_dollar_handlers, write_lambda_handlers, write_rd_handler,
     RDRuleInfo, RDSyntaxItem,
 };
+use crate::rd_analysis::should_use_standalone_fn;
 use crate::trampoline::{
-    should_use_standalone_fn, write_trampolined_parser, write_trampolined_parser_recovering,
-    TrampolineConfig,
+    write_trampolined_parser, write_trampolined_parser_recovering, TrampolineConfig,
 };
 use crate::trampoline::write_trampolined_parser_traced;
 use crate::wfst::PredictionWfst;
@@ -365,7 +367,7 @@ pub(crate) fn detect_dead_rules(
     let nfa_covered: HashSet<String> = {
         let mut covered = HashSet::new();
         for cat in nfa_spillover_categories {
-            let groups = crate::trampoline::group_rd_by_dispatch_token_pub(rd_rules, cat);
+            let groups = crate::rd_analysis::group_rd_by_dispatch_token_pub(rd_rules, cat);
             for (_token, rules) in &groups {
                 if rules.len() < 2 {
                     continue;
@@ -1183,18 +1185,10 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
 
     let bp_table = analyze_binding_powers(&infix_rules);
 
-    // Compute max infix bp per category (exclude postfix) for prefix_bp
-    let max_infix_bp: HashMap<String, u8> = {
-        let mut map = HashMap::new();
-        for op in &bp_table.operators {
-            if op.is_postfix {
-                continue;
-            }
-            let max = map.entry(op.category.clone()).or_insert(0u8);
-            *max = (*max).max(op.left_bp).max(op.right_bp);
-        }
-        map
-    };
+    // Stage 3.27d-pre (2026-04-30): prefix_bp now derives from
+    // `compute_prefix_bp()` — the local max_infix_bp HashMap was removed
+    // because the helper queries `bp_table.operators` directly. See
+    // `prattail/src/binding_power.rs::PREFIX_BP_OFFSET`.
 
     // Extract rule_infos for FIRST set computation
     let rule_infos: Vec<RuleInfo> = spec
@@ -1252,12 +1246,11 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         .filter(|r| !r.is_infix && !r.is_var && !r.is_literal)
         .map(|rule| {
             let prefix_bp = if rule.is_unary_prefix {
-                if let Some(explicit_bp) = rule.prefix_precedence {
-                    Some(explicit_bp)
-                } else {
-                    let cat_max = max_infix_bp.get(&rule.category).copied().unwrap_or(0);
-                    Some(cat_max + 2)
-                }
+                Some(compute_prefix_bp(
+                    &rule.category,
+                    rule.prefix_precedence,
+                    &bp_table,
+                ))
             } else {
                 None
             };
@@ -1317,10 +1310,16 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
     };
 
     // Extract cast rules
+    // Stage 3.13c (2026-05-01): exclude synthetic auto-injection rules from
+    // legacy unified-trampoline cast_rules. Synthetic rules emitted by
+    // `wpds_codegen/auto_inject.rs::make_injection_rule` are visible only to
+    // the WPDS path; routing them through unified-trampoline cast machinery
+    // produces ambiguity warnings and downstream codegen errors (W05 false
+    // positives + IfElse/KwInt arity mismatches in `int_bool-unified.rs`).
     let cast_rules: Vec<CastRule> = spec
         .rules
         .iter()
-        .filter(|r| r.is_cast)
+        .filter(|r| r.is_cast && !r.is_auto_injected)
         .map(|r| {
             let source_cat = r.cast_source_category.clone().unwrap_or_default();
             let target_cat = r.category.clone();
@@ -2755,7 +2754,7 @@ fn generate_parser_code(
     // Detect which categories have NFA-ambiguous prefix groups (multiple rules
     // sharing the same dispatch token). These categories need thread-local spillover
     // buffers and forced-prefix replay for intra-category disambiguation.
-    let mut nfa_spillover_categories = crate::trampoline::categories_needing_nfa_spillover(
+    let mut nfa_spillover_categories = crate::rd_analysis::categories_needing_nfa_spillover(
         &bundle.rd_rules,
         &category_names,
     );
@@ -3324,7 +3323,7 @@ fn generate_parser_code(
             let before = nfa_spillover_categories.len();
             nfa_spillover_categories.retain(|cat| {
                 // Check if any NFA group in this category still has >1 live rule
-                let groups = crate::trampoline::group_rd_by_dispatch_token_pub(
+                let groups = crate::rd_analysis::group_rd_by_dispatch_token_pub(
                     &bundle.rd_rules, cat,
                 );
                 groups.iter().any(|(_token, rules)| {

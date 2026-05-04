@@ -147,15 +147,19 @@ fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
         return result.unwrap_int();
     }
 
-    let choice = (reader.next_byte() as usize) % 2;
+    let choice = (reader.next_byte() as usize) % 3;
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_int(),
-        _ => {
+        1 => {
             let f0 = Box::new(build_bool_from_tape(reader, child_depth));
             let f1 = Box::new(build_int_from_tape(reader, child_depth));
             let f2: Option<Box<Int>> = if reader.next_byte() & 1 == 0 { None } else { Some(Box::new(build_int_from_tape(reader, child_depth))) };
             Int::IfElse(f0, f1, f2)
+        },
+        _ => {
+            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            Int::BoolToInt(f0)
         },
     }
 }
@@ -407,5 +411,282 @@ proptest! {
         }
     }
 
+}
+
+// ═══════════════════════════════════════════════════════════
+// Simulation tests (runner integration)
+// ═══════════════════════════════════════════════════════════
+
+#[test]
+fn sim_optsmoke_normal_form_reachability() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+
+    let lang = OptSmokeLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+
+    let test_inputs: Vec<&str> = vec!["true", "1"];
+
+    let mut tested = 0usize;
+    let mut reached_nf = 0usize;
+
+    for input in &test_inputs {
+        mettail_runtime::clear_var_cache();
+        // Catch panics from native eval (e.g., division by zero in ![a / b]).
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runner.run_to_normal_form(input)
+        }));
+        match result {
+            Ok(Ok(trace)) => {
+                tested += 1;
+                if matches!(trace.outcome, TraceOutcome::NormalForm { .. }) {
+                    reached_nf += 1;
+                }
+            }
+            _ => {
+                // Skip inputs that fail to parse, evaluate, or panic.
+            }
+        }
+    }
+
+    if tested > 0 {
+        let pass_rate = reached_nf as f64 / tested as f64;
+        assert!(
+            pass_rate >= 0.80,
+            "OptSmoke normal form reachability: only {:.1}% reached NF ({} / {})",
+            pass_rate * 100.0,
+            reached_nf,
+            tested,
+        );
+    }
+}
+
+#[test]
+fn sim_optsmoke_roundtrip_under_rewrite() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+
+    let lang = OptSmokeLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        seed: Some([99u8; 32]),
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+
+    // Test a set of concrete expressions for rewrite roundtrip.
+    let test_inputs: Vec<&str> = vec!["true", "1"];
+
+    for input in &test_inputs {
+        mettail_runtime::clear_var_cache();
+        // Catch panics from native eval (e.g., division by zero).
+        let result1 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runner.run_to_normal_form(input)
+        }));
+        let trace1 = match result1 {
+            Ok(Ok(t)) => t,
+            _ => continue, // Skip inputs that panic, fail to parse, or error.
+        };
+        let nf1 = match &trace1.outcome {
+            TraceOutcome::NormalForm { term, .. } => term.clone(),
+            _ => continue,
+        };
+
+        mettail_runtime::clear_var_cache();
+        let result2 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runner.run_to_normal_form(&nf1)
+        }));
+        let trace2 = match result2 {
+            Ok(Ok(t)) => t,
+            _ => panic!(
+                "OptSmoke roundtrip re-run panicked or errored for input {:?} \
+                 (first NF: {:?})",
+                input, nf1,
+            ),
+        };
+        let nf2 = match &trace2.outcome {
+            TraceOutcome::NormalForm { term, .. } => term.clone(),
+            other => panic!(
+                "OptSmoke roundtrip re-run did not reach NF for input {:?} \
+                 (first NF: {:?}): {:?}",
+                input, nf1, other,
+            ),
+        };
+
+        if nf1 != nf2 {
+            panic!(
+                "OptSmoke roundtrip under rewrite FAILED for input {:?}:\n\
+                 First NF:  {:?}\nSecond NF: {:?}",
+                input, nf1, nf2,
+            );
+        }
+    }
+}
+
+#[test]
+fn sim_optsmoke_morphology_bounded() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+
+    let lang = OptSmokeLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: true,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+
+    let test_inputs: Vec<&str> = vec!["true", "1"];
+
+    for input in &test_inputs {
+        mettail_runtime::clear_var_cache();
+        // Catch panics from native eval (e.g., division by zero).
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runner.run_to_normal_form(input)
+        }));
+        if let Ok(Ok(trace)) = result {
+            if let Some(ref morph) = trace.morphology {
+                assert!(
+                    morph.max_nodes <= 50000,
+                    "OptSmoke morphology: max nodes {} exceeds bound 50000 for input {:?}",
+                    morph.max_nodes,
+                    input,
+                );
+                assert!(
+                    morph.max_depth <= 100,
+                    "OptSmoke morphology: max depth {} exceeds bound 100 for input {:?}",
+                    morph.max_depth,
+                    input,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn sim_optsmoke_eval_determinism() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+
+    let lang = OptSmokeLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+
+    let test_inputs: Vec<&str> = vec!["true", "1"];
+
+    for input in &test_inputs {
+        let config1 = SimulationConfig {
+            max_steps: 100,
+            track_morphology: false,
+            ..SimulationConfig::default()
+        };
+        let runner1 = SimulationRunner::new(lang_ref, config1);
+
+        mettail_runtime::clear_var_cache();
+        // Catch panics from native eval (e.g., division by zero).
+        let result1 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runner1.run_to_normal_form(input)
+        }));
+        let trace1 = match result1 {
+            Ok(Ok(t)) => t,
+            _ => continue, // Skip inputs that panic or fail.
+        };
+        let nf1 = match &trace1.outcome {
+            TraceOutcome::NormalForm { term, .. } => term.clone(),
+            _ => continue,
+        };
+
+        let config2 = SimulationConfig {
+            max_steps: 100,
+            track_morphology: false,
+            ..SimulationConfig::default()
+        };
+        let runner2 = SimulationRunner::new(lang_ref, config2);
+
+        mettail_runtime::clear_var_cache();
+        let result2 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runner2.run_to_normal_form(input)
+        }));
+        let trace2 = match result2 {
+            Ok(Ok(t)) => t,
+            _ => continue, // If the second run panics but the first didn't, skip.
+        };
+        let nf2 = match &trace2.outcome {
+            TraceOutcome::NormalForm { term, .. } => term.clone(),
+            _ => continue,
+        };
+
+        assert_eq!(
+            nf1, nf2,
+            "OptSmoke eval determinism: different normal forms for input {:?}: {:?} vs {:?}",
+            input, nf1, nf2,
+        );
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+
+    #[test]
+    fn sim_optsmoke_proptest_campaign(term in arb_int(3u32)) {
+        use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+        use mettail_simulation::trace::TraceOutcome;
+        use mettail_simulation::invariant::{BoundedSize, BoundedDepth};
+
+        let lang = OptSmokeLanguage;
+        let lang_ref: &dyn mettail_runtime::Language = &lang;
+
+        let displayed = format!("{}", term);
+        // Skip very large terms to avoid OOM in the rewrite engine.
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+
+        // `AlwaysParseable` is intentionally excluded: the roundtrip tests
+        // (sim_*_roundtrip_under_rewrite) already check parseability of normal
+        // forms, and AlwaysParseable's per-step `clear_var_cache()` is a
+        // significant per-iteration cost in a proptest campaign.
+        let config = SimulationConfig {
+            max_steps: 50,
+            track_morphology: false,
+            invariants: vec![
+                Box::new(BoundedSize { max_nodes: 10000 }),
+                Box::new(BoundedDepth { max_depth: 50 }),
+            ],
+            ..SimulationConfig::default()
+        };
+        let runner = SimulationRunner::new(lang_ref, config);
+
+        // `catch_unwind` is defensive only: the `SafeArith` + `rust_code_rewrite`
+        // pass removes arithmetic overflow as a panic source. Any remaining panic
+        // (e.g. parser bug, language invariant broken) is a real bug we'd want to
+        // surface — but we catch it here so proptest shrinking doesn't hit the
+        // macOS double-panic abort. `prop_assert!` fires only on
+        // `InvariantViolation` (the bug signal for this test); other outcomes
+        // are covered by Tests 1–4.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            mettail_runtime::clear_var_cache();
+            runner.run_to_normal_form(&displayed)
+        }));
+        if let Ok(Ok(trace)) = result {
+            if let TraceOutcome::InvariantViolation { ref invariant, ref message, .. } = trace.outcome {
+                prop_assert!(
+                    false,
+                    "OptSmoke invariant '{}' violated on '{}': {}",
+                    invariant, displayed, message,
+                );
+            }
+        }
+        // All other outcomes (SimulationFailure, panics, StepLimitReached, Error)
+        // are tolerated — they are covered by dedicated non-proptest simulation tests.
+    }
 }
 

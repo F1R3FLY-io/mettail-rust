@@ -323,7 +323,12 @@ impl fmt::Display for StackSymbolV2 {
 /// branching parses. Plus the standard terminal states.
 ///
 /// External consumers inspect this via [`WpdsWalker::state`] (Stage 4).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Stage 3.5b (2026-05-01): adds `Hash` derive so cursor configurations
+/// `(state, gss_node_id, pos)` can be the key for `merge_equivalent_cursors`
+/// — the WPDS ⊕-merging step that collapses paths reaching the same
+/// configuration via `Semiring::plus`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WpdsState {
     /// Initial state at category entry; parser awaits its first event.
     Ready { min_bp: u8 },
@@ -503,6 +508,64 @@ impl WpdsState {
         matches!(self, WpdsState::Accepted | WpdsState::Error { .. })
     }
 }
+
+/// Stage 3.5b (2026-05-01): the result of `WpdsWalker::resolve_at_end_of_input`,
+/// the WPDS-correct end-of-stream resolution path. Replaces the prior
+/// mid-stream `commit_winner` semantics where the Walker would commit any
+/// time `branch_cursors` collapsed to one alive cursor — that was
+/// architecturally a bug (Bug 1: mid-stream commit). The new contract:
+/// configurations carry through to EOI, ⊕-merge en route, and the answer
+/// is the lex-min weighted Accepted configuration at `pos == tokens.len()`.
+///
+/// Source-order tiebreak applies when ≥2 configurations tie on
+/// `LexicographicWeight`'s 4-tuple (which is structurally rare: equal
+/// `primary, lex_alt_idx, src_idx, rule_idx`). When that tiebreak fires,
+/// emit ambiguity warning + commit earliest source-ordered branch +
+/// return `AcceptedAmbiguous`.
+#[derive(Debug)]
+pub enum WpdsResolveResult<W: Semiring> {
+    /// Single Accepted configuration at EOI.
+    Accepted {
+        weight: W,
+        term: Arc<dyn std::any::Any + Send + Sync>,
+    },
+    /// ≥2 Accepted configurations tied on weight after `LexicographicWeight`
+    /// 4-tuple comparison. `equivalence_class_size` reports how many
+    /// branches tied; the chosen `term` is the source-order earliest.
+    AcceptedAmbiguous {
+        weight: W,
+        term: Arc<dyn std::any::Any + Send + Sync>,
+        equivalence_class_size: usize,
+    },
+    /// Zero accepting configurations at EOI — input cannot be parsed by
+    /// the grammar. `position` is where the cursor stalled (max position
+    /// reached among dead cursors).
+    ParseError { message: String, position: usize },
+    /// Driver hit `max_steps` budget before reaching EOI. Caller may
+    /// resume by extending the budget.
+    MaxStepsExceeded { position: usize },
+}
+
+/// Stage 3.5b (2026-05-01): error returned by `WpdsWalker::run_to_end_of_input`
+/// when the driver exhausts its `max_steps` budget before reaching EOI
+/// or a terminal state. Caller may extend the budget and resume by
+/// calling `run_to_end_of_input` again with a larger `max_steps`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WpdsMaxStepsExceeded {
+    pub position: usize,
+}
+
+impl std::fmt::Display for WpdsMaxStepsExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "WPDS walker exceeded max_steps before reaching end of input (position={})",
+            self.position
+        )
+    }
+}
+
+impl std::error::Error for WpdsMaxStepsExceeded {}
 
 /// Events that drive the reactive FSM forward.
 ///
@@ -1043,6 +1106,18 @@ pub const fn unpack_action_id(id: ActionId) -> (u16, u16) {
 /// Heterogeneous — actions downcast on demand. The walker pushes these
 /// during the parse; actions pop a slice of N (matching the rule's
 /// arity) and consume them.
+///
+/// Stage 3.6 / ι Phase 1 (2026-05-01): `Term`, `Collection`, and
+/// `Predicate` payloads are `Arc<dyn Any + Send + Sync>` (was
+/// `Box<dyn Any + Send>`) so `ActionArg` derives `Clone`. This unblocks
+/// `BranchCursor::clone` for cursors with populated `collection_stack`
+/// accumulators (the pre-3.6 `debug_assert!` panic at line 416 of
+/// `wpds_walker.rs` is no longer needed). AST types are `Clone` (manual
+/// impls via `iterative_clone.rs`); primitives are `Clone`. Accessors
+/// `into_term::<T>` / `into_collection::<T>` / `into_predicate::<T>`
+/// gain a `T: Clone` bound so they can deep-clone out of the Arc when
+/// the value is shared.
+#[derive(Clone)]
 pub enum ActionArg {
     /// A raw token kind + its text + position.
     Token { kind: TokenKind, text: String, pos: usize },
@@ -1050,7 +1125,7 @@ pub enum ActionArg {
     Ident { name: String, pos: usize },
     /// A fully-constructed sub-term (downcast via `Any`).
     Term {
-        value: Box<dyn Any + Send>,
+        value: Arc<dyn Any + Send + Sync>,
         /// Static type-name tag for debug rendering and mismatch detection.
         type_name: &'static str,
     },
@@ -1058,7 +1133,7 @@ pub enum ActionArg {
     BinderScope(BinderHandle),
     /// A completed collection (List, Bag, Map — downcast via `Any`).
     Collection {
-        value: Box<dyn Any + Send>,
+        value: Arc<dyn Any + Send + Sync>,
         type_name: &'static str,
     },
     /// Phase 4: identifier of an in-flight collection accumulator. Pushed by
@@ -1068,7 +1143,7 @@ pub enum ActionArg {
     /// Phase 6: a parsed behavioral predicate. Pushed by the walker after
     /// invoking `parse_predicate_from_tokens`; consumed by the rule's action
     /// to wire the predicate into the constructed AST.
-    Predicate(Box<dyn Any + Send>),
+    Predicate(Arc<dyn Any + Send + Sync>),
     /// Opt-Group (2026-04-29): a captured optional-group result.
     ///
     /// `Some(inner_args)` when the syntax-pattern Opt block matched
@@ -1150,9 +1225,17 @@ impl ActionArg {
         }
     }
     /// Consume this `Term` arg and downcast to `T`.
-    pub fn into_term<T: 'static>(self) -> Option<T> {
+    ///
+    /// Stage 3.6 / ι Phase 1 (2026-05-01): `T: Clone` bound added. The
+    /// payload is `Arc<dyn Any + Send + Sync>`; `Arc::try_unwrap` moves
+    /// out when the Arc is uniquely owned (zero-copy fast path); falls
+    /// back to `(*arc).clone()` when the Arc has been cloned for fanout.
+    pub fn into_term<T: 'static + Send + Sync + Clone>(self) -> Option<T> {
         match self {
-            ActionArg::Term { value, .. } => value.downcast::<T>().ok().map(|b| *b),
+            ActionArg::Term { value, .. } => match Arc::downcast::<T>(value) {
+                Ok(arc) => Some(Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())),
+                Err(_) => None,
+            },
             _ => None,
         }
     }
@@ -1164,9 +1247,15 @@ impl ActionArg {
         }
     }
     /// Consume this `Collection` arg and downcast to `T`.
-    pub fn into_collection<T: 'static>(self) -> Option<T> {
+    ///
+    /// Stage 3.6 / ι Phase 1 (2026-05-01): see `into_term` for Arc/Clone
+    /// rationale.
+    pub fn into_collection<T: 'static + Send + Sync + Clone>(self) -> Option<T> {
         match self {
-            ActionArg::Collection { value, .. } => value.downcast::<T>().ok().map(|b| *b),
+            ActionArg::Collection { value, .. } => match Arc::downcast::<T>(value) {
+                Ok(arc) => Some(Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())),
+                Err(_) => None,
+            },
             _ => None,
         }
     }
@@ -1178,9 +1267,15 @@ impl ActionArg {
         }
     }
     /// Phase 6: consume this `Predicate` arg and downcast to `T`.
-    pub fn into_predicate<T: 'static>(self) -> Option<T> {
+    ///
+    /// Stage 3.6 / ι Phase 1 (2026-05-01): see `into_term` for Arc/Clone
+    /// rationale.
+    pub fn into_predicate<T: 'static + Send + Sync + Clone>(self) -> Option<T> {
         match self {
-            ActionArg::Predicate(value) => value.downcast::<T>().ok().map(|b| *b),
+            ActionArg::Predicate(value) => match Arc::downcast::<T>(value) {
+                Ok(arc) => Some(Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())),
+                Err(_) => None,
+            },
             _ => None,
         }
     }
@@ -1309,6 +1404,13 @@ impl SemanticBuilder {
         self.optional_stack.push(Vec::new());
     }
 
+    /// Stage 3.9 / ι Phase 4 (2026-05-01): introspection accessor for
+    /// regression tests verifying optional-scope opener fires correctly
+    /// on `OptionalGroupAt(1)` push (`emit_push_side_effects` clause).
+    pub fn optional_stack_depth(&self) -> usize {
+        self.optional_stack.len()
+    }
+
     /// Opt-Group: close the innermost optional scope, wrapping its
     /// inner-arg buffer as `ActionArg::Optional(Some(inner))` and pushing
     /// to the surrounding scope (next-outer optional scope OR main stack).
@@ -1348,18 +1450,25 @@ impl SemanticBuilder {
     }
 
     /// Push a constructed sub-term.
-    pub fn push_term<T: 'static + Send>(&mut self, value: T) {
+    ///
+    /// Stage 3.6 / ι Phase 1 (2026-05-01): `T: Sync` bound added (was `Send`
+    /// only). The payload is `Arc<dyn Any + Send + Sync>`; `Sync` is
+    /// required for the trait object. AST types satisfy `Send + Sync`
+    /// (verified — no interior mutability in any AST variant).
+    pub fn push_term<T: 'static + Send + Sync>(&mut self, value: T) {
         self.push_arg_internal(ActionArg::Term {
-            value: Box::new(value),
+            value: Arc::new(value),
             type_name: std::any::type_name::<T>(),
         });
     }
 
     /// Push a completed collection (already of the language's native
     /// collection type, e.g., `HashBag<Proc>` or `Vec<Int>`).
-    pub fn push_collection<T: 'static + Send>(&mut self, value: T) {
+    ///
+    /// Stage 3.6 / ι Phase 1 (2026-05-01): `T: Sync` bound added.
+    pub fn push_collection<T: 'static + Send + Sync>(&mut self, value: T) {
         self.push_arg_internal(ActionArg::Collection {
-            value: Box::new(value),
+            value: Arc::new(value),
             type_name: std::any::type_name::<T>(),
         });
     }
@@ -1377,33 +1486,19 @@ impl SemanticBuilder {
     }
 
     /// Phase 6: push a parsed behavioral predicate onto the stack.
-    pub fn push_predicate<T: 'static + Send>(&mut self, pred: T) {
-        self.push_arg_internal(ActionArg::Predicate(Box::new(pred)));
+    ///
+    /// Stage 3.6 / ι Phase 1 (2026-05-01): `T: Sync` bound added.
+    pub fn push_predicate<T: 'static + Send + Sync>(&mut self, pred: T) {
+        self.push_arg_internal(ActionArg::Predicate(Arc::new(pred)));
     }
 
-    /// Cleanup 4 (Option A refinement, 2026-04-28): replay path for an
-    /// Arc-erased predicate captured from a Fork branch. `BuilderDelta::PushPredicate`
-    /// holds `Arc<dyn Any + Send + Sync>` so cloning during nested-Fork
-    /// `ForkInto` is total (no `Box` non-Clone restriction). At commit
-    /// time we downcast back to the concrete predicate type, clone, and
-    /// re-box for `ActionArg::Predicate(Box<dyn Any + Send>)` — the
-    /// downstream `into_predicate::<T>()` API stays unchanged.
-    ///
-    /// Today's only emitted predicate type is `BehavioralPred` (which
-    /// derives `Clone`). Future predicate types must be added to the
-    /// downcast cascade; the debug_assert flags missing additions
-    /// loudly. Cloning is cheap: predicate ASTs are small.
+    /// Stage 3.6 / ι Phase 1 (2026-05-01) simplification: now that
+    /// `ActionArg::Predicate` is `Arc<dyn Any + Send + Sync>` natively,
+    /// the Arc-erased replay path stores the Arc directly without
+    /// downcast/clone/re-box. The pre-3.6 cascade (downcast to
+    /// BehavioralPred → clone → Box) is no longer needed.
     pub fn push_predicate_arc(&mut self, pred: Arc<dyn Any + Send + Sync>) {
-        if let Some(bp) = pred.downcast_ref::<crate::behavioral_pred::BehavioralPred>() {
-            self.push_arg_internal(ActionArg::Predicate(Box::new(bp.clone())));
-            return;
-        }
-        debug_assert!(
-            false,
-            "push_predicate_arc: Arc<dyn Any + Send + Sync> did not downcast \
-             to BehavioralPred — add the new predicate type to the cascade",
-        );
-        let _ = pred;
+        self.push_arg_internal(ActionArg::Predicate(pred));
     }
 
     /// Pop the top N args (returned in push order: result[0] was
@@ -1454,7 +1549,10 @@ impl SemanticBuilder {
     /// At parse completion, extract the single remaining term as the
     /// parse result. Returns `None` if the stack is empty, has more than
     /// one entry, or the top entry is not a term of type `T`.
-    pub fn take_result<T: 'static + Send>(&mut self) -> Option<T> {
+    ///
+    /// Stage 3.6 / ι Phase 1 (2026-05-01): `T: Clone` bound added (Arc
+    /// move-or-clone fast path).
+    pub fn take_result<T: 'static + Send + Sync + Clone>(&mut self) -> Option<T> {
         debug_assert!(
             self.optional_stack.is_empty(),
             "take_result: optional_stack is non-empty at Accepted state — \
@@ -1465,7 +1563,30 @@ impl SemanticBuilder {
             return None;
         }
         match self.stack.pop()? {
-            ActionArg::Term { value, .. } => value.downcast::<T>().ok().map(|b| *b),
+            ActionArg::Term { value, .. } => match Arc::downcast::<T>(value) {
+                Ok(arc) => Some(Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())),
+                Err(_) => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Stage 3.5b (2026-05-01): type-erased variant of `take_result` used by
+    /// `WpdsWalker::resolve_at_end_of_input`. The walker is generic over
+    /// the semiring W but does not know the parsed term type T at the
+    /// resolution surface — `WpdsResolveResult` carries the term as
+    /// `Arc<dyn Any + Send + Sync>` (post-Stage-3.6) and downstream callers
+    /// downcast.
+    pub fn take_dyn_result(&mut self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        debug_assert!(
+            self.optional_stack.is_empty(),
+            "take_dyn_result: optional_stack is non-empty — engine bug",
+        );
+        if self.stack.len() != 1 {
+            return None;
+        }
+        match self.stack.pop()? {
+            ActionArg::Term { value, .. } => Some(value),
             _ => None,
         }
     }
@@ -1495,8 +1616,41 @@ impl SemanticBuilder {
 
     /// Drain the collection identified by `id`, returning its elements
     /// in push order. Called by the collection-finalize action.
+    ///
+    /// **Lifecycle (Stage 3.5 / γ.1, 2026-04-30):** the slot at `id` is
+    /// REMOVED from `collection_stack` — mirroring
+    /// `finalize_optional_scope_present`'s `optional_stack.pop()` pattern.
+    /// Without the pop, slot accumulation grows unboundedly across nested
+    /// collection finalizes and breaks the `adopt_collection_stack`
+    /// invariant at fanout boundaries (see Class C panic at
+    /// `wpds_runtime.rs::adopt_collection_stack`). LIFO invariant: every
+    /// `drain_collection(id)` call should match the top of the stack
+    /// because grammars can only close collections in the reverse order
+    /// they opened (the close-delim of an inner collection always
+    /// precedes the close-delim of an outer collection that contains it).
     pub fn drain_collection(&mut self, id: u8) -> Vec<ActionArg> {
-        if let Some(acc) = self.collection_stack.get_mut(id as usize) {
+        let id_usize = id as usize;
+        debug_assert!(
+            id_usize < self.collection_stack.len(),
+            "drain_collection: id {} out of range (collection_stack.len() = {})",
+            id, self.collection_stack.len(),
+        );
+        debug_assert_eq!(
+            id_usize + 1,
+            self.collection_stack.len(),
+            "drain_collection: LIFO violation — id {} is not the top of \
+             collection_stack (len = {}). Collections must finalize in \
+             reverse open order.",
+            id, self.collection_stack.len(),
+        );
+        if id_usize + 1 == self.collection_stack.len() {
+            self.collection_stack.pop().unwrap_or_default()
+        } else if let Some(acc) = self.collection_stack.get_mut(id_usize) {
+            // Defensive fallback in release builds when LIFO is violated:
+            // drain the slot in place (legacy mem::take behavior). Slot
+            // remains, leaving an empty husk — but better than panicking
+            // on a non-LIFO grammar (none ship today; future grammars
+            // would surface via the debug_assert above).
             std::mem::take(acc)
         } else {
             Vec::new()
@@ -1522,6 +1676,25 @@ impl SemanticBuilder {
             self.collection_stack.len(),
         );
         self.collection_stack = accs;
+    }
+
+    /// Stage 3.12.8 (2026-05-03): collection_stack length accessor for
+    /// the `BuilderDelta::FinalizeCollection` replay invariant check.
+    pub fn collection_stack_len(&self) -> usize {
+        self.collection_stack.len()
+    }
+
+    /// Stage 3.12.8 (2026-05-03): re-push a previously-drained
+    /// collection slot. Used by `BuilderDelta::FinalizeCollection`
+    /// replay to restore the LIFO top so the subsequent
+    /// `FireAction → drain_collection(id)` succeeds.
+    ///
+    /// The slot's elements are the `drained` Vec from the delta —
+    /// captured at the cursor-side pop time when grammar logically
+    /// closed the collection. After replay's re-push, the live
+    /// builder's stack length matches the cursor's logical snapshot.
+    pub fn push_collection_slot(&mut self, drained: Vec<ActionArg>) {
+        self.collection_stack.push(drained);
     }
 }
 
@@ -1923,9 +2096,10 @@ mod tests {
 
     #[test]
     fn action_arg_debug_is_type_safe() {
-        // Ensures Debug doesn't try to print the Box<dyn Any> internals.
+        // Ensures Debug doesn't try to print the dyn Any internals.
+        // Stage 3.6 / ι Phase 1 (2026-05-01): Box → Arc.
         let a = ActionArg::Term {
-            value: Box::new(42i32),
+            value: Arc::new(42i32),
             type_name: "i32",
         };
         let s = format!("{:?}", a);

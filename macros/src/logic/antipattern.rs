@@ -766,6 +766,7 @@ mod tests {
                 RelationDecl {
                     name: rel.name.clone(),
                     param_types,
+                    doc_comment: None,
                 }
             })
             .collect();
@@ -923,6 +924,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }];
 
         let warnings = detect_deep_congruence_chains(&lang);
@@ -966,6 +969,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }];
 
         let warnings = detect_deep_congruence_chains(&lang);
@@ -1001,6 +1006,8 @@ mod tests {
                 is_right_assoc: false,
                 prefix_bp: None,
                 tier_directive: None,
+                is_auto_injected: false,
+                doc_comment: None,
             },
             GrammarRule {
                 label: make_ident("PWrap"),
@@ -1017,6 +1024,8 @@ mod tests {
                 is_right_assoc: false,
                 prefix_bp: None,
                 tier_directive: None,
+                is_auto_injected: false,
+                doc_comment: None,
             },
         ];
 
@@ -1030,6 +1039,8 @@ mod tests {
                 constructor: make_ident("PWrap"),
                 args: vec![Pattern::Term(PatternTerm::Var(make_ident("P")))],
             }),
+            is_auto_injected: false,
+
         }];
 
         let warnings = detect_unbounded_rewrite_growth(&lang);
@@ -1064,6 +1075,8 @@ mod tests {
                 is_right_assoc: false,
                 prefix_bp: None,
                 tier_directive: None,
+                is_auto_injected: false,
+                doc_comment: None,
             },
             GrammarRule {
                 label: make_ident("PWrap"),
@@ -1080,6 +1093,8 @@ mod tests {
                 is_right_assoc: false,
                 prefix_bp: None,
                 tier_directive: None,
+                is_auto_injected: false,
+                doc_comment: None,
             },
         ];
 
@@ -1095,6 +1110,8 @@ mod tests {
                     constructor: make_ident("PWrap"),
                     args: vec![Pattern::Term(PatternTerm::Var(make_ident("P")))],
                 }),
+                is_auto_injected: false,
+
             },
             mettail_ast::language::RewriteRule {
                 name: make_ident("UnwrapAll"),
@@ -1105,6 +1122,8 @@ mod tests {
                     args: vec![Pattern::Term(PatternTerm::Var(make_ident("P")))],
                 }),
                 right: Pattern::Term(PatternTerm::Var(make_ident("P"))),
+                is_auto_injected: false,
+
             },
         ];
 
@@ -1143,6 +1162,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }];
 
         let warnings = detect_clone_storm(&lang);
@@ -1186,6 +1207,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }];
 
         let warnings = detect_clone_storm(&lang);
@@ -1238,6 +1261,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }];
 
         let warnings = detect_antipatterns(&lang);

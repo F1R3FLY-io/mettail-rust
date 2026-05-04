@@ -111,6 +111,11 @@ pub(crate) fn build_per_category_rules(
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            // Literal-pattern shape synthesis is a foundational rule
+            // (not cross-cat auto-injection per Stage 3.13b/3.13c), so
+            // it remains visible to legacy unified-trampoline cast_rules.
+            is_auto_injected: false,
+            doc_comment: None,
         };
         per_cat[i].push(synthetic);
     }
@@ -210,6 +215,11 @@ pub(crate) fn build_per_category_rules(
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            // Collection-literal synthesis (List/Bag/Map) is a foundational
+            // rule, not cross-cat auto-injection. Remains visible to legacy
+            // unified-trampoline cast_rules.
+            is_auto_injected: false,
+            doc_comment: None,
         };
         per_cat[i].push(synthetic);
     }
@@ -266,6 +276,12 @@ pub(crate) fn build_per_category_rules(
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            // Var-rule synthesis is a foundational rule (mirrors macro
+            // `gen/types/enums.rs:113-115` auto-Var emission), not
+            // cross-cat auto-injection. Remains visible to legacy
+            // unified-trampoline cast_rules.
+            is_auto_injected: false,
+            doc_comment: None,
         };
         per_cat[i].push(synthetic);
     }

@@ -289,16 +289,46 @@ language! {
                 _ => false,
             }
         }] fold;
+        // Stage 3.12.9 α-4 (2026-05-04): use fallible `try_eval()` instead of
+        // panicking `eval()` for each `Proc::Proc<X>` arm. Combined with β's
+        // extended `try_eval` (which handles auto-injection wrappers like
+        // `BigRat::IntToBigRat(NumLit(_))`), this preserves functionality
+        // for lossless wrappers while gracefully falling to `String::new()`
+        // for unevaluable inputs (Var, partially-reduced). The
+        // `String::new()` fallback mirrors the existing `_ => String::new()`
+        // catch-all at the bottom — same semantics, just per-arm contract
+        // correctness instead of waiting for the catch-all.
         ProcToStr . a:Proc |- "str" "(" a ")" : Str ![{
             match a {
                 Proc::ProcStr(s) => s.as_ref().eval(),
-                Proc::ProcInt(i) => i.as_ref().eval().to_string(),
-                Proc::ProcUInt32(u) => u.as_ref().eval().to_string(),
-                Proc::ProcBigInt(n) => n.as_ref().eval().to_string(),
-                Proc::ProcBigRat(r) => r.as_ref().eval().to_string(),
-                Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
-                Proc::ProcFixed(x) => x.as_ref().eval().to_string(),
-                Proc::ProcBool(b) => b.as_ref().eval().to_string(),
+                Proc::ProcInt(i) => match i.as_ref().try_eval() {
+                    Some(v) => v.to_string(),
+                    None => String::new(),
+                },
+                Proc::ProcUInt32(u) => match u.as_ref().try_eval() {
+                    Some(v) => v.to_string(),
+                    None => String::new(),
+                },
+                Proc::ProcBigInt(n) => match n.as_ref().try_eval() {
+                    Some(v) => v.to_string(),
+                    None => String::new(),
+                },
+                Proc::ProcBigRat(r) => match r.as_ref().try_eval() {
+                    Some(v) => v.to_string(),
+                    None => String::new(),
+                },
+                Proc::ProcFloat(f) => match f.as_ref().try_eval() {
+                    Some(v) => v.to_string(),
+                    None => String::new(),
+                },
+                Proc::ProcFixed(x) => match x.as_ref().try_eval() {
+                    Some(v) => v.to_string(),
+                    None => String::new(),
+                },
+                Proc::ProcBool(b) => match b.as_ref().try_eval() {
+                    Some(v) => v.to_string(),
+                    None => String::new(),
+                },
                 Proc::ElemList(list, index) => {
                     let idx_opt = match index.as_ref() { Int::NumLit(n) => Some(*n as usize), _ => None };
                     let list_opt = match list.as_ref() { List::ListLit(v) => Some(v), _ => None };
@@ -306,13 +336,34 @@ language! {
                     if let Some(elem) = elem_opt {
                         match &elem {
                             Proc::ProcStr(s) => s.as_ref().eval(),
-                            Proc::ProcInt(i) => i.as_ref().eval().to_string(),
-                            Proc::ProcUInt32(u) => u.as_ref().eval().to_string(),
-                            Proc::ProcBigInt(n) => n.as_ref().eval().to_string(),
-                            Proc::ProcBigRat(r) => r.as_ref().eval().to_string(),
-                            Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
-                            Proc::ProcFixed(x) => x.as_ref().eval().to_string(),
-                            Proc::ProcBool(b) => b.as_ref().eval().to_string(),
+                            Proc::ProcInt(i) => match i.as_ref().try_eval() {
+                                Some(v) => v.to_string(),
+                                None => String::new(),
+                            },
+                            Proc::ProcUInt32(u) => match u.as_ref().try_eval() {
+                                Some(v) => v.to_string(),
+                                None => String::new(),
+                            },
+                            Proc::ProcBigInt(n) => match n.as_ref().try_eval() {
+                                Some(v) => v.to_string(),
+                                None => String::new(),
+                            },
+                            Proc::ProcBigRat(r) => match r.as_ref().try_eval() {
+                                Some(v) => v.to_string(),
+                                None => String::new(),
+                            },
+                            Proc::ProcFloat(f) => match f.as_ref().try_eval() {
+                                Some(v) => v.to_string(),
+                                None => String::new(),
+                            },
+                            Proc::ProcFixed(x) => match x.as_ref().try_eval() {
+                                Some(v) => v.to_string(),
+                                None => String::new(),
+                            },
+                            Proc::ProcBool(b) => match b.as_ref().try_eval() {
+                                Some(v) => v.to_string(),
+                                None => String::new(),
+                            },
                             _ => String::new(),
                         }
                     } else {

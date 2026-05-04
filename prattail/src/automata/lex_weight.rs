@@ -192,6 +192,37 @@ pub struct LexicographicWeight {
     pub rule_idx: u16,
 }
 
+/// Stage 3.12 / Class A.i (2026-05-01): epsilon cost added to the SKIP
+/// branch of an Opt-Group Fork to give TAKE preference when both
+/// branches reach Accepted with the same primary cost.
+///
+/// Reasoning:
+/// - TAKE branch weight: `from_cost(0.0, src, rule)` — no penalty.
+/// - SKIP branch weight: `from_cost(EPSILON_OPT_SKIP, src, rule)` — a
+///   small floor penalty.
+///
+/// When TAKE succeeds (FIRST set matches), TAKE's primary < SKIP's
+/// primary → TAKE wins. When TAKE fails (FIRST set rejects mid-parse),
+/// TAKE's cursor dies, SKIP survives at primary `EPSILON_OPT_SKIP`.
+///
+/// Magnitude `0.5`:
+/// - Large enough to dominate floating-point noise from down-stream
+///   weight composition.
+/// - Small enough that recovery costs (typically `1.0+` per token,
+///   per `recovery.rs::TIER1_INSERT_COST`) dominate this epsilon —
+///   recovery always loses to a successful Opt-Group SKIP.
+///
+/// Right-associative dangling-else mechanism (per
+/// `plan-class-a-i-opt-group-fork.md`):
+/// `if false then if false then 1 else 2`:
+/// - Inner-TAKE+Outer-SKIP: weight = 0.0 + EPSILON_OPT_SKIP = 0.5.
+/// - Inner-SKIP+Outer-TAKE: weight = EPSILON_OPT_SKIP + 0.0 = 0.5.
+/// Both reach Accepted with identical primary (0.5). Tiebreak by
+/// cursor-allocation order (TAKE branch is first per `vec![take, skip]`)
+/// → Inner-TAKE descendant wins → `IfElse(false, IfElse(false, 1, Some(2)), None)`
+/// — right-associative.
+pub const EPSILON_OPT_SKIP: f64 = 0.5;
+
 impl LexicographicWeight {
     /// Construct a weight with the given components. Sets `lex_alt_idx` to 0.
     #[inline]

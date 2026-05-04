@@ -1676,3 +1676,67 @@ fn rewrite_calculator_stridcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+// Rewrite test for BoolToUInt32Cong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_calculator_booltouint32cong() {
+    let _lang = CalculatorLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for BoolToBigIntCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_calculator_booltobigintcong() {
+    let _lang = CalculatorLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for BoolToBigRatCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_calculator_booltobigratcong() {
+    let _lang = CalculatorLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for UInt32ToBigIntCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_calculator_uint32tobigintcong() {
+    let _lang = CalculatorLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for UInt32ToBigRatCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_calculator_uint32tobigratcong() {
+    let _lang = CalculatorLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for FloatToBigRatCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_calculator_floattobigratcong() {
+    let _lang = CalculatorLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for BigIntToBigRatCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_calculator_biginttobigratcong() {
+    let _lang = CalculatorLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for FixedToBigRatCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_calculator_fixedtobigratcong() {
+    let _lang = CalculatorLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+

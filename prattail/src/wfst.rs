@@ -2528,6 +2528,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             }],
             BeamWidthConfig::Explicit(1.5),          // beam_width
             None,                                    // log_semiring_model_path

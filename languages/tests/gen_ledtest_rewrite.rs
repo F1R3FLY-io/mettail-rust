@@ -148,3 +148,11 @@ fn rewrite_ledtest_eparcongr() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+// Rewrite test for PredToNumCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_ledtest_predtonumcong() {
+    let _lang = LedTestLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+

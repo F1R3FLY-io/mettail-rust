@@ -891,7 +891,271 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_or_0040()
+} #[test] fn parity_rhocalc_int_cross_cat_bool_0040()
+{
+    let input = "true"; let legacy = rhocalc :: Int :: parse(input); let wpds
+    = rhocalc :: Int :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_rhocalc_uint32_cross_cat_bool_0041()
+{
+    let input = "true"; let legacy = rhocalc :: UInt32 :: parse(input); let
+    wpds = rhocalc :: UInt32 :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_rhocalc_bigint_cross_cat_bool_0042()
+{
+    let input = "true"; let legacy = rhocalc :: BigInt :: parse(input); let
+    wpds = rhocalc :: BigInt :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_rhocalc_bigrat_cross_cat_bool_0043()
+{
+    let input = "true"; let legacy = rhocalc :: BigRat :: parse(input); let
+    wpds = rhocalc :: BigRat :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_rhocalc_bigint_cross_cat_int_0044()
+{
+    let input = "0"; let legacy = rhocalc :: BigInt :: parse(input); let wpds
+    = rhocalc :: BigInt :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_rhocalc_bigrat_cross_cat_int_0045()
+{
+    let input = "0"; let legacy = rhocalc :: BigRat :: parse(input); let wpds
+    = rhocalc :: BigRat :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_rhocalc_int_cross_cat_uint32_0046()
+{
+    let input = "0u32"; let legacy = rhocalc :: Int :: parse(input); let wpds
+    = rhocalc :: Int :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_rhocalc_bigint_cross_cat_uint32_0047()
+{
+    let input = "0u32"; let legacy = rhocalc :: BigInt :: parse(input); let
+    wpds = rhocalc :: BigInt :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_rhocalc_bigrat_cross_cat_uint32_0048()
+{
+    let input = "0u32"; let legacy = rhocalc :: BigRat :: parse(input); let
+    wpds = rhocalc :: BigRat :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_rhocalc_bigrat_cross_cat_float_0049()
+{
+    let input = "0.0"; let legacy = rhocalc :: BigRat :: parse(input); let
+    wpds = rhocalc :: BigRat :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_rhocalc_bigrat_cross_cat_bigint_0050()
+{
+    let input = "0n"; let legacy = rhocalc :: BigRat :: parse(input); let wpds
+    = rhocalc :: BigRat :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_rhocalc_bigrat_cross_cat_fixed_0051()
+{
+    let input = "1.5p2"; let legacy = rhocalc :: BigRat :: parse(input); let
+    wpds = rhocalc :: BigRat :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_rhocalc_proc_infix_or_0052()
 {
     let input = "{} or {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -913,7 +1177,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_and_0041()
+} #[test] fn parity_rhocalc_proc_infix_and_0053()
 {
     let input = "{} and {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -935,7 +1199,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_bitor_0042()
+} #[test] fn parity_rhocalc_proc_infix_bitor_0054()
 {
     let input = "{} bitor {}"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -957,7 +1221,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_bitand_0043()
+} #[test] fn parity_rhocalc_proc_infix_bitand_0055()
 {
     let input = "{} bitand {}"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -979,7 +1243,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_eqeq_0044()
+} #[test] fn parity_rhocalc_proc_infix_eqeq_0056()
 {
     let input = "{} == {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1001,7 +1265,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_bangeq_0045()
+} #[test] fn parity_rhocalc_proc_infix_bangeq_0057()
 {
     let input = "{} != {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1023,7 +1287,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_gt_0046()
+} #[test] fn parity_rhocalc_proc_infix_gt_0058()
 {
     let input = "{} > {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1045,7 +1309,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_lt_0047()
+} #[test] fn parity_rhocalc_proc_infix_lt_0059()
 {
     let input = "{} < {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1067,7 +1331,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_gteq_0048()
+} #[test] fn parity_rhocalc_proc_infix_gteq_0060()
 {
     let input = "{} >= {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1089,7 +1353,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_lteq_0049()
+} #[test] fn parity_rhocalc_proc_infix_lteq_0061()
 {
     let input = "{} <= {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1111,7 +1375,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_plus_0050()
+} #[test] fn parity_rhocalc_proc_infix_plus_0062()
 {
     let input = "{} + {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1133,7 +1397,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_minus_0051()
+} #[test] fn parity_rhocalc_proc_infix_minus_0063()
 {
     let input = "{} - {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1155,7 +1419,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_star_0052()
+} #[test] fn parity_rhocalc_proc_infix_star_0064()
 {
     let input = "{} * {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1177,7 +1441,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_slash_0053()
+} #[test] fn parity_rhocalc_proc_infix_slash_0065()
 {
     let input = "{} / {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1199,7 +1463,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_infix_percent_0054()
+} #[test] fn parity_rhocalc_proc_infix_percent_0066()
 {
     let input = "{} % {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1221,7 +1485,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_int_unary_minus_0055()
+} #[test] fn parity_rhocalc_int_unary_minus_0067()
 {
     let input = "- 0"; let legacy = rhocalc :: Int :: parse(input); let wpds =
     rhocalc :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -1243,7 +1507,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_unary_bitnot_0056()
+} #[test] fn parity_rhocalc_proc_unary_bitnot_0068()
 {
     let input = "bitnot {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1265,7 +1529,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_unary_minus_0057()
+} #[test] fn parity_rhocalc_proc_unary_minus_0069()
 {
     let input = "- {}"; let legacy = rhocalc :: Proc :: parse(input); let wpds
     = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1287,7 +1551,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_unary_not_0058()
+} #[test] fn parity_rhocalc_proc_unary_not_0070()
 {
     let input = "not {}"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1309,7 +1573,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_name_call___0059()
+} #[test] fn parity_rhocalc_name_call___0071()
 {
     let input = "@({})"; let legacy = rhocalc :: Name :: parse(input); let
     wpds = rhocalc :: Name :: parse_via_wpds(input); match (legacy, wpds)
@@ -1331,7 +1595,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_int_0060()
+} #[test] fn parity_rhocalc_proc_call_int_0072()
 {
     let input = "int({}, 0)"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1353,7 +1617,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_uint_0061()
+} #[test] fn parity_rhocalc_proc_call_uint_0073()
 {
     let input = "uint({}, 0)"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1375,7 +1639,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_float_0062()
+} #[test] fn parity_rhocalc_proc_call_float_0074()
 {
     let input = "float({}, 0)"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1397,7 +1661,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_fixed_0063()
+} #[test] fn parity_rhocalc_proc_call_fixed_0075()
 {
     let input = "fixed({}, 0)"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1419,7 +1683,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_bigint_0064()
+} #[test] fn parity_rhocalc_proc_call_bigint_0076()
 {
     let input = "bigint({})"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1441,7 +1705,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_bigrat_0065()
+} #[test] fn parity_rhocalc_proc_call_bigrat_0077()
 {
     let input = "bigrat({})"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1463,7 +1727,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_fraction_0066()
+} #[test] fn parity_rhocalc_proc_call_fraction_0078()
 {
     let input = "fraction({}, {})"; let legacy = rhocalc :: Proc ::
     parse(input); let wpds = rhocalc :: Proc :: parse_via_wpds(input); match
@@ -1486,7 +1750,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_concat_0067()
+} #[test] fn parity_rhocalc_proc_call_concat_0079()
 {
     let input = "concat({}, {})"; let legacy = rhocalc :: Proc ::
     parse(input); let wpds = rhocalc :: Proc :: parse_via_wpds(input); match
@@ -1509,7 +1773,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_at_0068()
+} #[test] fn parity_rhocalc_proc_call_at_0080()
 {
     let input = "at({}, {})"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1531,7 +1795,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_delete_0069()
+} #[test] fn parity_rhocalc_proc_call_delete_0081()
 {
     let input = "delete({}, {})"; let legacy = rhocalc :: Proc ::
     parse(input); let wpds = rhocalc :: Proc :: parse_via_wpds(input); match
@@ -1554,7 +1818,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_union_0070()
+} #[test] fn parity_rhocalc_proc_call_union_0082()
 {
     let input = "union({}, {})"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1576,7 +1840,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_remove_0071()
+} #[test] fn parity_rhocalc_proc_call_remove_0083()
 {
     let input = "remove({}, {})"; let legacy = rhocalc :: Proc ::
     parse(input); let wpds = rhocalc :: Proc :: parse_via_wpds(input); match
@@ -1599,7 +1863,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_diff_0072()
+} #[test] fn parity_rhocalc_proc_call_diff_0084()
 {
     let input = "diff({}, {})"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1621,7 +1885,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_int_call_count_0073()
+} #[test] fn parity_rhocalc_int_call_count_0085()
 {
     let input = "count({}, {})"; let legacy = rhocalc :: Int :: parse(input);
     let wpds = rhocalc :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -1643,7 +1907,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_get_0074()
+} #[test] fn parity_rhocalc_proc_call_get_0086()
 {
     let input = "get({}, {})"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1665,7 +1929,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_put_0075()
+} #[test] fn parity_rhocalc_proc_call_put_0087()
 {
     let input = "put({}, {}, {})"; let legacy = rhocalc :: Proc ::
     parse(input); let wpds = rhocalc :: Proc :: parse_via_wpds(input); match
@@ -1688,7 +1952,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_mapdelete_0076()
+} #[test] fn parity_rhocalc_proc_call_mapdelete_0088()
 {
     let input = "mapdelete({}, {})"; let legacy = rhocalc :: Proc ::
     parse(input); let wpds = rhocalc :: Proc :: parse_via_wpds(input); match
@@ -1711,7 +1975,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_merge_0077()
+} #[test] fn parity_rhocalc_proc_call_merge_0089()
 {
     let input = "merge({}, {})"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1733,7 +1997,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_has_0078()
+} #[test] fn parity_rhocalc_proc_call_has_0090()
 {
     let input = "has({}, {})"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1755,7 +2019,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_keys_0079()
+} #[test] fn parity_rhocalc_proc_call_keys_0091()
 {
     let input = "keys({})"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1777,7 +2041,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_values_0080()
+} #[test] fn parity_rhocalc_proc_call_values_0092()
 {
     let input = "values({})"; let legacy = rhocalc :: Proc :: parse(input);
     let wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1799,7 +2063,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_len_0081()
+} #[test] fn parity_rhocalc_proc_call_len_0093()
 {
     let input = "len({})"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1821,7 +2085,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_bool_0082()
+} #[test] fn parity_rhocalc_proc_call_bool_0094()
 {
     let input = "bool({})"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1843,7 +2107,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_proc_call_str_0083()
+} #[test] fn parity_rhocalc_proc_call_str_0095()
 {
     let input = "str({})"; let legacy = rhocalc :: Proc :: parse(input); let
     wpds = rhocalc :: Proc :: parse_via_wpds(input); match (legacy, wpds)
@@ -1865,7 +2129,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_bag_coll_empty_0084()
+} #[test] fn parity_rhocalc_bag_coll_empty_0096()
 {
     let input = "{}"; let legacy = rhocalc :: Bag :: parse(input); let wpds =
     rhocalc :: Bag :: parse_via_wpds(input); match (legacy, wpds)
@@ -1887,7 +2151,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_bag_coll_single_0085()
+} #[test] fn parity_rhocalc_bag_coll_single_0097()
 {
     let input = "{ {} }"; let legacy = rhocalc :: Bag :: parse(input); let
     wpds = rhocalc :: Bag :: parse_via_wpds(input); match (legacy, wpds)
@@ -1909,7 +2173,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_bag_coll_multi_0086()
+} #[test] fn parity_rhocalc_bag_coll_multi_0098()
 {
     let input = "{ {} | {} }"; let legacy = rhocalc :: Bag :: parse(input);
     let wpds = rhocalc :: Bag :: parse_via_wpds(input); match (legacy, wpds)
@@ -1931,7 +2195,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_map_coll_empty_0087()
+} #[test] fn parity_rhocalc_map_coll_empty_0099()
 {
     let input = "{}"; let legacy = rhocalc :: Map :: parse(input); let wpds =
     rhocalc :: Map :: parse_via_wpds(input); match (legacy, wpds)
@@ -1953,7 +2217,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_map_coll_single_0088()
+} #[test] fn parity_rhocalc_map_coll_single_0100()
 {
     let input = "{ {} }"; let legacy = rhocalc :: Map :: parse(input); let
     wpds = rhocalc :: Map :: parse_via_wpds(input); match (legacy, wpds)
@@ -1975,7 +2239,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_rhocalc_map_coll_multi_0089()
+} #[test] fn parity_rhocalc_map_coll_multi_0101()
 {
     let input = "{ {} , {} }"; let legacy = rhocalc :: Map :: parse(input);
     let wpds = rhocalc :: Map :: parse_via_wpds(input); match (legacy, wpds)

@@ -240,6 +240,23 @@ pub struct GrammarRule {
     /// that overrides the auto-classified guard tier for this rule.
     /// `None` means use the analyzer's classification.
     pub tier_directive: Option<TierDirective>,
+    /// Stage 3.13b (2026-05-01): provenance flag distinguishing user-written
+    /// rules (false) from synthetic auto-injection rules emitted by
+    /// `macros/src/gen/runtime/wpds_codegen/auto_inject.rs::make_injection_rule`
+    /// (true). Used by:
+    /// - Stage 3.13c routing filter (`pipeline.rs:1316`) to exclude synthetic
+    ///   rules from legacy unified-trampoline cast_rules.
+    /// - Stage 3.13b W05 lint refinement (future) to distinguish synthetic-
+    ///   induced ambiguity (Note severity) from user-authored ambiguity
+    ///   (Warning severity).
+    /// Default `false` for parsed rules; set `true` only by `make_injection_rule`.
+    pub is_auto_injected: bool,
+    /// Stage 3.27a (2026-05-04): doc-comment text (joined with `\n`)
+    /// extracted from `#[doc = "..."]` attributes (typically lowered from
+    /// `///` lines) preceding the rule. `None` when no doc comment is
+    /// present. Surfaces in the generated `TermDef::description` field,
+    /// displayed by the REPL `info` command.
+    pub doc_comment: Option<String>,
 }
 
 /// Phase 11 (predicated types): user-supplied tier override.
@@ -379,6 +396,70 @@ pub fn parse_tier_directive(input: ParseStream) -> SynResult<Option<TierDirectiv
     }))
 }
 
+/// Stage 3.27a (2026-05-04): consume zero or more `#[doc = "..."]`
+/// attributes (typically emitted by `///` doc-comment sugar) preceding
+/// a grammar rule. Stops at the first non-`#[doc]` attribute or non-`#`
+/// token, leaving the unconsumed attribute on the stream for the next
+/// parser (e.g., `parse_tier_directive`). Returns the joined text
+/// (with one canonical leading space stripped per Rust convention) or
+/// `None` if no doc comments were present.
+///
+/// **MUST run before `parse_tier_directive`** since both peek for `#`.
+/// Uses fork-peek with single-attribute granularity to ONLY consume
+/// `#[doc = "..."]` attributes; `#[tier(...)]` and any other attribute
+/// remain on the real stream.
+pub fn parse_doc_comment(input: ParseStream) -> SynResult<Option<String>> {
+    let mut lines: Vec<String> = Vec::new();
+    while input.peek(Token![#]) {
+        // Peek one attribute on a fork without consuming the real stream.
+        let fork = input.fork();
+        let attr = match parse_one_outer_attribute(&fork) {
+            Ok(a) => a,
+            Err(_) => break,
+        };
+        if !attr.path().is_ident("doc") {
+            break; // not a doc attribute — leave on real stream for next parser
+        }
+        // Extract the string literal from `#[doc = "..."]`.
+        let nv = match attr.meta.require_name_value() {
+            Ok(nv) => nv,
+            Err(_) => break, // `#[doc(...)]` form — skip without consuming
+        };
+        let lit_str = match &nv.value {
+            syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => s.value(),
+            _ => break,
+        };
+        // Confirmed `#[doc = "..."]`: advance the real stream by parsing
+        // one outer attribute (the same one we just peeked).
+        let _ = parse_one_outer_attribute(input)?;
+        // Strip exactly one leading space (rustc's canonical form for `///`).
+        let stripped = lit_str.strip_prefix(' ').unwrap_or(&lit_str).to_string();
+        lines.push(stripped);
+    }
+    if lines.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(lines.join("\n")))
+    }
+}
+
+/// Parse exactly ONE outer attribute (`#[...]`) — mirrors syn's internal
+/// `single_parse_outer` which is not public. Used by `parse_doc_comment`
+/// to inspect attributes one at a time without consuming all attributes
+/// like `Attribute::parse_outer` would.
+fn parse_one_outer_attribute(input: ParseStream) -> SynResult<syn::Attribute> {
+    let pound_token: Token![#] = input.parse()?;
+    let bracket_content;
+    let bracket_token = syn::bracketed!(bracket_content in input);
+    let meta: syn::Meta = bracket_content.parse()?;
+    Ok(syn::Attribute {
+        pound_token,
+        style: syn::AttrStyle::Outer,
+        bracket_token,
+        meta,
+    })
+}
+
 pub fn parse_terms(input: ParseStream) -> SynResult<Vec<GrammarRule>> {
     let terms_ident = input.parse::<Ident>()?;
     if terms_ident != "terms" {
@@ -402,6 +483,13 @@ pub fn parse_terms(input: ParseStream) -> SynResult<Vec<GrammarRule>> {
 }
 
 fn parse_grammar_rule(input: ParseStream) -> SynResult<GrammarRule> {
+    // Stage 3.27a (2026-05-04): consume `#[doc = "..."]` attributes
+    // (typically lowered from `///` lines) BEFORE `parse_tier_directive`
+    // since both peek for `#`. parse_doc_comment uses fork-peek to ONLY
+    // consume `#[doc]` attributes, leaving `#[tier(...)]` for the next
+    // parser.
+    let doc_comment = parse_doc_comment(input)?;
+
     // Phase 11: optional `#[tier(...)]` directive precedes the rule.
     let tier_directive = parse_tier_directive(input)?;
 
@@ -436,6 +524,7 @@ fn parse_grammar_rule(input: ParseStream) -> SynResult<GrammarRule> {
     };
 
     rule.tier_directive = tier_directive;
+    rule.doc_comment = doc_comment;
     Ok(rule)
 }
 
@@ -494,6 +583,8 @@ fn parse_grammar_rule_old(label: Ident, input: ParseStream) -> SynResult<Grammar
         is_right_assoc: false,
         prefix_bp: None,
         tier_directive: None,
+        is_auto_injected: false,
+        doc_comment: None,
     })
 }
 
@@ -600,6 +691,8 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
         is_right_assoc,
         prefix_bp,
         tier_directive: None,
+        is_auto_injected: false,
+        doc_comment: None,
     })
 }
 
@@ -977,8 +1070,17 @@ fn parse_opt_op(content: ParseStream) -> SynResult<PatternOp> {
     Ok(PatternOp::Opt { inner })
 }
 
-/// Convert term context to old-style items and bindings for backward compatibility
-fn convert_term_context_to_items(
+/// Convert term context to old-style items and bindings for backward compatibility.
+///
+/// **Stage 3.13 (2026-04-30):** made `pub` so auto-injection codegen
+/// (`macros/src/gen/runtime/wpds_codegen/auto_inject.rs::make_injection_rule`)
+/// can synthesize judgement-style GrammarRules with both the new-style
+/// `term_context` field AND the legacy `items` field populated identically
+/// to how the DSL parser at `:589` does it. Without this, downstream
+/// codegen paths that read `rule.items` (test-gen, lint, parser arm
+/// emission) treat synthetic rules as nullary constructors and emit
+/// type-mismatched code.
+pub fn convert_term_context_to_items(
     term_context: &[TermParam],
 ) -> (Vec<GrammarItem>, Vec<(usize, Vec<usize>)>) {
     let mut items = Vec::new();

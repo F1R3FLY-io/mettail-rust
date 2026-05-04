@@ -69,13 +69,19 @@ pub(crate) fn emit_engine_impl_full(
     // Phase 5: binder rule prefix arms (recognize trigger literal of binder
     // rules) + BinderRule state body (multi-step state machine per rule).
     let binder_arms = super::binder::emit_binder_prefix_arms(language, categories, per_cat);
-    let binder_rule_body = super::binder::emit_binder_rule_body(categories, per_cat);
+    // Stage 3.27d (G-PREFIX-BP, 2026-04-30): build the unary-prefix BP map
+    // once per language; consumed by ParamParse arms in BinderRule and
+    // OptionalGroup state bodies. Empty map => non-unary-prefix rules use
+    // `cur_bp: 0` per the legacy default.
+    let prefix_bp_map = super::binder::build_prefix_bp_map(language, per_cat);
+    let binder_rule_body =
+        super::binder::emit_binder_rule_body(categories, per_cat, &prefix_bp_map);
     // Phase 5b: BinderListLoop body for multi-binder list (^[xs]).
     let binder_list_loop_body = super::binder::emit_binder_list_loop_body(per_cat);
     // Opt-Group (2026-04-29): per-rule per-group OptionalGroup state
     // dispatch — FIRST-set peek + inner-position walk + finalize.
     let optional_group_body =
-        super::binder::emit_optional_group_body(categories, per_cat);
+        super::binder::emit_optional_group_body(categories, per_cat, &prefix_bp_map);
     // B7 Pattern 2: paren-grouping arms in PrefixDispatch — backend
     // emission of `(`-grouping for every parseable category, satisfying
     // the user mandate "no per-grammar order; backend change". Emitted

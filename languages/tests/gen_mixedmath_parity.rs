@@ -9,7 +9,29 @@
 [doc = r" failures; per `feedback_parity_drift_ok_if_better.md`, accepted"] #
 ! [doc = r" divergences should be moved out of this generator into a"] # !
 [doc = r" WPDS-only or trampoline-only fixture file."] use mettail_languages
-:: mixedmath; #[test] fn parity_mixedmath_bool_infix_and_0000()
+:: mixedmath; #[test] fn parity_mixedmath_int_cross_cat_bool_0000()
+{
+    let input = "true"; let legacy = mixedmath :: Int :: parse(input); let
+    wpds = mixedmath :: Int :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+} #[test] fn parity_mixedmath_bool_infix_and_0001()
 {
     let input = "true and true"; let legacy = mixedmath :: Bool ::
     parse(input); let wpds = mixedmath :: Bool :: parse_via_wpds(input); match
@@ -32,7 +54,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_mixedmath_bool_infix_or_0001()
+} #[test] fn parity_mixedmath_bool_infix_or_0002()
 {
     let input = "true or true"; let legacy = mixedmath :: Bool ::
     parse(input); let wpds = mixedmath :: Bool :: parse_via_wpds(input); match
@@ -55,7 +77,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_mixedmath_int_infix_plus_0002()
+} #[test] fn parity_mixedmath_int_infix_plus_0003()
 {
     let input = "0 + 0"; let legacy = mixedmath :: Int :: parse(input); let
     wpds = mixedmath :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -77,7 +99,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_mixedmath_int_infix_minus_0003()
+} #[test] fn parity_mixedmath_int_infix_minus_0004()
 {
     let input = "0 - 0"; let legacy = mixedmath :: Int :: parse(input); let
     wpds = mixedmath :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -99,7 +121,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_mixedmath_int_infix_star_0004()
+} #[test] fn parity_mixedmath_int_infix_star_0005()
 {
     let input = "0 * 0"; let legacy = mixedmath :: Int :: parse(input); let
     wpds = mixedmath :: Int :: parse_via_wpds(input); match (legacy, wpds)
@@ -121,7 +143,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_mixedmath_bool_unary_not_0005()
+} #[test] fn parity_mixedmath_bool_unary_not_0006()
 {
     let input = "not true"; let legacy = mixedmath :: Bool :: parse(input);
     let wpds = mixedmath :: Bool :: parse_via_wpds(input); match
@@ -144,7 +166,7 @@
             input, b, le,);
         }
     }
-} #[test] fn parity_mixedmath_int_unary_minus_0006()
+} #[test] fn parity_mixedmath_int_unary_minus_0007()
 {
     let input = "- 0"; let legacy = mixedmath :: Int :: parse(input); let wpds
     = mixedmath :: Int :: parse_via_wpds(input); match (legacy, wpds)

@@ -63,6 +63,27 @@ pub fn language(input: TokenStream) -> TokenStream {
         abort!(span, "{}", msg);
     }
 
+    // Stage 3.13 (2026-04-30): auto-injection codegen — append synthetic
+    // `<Source>To<Target> . v:Source |- v : Target ;` rules for every
+    // lossless built-in promotion edge declared in the language. Runs
+    // AFTER composition (so extends/includes/mixins have settled) and
+    // BEFORE downstream codegen (so synthetic rules participate in
+    // FIRST/FOLLOW, BP analysis, lint, etc. byte-identically to
+    // user-written rules). User-defined injections are skip-listed via
+    // shape match. See `macros/src/gen/runtime/wpds_codegen/auto_inject.rs`.
+    //
+    // Stage 3.13e (2026-05-01): also append synthetic congruence rewrites
+    // (`<Source>To<Target>Cong . | S ~> T |- (<Source>To<Target> S) ~>
+    // (<Source>To<Target> T) ;`) so the rewrite engine propagates inner
+    // `rw_<source>` reductions through the cast wrapper into
+    // `rw_<target>`. Without these, auto-injected casts absorb inner
+    // reductions but never surface them — affecting 214/1331 calc_op +
+    // 148/532 rho_op tests.
+    let auto_inject_output =
+        crate::gen::runtime::wpds_codegen::auto_inject::emit_auto_injection_rules(&language_def);
+    language_def.terms.extend(auto_inject_output.terms);
+    language_def.rewrites.extend(auto_inject_output.rewrites);
+
     // Phase 3F (predicated types): stratification analysis. Walks the
     // language's logic relations and ?guard:Guard predicates to detect
     // negation cycles. Non-stratifiable programs make Ascent's fixpoint

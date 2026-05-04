@@ -536,7 +536,7 @@ The WPDS layer expansion introduces 6 new diagnostics:
 | D14 | wpds-complexity-report | Info | |Γ|, |Δ|, SCCs, call edges, depth bounds |
 | D15 | wpds-witness-trace | Info | BFS shortest path on G33 call graph (sub-diagnostic of W13) |
 | P05 | wpds-pipeline-cost | Info | Wall-clock timing and analysis sizes |
-| W14 | wpds-confirmed-ambiguity | Warning/Note | WPDS confirms/denies pushdown ambiguity |
+| W14 | walker-fork-tight-margin | Note | Top-2 prediction weights within ε; Walker lex-min depends on src_idx/rule_idx (Stage 10c repurpose, 2026-05-04) |
 | W16 | wpds-weight-inversion | Warning | WFST vs WPDS weight order disagreement |
 | COMP-08 | wpds-refactoring-suggestion | Note | Hub splitting, inlining, cycle-breaking |
 

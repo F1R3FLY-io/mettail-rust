@@ -658,7 +658,7 @@ fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
         return result.unwrap_int();
     }
 
-    let choice = (reader.next_byte() as usize) % 3;
+    let choice = (reader.next_byte() as usize) % 5;
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX)).unwrap_int(),
@@ -666,10 +666,18 @@ fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
             let f0 = Box::new(build_int_from_tape(reader, child_depth));
             Int::NegInt(f0)
         },
-        _ => {
+        2 => {
             let f0 = Box::new(build_proc_from_tape(reader, child_depth));
             let f1 = Box::new(build_proc_from_tape(reader, child_depth));
             Int::CountBag(f0, f1)
+        },
+        3 => {
+            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            Int::BoolToInt(f0)
+        },
+        _ => {
+            let f0 = Box::new(build_uint32_from_tape(reader, child_depth));
+            Int::UInt32ToInt(f0)
         },
     }
 }
@@ -686,8 +694,15 @@ fn build_uint32_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> UInt32 {
         return result.unwrap_uint32();
     }
 
-    // No recursive constructors, fall back to leaf
-    build_uint32_from_tape(reader, 0)
+    let choice = (reader.next_byte() as usize) % 2;
+    let child_depth = depth - 1;
+    match choice {
+        0 => AnyTerm::WrapUInt32(UInt32::NumLit(reader.next_u32())).unwrap_uint32(),
+        _ => {
+            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            UInt32::BoolToUInt32(f0)
+        },
+    }
 }
 
 /// Build a `BigInt` term from an instruction tape.
@@ -702,8 +717,23 @@ fn build_bigint_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigInt {
         return result.unwrap_bigint();
     }
 
-    // No recursive constructors, fall back to leaf
-    build_bigint_from_tape(reader, 0)
+    let choice = (reader.next_byte() as usize) % 4;
+    let child_depth = depth - 1;
+    match choice {
+        0 => AnyTerm::WrapBigInt(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(num_bigint::BigInt::from(reader.next_i32())))).unwrap_bigint(),
+        1 => {
+            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            BigInt::BoolToBigInt(f0)
+        },
+        2 => {
+            let f0 = Box::new(build_int_from_tape(reader, child_depth));
+            BigInt::IntToBigInt(f0)
+        },
+        _ => {
+            let f0 = Box::new(build_uint32_from_tape(reader, child_depth));
+            BigInt::UInt32ToBigInt(f0)
+        },
+    }
 }
 
 /// Build a `BigRat` term from an instruction tape.
@@ -718,8 +748,35 @@ fn build_bigrat_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigRat {
         return result.unwrap_bigrat();
     }
 
-    // No recursive constructors, fall back to leaf
-    build_bigrat_from_tape(reader, 0)
+    let choice = (reader.next_byte() as usize) % 7;
+    let child_depth = depth - 1;
+    match choice {
+        0 => AnyTerm::WrapBigRat(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32()))))).unwrap_bigrat(),
+        1 => {
+            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            BigRat::BoolToBigRat(f0)
+        },
+        2 => {
+            let f0 = Box::new(build_int_from_tape(reader, child_depth));
+            BigRat::IntToBigRat(f0)
+        },
+        3 => {
+            let f0 = Box::new(build_uint32_from_tape(reader, child_depth));
+            BigRat::UInt32ToBigRat(f0)
+        },
+        4 => {
+            let f0 = Box::new(build_float_from_tape(reader, child_depth));
+            BigRat::FloatToBigRat(f0)
+        },
+        5 => {
+            let f0 = Box::new(build_bigint_from_tape(reader, child_depth));
+            BigRat::BigIntToBigRat(f0)
+        },
+        _ => {
+            let f0 = Box::new(build_fixed_from_tape(reader, child_depth));
+            BigRat::FixedToBigRat(f0)
+        },
+    }
 }
 
 /// Build a `Fixed` term from an instruction tape.

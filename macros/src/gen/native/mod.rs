@@ -9,6 +9,7 @@ use mettail_ast::language::LanguageDef;
 use syn::Ident;
 
 pub mod eval;
+pub mod lossless_coercion;
 pub mod rust_code_rewrite;
 
 /// Typed representation of a native Rust type mapped to a language category.

@@ -9,4 +9,26 @@
 [doc = r" failures; per `feedback_parity_drift_ok_if_better.md`, accepted"] #
 ! [doc = r" divergences should be moved out of this generator into a"] # !
 [doc = r" WPDS-only or trampoline-only fixture file."] use mettail_languages
-:: optsmoke; #[test] fn parity_placeholder_no_fixtures() {}
+:: optsmoke; #[test] fn parity_optsmoke_int_cross_cat_bool_0000()
+{
+    let input = "true"; let legacy = optsmoke :: Int :: parse(input); let wpds
+    = optsmoke :: Int :: parse_via_wpds(input); match (legacy, wpds)
+    {
+        (Ok(a), Ok(b)) =>
+        {
+            assert_eq!
+            (a, b, "Model A parity divergence on {:?}: legacy={:?} wpds={:?}",
+            input, a, b,);
+        } (Err(le), Err(we)) => { let _ = (le, we); } (Ok(a), Err(we)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: trampoline OK ({:?}) but WPDS Err ({})",
+            input, a, we,);
+        } (Err(le), Ok(b)) =>
+        {
+            panic!
+            ("Model A parity divergence on {:?}: WPDS OK ({:?}) but trampoline Err ({})",
+            input, b, le,);
+        }
+    }
+}

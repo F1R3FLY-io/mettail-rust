@@ -132,9 +132,8 @@ semiring, which is why the `wfst-log` feature gate is required.
 - [W05](W05-composed-dispatch-ambiguity.md) -- Ambiguity resolution via
   tropical shortest path; high entropy means the weights used for this
   resolution may not reflect true priorities.
-- [W10](W10-multi-token-lookahead.md) -- Multi-token lookahead can resolve
-  ambiguity structurally even when weights are uninformative.
+<!-- Stage 10c (2026-05-04): W10 deleted; cross-link removed. -->
 - [W06](W06-weight-inversion.md) -- Weight inversions can coexist with high
   entropy; training typically fixes both.
-- [W14](W14-wpds-confirmed-ambiguity.md) -- WPDS-confirmed ambiguities
-  represent deeper structural issues that training alone may not resolve.
+- [W14](W14-walker-fork-tight-margin.md) -- Walker Fork lex-min margin
+  under-confidence; tight-margin diagnostics often coexist with high entropy.

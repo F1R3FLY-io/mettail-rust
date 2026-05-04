@@ -52,11 +52,9 @@ Ordering: `Info < Note < Warning < Error`
 | [W06](wfst/W06-weight-inversion.md)                      | weight-inversion                 | Note     | Less-specific rule has better weight than more-specific   |
 | W07                                                       | nearly-dead-path                 | Note     | Rule nearly dead -- high weight but still reachable       |
 | W09                                                       | cancellation-pair-missing-rewrite| Warning  | Suppressed equation has no corresponding rewrite          |
-| W10                                                       | multi-token-lookahead-required   | Warning  | Single-token dispatch insufficient for disambiguation     |
-| W11                                                       | context-weight-narrowing         | Note     | ContextWeight powerset narrowed by 2-token lookahead      |
 | W12                                                       | forward-backward-recovery        | Note     | Forward-backward analysis improved recovery weights       |
 | [W13](wfst/W13-wpds-unreachable.md)                      | wpds-unreachable                 | Warning  | Rule unreachable via WPDS stack-aware analysis            |
-| [W14](wfst/W14-wpds-confirmed-ambiguity.md)              | wpds-confirmed-ambiguity         | Warning  | WPDS confirms pushdown-level ambiguity                    |
+| [W14](wfst/W14-walker-fork-tight-margin.md)              | walker-fork-tight-margin         | Note     | Top-2 prediction weights within ε; Walker lex-min Fork resolution will be src_idx/rule_idx-dependent |
 | [W16](wfst/W16-wpds-weight-inversion.md)                 | wpds-weight-inversion            | Warning  | WFST vs WPDS weight order disagrees                       |
 
 ### Recovery (R01–R07)
@@ -326,11 +324,10 @@ Ordering: `Info < Note < Warning < Error`
 |---|---|---|---|---|
 | [LT01](logict/LT01.md) | logict-search-bound-exceeded | Warning | `logict` | Fair interleaving search hit configured depth limit — result is Unknown, not Unsat |
 
-### Performance (P02–P06)
+### Performance (P03–P06)
 
 | ID                                           | Name               | Severity | Description                                   |
 |----------------------------------------------|--------------------|----------|-----------------------------------------------|
-| [P02](performance/P02-high-nfa-spillover.md) | high-nfa-spillover | Note     | Many categories need NFA spillover buffers    |
 | [P03](performance/P03-deep-cast-nesting.md)  | deep-cast-nesting  | Note     | Deep cast chain adds Box wrapper overhead     |
 | [P04](performance/P04-many-alternatives.md)  | many-alternatives  | Note     | Token dispatches to many rules (save/restore) |
 | [P05](performance/P05-wpds-pipeline-cost.md) | wpds-pipeline-cost | Info     | WPDS analysis wall-clock time and sizes       |

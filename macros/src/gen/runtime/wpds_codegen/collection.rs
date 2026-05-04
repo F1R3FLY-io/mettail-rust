@@ -440,6 +440,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         };
         let lang = empty_lang();
         let shape = classify_collection(&rule, &lang).expect("collection");
@@ -486,6 +488,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         };
         let lang = empty_lang();
         let shape = classify_collection(&rule, &lang).expect("4-element collection");

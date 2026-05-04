@@ -1164,6 +1164,7 @@ mod tests {
             rust_code: None,
             eval_mode: None,
             source_location: None,
+            is_auto_injected: false,
         }
     }
 

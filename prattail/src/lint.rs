@@ -214,7 +214,7 @@ define_diagnostic_ids! {
     O01 => "O01", O02 => "O02",
 
     // ── Parsing (P) ──
-    P02 => "P02", P03 => "P03", P04 => "P04", P05 => "P05", P06 => "P06",
+    P03 => "P03", P04 => "P04", P05 => "P05", P06 => "P06",
 
     // ── Parallel (PAR) ──
     PAR01 => "PAR01", PAR02 => "PAR02", PAR03 => "PAR03",
@@ -281,7 +281,7 @@ define_diagnostic_ids! {
     // ── WFST (W) ──
     W01 => "W01", W02 => "W02", W03 => "W03", W04 => "W04",
     W05 => "W05", W06 => "W06", W07 => "W07",
-    W09 => "W09", W10 => "W10", W11 => "W11", W12 => "W12", W13 => "W13", W14 => "W14", W16 => "W16",
+    W09 => "W09", W12 => "W12", W13 => "W13", W14 => "W14", W16 => "W16",
 
     // ── Zone (Z) ──
     Z01 => "Z01",
@@ -306,8 +306,8 @@ impl DiagnosticId {
     pub const fn is_groupable(&self) -> bool {
         matches!(self,
             DiagnosticId::W01  | DiagnosticId::W02  | DiagnosticId::W03  |
-            DiagnosticId::W05  | DiagnosticId::W07  | DiagnosticId::W10  |
-            DiagnosticId::W12  | DiagnosticId::W14  |
+            DiagnosticId::W05  | DiagnosticId::W07  |
+            DiagnosticId::W12  |
             DiagnosticId::G03  | DiagnosticId::G08  | DiagnosticId::G27  |
             DiagnosticId::D01  | DiagnosticId::D02  | DiagnosticId::D03  |
             DiagnosticId::D08  | DiagnosticId::D09  |
@@ -685,8 +685,8 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     // W05: Insert pre-collected composed-dispatch-ambiguity diagnostics
     diagnostics.extend(ctx.pre_collected_diagnostics.iter().cloned());
     lint_w06_weight_inversion(ctx, &mut diagnostics);
-    lint_w10_spillover_eliminable_by_lookahead(ctx, &mut diagnostics);
-    lint_w11_context_narrowing_deterministic(ctx, &mut diagnostics);
+    // Stage 10c (2026-05-04): W10 + W11 deleted; see comment blocks above
+    // their former emit functions. Pipeline call sites removed in lockstep.
     lint_w12_training_would_improve(ctx, &mut diagnostics);
 
     // ── Recovery lints ──
@@ -702,7 +702,7 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     lint_c04_wide_cross_overlap(ctx, &mut diagnostics);
 
     // ── Performance lints ──
-    lint_p02_high_nfa_spillover(ctx, &mut diagnostics);
+    // Stage 10c (2026-05-04): P02 deleted; pipeline call site removed.
     lint_p03_deep_cast_nesting(ctx, &mut diagnostics);
     lint_p04_many_alternatives(ctx, &mut diagnostics);
 
@@ -1362,9 +1362,8 @@ pub fn group_diagnostics(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic
                 DiagnosticId::CAP03 => group_cap03(items),
                 DiagnosticId::CAP05 => group_cap05(items),
                 DiagnosticId::DIS01 => group_dis01(items),
-                DiagnosticId::W10 => group_w10(items),
+                // Stage 10c (2026-05-04): W10 + W14 dispatch arms removed.
                 DiagnosticId::W12 => group_w12(items),
-                DiagnosticId::W14 => group_w14(items),
                 // Lint-B cleanup groupers for high-volume IDs.
                 DiagnosticId::M01 => group_m01(items),
                 DiagnosticId::K01 => group_k01(items),
@@ -2019,39 +2018,7 @@ fn group_dis01(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
     }]
 }
 
-/// Group W10 (NFA spillover eliminable by lookahead) by category.
-///
-/// Output: `"N categories could eliminate NFA spillover with k-token lookahead: Cat1, Cat2"`
-fn group_w10(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
-    let grammar_name = diagnostics.first().and_then(|d| d.grammar_name.clone());
-    let hint = diagnostics.first().and_then(|d| d.hint.clone());
-    let severity = diagnostics.first().map(|d| d.severity).unwrap_or(LintSeverity::Note);
-
-    let mut cats: Vec<String> = Vec::new();
-    for diag in &diagnostics {
-        if let Some(cat) = &diag.category {
-            if !cats.contains(cat) {
-                cats.push(cat.clone());
-            }
-        }
-    }
-
-    vec![LintDiagnostic {
-        id: DiagnosticId::W10,
-        name: "nfa-spillover-lookahead",
-        severity,
-        category: None,
-        rule: None,
-        message: format!(
-            "{} categories could eliminate NFA spillover with k-token lookahead: {}",
-            cats.len(),
-            cats.join(", "),
-        ),
-        hint,
-        grammar_name,
-        source_location: None,
-    }]
-}
+// Stage 10c (2026-05-04): group_w10 helper DELETED alongside W10.
 
 /// Group W12 (dispatch entropy) by category with entropy values.
 ///
@@ -2100,39 +2067,11 @@ fn group_w12(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
     }]
 }
 
-/// Group W14 (WPDS-confirmed ambiguity) by category.
-///
-/// Output: `"N categories have WPDS-confirmed NFA ambiguity: Cat1, Cat2"`
-fn group_w14(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
-    let grammar_name = diagnostics.first().and_then(|d| d.grammar_name.clone());
-    let hint = diagnostics.first().and_then(|d| d.hint.clone());
-    let severity = diagnostics.first().map(|d| d.severity).unwrap_or(LintSeverity::Note);
-
-    let mut cats: Vec<String> = Vec::new();
-    for diag in &diagnostics {
-        if let Some(cat) = &diag.category {
-            if !cats.contains(cat) {
-                cats.push(cat.clone());
-            }
-        }
-    }
-
-    vec![LintDiagnostic {
-        id: DiagnosticId::W14,
-        name: "wpds-confirmed-ambiguity",
-        severity,
-        category: None,
-        rule: None,
-        message: format!(
-            "{} categories have WPDS-confirmed NFA ambiguity: {}",
-            cats.len(),
-            cats.join(", "),
-        ),
-        hint,
-        grammar_name,
-        source_location: None,
-    }]
-}
+// Stage 10c (2026-05-04): group_w14 helper DELETED. The repurposed W14
+// (walker-fork-tight-margin) emits per-(category, token) diagnostics
+// that are unique by construction; grouping is unnecessary and would
+// hide the per-token data. Removed from `is_groupable()` and
+// `group_diagnostics` dispatch in lockstep.
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Lint-B cleanup: groupers for high-volume diagnostic IDs
@@ -3618,7 +3557,7 @@ fn lint_w01_dead_rule(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) 
 
 fn lint_w02_nfa_ambiguous_prefix(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     for cat_name in ctx.nfa_spillover_categories {
-        let rd_by_token = crate::trampoline::group_rd_by_dispatch_token_pub(ctx.rd_rules, cat_name);
+        let rd_by_token = crate::rd_analysis::group_rd_by_dispatch_token_pub(ctx.rd_rules, cat_name);
         if let Some(wfst) = ctx.prediction_wfsts.get(cat_name.as_str()) {
             for (token, rules) in &rd_by_token {
                 if rules.len() <= 1 {
@@ -3849,138 +3788,20 @@ fn lint_w06_weight_inversion(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// W10: Spillover Eliminable by Lookahead (Sprint 6)
+// Stage 10c (2026-05-04): W10 (spillover-eliminable-by-lookahead) DELETED.
+// Iterated `nfa_spillover_categories` checking k-token narrowability; the
+// enforcement target — NFA spillover infrastructure used by trampoline.rs and
+// parse_preserving_vars — was excised in Stage 10b. Walker+WPDS subsumes the
+// dispatch; any narrow-by-lookahead win is collected by the WFST/WPDS path.
+// (Function body, grouper helper `group_w10`, and grouper test all removed.)
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// W10: For each NFA-spillover category, compute minimum k such that k-token
-/// lookahead eliminates try-all. Emits Note with required depth when all
-/// branches narrow to singletons at depth ≤ 4.
-fn lint_w10_spillover_eliminable_by_lookahead(
-    ctx: &LintContext,
-    diagnostics: &mut Vec<LintDiagnostic>,
-) {
-    for cat_name in ctx.nfa_spillover_categories {
-        if let Some(wfst) = ctx.prediction_wfsts.get(cat_name.as_str()) {
-            if wfst.context_labels.is_empty() {
-                continue;
-            }
-
-            let rd_by_token = crate::trampoline::group_rd_by_dispatch_token_pub(
-                ctx.rd_rules, cat_name,
-            );
-
-            for (token, rules) in &rd_by_token {
-                if rules.len() <= 1 {
-                    continue;
-                }
-
-                // Check if two-token lookahead resolves this group
-                if let Some(label) = wfst.is_deterministic_context(&[token]) {
-                    diagnostics.push(LintDiagnostic {
-                        id: DiagnosticId::W10,
-                        name: "spillover-eliminable-by-lookahead",
-                        severity: LintSeverity::Note,
-                        category: Some(cat_name.clone()),
-                        rule: None,
-                        message: format!(
-                            "NFA spillover for token `{}` in `{}` could be eliminated \
-                             with 1-token lookahead (resolves to `{}`)",
-                            token, cat_name, label,
-                        ),
-                        hint: Some(
-                            "two-token WFST disambiguation resolves this group \
-                             deterministically"
-                                .to_string(),
-                        ),
-                        grammar_name: Some(ctx.grammar_name.to_string()),
-                        source_location: None,
-                    });
-                } else {
-                    // Check two-token narrowing
-                    let (_, count) = wfst.context_narrowing(&[token]);
-                    if count > 0 && (count as usize) < rules.len() {
-                        diagnostics.push(LintDiagnostic {
-                            id: DiagnosticId::W10,
-                            name: "spillover-eliminable-by-lookahead",
-                            severity: LintSeverity::Note,
-                            category: Some(cat_name.clone()),
-                            rule: None,
-                            message: format!(
-                                "NFA spillover for token `{}` in `{}` narrows from {} to {} \
-                                 candidates with ContextWeight analysis",
-                                token, cat_name, rules.len(), count,
-                            ),
-                            hint: Some(
-                                "consider extending lookahead depth to further reduce \
-                                 ambiguity"
-                                    .to_string(),
-                            ),
-                            grammar_name: Some(ctx.grammar_name.to_string()),
-                            source_location: None,
-                        });
-                    }
-                }
-            }
-        }
-    }
-}
-
 // ══════════════════════════════════════════════════════════════════════════════
-// W11: Context Narrowing Deterministic (Sprint 6)
+// Stage 10c (2026-05-04): W11 (context-narrowing-deterministic) DELETED.
+// Predicate referenced `DispatchStrategy::NfaTryAll`, which Stage 10d removes.
+// Per `analysis-nfa-spillover-coverage-gaps.md` Gap 2: NFA spillover lints
+// have no enforcement target post-Stage-10b parse_preserving_vars excision.
 // ══════════════════════════════════════════════════════════════════════════════
-
-/// W11: When ContextWeight narrows to singleton, suggest replacing NfaTryAll
-/// with Commit dispatch.
-fn lint_w11_context_narrowing_deterministic(
-    ctx: &LintContext,
-    diagnostics: &mut Vec<LintDiagnostic>,
-) {
-    for (cat_name, tree) in ctx.decision_trees {
-        if let Some(wfst) = ctx.prediction_wfsts.get(cat_name.as_str()) {
-            if wfst.context_labels.is_empty() {
-                continue;
-            }
-
-            // Get all dispatch tokens for this category
-            let first_set = match ctx.first_sets.get(cat_name) {
-                Some(fs) => fs,
-                None => continue,
-            };
-
-            for token in first_set.sorted_tokens() {
-                let variant = crate::automata::codegen::terminal_to_variant_name(&token);
-                let strategy = tree.dispatch_strategy(&variant, ctx.token_id_map);
-
-                if let crate::decision_tree::DispatchStrategy::NfaTryAll {
-                    rule_labels, ..
-                } = &strategy
-                {
-                    if let Some(label) = wfst.is_deterministic_context(&[&token]) {
-                        diagnostics.push(LintDiagnostic {
-                            id: DiagnosticId::W11,
-                            name: "context-narrowing-deterministic",
-                            severity: LintSeverity::Note,
-                            category: Some(cat_name.clone()),
-                            rule: None,
-                            message: format!(
-                                "NfaTryAll for token `{}` in `{}` ({} candidates) is \
-                                 deterministic via ContextWeight — resolves to `{}`",
-                                token, cat_name, rule_labels.len(), label,
-                            ),
-                            hint: Some(
-                                "the NFA try-all could be replaced with direct Commit \
-                                 dispatch for this token"
-                                    .to_string(),
-                            ),
-                            grammar_name: Some(ctx.grammar_name.to_string()),
-                            source_location: None,
-                        });
-                    }
-                }
-            }
-        }
-    }
-}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // W12: Training Would Improve (Sprint 6, wfst-log gated)
@@ -4202,77 +4023,58 @@ fn lint_p05_wpds_pipeline_cost(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// W14: WPDS-Confirmed Ambiguity
+// W14: Walker-Fork Tight Margin (Stage 10c repurpose, 2026-05-04)
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Warning when WPDS analysis confirms genuine pushdown-level ambiguity for
-/// NFA dispatch tokens, distinguishing from WFST false-positives.
+/// **Stage 10c (2026-05-04)** repurposed W14 from `wpds-confirmed-ambiguity`
+/// (which depended on `nfa_spillover_categories`) to `walker-fork-tight-margin`.
+/// Symmetric to W04 (which fires on gap > 5.0 = near-deterministic):
+/// W14 fires when the top-2 prediction-WFST actions for a dispatch token
+/// have a primary-weight margin < `TIGHT_MARGIN_THRESHOLD` (= 0.1). At
+/// runtime the Walker's `LexicographicWeight (primary, src_idx, rule_idx)`
+/// lex-min decides the Fork winner; when the primary margin is near zero,
+/// the resolution depends purely on `src_idx`/`rule_idx` tiebreaks — a
+/// brittle, ordering-dependent outcome that grammar authors should be
+/// aware of.
 ///
-/// Uses the WPDS stringsum parse count for categories with NFA spillover:
-/// `CountingWeight > 1` at the pushdown level confirms true ambiguity.
+/// Independent of `nfa_spillover_categories` — W14 reads only
+/// `prediction_wfsts` and `first_sets`.
 fn lint_w14_wpds_confirmed_ambiguity(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
-    let analysis = match ctx.wpds_analysis {
-        Some(a) => a,
-        None => return,
-    };
+    /// Margin under which Walker lex-min Fork resolution depends on
+    /// `src_idx`/`rule_idx` tiebreaks rather than principled weight order.
+    const TIGHT_MARGIN_THRESHOLD: f64 = 0.1;
 
-    // For each NFA spillover category, check if WPDS confirms the ambiguity.
-    // If a category is in nfa_spillover but NOT reachable in WPDS, the ambiguity
-    // is a WFST-level false positive.
-    for cat in ctx.nfa_spillover_categories {
-        if !analysis.reachable_categories.contains(cat) {
-            // Category is WPDS-unreachable → the ambiguity is a false positive
-            diagnostics.push(LintDiagnostic {
-                id: DiagnosticId::W14,
-                name: "wpds-confirmed-ambiguity",
-                severity: LintSeverity::Note,
-                category: Some(cat.clone()),
-                rule: None,
-                message: format!(
-                    "NFA spillover for `{}` may be a WFST false-positive \
-                     (category is WPDS-unreachable)",
-                    cat,
-                ),
-                hint: Some(
-                    "WPDS stack-aware analysis suggests this category is unreachable; \
-                     the NFA ambiguity may not manifest in practice"
-                        .to_string(),
-                ),
-                grammar_name: Some(ctx.grammar_name.to_string()),
-                source_location: None,
-            });
-        } else {
-            // Category is reachable — check if multiple rules share the
-            // same calling context (confirmed pushdown ambiguity).
-            // We check if the call graph fan-in > 1 for this category,
-            // which means multiple callers can reach it (different stack configs).
-            let fan_in = analysis
-                .call_graph
-                .fan_in
-                .get(cat)
-                .copied()
-                .unwrap_or(0);
-            let calling_context_count = analysis
-                .calling_contexts
-                .get(cat)
-                .map(|c| c.len())
-                .unwrap_or(0);
+    for (cat_name, wfst) in ctx.prediction_wfsts {
+        let first_set = match ctx.first_sets.get(cat_name) {
+            Some(fs) => fs,
+            None => continue,
+        };
 
-            if fan_in > 0 && calling_context_count > 1 {
+        for token in first_set.sorted_tokens() {
+            let actions = wfst.predict(&token);
+            if actions.len() < 2 {
+                continue;
+            }
+            let margin = actions[1].weight.value() - actions[0].weight.value();
+            if margin < TIGHT_MARGIN_THRESHOLD {
+                let top_label = actions[0].action.rule_label();
+                let runner_label = actions[1].action.rule_label();
                 diagnostics.push(LintDiagnostic {
                     id: DiagnosticId::W14,
-                    name: "wpds-confirmed-ambiguity",
+                    name: "walker-fork-tight-margin",
                     severity: LintSeverity::Note,
-                    category: Some(cat.clone()),
+                    category: Some(cat_name.clone()),
                     rule: None,
                     message: format!(
-                        "NFA spillover for `{}` is confirmed at pushdown level \
-                         ({} calling contexts, fan-in={})",
-                        cat, calling_context_count, fan_in,
+                        "category `{}`, token `{}`: top-2 actions (`{}` vs `{}`) have \
+                         primary-weight margin {:.3} (Walker lex-min Fork resolution \
+                         will be src_idx/rule_idx-dependent)",
+                        cat_name, token, top_label, runner_label, margin,
                     ),
                     hint: Some(
-                        "the ambiguity is genuine: multiple stack configurations \
-                         can reach this category's dispatch point"
+                        "consider increasing weight specificity for one of the rules, \
+                         or audit codegen ordering — current Fork resolution depends on \
+                         rule_idx tiebreak rather than principled weight order"
                             .to_string(),
                     ),
                     grammar_name: Some(ctx.grammar_name.to_string()),
@@ -5097,42 +4899,13 @@ fn lint_c04_wide_cross_overlap(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// P02: High NFA Spillover
+// Stage 10c (2026-05-04): P02 (high-nfa-spillover) DELETED.
+// Message described per-cat thread-local bindings (NFA_PREFIX_SPILL_<CAT>,
+// NFA_FORCED_PREFIX_<CAT>, NFA_PRIMARY_WEIGHT_<CAT>) that Stage 10b already
+// removed from `language.rs:1840-1932`. With those TLS bindings gone, the
+// hint about reducing categories with NFA spillover refers to overhead that
+// no longer exists. Lint deleted with no replacement.
 // ══════════════════════════════════════════════════════════════════════════════
-
-fn lint_p02_high_nfa_spillover(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
-    if ctx.nfa_spillover_categories.len() > 3 {
-        let mut sorted_cats: Vec<&String> = ctx.nfa_spillover_categories.iter().collect();
-        sorted_cats.sort();
-        let cats_str: Vec<&str> = sorted_cats.iter().map(|s| s.as_str()).collect();
-        // Modulate severity: tiny grammars (<10 categories) → Note, larger → Warning
-        let severity = if ctx.grammar_profile
-            .map_or(false, |p| p.category_count >= 10) {
-            LintSeverity::Warning
-        } else {
-            LintSeverity::Note
-        };
-        diagnostics.push(LintDiagnostic {
-            id: DiagnosticId::P02,
-            name: "high-nfa-spillover",
-            severity,
-            category: None,
-            rule: None,
-            message: format!(
-                "{} categories need NFA spillover buffers: [{}] — increases TLS overhead",
-                ctx.nfa_spillover_categories.len(),
-                cats_str.join(", "),
-            ),
-            hint: Some(
-                "reduce prefix ambiguity to lower the number of categories needing \
-                 NFA spillover"
-                    .to_string(),
-            ),
-            grammar_name: Some(ctx.grammar_name.to_string()),
-            source_location: None,
-        });
-    }
-}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // P03: Deep Cast Nesting
@@ -9312,7 +9085,7 @@ fn lint_rt06_name_shadow(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic
 ///
 /// Severity: Note (informational — optimization opportunity).
 fn lint_cek01_dead_capture_in_frame(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
-    use crate::trampoline::{split_rd_handler, constructor_capture_names, compute_live_captures, capture_name};
+    use crate::rd_analysis::{split_rd_handler, constructor_capture_names, compute_live_captures, capture_name};
 
     for rd_rule in ctx.rd_rules {
         let segments = split_rd_handler(rd_rule);
@@ -9384,18 +9157,25 @@ fn lint_cek03_unreachable_frame_variant(
             continue;
         }
         if !analysis.pautomaton.is_symbol_in_any_configuration(symbol) {
+            // Stage 3.27c (2026-05-04): WPDS-architecture renaming. Frame
+            // enums no longer exist post-Stage-10 trampoline excision; the
+            // CEK bijection now maps WPDS rule positions (StackSymbol) to
+            // CEK reachability. The lint name and message reflect the
+            // current architecture: "rule position" not "frame variant".
+            // The diagnostic ID `CEK03` is preserved for stable consumer
+            // wiring; only the human-readable name/message text changes.
             diagnostics.push(LintDiagnostic {
                 id: DiagnosticId::CEK03,
-                name: "unreachable-frame-variant",
+                name: "unreachable-rule-position",
                 severity: LintSeverity::Note,
                 category: None,
                 rule: None,
                 message: format!(
-                    "frame variant '{}' is unreachable in all valid stack contexts",
+                    "rule position '{}' is unreachable in all valid stack contexts",
                     frame_name,
                 ),
                 hint: Some(
-                    "enable CEK03:DeadFrameElimination to suppress codegen for unreachable frame variants"
+                    "enable CEK03:DeadFrameElimination to suppress codegen for unreachable rule positions"
                         .to_string(),
                 ),
                 grammar_name: Some(ctx.grammar_name.to_string()),
@@ -10561,33 +10341,9 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // P02: High NFA Spillover
+    // Stage 10c (2026-05-04): P02 (high-nfa-spillover) tests DELETED
+    // alongside the lint function and DiagnosticId variant.
     // ══════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn p02_fires_on_many_spillover_categories() {
-        let mut b = CtxBuilder::new();
-        b.nfa_spillover_categories = ["A", "B", "C", "D"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-
-        let mut diags = Vec::new();
-        lint_p02_high_nfa_spillover(&b.ctx(), &mut diags);
-
-        assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].id, DiagnosticId::P02);
-    }
-
-    #[test]
-    fn p02_does_not_fire_on_few() {
-        let mut b = CtxBuilder::new();
-        b.nfa_spillover_categories = ["A"].iter().map(|s| s.to_string()).collect();
-
-        let mut diags = Vec::new();
-        lint_p02_high_nfa_spillover(&b.ctx(), &mut diags);
-        assert!(diags.is_empty());
-    }
 
     // ══════════════════════════════════════════════════════════════════════
     // P03: Deep Cast Nesting
@@ -13194,21 +12950,8 @@ mod tests {
         assert!(result[0].message.contains("Expr"), "message: {}", result[0].message);
     }
 
-    #[test]
-    fn group_w10_multiple_categories() {
-        let diags = vec![
-            make_diag(DiagnosticId::W10, "spillover-eliminable-by-lookahead", LintSeverity::Note, Some("Proc"), None, "NFA spillover for token `kw_new` in `Proc` could be eliminated with 1-token lookahead (resolves to `PNew`)", Some("two-token WFST disambiguation resolves this")),
-            make_diag(DiagnosticId::W10, "spillover-eliminable-by-lookahead", LintSeverity::Note, Some("Proc"), None, "NFA spillover for token `kw_for` in `Proc` narrows from 3 to 1 candidates with ContextWeight analysis", Some("consider extending lookahead depth")),
-            make_diag(DiagnosticId::W10, "spillover-eliminable-by-lookahead", LintSeverity::Note, Some("Name"), None, "NFA spillover for token `ident` in `Name` could be eliminated with 1-token lookahead (resolves to `NVar`)", Some("two-token WFST disambiguation resolves this")),
-        ];
-        let result = group_diagnostics(diags);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, DiagnosticId::W10);
-        assert_eq!(result[0].name, "nfa-spillover-lookahead");
-        assert!(result[0].message.contains("2 categories"), "message: {}", result[0].message);
-        assert!(result[0].message.contains("Proc"), "message: {}", result[0].message);
-        assert!(result[0].message.contains("Name"), "message: {}", result[0].message);
-    }
+    // Stage 10c (2026-05-04): group_w10_multiple_categories test DELETED
+    // alongside W10's emit function and grouper helper.
 
     #[test]
     fn group_w12_multiple_categories() {
@@ -13225,22 +12968,9 @@ mod tests {
         assert!(result[0].message.contains("Name(2.85 bits)"), "message: {}", result[0].message);
     }
 
-    #[test]
-    fn group_w14_multiple_categories() {
-        let diags = vec![
-            make_diag(DiagnosticId::W14, "wpds-confirmed-ambiguity", LintSeverity::Note, Some("Proc"), None, "NFA spillover for `Proc` is confirmed at pushdown level (3 calling contexts, fan-in=2)", Some("the ambiguity is genuine")),
-            make_diag(DiagnosticId::W14, "wpds-confirmed-ambiguity", LintSeverity::Note, Some("Name"), None, "NFA spillover for `Name` may be a WFST false-positive (category is WPDS-unreachable)", Some("WPDS stack-aware analysis suggests unreachable")),
-            make_diag(DiagnosticId::W14, "wpds-confirmed-ambiguity", LintSeverity::Note, Some("Expr"), None, "NFA spillover for `Expr` is confirmed at pushdown level (2 calling contexts, fan-in=1)", Some("the ambiguity is genuine")),
-        ];
-        let result = group_diagnostics(diags);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, DiagnosticId::W14);
-        assert_eq!(result[0].name, "wpds-confirmed-ambiguity");
-        assert!(result[0].message.contains("3 categories"), "message: {}", result[0].message);
-        assert!(result[0].message.contains("Proc"), "message: {}", result[0].message);
-        assert!(result[0].message.contains("Name"), "message: {}", result[0].message);
-        assert!(result[0].message.contains("Expr"), "message: {}", result[0].message);
-    }
+    // Stage 10c (2026-05-04): group_w14_multiple_categories test DELETED.
+    // The repurposed W14 (walker-fork-tight-margin) emits per-(category,
+    // token) diagnostics that are unique by construction; no grouper.
 
     // ══════════════════════════════════════════════════════════════════════
     // A-Series Analysis Lint Direct Tests (A02–A10)
@@ -15025,104 +14755,85 @@ mod tests {
         assert!(diags.is_empty(), "absent WPDS analysis should not trigger W13");
     }
 
-    // ── W14: WPDS-Confirmed Ambiguity ──
+    // ── W14: Walker-Fork Tight Margin (Stage 10c repurpose, 2026-05-04) ──
+    //
+    // The 4 old W14 tests (wpds-confirmed-ambiguity) were deleted alongside
+    // the rewrite. Below: 3 new tests for the repurposed semantics.
 
     #[test]
-    fn w14_fires_false_positive_for_unreachable_category() {
+    fn w14_fires_on_tight_margin() {
         let mut b = CtxBuilder::new();
         b.categories.push(cat_info("Expr", None, true));
-        b.categories.push(cat_info("Orphan", None, false));
-        b.nfa_spillover_categories.insert("Orphan".to_string());
-
-        let mut analysis = make_wpds_analysis_empty();
-        analysis.reachable_categories.insert("Expr".to_string());
-        // "Orphan" is NOT reachable — false positive
-        b.wpds_analysis_data = Some(analysis);
-
-        let mut diags = Vec::new();
-        lint_w14_wpds_confirmed_ambiguity(&b.ctx(), &mut diags);
-
-        assert_eq!(diags.len(), 1, "expected 1 W14 diagnostic: {:?}", diags);
-        assert_eq!(diags[0].id, DiagnosticId::W14);
-        assert_eq!(diags[0].severity, LintSeverity::Note);
-        assert!(
-            diags[0].message.contains("false-positive"),
-            "message should mention false-positive: {}",
-            diags[0].message,
-        );
-        assert!(diags[0].message.contains("Orphan"), "message: {}", diags[0].message);
-    }
-
-    #[test]
-    fn w14_fires_confirmed_for_reachable_with_multiple_contexts() {
-        let mut b = CtxBuilder::new();
-        b.categories.push(cat_info("Expr", None, true));
-        b.nfa_spillover_categories.insert("Expr".to_string());
-
-        let mut analysis = make_wpds_analysis_empty();
-        analysis.reachable_categories.insert("Expr".to_string());
-        analysis.call_graph.fan_in.insert("Expr".to_string(), 2);
-        analysis.calling_contexts.insert(
+        let mut fs = FirstSet::new();
+        fs.insert("Plus");
+        b.first_sets.insert("Expr".to_string(), fs);
+        b.prediction_wfsts.insert(
             "Expr".to_string(),
-            vec![
-                crate::wpds::CallingContext {
-                    caller_category: "Stmt".to_string(),
-                    caller_rule: "ExprStmt".to_string(),
-                    caller_position: 0,
-                    weight: 1.0,
-                },
-                crate::wpds::CallingContext {
-                    caller_category: "Type".to_string(),
-                    caller_rule: "TypeExpr".to_string(),
-                    caller_position: 0,
-                    weight: 1.0,
-                },
-            ],
+            make_prediction_wfst("Expr", &[
+                ("Plus", "AddExpr", 1.0),
+                ("Plus", "ConcatExpr", 1.05), // margin = 0.05 < 0.1
+            ]),
         );
-        b.wpds_analysis_data = Some(analysis);
 
         let mut diags = Vec::new();
         lint_w14_wpds_confirmed_ambiguity(&b.ctx(), &mut diags);
 
         assert_eq!(diags.len(), 1, "expected 1 W14 diagnostic: {:?}", diags);
         assert_eq!(diags[0].id, DiagnosticId::W14);
+        assert_eq!(diags[0].name, "walker-fork-tight-margin");
         assert!(
-            diags[0].message.contains("confirmed"),
-            "message should mention confirmed: {}",
-            diags[0].message,
-        );
-        assert!(
-            diags[0].message.contains("fan-in=2"),
-            "message should mention fan-in: {}",
+            diags[0].message.contains("margin"),
+            "message should mention margin: {}",
             diags[0].message,
         );
     }
 
     #[test]
-    fn w14_silent_when_no_nfa_spillover() {
+    fn w14_silent_on_wide_gap() {
+        // Wide gap (4.0) is W04 territory, not W14.
         let mut b = CtxBuilder::new();
         b.categories.push(cat_info("Expr", None, true));
-
-        let mut analysis = make_wpds_analysis_empty();
-        analysis.reachable_categories.insert("Expr".to_string());
-        b.wpds_analysis_data = Some(analysis);
-        // No nfa_spillover_categories
+        let mut fs = FirstSet::new();
+        fs.insert("Plus");
+        b.first_sets.insert("Expr".to_string(), fs);
+        b.prediction_wfsts.insert(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[
+                ("Plus", "AddExpr", 1.0),
+                ("Plus", "ConcatExpr", 5.0), // margin = 4.0 >= 0.1
+            ]),
+        );
 
         let mut diags = Vec::new();
         lint_w14_wpds_confirmed_ambiguity(&b.ctx(), &mut diags);
 
-        assert!(diags.is_empty(), "no NFA spillover should not trigger W14");
+        assert!(
+            diags.is_empty(),
+            "wide-gap weights should not trigger W14 (W04 territory): {:?}",
+            diags,
+        );
     }
 
     #[test]
-    fn w14_silent_when_no_wpds_analysis() {
+    fn w14_silent_on_singleton_dispatch() {
         let mut b = CtxBuilder::new();
-        b.nfa_spillover_categories.insert("Expr".to_string());
+        b.categories.push(cat_info("Expr", None, true));
+        let mut fs = FirstSet::new();
+        fs.insert("Plus");
+        b.first_sets.insert("Expr".to_string(), fs);
+        b.prediction_wfsts.insert(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[("Plus", "AddExpr", 1.0)]),
+        );
 
         let mut diags = Vec::new();
         lint_w14_wpds_confirmed_ambiguity(&b.ctx(), &mut diags);
 
-        assert!(diags.is_empty(), "absent WPDS analysis should not trigger W14");
+        assert!(
+            diags.is_empty(),
+            "singleton dispatch should not trigger W14: {:?}",
+            diags,
+        );
     }
 
     // ── W16: WPDS Weight Inversion ──

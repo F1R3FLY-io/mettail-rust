@@ -404,6 +404,7 @@ mod tests {
                     rust_code: None,
                     eval_mode: None,
                     source_location: None,
+                    is_auto_injected: false,
                 },
                 RuleSpec {
                     label: "Add".to_string(),
@@ -439,6 +440,7 @@ mod tests {
                     rust_code: None,
                     eval_mode: None,
                     source_location: None,
+                    is_auto_injected: false,
                 },
             ],
             beam_width: crate::BeamWidthConfig::Disabled,

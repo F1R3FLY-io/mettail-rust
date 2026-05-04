@@ -8,7 +8,7 @@ use mettail_languages::rhocalc::*;
 use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
 
-// Dead rules detected by WFST analysis: {"Proc::DeleteMap", "Proc::HasMap", "CastBool", "CastList", "Proc::FloatBinProc", "Proc::RemoveBag", "CastInt", "Proc::UIntBinProc", "Proc::MergeMap", "Proc::GetMap", "Proc::ConcatList", "CastBigRat", "Proc::PInputs", "Proc::DiffBag", "CastUInt32", "Proc::IntBinProc", "CastMap", "Proc::ElemList", "Proc::PNew", "CastBigInt", "Proc::UnionBag", "Proc::PutMap", "Proc::FractionProc", "Int::CountBag", "CastStr", "CastBag", "Proc::FixedBinProc", "Proc::POutput", "Proc::DeleteList"}
+// Dead rules detected by WFST analysis: {"CastInt", "Proc::BigratCastProc", "Proc::Len", "Proc::ValuesMap", "Proc::KeysMap", "Proc::UIntBinProc", "CastBigRat", "Proc::DeleteList", "Proc::RemoveBag", "CastMap", "CastBigInt", "CastStr", "Proc::GetMap", "Proc::UnionBag", "UInt32ToInt", "CastList", "Proc::FixedBinProc", "Proc::PDrop", "Proc::MergeMap", "Proc::HasMap", "Proc::PNew", "Proc::ToStr", "CastUInt32", "Proc::DiffBag", "Proc::BigintCastProc", "Proc::ConcatList", "Proc::POutput", "Proc::PutMap", "BoolToInt", "Int::CountBag", "Proc::ElemList", "Proc::PInputs", "Proc::FractionProc", "Proc::FloatBinProc", "Proc::DeleteMap", "Proc::ToBool", "CastBag", "Proc::IntBinProc", "CastBool"}
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -796,6 +796,162 @@ fn unit_rhocalc_proc_tostr() {
         let re_displayed = format!("{}", parsed);
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for ToStr: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_rhocalc_int_booltoint() {
+    mettail_runtime::clear_var_cache();
+    let term = Int::BoolToInt(Box::new(Bool::BoolLit(false)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToInt");
+    if let Ok(parsed) = Int::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for BoolToInt: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_rhocalc_uint32_booltouint32() {
+    mettail_runtime::clear_var_cache();
+    let term = UInt32::BoolToUInt32(Box::new(Bool::BoolLit(false)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToUInt32");
+    if let Ok(parsed) = UInt32::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for BoolToUInt32: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_rhocalc_bigint_booltobigint() {
+    mettail_runtime::clear_var_cache();
+    let term = BigInt::BoolToBigInt(Box::new(Bool::BoolLit(false)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToBigInt");
+    if let Ok(parsed) = BigInt::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for BoolToBigInt: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_rhocalc_bigrat_booltobigrat() {
+    mettail_runtime::clear_var_cache();
+    let term = BigRat::BoolToBigRat(Box::new(Bool::BoolLit(false)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToBigRat");
+    if let Ok(parsed) = BigRat::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for BoolToBigRat: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_rhocalc_bigint_inttobigint() {
+    mettail_runtime::clear_var_cache();
+    let term = BigInt::IntToBigInt(Box::new(Int::NumLit(0i64)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToBigInt");
+    if let Ok(parsed) = BigInt::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for IntToBigInt: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_rhocalc_bigrat_inttobigrat() {
+    mettail_runtime::clear_var_cache();
+    let term = BigRat::IntToBigRat(Box::new(Int::NumLit(0i64)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToBigRat");
+    if let Ok(parsed) = BigRat::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for IntToBigRat: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_rhocalc_int_uint32toint() {
+    mettail_runtime::clear_var_cache();
+    let term = Int::UInt32ToInt(Box::new(UInt32::NumLit(0u32)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToInt");
+    if let Ok(parsed) = Int::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for UInt32ToInt: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_rhocalc_bigint_uint32tobigint() {
+    mettail_runtime::clear_var_cache();
+    let term = BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(0u32)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToBigInt");
+    if let Ok(parsed) = BigInt::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for UInt32ToBigInt: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_rhocalc_bigrat_uint32tobigrat() {
+    mettail_runtime::clear_var_cache();
+    let term = BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(0u32)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToBigRat");
+    if let Ok(parsed) = BigRat::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for UInt32ToBigRat: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_rhocalc_bigrat_floattobigrat() {
+    mettail_runtime::clear_var_cache();
+    let term = BigRat::FloatToBigRat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatToBigRat");
+    if let Ok(parsed) = BigRat::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for FloatToBigRat: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_rhocalc_bigrat_biginttobigrat() {
+    mettail_runtime::clear_var_cache();
+    let term = BigRat::BigIntToBigRat(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BigIntToBigRat");
+    if let Ok(parsed) = BigRat::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for BigIntToBigRat: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_rhocalc_bigrat_fixedtobigrat() {
+    mettail_runtime::clear_var_cache();
+    let term = BigRat::FixedToBigRat(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedToBigRat");
+    if let Ok(parsed) = BigRat::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for FixedToBigRat: {} != {}", displayed, re_displayed);
     }
 }
 

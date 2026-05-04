@@ -8,6 +8,8 @@ use mettail_languages::ledtest::*;
 use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
 
+// Dead rules detected by WFST analysis: {"PredToNum"}
+
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
 // ═══════════════════════════════════════════════════════════
@@ -166,6 +168,19 @@ fn unit_ledtest_expr_epar() {
         let re_displayed = format!("{}", parsed);
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for EPar: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_ledtest_num_predtonum() {
+    mettail_runtime::clear_var_cache();
+    let term = Num::PredToNum(Box::new(Pred::BoolLit(false)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for PredToNum");
+    if let Ok(parsed) = Num::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for PredToNum: {} != {}", displayed, re_displayed);
     }
 }
 

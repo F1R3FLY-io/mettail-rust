@@ -108,3 +108,11 @@ fn rewrite_mixedmath_notcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+// Rewrite test for BoolToIntCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_mixedmath_booltointcong() {
+    let _lang = MixedMathLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+

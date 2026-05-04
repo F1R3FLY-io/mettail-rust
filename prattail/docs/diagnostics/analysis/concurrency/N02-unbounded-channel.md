@@ -185,4 +185,5 @@ buffer is full), which could create new deadlock risks detectable by
 
 - [N01](N01-deadlock-risk.md) -- Deadlock risk; adding capacity bounds to unbounded places may introduce deadlocks
 - [S01](../../safety/S01-safety-violation.md) -- Safety violation; unbounded growth may lead to bad parser configurations
-- [P02](../../performance/P02-high-nfa-spillover.md) -- NFA spillover; unbounded token accumulation can cause excessive NFA buffer usage
+<!-- Stage 10c (2026-05-04): P02 cross-link removed; P02 deleted alongside NFA spillover infrastructure. -->
+

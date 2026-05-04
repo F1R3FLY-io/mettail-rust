@@ -1135,6 +1135,8 @@ mod tests {
                     is_right_assoc: false,
                     prefix_bp: None,
                     tier_directive: None,
+                    is_auto_injected: false,
+                    doc_comment: None,
                 }
             })
             .collect();
@@ -1173,6 +1175,8 @@ mod tests {
                         constructor: rhs_ident,
                         args: vec![Pattern::Term(PatternTerm::Var(Ident::new("X", Span::call_site())))],
                     }),
+                    is_auto_injected: false,
+
                 }
             })
             .collect();

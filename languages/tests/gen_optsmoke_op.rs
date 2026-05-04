@@ -12,12 +12,12 @@ use mettail_runtime::BehavioralPred;
 // WFST-derived test coverage plan
 // ═══════════════════════════════════════════════════════════
 // Constructor weights (lower = more frequent):
-//   IfElse               weight: 0.0000
-//   BoolLit              weight: 0.0000
 //   IntLit               weight: 0.0000
+//   IfElse               weight: 0.0000
 //   Grouping             weight: 0.0000
-//   VarInt               weight: 2.0000
+//   BoolLit              weight: 0.0000
 //   VarBool              weight: 2.0000
+//   VarInt               weight: 2.0000
 // Category weights:
 //   Int                  weight: 0.5000
 //   Bool                 weight: 0.6667
@@ -164,6 +164,18 @@ fn eval_optsmoke_ifelse_true_0() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
+fn cross_cat_optsmoke_cast_booltoint_from_bool_to_int() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::BoolToInt(Box::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = OptSmokeLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn cross_cat_optsmoke_eval_ifelse() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(1i32)), None);
@@ -174,6 +186,18 @@ fn cross_cat_optsmoke_eval_ifelse() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "1"),
         "{} should evaluate to 1, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn cross_cat_optsmoke_castop_ifelse_booltoint_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), None);
+    let input_str = format!("{}", input_term);
+    let lang = OptSmokeLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -342,5 +366,5 @@ fn type_pres_optsmoke_ifelse_true_0() {
 }
 }
 
-// Total operational semantics tests: 23 (P1=10, P2a=0, P2b=0, P3a=1, P3b=0, P4a=1, P4b=0, P5a=10, P5b=1)
+// Total operational semantics tests: 25 (P1=10, P2a=0, P2b=0, P3a=3, P3b=0, P4a=1, P4b=0, P5a=10, P5b=1)
 

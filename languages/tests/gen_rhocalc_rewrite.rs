@@ -792,3 +792,99 @@ fn rewrite_rhocalc_tostrcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+// Rewrite test for BoolToIntCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_booltointcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for BoolToUInt32Cong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_booltouint32cong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for BoolToBigIntCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_booltobigintcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for BoolToBigRatCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_booltobigratcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for IntToBigIntCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_inttobigintcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for IntToBigRatCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_inttobigratcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for UInt32ToIntCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_uint32tointcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for UInt32ToBigIntCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_uint32tobigintcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for UInt32ToBigRatCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_uint32tobigratcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for FloatToBigRatCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_floattobigratcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for BigIntToBigRatCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_biginttobigratcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for FixedToBigRatCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_fixedtobigratcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+

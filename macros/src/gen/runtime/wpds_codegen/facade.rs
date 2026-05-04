@@ -94,9 +94,11 @@ pub(crate) fn emit_parse_fns(
                 ),
                 WpdsParseError,
             > {
-                use mettail_prattail::wpds_runtime::WpdsState;
+                use mettail_prattail::wpds_runtime::WpdsResolveResult;
                 use mettail_prattail::wpds_walker::WpdsWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
+                // Stage 6 G6+ (2026-05-02): default 1M; PRATTAIL_MAX_STEPS env
+                // var overrides via run_to_end_of_input_env_aware.
                 const MAX_STEPS: usize = 1_000_000;
                 let mut walker = WpdsWalker::<LexicographicWeight, _>::new_for_category(
                     #engine_ident::default(),
@@ -106,23 +108,45 @@ pub(crate) fn emit_parse_fns(
                 let src = mettail_prattail::wpds_runtime::SliceTokenSource::with_texts(
                     kinds, texts,
                 );
-                match walker.run_to_saturation(MAX_STEPS, &src) {
-                    WpdsState::Accepted => {
-                        *pos = walker.position();
-                        let weight = *walker.weight();
-                        let result = walker
-                            .builder_mut()
-                            .take_result::<#cat_ident>()
-                            .ok_or(WpdsParseError::EmptyResult)?;
-                        Ok((result, weight))
-                    }
-                    WpdsState::Error { message } => Err(WpdsParseError::ParseFailed {
-                        message,
-                        position: walker.position(),
-                        attempts: Vec::new(),
-                    }),
-                    _ => Err(WpdsParseError::Incomplete {
-                        position: walker.position(),
+                // Stage 3.5b (2026-05-01): WPDS-correct EOI resolution.
+                // `run_to_end_of_input` drives until input exhausted /
+                // all-cursors-dead / max_steps; `resolve_at_end_of_input`
+                // collapses the parked frontier to a single weighted result
+                // via Semiring::plus + lex-min selection.
+                match walker.run_to_end_of_input_env_aware(MAX_STEPS, &src) {
+                    Ok(()) => match walker.resolve_at_end_of_input(&src) {
+                        WpdsResolveResult::Accepted { weight, term }
+                        | WpdsResolveResult::AcceptedAmbiguous { weight, term, .. } => {
+                            *pos = walker.position();
+                            // Stage 3.6 / ι Phase 1 (2026-05-01): term is
+                            // `Arc<dyn Any + Send + Sync>` (was `Box<dyn Any + Send>`).
+                            // `Arc::downcast` returns `Result<Arc<T>, _>`; we
+                            // move out via `Arc::try_unwrap` (zero-copy when
+                            // unique) and fall back to `(*arc).clone()` when
+                            // the Arc has been cloned for fanout.
+                            let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                .map_err(|_| WpdsParseError::EmptyResult)?;
+                            let typed = std::sync::Arc::try_unwrap(arc)
+                                .unwrap_or_else(|arc| (*arc).clone());
+                            // The walker's accumulated weight `walker.weight()`
+                            // is the lex-min winner's weight after EOI
+                            // resolution committed. The resolve result
+                            // also returns it; both are consistent.
+                            Ok((typed, weight))
+                        }
+                        WpdsResolveResult::ParseError { message, position } => {
+                            Err(WpdsParseError::ParseFailed {
+                                message,
+                                position,
+                                attempts: Vec::new(),
+                            })
+                        }
+                        WpdsResolveResult::MaxStepsExceeded { position } => {
+                            Err(WpdsParseError::Incomplete { position })
+                        }
+                    },
+                    Err(exceeded) => Err(WpdsParseError::Incomplete {
+                        position: exceeded.position,
                     }),
                 }
             }
@@ -147,10 +171,12 @@ pub(crate) fn emit_parse_fns(
                 pos: &mut usize,
                 min_bp: u8,
             ) -> (Result<#cat_ident, WpdsParseError>, Vec<RecoveryAttempt>) {
-                use mettail_prattail::wpds_runtime::WpdsState;
+                use mettail_prattail::wpds_runtime::WpdsResolveResult;
                 use mettail_prattail::wpds_walker::WpdsWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
 
+                // Stage 6 G6+ (2026-05-02): default 1M; PRATTAIL_MAX_STEPS env
+                // var overrides via run_to_end_of_input_env_aware.
                 const MAX_STEPS: usize = 1_000_000;
                 const MAX_RECOVERY_ROUNDS: usize = 4;
                 const SYNC_TOKENS: &[&str] = &[")", "}", "]", ";", ","];
@@ -169,17 +195,35 @@ pub(crate) fn emit_parse_fns(
                     let src = mettail_prattail::wpds_runtime::SliceTokenSource::with_texts(
                         kinds_slice, texts_slice,
                     );
-                    match walker.run_to_saturation(MAX_STEPS, &src) {
-                        WpdsState::Accepted => {
+                    // Stage 3.5b (2026-05-01): WPDS-correct EOI resolution.
+                    // The wrapper-level recovery loop stays in place
+                    // pre-Stage-3.20; ParseError surfaces from
+                    // resolve_at_end_of_input and the wrapper retries
+                    // from the next sync token.
+                    let resolve = match walker.run_to_end_of_input_env_aware(MAX_STEPS, &src) {
+                        Ok(()) => walker.resolve_at_end_of_input(&src),
+                        Err(exceeded) => {
+                            return (
+                                Err(WpdsParseError::Incomplete {
+                                    position: start_pos + exceeded.position,
+                                }),
+                                attempts,
+                            );
+                        }
+                    };
+                    match resolve {
+                        WpdsResolveResult::Accepted { term, .. }
+                        | WpdsResolveResult::AcceptedAmbiguous { term, .. } => {
                             *pos = start_pos + walker.position();
-                            let result = walker
-                                .builder_mut()
-                                .take_result::<#cat_ident>()
-                                .ok_or(WpdsParseError::EmptyResult);
+                            // Stage 3.6 / ι Phase 1 (2026-05-01): Arc downcast.
+                            let result = std::sync::Arc::downcast::<#cat_ident>(term)
+                                .map(|arc| std::sync::Arc::try_unwrap(arc)
+                                    .unwrap_or_else(|arc| (*arc).clone()))
+                                .map_err(|_| WpdsParseError::EmptyResult);
                             return (result, attempts);
                         }
-                        WpdsState::Error { message } => {
-                            let err_pos = start_pos + walker.position();
+                        WpdsResolveResult::ParseError { message, position } => {
+                            let err_pos = start_pos + position;
                             if recovery_rounds < MAX_RECOVERY_ROUNDS {
                                 let mut next_sync: Option<usize> = None;
                                 for i in (err_pos + 1)..kinds.len() {
@@ -234,10 +278,10 @@ pub(crate) fn emit_parse_fns(
                                 attempts,
                             );
                         }
-                        _ => {
+                        WpdsResolveResult::MaxStepsExceeded { position } => {
                             return (
                                 Err(WpdsParseError::Incomplete {
-                                    position: start_pos + walker.position(),
+                                    position: start_pos + position,
                                 }),
                                 attempts,
                             );

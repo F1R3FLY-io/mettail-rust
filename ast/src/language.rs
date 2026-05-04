@@ -88,6 +88,12 @@ pub struct RelationDecl {
     pub name: Ident,
     /// Parameter type strings (e.g., ["Proc", "Proc"] or ["Vec<Proc>"])
     pub param_types: Vec<String>,
+    /// Stage 3.27a (2026-05-04): doc-comment text (joined with `\n`)
+    /// extracted from `#[doc = "..."]` attributes (typically lowered from
+    /// `///` lines) preceding the relation. `None` when no doc comment is
+    /// present. Surfaces in the generated `LogicRelationDef::description`
+    /// field, displayed by the REPL `info` command.
+    pub doc_comment: Option<String>,
 }
 
 /// A typed parameter in the type context
@@ -736,6 +742,15 @@ pub struct RewriteRule {
     pub left: Pattern,
     /// RHS pattern - the result of the rewrite (can use metasyntax)
     pub right: Pattern,
+    /// Stage 3.13e (2026-05-01): provenance flag distinguishing user-written
+    /// rewrites (false) from synthetic congruence rules emitted by
+    /// `wpds_codegen/auto_inject.rs::make_injection_cong_rule` for
+    /// auto-injected `<Source>To<Target>` cast constructors. Mirrors
+    /// `GrammarRule.is_auto_injected` (Stage 3.13b). Used by future
+    /// W05-rewrite-analog lints to distinguish synthetic-induced ambiguity
+    /// from user-authored ambiguity. Default `false` for parsed rules;
+    /// set `true` only by `make_injection_cong_rule`.
+    pub is_auto_injected: bool,
 }
 
 impl RewriteRule {
@@ -951,6 +966,201 @@ impl NativeKind {
             | Self::Usize => Some("Integer"),
             Self::Other => None,
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Stage 3.13 — BuiltinTypeLattice (2026-04-30)
+    //
+    // Lossless / lossy promotion edges between built-in types. Used by:
+    // - Stage 3.13 auto-injection codegen — emits cross-cat injection
+    //   rules byte-identical to hand-written `IntToBigInt . i:Int |- i : BigInt`.
+    // - Stage 3.27f G-INTEGER-OVERFLOW-FORK — emits promotion-Fork
+    //   branches for every lossless edge declared in a grammar.
+    //
+    // Future-proof contract: adding a new built-in type (e.g. Decimal128)
+    // only requires (a) a new variant here, (b) updates to `from_syn_type`
+    // and `standard_token_variant`, (c) new rows in `lossless_targets` /
+    // `lossy_targets`. No code change in binder.rs/prefix.rs/auto_inject.rs
+    // is needed — the codegen consumes the lattice abstractly.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Return the lossless promotion targets for this kind.
+    ///
+    /// A lossless edge `Source → Target` means every `Source`-valued
+    /// literal can be embedded in `Target` without loss (no truncation,
+    /// no precision loss, no representable-range overflow).
+    ///
+    /// **Auto-emittable:** Stage 3.13 unconditionally emits cross-cat
+    /// injection rules for every lossless edge declared in a grammar
+    /// (i.e., when both source and target categories are present).
+    ///
+    /// **Lossless edges:**
+    /// - `Bool → Int{8..128}`, `Bool → UInt{8..128}` (false→0, true→1).
+    /// - `IntN → IntM` for N ≤ M (signed widening).
+    /// - `UIntN → UIntM` for N ≤ M (unsigned widening).
+    /// - `UIntN → IntM` for N < M (sign bit available).
+    /// - `IntN/UIntN → CanonicalBigInt` (arbitrary precision).
+    /// - `CanonicalBigInt → CanonicalBigRat` (Z ⊂ Q).
+    /// - `Float32 → Float64` (IEEE 754 widen).
+    /// - `Float64 → CanonicalBigRat` (exact via `f64_to_exact_rational`).
+    /// - `CanonicalFixedPoint → CanonicalBigRat` (rational with bounded denom).
+    ///
+    /// Multi-step lossless chains (e.g., `Int32 → CanonicalBigInt →
+    /// CanonicalBigRat`) are NOT enumerated explicitly — Stage 3.27f's
+    /// promotion-target search is BFS over the direct-edge graph this
+    /// function defines.
+    pub const fn lossless_targets(self) -> &'static [NativeKind] {
+        match self {
+            // Bool → all integer widths (false=0, true=1 fits everywhere).
+            Self::Bool => &[
+                Self::Int8, Self::Int16, Self::Int32, Self::Int64, Self::Int128, Self::Isize,
+                Self::UInt8, Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128, Self::Usize,
+                Self::CanonicalBigInt, Self::CanonicalBigRat,
+            ],
+
+            // Signed integer widening: IntN → IntM for N ≤ M, plus to CanonicalBigInt + CanonicalBigRat.
+            Self::Int8 => &[
+                Self::Int16, Self::Int32, Self::Int64, Self::Int128,
+                Self::CanonicalBigInt, Self::CanonicalBigRat,
+            ],
+            Self::Int16 => &[
+                Self::Int32, Self::Int64, Self::Int128,
+                Self::CanonicalBigInt, Self::CanonicalBigRat,
+            ],
+            Self::Int32 => &[
+                Self::Int64, Self::Int128,
+                Self::CanonicalBigInt, Self::CanonicalBigRat,
+            ],
+            Self::Int64 => &[
+                Self::Int128,
+                Self::CanonicalBigInt, Self::CanonicalBigRat,
+            ],
+            Self::Int128 => &[Self::CanonicalBigInt, Self::CanonicalBigRat],
+            // isize is 32-or-64-bit platform-dependent; treat as Int64-equivalent for lattice purposes.
+            Self::Isize => &[
+                Self::Int128,
+                Self::CanonicalBigInt, Self::CanonicalBigRat,
+            ],
+
+            // Unsigned integer widening: UIntN → UIntM (N ≤ M); UIntN → IntM (N < M, sign bit available).
+            Self::UInt8 => &[
+                Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128,
+                Self::Int16, Self::Int32, Self::Int64, Self::Int128,
+                Self::CanonicalBigInt, Self::CanonicalBigRat,
+            ],
+            Self::UInt16 => &[
+                Self::UInt32, Self::UInt64, Self::UInt128,
+                Self::Int32, Self::Int64, Self::Int128,
+                Self::CanonicalBigInt, Self::CanonicalBigRat,
+            ],
+            Self::UInt32 => &[
+                Self::UInt64, Self::UInt128,
+                Self::Int64, Self::Int128,
+                Self::CanonicalBigInt, Self::CanonicalBigRat,
+            ],
+            Self::UInt64 => &[
+                Self::UInt128,
+                Self::Int128,
+                Self::CanonicalBigInt, Self::CanonicalBigRat,
+            ],
+            Self::UInt128 => &[Self::CanonicalBigInt, Self::CanonicalBigRat],
+            Self::Usize => &[
+                Self::UInt128,
+                Self::Int128,
+                Self::CanonicalBigInt, Self::CanonicalBigRat,
+            ],
+
+            // Float widening + exact-to-BigRat.
+            Self::Float32 => &[Self::Float64, Self::CanonicalBigRat],
+            Self::Float64 => &[Self::CanonicalBigRat],
+
+            // Canonical → CanonicalBigRat (Z ⊂ Q; FixedPoint ⊂ Q).
+            Self::CanonicalBigInt => &[Self::CanonicalBigRat],
+            Self::CanonicalFixedPoint => &[Self::CanonicalBigRat],
+
+            // Terminal / non-numeric kinds: no lossless targets.
+            Self::CanonicalBigRat | Self::Str | Self::Other => &[],
+        }
+    }
+
+    /// Return the lossy promotion targets for this kind.
+    ///
+    /// A lossy edge `Source → Target` means SOME `Source` values cannot
+    /// be embedded in `Target` without loss — overflow, truncation, or
+    /// representable-range mismatch can occur.
+    ///
+    /// **Opt-in only:** Stage 3.13 auto-injection emits these only when
+    /// the user grammar opts in via
+    /// `options { auto_inject_lossy: true }` or per-edge
+    /// `auto_inject_allow: [...]`.
+    ///
+    /// **Lossy edges:**
+    /// - `IntN → UIntM` (negatives unrepresentable).
+    /// - `Float* → IntN` / `Float* → UIntN` (truncation).
+    /// - `IntN/UIntN → Float*` (precision loss for wide ints).
+    /// - `CanonicalBigRat → CanonicalFixedPoint` (truncation at scale).
+    /// - `CanonicalBigRat → IntN/UIntN/Float*` (truncation + range).
+    /// - `Bool → Float*` (semantic, not numeric — false→0.0, true→1.0).
+    /// - Any → Str / Str → any (format/parse asymmetry).
+    pub const fn lossy_targets(self) -> &'static [NativeKind] {
+        match self {
+            Self::Int8 | Self::Int16 | Self::Int32 | Self::Int64 | Self::Int128 | Self::Isize => &[
+                Self::UInt8, Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128, Self::Usize,
+                Self::Float32, Self::Float64,
+            ],
+            Self::UInt8 | Self::UInt16 | Self::UInt32 | Self::UInt64 | Self::UInt128 | Self::Usize => &[
+                Self::Float32, Self::Float64,
+            ],
+            Self::Float32 | Self::Float64 => &[
+                Self::Int8, Self::Int16, Self::Int32, Self::Int64, Self::Int128, Self::Isize,
+                Self::UInt8, Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128, Self::Usize,
+                Self::CanonicalFixedPoint,
+            ],
+            Self::Bool => &[Self::Float32, Self::Float64],
+            Self::CanonicalBigInt => &[
+                Self::Int8, Self::Int16, Self::Int32, Self::Int64, Self::Int128, Self::Isize,
+                Self::UInt8, Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128, Self::Usize,
+                Self::Float32, Self::Float64,
+            ],
+            Self::CanonicalBigRat => &[
+                Self::CanonicalBigInt,
+                Self::Int8, Self::Int16, Self::Int32, Self::Int64, Self::Int128, Self::Isize,
+                Self::UInt8, Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128, Self::Usize,
+                Self::Float32, Self::Float64, Self::CanonicalFixedPoint,
+            ],
+            Self::CanonicalFixedPoint => &[
+                Self::Int8, Self::Int16, Self::Int32, Self::Int64, Self::Int128, Self::Isize,
+                Self::UInt8, Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128, Self::Usize,
+                Self::Float32, Self::Float64, Self::CanonicalBigInt,
+            ],
+            Self::Str | Self::Other => &[],
+        }
+    }
+
+    /// BFS over the lossless-edge graph from `self`, yielding
+    /// `(reachable_kind, distance)` pairs in shortest-path order.
+    ///
+    /// **Used by:** Stage 3.27f G-INTEGER-OVERFLOW-FORK to enumerate all
+    /// admissible promotion targets for a built-in literal (cost weighted
+    /// by distance).
+    pub fn lossless_promotion_chain(self) -> Vec<(NativeKind, u8)> {
+        use std::collections::VecDeque;
+        let mut seen: Vec<NativeKind> = vec![self];
+        let mut out: Vec<(NativeKind, u8)> = Vec::new();
+        let mut queue: VecDeque<(NativeKind, u8)> = VecDeque::new();
+        queue.push_back((self, 0));
+        while let Some((kind, distance)) = queue.pop_front() {
+            for &target in kind.lossless_targets() {
+                if seen.contains(&target) {
+                    continue;
+                }
+                seen.push(target);
+                let next_dist = distance.saturating_add(1);
+                out.push((target, next_dist));
+                queue.push_back((target, next_dist));
+            }
+        }
+        out
     }
 }
 
@@ -4511,6 +4721,7 @@ fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
         premises,
         left,
         right,
+        is_auto_injected: false,
     })
 }
 
@@ -4542,7 +4753,11 @@ fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
                 .iter()
                 .map(|ty| quote::quote!(#ty).to_string())
                 .collect();
-            RelationDecl { name: rel.name, param_types }
+            // Stage 3.27a (2026-05-04): doc_comment is None for now —
+            // ascent_syntax_export does not surface relation-level doc
+            // comments. Future: extend ascent_syntax_export to capture
+            // and forward `#[doc = "..."]` attributes per relation.
+            RelationDecl { name: rel.name, param_types, doc_comment: None }
         })
         .collect();
 

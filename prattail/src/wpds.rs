@@ -2204,6 +2204,11 @@ pub fn analyze_wpds_from_bundle(
             rust_code: None,
             eval_mode: None,
             source_location: None,
+            // Reconstructed input from all_syntax loses provenance — assume
+            // user-written. Stage 3.13b filter consumes is_auto_injected on
+            // RuleSpec, but cek-bridge's reconstruction operates on a
+            // syntax-only triple, so we conservatively mark these false.
+            is_auto_injected: false,
         })
         .collect();
 
@@ -2688,6 +2693,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             },
             RuleSpecInput {
                 label: "Add".to_string(),
@@ -2709,6 +2715,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             },
         ];
 
@@ -2744,6 +2751,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             },
             RuleSpecInput {
                 label: "Add".to_string(),
@@ -2765,6 +2773,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             },
             RuleSpecInput {
                 label: "Cast".to_string(),
@@ -2787,6 +2796,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             },
             RuleSpecInput {
                 label: "IntType".to_string(),
@@ -2798,6 +2808,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             },
             RuleSpecInput {
                 label: "FloatType".to_string(),
@@ -2809,6 +2820,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             },
         ];
 
@@ -2844,6 +2856,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             },
             RuleSpecInput {
                 label: "OrphanRule".to_string(),
@@ -2855,6 +2868,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             },
         ];
 
@@ -3419,6 +3433,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             },
             RuleSpecInput {
                 label: "LetIn".to_string(),
@@ -3440,6 +3455,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             },
             RuleSpecInput {
                 label: "LetDecl".to_string(),
@@ -3457,6 +3473,7 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
                 source_location: None,
+                is_auto_injected: false,
             },
         ];
 
@@ -3922,6 +3939,7 @@ mod tests {
             rust_code: None,
             eval_mode: None,
             source_location: None,
+            is_auto_injected: false,
         }];
 
         let spec = LanguageSpec::new("TestLang".to_string(), types, inputs);
@@ -3990,6 +4008,7 @@ mod tests {
             rust_code: None,
             eval_mode: None,
             source_location: None,
+            is_auto_injected: false,
         }];
 
         let spec = LanguageSpec::new("TestLang".to_string(), types, inputs);

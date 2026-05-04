@@ -15,7 +15,8 @@ export const categoryInfo = {
 			"AddInt",
 			"SubInt",
 			"MulInt",
-			"Neg"
+			"Neg",
+			"BoolToInt"
 		],
 		colour: "51b0e0",
 	}

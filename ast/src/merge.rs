@@ -893,6 +893,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }
     }
 
@@ -1014,6 +1016,7 @@ mod tests {
             relations: vec![RelationDecl {
                 name: Ident::new("path", Span::call_site()),
                 param_types: vec!["Proc".to_string(), "Proc".to_string()],
+                doc_comment: None,
             }],
             content: quote::quote! { path(x, y) <-- edge(x, y); },
         });
@@ -1023,6 +1026,7 @@ mod tests {
             relations: vec![RelationDecl {
                 name: Ident::new("reachable", Span::call_site()),
                 param_types: vec!["Name".to_string()],
+                doc_comment: None,
             }],
             content: quote::quote! { reachable(n) <-- start(n); },
         });
@@ -1040,6 +1044,7 @@ mod tests {
             relations: vec![RelationDecl {
                 name: Ident::new("path", Span::call_site()),
                 param_types: vec!["Proc".to_string(), "Proc".to_string()],
+                doc_comment: None,
             }],
             content: TokenStream::new(),
         });
@@ -1049,6 +1054,7 @@ mod tests {
             relations: vec![RelationDecl {
                 name: Ident::new("path", Span::call_site()),
                 param_types: vec!["Name".to_string()], // different params
+                doc_comment: None,
             }],
             content: TokenStream::new(),
         });

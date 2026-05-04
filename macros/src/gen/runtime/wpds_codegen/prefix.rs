@@ -952,6 +952,8 @@ fn emit_cross_cat_projection_arms_bucketed(
                                 source_src_idx: #source_src_idx,
                                 outer_bp: _outer_bp,
                             },
+                            // Stage 3.12 / Class A.i (2026-05-01): default Push.
+                            action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
                         }
                     }
                 })
@@ -1255,6 +1257,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }
     }
 
@@ -1274,6 +1278,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }
     }
 
@@ -1290,6 +1296,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         }
     }
 
@@ -1429,6 +1437,8 @@ mod tests {
             is_right_assoc: false,
             prefix_bp: None,
             tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
         };
         match classify_atomic(&rule, &lang) {
             AtomicShape::TerminalKeyword { terminal_text, wrapper_variant } => {

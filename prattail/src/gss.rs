@@ -44,6 +44,51 @@ use crate::wpds_runtime::StackSymbolV2;
 /// Unique identifier for a GSS node.
 pub type GssNodeId = u32;
 
+/// Stage 3.12 fix (2026-05-02): sentinel marking "cursor has no GSS node"
+/// — i.e., the cursor has unwound past the entry frame. Engine.step's
+/// `frontier_top = self.gss.node(cursor.node)` returns `None` for this
+/// id (since `WpdsGss` cannot allocate `u32::MAX` nodes — bounded by the
+/// `STRICT_PENDING_OPS_LIMIT` runaway guard), routing the cursor through
+/// the `frontier_top.is_none() ⇒ Accept` engine branch. Replaces the
+/// pre-Stage-3.12 `top_node: Option<GssNodeId>` semantics that the
+/// cursor-side code had to encode in a single `u32` field.
+pub const GSS_NODE_NONE: GssNodeId = u32::MAX;
+
+/// Stage 3.12.6 (2026-05-02): stable identifier for a `WpdsGss` edge,
+/// packed as `(source_node_u32 << 32) | edge_index_u32` where
+/// `edge_index_u32` is the edge's index in the source node's
+/// `Vec<WpdsGssEdge<W>>` outgoing-edge list.
+///
+/// **Stability invariant**: edge indices are append-only — `WpdsGss`
+/// never removes edges, so an edge's index in its source's outgoing
+/// list is stable for the GSS's lifetime. The dedup-via-`plus` path in
+/// `add_edge` mutates an existing edge's weight in place, preserving
+/// its index and thus its `GssEdgeId`.
+///
+/// Used by the walker's per-cursor `incoming_edge_stack` to record each
+/// cursor's stack-suffix path through the GSS, restoring pop-time
+/// determinism in the face of GSS structural sharing across recursive
+/// rules' `(pos, symbol)` re-entries.
+pub type GssEdgeId = u64;
+
+/// Pack `(source, edge_index)` into a `GssEdgeId`.
+#[inline(always)]
+pub fn pack_edge_id(source: GssNodeId, edge_index: usize) -> GssEdgeId {
+    debug_assert!(
+        edge_index < (u32::MAX as usize),
+        "GSS edge index overflow: STRICT_PENDING_OPS_LIMIT should prevent this",
+    );
+    ((source as u64) << 32) | (edge_index as u64)
+}
+
+/// Unpack a `GssEdgeId` into `(source, edge_index)`.
+#[inline(always)]
+pub fn unpack_edge_id(id: GssEdgeId) -> (GssNodeId, u32) {
+    let source = (id >> 32) as GssNodeId;
+    let edge_index = (id & 0xFFFF_FFFF) as u32;
+    (source, edge_index)
+}
+
 /// A node in the graph-structured stack.
 ///
 /// Each node represents a parse state at a particular input position
@@ -366,8 +411,49 @@ impl<W: Semiring> WpdsGss<W> {
     }
 
     /// Add a weighted edge from `source` to `target`.
-    pub fn add_edge(&mut self, source: GssNodeId, target: GssNodeId, weight: W) {
-        self.edges.entry(source).or_default().push(WpdsGssEdge { target, weight });
+    ///
+    /// **Dedup invariant (Stage 3.1, 2026-04-30):** if an edge `(source,
+    /// target)` already exists, its weight is merged with the new weight
+    /// via `Semiring::plus` (lex-min for `LexicographicWeight`, tropical
+    /// sum for `TropicalWeight`) — no duplicate edges are appended. This
+    /// is required for two reasons:
+    ///
+    /// 1. The Pratt walker's fanout machinery calls `add_edge` once per
+    ///    cursor-step on potentially-revisited `(source, target)` pairs.
+    ///    Without dedup, edge counts grow as `O(steps × cursors)`, which
+    ///    on failed parses causes 73 amortized `Vec::push` reallocations
+    ///    and ~805MB peak heap. Empirically reproduced and heaptrack-
+    ///    validated; see `wpds-gss-unbounded-growth-2026-04-29.md`.
+    /// 2. Semantically, multiple `(source, target)` edges with different
+    ///    weights represent the *same* parallel-derivation relation
+    ///    weighted differently — the semiring sum is the canonical
+    ///    representative.
+    pub fn add_edge(&mut self, source: GssNodeId, target: GssNodeId, weight: W) -> GssEdgeId {
+        let edges = self.edges.entry(source).or_default();
+        for (idx, existing) in edges.iter_mut().enumerate() {
+            if existing.target == target {
+                existing.weight = existing.weight.plus(&weight);
+                return pack_edge_id(source, idx);
+            }
+        }
+        let idx = edges.len();
+        edges.push(WpdsGssEdge { target, weight });
+        pack_edge_id(source, idx)
+    }
+
+    /// Stage 3.12.6 (2026-05-02): look up the target node of a specific
+    /// edge by its `GssEdgeId`. Returns `None` if the edge does not exist
+    /// (e.g., the source node has fewer outgoing edges than the index
+    /// encoded in the id, or the source node id is invalid).
+    ///
+    /// Used by the walker's `cursor_gss_pop_via_edge` to follow the
+    /// cursor's recorded stack-suffix path through the GSS.
+    pub fn edge_target(&self, id: GssEdgeId) -> Option<GssNodeId> {
+        let (source, edge_index) = unpack_edge_id(id);
+        self.edges
+            .get(&source)
+            .and_then(|v| v.get(edge_index as usize))
+            .map(|e| e.target)
     }
 
     /// Number of nodes.
@@ -434,9 +520,23 @@ impl<W: Semiring> WpdsGss<W> {
         pos: usize,
         weight: W,
     ) -> GssNodeId {
+        self.push_symbol_with_edge_id(frontier_node, symbol, pos, weight).0
+    }
+
+    /// Stage 3.12.6 (2026-05-02): variant of `push_symbol` that returns
+    /// the new node id paired with the `GssEdgeId` of the freshly
+    /// recorded `(new_id → frontier_node)` edge. Used by the walker's
+    /// `cursor_gss_push` to populate the cursor's `incoming_edge_stack`.
+    pub fn push_symbol_with_edge_id(
+        &mut self,
+        frontier_node: GssNodeId,
+        symbol: StackSymbolV2,
+        pos: usize,
+        weight: W,
+    ) -> (GssNodeId, GssEdgeId) {
         let new_id = self.get_or_create_node(WpdsGssNode { pos, symbol });
-        self.add_edge(new_id, frontier_node, weight);
-        new_id
+        let edge_id = self.add_edge(new_id, frontier_node, weight);
+        (new_id, edge_id)
     }
 
     /// WPDS pop: drop the top frame, returning the predecessor node.
@@ -476,17 +576,62 @@ impl<W: Semiring> WpdsGss<W> {
         pos: usize,
         weight: W,
     ) -> GssNodeId {
+        // Stage 3.12.7 (2026-05-02): legacy wrapper passes None for the
+        // cursor's edge (returns first predecessor edge id). Walker
+        // callers should use `replace_top_with_edge_id` directly with
+        // the cursor's recorded incoming edge.
+        self.replace_top_with_edge_id(frontier_node, new_symbol, pos, weight, None).0
+    }
+
+    /// Stage 3.12.6 (2026-05-02): variant of `replace_top` that returns
+    /// the new node id paired with the `GssEdgeId` of the predecessor
+    /// edge that the cursor traversed (preferred) or the first
+    /// predecessor edge if the cursor's edge cannot be matched.
+    ///
+    /// Stage 3.12.7 (2026-05-02): added `cursor_incoming_edge` parameter.
+    /// When `frontier_node` has multiple predecessors (e.g., from GSS
+    /// dedup of recursive `(pos, symbol)` pushes), the cursor's specific
+    /// stack-suffix identity must be preserved. The function looks up
+    /// the cursor's recorded edge target and returns the new edge id
+    /// that points to the SAME target. Falls back to the first edge
+    /// when the cursor's edge can't be resolved (shouldn't happen
+    /// under correct push/pop pairing) or when frontier_node has no
+    /// predecessors (terminal pop).
+    ///
+    /// Without this, cursors at multi-predecessor GSS nodes silently
+    /// inherit the wrong predecessor on Replace — latent today (no
+    /// existing test exercises Replace at a multi-pred node) but will
+    /// surface in Stage 3.16+ Forks.
+    pub fn replace_top_with_edge_id(
+        &mut self,
+        frontier_node: GssNodeId,
+        new_symbol: StackSymbolV2,
+        pos: usize,
+        weight: W,
+        cursor_incoming_edge: Option<GssEdgeId>,
+    ) -> (GssNodeId, GssEdgeId) {
         let new_id = self.get_or_create_node(WpdsGssNode { pos, symbol: new_symbol });
-        // Copy outgoing edges from frontier_node, composing weights.
         let preds: Vec<(GssNodeId, W)> = self
             .edges_from(frontier_node)
             .iter()
             .map(|e| (e.target, weight.times(&e.weight)))
             .collect();
+        let cursor_target = cursor_incoming_edge.and_then(|e| self.edge_target(e));
+        let mut matching_edge_id: Option<GssEdgeId> = None;
+        let mut first_edge_id: Option<GssEdgeId> = None;
         for (target, w) in preds {
-            self.add_edge(new_id, target, w);
+            let edge_id = self.add_edge(new_id, target, w);
+            if first_edge_id.is_none() {
+                first_edge_id = Some(edge_id);
+            }
+            if cursor_target == Some(target) && matching_edge_id.is_none() {
+                matching_edge_id = Some(edge_id);
+            }
         }
-        new_id
+        // Prefer the cursor's specific edge target; fall back to first
+        // (single-pred case) or 0 (no preds — terminal replace).
+        let edge_id = matching_edge_id.or(first_edge_id).unwrap_or(0);
+        (new_id, edge_id)
     }
 
     /// Fork the stack: create a parallel branch at `from` sharing its

@@ -245,11 +245,10 @@ Ordering: `Info < Note < Warning < Error`
 | K01 | `hoare-failure`     | Warning  | `kat`        | Hoare triple {p} e {q} fails    |
 | K02 | `kat-equivalence`   | Note     | `kat`        | KAT expression equivalence result |
 
-### Performance (P02–P06)
+### Performance (P03–P06)
 
 | ID  | Name                    | Severity | Description                                   |
 |-----|-------------------------|----------|-----------------------------------------------|
-| P02 | `high-nfa-spillover`    | Note     | > 3 categories need spillover buffers         |
 | P03 | `deep-cast-nesting`     | Note     | Cast chain depth > 3                          |
 | P04 | `many-alternatives`     | Note     | Token dispatches to > 4 rules                 |
 | P05 | `wpds-pipeline-cost`    | Info     | WPDS analysis wall-clock time and sizes       |

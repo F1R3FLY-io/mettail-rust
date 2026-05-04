@@ -18,4 +18,5 @@ pub mod iterative_drop;
 pub mod iterative_hash;
 pub mod match_pattern;
 pub mod normalize;
+pub mod parse_alt_filter;
 pub mod subst;

@@ -12,7 +12,47 @@ use mettail_runtime::BehavioralPred;
 // Analytical tests (confluence, termination)
 // ═══════════════════════════════════════════════════════════
 
-// No rewrites defined — TRS analytical tests skipped.
+#[test]
+fn optsmoke_confluence_check() {
+    let lang = OptSmokeLanguage;
+    let meta = lang.metadata();
+    let result = mettail_testkit::analytical::confluence::check_language_confluence(meta);
+    assert!(
+        result.is_confluent,
+        "OptSmoke confluence FAILED: {} non-joinable critical pair(s) out of {}. Summary: {}",
+        result.non_joinable_count,
+        result.critical_pair_count,
+        result.summary,
+    );
+}
+
+#[test]
+fn optsmoke_termination_check() {
+    let lang = OptSmokeLanguage;
+    let meta = lang.metadata();
+    let result = mettail_testkit::analytical::termination::check_language_termination(meta);
+    if result.is_conclusive {
+        assert!(
+            result.is_terminating,
+            "OptSmoke termination FAILED (conclusive): {}",
+            result.summary
+        );
+    }
+    // If not conclusive: pass silently (analysis incomplete, not a bug).
+}
+
+#[test]
+#[ignore = "termination analysis inconclusive -- run manually to inspect"]
+fn optsmoke_termination_check_inconclusive() {
+    let lang = OptSmokeLanguage;
+    let meta = lang.metadata();
+    let result = mettail_testkit::analytical::termination::check_language_termination(meta);
+    assert!(
+        result.is_conclusive,
+        "OptSmoke termination analysis is INCONCLUSIVE: {}",
+        result.summary
+    );
+}
 
 // ═══════════════════════════════════════════════════════════
 // User tests (from `tests { }` block)

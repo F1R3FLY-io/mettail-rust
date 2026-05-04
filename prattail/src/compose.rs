@@ -306,6 +306,7 @@ fn merge_rules(
             rust_code: rule.rust_code.clone(),
             eval_mode: rule.eval_mode.clone(),
             source_location: rule.source_location,
+            is_auto_injected: rule.is_auto_injected,
         });
     }
 
@@ -329,6 +330,7 @@ fn merge_rules(
             rust_code: rule.rust_code.clone(),
             eval_mode: rule.eval_mode.clone(),
             source_location: rule.source_location,
+            is_auto_injected: rule.is_auto_injected,
         });
     }
 

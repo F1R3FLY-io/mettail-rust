@@ -12,11 +12,11 @@ use mettail_runtime::BehavioralPred;
 // WFST-derived test coverage plan
 // ═══════════════════════════════════════════════════════════
 // Constructor weights (lower = more frequent):
+//   Grouping             weight: 0.0000
 //   IntLit               weight: 0.0000
 //   Neg                  weight: 0.0000
 //   BoolLit              weight: 0.0000
 //   Not                  weight: 0.0000
-//   Grouping             weight: 0.0000
 //   VarInt               weight: 2.0000
 //   VarBool              weight: 2.0000
 // Category weights:
@@ -1799,6 +1799,142 @@ fn edge_mixedmath_not_bool_true() {
 }
 
 // ═══════════════════════════════════════════════════════════
+// Phase 3a: Cross-category tests (cast + cross-cat eval)
+// ═══════════════════════════════════════════════════════════
+
+#[test]
+fn cross_cat_mixedmath_cast_booltoint_from_bool_to_int() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::BoolToInt(Box::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_mixedmath_castop_addint_booltoint_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_mixedmath_castop_subint_booltoint_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_mixedmath_castop_mulint_booltoint_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_mixedmath_castop_neg_booltoint_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::Neg(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_mixedmath_mixed_addint_cast_booltoint_lhs_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_mixedmath_mixed_addint_cast_booltoint_rhs_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_mixedmath_composite_addint_booltoint_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_mixedmath_composite_subint_booltoint_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::SubInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_mixedmath_composite_mulint_booltoint_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn cross_cat_mixedmath_composite_neg_booltoint_smoke() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::Neg(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+// ═══════════════════════════════════════════════════════════
 // Phase 4a: WFST-guided dispatch tests
 // ═══════════════════════════════════════════════════════════
 
@@ -2529,5 +2665,5 @@ fn type_pres_mixedmath_neg_0() {
 }
 }
 
-// Total operational semantics tests: 188 (P1=75, P2a=50, P2b=10, P3a=0, P3b=0, P4a=7, P4b=9, P5a=30, P5b=7)
+// Total operational semantics tests: 199 (P1=75, P2a=50, P2b=10, P3a=11, P3b=0, P4a=7, P4b=9, P5a=30, P5b=7)
 

@@ -670,6 +670,7 @@ mod wfst_lexer_weight_tests {
                     rust_code: None,
                     eval_mode: None,
                     source_location: None,
+                    is_auto_injected: false,
                 },
                 RuleSpecInput {
                     label: "Add".to_string(),
@@ -691,6 +692,7 @@ mod wfst_lexer_weight_tests {
                     rust_code: None,
                     eval_mode: None,
                     source_location: None,
+                    is_auto_injected: false,
                 },
             ],
             BeamWidthConfig::Explicit(1.5),

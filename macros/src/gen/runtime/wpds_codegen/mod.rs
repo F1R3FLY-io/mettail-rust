@@ -49,7 +49,9 @@
 //! spill-and-include pattern documented at
 //! `macros/src/logic/writer.rs::spill_and_include`).
 
+pub mod auto_inject;
 pub mod binder;
+pub mod builtin_metadata;
 pub mod collection;
 pub mod engine_impl;
 pub mod facade;
@@ -353,6 +355,8 @@ mod tests {
                     is_right_assoc: false,
                     prefix_bp: None,
                     tier_directive: None,
+                    is_auto_injected: false,
+                    doc_comment: None,
                 },
                 mettail_ast::grammar::GrammarRule {
                     label: Ident::new("Add", Span::call_site()),
@@ -366,6 +370,8 @@ mod tests {
                     is_right_assoc: false,
                     prefix_bp: None,
                     tier_directive: None,
+                    is_auto_injected: false,
+                    doc_comment: None,
                 },
                 mettail_ast::grammar::GrammarRule {
                     label: Ident::new("BoolLit", Span::call_site()),
@@ -379,6 +385,8 @@ mod tests {
                     is_right_assoc: false,
                     prefix_bp: None,
                     tier_directive: None,
+                    is_auto_injected: false,
+                    doc_comment: None,
                 },
             ],
             equations: Vec::new(),

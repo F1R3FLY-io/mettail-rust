@@ -3619,9 +3619,8 @@ G24 alpha-equivalent-rules, G32 prefix-isomorphism.
 **WFST (W):**
 W01 dead-rule, W02 nfa-ambiguous-prefix, W03 high-ambiguity-token,
 W04 weight-gap-anomaly, W06 weight-inversion,
-W10 spillover-eliminable-by-lookahead, W11 context-narrowing-deterministic,
 W12 training-would-improve, W13 wpds-unreachable,
-W14 wpds-confirmed-ambiguity, W16 wpds-weight-inversion.
+W14 walker-fork-tight-margin, W16 wpds-weight-inversion.
 
 **Recovery (R):**
 R01 empty-sync-set, R02 sparse-recovery, R05 missing-bracket-sync,
