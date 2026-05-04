@@ -1024,6 +1024,16 @@ mod parsing {
     }
 
     #[test]
+    fn send_empty_payload_parses() {
+        let _ = run("x!()");
+    }
+
+    #[test]
+    fn send_empty_payload_quoted_bind_emits_empty_proc() {
+        assert_reduces_to("{for(@y <- x){y} | x!()}", "{for(@y <- x){y} | x!()}");
+    }
+
+    #[test]
     fn send_polyadic_is_list_sugar() {
         fresh();
         let poly = parse("x!(1, 2, 3)").normalize();
@@ -1037,6 +1047,17 @@ mod parsing {
         let poly = parse("x!(1, 2)").normalize();
         let list = parse("x!([1, 2])").normalize();
         assert!(poly.term_eq(&list), "expected 2-arg send sugar to match list payload");
+    }
+
+    #[test]
+    fn send_unary_and_polyadic_non_regression() {
+        fresh();
+        let unary = parse("x!(0)").normalize();
+        let explicit_unary = parse("x!(0)").normalize();
+        let poly = parse("x!(1, 2)").normalize();
+        let list = parse("x!([1, 2])").normalize();
+        assert!(unary.term_eq(&explicit_unary), "expected unary send parse unchanged");
+        assert!(poly.term_eq(&list), "expected polyadic send sugar unchanged");
     }
 
     #[test]
@@ -1376,6 +1397,11 @@ mod parsing {
     #[test]
     fn empty_receiver_plain_runtime_with_int_payload() {
         assert_reduces_to("{for(<- x){ok} | x!(1)}", "ok");
+    }
+
+    #[test]
+    fn empty_receiver_plain_runtime_with_empty_payload() {
+        assert_reduces_to("{for(<- x){ok} | x!()}", "ok");
     }
 
     #[test]

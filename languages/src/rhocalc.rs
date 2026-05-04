@@ -77,6 +77,11 @@ language! {
 
         POutput . n:Name, q:Proc
         |- n "!" "(" q ")" : Proc ;
+        // Empty send sugar: `x!()` sends empty process payload.
+        POutputEmpty . n:Name
+        |- n "!" "(" ")" : Proc ![{
+            Proc::POutput(Box::new(n.clone()), Box::new(Proc::PZero))
+        }] fold;
         // Sugar for polyadic send: `x!(a, b, c)` is parsed as `x!([a, b, c])`.
         //
         // Placing this rule after unary keeps existing unary send parsing stable.
