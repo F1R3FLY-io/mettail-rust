@@ -168,9 +168,23 @@ language! {
                 Box::new(n.clone()),
             )
         }] fold;
+        InputBindQuotedPersistent . pat:Proc, n:Name
+        |- "@" pat "<" "=" n : InputBind ![{
+            InputBind::InputBindQuotedPersistent(
+                Box::new(pat.clone()),
+                Box::new(n.clone()),
+            )
+        }] fold;
         InputBind . lhs:Name, n:Name
         |- lhs "<-" n : InputBind ![{
             InputBind::InputBind(
+                Box::new(lhs.clone()),
+                Box::new(n.clone()),
+            )
+        }] fold;
+        InputBindPersistent . lhs:Name, n:Name
+        |- lhs "<" "=" n : InputBind ![{
+            InputBind::InputBindPersistent(
                 Box::new(lhs.clone()),
                 Box::new(n.clone()),
             )
@@ -179,9 +193,68 @@ language! {
         |- "<-" n : InputBind ![{
             InputBind::InputBindEmpty(Box::new(n.clone()))
         }] fold;
+        InputBindEmptyPersistent . n:Name
+        |- "<" "=" n : InputBind ![{
+            InputBind::InputBindEmptyPersistent(Box::new(n.clone()))
+        }] fold;
 
         // A ForRow is one row of a multi-row for: one or more & binds with an optional where guard.
         // More-specific variants (with & or where) come first so the parser tries them before the fallback.
+        ForRowPersistentWhere . lhs:Name, n:Name, bs:Vec(InputBind), cond:Proc
+        |- lhs "<=" n "&" bs.*sep("&") "where" cond : ForRow ![{
+            ForRow::ForRowWhere(
+                Box::new(InputBind::InputBindPersistent(
+                    Box::new(lhs.clone()),
+                    Box::new(n.clone()),
+                )),
+                bs.clone(),
+                Box::new(cond.clone()),
+            )
+        }] fold;
+
+        ForRowPersistentNoWhere . lhs:Name, n:Name, bs:Vec(InputBind)
+        |- lhs "<=" n "&" bs.*sep("&") : ForRow ![{
+            ForRow::ForRowNoWhere(
+                Box::new(InputBind::InputBindPersistent(
+                    Box::new(lhs.clone()),
+                    Box::new(n.clone()),
+                )),
+                bs.clone(),
+            )
+        }] fold;
+
+        ForRowSinglePersistentWhere . lhs:Name, n:Name, cond:Proc
+        |- lhs "<=" n "where" cond : ForRow ![{
+            ForRow::ForRowSingleWhere(
+                Box::new(InputBind::InputBindPersistent(
+                    Box::new(lhs.clone()),
+                    Box::new(n.clone()),
+                )),
+                Box::new(cond.clone()),
+            )
+        }] fold;
+
+        ForRowSinglePersistentNoWhere . lhs:Name, n:Name
+        |- lhs "<=" n : ForRow ![{
+            ForRow::ForRowSingleNoWhere(Box::new(InputBind::InputBindPersistent(
+                Box::new(lhs.clone()),
+                Box::new(n.clone()),
+            )))
+        }] fold;
+
+        ForRowSingleEmptyPersistentWhere . n:Name, cond:Proc
+        |- "<=" n "where" cond : ForRow ![{
+            ForRow::ForRowSingleWhere(
+                Box::new(InputBind::InputBindEmptyPersistent(Box::new(n.clone()))),
+                Box::new(cond.clone()),
+            )
+        }] fold;
+
+        ForRowSingleEmptyPersistentNoWhere . n:Name
+        |- "<=" n : ForRow ![{
+            ForRow::ForRowSingleNoWhere(Box::new(InputBind::InputBindEmptyPersistent(Box::new(n.clone()))))
+        }] fold;
+
         ForRowWhere . b:InputBind, bs:Vec(InputBind), cond:Proc
         |- b "&" bs.*sep("&") "where" cond : ForRow;
 

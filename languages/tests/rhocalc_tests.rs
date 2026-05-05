@@ -277,6 +277,77 @@ mod comm {
     }
 
     #[test]
+    fn comm_with_persistent_receive_keeps_receive() {
+        let results = run("{for(x <= c){*x} | c!(p)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays.iter().any(|d| d.contains("for(x <= c){")),
+            "expected persistent receive to remain after comm, got {:?}",
+            displays
+        );
+        assert!(
+            displays.iter().any(|d| d.matches('p').count() >= 1),
+            "expected comm result payload to appear, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn two_sends_can_fire_against_same_persistent_receive() {
+        let results = run("{for(x <= c){*x} | c!(p) | c!(q)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("for(x <= c){") && d.contains("p") && d.contains("q")),
+            "expected both sends consumed and persistent receive remains, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn persistent_receive_with_persistent_send_keeps_both() {
+        let results = run("{for(x <= c){*x} | c!!(p)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("for(x <= c){") && d.contains("c!!(p)") && d.contains("p")),
+            "expected persistent receive and persistent send to remain, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn join_persistent_receive_keeps_receive_after_fire() {
+        let results = run("{for(x <= c1 & y <- c2){*x} | c1!(p) | c2!(q)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("for(x <= c1") && d.contains("y <- c2") && d.contains("p")),
+            "expected persistent join receive to remain after comm, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
     fn pattern_comm_var_matches_payload() {
         assert_reduces_to("{for(x <- c){*x} | c!(p)}", "p");
     }
@@ -1496,6 +1567,12 @@ mod parsing {
     fn receive() {
         let _ = run("for(y <- x){y!(0)}");
     }
+
+    #[test]
+    fn persistent_receive_parses() {
+        let _ = run("for(y <= x){y!(0)}");
+    }
+
     #[test]
     fn multi_input() {
         let _ = run("{for(x <- c1 & y <- c2){*(x)} | c1!(p) | c2!(q)}");

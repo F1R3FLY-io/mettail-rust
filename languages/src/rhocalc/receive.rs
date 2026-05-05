@@ -17,14 +17,19 @@ pub(crate) fn name_pattern_to_proc(name_pat: &Name) -> Proc {
 pub(crate) fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
     match bind {
         InputBind::InputBind(lhs, _) => Some(name_pattern_to_proc(lhs.as_ref())),
+        InputBind::InputBindPersistent(lhs, _) => Some(name_pattern_to_proc(lhs.as_ref())),
         InputBind::InputBindQuery(lhs, _, _) => Some(name_pattern_to_proc(lhs.as_ref())),
         InputBind::InputBindEmpty(_) => {
+            Some(Proc::PVar(OrdVar(Var::Free(FreeVar::fresh_named("__wild_recv")))))
+        },
+        InputBind::InputBindEmptyPersistent(_) => {
             Some(Proc::PVar(OrdVar(Var::Free(FreeVar::fresh_named("__wild_recv")))))
         },
         InputBind::InputBindEmptyQuery(_, _) => {
             Some(Proc::PVar(OrdVar(Var::Free(FreeVar::fresh_named("__wild_recv")))))
         },
         InputBind::InputBindQuoted(pat, _) => Some(pat.as_ref().clone()),
+        InputBind::InputBindQuotedPersistent(pat, _) => Some(pat.as_ref().clone()),
         InputBind::InputBindQuotedQuery(pat, _, _) => Some(pat.as_ref().clone()),
         _ => None,
     }
@@ -33,13 +38,25 @@ pub(crate) fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
 fn bind_channel_name(bind: &InputBind) -> Option<&Name> {
     match bind {
         InputBind::InputBind(_, n) => Some(n.as_ref()),
+        InputBind::InputBindPersistent(_, n) => Some(n.as_ref()),
         InputBind::InputBindQuery(_, n, _) => Some(n.as_ref()),
         InputBind::InputBindEmpty(n) => Some(n.as_ref()),
+        InputBind::InputBindEmptyPersistent(n) => Some(n.as_ref()),
         InputBind::InputBindEmptyQuery(n, _) => Some(n.as_ref()),
         InputBind::InputBindQuoted(_, n) => Some(n.as_ref()),
+        InputBind::InputBindQuotedPersistent(_, n) => Some(n.as_ref()),
         InputBind::InputBindQuotedQuery(_, n, _) => Some(n.as_ref()),
         _ => None,
     }
+}
+
+fn is_persistent_bind(bind: &InputBind) -> bool {
+    matches!(
+        bind,
+        InputBind::InputBindPersistent(_, _)
+            | InputBind::InputBindEmptyPersistent(_)
+            | InputBind::InputBindQuotedPersistent(_, _)
+    )
 }
 
 pub fn guard_then(cond: &Proc, body: &Proc) -> Proc {
@@ -527,10 +544,19 @@ fn try_comm_single(
 ) -> Option<Proc> {
     let n_for_output = bind_channel_name(b)?;
     let pat = bind_pattern_proc(b)?;
+    let persistent_recv = is_persistent_bind(b);
     for (cand, _) in whole_bag.iter() {
         if let Some((n_out, _q)) = output_parts(cand) {
             if &n_out == n_for_output {
-                return finish_single_comm(whole_bag, for_key, cand, &pat, cont, where_cond);
+                return finish_single_comm(
+                    whole_bag,
+                    for_key,
+                    cand,
+                    &pat,
+                    cont,
+                    where_cond,
+                    persistent_recv,
+                );
             }
         }
     }
@@ -544,6 +570,7 @@ fn finish_single_comm(
     pat: &Proc,
     cont: &Proc,
     where_cond: Option<&Proc>,
+    persistent_recv: bool,
 ) -> Option<Proc> {
     let (n_out, q) = output_parts(output_key)?;
     if !pat.pattern_matches(&q) {
@@ -560,10 +587,16 @@ fn finish_single_comm(
     } else {
         cont.apply_pattern(pat, &q)?
     };
-    if matches!(output_key, Proc::PPersistOutput(_, _)) {
-        ppar_remove_one_insert(whole_bag, for_key, new_center)
-    } else {
-        ppar_remove_two_insert(whole_bag, for_key, output_key, new_center)
+    let persistent_send = matches!(output_key, Proc::PPersistOutput(_, _));
+    match (persistent_recv, persistent_send) {
+        (false, false) => ppar_remove_two_insert(whole_bag, for_key, output_key, new_center),
+        (false, true) => ppar_remove_one_insert(whole_bag, for_key, new_center),
+        (true, false) => ppar_remove_one_insert(whole_bag, output_key, new_center),
+        (true, true) => {
+            let mut b = whole_bag.clone();
+            b.insert(new_center);
+            Some(Proc::PPar(b))
+        },
     }
 }
 
@@ -610,8 +643,9 @@ fn try_comm_join(
     cont: &Proc,
 ) -> Option<Proc> {
     let expected_ns = channel_names_from_row(b, bs)?;
+    let persistent_recv = is_persistent_bind(b);
     let mut work = whole_bag.clone();
-    if !work.remove(for_key) {
+    if !persistent_recv && !work.remove(for_key) {
         return None;
     }
     let mut ns_collected: Vec<Name> = Vec::new();
