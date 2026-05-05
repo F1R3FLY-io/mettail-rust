@@ -694,47 +694,80 @@ pub(crate) fn emit_binder_rule_body(
                         // separator to chain Ident captures.
                         quote! {
                             (#result_src_idx, #rule_idx, #pos) => {
-                                // Check first token: if Ident, capture and start collecting.
-                                // If close delim, transition to next pos (empty list).
-                                let token_text = tokens.peek_text(_pos).unwrap_or("");
-                                if token_text == #close {
-                                    // Empty list. Push an empty BinderList arg
-                                    // (handled via builder.start_binder_scope(vec![])).
-                                    b_pre_finalize_empty_list();
-                                    return WpdsStepAction::ConsumeAndReplace {
-                                        symbol: StackSymbolV2::rule_at(
-                                            #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                        ),
-                                        weight: LexicographicWeight::one(),
-                                        new_state: WpdsState::BinderRule {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            body_src_idx: *_body_src_idx,
-                                            outer_bp: *outer_bp,
+                                // Stage 3.16 / Hack #3 (Cluster 1, Mechanism γ,
+                                // 2026-05-05): two-branch Fork over empty
+                                // (close-delim) and non-empty (first-ident)
+                                // bootstrap paths. Lex-min picks the surviving
+                                // cursor:
+                                //   - empty (weight 0.0): wins when token ==
+                                //     close. Logs StartBinderScope { names:
+                                //     vec![] } via ConsumeAndReplaceWithEffect.
+                                //   - first-ident (weight SKIP_BIAS): wins
+                                //     when token is Ident (or anything else
+                                //     in default grammars). Penalized so
+                                //     close wins when its token matches.
+                                //
+                                // The legacy `b_pre_finalize_empty_list()`
+                                // helper is replaced by an explicit
+                                // BuilderDelta::StartBinderScope effect on
+                                // the empty branch.
+                                let _ = tokens.peek_text(_pos);
+                                return WpdsStepAction::Fork {
+                                    branches: vec![
+                                        // BRANCH 1: empty close — start empty
+                                        // binder scope (via effect), then
+                                        // ConsumeAndReplace into BinderRule
+                                        // at next_pos.
+                                        mettail_prattail::wpds_walker::ForkBranch {
+                                            symbol: StackSymbolV2::rule_at(
+                                                #result_src_idx, #rule_idx,
+                                                #next_pos, Some(*outer_bp),
+                                            ),
+                                            weight: LexicographicWeight::from_cost(
+                                                0.0, #result_src_idx, #rule_idx,
+                                            ),
+                                            new_state: WpdsState::BinderRule {
+                                                result_src_idx: #result_src_idx,
+                                                rule_idx: #rule_idx,
+                                                body_src_idx: *_body_src_idx,
+                                                outer_bp: *outer_bp,
+                                            },
+                                            action_kind:
+                                                mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndReplaceWithEffect {
+                                                    effect:
+                                                        mettail_prattail::wpds_walker::BuilderDelta::StartBinderScope {
+                                                            names: Vec::new(),
+                                                        },
+                                                },
                                         },
-                                    };
-                                }
-                                // Non-empty: consume first Ident and start scope-list.
-                                match tokens.peek_kind(_pos) {
-                                    Some(mettail_prattail::automata::TokenKind::Ident) => {}
-                                    _ => return WpdsStepAction::Error(format!(
-                                        "expected identifier or '{}' in binder list", #close,
-                                    )),
-                                }
-                                return WpdsStepAction::ConsumeIdentAndReplace {
-                                    symbol: StackSymbolV2::rule_at(
-                                        #result_src_idx, #rule_idx, #pos, Some(*outer_bp),
-                                    ),
-                                    weight: LexicographicWeight::one(),
-                                    new_state: WpdsState::BinderListLoop {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        body_src_idx: *_body_src_idx,
-                                        outer_bp: *outer_bp,
-                                        marker_pos: #pos,
-                                        next_pos: #next_pos,
-                                    },
-                                    start_scope: true,
+                                        // BRANCH 2: first ident —
+                                        // ConsumeIdentAndReplace start_scope:
+                                        // true, transition to BinderListLoop
+                                        // for subsequent idents.
+                                        mettail_prattail::wpds_walker::ForkBranch {
+                                            symbol: StackSymbolV2::rule_at(
+                                                #result_src_idx, #rule_idx,
+                                                #pos, Some(*outer_bp),
+                                            ),
+                                            weight: LexicographicWeight::from_cost(
+                                                mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                                                #result_src_idx, #rule_idx,
+                                            ),
+                                            new_state: WpdsState::BinderListLoop {
+                                                result_src_idx: #result_src_idx,
+                                                rule_idx: #rule_idx,
+                                                body_src_idx: *_body_src_idx,
+                                                outer_bp: *outer_bp,
+                                                marker_pos: #pos,
+                                                next_pos: #next_pos,
+                                            },
+                                            action_kind:
+                                                mettail_prattail::wpds_walker::ForkActionKind::ConsumeIdentAndReplace {
+                                                    start_scope: true,
+                                                },
+                                        },
+                                    ],
+                                    consume_trigger: false,
                                 };
                             }
                         }

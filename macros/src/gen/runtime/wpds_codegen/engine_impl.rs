@@ -140,6 +140,20 @@ pub(crate) fn emit_engine_impl_full(
                         // is a CollectionMarker AND the next token is the
                         // close delim, emit ConsumeAndPop directly so the
                         // empty-collection finalize action fires.
+                        //
+                        // Hack #7 review (Stage 3.16 / 2026-05-05): the
+                        // empty-close vs cross-cat-redirect dispatch is
+                        // mutually-exclusive on STRUCTURAL conditions
+                        // (token-equality + codegen-time index comparison),
+                        // not a tiebreak between simultaneously-matching
+                        // alternatives. Per `feedback_use_wpds_disambiguation_not_heuristics.md`
+                        // the rule targets ambiguity tiebreakers; this site
+                        // is principled-deterministic and stays as-is.
+                        // For grammars with deliberate ambiguity at this
+                        // dispatch (close-token equals an element token AND
+                        // is also a cross-cat-redirect target), the
+                        // ConsumeAndPop close path wins by source order
+                        // (checked first) — same as a 2-branch Fork would.
                         if let Some(node) = frontier_top {
                             if node.symbol.kind
                                 == mettail_prattail::wpds_runtime::SymbolKind::CollectionMarker
@@ -351,25 +365,58 @@ pub(crate) fn emit_engine_impl_full(
                                             new_state: WpdsState::InfixLoop { cur_bp: 0 },
                                         };
                                     }
-                                    // Not the last: demand the separator,
-                                    // consume it, then transition to
-                                    // MixfixContinuation which will
-                                    // ReplaceAndPush the next operand entry.
+                                    // Stage 3.16 / Hack #10 (Cluster 1,
+                                    // Mechanism γ, 2026-05-05): two-branch
+                                    // Fork over separator-match and
+                                    // last-operand-elision (G2 future
+                                    // grammar support). Lex-min picks:
+                                    //   - separator-match (weight 0.0)
+                                    //     when token == following.
+                                    //   - last-operand-elision (weight
+                                    //     SKIP_BIAS) Pop the marker and
+                                    //     transition to InfixLoop. Fires
+                                    //     for grammars permitting optional
+                                    //     trailing separator (e.g.
+                                    //     `if c then a [else b] end`).
+                                    //
+                                    // (None, _) case is a codegen invariant
+                                    // violation — reachable only when the
+                                    // codegen-time mixfix-parts table is
+                                    // malformed; no Fork branch needed.
                                     match (following, tokens.peek_text(_pos)) {
-                                        (Some(t), Some(actual)) if actual == t => {
-                                            WpdsStepAction::Consume {
-                                                weight: LexicographicWeight::one(),
-                                                new_state: WpdsState::MixfixContinuation {
-                                                    result_src_idx,
-                                                    rule_idx,
-                                                    completed_idx: completed_idx + 1,
-                                                },
+                                        (Some(t), _) => {
+                                            let _ = t;
+                                            WpdsStepAction::Fork {
+                                                branches: vec![
+                                                    // BRANCH 1: separator-match.
+                                                    mettail_prattail::wpds_walker::ForkBranch {
+                                                        symbol: StackSymbolV2::category_entry(0),
+                                                        weight: LexicographicWeight::from_cost(
+                                                            0.0, result_src_idx, rule_idx,
+                                                        ),
+                                                        new_state: WpdsState::MixfixContinuation {
+                                                            result_src_idx,
+                                                            rule_idx,
+                                                            completed_idx: completed_idx + 1,
+                                                        },
+                                                        action_kind:
+                                                            mettail_prattail::wpds_walker::ForkActionKind::Consume,
+                                                    },
+                                                    // BRANCH 2: last-operand-elision (G2 support).
+                                                    mettail_prattail::wpds_walker::ForkBranch {
+                                                        symbol: StackSymbolV2::category_entry(0),
+                                                        weight: LexicographicWeight::from_cost(
+                                                            mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                                                            result_src_idx, rule_idx,
+                                                        ),
+                                                        new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                                                        action_kind:
+                                                            mettail_prattail::wpds_walker::ForkActionKind::Pop,
+                                                    },
+                                                ],
+                                                consume_trigger: false,
                                             }
                                         }
-                                        (Some(t), other) => WpdsStepAction::Error(format!(
-                                            "expected `{}` separator in mixfix at pos {}, found {:?}",
-                                            t, _pos, other
-                                        )),
                                         (None, _) => {
                                             // Inner operand without trailing
                                             // separator and not the last —
