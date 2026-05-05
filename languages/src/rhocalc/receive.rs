@@ -521,15 +521,52 @@ fn try_comm_on_pfor_user(
         ForRow::ForRowSingleNoWhere(b) => {
             try_comm_single(b.as_ref(), whole_bag, for_key, &cont, None)
         },
+        ForRow::ForRowSinglePersistentNoWhere(lhs, n) => {
+            let b = InputBind::InputBindPersistent(
+                Box::new(lhs.as_ref().clone()),
+                Box::new(n.as_ref().clone()),
+            );
+            try_comm_single(&b, whole_bag, for_key, &cont, None)
+        },
         ForRow::ForRowSingleWhere(b, cond) => {
             try_comm_single(b.as_ref(), whole_bag, for_key, &cont, Some(cond.as_ref()))
+        },
+        ForRow::ForRowSinglePersistentWhere(lhs, n, cond) => {
+            let b = InputBind::InputBindPersistent(
+                Box::new(lhs.as_ref().clone()),
+                Box::new(n.as_ref().clone()),
+            );
+            try_comm_single(&b, whole_bag, for_key, &cont, Some(cond.as_ref()))
+        },
+        ForRow::ForRowSingleEmptyPersistentNoWhere(n) => {
+            let b = InputBind::InputBindEmptyPersistent(Box::new(n.as_ref().clone()));
+            try_comm_single(&b, whole_bag, for_key, &cont, None)
+        },
+        ForRow::ForRowSingleEmptyPersistentWhere(n, cond) => {
+            let b = InputBind::InputBindEmptyPersistent(Box::new(n.as_ref().clone()));
+            try_comm_single(&b, whole_bag, for_key, &cont, Some(cond.as_ref()))
         },
         ForRow::ForRowNoWhere(b, bs) => {
             let true_c = Proc::CastBool(Box::new(Bool::BoolLit(true)));
             try_comm_join(b.as_ref(), bs, &true_c, whole_bag, for_key, &cont)
         },
+        ForRow::ForRowPersistentNoWhere(lhs, n, bs) => {
+            let true_c = Proc::CastBool(Box::new(Bool::BoolLit(true)));
+            let b = InputBind::InputBindPersistent(
+                Box::new(lhs.as_ref().clone()),
+                Box::new(n.as_ref().clone()),
+            );
+            try_comm_join(&b, bs, &true_c, whole_bag, for_key, &cont)
+        },
         ForRow::ForRowWhere(b, bs, cond) => {
             try_comm_join(b.as_ref(), bs, cond.as_ref(), whole_bag, for_key, &cont)
+        },
+        ForRow::ForRowPersistentWhere(lhs, n, bs, cond) => {
+            let b = InputBind::InputBindPersistent(
+                Box::new(lhs.as_ref().clone()),
+                Box::new(n.as_ref().clone()),
+            );
+            try_comm_join(&b, bs, cond.as_ref(), whole_bag, for_key, &cont)
         },
         _ => None,
     }

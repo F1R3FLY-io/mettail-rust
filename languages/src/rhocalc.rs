@@ -201,59 +201,22 @@ language! {
         // A ForRow is one row of a multi-row for: one or more & binds with an optional where guard.
         // More-specific variants (with & or where) come first so the parser tries them before the fallback.
         ForRowPersistentWhere . lhs:Name, n:Name, bs:Vec(InputBind), cond:Proc
-        |- lhs "<=" n "&" bs.*sep("&") "where" cond : ForRow ![{
-            ForRow::ForRowWhere(
-                Box::new(InputBind::InputBindPersistent(
-                    Box::new(lhs.clone()),
-                    Box::new(n.clone()),
-                )),
-                bs.clone(),
-                Box::new(cond.clone()),
-            )
-        }] fold;
+        |- lhs "<=" n "&" bs.*sep("&") "where" cond : ForRow;
 
         ForRowPersistentNoWhere . lhs:Name, n:Name, bs:Vec(InputBind)
-        |- lhs "<=" n "&" bs.*sep("&") : ForRow ![{
-            ForRow::ForRowNoWhere(
-                Box::new(InputBind::InputBindPersistent(
-                    Box::new(lhs.clone()),
-                    Box::new(n.clone()),
-                )),
-                bs.clone(),
-            )
-        }] fold;
+        |- lhs "<=" n "&" bs.*sep("&") : ForRow;
 
         ForRowSinglePersistentWhere . lhs:Name, n:Name, cond:Proc
-        |- lhs "<=" n "where" cond : ForRow ![{
-            ForRow::ForRowSingleWhere(
-                Box::new(InputBind::InputBindPersistent(
-                    Box::new(lhs.clone()),
-                    Box::new(n.clone()),
-                )),
-                Box::new(cond.clone()),
-            )
-        }] fold;
+        |- lhs "<=" n "where" cond : ForRow;
 
         ForRowSinglePersistentNoWhere . lhs:Name, n:Name
-        |- lhs "<=" n : ForRow ![{
-            ForRow::ForRowSingleNoWhere(Box::new(InputBind::InputBindPersistent(
-                Box::new(lhs.clone()),
-                Box::new(n.clone()),
-            )))
-        }] fold;
+        |- lhs "<=" n : ForRow;
 
         ForRowSingleEmptyPersistentWhere . n:Name, cond:Proc
-        |- "<=" n "where" cond : ForRow ![{
-            ForRow::ForRowSingleWhere(
-                Box::new(InputBind::InputBindEmptyPersistent(Box::new(n.clone()))),
-                Box::new(cond.clone()),
-            )
-        }] fold;
+        |- "<=" n "where" cond : ForRow;
 
         ForRowSingleEmptyPersistentNoWhere . n:Name
-        |- "<=" n : ForRow ![{
-            ForRow::ForRowSingleNoWhere(Box::new(InputBind::InputBindEmptyPersistent(Box::new(n.clone()))))
-        }] fold;
+        |- "<=" n : ForRow;
 
         ForRowWhere . b:InputBind, bs:Vec(InputBind), cond:Proc
         |- b "&" bs.*sep("&") "where" cond : ForRow;
@@ -1224,7 +1187,8 @@ language! {
         rw_proc(s0.clone(), res) <--
             eq_proc(s0, s),
             if let Some(rewritten) = crate::rhocalc::receive::try_comm_rw_proc(&s),
-            if rewritten != *s,
+            if !rewritten.term_eq(&s),
+            if !rewritten.term_eq(&s0),
             let res = rewritten;
 
         // many-step to a result
@@ -1350,5 +1314,13 @@ impl Proc {
         let lhs = normalize_query_send_sugar_proc(self);
         let rhs = normalize_query_send_sugar_proc(other);
         mettail_runtime::BoundTerm::term_eq(&lhs, &rhs)
+    }
+
+    /// Try exactly one custom COMM rewrite step for `PForUser` receives inside a `PPar`.
+    ///
+    /// This is useful for bounded semantic assertions in tests where full fixpoint search may diverge
+    /// (e.g. persistent receive + persistent send loops).
+    pub fn try_comm_once(&self) -> Option<Self> {
+        crate::rhocalc::receive::try_comm_rw_proc(self)
     }
 }

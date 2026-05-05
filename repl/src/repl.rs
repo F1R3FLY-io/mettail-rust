@@ -108,6 +108,44 @@ pub struct Repl {
 }
 
 impl Repl {
+    fn non_self_rewrites_from(
+        results: &AscentResults,
+        term_id: u64,
+    ) -> Vec<&mettail_runtime::Rewrite> {
+        results
+            .rewrites
+            .iter()
+            .filter(|r| r.from_id == term_id && r.to_id != term_id)
+            .collect()
+    }
+
+    fn progress_normal_form_reachable_from(
+        results: &AscentResults,
+        start_id: u64,
+    ) -> Option<&TermInfo> {
+        let term_by_id = |id: u64| results.all_terms.iter().find(|t| t.term_id == id);
+        let _start = term_by_id(start_id)?;
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::from([start_id]);
+        visited.insert(start_id);
+        while let Some(id) = queue.pop_front() {
+            let outgoing = Self::non_self_rewrites_from(results, id);
+            if outgoing.is_empty() {
+                if let Some(info) = term_by_id(id) {
+                    return Some(info);
+                }
+                continue;
+            }
+            for rw in outgoing {
+                let to_id = rw.to_id;
+                if visited.insert(to_id) {
+                    queue.push_back(to_id);
+                }
+            }
+        }
+        None
+    }
+
     /// Create a new REPL
     pub fn new(registry: LanguageRegistry) -> RustyResult<Self> {
         let editor = DefaultEditor::new()?;
@@ -1105,7 +1143,7 @@ impl Repl {
             }
         } else {
             // Exec: show a normal form reachable from the initial term
-            if let Some(nf) = results.normal_form_reachable_from(initial_id) {
+            if let Some(nf) = Self::progress_normal_form_reachable_from(&results, initial_id) {
                 let result_term: Box<dyn mettail_runtime::Term> =
                     match language.parse_term(&nf.display) {
                         Ok(t) => t,
@@ -1188,11 +1226,7 @@ impl Repl {
             .ok_or_else(|| anyhow::anyhow!("No current term"))?;
 
         // Find rewrites from the current term
-        let available_rewrites: Vec<_> = results
-            .rewrites
-            .iter()
-            .filter(|r| r.from_id == current_id)
-            .collect();
+        let available_rewrites = Self::non_self_rewrites_from(results, current_id);
 
         println!();
         if available_rewrites.is_empty() {
@@ -1387,11 +1421,7 @@ impl Repl {
             .ok_or_else(|| anyhow::anyhow!("No current term"))?;
 
         // Find available rewrites
-        let available_rewrites: Vec<_> = results
-            .rewrites
-            .iter()
-            .filter(|r| r.from_id == current_id)
-            .collect();
+        let available_rewrites = Self::non_self_rewrites_from(results, current_id);
 
         if idx >= available_rewrites.len() {
             anyhow::bail!("Rewrite {} not found. Use 'rewrites' to see available rewrites.", idx);

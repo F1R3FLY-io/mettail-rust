@@ -278,21 +278,29 @@ mod comm {
 
     #[test]
     fn comm_with_persistent_receive_keeps_receive() {
-        let results = run("{for(x <= c){*x} | c!(p)}");
-        let displays: Vec<String> = results
-            .all_terms
+        let (results, initial_id) = run_with_initial("{for(x <= c){*x} | c!(p)}");
+        let rewrites_from_initial: Vec<String> = results
+            .rewrites_from(initial_id)
             .iter()
-            .map(|t| t.display.clone())
+            .filter_map(|rw| {
+                results
+                    .all_terms
+                    .iter()
+                    .find(|t| t.term_id == rw.to_id)
+                    .map(|t| t.display.clone())
+            })
             .collect();
         assert!(
-            displays.iter().any(|d| d.contains("for(x <= c){")),
-            "expected persistent receive to remain after comm, got {:?}",
-            displays
+            !results.rewrites_from(initial_id).is_empty(),
+            "expected at least one rewrite from initial term; rewrites={:?}",
+            rewrites_from_initial
         );
         assert!(
-            displays.iter().any(|d| d.matches('p').count() >= 1),
-            "expected comm result payload to appear, got {:?}",
-            displays
+            rewrites_from_initial
+                .iter()
+                .any(|d| d.contains("for(x <= c){") && d.contains("*@(p)")),
+            "expected persistent receive + substituted body after one comm, rewrites={:?}",
+            rewrites_from_initial
         );
     }
 
@@ -315,18 +323,26 @@ mod comm {
 
     #[test]
     fn persistent_receive_with_persistent_send_keeps_both() {
-        let results = run("{for(x <= c){*x} | c!!(p)}");
-        let displays: Vec<String> = results
-            .all_terms
-            .iter()
-            .map(|t| t.display.clone())
-            .collect();
+        fresh();
+        let input = parse("{for(x <= c){*x} | c!!(p)}");
+        let one_step = input
+            .try_comm_once()
+            .expect("expected one COMM step for persistent receive + persistent send");
+        let out = one_step.to_string();
         assert!(
-            displays
-                .iter()
-                .any(|d| d.contains("for(x <= c){") && d.contains("c!!(p)") && d.contains("p")),
-            "expected persistent receive and persistent send to remain, got {:?}",
-            displays
+            out.contains("for(x <= c){*x}"),
+            "expected persistent receive to remain after one COMM step, got {}",
+            out
+        );
+        assert!(
+            out.contains("c!!(p)"),
+            "expected persistent send to remain after one COMM step, got {}",
+            out
+        );
+        assert!(
+            out.contains("*@(p)"),
+            "expected one-step continuation payload to be produced, got {}",
+            out
         );
     }
 
@@ -343,6 +359,110 @@ mod comm {
                 .iter()
                 .any(|d| d.contains("for(x <= c1") && d.contains("y <- c2") && d.contains("p")),
             "expected persistent join receive to remain after comm, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn persistent_receive_where_true_fires_and_keeps_listener() {
+        let results = run("{for(x <= c where x > 1){*x} | c!(2)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("for(x <= c where x > 1){*x}") && d.contains("*@(2)")),
+            "expected guarded persistent receive to fire and remain, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn persistent_receive_where_false_blocks() {
+        let results = run("{for(x <= c where x > 10){*x} | c!(2)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("for(x <= c where x > 10){*x}") && d.contains("c!(2)")),
+            "expected guarded persistent receive to block mismatch, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn empty_persistent_receive_consumes_payload_and_stays() {
+        let results = run("{for(<= c){ok} | c!(payload)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("ok") && d.contains("for(<=c){ok}")),
+            "expected empty persistent receive to fire and stay, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn persistent_join_where_true_fires() {
+        let results = run("{for(x <= c1 & y <- c2 where y > 1){*x} | c1!(p) | c2!(2)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("*@(p)") && d.contains("for(x <= c1&y <- c2where y > 1){*x}")),
+            "expected persistent join with true guard to fire, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn persistent_join_where_false_blocks() {
+        let results = run("{for(x <= c1 & y <- c2 where y > 10){*x} | c1!(p) | c2!(2)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays.iter().any(|d| {
+                d.contains("for(x <= c1&y <- c2where y > 10){*x}")
+                    && d.contains("c1!(p)")
+                    && d.contains("c2!(2)")
+            }),
+            "expected persistent join with false guard to block, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn semicolon_rows_with_persistent_first_row() {
+        let results = run("{for(x <= c1; y <- c2){*x} | c1!(p) | c2!(q)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("*@(p)") && d.contains("for(y <- c2){*@(p)}")),
+            "expected first persistent row to fire then continue with second row, got {:?}",
             displays
         );
     }
@@ -1571,6 +1691,26 @@ mod parsing {
     #[test]
     fn persistent_receive_parses() {
         let _ = run("for(y <= x){y!(0)}");
+    }
+
+    #[test]
+    fn persistent_receive_empty_parses() {
+        let _ = run("for(<= x){ok}");
+    }
+
+    #[test]
+    fn persistent_receive_where_parses() {
+        let _ = run("for(y <= x where y == ok){y!(0)}");
+    }
+
+    #[test]
+    fn persistent_receive_join_parses() {
+        let _ = run("for(y <= x & z <- c){z}");
+    }
+
+    #[test]
+    fn persistent_receive_join_where_parses() {
+        let _ = run("for(y <= x & z <- c where z == ok){z}");
     }
 
     #[test]
