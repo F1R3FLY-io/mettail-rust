@@ -18,6 +18,12 @@ pub(crate) fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
     match bind {
         InputBind::InputBind(lhs, _) => Some(name_pattern_to_proc(lhs.as_ref())),
         InputBind::InputBindQuery(lhs, _, _) => Some(name_pattern_to_proc(lhs.as_ref())),
+        InputBind::InputBindEmpty(_) => {
+            Some(Proc::PVar(OrdVar(Var::Free(FreeVar::fresh_named("__wild_recv")))))
+        },
+        InputBind::InputBindEmptyQuery(_, _) => {
+            Some(Proc::PVar(OrdVar(Var::Free(FreeVar::fresh_named("__wild_recv")))))
+        },
         InputBind::InputBindQuoted(pat, _) => Some(pat.as_ref().clone()),
         InputBind::InputBindQuotedQuery(pat, _, _) => Some(pat.as_ref().clone()),
         _ => None,
@@ -28,6 +34,8 @@ fn bind_channel_name(bind: &InputBind) -> Option<&Name> {
     match bind {
         InputBind::InputBind(_, n) => Some(n.as_ref()),
         InputBind::InputBindQuery(_, n, _) => Some(n.as_ref()),
+        InputBind::InputBindEmpty(n) => Some(n.as_ref()),
+        InputBind::InputBindEmptyQuery(n, _) => Some(n.as_ref()),
         InputBind::InputBindQuoted(_, n) => Some(n.as_ref()),
         InputBind::InputBindQuotedQuery(_, n, _) => Some(n.as_ref()),
         _ => None,
@@ -274,6 +282,12 @@ fn desugar_query_bind(
             let send = mk_query_send(channel.as_ref(), &ret_name, &args);
             (recv_bind, vec![(binder, send)])
         },
+        InputBind::InputBindEmptyQuery(channel, args) => {
+            let (binder, ret_name) = fresh_query_return(counter);
+            let recv_bind = InputBind::InputBindEmpty(Box::new(ret_name.clone()));
+            let send = mk_query_send(channel.as_ref(), &ret_name, &args);
+            (recv_bind, vec![(binder, send)])
+        },
         other => (other, vec![]),
     }
 }
@@ -323,19 +337,35 @@ fn desugar_row_query_binds(
 /// fold should have removed these; this supports a `fold_proc` idempotent pass).
 pub fn pfor_user_still_has_query_rows(rows: &[ForRow]) -> bool {
     rows.iter().any(|row| match row {
-        ForRow::ForRowSingleNoWhere(b) => matches!(b.as_ref(), InputBind::InputBindQuery(_, _, _)),
-        ForRow::ForRowSingleWhere(b, _) => matches!(b.as_ref(), InputBind::InputBindQuery(_, _, _)),
+        ForRow::ForRowSingleNoWhere(b) => matches!(
+            b.as_ref(),
+            InputBind::InputBindQuery(_, _, _) | InputBind::InputBindEmptyQuery(_, _)
+        ),
+        ForRow::ForRowSingleWhere(b, _) => matches!(
+            b.as_ref(),
+            InputBind::InputBindQuery(_, _, _) | InputBind::InputBindEmptyQuery(_, _)
+        ),
         ForRow::ForRowNoWhere(b, bs) => {
-            matches!(b.as_ref(), InputBind::InputBindQuery(_, _, _))
-                || bs
-                    .iter()
-                    .any(|ib| matches!(ib, InputBind::InputBindQuery(_, _, _)))
+            matches!(
+                b.as_ref(),
+                InputBind::InputBindQuery(_, _, _) | InputBind::InputBindEmptyQuery(_, _)
+            ) || bs.iter().any(|ib| {
+                matches!(
+                    ib,
+                    InputBind::InputBindQuery(_, _, _) | InputBind::InputBindEmptyQuery(_, _)
+                )
+            })
         },
         ForRow::ForRowWhere(b, bs, _) => {
-            matches!(b.as_ref(), InputBind::InputBindQuery(_, _, _))
-                || bs
-                    .iter()
-                    .any(|ib| matches!(ib, InputBind::InputBindQuery(_, _, _)))
+            matches!(
+                b.as_ref(),
+                InputBind::InputBindQuery(_, _, _) | InputBind::InputBindEmptyQuery(_, _)
+            ) || bs.iter().any(|ib| {
+                matches!(
+                    ib,
+                    InputBind::InputBindQuery(_, _, _) | InputBind::InputBindEmptyQuery(_, _)
+                )
+            })
         },
         _ => false,
     })

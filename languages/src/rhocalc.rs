@@ -122,6 +122,13 @@ language! {
                 args.clone(),
             )
         }] fold;
+        InputBindEmptyQuery . n:Name, args:Vec(Proc)
+        |- "<-" n "!" "?" "(" args.*sep(",") ")" : InputBind ![{
+            InputBind::InputBindEmptyQuery(
+                Box::new(n.clone()),
+                args.clone(),
+            )
+        }] fold;
         InputBindQuotedQuery . pat:Proc, n:Name, args:Vec(Proc)
         |- "@" pat "<-" n "!" "?" "(" args.*sep(",") ")" : InputBind ![{
             InputBind::InputBindQuotedQuery(
@@ -144,6 +151,10 @@ language! {
                 Box::new(lhs.clone()),
                 Box::new(n.clone()),
             )
+        }] fold;
+        InputBindEmpty . n:Name
+        |- "<-" n : InputBind ![{
+            InputBind::InputBindEmpty(Box::new(n.clone()))
         }] fold;
 
         // A ForRow is one row of a multi-row for: one or more & binds with an optional where guard.
