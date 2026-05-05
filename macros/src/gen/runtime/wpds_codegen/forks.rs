@@ -162,7 +162,12 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             let mut __branches: Vec<mettail_prattail::wpds_walker::ForkBranch<
                 LexicographicWeight,
             >> = Vec::with_capacity(alts.len());
-            for (alt_idx, _alt) in alts.iter().enumerate() {
+            for (alt_idx, alt) in alts.iter().enumerate() {
+                // Mechanism γ (Stage 3.16, 2026-05-05): LexAlt action_kind
+                // carries the alt's kind/text payload so the walker's
+                // apply_action::Fork dispatch logs
+                // BuilderDelta::CommitLexAlternative with the right
+                // arguments.
                 __branches.push(mettail_prattail::wpds_walker::ForkBranch {
                     symbol: StackSymbolV2::category_entry(primary_src),
                     weight: LexicographicWeight::from_cost_with_lex(
@@ -174,6 +179,8 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                     },
                     action_kind: mettail_prattail::wpds_walker::ForkActionKind::LexAlt {
                         alt_idx: alt_idx as u16,
+                        kind: alt.kind,
+                        text: alt.text.to_string(),
                     },
                 });
             }
