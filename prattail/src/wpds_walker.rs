@@ -409,8 +409,12 @@ impl<W: Semiring> ForkBranch<W> {
 /// introduces `OptGroupAbsent { replace_symbol }` for the Opt-Group SKIP
 /// branch (which needs pop+push+log, not just push).
 ///
-/// Future variants (Stage 3.16 unified framework): `OptGroupFinalize`,
-/// `LexAlternative`, `Recovery`, etc.
+/// Stage 3.16 unified-framework variants (Commit 2, 2026-05-05): all execute
+/// the same Push semantics as `Push` — they're discriminator markers used by
+/// diagnostics (`branch_cursors_for_test`, telemetry) and by lex-min final
+/// tiebreaks where redundant tier biases ensure correctness even on weight
+/// equality. Future variants (Recovery for Cluster 5 / Commit 4) will use
+/// distinct cursor-side semantics.
 #[derive(Clone, Debug)]
 pub enum ForkActionKind {
     /// Default: cursor pushes `branch.symbol` onto its GSS chain.
@@ -422,6 +426,29 @@ pub enum ForkActionKind {
     /// pop the cursor's outer RuleAt, push `replace_symbol` (the
     /// advanced outer RuleAt at next outer position).
     OptGroupAbsent { replace_symbol: StackSymbolV2 },
+    /// Cluster 1 (Stage 3.16) — BinderListLoop close-branch (matched the
+    /// closing delimiter of a binder list). Same semantics as Push;
+    /// distinct kind for diagnostics.
+    BinderListClose,
+    /// Cluster 1 (Stage 3.16) — CollectionLoop close-branch.
+    CollectionClose,
+    /// Cluster 1 (Stage 3.16) — Mixfix separator-match branch.
+    MixfixSeparator,
+    /// Cluster 3 (Stage 3.18) — InfixLoop infix-tier branch.
+    BPTierInfix,
+    /// Cluster 3 (Stage 3.18) — InfixLoop cross-cat-LHS-tier branch.
+    BPTierCrossCat,
+    /// Cluster 3 (Stage 3.18) — InfixLoop postfix-tier branch.
+    BPTierPostfix,
+    /// Cluster 3 (Stage 3.18) — InfixLoop mixfix-tier branch.
+    BPTierMixfix,
+    /// Cluster 2 #12 (Stage 3.14) — lex-alternative branch. Replay logs
+    /// `BuilderDelta::CommitLexAlternative { pos, alt_idx, kind, text }` onto
+    /// the cursor (production wiring of CommitLexAlternative replay lands in
+    /// Commit 4 alongside MutableMultiTokenSource threading; default
+    /// `SliceTokenSource::peek_alternatives` returns `&[]`, so the Fork
+    /// branch is never allocated in practice for default lexers).
+    LexAlt { alt_idx: u16 },
 }
 
 impl<W: Semiring> std::fmt::Debug for ForkBranch<W>
@@ -2161,7 +2188,19 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // `OptGroupAbsent` mirrors `apply_action::OptGroupAbsent`
                     // for the SKIP branch of an Opt-Group Fork.
                     match branch.action_kind {
-                        ForkActionKind::Push => {
+                        // Cluster 1+3 marker variants share Push semantics —
+                        // they only differ in the `action_kind` discriminator
+                        // for diagnostics + final-tiebreak ordering. Lex-min
+                        // weight bias enforces the actual ordering.
+                        ForkActionKind::Push
+                        | ForkActionKind::BinderListClose
+                        | ForkActionKind::CollectionClose
+                        | ForkActionKind::MixfixSeparator
+                        | ForkActionKind::BPTierInfix
+                        | ForkActionKind::BPTierCrossCat
+                        | ForkActionKind::BPTierPostfix
+                        | ForkActionKind::BPTierMixfix
+                        | ForkActionKind::LexAlt { .. } => {
                             // Stage 3.12 latent-bug fix (2026-05-01): apply
                             // emit_push_side_effects on each branch so
                             // OptionalGroupAt(1) and CollectionMarker

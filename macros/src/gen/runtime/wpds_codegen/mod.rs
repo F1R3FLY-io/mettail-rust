@@ -55,6 +55,10 @@ pub mod builtin_metadata;
 pub mod collection;
 pub mod engine_impl;
 pub mod facade;
+/// Stage 3.16/3.17/3.18 (Commit 2, 2026-05-05): unified Fork-emission framework.
+/// Helpers replace deterministic peek-and-decide patterns with
+/// `WpdsStepAction::Fork` per `feedback_use_wpds_disambiguation_not_heuristics.md`.
+pub mod forks;
 pub mod infix;
 pub mod prefix;
 pub mod recovery;
