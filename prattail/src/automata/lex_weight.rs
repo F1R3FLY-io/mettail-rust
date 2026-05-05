@@ -223,6 +223,22 @@ pub struct LexicographicWeight {
 /// — right-associative.
 pub const EPSILON_OPT_SKIP: f64 = 0.5;
 
+/// Stage 3.18 Cluster 3 BP-tier biases (Commit 2 / Mechanism γ, 2026-05-05).
+///
+/// These weights bias lex-min selection across the InfixLoop's three
+/// operator tiers (infix / postfix / mixfix) when multiple tiers' guards
+/// succeed at the same l_bp >= cur_bp. Strictly increasing so that on
+/// weight ties (same l_bp, same source category, same rule_idx), the lex-min
+/// picks lower tiers (infix preferred over postfix preferred over mixfix).
+///
+/// For grammars with deliberate inter-tier ambiguity at a token (e.g.
+/// G5 — infix and postfix sharing the same trigger token at the same l_bp),
+/// these biases enforce the canonical interpretation.
+pub const BP_TIER_INFIX: f64 = 0.00;
+pub const BP_TIER_CROSSCAT_LHS: f64 = 0.05;
+pub const BP_TIER_POSTFIX: f64 = 0.10;
+pub const BP_TIER_MIXFIX: f64 = 0.20;
+
 impl LexicographicWeight {
     /// Construct a weight with the given components. Sets `lex_alt_idx` to 0.
     #[inline]

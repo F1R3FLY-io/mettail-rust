@@ -445,28 +445,33 @@ pub(crate) fn emit_engine_impl_full(
                                 _ => {}
                             }
                         }
-                        // Phase 3: peek for an infix or postfix operator on
-                        // the current category. If the operator's left_bp >=
-                        // cur_bp, consume the token and push an
-                        // InfixContinuation Return (rule_idx targets the
-                        // operator's arity-2 action). Otherwise fall through
-                        // to Unwinding to pop the next frame.
+                        // Stage 3.18 / Hacks #17+#20 (Cluster 3, Mechanism γ,
+                        // 2026-05-05): collect ALL tier candidates whose
+                        // l_bp >= cur_bp, then emit a Fork over them with
+                        // BP_TIER_INFIX < BP_TIER_POSTFIX < BP_TIER_MIXFIX
+                        // bias offsets so lex-min picks the lower tier on
+                        // weight ties. Source-order tiebreak via rule_idx
+                        // within tier. Singleton fast-path emits
+                        // ConsumeAndPush directly to preserve zero-overhead
+                        // dispatch for the deterministic case (one tier
+                        // matches at l_bp >= cur_bp).
                         let state_cat_src_idx: u16 = frontier_top
                             .map(|n| n.symbol.category_src_idx)
                             .unwrap_or(#primary_src_idx);
                         let token_text = tokens.peek_text(_pos).unwrap_or("");
-                        // Try infix.
+                        let _ = token_text;
+
+                        let mut __cands: Vec<
+                            mettail_prattail::wpds_walker::ForkBranch<
+                                LexicographicWeight,
+                            >,
+                        > = Vec::new();
+
+                        // Infix tier (BP_TIER_INFIX = 0.00).
                         if let Some((l_bp, r_bp, result_src, rule_idx)) =
                             #infix_loop_dispatch
                         {
                             if l_bp >= *cur_bp {
-                                // Stage 1.2: cross-category infix (operand_cat ≠ result_cat,
-                                // e.g. EqInt: Int×Int→Bool). Push Return marker carrying
-                                // result_cat (so action_for dispatches to result_cat's
-                                // wrapper), then transition to CrossCatDelegate which
-                                // pushes a CategoryEntry for the operand_cat so the RHS
-                                // sub-parse runs against operand rules. After RHS returns,
-                                // the cross-cat Return pops and its arity-2 action fires.
                                 let new_state =
                                     if result_src != state_cat_src_idx {
                                         WpdsState::CrossCatDelegate {
@@ -479,67 +484,104 @@ pub(crate) fn emit_engine_impl_full(
                                             cur_bp: r_bp,
                                         }
                                     };
-                                return WpdsStepAction::ConsumeAndPush {
-                                    symbol: StackSymbolV2::rule_at(
-                                        result_src, rule_idx, 0, Some(*cur_bp),
-                                    )
-                                    .with_kind_return(),
-                                    weight: LexicographicWeight::from_cost(
-                                        0.0, result_src, rule_idx,
-                                    ),
-                                    new_state,
-                                    // Infix operator token isn't pushed to
-                                    // builder — only LHS+RHS terms.
-                                    capture_token: false,
-                                };
+                                __cands.push(
+                                    mettail_prattail::wpds_walker::ForkBranch {
+                                        symbol: StackSymbolV2::rule_at(
+                                            result_src, rule_idx, 0, Some(*cur_bp),
+                                        )
+                                        .with_kind_return(),
+                                        weight: LexicographicWeight::from_cost(
+                                            mettail_prattail::automata::lex_weight::BP_TIER_INFIX,
+                                            result_src, rule_idx,
+                                        ),
+                                        new_state,
+                                        action_kind:
+                                            mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                    },
+                                );
                             }
                         }
-                        // Try postfix.
+
+                        // Postfix tier (BP_TIER_POSTFIX = 0.10).
                         if let Some((l_bp, result_src, rule_idx)) =
                             #postfix_dispatch
                         {
                             if l_bp >= *cur_bp {
-                                return WpdsStepAction::ConsumeAndPush {
-                                    symbol: StackSymbolV2::rule_at(
-                                        result_src, rule_idx, 0, Some(*cur_bp),
-                                    )
-                                    .with_kind_return(),
-                                    weight: LexicographicWeight::from_cost(
-                                        0.0, result_src, rule_idx,
-                                    ),
-                                    new_state: WpdsState::InfixLoop { cur_bp: *cur_bp },
-                                    capture_token: false,
-                                };
+                                __cands.push(
+                                    mettail_prattail::wpds_walker::ForkBranch {
+                                        symbol: StackSymbolV2::rule_at(
+                                            result_src, rule_idx, 0, Some(*cur_bp),
+                                        )
+                                        .with_kind_return(),
+                                        weight: LexicographicWeight::from_cost(
+                                            mettail_prattail::automata::lex_weight::BP_TIER_POSTFIX,
+                                            result_src, rule_idx,
+                                        ),
+                                        new_state: WpdsState::InfixLoop {
+                                            cur_bp: *cur_bp,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                    },
+                                );
                             }
                         }
-                        // B7 Pattern 1: try mixfix. Mixfix triggers (e.g.
-                        // ternary `?`) consume the trigger token, push a
-                        // MixfixMarker (auto-fire on final pop), and
-                        // transition to PrefixDispatch{cur_bp:0} to parse
-                        // the first inner operand. Subsequent operands and
-                        // separators are driven by Unwinding-MixfixMarker
-                        // and MixfixContinuation.
+
+                        // Mixfix tier (BP_TIER_MIXFIX = 0.20).
                         if let Some((l_bp, result_src, rule_idx)) =
                             #mixfix_dispatch
                         {
                             if l_bp >= *cur_bp {
-                                return WpdsStepAction::ConsumeAndPush {
-                                    symbol: StackSymbolV2::mixfix_marker(
-                                        result_src, rule_idx, 0,
-                                    ),
-                                    weight: LexicographicWeight::from_cost(
-                                        0.0, result_src, rule_idx,
-                                    ),
-                                    new_state: WpdsState::PrefixDispatch {
-                                        pos: _pos + 1,
-                                        cur_bp: 0,
+                                __cands.push(
+                                    mettail_prattail::wpds_walker::ForkBranch {
+                                        symbol: StackSymbolV2::mixfix_marker(
+                                            result_src, rule_idx, 0,
+                                        ),
+                                        weight: LexicographicWeight::from_cost(
+                                            mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
+                                            result_src, rule_idx,
+                                        ),
+                                        new_state: WpdsState::PrefixDispatch {
+                                            pos: _pos + 1,
+                                            cur_bp: 0,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpds_walker::ForkActionKind::Push,
                                     },
-                                    capture_token: false,
-                                };
+                                );
                             }
                         }
-                        // No operator matched — fall through to Unwinding.
-                        WpdsStepAction::Advance(WpdsState::Unwinding)
+
+                        match __cands.len() {
+                            0 => {
+                                // No tier matched — fall through to Unwinding.
+                                WpdsStepAction::Advance(WpdsState::Unwinding)
+                            }
+                            1 => {
+                                // Singleton fast-path: only one tier matched,
+                                // so emit ConsumeAndPush directly. Preserves
+                                // zero-overhead dispatch for shipped grammars
+                                // (typical case — only one operator at any
+                                // given (token, l_bp >= cur_bp) pair).
+                                let b = __cands.into_iter().next().unwrap();
+                                WpdsStepAction::ConsumeAndPush {
+                                    symbol: b.symbol,
+                                    weight: b.weight,
+                                    new_state: b.new_state,
+                                    capture_token: false,
+                                }
+                            }
+                            _ => {
+                                // Multi-tier ambiguity (G5: e.g. infix and
+                                // postfix sharing a token at the same
+                                // l_bp >= cur_bp) — emit a Fork. Lex-min
+                                // picks the lower BP tier on ties.
+                                WpdsStepAction::Fork {
+                                    branches: __cands,
+                                    consume_trigger: true,
+                                }
+                            }
+                        }
                     }
                     WpdsState::CollectionLoop {
                         result_src_idx,

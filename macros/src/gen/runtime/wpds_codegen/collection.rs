@@ -272,29 +272,80 @@ pub(crate) fn emit_collection_loop_arm(
             };
             let token_text = tokens.peek_text(_pos).unwrap_or("");
             match lookup {
-                Some((close, sep)) if token_text == close => {
-                    let _ = sep;
-                    WpdsStepAction::ConsumeAndPop {
-                        weight: LexicographicWeight::from_cost(
-                            0.0, *result_src_idx, *rule_idx,
-                        ),
-                        new_state: WpdsState::Unwinding,
-                    }
-                }
-                Some((_close, sep)) if token_text == sep => {
-                    WpdsStepAction::Consume {
-                        weight: LexicographicWeight::one(),
-                        new_state: WpdsState::PrefixDispatch {
-                            pos: _pos + 1,
-                            cur_bp: 0,
-                        },
-                    }
-                }
                 Some((close, sep)) => {
-                    WpdsStepAction::Error(format!(
-                        "expected '{}' or '{}', got '{}'",
-                        close, sep, token_text,
-                    ))
+                    // Stage 3.16 / Hack #11 (Cluster 1, Mechanism γ,
+                    // 2026-05-05): three-branch Fork over close / sep /
+                    // bare-element. Lex-min over the three branches'
+                    // weights picks the surviving cursor:
+                    //   - close branch: from_cost(0.0, ...) — wins when
+                    //     token_text == close.
+                    //   - sep branch: from_cost(0.0, ...) — wins when
+                    //     token_text == sep (different token from close
+                    //     ⇒ mutually exclusive; on G1-style ambiguous
+                    //     close==sep, source-order picks close first).
+                    //   - bare-element branch: from_cost(SKIP_BIAS, ...)
+                    //     — wins when token_text matches neither close
+                    //     nor sep (G3 future-grammar support: `[a b c]`
+                    //     whitespace-separated lists). Penalized so close
+                    //     and sep branches win when their tokens match.
+                    //
+                    // Branches whose runtime guard fails downstream (e.g.
+                    // close branch when token_text != close means the
+                    // following Unwinding step will diverge from a clean
+                    // close-context) drop via cursor_resolution_check at
+                    // commit_winner time.
+                    let _ = (close, sep);
+                    let element_src_idx = *_element_src_idx;
+                    WpdsStepAction::Fork {
+                        branches: vec![
+                            // BRANCH 1: close — ConsumeAndPop into Unwinding.
+                            mettail_prattail::wpds_walker::ForkBranch {
+                                symbol: StackSymbolV2::category_entry(0),
+                                weight: LexicographicWeight::from_cost(
+                                    0.0, *result_src_idx, *rule_idx,
+                                ),
+                                new_state: WpdsState::Unwinding,
+                                action_kind:
+                                    mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndPop,
+                            },
+                            // BRANCH 2: sep — Consume token, return to
+                            // PrefixDispatch for next element.
+                            mettail_prattail::wpds_walker::ForkBranch {
+                                symbol: StackSymbolV2::category_entry(0),
+                                weight: LexicographicWeight::from_cost(
+                                    0.0, *result_src_idx, *rule_idx,
+                                ),
+                                new_state: WpdsState::PrefixDispatch {
+                                    pos: _pos + 1,
+                                    cur_bp: 0,
+                                },
+                                action_kind:
+                                    mettail_prattail::wpds_walker::ForkActionKind::Consume,
+                            },
+                            // BRANCH 3: bare-element (G3 support) —
+                            // Push CategoryEntry(element_src) onto GSS,
+                            // dispatch element parse without consuming
+                            // a separator first.
+                            mettail_prattail::wpds_walker::ForkBranch {
+                                symbol: StackSymbolV2::category_entry(
+                                    element_src_idx,
+                                ),
+                                weight: LexicographicWeight::from_cost(
+                                    mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                                    *result_src_idx, *rule_idx,
+                                ),
+                                new_state: WpdsState::PrefixDispatch {
+                                    pos: _pos,
+                                    cur_bp: 0,
+                                },
+                                action_kind:
+                                    mettail_prattail::wpds_walker::ForkActionKind::Push,
+                            },
+                        ],
+                        // Each branch's action_kind encodes its own
+                        // consume semantics (or no-consume for Push).
+                        consume_trigger: false,
+                    }
                 }
                 None => WpdsStepAction::Idle,
             }

@@ -854,58 +854,94 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
                     let rule_idx = rule_i as u16;
                     arms.push(quote! {
                         (#result_src_idx, #rule_idx) => {
-                            let token_text = tokens.peek_text(_pos).unwrap_or("");
-                            if token_text == #close {
-                                // Done. Advance to next position via Replace.
-                                return WpdsStepAction::ConsumeAndReplace {
-                                    symbol: StackSymbolV2::rule_at(
-                                        #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                    ),
-                                    weight: LexicographicWeight::one(),
-                                    new_state: WpdsState::BinderRule {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        body_src_idx: *body_src_idx,
-                                        outer_bp: *outer_bp,
+                            // Stage 3.16 / Hack #2 (Cluster 1, Mechanism γ,
+                            // 2026-05-05): three-branch Fork over close /
+                            // sep / ident. Lex-min picks the surviving
+                            // cursor:
+                            //   - close (weight 0.0): wins when token_text
+                            //     == close.
+                            //   - sep (weight 0.0): wins when token_text
+                            //     == separator (mutually-exclusive with
+                            //     close in standard grammars; on G1
+                            //     ambiguous close==sep, branch-source-order
+                            //     picks close).
+                            //   - ident (weight SKIP_BIAS): wins when token
+                            //     is Ident (or any other token in default
+                            //     grammars). Penalized so close/sep win
+                            //     their token matches; emerges only when
+                            //     close/sep guards fail.
+                            //
+                            // Branches whose runtime guard fails produce
+                            // dropped cursors via cursor_resolution_check.
+                            let _ = tokens.peek_text(_pos);
+                            return WpdsStepAction::Fork {
+                                branches: vec![
+                                    // BRANCH 1: close — ConsumeAndReplace
+                                    // outer RuleAt at next_pos, transition
+                                    // to BinderRule.
+                                    mettail_prattail::wpds_walker::ForkBranch {
+                                        symbol: StackSymbolV2::rule_at(
+                                            #result_src_idx, #rule_idx,
+                                            #next_pos, Some(*outer_bp),
+                                        ),
+                                        weight: LexicographicWeight::from_cost(
+                                            0.0, #result_src_idx, #rule_idx,
+                                        ),
+                                        new_state: WpdsState::BinderRule {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            body_src_idx: *body_src_idx,
+                                            outer_bp: *outer_bp,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndReplace,
                                     },
-                                };
-                            }
-                            if token_text == #separator {
-                                // Consume separator, expect next Ident.
-                                return WpdsStepAction::Consume {
-                                    weight: LexicographicWeight::one(),
-                                    new_state: WpdsState::BinderListLoop {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        body_src_idx: *body_src_idx,
-                                        outer_bp: *outer_bp,
-                                        marker_pos: *marker_pos,
-                                        next_pos: *next_pos,
+                                    // BRANCH 2: sep — Consume separator,
+                                    // return to BinderListLoop for next
+                                    // ident.
+                                    mettail_prattail::wpds_walker::ForkBranch {
+                                        symbol: StackSymbolV2::category_entry(0),
+                                        weight: LexicographicWeight::from_cost(
+                                            0.0, #result_src_idx, #rule_idx,
+                                        ),
+                                        new_state: WpdsState::BinderListLoop {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            body_src_idx: *body_src_idx,
+                                            outer_bp: *outer_bp,
+                                            marker_pos: *marker_pos,
+                                            next_pos: *next_pos,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpds_walker::ForkActionKind::Consume,
                                     },
-                                };
-                            }
-                            // Expect Ident: append to binder list.
-                            match tokens.peek_kind(_pos) {
-                                Some(mettail_prattail::automata::TokenKind::Ident) => {}
-                                _ => return WpdsStepAction::Error(format!(
-                                    "expected '{}', '{}', or identifier in binder list",
-                                    #separator, #close,
-                                )),
-                            }
-                            return WpdsStepAction::ConsumeIdentAndReplace {
-                                symbol: StackSymbolV2::rule_at(
-                                    #result_src_idx, #rule_idx, *marker_pos, Some(*outer_bp),
-                                ),
-                                weight: LexicographicWeight::one(),
-                                new_state: WpdsState::BinderListLoop {
-                                    result_src_idx: #result_src_idx,
-                                    rule_idx: #rule_idx,
-                                    body_src_idx: *body_src_idx,
-                                    outer_bp: *outer_bp,
-                                    marker_pos: *marker_pos,
-                                    next_pos: *next_pos,
-                                },
-                                start_scope: false, // append to existing scope
+                                    // BRANCH 3: ident — ConsumeIdentAndReplace
+                                    // append to existing scope (start_scope:
+                                    // false), return to BinderListLoop.
+                                    mettail_prattail::wpds_walker::ForkBranch {
+                                        symbol: StackSymbolV2::rule_at(
+                                            #result_src_idx, #rule_idx,
+                                            *marker_pos, Some(*outer_bp),
+                                        ),
+                                        weight: LexicographicWeight::from_cost(
+                                            mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                                            #result_src_idx, #rule_idx,
+                                        ),
+                                        new_state: WpdsState::BinderListLoop {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            body_src_idx: *body_src_idx,
+                                            outer_bp: *outer_bp,
+                                            marker_pos: *marker_pos,
+                                            next_pos: *next_pos,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpds_walker::ForkActionKind::ConsumeIdentAndReplace {
+                                                start_scope: false,
+                                            },
+                                    },
+                                ],
+                                consume_trigger: false,
                             };
                         }
                     });
