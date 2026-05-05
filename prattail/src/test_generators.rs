@@ -22,7 +22,7 @@
 use proptest::prelude::*;
 
 use crate::pipeline::CategoryInfo;
-use crate::recursive::CollectionKind;
+use crate::grammar::ir::CollectionKind;
 use crate::SyntaxItemSpec;
 
 // ══════════════════════════════════════════════════════════════════════════════

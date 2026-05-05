@@ -121,9 +121,11 @@ pub fn generate_language_impl(
     ground_rewrite_seeds: &[TokenStream],
     stratum_contents: &[crate::logic::StratumContent],
 ) -> TokenStream {
-    // Reset thread-local dedup tracker for `handle_mixfix_{Source}` emission
-    // so state doesn't leak between languages compiled in the same thread.
-    mettail_prattail::reset_handle_mixfix_emitted();
+    // Stage 10.6 (2026-05-05): `reset_handle_mixfix_emitted()` call DELETED.
+    // The `handle_mixfix_{Source}` thread-local dedup tracker lived inside
+    // `prattail/src/trampoline.rs` (also deleted in Stage 10.6). Walker
+    // (WPDS) doesn't emit `handle_mixfix_*` helpers; mixfix is encoded as
+    // Reduce edges in the WPDS rule table.
 
     let name = &language.name;
     let name_str = name.to_string();
@@ -1853,10 +1855,11 @@ fn generate_language_struct_multi(
             // always-empty Vec, dead code that only added cognitive
             // load and a maintenance hazard.
             //
-            // Stage 10c/d/e excise the trampoline-side NFA emitter,
-            // `DispatchStrategy::NfaTryAll`, lints W10/W11/P02, and
-            // `SpilloverTrainer` separately — those are independent
-            // follow-ups. This stage is local to language.rs codegen.
+            // Stage 10c/d/e excise the trampoline-side NFA emitter and
+            // related dead surfaces; T11 (2026-05-05) renames
+            // `DispatchStrategy::NfaTryAll` → `AmbiguousFanout` (variant
+            // is preserved because static-analysis lints still consume
+            // the enumerated rule-label fanout set for diagnostics).
             //
             // `success_weights` retained with default `0.5` so
             // `from_alternatives` (via `AMBIGUOUS_WEIGHTS`) keeps its

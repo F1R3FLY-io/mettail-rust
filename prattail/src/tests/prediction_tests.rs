@@ -5,7 +5,7 @@ use crate::prediction::{
     analyze_cross_category_overlaps, build_dispatch_tables, compute_first_sets,
     compute_follow_sets, FirstItem, FirstSet, RuleInfo,
 };
-use crate::recursive::CollectionKind;
+use crate::grammar::ir::CollectionKind;
 use crate::{RuleSpec, SyntaxItemSpec};
 
 #[test]

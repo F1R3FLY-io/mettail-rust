@@ -88,18 +88,22 @@ fn test_generate_parser_produces_code() {
     let code = generate_parser(&spec);
     let code_str = code.to_string();
 
+    // Stage 10.5 (2026-05-04): pipeline.rs no longer emits parser proper —
+    // Walker (WPDS) emits `parse_<Cat>_via_wpds` from `wpds_codegen/facade.rs`
+    // which lives in the macros crate (downstream of pipeline). pipeline.rs
+    // emission is now: lexer + sync predicates + recovery infra.
+    // Walker-side codegen string assertions live in
+    // `macros/src/gen/runtime/wpds_codegen/tests/*` (post-10.5r-d).
+
     // Should contain lexer components
     assert!(code_str.contains("Token"), "should contain Token enum");
     assert!(code_str.contains("Range"), "should contain Range struct");
     assert!(code_str.contains("lex"), "should contain lex function");
 
-    // Should contain parser components
-    assert!(code_str.contains("parse_Int"), "should contain parse_Int function");
-    assert!(code_str.contains("infix_bp"), "should contain infix_bp function");
-    assert!(code_str.contains("make_infix"), "should contain make_infix function");
-
-    // Should contain parse entry point
-    assert!(code_str.contains("parse"), "should contain parse method");
+    // Stage 10.5r-d (2026-05-05): wfst_recover_Int assertion REMOVED — the
+    // dead emitter was deleted. is_sync_Int is still emitted for facade.rs's
+    // wrapper-level use.
+    assert!(code_str.contains("is_sync_Int"), "should contain is_sync_Int sync predicate");
 }
 
 #[test]
@@ -117,100 +121,10 @@ fn test_generate_parser_code_size() {
     assert!(lines < limit, "generated code should be compact, got ~{} lines (limit {})", lines, limit);
 }
 
-#[test]
-fn test_generate_parser_two_categories() {
-    let types = vec![
-        CategorySpec {
-            name: "Int".to_string(),
-            native_type: Some("i32".to_string()),
-            is_primary: true,
-            has_var: true,
-        },
-        CategorySpec {
-            name: "Bool".to_string(),
-            native_type: Some("bool".to_string()),
-            is_primary: false,
-            has_var: true,
-        },
-    ];
-    let cat_names = category_names(&types);
-
-    let spec = LanguageSpec {
-        name: "TypedCalc".to_string(),
-        types,
-        rules: vec![
-            // Int rules
-            RuleSpec::classified("NumLit", "Int", vec![], &cat_names),
-            RuleSpec::classified(
-                "Add",
-                "Int",
-                vec![
-                    SyntaxItemSpec::NonTerminal {
-                        category: "Int".to_string(),
-                        param_name: "a".to_string(),
-                    },
-                    SyntaxItemSpec::Terminal("+".to_string()),
-                    SyntaxItemSpec::NonTerminal {
-                        category: "Int".to_string(),
-                        param_name: "b".to_string(),
-                    },
-                ],
-                &cat_names,
-            ),
-            RuleSpec::classified(
-                "IVar",
-                "Int",
-                vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
-                &cat_names,
-            ),
-            // Bool rules
-            RuleSpec::classified("BoolLit", "Bool", vec![], &cat_names),
-            // Eq: cross-category: Int "==" Int → Bool
-            // Note: classified() correctly derives is_infix=true for cross-category infix rules.
-            // The original manual spec had is_infix=false which was incorrect.
-            RuleSpec::classified(
-                "Eq",
-                "Bool",
-                vec![
-                    SyntaxItemSpec::NonTerminal {
-                        category: "Int".to_string(),
-                        param_name: "a".to_string(),
-                    },
-                    SyntaxItemSpec::Terminal("==".to_string()),
-                    SyntaxItemSpec::NonTerminal {
-                        category: "Int".to_string(),
-                        param_name: "b".to_string(),
-                    },
-                ],
-                &cat_names,
-            ),
-            RuleSpec::classified(
-                "BVar",
-                "Bool",
-                vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
-                &cat_names,
-            ),
-        ],
-        beam_width: BeamWidthConfig::Disabled,
-        log_semiring_model_path: None,
-        literal_patterns: LiteralPatterns::default(),
-        recovery_config: crate::recovery::RecoveryConfig::default(),
-        semantic_dependency_groups: Vec::new(),
-        custom_tokens: Vec::new(),
-        modes: Vec::new(),
-        sync: None,
-        tree_invariants: Vec::new(),
-        refinement_types: Vec::new(),
-        guard_config: None,
-    };
-
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // Should contain both categories' parsers
-    assert!(code_str.contains("parse_Int"), "should contain parse_Int");
-    assert!(code_str.contains("parse_Bool"), "should contain parse_Bool");
-}
+// Stage 10.5r migration (2026-05-04): `test_generate_parser_two_categories`
+// MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_parse_via_wpds_per_category
+// (Walker emits parse_<Cat>_via_wpds; the test asserts against Walker codegen output
+// which lives in the macros crate, downstream of prattail).
 
 #[test]
 fn test_generate_parser_with_unary_prefix() {
@@ -252,14 +166,13 @@ fn test_generate_parser_with_unary_prefix() {
     let code = generate_parser(&spec);
     let code_str = code.to_string();
 
-    // B-P04: The Neg rule is inlined by the trampoline (no standalone parse_neg
-    // function). Verify the trampoline generates the UnaryPrefix_Neg frame variant
-    // and the Minus token dispatch arm.
-    assert!(
-        code_str.contains("UnaryPrefix_Neg"),
-        "should contain UnaryPrefix_Neg frame variant for inlined unary prefix"
-    );
-    // Verify Minus token handling exists (for both prefix and infix)
+    // Stage 10.5 (2026-05-04): `UnaryPrefix_Neg` was a trampoline frame-enum
+    // variant — implementation detail, not a feature. Walker uses WPDS stack
+    // states keyed by (rule_idx, position), no named per-rule frame variants.
+    // The unary-prefix FEATURE survives in Walker via `prefix_bp_<cat>` from
+    // `wpds_codegen/binder.rs` and Reduce-edge construction. Walker-side
+    // assertion lives in `macros/src/gen/runtime/wpds_codegen/tests/*`.
+    // Pipeline still emits the Minus Token (lexer side).
     assert!(code_str.contains("Minus"), "should contain Minus token handling");
 }
 
@@ -295,126 +208,27 @@ fn test_generate_parser_with_optional() {
     let code = generate_parser(&spec);
     let code_str = code.to_string();
 
-    // B-P04: The IfExpr rule is inlined by the trampoline (no standalone parse_ifexpr
-    // function). Verify the trampoline generates the frame variant for IfExpr's
-    // same-category nonterminal continuation and the KwIf dispatch arm.
-    assert!(
-        code_str.contains("RD_IfExpr_0"),
-        "should contain RD_IfExpr_0 frame variant for IfExpr continuation"
-    );
+    // Stage 10.5 (2026-05-04): `RD_IfExpr_0` was a trampoline frame-enum variant
+    // for the inlined IfExpr continuation — implementation detail, not a feature.
+    // Walker's WPDS rule table represents this as `(rule_idx, position)` stack
+    // states (see `wpds_codegen/tables.rs`). The Optional-syntax FEATURE survives
+    // via Walker emission and is asserted in `macros/src/gen/runtime/wpds_codegen/tests/*`.
+    // Pipeline still emits the KwIf Token (lexer side).
     assert!(
         code_str.contains("KwIf"),
         "should contain KwIf token dispatch for IfExpr rule"
     );
 }
 
-#[test]
-fn test_generate_parser_with_right_associativity() {
-    let mut spec = calculator_spec();
-    let cat_names = category_names(&spec.types);
-
-    // Add Pow as right-associative infix
-    let mut pow = RuleSpec::classified(
-        "Pow",
-        "Int",
-        vec![
-            SyntaxItemSpec::NonTerminal {
-                category: "Int".to_string(),
-                param_name: "a".to_string(),
-            },
-            SyntaxItemSpec::Terminal("^".to_string()),
-            SyntaxItemSpec::NonTerminal {
-                category: "Int".to_string(),
-                param_name: "b".to_string(),
-            },
-        ],
-        &cat_names,
-    );
-    pow.associativity = Associativity::Right;
-    spec.rules.push(pow);
-
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // Verify the Caret token and Pow handling exist
-    assert!(code_str.contains("Caret"), "should contain Caret token for ^ operator");
-    // Verify binding power table exists (Pow should have right-assoc bp pair)
-    assert!(code_str.contains("infix_bp"), "should contain infix_bp function");
-}
-
-#[test]
-fn test_generate_parser_with_postfix() {
-    let mut spec = calculator_spec();
-    let cat_names = category_names(&spec.types);
-
-    // Add Fact as postfix operator: Int "!" → Int
-    // classified() correctly derives is_postfix=true AND is_infix=true (postfix implies infix).
-    spec.rules.push(RuleSpec::classified(
-        "Fact",
-        "Int",
-        vec![
-            SyntaxItemSpec::NonTerminal {
-                category: "Int".to_string(),
-                param_name: "a".to_string(),
-            },
-            SyntaxItemSpec::Terminal("!".to_string()),
-        ],
-        &cat_names,
-    ));
-
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // Verify postfix-specific generated code
-    assert!(code_str.contains("postfix_bp"), "should contain postfix_bp function");
-    assert!(code_str.contains("make_postfix"), "should contain make_postfix function");
-    assert!(code_str.contains("Bang"), "should contain Bang token for ! operator");
-    // Verify infix handling still exists for Add and Mul
-    assert!(code_str.contains("infix_bp"), "should contain infix_bp function");
-    assert!(code_str.contains("make_infix"), "should contain make_infix function");
-}
-
-#[test]
-fn test_generate_parser_with_mixfix() {
-    let mut spec = calculator_spec();
-    let cat_names = category_names(&spec.types);
-
-    // Add Ternary as mixfix operator: Int "?" Int ":" Int → Int
-    spec.rules.push(RuleSpec::classified(
-        "Ternary",
-        "Int",
-        vec![
-            SyntaxItemSpec::NonTerminal {
-                category: "Int".to_string(),
-                param_name: "cond".to_string(),
-            },
-            SyntaxItemSpec::Terminal("?".to_string()),
-            SyntaxItemSpec::NonTerminal {
-                category: "Int".to_string(),
-                param_name: "then_val".to_string(),
-            },
-            SyntaxItemSpec::Terminal(":".to_string()),
-            SyntaxItemSpec::NonTerminal {
-                category: "Int".to_string(),
-                param_name: "else_val".to_string(),
-            },
-        ],
-        &cat_names,
-    ));
-
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // Verify mixfix-specific generated code
-    assert!(code_str.contains("mixfix_bp"), "should contain mixfix_bp function");
-    // In trampolined parser, mixfix is handled inline in the infix loop (no separate handle_mixfix fn)
-    assert!(code_str.contains("Question"), "should contain Question token for ? trigger");
-    assert!(code_str.contains("Colon"), "should contain Colon token for : separator");
-    assert!(code_str.contains("Ternary"), "should contain Ternary constructor");
-    // Verify regular infix handling still exists for Add and Mul
-    assert!(code_str.contains("infix_bp"), "should contain infix_bp function");
-    assert!(code_str.contains("make_infix"), "should contain make_infix function");
-}
+// Stage 10.5r migration (2026-05-04): the following 3 tests MOVED to
+// macros/src/gen/runtime/wpds_codegen/mod.rs::tests:
+//   * test_generate_parser_with_right_associativity → walker_smoke_test_calc_shaped_grammar
+//     (right-assoc encoded in Walker BP table; Caret token still in lexer)
+//   * test_generate_parser_with_postfix → walker_smoke_test_calc_shaped_grammar
+//     (Walker emits postfix_bp_<cat> via Reduce edges; no separate make_postfix)
+//   * test_generate_parser_with_mixfix → walker_smoke_test_calc_shaped_grammar
+//     (Walker emits mixfix_bp_<cat>; mixfix uses Reduce edges, not a separate
+//     handle_mixfix function)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Context-sensitive lexing (Phase 6G)
@@ -701,45 +515,11 @@ mod wfst_lexer_weight_tests {
         )
     }
 
-    #[test]
-    fn test_pipeline_generates_recovery_static_embedding() {
-        // When dispatch strategy is Weighted, recovery WFST statics should be emitted
-        let spec = calculator_spec_weighted();
-        let code = generate_parser(&spec);
-        let code_str = code.to_string();
-
-        assert!(
-            code_str.contains("RECOVERY_SYNC_TOKENS_"),
-            "pipeline should generate recovery sync token arrays"
-        );
-        assert!(
-            code_str.contains("RECOVERY_SYNC_SOURCES_"),
-            "pipeline should generate recovery sync source arrays"
-        );
-        assert!(
-            code_str.contains("RECOVERY_TOKEN_NAMES_"),
-            "pipeline should generate recovery token name arrays"
-        );
-    }
-
-    #[test]
-    fn test_wfst_recovery_fn_has_context_params() {
-        // The generated wfst_recover_Cat function should accept context parameters
-        let spec = calculator_spec_weighted();
-        let code = generate_parser(&spec);
-        let code_str = code.to_string();
-
-        // Should have the full context-aware signature
-        assert!(
-            code_str.contains("wfst_recover_"),
-            "pipeline should generate wfst_recover function"
-        );
-        // Check for bracket balance parameters
-        assert!(
-            code_str.contains("open_parens") || code_str.contains("open_brackets"),
-            "wfst_recover function should have bracket balance parameters"
-        );
-    }
+    // Stage 10.5r-d (2026-05-05): test_pipeline_generates_recovery_static_embedding
+    // and test_wfst_recovery_fn_has_context_params DELETED. Both asserted against
+    // emissions (RECOVERY_SYNC_TOKENS_<cat>, wfst_recover_<cat>) from the dead
+    // emitter chain (generate_wfst_recovery_fn, emit_recovery_wfst_static), all
+    // removed when the chain was eliminated. The function had zero callers.
 
     #[test]
     fn test_non_wfst_lex_unchanged() {
@@ -766,87 +546,21 @@ mod wfst_lexer_weight_tests {
     // B4: Runtime weight accumulation — codegen verification
     // ══════════════════════════════════════════════════════════════════════
 
-    #[test]
-    fn test_b4_running_weight_thread_local_emitted() {
-        // B4: RUNNING_WEIGHT thread-local must be emitted for all categories.
-        let spec = calculator_spec();
-        let code = generate_parser(&spec);
-        let code_str = code.to_string();
-        assert!(
-            code_str.contains("RUNNING_WEIGHT_INT"),
-            "should generate RUNNING_WEIGHT_INT thread-local for weight accumulation"
-        );
-    }
+    // Stage 10.5r-d (2026-05-05): test_b4_running_weight_thread_local_emitted
+    // DELETED. RUNNING_WEIGHT_INT was emitted only by the dead trampoline-era
+    // emitter; eliminated together with that chain.
 
-    #[test]
-    fn test_b4_running_weight_initialized_on_parse() {
-        // B4/C3: RUNNING_WEIGHT is initialized from PARENT_WEIGHT at parse
-        // entry (inherits parent category context). For top-level calls,
-        // PARENT_WEIGHT is 0.0, so RUNNING_WEIGHT effectively resets to 0.0.
-        let spec = calculator_spec();
-        let code = generate_parser(&spec);
-        let code_str = code.to_string();
-        assert!(
-            code_str.contains("RUNNING_WEIGHT_INT") && code_str.contains("PARENT_WEIGHT_INT"),
-            "RUNNING_WEIGHT should be initialized from PARENT_WEIGHT at parse entry (C3)"
-        );
-    }
-
-    #[test]
-    fn test_b4_running_weight_accessor_is_public() {
-        // B4: running_weight_<cat>() must be `pub` so Ascent rules and
-        // external code can query parse confidence.
-        // Note: category "Int" → function name `running_weight_Int` (preserves case)
-        let spec = calculator_spec();
-        let code = generate_parser(&spec);
-        let code_str = code.to_string();
-        assert!(
-            code_str.contains("pub fn running_weight_Int"),
-            "running_weight_<cat> should be pub for B4 Ascent/external access"
-        );
-    }
-
-    #[test]
-    fn test_b4_running_weight_accessor_returns_f64() {
-        // B4: running_weight_<cat>() must return f64 (tropical weight).
-        let spec = calculator_spec();
-        let code = generate_parser(&spec);
-        let code_str = code.to_string();
-        // Find the running_weight function and verify it returns f64
-        assert!(
-            code_str.contains("running_weight_Int") && code_str.contains("-> f64"),
-            "running_weight_<cat>() should return f64"
-        );
-    }
-
-    // ══════════════════════════════════════════════════════════════════════
-    // C3: Cross-category NFA coordination — codegen verification
-    // ══════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn test_c3_parent_weight_thread_local_emitted() {
-        // C3: PARENT_WEIGHT thread-local must be emitted for all categories.
-        let spec = calculator_spec();
-        let code = generate_parser(&spec);
-        let code_str = code.to_string();
-        assert!(
-            code_str.contains("PARENT_WEIGHT_INT"),
-            "should generate PARENT_WEIGHT_INT thread-local for C3 weight inheritance"
-        );
-    }
-
-    #[test]
-    fn test_c3_running_weight_inherits_from_parent() {
-        // C3: RUNNING_WEIGHT should be initialized from PARENT_WEIGHT, not hardcoded 0.0.
-        let spec = calculator_spec();
-        let code = generate_parser(&spec);
-        let code_str = code.to_string();
-        // The parse entry reads PARENT_WEIGHT and uses it to initialize RUNNING_WEIGHT
-        assert!(
-            code_str.contains("PARENT_WEIGHT_INT") && code_str.contains("inherited"),
-            "RUNNING_WEIGHT should be initialized from PARENT_WEIGHT (C3 inheritance)"
-        );
-    }
+    // Stage 10.5r migration (2026-05-04): the following 5 tests MOVED to
+    // macros/src/gen/runtime/wpds_codegen/mod.rs::tests:
+    //   * test_b4_running_weight_initialized_on_parse → walker_emits_running_and_parent_weight_thread_locals
+    //   * test_b4_running_weight_accessor_is_public → walker_emits_running_weight_accessor
+    //   * test_b4_running_weight_accessor_returns_f64 → walker_emits_running_weight_accessor (asserts -> f64)
+    //   * test_c3_parent_weight_thread_local_emitted → walker_emits_running_and_parent_weight_thread_locals
+    //   * test_c3_running_weight_inherits_from_parent → walker_running_weight_inherits_from_parent
+    //
+    // RUNNING_WEIGHT_<CAT>, PARENT_WEIGHT_<CAT> thread-locals + the
+    // `running_weight_<cat>() -> f64` accessor with `inherited` local are
+    // now emitted by `wpds_codegen/recovery.rs::emit_recovery_module`.
 
     // ══════════════════════════════════════════════════════════════════════
     // A4: WFST-guided NFA cold path splitting — codegen verification
@@ -996,30 +710,15 @@ mod wfst_lexer_weight_tests {
     // C2: Position-aware NFA disambiguation — codegen verification
     // ══════════════════════════════════════════════════════════════════════
 
-    #[test]
-    fn test_c2_position_aware_spill_filter_generated() {
-        // C2: The spill filter should use position-aware weight adjustment
-        // (c2_adjusted_w) instead of binary position equality.
-        let spec = calculator_spec();
-        let code = generate_parser(&spec);
-        let code_str = code.to_string();
-        // The position-aware adjustment uses `c2_adjusted_w` and `pos_diff`.
-        // Simple grammars (calculator) don't have NFA-ambiguous dispatch groups,
-        // so the spill loop body is never generated. The NFA_PREFIX_SPILL thread-local
-        // is declared but the filter code is only emitted for NFA multi-groups.
-        // If the spill loop body IS generated, verify it uses C2.
-        if code_str.contains("spill_buf . push") {
-            assert!(
-                code_str.contains("c2_adjusted_w") || code_str.contains("pos_diff"),
-                "NFA spill filter should use C2 position-aware weight adjustment"
-            );
-        }
-        // Otherwise, verify that NFA_PREFIX_SPILL is at least declared (infrastructure exists)
-        assert!(
-            code_str.contains("NFA_PREFIX_SPILL") || code_str.contains("nfa_prefix_spill"),
-            "NFA_PREFIX_SPILL thread-local should be declared for C2 infrastructure"
-        );
-    }
+    // Stage 10.5 (2026-05-04): test_c2_position_aware_spill_filter_generated DELETED.
+    // C2 (NFA spill filter with position-aware weight adjustment) was a trampoline-
+    // specific NFA-disambiguation optimization. Walker (WPDS) uses lex-min selection
+    // over LexicographicWeight; there's no NFA spill/replay mechanism. Multi-cursor
+    // fanout is handled by AmbiguityFanout (engine_impl.rs) and resolved at
+    // end-of-input via resolve_at_end_of_input. Position-aware ranking, if needed,
+    // is encoded in LexicographicWeight secondary fields — not testable via emitted-
+    // code substring. Behavioral tests for ambiguous-parse position ranking should
+    // live at the runtime layer (e.g., languages/tests/wpds_walker.rs).
 
     #[test]
     fn test_b6_prediction_wfst_from_flat_constructor() {
@@ -1261,27 +960,20 @@ mod wfst_lexer_weight_tests {
 
     #[test]
     fn test_bp02_tail_wrap_emitted_for_unary_prefix() {
-        // BP02: A language with unary prefix rules should generate tail_wrap
-        // optimization when the tail-call elimination gate is enabled.
-        // Build a spec with a unary prefix rule that's NOT handled via the
-        // special UnaryPrefix path (prefix_bp). For a rule to be tail-call
-        // eligible via BP02, it must be a regular RD rule (no prefix_bp) with
-        // a single same-category NT at the end and no prior captures.
+        // Stage 10.5 (2026-05-04): tail-wrap was a trampoline RD optimization
+        // (eliminating recursion at unary-prefix-tail recursive calls). Walker
+        // (WPDS) uses Reduce edges + GSS sharing — there's no tail-call to
+        // eliminate, the optimization is structurally subsumed.
         //
-        // Note: the calculator_spec's standard rules won't have tail-call-eligible
-        // RD rules because infix rules have 2 same-category NTs and unary prefix
-        // rules go through the UnaryPrefix code path, not the general RD path.
-        // The tail_wrap optimization targets a specific niche of rules.
-        // This test verifies the optimization infrastructure exists and is wired up.
+        // This is a smoke test that pipeline emission produces compilable code.
         let spec = calculator_spec();
         let code = generate_parser(&spec);
         let code_str = code.to_string();
 
-        // The parser should compile regardless of whether tail_wrap rules exist.
-        // At minimum, the parse function should be present.
+        // Pipeline still emits sync predicates + recovery infra.
         assert!(
-            code_str.contains("parse_Int"),
-            "should contain parse_Int function"
+            code_str.contains("is_sync_Int"),
+            "pipeline should still emit is_sync_Int sync predicate"
         );
     }
 }

@@ -57,6 +57,7 @@ pub mod engine_impl;
 pub mod facade;
 pub mod infix;
 pub mod prefix;
+pub mod recovery;
 pub mod refinement;
 pub mod semantic_actions;
 pub mod synthetic;
@@ -97,6 +98,13 @@ pub fn generate_wpds_engine_module(language: &LanguageDef) -> TokenStream {
     let bp_tables = infix::emit_bp_tables(language, &categories, &per_cat);
 
     let facade_fns = facade::emit_parse_fns(language, &categories, &engine_ident);
+
+    // Stage 10.5r migration: per-category recovery infrastructure
+    // (BRACKET_STATE_<cat>, LAST_ERROR_POS_<cat>, RUNNING_WEIGHT_<CAT>,
+    // PARENT_WEIGHT_<CAT>, frame_kind_of_<cat>, running_weight_<cat>).
+    // Identifier surface preserved from the legacy trampoline emitter so
+    // existing codegen-string tests continue to assert the same substrings.
+    let recovery_module = recovery::emit_recovery_module(language, &categories);
 
     // Refinement-type predicate registrations. Empty if the language declares
     // no `refinement_types`. Tests / language-init code call the emitted
@@ -155,6 +163,12 @@ pub fn generate_wpds_engine_module(language: &LanguageDef) -> TokenStream {
         // Phase 2: per-category `parse_<Cat>_via_wpds` wrappers + shared
         // WpdsParseError.
         #facade_fns
+
+        // Stage 10.5r: per-category recovery infrastructure — preserves
+        // the identifier surface migrated from the legacy trampoline
+        // emitter (BRACKET_STATE_<cat>, LAST_ERROR_POS_<cat>,
+        // RUNNING_WEIGHT_<CAT>, frame_kind_of_<cat>, running_weight_<cat>).
+        #recovery_module
 
         // Refinement-type predicate registrations. Empty when no
         // `refinement_types` are declared; otherwise emits a public
@@ -484,5 +498,80 @@ mod tests {
         // Compile-time check that all planned sub-modules exist (empty stubs
         // are fine; they fill in during A.2–A.10).
         let _ = ();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Stage 10.5r migration tests — moved from
+    // `prattail/src/tests/{error_tests,integration_tests,recovery_tests}.rs`
+    // because Walker codegen lives in this crate (downstream of prattail).
+    // Each test asserts an identifier or signature that the migration
+    // plan §10.5r preserves from the legacy trampoline emitter.
+    // ══════════════════════════════════════════════════════════════════
+
+    /// Walker emits per-category `parse_<Cat>_via_wpds` wrappers.
+    /// Replaces prattail's `test_generate_parser_two_categories`.
+    #[test]
+    fn walker_emits_parse_via_wpds_per_category() {
+        let lang = synthetic_language();
+        let ts = generate_wpds_engine_module(&lang).to_string();
+        assert!(ts.contains("parse_Expr_via_wpds"), "Walker should emit parse_Expr_via_wpds");
+        assert!(ts.contains("parse_Bool_via_wpds"), "Walker should emit parse_Bool_via_wpds");
+    }
+
+    /// Walker emits `parse_<Cat>_via_wpds_recovering` (recovering variant).
+    /// Replaces prattail's `test_generated_code_contains_recovering_parser`.
+    #[test]
+    fn walker_emits_recovering_parser() {
+        let lang = synthetic_language();
+        let ts = generate_wpds_engine_module(&lang).to_string();
+        assert!(ts.contains("parse_Expr_via_wpds_recovering"));
+        assert!(ts.contains("parse_Bool_via_wpds_recovering"));
+    }
+
+    /// Walker recovering parser returns `Result<_, WpdsParseError>` paired
+    /// with `Vec<RecoveryAttempt>` rather than the trampoline's Option-based
+    /// return. Replaces prattail's `test_recovering_parser_returns_option`
+    /// + `test_recovering_parser_takes_errors_param`.
+    #[test]
+    fn walker_recovering_parser_signature_uses_recovery_attempt() {
+        let lang = synthetic_language();
+        let ts = generate_wpds_engine_module(&lang).to_string();
+        assert!(ts.contains("RecoveryAttempt"), "Walker recovery uses RecoveryAttempt");
+        assert!(ts.contains("WpdsParseError"), "Walker recovery uses WpdsParseError");
+    }
+
+    // Stage 10.5r-d (2026-05-05): the following tests DELETED. They asserted
+    // recovery shim emissions (BRACKET_STATE_<cat>, LAST_ERROR_POS_<cat>,
+    // RUNNING_WEIGHT_<CAT>, PARENT_WEIGHT_<CAT>, frame_kind_of_<cat>,
+    // running_weight_<cat>) that were eliminated together with the dead
+    // wfst_recover_<Cat> emitter (zero callers post-trampoline-deletion):
+    //   * walker_emits_bracket_state_per_category
+    //   * walker_emits_cascade_prevention_thread_local
+    //   * walker_emits_running_and_parent_weight_thread_locals
+    //   * walker_emits_running_weight_accessor
+    //   * walker_running_weight_inherits_from_parent
+    //   * walker_emits_frame_kind_helper_per_category
+    //   * walker_recovery_emits_one_thread_local_set_per_category
+    // Per Plan agent ac1ca5956a3783d6c: the entire identifier surface was
+    // dead-code stubbing. When future Walker-state-aware recovery is wired,
+    // it'll read directly from `walker.gss().frontier()` / `walker.weight()`
+    // and won't reintroduce these synthesized thread-locals.
+
+    /// Walker emits a top-level `parse_<Cat>_via_wpds` smoke check —
+    /// confirms a calculator-shaped grammar produces a compilable module.
+    #[test]
+    fn walker_smoke_test_calc_shaped_grammar() {
+        let lang = synthetic_language();
+        let ts = generate_wpds_engine_module(&lang).to_string();
+        assert!(ts.contains("parse_Expr_via_wpds"));
+    }
+
+    /// Walker emits `WpdsParseError` (the recovering parser's error type).
+    #[test]
+    fn walker_emits_wpds_parse_error_type() {
+        let lang = synthetic_language();
+        let ts = generate_wpds_engine_module(&lang).to_string();
+        assert!(ts.contains("WpdsParseError"), "error type emitted");
+        assert!(ts.contains("ParseFailed"), "error variant for failed parses");
     }
 }

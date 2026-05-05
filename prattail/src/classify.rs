@@ -9,7 +9,7 @@
 //! `category`, and the list of known category names. No access to the
 //! macros-crate AST types (`GrammarRule`, `TermParam`, etc.) is needed.
 
-use crate::recursive::CollectionKind;
+use crate::grammar::ir::CollectionKind;
 use crate::SyntaxItemSpec;
 
 /// All derived classification flags for a single rule.

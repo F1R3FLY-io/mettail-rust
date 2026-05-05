@@ -1,10 +1,23 @@
 # Incremental Parsing Guide
 
+## Scope (post-Stage-10)
+
+This guide describes the **CEK-machine-based** `IncrementalSession`
+checkpoint protocol used by evaluator-side CEK consumers. The
+trampoline-era parser-side checkpointing is gone (Stage 10.6 deleted
+trampoline.rs). For parser-side reactive observation see the
+`WalkerConsumer` trait in `prattail/src/wpds_walker.rs` and the
+WPDS-runtime parsing flow in
+`prattail/docs/architecture/reactive-state-machine.md`.
+
 ## Overview
 
-`IncrementalSession` manages checkpoint-based incremental parsing for LSP integration. On file open, a full parse creates checkpoints. On edits, only the affected region is re-parsed.
+`IncrementalSession` manages checkpoint-based incremental evaluation
+for LSP integration. On file open, a full evaluation pass creates
+checkpoints. On edits, only the affected region is re-evaluated from
+the nearest valid checkpoint.
 
-## Initial Parse
+## Initial Pass
 
 ```rust
 use mettail_prattail::cek::IncrementalSession;
@@ -12,8 +25,10 @@ use mettail_prattail::cek::IncrementalSession;
 // Create session with token-level checkpoints
 let mut session = IncrementalSession::new(0, 1);
 
-// During initial parse, record checkpoints
-// (done by the generated parser via CekTraceEntry emission)
+// During initial CEK evaluation, record checkpoints via CekTraceEntry
+// emission. (Parser-side CekTraceEntry emission was specific to the
+// trampoline backend, deleted in Stage 10.6; CEK evaluator-side emission
+// remains the live path.)
 ```
 
 ## Handling Edits

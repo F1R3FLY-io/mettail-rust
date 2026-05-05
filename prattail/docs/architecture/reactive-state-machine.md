@@ -131,3 +131,29 @@ loop {
 | `StateTransition` | `CekTransition` |
 | `ReplStateMachine` | `CekMachine` |
 | `process_event()` | `process_event()` |
+
+## Relationship to the WPDS Walker
+
+The CEK machine described above drives the **evaluator** (post-parse
+term reduction). Parser-side reactive observation lives in a sibling
+architecture: the **WPDS Walker** in `prattail/src/wpds_walker.rs`.
+
+The two are reactive state machines with the same shape but different
+roles:
+
+| Layer | Driver | Consumer trait | Trace type | Steps |
+|-------|--------|----------------|------------|-------|
+| Parser | `WpdsWalker` | `WalkerConsumer` | `WpdsTraceEntry` / `CursorSnapshot` / `StepSnapshot` | `step()`, `run_to_saturation()`, `run_to_end_of_input()` |
+| Evaluator | `CekMachine` | (driver-internal) | `CekTraceEntry` | `step()`, `process_event()`, `run_to_completion()` |
+
+Both expose `step()` for one-event-at-a-time advancement and
+`run_to_*()` for batch consumption. The Walker additionally exposes
+**rich tracing** via `RichTracingConsumer` (see `wpds_walker.rs:3702`)
+that captures cursor snapshots and step snapshots — useful for
+hang-dump (gated under `cfg(feature = "hang-dump")`) and graphical
+debug visualization.
+
+LSP / DAP / REPL consumers compose the two: WPDS Walker for parse
+checkpoints, CEK machine for evaluator checkpoints. Both honor the
+same `process_event()` shape so a unified driver loop can route
+events to whichever layer is active.

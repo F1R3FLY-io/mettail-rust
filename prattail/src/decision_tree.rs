@@ -35,9 +35,8 @@ use pathmap::PathMap;
 use pathmap::ring::{AlgebraicResult, Lattice, DistributiveLattice};
 
 use crate::automata::codegen::terminal_to_variant_name;
-use crate::dispatch::{CastRule, CrossCategoryRule};
+use crate::grammar::ir::{CastRule, CrossCategoryRule, RDRuleInfo, RDSyntaxItem};
 use crate::prediction::FirstSet;
-use crate::recursive::{RDRuleInfo, RDSyntaxItem};
 use crate::token_id::TokenIdMap;
 use crate::wfst::PredictionWfst;
 
@@ -1206,7 +1205,7 @@ pub fn jump_thread_commit_branches(
         let mut terminals = Vec::new();
         for item in &rule.items {
             match item {
-                crate::recursive::RDSyntaxItem::Terminal(t) => {
+                crate::grammar::ir::RDSyntaxItem::Terminal(t) => {
                     terminals.push(crate::automata::codegen::terminal_to_variant_name(t));
                 }
                 // Stop at first non-terminal item
@@ -1309,7 +1308,7 @@ pub fn compute_jump_threading_info(
         let mut terminals = Vec::new();
         for item in &rule.items {
             match item {
-                crate::recursive::RDSyntaxItem::Terminal(t) => {
+                crate::grammar::ir::RDSyntaxItem::Terminal(t) => {
                     terminals.push(crate::automata::codegen::terminal_to_variant_name(t));
                 }
                 _ => break,
@@ -2782,8 +2781,12 @@ pub enum DispatchStrategy {
         /// After the shared prefix, suffix_token_variant → rule_label.
         suffix_map: BTreeMap<String, String>,
     },
-    /// Multiple rules share this token and suffixes overlap — need NFA try-all.
-    NfaTryAll {
+    /// Multiple rules share this token and suffixes overlap — Walker emits a
+    /// Fork over the rule_labels with lex-min disambiguation. Renamed from the
+    /// historical `NfaTryAll` (the trampoline-era runtime mechanism is gone;
+    /// this variant survives because static analyses still want to enumerate
+    /// the ambiguous prefix-overlap set for diagnostics).
+    AmbiguousFanout {
         /// Rule labels in the ambiguous group.
         rule_labels: Vec<String>,
         /// Shared terminal prefix length (may be 0).
@@ -2842,7 +2845,7 @@ impl CategoryDecisionTree {
                         DispatchStrategy::Singleton { rule_label: rule_label.clone() }
                     }
                     DecisionAction::Ambiguous { candidates } => {
-                        DispatchStrategy::NfaTryAll {
+                        DispatchStrategy::AmbiguousFanout {
                             rule_labels: candidates.iter().map(|c| c.rule_label.clone()).collect(),
                             shared_prefix_len: 0,
                             shared_terminals: Vec::new(),
@@ -2923,7 +2926,7 @@ impl CategoryDecisionTree {
                             _ => {}
                         }
                     }
-                    DispatchStrategy::NfaTryAll {
+                    DispatchStrategy::AmbiguousFanout {
                         rule_labels,
                         shared_prefix_len: shared_len - 1, // exclude dispatch token
                         shared_terminals,
@@ -3084,7 +3087,7 @@ impl CategoryDecisionTree {
 /// For each category and dispatch token, compute a weight adjustment factor
 /// based on the dispatch strategy:
 /// - `DisjointSuffix` → weight -= 0.25 (resolved without backtracking)
-/// - `NfaTryAll` with long shared prefix → weight += 0.1 × shared_prefix_len
+/// - `AmbiguousFanout` with long shared prefix → weight += 0.1 × shared_prefix_len
 ///   (longer prefix = more tokens consumed before ambiguity)
 /// - `Singleton` → weight -= 0.5 (fully deterministic)
 ///
@@ -3103,7 +3106,7 @@ pub fn compute_weight_adjustments(
                 DispatchStrategy::DisjointSuffix { shared_prefix_len, .. } => {
                     -0.25 - (*shared_prefix_len as f64 * 0.05)
                 }
-                DispatchStrategy::NfaTryAll { shared_prefix_len, .. } => {
+                DispatchStrategy::AmbiguousFanout { shared_prefix_len, .. } => {
                     *shared_prefix_len as f64 * 0.1
                 }
                 DispatchStrategy::NotPresent => 0.0,
@@ -3822,9 +3825,9 @@ mod tests {
         let tree = builder.get_tree("Float").expect("should have Float tree");
         /* After "float" "(" the next items are IdentCapture (0x80) and
          * NonTerminal (encoded at NT boundary). Since IdentCapture is > MAX_TERMINAL_ID,
-         * the suffix disjointness check should fail → NfaTryAll. */
+         * the suffix disjointness check should fail → AmbiguousFanout. */
         match tree.dispatch_strategy("KwFloat", &token_ids) {
-            DispatchStrategy::NfaTryAll { rule_labels, shared_prefix_len, .. } => {
+            DispatchStrategy::AmbiguousFanout { rule_labels, shared_prefix_len, .. } => {
                 assert!(shared_prefix_len >= 1); // "(" is shared
                 assert!(rule_labels.len() >= 1); // at least one rule
             }
@@ -3832,7 +3835,7 @@ mod tests {
                 /* Also acceptable if the encoding makes the suffixes look disjoint
                  * (IdentCapture byte vs NT boundary truncation). */
             }
-            other => panic!("expected NfaTryAll or DisjointSuffix, got {:?}", other),
+            other => panic!("expected AmbiguousFanout or DisjointSuffix, got {:?}", other),
         }
     }
 
@@ -3868,355 +3871,12 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // Equivalence tests: decision tree vs ad-hoc analysis
+    // Stage 10.2 (2026-05-04): "Equivalence tests" block (formerly 350 LoC,
+    // 4 tests asserting decision-tree dispatch == legacy ad-hoc analysis)
+    // DELETED. Tests imported `crate::trampoline::*` helpers; their
+    // equivalence-with-trampoline question is moot post-Stage-10b
+    // (trampoline.rs deleted in Stage 10.6).
     // ══════════════════════════════════════════════════════════════════════
-
-    /// Verify that for singleton dispatch tokens, both the ad-hoc
-    /// group_rd_by_dispatch_token and the decision tree agree.
-    #[test]
-    fn test_equivalence_singleton_dispatch() {
-        use crate::trampoline::group_rd_by_dispatch_token_pub;
-
-        let token_ids = make_token_ids();
-        let first_sets = make_first_sets();
-        let mut builder = DecisionTreeBuilder::new(
-            token_ids.clone(),
-            first_sets,
-            vec!["Int".to_string()],
-            HashSet::new(),
-        );
-
-        let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-            make_rd_rule("LetIn", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-                RDSyntaxItem::Terminal("in".to_string()),
-            ]),
-        ];
-        builder.insert_rd_rules(&rules);
-
-        let tree = builder.get_tree("Int").expect("should have Int tree");
-
-        /* Ad-hoc analysis */
-        let adhoc_groups = group_rd_by_dispatch_token_pub(&rules, "Int");
-
-        /* Both should identify the same dispatch tokens */
-        let dt_tokens = tree.dispatch_tokens(&token_ids);
-        let adhoc_tokens: Vec<String> = adhoc_groups.keys().cloned().collect();
-        assert_eq!(dt_tokens, adhoc_tokens, "dispatch tokens should match");
-
-        /* For each singleton group, decision tree should say Singleton */
-        for (variant, group_rules) in &adhoc_groups {
-            let strategy = tree.dispatch_strategy(variant, &token_ids);
-            if group_rules.len() == 1 {
-                match strategy {
-                    DispatchStrategy::Singleton { rule_label } => {
-                        assert_eq!(
-                            rule_label, group_rules[0].label,
-                            "singleton rule label mismatch for {}",
-                            variant
-                        );
-                    }
-                    other => panic!(
-                        "expected Singleton for {} (ad-hoc has 1 rule), got {:?}",
-                        variant, other
-                    ),
-                }
-            }
-        }
-    }
-
-    /// Verify that for multi-rule groups with shared prefix + disjoint
-    /// suffixes, the decision tree's DisjointSuffix matches the ad-hoc
-    /// compute_shared_terminal_prefix + suffix_disjointness_check.
-    #[test]
-    fn test_equivalence_shared_prefix_disjoint() {
-        use crate::automata::codegen::terminal_to_variant_name;
-        use crate::trampoline::{
-            compute_shared_terminal_prefix, group_rd_by_dispatch_token_pub,
-            suffix_disjointness_check,
-        };
-
-        let token_ids = make_token_ids();
-        let first_sets = make_first_sets();
-        let mut builder = DecisionTreeBuilder::new(
-            token_ids.clone(),
-            first_sets.clone(),
-            vec!["Int".to_string()],
-            HashSet::new(),
-        );
-
-        /* Rules: both start with "if" "(" then diverge at "+" vs "-" */
-        let rules = vec![
-            make_rd_rule("IfParenPlus", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::Terminal("+".to_string()),
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-            make_rd_rule("IfParenMinus", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::Terminal("-".to_string()),
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-        ];
-        builder.insert_rd_rules(&rules);
-
-        let tree = builder.get_tree("Int").expect("should have Int tree");
-
-        /* Ad-hoc analysis */
-        let adhoc_groups = group_rd_by_dispatch_token_pub(&rules, "Int");
-        let kw_if = terminal_to_variant_name("if");
-        let group = adhoc_groups.get(&kw_if).expect("should have KwIf group");
-        assert_eq!(group.len(), 2);
-
-        let shared_prefix = compute_shared_terminal_prefix(group);
-        /* shared prefix should be ["("] (items[1]) */
-        assert_eq!(shared_prefix.len(), 1, "ad-hoc: expected shared prefix of length 1");
-        assert_eq!(shared_prefix[0], "(");
-
-        let skip = 1 + shared_prefix.len(); // dispatch_token + shared_prefix
-        let suffix_map = suffix_disjointness_check(group, skip, &first_sets);
-        /* Ad-hoc should detect disjoint suffixes: "+" → 0, "-" → 1 */
-        assert!(suffix_map.is_some(), "ad-hoc: expected disjoint suffixes");
-        let adhoc_map = suffix_map.expect("checked above");
-
-        /* Decision tree analysis */
-        match tree.dispatch_strategy(&kw_if, &token_ids) {
-            DispatchStrategy::DisjointSuffix {
-                shared_prefix_len,
-                suffix_map: dt_suffix_map,
-                ..
-            } => {
-                /* shared_prefix_len should match ad-hoc shared_prefix.len() */
-                assert_eq!(
-                    shared_prefix_len,
-                    shared_prefix.len(),
-                    "shared prefix length mismatch: dt={}, adhoc={}",
-                    shared_prefix_len,
-                    shared_prefix.len()
-                );
-
-                /* Both should have the same suffix tokens */
-                let adhoc_tokens: std::collections::BTreeSet<String> =
-                    adhoc_map.keys().cloned().collect();
-                let dt_tokens: std::collections::BTreeSet<String> =
-                    dt_suffix_map.keys().cloned().collect();
-                assert_eq!(
-                    adhoc_tokens, dt_tokens,
-                    "suffix dispatch tokens differ: adhoc={:?}, dt={:?}",
-                    adhoc_tokens, dt_tokens
-                );
-
-                /* Rule labels should correspond (ad-hoc maps token→index, dt maps token→label) */
-                for (dt_token, dt_label) in &dt_suffix_map {
-                    let adhoc_indices = adhoc_map
-                        .get(dt_token)
-                        .expect("token should exist in ad-hoc map");
-                    assert_eq!(
-                        adhoc_indices.len(),
-                        1,
-                        "ad-hoc should have exactly 1 index per token"
-                    );
-                    let adhoc_label = &group[adhoc_indices[0]].label;
-                    assert_eq!(
-                        dt_label, adhoc_label,
-                        "rule label mismatch for suffix token {}: dt={}, adhoc={}",
-                        dt_token, dt_label, adhoc_label
-                    );
-                }
-            }
-            other => panic!(
-                "decision tree should return DisjointSuffix, got {:?}",
-                other
-            ),
-        }
-    }
-
-    /// Verify that for multi-rule groups with NO shared prefix but disjoint
-    /// second tokens, both analyses agree (B1: second_token_lookahead).
-    #[test]
-    fn test_equivalence_second_token_lookahead() {
-        use crate::automata::codegen::terminal_to_variant_name;
-        use crate::trampoline::{
-            group_rd_by_dispatch_token_pub, second_token_lookahead,
-        };
-
-        let token_ids = make_token_ids();
-        let first_sets = make_first_sets();
-        let mut builder = DecisionTreeBuilder::new(
-            token_ids.clone(),
-            first_sets.clone(),
-            vec!["Int".to_string()],
-            HashSet::new(),
-        );
-
-        /* Rules: both start with "if" then immediately diverge at "+" vs "-" */
-        let rules = vec![
-            make_rd_rule("IfPlus", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("+".to_string()),
-            ]),
-            make_rd_rule("IfMinus", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("-".to_string()),
-            ]),
-        ];
-        builder.insert_rd_rules(&rules);
-
-        let tree = builder.get_tree("Int").expect("should have Int tree");
-
-        /* Ad-hoc B1 analysis */
-        let adhoc_groups = group_rd_by_dispatch_token_pub(&rules, "Int");
-        let kw_if = terminal_to_variant_name("if");
-        let group = adhoc_groups.get(&kw_if).expect("should have KwIf group");
-        assert_eq!(group.len(), 2);
-
-        let b1 = second_token_lookahead(group);
-        assert!(b1.is_some(), "ad-hoc B1: expected two-token lookahead");
-        let b1_map = b1.expect("checked above");
-
-        /* Decision tree analysis */
-        match tree.dispatch_strategy(&kw_if, &token_ids) {
-            DispatchStrategy::DisjointSuffix {
-                shared_prefix_len,
-                suffix_map: dt_suffix_map,
-                ..
-            } => {
-                /* No shared prefix beyond dispatch token */
-                assert_eq!(shared_prefix_len, 0, "no shared prefix expected");
-
-                /* B1 maps second_variant → rule_index.
-                 * DT maps suffix_variant → rule_label.
-                 * They should agree on the set of suffix tokens. */
-                let b1_tokens: std::collections::BTreeSet<String> =
-                    b1_map.groups.keys().cloned().collect();
-                let dt_tokens: std::collections::BTreeSet<String> =
-                    dt_suffix_map.keys().cloned().collect();
-                assert_eq!(
-                    b1_tokens, dt_tokens,
-                    "B1 vs DT suffix tokens: b1={:?}, dt={:?}",
-                    b1_tokens, dt_tokens
-                );
-
-                /* Rule label correspondence */
-                for (token, dt_label) in &dt_suffix_map {
-                    let b1_idx = b1_map.groups.get(token).expect("token in b1");
-                    let adhoc_label = &group[*b1_idx].label;
-                    assert_eq!(
-                        dt_label, adhoc_label,
-                        "rule label mismatch for B1 token {}: dt={}, adhoc={}",
-                        token, dt_label, adhoc_label
-                    );
-                }
-            }
-            other => panic!(
-                "decision tree should return DisjointSuffix for B1 case, got {:?}",
-                other
-            ),
-        }
-    }
-
-    /// Verify that when rules have overlapping suffixes (no disjointness),
-    /// both the ad-hoc and decision tree agree on NFA try-all.
-    #[test]
-    fn test_equivalence_nfa_tryall() {
-        use crate::automata::codegen::terminal_to_variant_name;
-        use crate::trampoline::{
-            compute_shared_terminal_prefix, group_rd_by_dispatch_token_pub,
-            suffix_disjointness_check,
-        };
-
-        let token_ids = make_token_ids();
-        let first_sets = make_first_sets();
-        let mut builder = DecisionTreeBuilder::new(
-            token_ids.clone(),
-            first_sets.clone(),
-            vec!["Int".to_string()],
-            HashSet::new(),
-        );
-
-        /* Rules: both start with "if" "(" "+" — identical prefixes, no disjoint suffix.
-         * They only differ in the last terminal. */
-        let rules = vec![
-            make_rd_rule("IfParenPlusThen", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::Terminal("+".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-            ]),
-            make_rd_rule("IfParenPlusElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::Terminal("+".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-        ];
-        builder.insert_rd_rules(&rules);
-
-        let tree = builder.get_tree("Int").expect("should have Int tree");
-
-        /* Ad-hoc analysis */
-        let adhoc_groups = group_rd_by_dispatch_token_pub(&rules, "Int");
-        let kw_if = terminal_to_variant_name("if");
-        let group = adhoc_groups.get(&kw_if).expect("should have KwIf group");
-        assert_eq!(group.len(), 2);
-
-        let shared_prefix = compute_shared_terminal_prefix(group);
-        /* shared prefix = ["(", "+"] (items[1] and items[2]) */
-        assert_eq!(shared_prefix.len(), 2, "ad-hoc: shared prefix should be 2");
-
-        let skip = 1 + shared_prefix.len();
-        let suffix_map = suffix_disjointness_check(group, skip, &first_sets);
-        /* Suffixes at position 3 are "then" vs "else" — actually disjoint!
-         * So both approaches should find disjoint suffixes here. */
-        if suffix_map.is_some() {
-            /* Ad-hoc found disjoint suffixes after shared prefix [( +] */
-            match tree.dispatch_strategy(&kw_if, &token_ids) {
-                DispatchStrategy::DisjointSuffix {
-                    shared_prefix_len,
-                    suffix_map: dt_suffix_map,
-                    ..
-                } => {
-                    assert_eq!(
-                        shared_prefix_len,
-                        shared_prefix.len(),
-                        "shared prefix length should match"
-                    );
-                    assert_eq!(dt_suffix_map.len(), 2, "should have 2 disjoint suffixes");
-                }
-                DispatchStrategy::NfaTryAll { shared_prefix_len, .. } => {
-                    /* DT may differ if encoding truncates differently.
-                     * This is still correct — NfaTryAll is never WRONG,
-                     * it's just more conservative. */
-                    assert_eq!(
-                        shared_prefix_len as usize,
-                        shared_prefix.len(),
-                        "shared prefix should still match"
-                    );
-                }
-                other => panic!(
-                    "unexpected strategy: {:?}",
-                    other
-                ),
-            }
-        } else {
-            /* Ad-hoc says NFA. Decision tree should also say NFA or DisjointSuffix
-             * (DisjointSuffix is strictly better). */
-            match tree.dispatch_strategy(&kw_if, &token_ids) {
-                DispatchStrategy::NfaTryAll { .. } | DispatchStrategy::DisjointSuffix { .. } => {}
-                other => panic!(
-                    "expected NfaTryAll or DisjointSuffix, got {:?}",
-                    other
-                ),
-            }
-        }
-    }
 
     // ══════════════════════════════════════════════════════════════════════
     // Analysis layer tests

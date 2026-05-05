@@ -29,7 +29,7 @@
 //! `capture_name`, `constructor_capture_names`.
 
 use crate::automata::codegen::terminal_to_variant_name;
-use crate::recursive::{CollectionKind, RDRuleInfo, RDSyntaxItem};
+use crate::grammar::ir::{CollectionKind, RDRuleInfo, RDSyntaxItem};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Rule classification

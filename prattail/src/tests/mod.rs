@@ -2,6 +2,7 @@
 
 mod automata_tests;
 mod error_tests;
+mod hang_dump_tests;
 mod int_lit_tests;
 mod integration_tests;
 mod lexer_tests;

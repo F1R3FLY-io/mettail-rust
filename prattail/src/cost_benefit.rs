@@ -37,25 +37,22 @@ pub enum Optimization {
     /// A5: CountingWeight-guided ambiguity targeting
     AmbiguityTargeting,
     /// B1: Multi-token lookahead via extended PredictionWfst.
-    /// Used by both DT-driven NfaTryAll path and legacy fallback path.
+    /// Used by both DT-driven AmbiguousFanout path and legacy fallback path.
     MultiTokenLookahead,
     /// B2: Adaptive recovery via runtime weight accumulation
     AdaptiveRecovery,
     /// B3: PredictionWfst minimization
     WfstMinimization,
-    /// F1: Weight-based spillover pruning
-    SpilloverPruning,
-    /// F2: Early termination on deterministic hit
-    EarlyTermination,
-    /// F3: Lazy spillover (demand-driven replay)
-    LazySpillover,
+    // Stage 10.7 (2026-05-05): F1 SpilloverPruning, F2 EarlyTermination,
+    // F3 LazySpillover, H1 ContextDisambiguation DELETED. These were
+    // trampoline-era NFA-spillover optimizations; Walker (WPDS) uses lex-min
+    // selection over LexicographicWeight, so the spillover pruning / early
+    // termination / lazy spillover / context-disambiguation gating becomes
+    // structurally irrelevant.
     /// G1: Backtracking elimination via compile-time FIRST set analysis.
-    /// Used by both DT-driven NfaTryAll path (suffix_disjointness_check)
+    /// Used by both DT-driven AmbiguousFanout path (suffix_disjointness_check)
     /// and legacy fallback path.
     BacktrackingElimination,
-    /// H1: ContextWeight-based disambiguation (Sprint 6).
-    /// Uses powerset WFST to narrow NFA try-all candidate sets at compile time.
-    ContextDisambiguation,
     /// G25: WPDS stack-aware reachability check.
     /// Uses poststar saturation to confirm/refute WFST-based dead-rule detection
     /// with full pushdown precision.
@@ -126,9 +123,10 @@ pub enum Optimization {
     // this enum variant is no longer reachable. The Display/FromStr
     // round-trip continues to cover all remaining variants.
 
-    /// CEK03: Dead frame elimination via WPDS poststar reachability.
-    /// Suppresses unreachable Frame_Cat variants, prefix arms, and unwind handlers.
-    DeadFrameElimination,
+    // Stage 10.7 (2026-05-05): CEK03 DeadFrameElimination DELETED. Suppressed
+    // unreachable Frame_Cat variants — but Frame_Cat is gone with trampoline.rs
+    // (Stage 10.6); Walker uses WPDS stack symbols (rule_idx, position), not
+    // named frame variants. The optimization is structurally subsumed.
 
     /// GT01: Green thread fork/join cost analysis via alternating automaton.
     /// Determines whether parallel or serial execution is optimal for channel operations.
@@ -220,11 +218,7 @@ impl fmt::Display for Optimization {
             Self::MultiTokenLookahead => write!(f, "B1:MultiTokenLookahead"),
             Self::AdaptiveRecovery => write!(f, "B2:AdaptiveRecovery"),
             Self::WfstMinimization => write!(f, "B3:WfstMinimization"),
-            Self::SpilloverPruning => write!(f, "F1:SpilloverPruning"),
-            Self::EarlyTermination => write!(f, "F2:EarlyTermination"),
-            Self::LazySpillover => write!(f, "F3:LazySpillover"),
             Self::BacktrackingElimination => write!(f, "G1:BacktrackingElimination"),
-            Self::ContextDisambiguation => write!(f, "H1:ContextDisambiguation"),
             Self::WpdsReachabilityCheck => write!(f, "G25:WpdsReachabilityCheck"),
             Self::TrsConfluenceCheck => write!(f, "T01:TrsConfluenceCheck"),
             Self::VpaInclusionCheck => write!(f, "V01:VpaInclusionCheck"),
@@ -250,7 +244,6 @@ impl fmt::Display for Optimization {
             Self::PredicateDispatch => write!(f, "PD01:PredicateDispatch"),
             Self::RefinementTypeCheck => write!(f, "RT01:RefinementTypeCheck"),
             Self::EnvironmentTrimming => write!(f, "CEK01:EnvironmentTrimming"),
-            Self::DeadFrameElimination => write!(f, "CEK03:DeadFrameElimination"),
             Self::GreenThreadForkJoin => write!(f, "GT01:GreenThreadForkJoin"),
             Self::HashConsing => write!(f, "ART01:HashConsing"),
             Self::IncrementalDelta => write!(f, "ART02:IncrementalDelta"),
@@ -302,11 +295,7 @@ impl std::str::FromStr for Optimization {
             "B1" => Ok(Self::MultiTokenLookahead),
             "B2" => Ok(Self::AdaptiveRecovery),
             "B3" => Ok(Self::WfstMinimization),
-            "F1" => Ok(Self::SpilloverPruning),
-            "F2" => Ok(Self::EarlyTermination),
-            "F3" => Ok(Self::LazySpillover),
             "G1" => Ok(Self::BacktrackingElimination),
-            "H1" => Ok(Self::ContextDisambiguation),
             "G25" => Ok(Self::WpdsReachabilityCheck),
             // Full names (case-insensitive)
             s if s.eq_ignore_ascii_case("LeftFactoring") => Ok(Self::LeftFactoring),
@@ -320,11 +309,7 @@ impl std::str::FromStr for Optimization {
             s if s.eq_ignore_ascii_case("MultiTokenLookahead") => Ok(Self::MultiTokenLookahead),
             s if s.eq_ignore_ascii_case("AdaptiveRecovery") => Ok(Self::AdaptiveRecovery),
             s if s.eq_ignore_ascii_case("WfstMinimization") => Ok(Self::WfstMinimization),
-            s if s.eq_ignore_ascii_case("SpilloverPruning") => Ok(Self::SpilloverPruning),
-            s if s.eq_ignore_ascii_case("EarlyTermination") => Ok(Self::EarlyTermination),
-            s if s.eq_ignore_ascii_case("LazySpillover") => Ok(Self::LazySpillover),
             s if s.eq_ignore_ascii_case("BacktrackingElimination") => Ok(Self::BacktrackingElimination),
-            s if s.eq_ignore_ascii_case("ContextDisambiguation") => Ok(Self::ContextDisambiguation),
             s if s.eq_ignore_ascii_case("WpdsReachabilityCheck") => Ok(Self::WpdsReachabilityCheck),
             "T01" => Ok(Self::TrsConfluenceCheck),
             s if s.eq_ignore_ascii_case("TrsConfluenceCheck") => Ok(Self::TrsConfluenceCheck),
@@ -374,8 +359,6 @@ impl std::str::FromStr for Optimization {
             s if s.eq_ignore_ascii_case("RefinementTypeCheck") => Ok(Self::RefinementTypeCheck),
             "CEK01" => Ok(Self::EnvironmentTrimming),
             s if s.eq_ignore_ascii_case("EnvironmentTrimming") => Ok(Self::EnvironmentTrimming),
-            "CEK03" => Ok(Self::DeadFrameElimination),
-            s if s.eq_ignore_ascii_case("DeadFrameElimination") => Ok(Self::DeadFrameElimination),
             "ART01" => Ok(Self::HashConsing),
             "ART02" => Ok(Self::IncrementalDelta),
             "ART03" => Ok(Self::RelationIndexing),
@@ -775,41 +758,9 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         ),
     ));
 
-    // F1: Spillover pruning — beneficial when beam is set and there's spillover
-    candidates.push(OptimizationCandidate::new(
-        Optimization::SpilloverPruning,
-        0.2, // low weight = high benefit
-        0.01, // trivial cost
-        profile.has_beam_width && profile.nfa_spillover_categories > 0,
-        format!(
-            "has_beam_width={}, nfa_spillover_categories={}",
-            profile.has_beam_width, profile.nfa_spillover_categories
-        ),
-    ));
-
-    // F2: Early termination — beneficial when deterministic alternatives exist
-    candidates.push(OptimizationCandidate::new(
-        Optimization::EarlyTermination,
-        0.1, // very beneficial
-        0.01, // trivial cost
-        profile.nfa_spillover_categories == 0 && profile.ambiguous_count > 0,
-        format!(
-            "nfa_spillover_categories={}, ambiguous_count={}",
-            profile.nfa_spillover_categories, profile.ambiguous_count
-        ),
-    ));
-
-    // F3: Lazy spillover — beneficial when there's spillover
-    candidates.push(OptimizationCandidate::new(
-        Optimization::LazySpillover,
-        0.3,
-        0.3, // medium cost (refactoring parse_preserving_vars)
-        profile.nfa_spillover_categories > 0,
-        format!(
-            "nfa_spillover_categories={}",
-            profile.nfa_spillover_categories
-        ),
-    ));
+    // Stage 10.7 (2026-05-05): F1 SpilloverPruning, F2 EarlyTermination,
+    // F3 LazySpillover candidate emission DELETED. NFA-spillover infrastructure
+    // is gone (Stage 10.6); these gate candidates have no consumers.
 
     // G1: Backtracking elimination — always beneficial (removes redundant save/restore)
     candidates.push(OptimizationCandidate::new(
@@ -838,33 +789,10 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         "always applicable (static liveness analysis)".to_string(),
     ));
 
-    // CEK03: Dead frame elimination — beneficial for multi-category grammars
-    candidates.push(OptimizationCandidate::new(
-        Optimization::DeadFrameElimination,
-        0.2, // good speedup (eliminates unreachable frame variants and codegen)
-        0.15, // medium cost (WPDS poststar + P-automaton query)
-        profile.category_count >= 2,
-        format!(
-            "category_count={} (threshold: >=2)",
-            profile.category_count
-        ),
-    ));
-
-    // H1: ContextWeight-based disambiguation
-    candidates.push(OptimizationCandidate::new(
-        Optimization::ContextDisambiguation,
-        if profile.ambiguous_fraction > 0.0 {
-            -profile.ambiguous_fraction.ln() * 0.8
-        } else {
-            f64::INFINITY
-        },
-        0.2,
-        profile.nfa_spillover_categories > 0 && profile.ambiguous_fraction > 0.05,
-        format!(
-            "nfa_spillover_categories={}, ambiguous_fraction={:.2}",
-            profile.nfa_spillover_categories, profile.ambiguous_fraction
-        ),
-    ));
+    // Stage 10.7 (2026-05-05): CEK03 DeadFrameElimination + H1 ContextDisambiguation
+    // candidate emission DELETED. Frame_Cat enum (target of CEK03 dead-frame
+    // elimination) is gone with trampoline.rs; H1 powerset-WFST narrowing
+    // operated on NFA try-all, which is gone too.
 
     // G25: WPDS stack-aware reachability — beneficial for multi-category grammars
     candidates.push(OptimizationCandidate::new(
@@ -1466,7 +1394,7 @@ pub fn recommended_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCa
 /// Boolean gates for each optimization pass, derived from cost-benefit analysis.
 ///
 /// The pipeline populates this from `recommended_optimizations()` and threads it
-/// into `TrampolineConfig` and `write_category_dispatch()`. Each gate controls
+/// into Walker codegen (`wpds_codegen/*`). Each gate controls
 /// whether the corresponding codegen optimization is emitted. When a gate is
 /// `false`, the codegen falls back to the default (unoptimized) path for that
 /// optimization, avoiding code bloat and compile overhead for grammars that
@@ -1482,15 +1410,8 @@ pub struct OptimizationGates {
     /// B1: Multi-token lookahead via second-token dispatch.
     /// When false, ambiguous prefix groups always use NFA try-all.
     pub multi_token_lookahead: bool,
-    /// F1: Weight-based spillover pruning (beam-gated alternative filtering).
-    /// When false, all position-matching alternatives are spilled regardless of weight.
-    pub spillover_pruning: bool,
-    /// F2: Early termination on deterministic hit (weight == 0.0).
-    /// When false, all alternatives are always tried even if the first succeeds.
-    pub early_termination: bool,
-    /// F3: Lazy spillover (demand-driven forced-prefix replay).
-    /// When false, spillover is eager (all alternatives replayed immediately).
-    pub lazy_spillover: bool,
+    // Stage 10.7 (2026-05-05): F1 spillover_pruning, F2 early_termination,
+    // F3 lazy_spillover gates DELETED. NFA spillover infrastructure gone.
     /// B3: WFST minimization via TransducerCascade.
     /// When false, the cascade is not run after WFST construction.
     pub wfst_minimization: bool,
@@ -1504,9 +1425,8 @@ pub struct OptimizationGates {
     /// Controls Phases 1-4: deterministic cross-cat arm commit, NFA suffix
     /// disjointness, LParen LL(2)/LL(3), optional LL(1) guard.
     pub backtracking_elimination: bool,
-    /// H1: ContextWeight-based disambiguation (Sprint 6).
-    /// When true, NFA try-all codegen narrows candidates via ContextWeight.
-    pub context_disambiguation: bool,
+    // Stage 10.7 (2026-05-05): H1 context_disambiguation gate DELETED.
+    // NFA try-all is gone (Walker uses lex-min over LexicographicWeight).
     /// G25: WPDS stack-aware reachability check.
     /// When true, poststar analysis refines dead-rule detection.
     pub wpds_reachability: bool,
@@ -1561,8 +1481,8 @@ pub struct OptimizationGates {
 
     /// CEK01: Dead capture elimination in Frame_Cat variants.
     pub environment_trimming: bool,
-    /// CEK03: Dead frame elimination via WPDS poststar P-automaton.
-    pub dead_frame_elimination: bool,
+    // Stage 10.7 (2026-05-05): CEK03 dead_frame_elimination gate DELETED.
+    // Frame_Cat enum gone with trampoline.rs.
 
     // ── Advanced Automata Codegen Promotions ─────────────────────────────────
 
@@ -1661,15 +1581,11 @@ impl OptimizationGates {
             left_factoring: true,
             hot_cold_splitting: true,
             multi_token_lookahead: true,
-            spillover_pruning: true,
-            early_termination: true,
-            lazy_spillover: true,
             wfst_minimization: true,
             enhanced_dce: true,
             ambiguity_targeting: true,
             adaptive_recovery: true,
             backtracking_elimination: true,
-            context_disambiguation: true,
             wpds_reachability: true,
             trs_confluence: true,
             vpa_inclusion: true,
@@ -1694,7 +1610,6 @@ impl OptimizationGates {
             lattice: true,
             refinement_type_check: true,
             environment_trimming: true,
-            dead_frame_elimination: true,
             symbolic_guard_dce: true,
             probabilistic_dce: true,
             probabilistic_weight_blend: true,
@@ -1750,15 +1665,11 @@ impl OptimizationGates {
             left_factoring: enabled.contains(&Optimization::LeftFactoring),
             hot_cold_splitting: enabled.contains(&Optimization::HotColdSplitting),
             multi_token_lookahead: enabled.contains(&Optimization::MultiTokenLookahead),
-            spillover_pruning: enabled.contains(&Optimization::SpilloverPruning),
-            early_termination: enabled.contains(&Optimization::EarlyTermination),
-            lazy_spillover: enabled.contains(&Optimization::LazySpillover),
             wfst_minimization: enabled.contains(&Optimization::WfstMinimization),
             enhanced_dce: enabled.contains(&Optimization::EnhancedDeadCodeElimination),
             ambiguity_targeting: enabled.contains(&Optimization::AmbiguityTargeting),
             adaptive_recovery: enabled.contains(&Optimization::AdaptiveRecovery),
             backtracking_elimination: enabled.contains(&Optimization::BacktrackingElimination),
-            context_disambiguation: enabled.contains(&Optimization::ContextDisambiguation),
             wpds_reachability: enabled.contains(&Optimization::WpdsReachabilityCheck),
             trs_confluence: enabled.contains(&Optimization::TrsConfluenceCheck),
             vpa_inclusion: enabled.contains(&Optimization::VpaInclusionCheck),
@@ -1783,7 +1694,6 @@ impl OptimizationGates {
             lattice: enabled.contains(&Optimization::LatticeAnalysis),
             refinement_type_check: enabled.contains(&Optimization::RefinementTypeCheck),
             environment_trimming: enabled.contains(&Optimization::EnvironmentTrimming),
-            dead_frame_elimination: enabled.contains(&Optimization::DeadFrameElimination),
             symbolic_guard_dce: enabled.contains(&Optimization::SymbolicGuardAnalysis),
             probabilistic_dce: enabled.contains(&Optimization::ProbabilisticAnalysis),
             probabilistic_weight_blend: enabled.contains(&Optimization::ProbabilisticAnalysis),
@@ -1831,15 +1741,11 @@ impl OptimizationGates {
             left_factoring: false,
             hot_cold_splitting: false,
             multi_token_lookahead: false,
-            spillover_pruning: false,
-            early_termination: false,
-            lazy_spillover: false,
             wfst_minimization: false,
             enhanced_dce: false,
             ambiguity_targeting: false,
             adaptive_recovery: false,
             backtracking_elimination: false,
-            context_disambiguation: false,
             wpds_reachability: false,
             trs_confluence: false,
             vpa_inclusion: false,
@@ -1864,7 +1770,6 @@ impl OptimizationGates {
             lattice: false,
             refinement_type_check: false,
             environment_trimming: false,
-            dead_frame_elimination: false,
             symbolic_guard_dce: false,
             probabilistic_dce: false,
             probabilistic_weight_blend: false,
@@ -1950,15 +1855,11 @@ impl OptimizationGates {
             left_factoring: enabled.contains(&Optimization::LeftFactoring),
             hot_cold_splitting: enabled.contains(&Optimization::HotColdSplitting),
             multi_token_lookahead: enabled.contains(&Optimization::MultiTokenLookahead),
-            spillover_pruning: enabled.contains(&Optimization::SpilloverPruning),
-            early_termination: enabled.contains(&Optimization::EarlyTermination),
-            lazy_spillover: enabled.contains(&Optimization::LazySpillover),
             wfst_minimization: enabled.contains(&Optimization::WfstMinimization),
             enhanced_dce: enabled.contains(&Optimization::EnhancedDeadCodeElimination),
             ambiguity_targeting: enabled.contains(&Optimization::AmbiguityTargeting),
             adaptive_recovery: enabled.contains(&Optimization::AdaptiveRecovery),
             backtracking_elimination: enabled.contains(&Optimization::BacktrackingElimination),
-            context_disambiguation: enabled.contains(&Optimization::ContextDisambiguation),
             wpds_reachability: enabled.contains(&Optimization::WpdsReachabilityCheck),
             trs_confluence: enabled.contains(&Optimization::TrsConfluenceCheck),
             vpa_inclusion: enabled.contains(&Optimization::VpaInclusionCheck),
@@ -1983,7 +1884,6 @@ impl OptimizationGates {
             lattice: enabled.contains(&Optimization::LatticeAnalysis),
             refinement_type_check: enabled.contains(&Optimization::RefinementTypeCheck),
             environment_trimming: enabled.contains(&Optimization::EnvironmentTrimming),
-            dead_frame_elimination: enabled.contains(&Optimization::DeadFrameElimination),
             symbolic_guard_dce: enabled.contains(&Optimization::SymbolicGuardAnalysis),
             probabilistic_dce: enabled.contains(&Optimization::ProbabilisticAnalysis),
             probabilistic_weight_blend: enabled.contains(&Optimization::ProbabilisticAnalysis),
@@ -2215,18 +2115,10 @@ impl Optimization {
             Self::LeftFactoring        // A1: write_nfa_merged_prefix_arm left-factoring
             | Self::HotColdSplitting   // A2: dispatch hot/cold splitting
             | Self::MultiTokenLookahead // B1: NFA multi-token dispatch
-            | Self::SpilloverPruning   // F1: beam-based spill filter
-            | Self::EarlyTermination   // F2: deterministic NFA early exit
-            | Self::LazySpillover      // F3: weight-gated spillover
             | Self::WfstMinimization   // B3: cascade gating
             | Self::EnhancedDeadCodeElimination // A4: dead-rule codegen suppression
             | Self::AdaptiveRecovery   // B2: adaptive recovery weight expr
             | Self::BacktrackingElimination // G1: FIRST-set backtracking elimination
-            | Self::DeadFrameElimination   // CEK03: WPDS-dead frame elimination
-            => OptimizationStatus::Auto,
-
-            // Auto-applied (Sprint 6): ContextWeight narrowing in NFA try-all
-            | Self::ContextDisambiguation // H1: powerset WFST candidate narrowing
             => OptimizationStatus::Auto,
 
             // Diagnostic: info messages only, no codegen effect
@@ -2567,31 +2459,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_spillover_with_beam() {
-        let profile = GrammarProfile {
-            nfa_spillover_categories: 2,
-            has_beam_width: true,
-            unsatisfiable_guard_count: 0,
-            probabilistic_mean_entropy: 0.0,
-            low_selectivity_count: 0,
-            bisimulation_extra_groups: 0,
-            dead_register_count: 0,
-            ..simple_profile()
-        };
-        let recommended = recommended_optimizations(&profile);
-        let names: Vec<_> = recommended.iter().map(|c| c.optimization).collect();
-        assert!(
-            names.contains(&Optimization::SpilloverPruning),
-            "spillover pruning should be recommended when beam is set: {:?}",
-            names
-        );
-        assert!(
-            names.contains(&Optimization::LazySpillover),
-            "lazy spillover should be recommended when spillover categories exist: {:?}",
-            names
-        );
-    }
+    // Stage 10.7 (2026-05-05): test_spillover_with_beam DELETED.
+    // Asserted F1 SpilloverPruning + F3 LazySpillover recommendations; both
+    // gates are gone (NFA spillover infrastructure excised in Stage 10.6).
 
     #[test]
     fn test_lexicographic_ordering() {
@@ -2620,8 +2490,9 @@ mod tests {
     fn test_all_candidates_evaluated() {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
-        // Stage 6 Phase F.2 (2026-04-24) removed CEK02:CekTracedParser (was 72 → 71).
-        assert_eq!(all.len(), 71, "should evaluate all 71 optimization candidates");
+        // Stage 6 Phase F.2 (2026-04-24): removed CEK02:CekTracedParser (was 72 → 71).
+        // Stage 10.7 (2026-05-05): removed F1/F2/F3/H1/CEK03 (71 → 66).
+        assert_eq!(all.len(), 66, "should evaluate all 66 optimization candidates");
     }
 
     #[test]
@@ -2716,13 +2587,8 @@ mod tests {
             dead_register_count: 0,
             ..simple_profile()
         };
-        let recommended = recommended_optimizations(&profile);
-        let names: Vec<_> = recommended.iter().map(|c| c.optimization).collect();
-        assert!(
-            !names.contains(&Optimization::EarlyTermination),
-            "F2 should not be recommended when NFA spillover is needed: {:?}",
-            names
-        );
+        let _recommended = recommended_optimizations(&profile);
+        // Stage 10.7 (2026-05-05): EarlyTermination assertion DELETED — gate removed.
     }
 
     // ── A3: OptimizationGates tests ──────────────────────────────────────
@@ -2733,9 +2599,6 @@ mod tests {
         assert!(gates.left_factoring);
         assert!(gates.hot_cold_splitting);
         assert!(gates.multi_token_lookahead);
-        assert!(gates.spillover_pruning);
-        assert!(gates.early_termination);
-        assert!(gates.lazy_spillover);
         assert!(gates.wfst_minimization);
         assert!(gates.enhanced_dce);
         assert!(gates.ambiguity_targeting);
@@ -2789,13 +2652,7 @@ mod tests {
         let gates = OptimizationGates::from_recommendations(&recommended);
         assert!(gates.multi_token_lookahead, "B1 should be enabled for ambiguous grammars");
         assert!(gates.ambiguity_targeting, "A5 should be enabled");
-        assert!(gates.spillover_pruning, "F1 should be enabled with beam + spillover");
-        assert!(gates.lazy_spillover, "F3 should be enabled with spillover categories");
-        // F2 should NOT be enabled when spillover categories exist
-        assert!(
-            !gates.early_termination,
-            "F2 should not be enabled when NFA spillover is needed"
-        );
+        // Stage 10.7 (2026-05-05): F1/F2/F3 gate assertions DELETED — gates removed.
     }
 
     #[test]
@@ -3126,9 +2983,7 @@ mod tests {
         assert_eq!(Optimization::from_str("B1").expect("B1"), Optimization::MultiTokenLookahead);
         assert_eq!(Optimization::from_str("B2").expect("B2"), Optimization::AdaptiveRecovery);
         assert_eq!(Optimization::from_str("B3").expect("B3"), Optimization::WfstMinimization);
-        assert_eq!(Optimization::from_str("F1").expect("F1"), Optimization::SpilloverPruning);
-        assert_eq!(Optimization::from_str("F2").expect("F2"), Optimization::EarlyTermination);
-        assert_eq!(Optimization::from_str("F3").expect("F3"), Optimization::LazySpillover);
+        // Stage 10.7 (2026-05-05): F1/F2/F3 from_str assertions DELETED — variants removed.
     }
 
     #[test]
@@ -3136,7 +2991,7 @@ mod tests {
         use std::str::FromStr;
         assert_eq!(Optimization::from_str("LeftFactoring").expect("name"), Optimization::LeftFactoring);
         assert_eq!(Optimization::from_str("adaptiverecovery").expect("lower"), Optimization::AdaptiveRecovery);
-        assert_eq!(Optimization::from_str("LAZYSPILLOVER").expect("upper"), Optimization::LazySpillover);
+        // Stage 10.7 (2026-05-05): LAZYSPILLOVER assertion DELETED — variant removed.
         assert_eq!(Optimization::from_str("EnhancedDCE").expect("alias"), Optimization::EnhancedDeadCodeElimination);
     }
 
@@ -3161,9 +3016,6 @@ mod tests {
         assert!(!gates.left_factoring);
         assert!(!gates.hot_cold_splitting);
         assert!(!gates.multi_token_lookahead);
-        assert!(!gates.spillover_pruning);
-        assert!(!gates.early_termination);
-        assert!(!gates.lazy_spillover);
         assert!(!gates.wfst_minimization);
         assert!(!gates.enhanced_dce);
         assert!(!gates.ambiguity_targeting);
@@ -3173,15 +3025,15 @@ mod tests {
     #[test]
     fn test_from_env_with_specific_opts() {
         let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
-        // Set env var to enable only A1 and F3
-        std::env::set_var("PRATTAIL_AUTO_OPTIMIZE", "A1,F3");
+        // Stage 10.7 (2026-05-05): F3 was deleted; use G1 (BacktrackingElimination) instead.
+        std::env::set_var("PRATTAIL_AUTO_OPTIMIZE", "A1,G1");
         let result = OptimizationGates::from_env();
         // Clean up before asserting (env is process-global)
         std::env::remove_var("PRATTAIL_AUTO_OPTIMIZE");
 
         let gates = result.expect("parse").expect("should be Some");
         assert!(gates.left_factoring, "A1 should be enabled");
-        assert!(gates.lazy_spillover, "F3 should be enabled");
+        assert!(gates.backtracking_elimination, "G1 should be enabled");
         assert!(!gates.hot_cold_splitting, "A2 should not be enabled");
         assert!(!gates.adaptive_recovery, "B2 should not be enabled");
         assert!(!gates.enhanced_dce, "A4 should not be enabled");
@@ -3198,9 +3050,6 @@ mod tests {
         assert!(gates.left_factoring);
         assert!(gates.hot_cold_splitting);
         assert!(gates.multi_token_lookahead);
-        assert!(gates.spillover_pruning);
-        assert!(gates.early_termination);
-        assert!(gates.lazy_spillover);
         assert!(gates.wfst_minimization);
         assert!(gates.enhanced_dce);
         assert!(gates.ambiguity_targeting);
@@ -3474,11 +3323,7 @@ mod tests {
             Optimization::MultiTokenLookahead,
             Optimization::AdaptiveRecovery,
             Optimization::WfstMinimization,
-            Optimization::SpilloverPruning,
-            Optimization::EarlyTermination,
-            Optimization::LazySpillover,
             Optimization::BacktrackingElimination,
-            Optimization::ContextDisambiguation,
             Optimization::WpdsReachabilityCheck,
             Optimization::TrsConfluenceCheck,
             Optimization::VpaInclusionCheck,
@@ -3486,7 +3331,6 @@ mod tests {
             Optimization::CegarRefinement,
             Optimization::PetriDeadlockCheck,
             Optimization::EnvironmentTrimming,
-            Optimization::DeadFrameElimination,
             Optimization::HashConsing,
             Optimization::IncrementalDelta,
             Optimization::RelationIndexing,
@@ -3527,7 +3371,7 @@ mod tests {
     fn test_optimization_display_fromstr_roundtrip_all() {
         use std::str::FromStr;
         let variants = all_optimizations();
-        assert_eq!(variants.len(), 53, "expected exactly 53 variants");
+        assert_eq!(variants.len(), 48, "expected exactly 48 variants (post-Stage-10.7: F1/F2/F3/H1/CEK03 deleted)");
 
         for variant in &variants {
             let display = variant.to_string();
@@ -3593,11 +3437,7 @@ mod tests {
             ("B1", Optimization::MultiTokenLookahead),
             ("B2", Optimization::AdaptiveRecovery),
             ("B3", Optimization::WfstMinimization),
-            ("F1", Optimization::SpilloverPruning),
-            ("F2", Optimization::EarlyTermination),
-            ("F3", Optimization::LazySpillover),
             ("G1", Optimization::BacktrackingElimination),
-            ("H1", Optimization::ContextDisambiguation),
             ("G25", Optimization::WpdsReachabilityCheck),
             ("T01", Optimization::TrsConfluenceCheck),
             ("V01", Optimization::VpaInclusionCheck),
@@ -3638,7 +3478,7 @@ mod tests {
             ("DB03", Optimization::ParallelAnalysis),
             ("DB04", Optimization::CachedLints),
         ];
-        assert_eq!(all_codes.len(), 51, "expected 51 short codes for all 51 variants");
+        assert_eq!(all_codes.len(), 47, "expected 47 short codes (Stage 10.7: F1/F2/F3/H1/CEK03 removed)");
 
         for (code, expected) in &all_codes {
             let parsed = Optimization::from_str(code).unwrap_or_else(|e| {
@@ -3721,8 +3561,8 @@ mod tests {
         let variants: HashSet<Optimization> = all_optimizations().into_iter().collect();
         assert_eq!(
             variants.len(),
-            53,
-            "all_optimizations() should return exactly 53 unique variants"
+            48,
+            "all_optimizations() should return exactly 48 unique variants (post-Stage-10.7)"
         );
 
         // Also verify each variant has a unique Display representation
@@ -3735,10 +3575,11 @@ mod tests {
         );
 
         // Verify all short codes parse to unique variants
+        // Stage 10.7 (2026-05-05): F1, F2, F3, H1, CEK03 removed.
         let mut all_short_codes: Vec<&str> = vec![
-            "A1", "A2", "A4", "A5", "B1", "B2", "B3", "F1", "F2", "F3",
-            "G1", "H1", "G25", "T01", "V01", "S01", "S03", "N01",
-            "CEK01", "CEK03",
+            "A1", "A2", "A4", "A5", "B1", "B2", "B3",
+            "G1", "G25", "T01", "V01", "S01", "S03", "N01",
+            "CEK01",
             "ART01", "ART02", "ART03", "ART04", "ART05", "ART06",
             "BCG01", "BCG02", "BCG03", "BCG04", "BCG05", "BCG06",
             "AL01", "AL02", "AL03", "AL04", "AL05", "AL06",

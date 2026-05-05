@@ -1512,7 +1512,7 @@ mod tests {
                         element_category: "Expr".to_string(),
                         separator: ",".to_string(),
                         key_val_separator: None,
-                        kind: crate::recursive::CollectionKind::Vec,
+                        kind: crate::grammar::ir::CollectionKind::Vec,
                     },
                     SyntaxItemSpec::Terminal("]".to_string()),
                 ],

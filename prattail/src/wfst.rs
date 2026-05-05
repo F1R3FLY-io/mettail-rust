@@ -1113,37 +1113,11 @@ impl PredictionWfst {
         normalized_count
     }
 
-    /// Override weights with trained model weights.
-    ///
-    /// For each action whose `rule_label` matches a key in the trained model's
-    /// `rule_weights` map, the action's weight is replaced with the trained weight.
-    /// Unmatched actions keep their original (heuristic) weights.
-    ///
-    /// Also updates the corresponding transitions in the start state.
-    pub fn with_trained_weights(&mut self, model: &crate::training::TrainedModel) {
-        for (idx, action) in self.actions.iter_mut().enumerate() {
-            let label = match &action.action {
-                DispatchAction::Direct { rule_label, .. } => rule_label.as_str(),
-                DispatchAction::Cast { wrapper_label, .. } => wrapper_label.as_str(),
-                DispatchAction::CrossCategory { rule_label, .. } => rule_label.as_str(),
-                _ => continue,
-            };
-
-            if let Some(&trained_weight) = model.rule_weights.get(label) {
-                let new_weight = TropicalWeight::new(trained_weight);
-                action.weight = new_weight;
-
-                // Update corresponding transition weight in start state
-                if let Some(start) = self.states.get_mut(self.start as usize) {
-                    for trans in &mut start.transitions {
-                        if trans.action_idx == idx as u32 {
-                            trans.weight = new_weight;
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // Stage 10.8 (2026-05-05): with_trained_weights method DELETED. Consumed
+    // TrainedModel produced by SpilloverTrainer (also deleted in Stage 10.8).
+    // Walker-derived weight corrections will need a fresh API design when
+    // they exist; the underlying mechanism (DispatchAction.weight override)
+    // is preserved for future use via apply_corrections.
 
     /// Sprint 5: Apply weight corrections from NFA spillover training signals.
     ///
@@ -1610,11 +1584,11 @@ pub fn build_prediction_wfsts(
 /// Returns the number of two-token paths added across all categories.
 pub fn enrich_with_two_token_paths(
     wfsts: &mut HashMap<String, PredictionWfst>,
-    rd_rules: &[crate::recursive::RDRuleInfo],
+    rd_rules: &[crate::grammar::ir::RDRuleInfo],
     category_names: &[String],
     first_sets: &HashMap<String, crate::prediction::FirstSet>,
 ) -> usize {
-    use crate::recursive::RDSyntaxItem;
+    use crate::grammar::ir::RDSyntaxItem;
 
     let mut total_added = 0;
 
@@ -1625,7 +1599,7 @@ pub fn enrich_with_two_token_paths(
         };
 
         // Group RD rules by their dispatch token (first terminal)
-        let mut groups: HashMap<String, Vec<&crate::recursive::RDRuleInfo>> = HashMap::new();
+        let mut groups: HashMap<String, Vec<&crate::grammar::ir::RDRuleInfo>> = HashMap::new();
         for rule in rd_rules {
             if rule.category != *cat {
                 continue;
@@ -2411,98 +2385,9 @@ mod tests {
         assert!(wfst.predict("Plus").is_empty());
     }
 
-    // ── with_trained_weights() tests ────────────────────────────────────
-
-    #[test]
-    fn test_with_trained_weights_overrides_matching() {
-        let token_map = TokenIdMap::from_names(vec!["Plus", "Ident"].into_iter().map(String::from));
-
-        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
-        builder.add_action(
-            "Plus",
-            DispatchAction::Direct {
-                rule_label: "Add".to_string(),
-                parse_fn: "parse_add".to_string(),
-            },
-            TropicalWeight::new(0.0), // original weight
-        );
-        builder.add_action(
-            "Ident",
-            DispatchAction::Variable { category: "Expr".to_string() },
-            TropicalWeight::new(2.0), // original weight
-        );
-
-        let mut wfst = builder.build();
-
-        // Create a trained model that overrides "Add" weight
-        let mut rule_weights = std::collections::HashMap::new();
-        rule_weights.insert("Add".to_string(), 0.3);
-        // "NonExistent" should be silently ignored
-        rule_weights.insert("NonExistent".to_string(), 99.0);
-
-        let model = crate::training::TrainedModel {
-            rule_weights,
-            recommended_beam_width: None,
-            recovery_weights: None,
-            metadata: crate::training::TrainedModelMetadata {
-                epochs: 10,
-                final_loss: 0.01,
-                converged: true,
-                num_examples: 100,
-                learning_rate: 0.01,
-            },
-        };
-
-        wfst.with_trained_weights(&model);
-
-        // "Plus" → "Add" should now have weight 0.3 (trained)
-        let plus_results = wfst.predict("Plus");
-        assert_eq!(plus_results.len(), 1);
-        assert_eq!(plus_results[0].weight, TropicalWeight::new(0.3));
-
-        // "Ident" → Variable has no matching trained weight, stays at 2.0
-        // (Variable action doesn't match any rule_label in the model)
-    }
-
-    #[test]
-    fn test_with_trained_weights_updates_transitions() {
-        let token_map = TokenIdMap::from_names(vec!["Plus"].into_iter().map(String::from));
-
-        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
-        builder.add_action(
-            "Plus",
-            DispatchAction::Direct {
-                rule_label: "Add".to_string(),
-                parse_fn: "parse_add".to_string(),
-            },
-            TropicalWeight::new(5.0),
-        );
-
-        let mut wfst = builder.build();
-
-        let mut rule_weights = std::collections::HashMap::new();
-        rule_weights.insert("Add".to_string(), 0.1);
-
-        let model = crate::training::TrainedModel {
-            rule_weights,
-            recommended_beam_width: None,
-            recovery_weights: None,
-            metadata: crate::training::TrainedModelMetadata {
-                epochs: 5,
-                final_loss: 0.05,
-                converged: true,
-                num_examples: 50,
-                learning_rate: 0.01,
-            },
-        };
-
-        wfst.with_trained_weights(&model);
-
-        // Verify the transition weight was also updated (not just the action)
-        let start_state = &wfst.states[wfst.start as usize];
-        assert_eq!(start_state.transitions.len(), 1);
-        assert_eq!(start_state.transitions[0].weight, TropicalWeight::new(0.1));
-    }
+    // Stage 10.8 (2026-05-05): with_trained_weights tests DELETED. The method
+    // they exercised was removed alongside SpilloverTrainer (input signal source
+    // gone post-Stage-10.6 NFA spillover excision).
 
     #[test]
     fn test_beam_width_from_language_spec() {
@@ -3752,7 +3637,7 @@ mod tests {
     #[test]
     fn test_enrich_terminal_second_items() {
         // enrich_with_two_token_paths should add paths when 2nd items are disjoint terminals
-        use crate::recursive::{RDRuleInfo, RDSyntaxItem};
+        use crate::grammar::ir::{RDRuleInfo, RDSyntaxItem};
         let rd_rules = vec![
             RDRuleInfo {
                 label: "IfThen".to_string(),
@@ -3815,7 +3700,7 @@ mod tests {
     #[test]
     fn test_enrich_nonterminal_first_set_expansion() {
         // Sprint 2: enrich should expand NonTerminal second items via FIRST sets
-        use crate::recursive::{RDRuleInfo, RDSyntaxItem};
+        use crate::grammar::ir::{RDRuleInfo, RDSyntaxItem};
         use crate::prediction::FirstSet;
 
         // Rule A: float ( Expr ) — FIRST(Expr) = {Integer, Ident}
@@ -3950,7 +3835,7 @@ mod tests {
     fn test_enrich_mixed_terminal_nonterminal() {
         // Mix of terminal and nonterminal second items
         // terminal_to_variant_name("cmd") = "KwCmd"
-        use crate::recursive::{RDRuleInfo, RDSyntaxItem};
+        use crate::grammar::ir::{RDRuleInfo, RDSyntaxItem};
         use crate::prediction::FirstSet;
 
         // Rule A: cmd ( — terminal second item "("

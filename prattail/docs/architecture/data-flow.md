@@ -2,6 +2,18 @@
 
 **Traces every data transformation from `LanguageSpec` input to `TokenStream` output.**
 
+> **Post-Stage-10 (2026-05-04) update:** the parser backend has migrated
+> from the trampolined RD/Pratt emitter to the WPDS Walker. References to
+> `TrampolineConfig`, `Frame_Cat`, `write_rd_handler`, `write_pratt_parser`,
+> `write_category_dispatch`, `write_pratt_parser_recovering`, and the
+> `trampoline.rs` driver loop describe the historical pipeline; the live
+> equivalents are emitted by `macros/src/gen/runtime/wpds_codegen/{facade,
+> engine_impl, prefix, infix, binder, collection}.rs` (see
+> `prattail/docs/design/wpds-migration-survey.md`). Specific historical
+> references have been re-pointed to their WPDS-codegen successors below;
+> the surrounding pipeline orchestration shape (FIRST/FOLLOW, decision
+> trees, semantic dependency groups, etc.) is unchanged.
+
 ---
 
 ## Overview
@@ -135,7 +147,9 @@ LanguageSpec
     │       │       Identifies dispatch tokens with 2+ rules after lookahead
     │       │       Orders alternatives by WFST TropicalWeight via nfa_alternative_order()
     │       │       Beam pruning: filter alternatives where weight > best + beam_width
-    │       │       Sets TrampolineConfig.needs_nfa_spillover per category
+    │       │       Sets GrammarBundle.nfa_spillover_categories per category
+    │       │       (post-Stage-10: trampoline TrampolineConfig deleted; WPDS
+    │       │       codegen reads the same set from the bundle directly)
     │       │
     │       ├───▶ write_parser_helpers(buf)
     │       │       expect_token, expect_ident, peek_token, peek_ahead
@@ -143,20 +157,25 @@ LanguageSpec
     │       ├───▶ write_recovery_helpers(buf)
     │       │       sync_to, expect_token_rec, expect_ident_rec
     │       │
-    │       ├───▶ For each RD rule: write_rd_handler(buf, rule) → PrefixHandler
+    │       ├───▶ Post-Stage-10 (WPDS Walker codegen, replacing the
+    │       │       trampoline-era emitters listed below):
     │       │
-    │       ├───▶ For each category:
-    │       │       write_pratt_parser(buf, config, bp_table, prefix_handlers)
-    │       │         Pratt loop, prefix handler, infix_bp, make_infix,
-    │       │         postfix_bp, make_postfix, mixfix_bp, handle_mixfix
+    │       │       For each category, emit via wpds_codegen/*:
+    │       │         facade::emit_parse_fn(...)              [parse_<Cat>_via_wpds]
+    │       │         facade::emit_parse_fn_recovering(...)   [parse_<Cat>_via_wpds_recovering]
+    │       │         engine_impl::emit_engine_impl_full(...) [WpdsEngine impl]
+    │       │         prefix::emit_prefix_arms_for_category(...) [PrefixDispatch]
+    │       │         infix::emit_infix_arms_for_category(...)   [InfixLoop]
+    │       │         binder::emit_binder_arms(...)              [BinderRule + lambda/dollar]
+    │       │         collection::emit_collection_arms(...)      [CollectionLoop]
     │       │
-    │       ├───▶ For each category with cross/cast rules:
-    │       │       write_category_dispatch(buf, category, cross_rules, ...)
+    │       │       Historical (pre-Stage-10, all DELETED):
+    │       │         write_rd_handler / write_pratt_parser / write_category_dispatch /
+    │       │         write_pratt_parser_recovering / write_dispatch_recovering /
+    │       │         generate_sync_predicate
     │       │
-    │       ├───▶ For each category:
-    │       │       generate_sync_predicate(buf, category, follow_set, grammar_terminals)
-    │       │       write_pratt_parser_recovering(buf, config, bp_table)
-    │       │       write_dispatch_recovering(buf, category)
+    │       │       Sync predicates: emitted as part of facade::emit_parse_fn_recovering;
+    │       │       grammar_terminals analysis is preserved upstream.
     │       │
     │       └───▶ write_parse_entry_points(buf, categories)
     │               4 entry points per category:
@@ -516,8 +535,10 @@ compute_follow_sets_from_inputs()
     ▼
 BTreeMap<String, FirstSet>   (FOLLOW sets)
     │
-    ├───▶ Used by generate_sync_predicate() for error recovery
-    └───▶ Used by write_pratt_parser_recovering() for sync-to targets
+    ├───▶ Used by sync-predicate emission inside the WPDS recovery codegen
+    │       (post-Stage-10: facade::emit_parse_fn_recovering;
+    │        historical: generate_sync_predicate / write_pratt_parser_recovering)
+    └───▶ Used by recovery dispatch for sync-to targets
 ```
 
 ---

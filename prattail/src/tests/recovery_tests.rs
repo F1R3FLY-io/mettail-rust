@@ -65,45 +65,12 @@ fn calculator_spec() -> LanguageSpec {
     }
 }
 
-// ── sync_to helper generation ──
-
-#[test]
-fn test_generated_code_contains_sync_to() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    assert!(
-        code_str.contains("sync_to"),
-        "generated code should contain sync_to recovery helper"
-    );
-}
-
-// ── expect_token_rec / expect_ident_rec generation ──
-
-#[test]
-fn test_generated_code_contains_expect_token_rec() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    assert!(
-        code_str.contains("expect_token_rec"),
-        "generated code should contain expect_token_rec recovery helper"
-    );
-}
-
-#[test]
-fn test_generated_code_contains_expect_ident_rec() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    assert!(
-        code_str.contains("expect_ident_rec"),
-        "generated code should contain expect_ident_rec recovery helper"
-    );
-}
+// Stage 10.5b conclusion (2026-05-05): the following 3 tests DELETED.
+// `sync_to`, `expect_token_rec`, `expect_ident_rec` were trampoline-internal
+// recovery helpers emitted by the now-deleted pratt::write_recovery_helpers.
+// Walker recovery uses wfst_recover_<cat> + RecoveryAttempt directly; there
+// is no sync_to / expect_*_rec equivalent. The recovery FEATURE is preserved
+// via wfst_recover emission (asserted by macros::tests::walker_emits_*).
 
 // ── Sync predicate generation ──
 
@@ -161,55 +128,16 @@ fn test_sync_predicate_includes_structural_delimiters() {
 
 // ── Recovering parser generation ──
 
-#[test]
-fn test_generated_code_contains_recovering_parser() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    assert!(
-        code_str.contains("parse_Int_recovering"),
-        "generated code should contain parse_Int_recovering function"
-    );
-}
-
-#[test]
-fn test_recovering_parser_takes_errors_param() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // The recovering parser should take an errors accumulator
-    let fn_start = code_str
-        .find("parse_Int_recovering")
-        .expect("parse_Int_recovering should exist");
-    let fn_area = &code_str[fn_start..fn_start + 300.min(code_str.len() - fn_start)];
-
-    assert!(
-        fn_area.contains("errors"),
-        "parse_Int_recovering should take an errors parameter, got: {}",
-        &fn_area[..200.min(fn_area.len())]
-    );
-}
-
-#[test]
-fn test_recovering_parser_returns_option() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // The recovering parser should return Option<Cat>
-    let fn_start = code_str
-        .find("parse_Int_recovering")
-        .expect("parse_Int_recovering should exist");
-    let fn_area = &code_str[fn_start..fn_start + 300.min(code_str.len() - fn_start)];
-
-    assert!(
-        fn_area.contains("Option"),
-        "parse_Int_recovering should return Option<Int>, got: {}",
-        &fn_area[..200.min(fn_area.len())]
-    );
-}
+// Stage 10.5r migration (2026-05-04): the following 3 tests MOVED to
+// macros/src/gen/runtime/wpds_codegen/mod.rs::tests:
+//   * test_generated_code_contains_recovering_parser → walker_emits_recovering_parser
+//   * test_recovering_parser_takes_errors_param → walker_recovering_parser_signature_uses_recovery_attempt (combined)
+//   * test_recovering_parser_returns_option → walker_recovering_parser_signature_uses_recovery_attempt (combined)
+//
+// Walker now emits `parse_<Cat>_via_wpds_recovering` returning
+// `(Result<Cat, WpdsParseError>, Vec<RecoveryAttempt>)` — different signature
+// from the trampoline's Option-based recovering parser. New tests assert
+// against the Walker emission directly.
 
 // ── Multi-category sync predicate ──
 
@@ -237,14 +165,12 @@ fn test_multi_category_generates_separate_sync_predicates() {
 
     assert!(code_str.contains("is_sync_Int"), "should generate sync predicate for Int");
     assert!(code_str.contains("is_sync_Bool"), "should generate sync predicate for Bool");
-    assert!(
-        code_str.contains("parse_Int_recovering"),
-        "should generate recovering parser for Int"
-    );
-    assert!(
-        code_str.contains("parse_Bool_recovering"),
-        "should generate recovering parser for Bool"
-    );
+
+    // Stage 10.5 (2026-05-04): `parse_<Cat>_recovering` was emitted by trampoline.
+    // Walker (WPDS) emits `parse_<Cat>_via_wpds_recovering` from `wpds_codegen/facade.rs`
+    // — invisible to `generate_parser(spec)` because Walker codegen lives downstream
+    // in the macros crate. Walker-side assertion lives in
+    // `macros/src/gen/runtime/wpds_codegen/tests/*` (post-Stage-10.5r-d move).
 }
 
 // ── Recovering led loop uses sync ──
@@ -262,10 +188,12 @@ fn test_recovering_parser_uses_sync_predicate() {
     );
 }
 
-// ── Beam pruning constant (Sprint 4) ──
-
+// Stage 10.5r-d (2026-05-05): test_generated_code_contains_recovery_beam_width
+// DELETED. RECOVERY_BEAM_WIDTH was emitted only as input to the dead
+// wfst_recover_<cat> emitter; eliminated together with that chain.
+#[cfg(any())]
 #[test]
-fn test_generated_code_contains_recovery_beam_width() {
+fn _disabled_test_generated_code_contains_recovery_beam_width() {
     let spec = calculator_spec();
     let code = generate_parser(&spec);
     let code_str = code.to_string();
@@ -278,39 +206,13 @@ fn test_generated_code_contains_recovery_beam_width() {
 
 // ── Error cascade prevention (Sprint 15) ──
 
-#[test]
-fn test_generated_code_contains_cascade_prevention() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // Should contain thread-local for tracking last error position
-    assert!(
-        code_str.contains("LAST_ERROR_POS_Int"),
-        "recovering parser should use LAST_ERROR_POS_Int for cascade prevention"
-    );
-}
-
-// ── Incremental bracket tracking (Sprint 2) ──
-
-#[test]
-fn test_generated_recovery_uses_incremental_bracket_tracking() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // Should use thread-local BRACKET_STATE, not a backward scan
-    assert!(
-        code_str.contains("BRACKET_STATE_Int"),
-        "recovering parser should use thread-local BRACKET_STATE_Int"
-    );
-
-    // Should NOT contain the old backward-scan pattern
-    assert!(
-        !code_str.contains("for i in 0 .. * pos"),
-        "recovering parser should not use backward scan (O(pos) per error)"
-    );
-}
+// Stage 10.5r migration (2026-05-04): cascade prevention + incremental
+// bracket tracking tests MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests:
+//   * test_generated_code_contains_cascade_prevention → walker_emits_cascade_prevention_thread_local
+//   * test_generated_recovery_uses_incremental_bracket_tracking → walker_emits_bracket_state_per_category
+//
+// LAST_ERROR_POS_<cat> and BRACKET_STATE_<cat> thread-locals are now emitted
+// by wpds_codegen/recovery.rs::emit_recovery_module. Identifier names preserved.
 
 // ── RepairAction::describe() produces human-readable messages ──
 
@@ -365,59 +267,16 @@ fn test_repair_action_describe() {
 
 // ── Generated code uses RecoveryApplied ──
 
-#[test]
-fn test_generated_recovery_uses_recovery_applied() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
+// Stage 10.5r migration (2026-05-04): RecoveryApplied test MOVED to
+// macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
+// (Walker uses WpdsParseError::ParseFailed { attempts: Vec<RecoveryAttempt> } —
+// the macro-side Cat::parse_recovering wrapper translates to ParseError variants).
 
-    // The generated recovering parser should construct RecoveryApplied errors
-    assert!(
-        code_str.contains("RecoveryApplied"),
-        "recovering parser should emit RecoveryApplied errors"
-    );
-
-    // The wfst_recover function should return Option<String>
-    // TokenStream stringification may add spaces around angle brackets
-    assert!(
-        code_str.contains("Option < String >") || code_str.contains("Option<String>"),
-        "wfst_recover should return Option<String> for repair description"
-    );
-}
-
-// ── ParseSimulator Tier 3 activation (Sprint 1) ──
-
-#[test]
-fn test_generated_code_contains_parse_simulator() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    assert!(
-        code_str.contains("PARSE_SIMULATOR"),
-        "generated code should contain PARSE_SIMULATOR LazyLock"
-    );
-}
-
-#[test]
-fn test_generated_code_contains_sim_first_sets() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    assert!(
-        code_str.contains("SIM_FIRST_SETS"),
-        "generated code should contain SIM_FIRST_SETS static array"
-    );
-    assert!(
-        code_str.contains("SIM_FOLLOW_SETS"),
-        "generated code should contain SIM_FOLLOW_SETS static array"
-    );
-    assert!(
-        code_str.contains("SIM_INFIX_SETS"),
-        "generated code should contain SIM_INFIX_SETS static array"
-    );
-}
+// Stage 10.5r-d (2026-05-05): the following tests DELETED — they assert
+// emissions (PARSE_SIMULATOR LazyLock, SIM_FIRST_SETS, SIM_FOLLOW_SETS,
+// SIM_INFIX_SETS) from the dead emit_parse_simulator_static emitter:
+//   * test_generated_code_contains_parse_simulator
+//   * test_generated_code_contains_sim_first_sets
 
 #[test]
 fn test_generated_code_contains_token_to_id() {
@@ -431,131 +290,26 @@ fn test_generated_code_contains_token_to_id() {
     );
 }
 
-#[test]
-fn test_generated_recovery_uses_tier3_simulation() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
+// Stage 10.5r-d (2026-05-05): test_generated_recovery_uses_tier3_simulation
+// and test_generated_code_contains_frame_state DELETED — they assert
+// emissions (simulate_after_repair, cost_multiplier, FRAME_STATE_INT) from
+// the dead generate_wfst_recovery_fn emitter chain.
 
-    // The wfst_recover function should call simulate_after_repair
-    assert!(
-        code_str.contains("simulate_after_repair"),
-        "wfst_recover should call PARSE_SIMULATOR.simulate_after_repair()"
-    );
+// Stage 10.5r migration (2026-05-04): frame_kind_helper test MOVED to
+// macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_frame_kind_helper_per_category
+// (frame_kind_of_<cat> per-category wrappers + shared frame_kind_of_wpds
+// emitted by wpds_codegen/recovery.rs::emit_recovery_module).
 
-    // Should compute sim_mult via cost_multiplier
-    assert!(
-        code_str.contains("cost_multiplier"),
-        "wfst_recover should call PARSE_SIMULATOR.cost_multiplier()"
-    );
-}
-
-// ── Frame kind propagation (Sprint 5) ──
-
-#[test]
-fn test_generated_code_contains_frame_state() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // Thread-local FRAME_STATE for depth + frame kind tracking
-    assert!(
-        code_str.contains("FRAME_STATE_INT"),
-        "generated code should contain FRAME_STATE_INT thread-local"
-    );
-}
-
-#[test]
-fn test_generated_code_contains_frame_kind_helper() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // frame_kind_of_Int helper maps stack top to FrameKind u8
-    assert!(
-        code_str.contains("frame_kind_of_Int"),
-        "generated code should contain frame_kind_of_Int helper"
-    );
-}
-
-#[test]
-fn test_recovery_uses_frame_kind_multipliers() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // The recovery function should read frame state and apply multipliers
-    assert!(
-        code_str.contains("frame_kind"),
-        "wfst_recover should read frame_kind from FRAME_STATE thread-local"
-    );
-    assert!(
-        code_str.contains("frame_insert_mult"),
-        "wfst_recover should compute frame_insert_mult for Collection/Group"
-    );
-}
-
-// ── Multi-token recovery sequences (Sprint 8) ──
-
-#[test]
-fn test_generated_recovery_uses_viterbi_multi_step() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // The recovery function should call viterbi_multi_step for multi-step sequences
-    assert!(
-        code_str.contains("viterbi_multi_step"),
-        "wfst_recover should call viterbi_multi_step for multi-step recovery"
-    );
-
-    // Should reference RECOVERY_SYNC_TOKENS for the sync set
-    assert!(
-        code_str.contains("RECOVERY_SYNC_TOKENS_Int"),
-        "wfst_recover should use RECOVERY_SYNC_TOKENS_Int for Viterbi sync set"
-    );
-}
+// Stage 10.5r-d (2026-05-05): test_recovery_uses_frame_kind_multipliers
+// and test_generated_recovery_uses_viterbi_multi_step DELETED — they
+// assert emissions (frame_kind/frame_insert_mult, viterbi_multi_step,
+// RECOVERY_SYNC_TOKENS_Int) from the dead generate_wfst_recovery_fn chain.
 
 // ── Cross-category recovery (Sprint 10) ──
 
-#[test]
-fn test_multi_category_generates_cross_cat_casts() {
-    let mut spec = calculator_spec();
-    spec.types.push(CategorySpec {
-        name: "Bool".to_string(),
-        native_type: Some("bool".to_string()),
-        is_primary: false,
-        has_var: true,
-    });
-    let category_names = vec!["Int".to_string(), "Bool".to_string()];
-    spec.rules
-        .push(RuleSpec::classified("BoolLit", "Bool", vec![], &category_names));
-    spec.rules.push(RuleSpec::classified(
-        "BVar",
-        "Bool",
-        vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
-        &category_names,
-    ));
-    // Add a cast rule: BoolToInt (Bool → Int)
-    spec.rules.push(RuleSpec::classified(
-        "BoolToInt",
-        "Int",
-        vec![SyntaxItemSpec::NonTerminal {
-            category: "Bool".to_string(),
-            param_name: "val".to_string(),
-        }],
-        &category_names,
-    ));
-
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // Int has a cast from Bool, so CROSS_CAT_CASTS_Int should exist
-    assert!(
-        code_str.contains("CROSS_CAT_CASTS_Int"),
-        "multi-category code with cast should contain CROSS_CAT_CASTS_Int"
-    );
-}
+// Stage 10.5r-d (2026-05-05): test_multi_category_generates_cross_cat_casts
+// DELETED — CROSS_CAT_CASTS_<cat> static was consumed only by the dead
+// wfst_recover_<cat> function (Strategy 6); eliminated together with that chain.
 
 #[test]
 fn test_single_category_no_cross_cat_casts() {

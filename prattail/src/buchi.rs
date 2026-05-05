@@ -2001,7 +2001,7 @@ mod tests {
     #[test]
     fn analyze_bundle_collection_self_ref() {
         use crate::pipeline::CategoryInfo;
-        use crate::recursive::CollectionKind;
+        use crate::grammar::ir::CollectionKind;
 
         let categories = vec![
             CategoryInfo { name: "Stmt".to_string(), is_primary: true, has_var: true, native_type: None },

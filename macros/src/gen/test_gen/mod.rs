@@ -38,7 +38,10 @@ pub mod pratt_bp_boundaries;
 pub mod binder_shadowing;
 pub mod recovery_corruption;
 pub mod ambiguity_exposure;
-pub mod parity;
+// Stage 10.1 (2026-05-04): parity test generator deleted.
+// Pre-Stage-10b parity tests compared `Cat::parse(input)` (trampoline) vs
+// `parse_<Cat>_via_wpds(...)` (WPDS facade); both routes are now Walker-driven
+// after Stage 10b's parse_preserving_vars rewrite. Tests became tautological.
 
 use mettail_ast::language::LanguageDef;
 use mettail_prattail::PipelineAnalysis;
@@ -104,14 +107,9 @@ pub fn write_test_file(language: &LanguageDef, pipeline: &PipelineAnalysis) {
         write_test_section(&lang_name, "analytical", &analytical_content);
     }
 
-    // Phase 9 (2026-04-26): Model A dual-codegen parity tests. Calls
-    // both `Cat::parse(input)` (trampoline) and `parse_<Cat>_via_wpds(...)`
-    // (WPDS facade), asserts equality. Wired here as the 6th test
-    // section so it auto-builds with each language.
-    let parity_content = parity::generate_parity_section(language).to_string();
-    if !parity_content.is_empty() {
-        write_test_section(&lang_name, "parity", &parity_content);
-    }
+    // Stage 10.1 (2026-05-04): parity-section emission deleted alongside
+    // `parity` module. The dual-codegen comparison was tautological after
+    // Stage 10b's parse_preserving_vars rewrite (both routes Walker-driven).
 }
 
 /// Emit a standard test-file header (imports and allow directives)

@@ -153,9 +153,9 @@ pub fn language(input: TokenStream) -> TokenStream {
     stage!("generate_language_impl.done");
 
     // W7 Stage 6: WPDS-runtime engine for the language.
-    // Emits a `<Lang>WpdsEngine` struct and `WpdsStepEngine` impl alongside
-    // the existing trampoline parser. Coexists harmlessly until Stage 10's
-    // hard cutover. See `prattail/docs/design/wpds-migration-survey.md`.
+    // Emits a `<Lang>WpdsEngine` struct and `WpdsStepEngine` impl. Walker
+    // (WPDS) is the sole parser backend post-Stage-10. See
+    // `prattail/docs/design/wpds-migration-survey.md`.
     stage!("generate_wpds_engine_module.start");
     let wpds_engine_code = generate_wpds_engine_module(&language_def);
     stage!("generate_wpds_engine_module.done");

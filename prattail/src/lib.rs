@@ -41,18 +41,33 @@
 pub mod automata;
 pub mod binding_power;
 pub mod classify;
-pub mod dispatch;
+// Stage 10.5b conclusion (2026-05-05): `pub mod dispatch` DELETED (file deleted,
+// ~1,940 LoC). Trampoline-side cross-category dispatch emitter; data types
+// (CastRule, CrossCategoryRule) migrated to grammar::ir.
 pub mod ebnf;
 pub mod lexer;
 pub mod lexer_types;
 pub mod pipeline;
-pub mod pratt;
+// Stage 10.5b conclusion (2026-05-05): `pub mod pratt` DELETED (file deleted,
+// ~2,172 LoC). Trampoline-side Pratt parser emitter; superseded by Walker
+// codegen at `macros/src/gen/runtime/wpds_codegen/{prefix,infix,binder}.rs`.
 pub mod prediction;
 pub mod rd_analysis;
-pub mod recursive;
+// Stage 10.5b conclusion (2026-05-05): `pub mod recursive` DELETED (file
+// deleted, ~1,200 LoC). Trampoline-side recursive-descent emitter; data
+// types (RDRuleInfo, RDSyntaxItem, CollectionKind) migrated to grammar::ir.
+pub mod grammar;
+pub mod hang_dump;
 pub mod token_id;
-pub mod trampoline;
-pub mod unified_trampoline;
+// Stage 10.6 (2026-05-05): `pub mod trampoline` DELETED (file deleted, 7,351 LoC).
+// The Walker (WPDS) is the surviving parser backend. All recovery infrastructure
+// (BRACKET_STATE_<cat>, LAST_ERROR_POS_<cat>, RUNNING_WEIGHT_<CAT>,
+// PARENT_WEIGHT_<CAT>, frame_kind_of_<cat>, running_weight_<cat>) migrated to
+// `macros/src/gen/runtime/wpds_codegen/recovery.rs::emit_recovery_module`.
+//
+// Stage 10.4 (2026-05-04): `pub mod unified_trampoline` DELETED. Walker
+// subsumes the multi-category mutual-recursion CPS dispatch via per-cursor
+// BranchCursors and AmbiguityFanout state.
 pub mod wfst;
 
 pub mod compose;
@@ -82,9 +97,9 @@ pub mod wpds_walker;
 /// integration. Stage 5 of W7 plan v5.1.
 pub mod wpds_session;
 
-/// Parity testing infrastructure: Model A (dual codegen) + Model B
-/// (postcard golden ASTs). Stage 8 of W7 plan v5.1.
-pub mod parity;
+// Stage 10.3 (2026-05-04): `pub mod parity` (Model A + Model B golden ASTs)
+// DELETED. Zero in-tree consumers; parity tests had become tautological
+// post-Stage-10b's parse_preserving_vars Walker rewrite.
 
 /// Phase 10 (F.0): shared parser/evaluator control directives. Hosts
 /// `CekControl` so the evaluator (`cek_eval`) survives Stage 6 Phase E.4
@@ -336,7 +351,7 @@ use std::fmt;
 use proc_macro2::TokenStream;
 
 use binding_power::Associativity;
-use recursive::CollectionKind;
+use grammar::ir::CollectionKind;
 
 /// Source location for a grammar rule, extracted from proc-macro span data.
 ///
@@ -448,7 +463,8 @@ pub mod int_lit;
 pub mod rational_lit;
 pub use int_lit::{parse_int_lit, IntLit, IntSuffix, Suffix};
 pub use rational_lit::{parse_rational_lit, RationalLit};
-pub use trampoline::reset_handle_mixfix_emitted;
+// Stage 10.6 (2026-05-05): `pub use trampoline::reset_handle_mixfix_emitted` DELETED;
+// `prattail/src/trampoline.rs` deleted entirely.
 // Note: parse_fixed_lit and parse_float_lit live in the `mettail-runtime` crate
 // (they construct runtime types CanonicalFixedPoint / CanonicalFloat64). The
 // dependency direction is runtime → prattail (not the reverse), so we keep

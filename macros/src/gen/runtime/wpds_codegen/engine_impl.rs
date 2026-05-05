@@ -414,7 +414,12 @@ pub(crate) fn emit_engine_impl_full(
                                         },
                                     );
                                 }
-                                _ => WpdsStepAction::Idle,
+                                other => WpdsStepAction::Error(format!(
+                                    "Unwinding: unrecognized symbol kind {:?} at pos {} \
+                                     (expected CollectionMarker / RuleAt / GroupingMarker / \
+                                     MixfixMarker / OptionalGroupAt) — codegen invariant violated",
+                                    other, _pos,
+                                )),
                             }
                         } else {
                             WpdsStepAction::Accept

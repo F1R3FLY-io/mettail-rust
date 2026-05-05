@@ -621,10 +621,10 @@ fn first_of_suffix(
 /// - Phase 3: LParen rule vs grouping LL(2)/LL(3)
 /// - Phase 4: Optional group LL(1) guard
 pub fn first_of_rd_suffix(
-    items: &[crate::recursive::RDSyntaxItem],
+    items: &[crate::grammar::ir::RDSyntaxItem],
     first_sets: &HashMap<String, FirstSet>,
 ) -> (FirstSet, bool) {
-    use crate::recursive::RDSyntaxItem;
+    use crate::grammar::ir::RDSyntaxItem;
 
     let mut result = FirstSet::new();
     let mut nullable = true; // empty suffix is nullable
@@ -1781,9 +1781,9 @@ pub fn build_dispatch_action_tables(
     categories: &[String],
     first_sets: &HashMap<String, FirstSet>,
     overlaps: &HashMap<(String, String), CrossCategoryOverlap>,
-    rd_rules: &[crate::recursive::RDRuleInfo],
-    cross_rules: &[crate::dispatch::CrossCategoryRule],
-    cast_rules: &[crate::dispatch::CastRule],
+    rd_rules: &[crate::grammar::ir::RDRuleInfo],
+    cross_rules: &[crate::grammar::ir::CrossCategoryRule],
+    cast_rules: &[crate::grammar::ir::CastRule],
     native_types: &HashMap<String, Option<String>>,
 ) -> HashMap<String, HashMap<String, DispatchAction>> {
     use crate::automata::codegen::terminal_to_variant_name;
@@ -1801,7 +1801,7 @@ pub fn build_dispatch_action_tables(
             // Skip infix-like, collection-first, and nonterminal-first rules
             if rd_rule.prefix_bp.is_some() {
                 // Unary prefix — still Direct, just with a different parse_fn
-                if let Some(crate::recursive::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
+                if let Some(crate::grammar::ir::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
                     let variant = terminal_to_variant_name(t);
                     entries
                         .entry(variant)
@@ -1814,12 +1814,12 @@ pub fn build_dispatch_action_tables(
             }
 
             let starts_with_terminal =
-                matches!(rd_rule.items.first(), Some(crate::recursive::RDSyntaxItem::Terminal(_)));
+                matches!(rd_rule.items.first(), Some(crate::grammar::ir::RDSyntaxItem::Terminal(_)));
             if !starts_with_terminal {
                 continue;
             }
 
-            if let Some(crate::recursive::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
+            if let Some(crate::grammar::ir::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
                 let variant = terminal_to_variant_name(t);
                 entries
                     .entry(variant)

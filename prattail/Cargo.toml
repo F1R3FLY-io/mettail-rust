@@ -11,6 +11,14 @@ description = "PraTTaIL: Pratt + Recursive Descent parser generator with automat
 ## Currently broken by upstream ascent 0.8.0 codegen bug (E0596: mutable borrow
 ## in Fn closure). See docs/design/exploring/ascent_parallel_issue.md.
 ascent-parallel = []
+## SIGUSR1 hang-dump (T4, 2026-05-05): debugging aid that lets the user send
+## a signal to a running parser to capture a snapshot of walker state. See
+## `prattail/src/hang_dump.rs` for details. Zero-cost when not enabled at
+## runtime via `PRATTAIL_HANG_DUMP=1`.
+##
+## JSON output is hand-formatted (per feedback_postcard_over_serde_json:
+## avoid serde_json; postcard is binary so doesn't fit human-readable dumps).
+hang-dump = ["dep:signal-hook", "dep:parking_lot"]
 
 [dependencies]
 # Note: prattail does NOT depend on runtime. fixed_lit/float_lit were moved
@@ -39,6 +47,9 @@ num_cpus = { version = "1" }
 num-bigint = "0.4"
 num-rational = { version = "0.4", features = ["num-bigint-std"] }
 num-traits = "0.2"
+# T4 SIGUSR1 hang-dump (optional under `hang-dump` feature).
+signal-hook = { version = "0.3", optional = true }
+parking_lot = { version = "0.12", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

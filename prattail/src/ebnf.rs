@@ -15,10 +15,9 @@ use std::fmt::Write;
 const EBNF_LINE_WIDTH: usize = 60;
 
 use crate::binding_power::{Associativity, BindingPowerTable, InfixOperator};
-use crate::dispatch::{CastRule, CrossCategoryRule};
+use crate::grammar::ir::{CastRule, CollectionKind, CrossCategoryRule, RDRuleInfo, RDSyntaxItem};
 use crate::pipeline::{CategoryInfo, ParserBundle};
 use crate::prediction::{compute_first_sets, compute_follow_sets_from_inputs, FirstSet};
-use crate::recursive::{CollectionKind, RDRuleInfo, RDSyntaxItem};
 use crate::lint::DiagnosticId;
 use crate::{LanguageSpec, RuleSpec, SyntaxItemSpec};
 
@@ -1369,9 +1368,9 @@ mod tests {
         // so we use run_pipeline logic. Instead, we replicate the extraction
         // inline for testing purposes.
         use crate::binding_power::{analyze_binding_powers, InfixRuleInfo};
-        use crate::dispatch::{CastRule, CrossCategoryRule};
+        use crate::grammar::ir::{CastRule, CrossCategoryRule};
         use crate::prediction::{FirstItem, FollowSetInput, RuleInfo};
-        use crate::recursive::RDRuleInfo;
+        use crate::grammar::ir::RDRuleInfo;
         use std::collections::BTreeMap;
 
         let categories: Vec<CategoryInfo> = spec

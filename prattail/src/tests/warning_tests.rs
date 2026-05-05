@@ -1103,7 +1103,7 @@ mod dead_rule_tests {
 
     #[test]
     fn test_nfa_spillover_siblings_not_flagged() {
-        use crate::recursive::{RDRuleInfo, RDSyntaxItem};
+        use crate::grammar::ir::{RDRuleInfo, RDSyntaxItem};
 
         // Two RD rules in Float that share dispatch token "float":
         //   BoolToFloat: "float" "(" Bool ")"
@@ -1207,7 +1207,7 @@ mod dead_rule_tests {
 
     #[test]
     fn test_nfa_spillover_all_dead_still_flagged() {
-        use crate::recursive::{RDRuleInfo, RDSyntaxItem};
+        use crate::grammar::ir::{RDRuleInfo, RDSyntaxItem};
 
         // Two RD rules sharing dispatch token "convert", but NEITHER is
         // WFST-reachable → both should still be flagged.

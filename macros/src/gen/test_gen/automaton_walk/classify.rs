@@ -103,26 +103,6 @@ fn is_accept(dfa: &Dfa, s: StateId) -> bool {
     dfa.states[s as usize].accept.is_some()
 }
 
-/// Follow a DFA transition on a concrete input byte `b`. Returns
-/// `DEAD_STATE` if the DFA has no transition for that byte.
-///
-/// Because `ClassId`s differ per DFA, we can't directly index by
-/// byte. Instead we rely on the fact that every DFA state's
-/// `transitions` vector is indexed by its own `ClassId` partition
-/// — so we must look up which class `b` falls into for *this* DFA.
-///
-/// The per-DFA byte→class map is **not** stored on `Dfa` itself;
-/// it's produced by `compute_equivalence_classes` as part of the
-/// partition. Since we don't retain the partition alongside the
-/// minimized DFA here, we take a different route: walk *accepted
-/// strings* directly via the NFA rather than byte-stepping through
-/// the DFA for product comparison. See `language_equivalent` for
-/// the actual mechanism.
-#[allow(dead_code)]
-fn _dfa_step_by_byte(_dfa: &Dfa, _s: StateId, _b: u8) -> StateId {
-    unimplemented!("use language_equivalent instead")
-}
-
 /// Decide whether two patterns (given as regex strings) accept the
 /// same language.
 ///

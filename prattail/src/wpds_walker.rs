@@ -1139,6 +1139,52 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         }
     }
 
+    /// T4 SIGUSR1 hang-dump (2026-05-05): publish a type-erased snapshot to
+    /// the hang-dump slot. No-op when the `hang-dump` feature is off, when
+    /// `PRATTAIL_HANG_DUMP` is unset, or when the slot is contended.
+    ///
+    /// Cheap on the happy path: one `current_snapshot` clone + one
+    /// `try_lock`. Called at the top of every `run_to_saturation` iteration
+    /// so a SIGUSR1 dump always sees a fresh snapshot.
+    #[cfg(feature = "hang-dump")]
+    pub fn publish_to_hang_dump_slot(&self)
+    where
+        W: 'static + std::fmt::Debug,
+    {
+        let snap = self.current_snapshot();
+        let cursors: Vec<crate::hang_dump::CursorRow> = snap
+            .cursors
+            .iter()
+            .map(|c| crate::hang_dump::CursorRow {
+                idx: c.idx,
+                pos: c.pos,
+                state_dbg: format!("{:?}", c.state),
+                weight_dbg: format!("{:?}", c.weight),
+                source_priority: c.source_priority,
+                pending_ops_len: c.pending_ops_len,
+                collection_depth: c.collection_depth,
+            })
+            .collect();
+        let hang_snap = crate::hang_dump::HangSnapshot {
+            timestamp_unix_secs: crate::hang_dump::now_unix_secs(),
+            pid: crate::hang_dump::current_pid(),
+            trigger: crate::hang_dump::HangTrigger::Sigusr1, // overridden by watcher at dump time
+            walker_state_dbg: format!("{:?}", snap.walker_state),
+            walker_pos: snap.walker_pos,
+            cursor_count: snap.cursor_count,
+            gss_node_count: snap.gss_node_count,
+            step_index: snap.step_index as u64,
+            cursors,
+        };
+        crate::hang_dump::publish_snapshot(hang_snap);
+    }
+
+    /// No-op variant when the `hang-dump` feature is disabled. Compiler
+    /// inlines and elides — zero cost on the happy path.
+    #[cfg(not(feature = "hang-dump"))]
+    #[inline(always)]
+    pub fn publish_to_hang_dump_slot(&self) {}
+
     /// Enable beam pruning to at most `k` branches per frontier (builder style).
     pub fn with_beam_size(mut self, k: usize) -> Self {
         self.beam_size = Some(k);
@@ -1360,11 +1406,19 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         &mut self,
         max_steps: usize,
         tokens: &dyn WpdsTokenSource,
-    ) -> WpdsState {
+    ) -> WpdsState
+    where
+        W: 'static + std::fmt::Debug,
+    {
         for _ in 0..max_steps {
             if self.state.is_terminal() {
                 break;
             }
+            // T4 SIGUSR1 hang-dump (2026-05-05): publish a fresh snapshot so
+            // that an out-of-band SIGUSR1 / watchdog dump always sees current
+            // walker state. No-op when the `hang-dump` feature is off or
+            // PRATTAIL_HANG_DUMP env var is unset.
+            self.publish_to_hang_dump_slot();
             // Step 3 (Fork plan F6): when in AmbiguityFanout, drive each
             // BranchCursor via step_fanout rather than asking the engine
             // about the AmbiguityFanout state itself (engine returns Idle
@@ -2426,6 +2480,15 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             match outcome {
                 CursorOutcome::Drop => { /* discard */ }
                 CursorOutcome::Alive => new_cursors.push(cursor),
+                // **Tiebreak chain link 4 (load-bearing).** `extend` preserves
+                // the source-order of `children` produced by Fork. Combined
+                // with: (1) `vec![take, skip]` codegen at binder.rs:973-980,
+                // (2) `LexicographicWeight::plus` returning `*self` on equality
+                // at lex_weight.rs:345-348, and (3) `pick_lex_min_resolved`'s
+                // earlier-index-wins tiebreak at wpds_walker.rs:2570-2592,
+                // this ordering yields right-associative dangling-else for
+                // Opt-Group Forks. Reordering or replacing with `insert`/`push`
+                // breaks the invariant.
                 CursorOutcome::ForkInto(children) => new_cursors.extend(children),
                 CursorOutcome::Resolved => {
                     resolved_indices.push(new_cursors.len());

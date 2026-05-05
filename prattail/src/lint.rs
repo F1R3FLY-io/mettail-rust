@@ -66,11 +66,10 @@ use std::fmt;
 use crate::SourceLocation;
 use crate::binding_power::BindingPowerTable;
 use crate::decision_tree::CategoryDecisionTree;
-use crate::dispatch::{CastRule, CrossCategoryRule};
+use crate::grammar::ir::{CastRule, CrossCategoryRule, RDRuleInfo};
 use crate::pipeline::CategoryInfo;
 use crate::prediction::{FirstSet, FollowSetInput, RuleInfo};
 use crate::recovery::{RecoveryConfig, RecoveryWfst};
-use crate::recursive::RDRuleInfo;
 use crate::token_id::TokenIdMap;
 use crate::wfst::PredictionWfst;
 use crate::SyntaxItemSpec;
@@ -218,7 +217,9 @@ define_diagnostic_ids! {
 
     // ── Parallel (PAR) ──
     PAR01 => "PAR01", PAR02 => "PAR02", PAR03 => "PAR03",
-    PAR04 => "PAR04", PAR05 => "PAR05",
+    PAR04 => "PAR04",
+    // Stage 10.8 (2026-05-05): PAR05 (trampoline-frame-variant-count) DELETED —
+    // Frame_Cat enum gone with trampoline.rs (Stage 10.6).
 
     // ── Parser bridge (PB) ──
     PB01 => "PB01", PB02 => "PB02", PB03 => "PB03",
@@ -914,7 +915,7 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     lint_par02_unused_bp_level(ctx, &mut diagnostics);
     lint_par03_postfix_prefix_collision(ctx, &mut diagnostics);
     lint_par04_mixfix_ambiguous_delimiter(ctx, &mut diagnostics);
-    lint_par05_trampoline_frame_variant_count(ctx, &mut diagnostics);
+    // Stage 10.8 (2026-05-05): lint_par05_trampoline_frame_variant_count DELETED.
 
     // ── Dispatch lints ──
     lint_dis01_hot_path_misalignment(ctx, &mut diagnostics);
@@ -2582,7 +2583,7 @@ fn classify_ambiguity_root_cause(
     let strategy = tree.dispatch_strategy(token, ctx.token_id_map);
 
     match strategy {
-        crate::decision_tree::DispatchStrategy::NfaTryAll {
+        crate::decision_tree::DispatchStrategy::AmbiguousFanout {
             rule_labels,
             shared_prefix_len,
             shared_terminals,
@@ -3296,7 +3297,7 @@ fn tree_rules_for_token(ctx: &LintContext, category: &str, token: &str) -> Vec<S
     let strategy = tree.dispatch_strategy(&variant, ctx.token_id_map);
     match strategy {
         crate::decision_tree::DispatchStrategy::Singleton { rule_label } => vec![rule_label],
-        crate::decision_tree::DispatchStrategy::NfaTryAll { rule_labels, .. } => rule_labels,
+        crate::decision_tree::DispatchStrategy::AmbiguousFanout { rule_labels, .. } => rule_labels,
         crate::decision_tree::DispatchStrategy::DisjointSuffix { suffix_map, .. } => {
             suffix_map.values().cloned().collect()
         }
@@ -3517,7 +3518,7 @@ fn lint_w01_dead_rule(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) 
                     crate::decision_tree::DispatchStrategy::Singleton { rule_label } => {
                         vec![rule_label.clone()]
                     }
-                    crate::decision_tree::DispatchStrategy::NfaTryAll { rule_labels, .. } => {
+                    crate::decision_tree::DispatchStrategy::AmbiguousFanout { rule_labels, .. } => {
                         rule_labels.clone()
                     }
                     crate::decision_tree::DispatchStrategy::DisjointSuffix { suffix_map, .. } => {
@@ -3798,7 +3799,11 @@ fn lint_w06_weight_inversion(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Stage 10c (2026-05-04): W11 (context-narrowing-deterministic) DELETED.
-// Predicate referenced `DispatchStrategy::NfaTryAll`, which Stage 10d removes.
+// Stage 10/T11 (2026-05-05): `DispatchStrategy::NfaTryAll` renamed to
+// `AmbiguousFanout` (the trampoline-era runtime mechanism is gone; the
+// variant survives because static analyses still want to enumerate the
+// ambiguous prefix-overlap set for diagnostics — Walker emits Forks for
+// these very same fanout sets).
 // Per `analysis-nfa-spillover-coverage-gaps.md` Gap 2: NFA spillover lints
 // have no enforcement target post-Stage-10b parse_preserving_vars excision.
 // ══════════════════════════════════════════════════════════════════════════════
@@ -3832,7 +3837,7 @@ fn lint_w12_training_would_improve(
                     cat_name, entropy_bits, entropy_nats, num_actions,
                 ),
                 hint: Some(
-                    "use `SpilloverTrainer` or `train_from_corrections()` to \
+                    "use `train_from_corrections()` to \
                      learn better weights from parse examples"
                         .to_string(),
                 ),
@@ -4037,8 +4042,7 @@ fn lint_p05_wpds_pipeline_cost(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
 /// brittle, ordering-dependent outcome that grammar authors should be
 /// aware of.
 ///
-/// Independent of `nfa_spillover_categories` — W14 reads only
-/// `prediction_wfsts` and `first_sets`.
+/// W14 reads only `prediction_wfsts` and `first_sets`.
 fn lint_w14_wpds_confirmed_ambiguity(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     /// Margin under which Walker lex-min Fork resolution depends on
     /// `src_idx`/`rule_idx` tiebreaks rather than principled weight order.
@@ -4402,7 +4406,7 @@ fn assess_sync_quality(
             crate::decision_tree::DispatchStrategy::DisjointSuffix { shared_prefix_len, .. } => {
                 if *shared_prefix_len <= 1 { "good (shallow)" } else { "fair (deep prefix)" }
             }
-            crate::decision_tree::DispatchStrategy::NfaTryAll { shared_prefix_len, .. } => {
+            crate::decision_tree::DispatchStrategy::AmbiguousFanout { shared_prefix_len, .. } => {
                 if *shared_prefix_len == 0 { "fair (ambiguous at root)" } else { "poor (deep + ambiguous)" }
             }
             crate::decision_tree::DispatchStrategy::NotPresent => "N/A (not in trie)",
@@ -5599,7 +5603,7 @@ fn lint_w03_cross_category_hotspot(ctx: &LintContext, diagnostics: &mut Vec<Lint
         for token_variant in &dispatch_tokens {
             let strategy = tree.dispatch_strategy(token_variant, ctx.token_id_map);
             let count = match &strategy {
-                crate::decision_tree::DispatchStrategy::NfaTryAll { rule_labels, .. } => {
+                crate::decision_tree::DispatchStrategy::AmbiguousFanout { rule_labels, .. } => {
                     rule_labels.len()
                 }
                 _ => 0,
@@ -7465,54 +7469,10 @@ fn lint_par04_mixfix_ambiguous_delimiter(
     }
 }
 
-/// PAR05: trampoline-frame-variant-count — Note when Frame_Cat enum has many variants.
-fn lint_par05_trampoline_frame_variant_count(
-    ctx: &LintContext,
-    diagnostics: &mut Vec<LintDiagnostic>,
-) {
-    // Estimate frame variant count: each RD rule generates 1-2 continuation variants.
-    for cat_info in ctx.categories {
-        let rd_rules_for_cat: Vec<_> = ctx
-            .rd_rules
-            .iter()
-            .filter(|r| r.category == cat_info.name)
-            .collect();
-
-        // Each RD rule with N nonterminals in its items generates N continuation frame variants
-        let frame_variants: usize = rd_rules_for_cat
-            .iter()
-            .map(|r| {
-                let nt_count = r
-                    .items
-                    .iter()
-                    .filter(|item| {
-                        matches!(item, crate::recursive::RDSyntaxItem::NonTerminal { .. })
-                    })
-                    .count();
-                nt_count.max(1)
-            })
-            .sum();
-
-        if frame_variants > 15 {
-            diagnostics.push(LintDiagnostic {
-                id: DiagnosticId::PAR05,
-                name: "trampoline-frame-variant-count",
-                severity: LintSeverity::Note,
-                category: Some(cat_info.name.clone()),
-                rule: None,
-                message: format!(
-                    "category `{}` has ~{} trampoline frame variants (threshold: 15) — large frame size",
-                    cat_info.name, frame_variants
-                ),
-                hint: Some(
-                    "consider splitting complex rules or factoring common prefixes".to_string(),
-                ),
-                grammar_name: Some(ctx.grammar_name.to_string()),
-                source_location: None,
-            });
-        }
-    }
-}
+// Stage 10.8 (2026-05-05): lint_par05_trampoline_frame_variant_count DELETED.
+// Linted Frame_Cat enum size — Frame_Cat is gone with trampoline.rs (Stage 10.6).
+// Walker uses WPDS stack symbols (rule_idx, src_idx), not named per-rule frame
+// variants, so the lint's enforcement target no longer exists.
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Dispatch Lints (DIS01-DIS05)
@@ -9393,11 +9353,11 @@ pub fn lint_gt06_stack_depth(
 mod tests {
     use super::*;
     use crate::binding_power::{BindingPowerTable, InfixOperator};
-    use crate::dispatch::{CastRule, CrossCategoryRule};
+    use crate::grammar::ir::{CastRule, CrossCategoryRule};
     use crate::pipeline::CategoryInfo;
     use crate::prediction::{FirstItem, FirstSet, FollowSetInput, RuleInfo};
     use crate::recovery::RecoveryConfig;
-    use crate::recursive::RDRuleInfo;
+    use crate::grammar::ir::RDRuleInfo;
 
     // ── Helper constructors ──
 
@@ -12956,7 +12916,7 @@ mod tests {
     #[test]
     fn group_w12_multiple_categories() {
         let diags = vec![
-            make_diag(DiagnosticId::W12, "training-would-improve", LintSeverity::Note, Some("Proc"), None, "category `Proc` has high dispatch entropy (3.21 bits, 2.22 nats) across 10 actions — WFST weight training would likely improve disambiguation quality", Some("use SpilloverTrainer")),
+            make_diag(DiagnosticId::W12, "training-would-improve", LintSeverity::Note, Some("Proc"), None, "category `Proc` has high dispatch entropy (3.21 bits, 2.22 nats) across 10 actions — WFST weight training would likely improve disambiguation quality", Some("use train_from_corrections")),
             make_diag(DiagnosticId::W12, "training-would-improve", LintSeverity::Note, Some("Name"), None, "category `Name` has high dispatch entropy (2.85 bits, 1.98 nats) across 7 actions — WFST weight training would likely improve disambiguation quality", Some("use SpilloverTrainer")),
         ];
         let result = group_diagnostics(diags);

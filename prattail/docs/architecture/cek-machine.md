@@ -1,6 +1,6 @@
 # CEK Machine Architecture
 
-PraTTaIL's trampolined parser is structurally isomorphic to a **CEK machine** (Felleisen & Friedman, 1986). This document formalizes the isomorphism and its consequences.
+PraTTaIL's parsing pipeline is structurally isomorphic to a **CEK machine** (Felleisen & Friedman, 1986). The original trampoline-era backend implemented this directly with `Frame_Cat` enum continuations and a `'drive` loop in `trampoline.rs`; post-Stage-10 (2026-05-04) the WPDS Walker hosts the same isomorphism via `WpdsState` (Control), the GSS frontier of `RuleAt` / `MixfixMarker` / `OptionalGroupAt` / `BinderRule` symbols (Kontinuation), and the live-builder `WpdsTermBuilder` (Environment). This document formalizes the isomorphism and its consequences.
 
 > **Note**: This document covers the **parsing CEK** machine. The parsing CEK is intentionally
 > *not* extended to CESK — parsing is purely functional (no mutable state, no store needed).
@@ -9,11 +9,11 @@ PraTTaIL's trampolined parser is structurally isomorphic to a **CEK machine** (F
 
 ## 1. Component Mapping
 
-| CEK | Current Implementation | Location |
-|-----|----------------------|----------|
-| **C** (Control) | Token-driven prefix dispatch + binding power (`cur_bp`) + decision tree | `trampoline.rs` (`'drive` loop) |
-| **E** (Environment) | Accumulated captures in `Frame_Cat` fields; `CekEnvironment` | `trampoline.rs` (`SegmentCapture`), `cek.rs` |
-| **K** (Kontinuation) | `Vec<Frame_Cat>` explicit continuation stack with TLS pooling | `trampoline.rs` (`FRAME_POOL_Cat`) |
+| CEK | WPDS Walker (live, post-Stage-10) | Trampoline (historical, Stage 10.6 deleted) |
+|-----|-------|----------|
+| **C** (Control) | `WpdsState` enum (`PrefixDispatch` / `InfixLoop` / `Unwinding` / `Accepted` / `Error` / `BinderRule` / `OptionalGroup` / `CollectionLoop` / …) at `prattail/src/wpds_runtime.rs` | Token-driven prefix dispatch + binding power (`cur_bp`) + decision tree in `trampoline.rs` (`'drive` loop) |
+| **E** (Environment) | `WpdsTermBuilder` live builder + per-cursor argument stacks (`prattail/src/wpds_walker.rs`); `CekEnvironment` (evaluator-side, unchanged) | Accumulated captures in `Frame_Cat` fields in `trampoline.rs` (`SegmentCapture`); `CekEnvironment` in `cek.rs` |
+| **K** (Kontinuation) | GSS frontier of `StackSymbolV2` symbols (`RuleAt`, `MixfixMarker`, `GroupingMarker`, `OptionalGroupAt`, `CollectionMarker`) in `prattail/src/wpds_walker.rs` | `Vec<Frame_Cat>` explicit continuation stack with TLS pooling in `trampoline.rs` (`FRAME_POOL_Cat`) |
 
 ## 2. Formal Transition Rules
 
@@ -79,7 +79,7 @@ where `p` is the single WPDS control location, and each `γᵢ = StackSymbol::ru
 
 For every concrete transition `s → s'`, there exists a WPDS transition sequence `α(s) →*_WPDS α(s')`.
 
-*Proof.* Case analysis on the 10 transition rules. See `formal/rocq/trampoline/theories/WpdsSimulation.v`.
+*Proof.* Case analysis on the 10 transition rules. See `formal/rocq/trampoline/theories/WpdsSimulation.v` (the proof remains valid for the WPDS Walker since the Walker IS the WPDS — the simulation is now identity rather than abstraction).
 
 ### Corollary (Dead Rule Soundness)
 

@@ -18,7 +18,7 @@ use mettail_ast::{
 };
 use crate::gen::native::{native_type_to_full_string, native_type_to_string};
 use mettail_prattail::{
-    binding_power::Associativity, recursive::CollectionKind, BeamWidthConfig, CategorySpec,
+    binding_power::Associativity, grammar::ir::CollectionKind, BeamWidthConfig, CategorySpec,
     CustomTokenSpec, LanguageSpec, LexerModeSpec, LiteralPatterns, RefinementPredKind,
     RefinementTypeSpec, RuleSpecInput, SyncConstraintSpec, SyncSpec, SyntaxItemSpec,
     TreeInvariantSpec,

@@ -24,29 +24,24 @@ use proc_macro2::TokenStream;
 use crate::binding_power::{
     analyze_binding_powers, compute_prefix_bp, BindingPowerTable, InfixRuleInfo, MixfixPart,
 };
-use crate::dispatch::{
-    categories_needing_dispatch, write_category_dispatch, CastRule, CrossCategoryRule,
-};
+// Stage 10.5 (2026-05-04): trampoline emitter imports DELETED. The legacy
+// modules (pratt, recursive, dispatch, trampoline) are being phased out;
+// data-type imports re-routed directly through `crate::grammar::ir::*`.
+use crate::grammar::ir::{CastRule, CrossCategoryRule, RDRuleInfo, RDSyntaxItem};
 use crate::automata::codegen::{LexerAmbiguityInfo, TokenVariantMap};
 use crate::lexer::{extract_terminals, generate_lexer_as_string_hybrid, GrammarRuleInfo, TypeInfo};
-use crate::pratt::{
-    write_dispatch_recovering, write_parser_helpers, write_recovery_helpers, PrefixHandler,
-};
+// Stage 10.5b conclusion (2026-05-05): pratt::write_parser_helpers /
+// write_recovery_helpers DELETED. They emitted runtime helpers
+// (expect_token, expect_ident, peek_token, peek_ahead, sync_to) that
+// were consumed only by trampoline-emitted RD handlers, all gone.
+// Walker (parse_<Cat>_via_wpds) has its own error handling via
+// WpdsParseError + RecoveryAttempt and doesn't need these helpers.
 use crate::prediction::{
     analyze_cross_category_overlaps, compute_first_sets, compute_first_sets_incremental,
     compute_follow_sets_from_inputs, compute_follow_sets_incremental,
     generate_sync_predicate, FirstItem, FirstSet, FollowSetInput,
     RuleInfo,
 };
-use crate::recursive::{
-    make_prefix_handler_metadata, write_dollar_handlers, write_lambda_handlers, write_rd_handler,
-    RDRuleInfo, RDSyntaxItem,
-};
-use crate::rd_analysis::should_use_standalone_fn;
-use crate::trampoline::{
-    write_trampolined_parser, write_trampolined_parser_recovering, TrampolineConfig,
-};
-use crate::trampoline::write_trampolined_parser_traced;
 use crate::wfst::PredictionWfst;
 use crate::lint::DiagnosticId;
 use crate::{LanguageSpec, LiteralPatterns, SyntaxItemSpec};
@@ -318,7 +313,7 @@ pub(crate) fn detect_dead_rules(
     prediction_wfsts: &HashMap<String, PredictionWfst>,
     semantic_dependency_groups: &[HashSet<String>],
     nfa_spillover_categories: &HashSet<String>,
-    rd_rules: &[crate::recursive::RDRuleInfo],
+    rd_rules: &[crate::grammar::ir::RDRuleInfo],
 ) -> Vec<DeadRuleWarning> {
     let mut warnings = Vec::new();
 
@@ -776,7 +771,7 @@ pub(crate) fn detect_dead_prefixes(
                 crate::decision_tree::DispatchStrategy::Singleton { rule_label } => {
                     vec![rule_label.clone()]
                 }
-                crate::decision_tree::DispatchStrategy::NfaTryAll { rule_labels, .. } => {
+                crate::decision_tree::DispatchStrategy::AmbiguousFanout { rule_labels, .. } => {
                     rule_labels.clone()
                 }
                 crate::decision_tree::DispatchStrategy::DisjointSuffix { suffix_map, .. } => {
@@ -2547,33 +2542,10 @@ fn generate_parser_code(
     // (e.g., with trained model weights overriding heuristic weights).
     let mut buf = String::with_capacity(8192);
     emit_prediction_wfst_static(&mut buf, &prediction_wfsts);
-    emit_recovery_wfst_static(&mut buf, &recovery_wfsts);
-
-    // Emit recovery beam width constant from RecoveryConfig.
-    // Used by viterbi_multi_step() when multi-step recovery is wired (Sprint 8).
-    {
-        use std::fmt::Write;
-        let beam_str = match bundle.recovery_config.beam_width {
-            Some(w) => format!("Some({})", format_f64(w)),
-            None => "None".to_string(),
-        };
-        write!(
-            buf,
-            "const RECOVERY_BEAM_WIDTH: Option<f64> = {};",
-            beam_str
-        )
-        .unwrap();
-    }
-
-    // Emit ParseSimulator static data for Tier 3 recovery simulation.
-    emit_parse_simulator_static(
-        &mut buf,
-        &first_sets,
-        &follow_sets,
-        &bundle.bp_table,
-        &category_names,
-        &token_id_map,
-    );
+    // Stage 10.5r-d (2026-05-05): emit_recovery_wfst_static + emit_parse_simulator_static
+    // calls DELETED. Both emit data structures consumed only by the dead
+    // `wfst_recover_<Cat>` function (also deleted). RECOVERY_BEAM_WIDTH constant
+    // similarly dead — removed.
 
     // Compute the set of token variant names that actually exist in the grammar's
     // Token enum. The TokenIdMap may contain superset tokens (e.g., Semi) that don't
@@ -2623,10 +2595,6 @@ fn generate_parser_code(
     // Emit token_to_id helper for Tier 3 simulation (Token → u16 TokenId).
     // Build a set of token names that carry a payload (tuple-variant patterns
     // must use a wildcard, e.g. `Token::BigRat(_)` not `Token::BigRat`).
-    //
-    // Also seed the thread-local used by `dispatch::write_token_pattern` so
-    // every downstream pattern emitter uses the correct wildcard form for
-    // custom payload-bearing variants during this codegen pass.
     let payload_variants: std::collections::HashSet<String> = {
         let mut set = std::collections::HashSet::new();
         for spec in &bundle.custom_tokens {
@@ -2636,72 +2604,18 @@ fn generate_parser_code(
         }
         set
     };
-    crate::dispatch::set_payload_variants(payload_variants.iter().cloned());
-
-    // W4b: Install category → native-type map so dispatch codegen can emit
-    // suffix-guarded `Token::Integer(_, suffix) if suffix.matches_<T>()`
-    // arms when routing to an integer-category parser. Without this the
-    // blanket `Token::Integer(_, _)` arm sends `0u32` to `parse_Int` and
-    // fails on the suffix mismatch.
-    let category_native_types: std::collections::HashMap<String, String> = bundle
-        .categories
-        .iter()
-        .filter_map(|c| c.native_type.as_ref().map(|nt| (c.name.clone(), nt.clone())))
-        .collect();
-    crate::dispatch::set_category_native_types(category_native_types);
 
     emit_token_to_id_fn(&mut buf, &token_id_map, &grammar_token_variants, &payload_variants);
 
-    // Generate RD handlers
+    // Stage 10.5 (2026-05-04): RD handler emission (`all_prefix_handlers` Vec
+    // build + lambda/dollar handler block) DELETED. These emitters fed the
+    // now-deleted trampoline emission. Walker emits binder syntax via
+    // `wpds_codegen/binder.rs` (lambda/dollar) and prefix RD rules via
+    // `wpds_codegen/prefix.rs`.
     //
-    // B-P04 optimization (Prefix Handler Inlining for Trivial Rules):
-    // Skip standalone function generation for rules that the trampoline will inline
-    // directly into the prefix match arm. A rule is inlined when it starts with a
-    // terminal and `should_use_standalone_fn()` returns false (no Sep items, no
-    // multi-binder). For such rules, only the PrefixHandler metadata is created —
-    // the standalone `parse_<label>` function is dead code that would otherwise
-    // bloat the generated output and slow compilation.
-    //
-    // This optimization is always applied (cost_benefit BP04 gate defaults to true
-    // and is marked "always applicable"). The optimization_gates struct is computed
-    // later in the pipeline; if gating is needed in the future, move gate
-    // computation earlier or check the gate here.
-    let mut all_prefix_handlers: Vec<PrefixHandler> = Vec::with_capacity(bundle.rd_rules.len());
-
-    for rd_rule in &bundle.rd_rules {
-        let starts_with_terminal = !matches!(
-            rd_rule.items.first(),
-            Some(RDSyntaxItem::NonTerminal { .. }) | Some(RDSyntaxItem::IdentCapture { .. })
-        );
-
-        if starts_with_terminal && !should_use_standalone_fn(rd_rule) {
-            // B-P04: trampoline inlines this rule — skip standalone function generation
-            let handler = make_prefix_handler_metadata(rd_rule);
-            all_prefix_handlers.push(handler);
-        } else {
-            // Rule needs standalone function (ident-lookahead dispatch, Sep, multi-binder)
-            let handler = write_rd_handler(&mut buf, rd_rule);
-            all_prefix_handlers.push(handler);
-        }
-    }
-
-    // Generate lambda handlers for primary category if grammar has binders
-    if bundle.has_binders {
-        let lambda_handlers = write_lambda_handlers(&mut buf, primary_category, &category_names);
-        all_prefix_handlers.extend(lambda_handlers);
-
-        // Generate dollar-syntax handlers ($proc, $name, etc.) for function application
-        let dollar_handlers = write_dollar_handlers(&mut buf, primary_category, &category_names);
-        all_prefix_handlers.extend(dollar_handlers);
-    }
-
-    // Determine dispatch categories
-    let dispatch_categories = categories_needing_dispatch(
-        &bundle.cross_rules,
-        &bundle.cast_rules,
-        &bundle.rd_rules,
-        &category_names,
-    );
+    // Stage 10.5 (2026-05-04): `dispatch_categories` declaration DELETED.
+    // It fed `TrampolineConfig::needs_dispatch` and the cross-cat dispatch
+    // for-loop, both of which died with the trampoline.
 
     // ── Composed dispatch resolution ────────────────────────────────────────
     // Compute the composed dispatch table from lexer ambiguity info and
@@ -2894,8 +2808,8 @@ fn generate_parser_code(
                         .filter(|r| r.category == *cat_name && !r.is_collection && r.prefix_bp.is_none())
                         .filter(|r| !matches!(
                             r.items.first(),
-                            Some(crate::recursive::RDSyntaxItem::NonTerminal { .. }) |
-                            Some(crate::recursive::RDSyntaxItem::IdentCapture { .. })
+                            Some(crate::grammar::ir::RDSyntaxItem::NonTerminal { .. }) |
+                            Some(crate::grammar::ir::RDSyntaxItem::IdentCapture { .. })
                         ))
                         .map(|r| r.label.clone())
                         .collect();
@@ -3136,7 +3050,7 @@ fn generate_parser_code(
                         crate::decision_tree::DispatchStrategy::NotPresent
                         | crate::decision_tree::DispatchStrategy::Singleton { .. }
                         | crate::decision_tree::DispatchStrategy::DisjointSuffix { .. } => true,
-                        crate::decision_tree::DispatchStrategy::NfaTryAll { .. } => false,
+                        crate::decision_tree::DispatchStrategy::AmbiguousFanout { .. } => false,
                     }
                 });
                 if all_resolved {
@@ -3286,28 +3200,10 @@ fn generate_parser_code(
         );
     }
 
-    // ── CEK-4: Dead frame computation ───────────────────────────────────
-    // Compute dead frame variants from WPDS poststar analysis. These are frame
-    // variants that are unreachable in all valid stack contexts, as determined
-    // by the P-automaton from WPDS poststar saturation.
-    let dead_frames: std::collections::HashSet<String> = if optimization_gates.dead_frame_elimination {
-        wpds_analysis.as_ref().map(|a| compute_dead_frames(a)).unwrap_or_default()
-    } else {
-        std::collections::HashSet::new()
-    };
-    if !dead_frames.is_empty() {
-        let mut sorted: Vec<&str> = dead_frames.iter().map(|s| s.as_str()).collect();
-        sorted.sort_unstable();
-        pipeline_diagnostic(
-            &bundle.grammar_name, DiagnosticId::I07, "dead-frame-elimination-active",
-            crate::lint::LintSeverity::Info,
-            format!(
-                "dead frame elimination: suppressing codegen for {} dead frame variant(s): [{}]",
-                dead_frames.len(), sorted.join(", "),
-            ),
-            None,
-        );
-    }
+    // Stage 10.7 (2026-05-05): CEK-4 dead frame computation DELETED.
+    // Frame_Cat enum (target of dead-frame elimination) is gone with
+    // trampoline.rs (Stage 10.6). Walker uses WPDS stack symbols, not
+    // named frame variants — the optimization is structurally subsumed.
 
     // ── INT-03: WPDS NFA Spillover Reduction ────────────────────────────
     // Remove WPDS-unreachable rules from NFA spillover groups. If a category's
@@ -3534,6 +3430,22 @@ fn generate_parser_code(
             &bundle.rd_rules,
         );
 
+        // Phase 7A.1 (T11/2026-05-05): predicate-dispatch diagnostics.
+        // Derives DispatchDiagnostics from a fresh dispatch plan classification
+        // so PD-aware lints (D-prefix codes via lint.rs:8593+) surface
+        // signature/conflict/cyclic-dispatch information instead of silently
+        // no-op'ing on `dispatch_diagnostics: None`.
+        let dispatch_plan_for_lints = crate::predicate_dispatch::classify_grammar(
+            &bundle.all_syntax,
+            &bundle.categories,
+        );
+        let dispatch_diagnostics_data =
+            crate::predicate_dispatch::compile_predicate_pipeline(
+                &dispatch_plan_for_lints,
+                &bundle.all_syntax,
+                &bundle.categories,
+            );
+
         let lint_ctx = crate::lint::LintContext {
             grammar_name: &bundle.grammar_name,
             rule_locations: &bundle.rule_locations,
@@ -3590,7 +3502,7 @@ fn generate_parser_code(
             two_way_result: two_way_result.as_ref(),
             sft_result: sft_result.as_ref(),
             egraph_result: egraph_result.as_ref(),
-            dispatch_diagnostics: None, // TODO: wire from Phase 7A dispatch plan when available
+            dispatch_diagnostics: Some(&dispatch_diagnostics_data),
             // ── Constraint theory analysis results ──
             presburger_result: presburger_result.as_ref(),
             unification_result: unification_result.as_ref(),
@@ -3717,8 +3629,9 @@ fn generate_parser_code(
         crate::lint::emit_diagnostic(&report.to_diagnostic());
     }
 
-    // Write parser helpers
-    write_parser_helpers(&mut buf);
+    // Stage 10.5b conclusion (2026-05-05): write_parser_helpers call DELETED.
+    // The emitted helpers (expect_token, expect_ident, peek_token, peek_ahead)
+    // were only consumed by trampoline-emitted RD handlers (gone in Stage 10.5).
 
     // D07: Emit runtime coverage tracking module (always enabled)
     if emit_coverage {
@@ -3770,299 +3683,26 @@ fn generate_parser_code(
             let infix_count = bundle.bp_table.operators_for_category(&cat.name).len();
             let postfix_count = bundle.bp_table.postfix_operators_for_category(&cat.name).len();
             let mixfix_count = bundle.bp_table.mixfix_operators_for_category(&cat.name).len();
-            infix_count >= crate::pratt::BP_TABLE_LOOKUP_THRESHOLD
-                || postfix_count >= crate::pratt::BP_TABLE_LOOKUP_THRESHOLD
-                || mixfix_count >= crate::pratt::BP_TABLE_LOOKUP_THRESHOLD
+            // Stage 10.5b conclusion (2026-05-05): BP_TABLE_LOOKUP_THRESHOLD
+            // inlined as `8` (BP03 threshold from trampoline.rs era).
+            infix_count >= 8 || postfix_count >= 8 || mixfix_count >= 8
         });
         if bp03_needed {
             crate::automata::codegen::write_token_variant_id(&mut buf, variant_map, &bundle.custom_tokens);
         }
     }
 
-    // CD05: Detect shared nonterminal prefixes across all categories (computed once).
-    let prefix_cse_all = if optimization_gates.prefix_cse {
-        crate::decision_tree::detect_shared_nonterminal_prefixes(
-            &decision_trees,
-            &first_sets,
-            &token_id_map,
-        )
-    } else {
-        Vec::new()
-    };
+    // Stage 10.5 (2026-05-04): trampoline-emission per-category for-loop DELETED.
+    // Walker (WPDS) emits `parse_<Cat>_via_wpds` via `wpds_codegen/facade.rs`,
+    // subsuming `parse_<cat>_own` and `parse_<cat>_own_traced`. The associated
+    // setup blocks (prefix_cse_all, all_frame_infos, unified_mode, TrampolineConfig
+    // construction) all died with the loop they fed.
 
-    // Collect per-category frame info for unified trampoline generation
-    let mut all_frame_infos: std::collections::HashMap<String, crate::trampoline::FrameInfo> = std::collections::HashMap::new();
-
-    // Unified trampoline: always enabled for multi-category grammars with native types.
-    let all_have_native = bundle.categories.iter().all(|c| c.native_type.is_some());
-    let unified_mode = all_have_native && bundle.categories.len() > 1;
-
-    // Write trampolined parsers per category (stack-safe via explicit continuation stack)
-    for cat in &bundle.categories {
-        let has_infix = !bundle.bp_table.operators_for_category(&cat.name).is_empty();
-        let has_postfix = !bundle
-            .bp_table
-            .postfix_operators_for_category(&cat.name)
-            .is_empty();
-        let has_mixfix = !bundle
-            .bp_table
-            .mixfix_operators_for_category(&cat.name)
-            .is_empty();
-        let needs_dispatch = dispatch_categories.contains(&cat.name);
-
-        let cat_cast_rules: Vec<CastRule> = bundle
-            .cast_rules
-            .iter()
-            .filter(|r| r.target_category == cat.name)
-            .cloned()
-            .collect();
-
-        let own_first = first_sets.get(&cat.name).cloned().unwrap_or_default();
-        let own_follow = follow_sets.get(&cat.name).cloned().unwrap_or_default();
-
-        // Compute missing cast suggestions: for each source category that has
-        // unique tokens (not in target's FIRST set) but NO cast rule to this
-        // target category, map each unique token → source category name.
-        let cast_suggestions: Vec<(String, String)> = {
-            let existing_sources: std::collections::HashSet<&str> = cat_cast_rules
-                .iter()
-                .map(|r| r.source_category.as_str())
-                .collect();
-            let mut suggestions = Vec::new();
-            for source_cat in &category_names {
-                if source_cat == &cat.name {
-                    continue; // skip self
-                }
-                if existing_sources.contains(source_cat.as_str()) {
-                    continue; // cast rule already exists
-                }
-                if let Some(source_first) = first_sets.get(source_cat) {
-                    let unique = source_first.difference(&own_first);
-                    for token in unique.sorted_tokens() {
-                        suggestions.push((token.to_string(), source_cat.clone()));
-                    }
-                }
-            }
-            suggestions
-        };
-
-        // Compute LED delegation for sum-type categories
-        let projection_rules = detect_projection_rules(
-            &cat.name,
-            &cat_cast_rules,
-            &bundle.rd_rules,
-        );
-        let led_delegation = compute_led_delegation(
-            &cat.name,
-            &cat_cast_rules,
-            &bundle.cast_rules,
-            &bundle.cross_rules,
-            &bundle.bp_table,
-            &projection_rules,
-        );
-
-        // 1.3b: Compute expected tokens string from decision tree dispatch tokens
-        let expected_tokens_str = decision_trees.get_tree(&cat.name)
-            .map(|tree| {
-                let tokens = tree.dispatch_tokens(&token_id_map);
-                if tokens.is_empty() {
-                    format!("{} expression", cat.name)
-                } else if tokens.len() <= 10 {
-                    format!("one of: {}", tokens.join(", "))
-                } else {
-                    // Truncate very long token lists
-                    let shown: Vec<&str> = tokens.iter().take(10).map(|s| s.as_str()).collect();
-                    format!("one of: {}, ... ({} more)", shown.join(", "), tokens.len() - 10)
-                }
-            });
-
-        let payload_carrying_variants: Vec<String> = bundle.custom_tokens.iter()
-            .filter(|s| s.payload_type.is_some())
-            .map(|s| s.name.clone())
-            .collect();
-
-        let tramp_config = TrampolineConfig {
-            category: cat.name.clone(),
-            is_primary: cat.is_primary,
-            has_var: cat.has_var,
-            has_infix,
-            has_postfix,
-            has_mixfix,
-            all_categories: category_names.clone(),
-            needs_dispatch,
-            native_type: cat.native_type.clone(),
-            payload_carrying_variants,
-            cast_rules: cat_cast_rules,
-            own_first_set: own_first,
-            all_first_sets: first_sets.clone(),
-            follow_set: own_follow,
-            has_binders: bundle.has_binders,
-            prediction_wfst: prediction_wfsts.get(&cat.name).cloned(),
-            needs_nfa_spillover: nfa_spillover_categories.contains(&cat.name),
-            cast_suggestions,
-            optimization_gates: optimization_gates.clone(),
-            dead_rules: dead_rules.clone(),
-            dead_frames: dead_frames.clone(),
-            complete_weight_map: complete_weight_map.clone(),
-            led_delegation,
-            decision_tree: decision_trees.get_tree(&cat.name).cloned(),
-            emit_coverage,
-            expected_tokens_str,
-            frame_pool_capacity: wpds_analysis.as_ref().and_then(|a| {
-                a.depth_bounds.get(&cat.name).and_then(|db| {
-                    db.max_depth.map(|d| (d as usize) + 1)
-                })
-            }),
-            token_variant_map: Some(variant_map.clone()),
-            prefix_cse_hints: prefix_cse_all
-                .iter()
-                .filter(|h| h.category == cat.name)
-                .cloned()
-                .collect(),
-            cross_cat_prefix_arms: if needs_dispatch {
-                let cat_cross: Vec<CrossCategoryRule> = bundle.cross_rules.iter()
-                    .filter(|r| r.result_category == cat.name)
-                    .cloned()
-                    .collect();
-                let cat_cast: Vec<CastRule> = bundle.cast_rules.iter()
-                    .filter(|r| r.target_category == cat.name)
-                    .cloned()
-                    .collect();
-                let wfst = prediction_wfsts.get(&cat.name)
-                    .expect("prediction WFST should exist for categories with cross-category rules");
-                crate::dispatch::compute_cross_cat_prefix_arms(
-                    &cat.name,
-                    &cat_cross,
-                    &cat_cast,
-                    &overlaps,
-                    &first_sets,
-                    wfst,
-                    composed_resolutions.as_ref(),
-                    complete_weight_map.as_ref(),
-                    &optimization_gates,
-                    &dead_rules,
-                    &bundle.rd_rules,
-                    &category_names,
-                )
-            } else {
-                Vec::new()
-            },
-            // Unified trampoline provides its own entry points; skip the
-            // per-category wrapper when unified mode is active.
-            skip_entry_point: unified_mode && !dispatch_categories.is_empty(),
-            unified_mode: unified_mode && !dispatch_categories.is_empty(),
-            // CPS step functions are generated by unified_trampoline.rs;
-            // suppress the recursive versions from trampoline.rs.
-            skip_step_functions: unified_mode && !dispatch_categories.is_empty(),
-        };
-
-        let cat_handlers: Vec<PrefixHandler> = all_prefix_handlers
-            .iter()
-            .filter(|h| h.category == cat.name)
-            .cloned()
-            .collect();
-
-        // Layer 10: Incremental codegen — check if this category's code can be reused
-        let current_hash = tramp_config.decision_tree.as_ref()
-            .map(crate::decision_tree::category_content_hash);
-        let cache_hit = current_hash.and_then(|h| {
-            if let Some(ref prev) = prev_cache {
-                if prev.is_valid() && prev.is_unchanged(&cat.name, h) {
-                    return prev.category_code.get(&cat.name).cloned();
-                }
-            }
-            None
-        });
-
-        if let Some(cached_code) = cache_hit {
-            buf.push_str(&cached_code);
-            if let Some(h) = current_hash {
-                new_cache.record(&cat.name, h);
-                new_cache.category_code.insert(cat.name.clone(), cached_code);
-            }
-        } else {
-            let cat_start = buf.len();
-            let frame_info = write_trampolined_parser(
-                &mut buf,
-                &tramp_config,
-                &bundle.bp_table,
-                &cat_handlers,
-                &bundle.rd_rules,
-            );
-            // Save frame info for unified trampoline generation
-            all_frame_infos.insert(cat.name.clone(), frame_info);
-
-            // CEK02: Generate traced parser alongside batch parser.
-            // Only for categories that have a parse_*_impl (prefix handlers or
-            // RD rules). Categories without these (e.g., Bool in Calculator)
-            // have no trampoline _impl to wrap.
-            let has_parseable_rules = !cat_handlers.is_empty()
-                || bundle.rd_rules.iter().any(|r| r.category == cat.name);
-            if has_parseable_rules {
-                write_trampolined_parser_traced(
-                    &mut buf,
-                    &tramp_config,
-                );
-            }
-
-            let cat_code = buf[cat_start..].to_string();
-            if let Some(h) = current_hash {
-                new_cache.record(&cat.name, h);
-                new_cache.category_code.insert(cat.name.clone(), cat_code);
-            }
-        }
-
-    }
-
-    // Write cross-category dispatch — uses composed resolutions for
-    // deterministic arms (no backtracking).
-    // PDA merge: skip the dispatch wrapper for categories whose cross-cat
-    // arms were inlined into the trampoline's prefix match.
-    for cat in &bundle.categories {
-        let cat_cross: Vec<CrossCategoryRule> = bundle
-            .cross_rules
-            .iter()
-            .filter(|r| r.result_category == cat.name)
-            .cloned()
-            .collect();
-        if cat_cross.is_empty() {
-            continue;
-        }
-        // PDA merge: dispatch wrapper is eliminated — skip emission
-        if dispatch_categories.contains(&cat.name) {
-            // Cross-cat dispatch is now handled inside the trampoline via
-            // cross_cat_prefix_arms. The dispatch wrapper is not needed.
-            continue;
-        }
-
-        // Filter cast rules to only those targeting this category
-        let cat_cast: Vec<CastRule> = bundle
-            .cast_rules
-            .iter()
-            .filter(|r| r.target_category == cat.name)
-            .cloned()
-            .collect();
-
-        // WFST-weighted dispatch (always-on)
-        let wfst = prediction_wfsts.get(&cat.name).expect(
-            "prediction WFST should exist for every category with cross-category rules"
-        );
-        write_category_dispatch(
-            &mut buf,
-            &cat.name,
-            &cat_cross,
-            &cat_cast,
-            &overlaps,
-            &first_sets,
-            wfst,
-            composed_resolutions.as_ref(),
-            complete_weight_map.as_ref(),
-            &optimization_gates,
-            &dead_rules,
-            &bundle.rd_rules,
-            Some(&token_id_map),
-        );
-    }
+    // Stage 10.5 (2026-05-04): cross-category dispatch emission DELETED.
+    // `write_category_dispatch` emitted arms calling `parse_<cat>_own`, which
+    // is no longer emitted post-trampoline-deletion. Walker (WPDS) provides
+    // equivalent cross-category dispatch via `parse_<Cat>_via_wpds` emitted by
+    // `wpds_codegen/facade.rs` (Fork+AmbiguityFanout+lex-min weights).
 
     // ── Error recovery functions (parallel set, zero overhead on non-recovering path) ──
 
@@ -4094,302 +3734,30 @@ fn generate_parser_code(
         terminals
     };
 
-    // Write recovery helpers (once)
-    write_recovery_helpers(&mut buf);
-
-    // Write sync predicates and recovering parsers per category
+    // Stage 10.5r-d (2026-05-05): per-category recovery emission DELETED.
+    // Per Plan agent finding (ac1ca5956a3783d6c): `wfst_recover_<Cat>` was
+    // emitted by `generate_wfst_recovery_fn` but had ZERO callers — the
+    // actual runtime recovery is the wrapper-level skip-to-sync loop in
+    // `wpds_codegen/facade.rs::parse_<Cat>_via_wpds_recovering`. The dead
+    // emission chain (generate_wfst_recovery_fn + CROSS_CAT_CASTS_<cat>
+    // static + emit_recovery_wfst_static + emit_parse_simulator_static)
+    // dragged in FRAME_STATE_<CAT>/RUNNING_WEIGHT_<CAT>/PARENT_WEIGHT_<CAT>
+    // thread-local references that no longer have a setter post-trampoline-
+    // deletion. Eliminating the dead chain removes the entire identifier
+    // surface that was begging for shims. Sync predicates still emitted
+    // for facade.rs's wrapper-level use.
     for cat in &bundle.categories {
         let own_follow = follow_sets.get(&cat.name).cloned().unwrap_or_default();
 
         // Generate sync predicate: is_sync_Cat(token) -> bool
         generate_sync_predicate(&mut buf, &cat.name, &own_follow, &grammar_terminals);
-
-        let needs_dispatch = dispatch_categories.contains(&cat.name);
-
-        let tramp_config = TrampolineConfig {
-            category: cat.name.clone(),
-            is_primary: cat.is_primary,
-            has_var: cat.has_var,
-            has_infix: !bundle.bp_table.operators_for_category(&cat.name).is_empty(),
-            has_postfix: !bundle
-                .bp_table
-                .postfix_operators_for_category(&cat.name)
-                .is_empty(),
-            has_mixfix: !bundle
-                .bp_table
-                .mixfix_operators_for_category(&cat.name)
-                .is_empty(),
-            all_categories: category_names.clone(),
-            needs_dispatch,
-            native_type: cat.native_type.clone(),
-            payload_carrying_variants: bundle.custom_tokens.iter()
-                .filter(|s| s.payload_type.is_some())
-                .map(|s| s.name.clone())
-                .collect(),
-            cast_rules: bundle
-                .cast_rules
-                .iter()
-                .filter(|r| r.target_category == cat.name)
-                .cloned()
-                .collect(),
-            own_first_set: first_sets.get(&cat.name).cloned().unwrap_or_default(),
-            all_first_sets: first_sets.clone(),
-            follow_set: own_follow,
-            has_binders: bundle.has_binders,
-            prediction_wfst: None, // Recovery wrappers don't need weighted dispatch
-            needs_nfa_spillover: false, // Recovery path doesn't use NFA spillover
-            cast_suggestions: Vec::new(), // Recovery path doesn't emit prefix match arms
-            optimization_gates: optimization_gates.clone(),
-            dead_rules: dead_rules.clone(),
-            dead_frames: dead_frames.clone(),
-            complete_weight_map: None, // Recovery path doesn't need composed weights
-            decision_tree: None, // Recovery path doesn't use decision tree dispatch
-            emit_coverage: false, // Recovery path doesn't need coverage tracking
-            expected_tokens_str: None, // Recovery path uses its own error messages
-            frame_pool_capacity: None, // Recovery path uses default pool
-            led_delegation: {
-                let rec_cast_rules: Vec<CastRule> = bundle.cast_rules.iter()
-                    .filter(|r| r.target_category == cat.name)
-                    .cloned()
-                    .collect();
-                let rec_proj = detect_projection_rules(&cat.name, &rec_cast_rules, &bundle.rd_rules);
-                compute_led_delegation(
-                    &cat.name,
-                    &rec_cast_rules,
-                    &bundle.cast_rules,
-                    &bundle.cross_rules,
-                    &bundle.bp_table,
-                    &rec_proj,
-                )
-            },
-            // Recovery path doesn't need BP03 optimization (fewer operators)
-            token_variant_map: None,
-            // Recovery path doesn't use CD05 prefix CSE
-            prefix_cse_hints: Vec::new(),
-            // Recovery path doesn't use PDA-merged dispatch arms, but needs the
-            // PDA merge naming flag when the batch parser is PDA-merged.
-            // A non-empty vec triggers `pda_merged = true` for function naming.
-            cross_cat_prefix_arms: if needs_dispatch {
-                // Sentinel: at least one entry so pda_merged = true
-                vec![crate::dispatch::CrossCatPrefixArm {
-                    token_pattern: String::new(),
-                    body: String::new(),
-                    weight: 0.0,
-                    token_variant: None,
-                    is_ambiguous: false,
-                }]
-            } else {
-                Vec::new()
-            },
-            skip_entry_point: false,
-            unified_mode: false,
-            skip_step_functions: false,
-        };
-
-        // Emit cross-category cast recovery static: for each source category
-        // that has a cast rule to this category, list its FIRST set token IDs.
-        // Used by Strategy 6 in wfst_recover_Cat for cross-category recovery.
-        {
-            use std::fmt::Write;
-            let cat_cast_rules: Vec<_> = bundle
-                .cast_rules
-                .iter()
-                .filter(|r| r.target_category == cat.name)
-                .collect();
-
-            // Only emit for multi-category grammars with cast rules
-            if category_names.len() > 1 && !cat_cast_rules.is_empty() {
-                write!(
-                    buf,
-                    "static CROSS_CAT_CASTS_{cat}: &[(&str, &[u16])] = &[",
-                    cat = cat.name,
-                )
-                .unwrap();
-
-                let mut first_entry = true;
-                for cast_rule in &cat_cast_rules {
-                    if let Some(source_first) = first_sets.get(&cast_rule.source_category) {
-                        if !first_entry {
-                            buf.push(',');
-                        }
-                        first_entry = false;
-                        let ids: Vec<u16> = source_first
-                            .sorted_tokens()
-                            .iter()
-                            .filter_map(|t| token_id_map.get(t))
-                            .collect();
-                        write!(buf, "(\"{}\", &[", cast_rule.source_category).unwrap();
-                        for (i, id) in ids.iter().enumerate() {
-                            if i > 0 {
-                                buf.push(',');
-                            }
-                            write!(buf, "{}_u16", id).unwrap();
-                        }
-                        buf.push_str("])");
-                    }
-                }
-                buf.push_str("];");
-            }
-        }
-
-        // Generate WFST-based recovery function.
-        // Generates a weighted recovery helper that evaluates skip, delete,
-        // and substitute strategies — replacing the linear sync_to() scan.
-        let has_cross_casts = category_names.len() > 1
-            && bundle
-                .cast_rules
-                .iter()
-                .any(|r| r.target_category == cat.name);
-        if let Some(recovery_wfst) = recovery_wfsts.iter().find(|w| w.category() == cat.name) {
-            generate_wfst_recovery_fn(
-                &mut buf,
-                &cat.name,
-                recovery_wfst,
-                has_cross_casts,
-                &optimization_gates,
-            );
-        }
-
-        // Generate recovering trampolined parser (wraps fail-fast trampoline with error catch)
-        // Use WFST recovery when available
-        if recovery_wfsts.iter().any(|w| w.category() == cat.name) {
-            write_trampolined_parser_recovering_wfst(&mut buf, &tramp_config);
-        } else {
-            write_trampolined_parser_recovering(
-                &mut buf,
-                &tramp_config,
-                &bundle.bp_table,
-                &crate::trampoline::FrameInfo {
-                    enum_name: format!("Frame_{}", cat.name),
-                    variants: Vec::new(),
-                },
-            );
-        }
-
-        // Generate recovering dispatch wrapper if needed.
-        // PDA merge: skip when cross-cat dispatch is inlined into the trampoline.
-        if needs_dispatch && !dispatch_categories.contains(&cat.name) {
-            write_dispatch_recovering(&mut buf, &cat.name);
-        }
     }
 
-    // ── Unified trampoline generation (multi-category grammars with native types) ──
-    // Generates a shared UnifiedFrame enum and unified driver loop that replaces
-    // per-category mutual recursion with iterative CPS dispatch.
-    if unified_mode && !dispatch_categories.is_empty() {
-        // Convert FrameInfo from trampoline.rs into FrameVariantInfo for unified_trampoline
-        let mut per_cat_frames: std::collections::HashMap<String, Vec<crate::unified_trampoline::FrameVariantInfo>> = std::collections::HashMap::new();
-        for (cat_name, frame_info) in &all_frame_infos {
-            let variants = frame_info.variants.iter().map(|v| {
-                crate::unified_trampoline::FrameVariantInfo {
-                    category: cat_name.clone(),
-                    variant_name: v.name.clone(),
-                    fields: v.fields.iter().map(|f| (f.name.clone(), f.type_str.clone())).collect(),
-                }
-            }).collect();
-            per_cat_frames.insert(cat_name.clone(), variants);
-        }
-
-        // Collect LED delegations per category
-        let mut led_delegations: std::collections::HashMap<String, Vec<crate::pratt::LedDelegationSource>> = std::collections::HashMap::new();
-        for cat in &bundle.categories {
-            let cat_cast_rules: Vec<CastRule> = bundle.cast_rules.iter()
-                .filter(|r| r.target_category == cat.name)
-                .cloned()
-                .collect();
-            let proj = detect_projection_rules(&cat.name, &cat_cast_rules, &bundle.rd_rules);
-            let delegation = compute_led_delegation(
-                &cat.name,
-                &cat_cast_rules,
-                &bundle.cast_rules,
-                &bundle.cross_rules,
-                &bundle.bp_table,
-                &proj,
-            );
-            if !delegation.is_empty() {
-                led_delegations.insert(cat.name.clone(), delegation);
-            }
-        }
-
-        // Build per-category TrampolineConfigs (minimal, for step function generation)
-        let mut per_cat_tramp_configs: std::collections::HashMap<String, crate::trampoline::TrampolineConfig> = std::collections::HashMap::new();
-        for cat in &bundle.categories {
-            let needs_dispatch = dispatch_categories.contains(&cat.name);
-            let tc = crate::trampoline::TrampolineConfig {
-                category: cat.name.clone(),
-                is_primary: cat.is_primary,
-                has_var: cat.has_var,
-                has_infix: !bundle.bp_table.operators_for_category(&cat.name).is_empty(),
-                has_postfix: !bundle.bp_table.postfix_operators_for_category(&cat.name).is_empty(),
-                has_mixfix: !bundle.bp_table.mixfix_operators_for_category(&cat.name).is_empty(),
-                all_categories: category_names.clone(),
-                needs_dispatch,
-                native_type: cat.native_type.clone(),
-                payload_carrying_variants: bundle.custom_tokens.iter()
-                    .filter(|s| s.payload_type.is_some())
-                    .map(|s| s.name.clone())
-                    .collect(),
-                cast_rules: bundle.cast_rules.iter().filter(|r| r.target_category == cat.name).cloned().collect(),
-                own_first_set: first_sets.get(&cat.name).cloned().unwrap_or_default(),
-                all_first_sets: first_sets.clone(),
-                follow_set: follow_sets.get(&cat.name).cloned().unwrap_or_default(),
-                has_binders: bundle.has_binders,
-                prediction_wfst: None,
-                needs_nfa_spillover: nfa_spillover_categories.contains(&cat.name),
-                cast_suggestions: Vec::new(),
-                optimization_gates: optimization_gates.clone(),
-                dead_rules: dead_rules.clone(),
-                dead_frames: dead_frames.clone(),
-                complete_weight_map: None,
-                decision_tree: None,
-                emit_coverage: false,
-                expected_tokens_str: None,
-                frame_pool_capacity: None,
-                led_delegation: led_delegations.get(&cat.name).cloned().unwrap_or_default(),
-                token_variant_map: None,
-                prefix_cse_hints: Vec::new(),
-                cross_cat_prefix_arms: Vec::new(),
-                skip_entry_point: false,
-                // unified_mode=true: step function helpers (frame_prefix(), etc.)
-                // use Cat_ prefixed variant names for the shared UnifiedFrame enum.
-                unified_mode: true,
-                skip_step_functions: false,
-            };
-            per_cat_tramp_configs.insert(cat.name.clone(), tc);
-        }
-
-        // Extract unary prefix operators: (category, token_variant, label, right_bp)
-        let mut unary_prefix_ops = Vec::new();
-        for rule in &bundle.rd_rules {
-            if let Some(bp) = rule.prefix_bp {
-                // First item should be the terminal token for the prefix operator
-                if let Some(crate::recursive::RDSyntaxItem::Terminal(t)) = rule.items.first() {
-                    let token_variant = crate::automata::codegen::terminal_to_variant_name(t);
-                    unary_prefix_ops.push((
-                        rule.category.clone(),
-                        token_variant,
-                        rule.label.clone(),
-                        bp,
-                    ));
-                }
-            }
-        }
-
-        let unified_config = crate::unified_trampoline::UnifiedTrampolineConfig {
-            categories: category_names.clone(),
-            cross_rules: bundle.cross_rules.clone(),
-            cast_rules: bundle.cast_rules.clone(),
-            led_delegations,
-            per_cat_frames,
-            per_cat_tramp_configs,
-            bp_table: bundle.bp_table.clone(),
-            unary_prefix_ops,
-            rd_rules: bundle.rd_rules.clone(),
-        };
-
-        crate::unified_trampoline::write_unified_types(&mut buf, &unified_config);
-        eprintln!("  (Unified trampoline generated for {} categories)", category_names.len());
-    }
+    // Stage 10.4 (2026-05-04): unified trampoline generation block DELETED.
+    // Walker (WPDS) subsumes the multi-category mutual-recursion CPS dispatch
+    // via per-cursor `BranchCursor`s and `WpdsState::AmbiguityFanout`.
+    // `unified_trampoline.rs` and its FrameVariantInfo / UnifiedTrampolineConfig
+    // / write_unified_types entry point all deleted in lockstep.
 
     // Debug dump: write generated parser code to file for inspection
     if let Ok(dump_dir) = std::env::var("PRATTAIL_DUMP_PARSER") {
@@ -4883,165 +4251,10 @@ fn capitalize_first(s: &str) -> String {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// LED delegation computation
-// ══════════════════════════════════════════════════════════════════════════════
-
-use crate::pratt::{CrossCatLedOp, LedDelegationSource};
-
-/// Compute LED delegation sources for a sum-type category.
-///
-/// A sum-type category is one that has cast rules from constituents (e.g., `Proc` has
-/// `CastInt . a:Int |- a : Proc`). For each constituent (source category), this function
-/// collects:
-/// 1. Whether the source has same-category infix, postfix, or mixfix operators
-/// 2. Cross-category operators FROM the source (e.g., `EqInt . a:Int, b:Int |- a "==" b : Bool`)
-/// 3. The re-wrap label for cross-cat results (e.g., `CastBool` wrapping Bool → Proc)
-/// 4. Projection labels for auto-projection (Phase 2)
-///
-/// Uses `cross_rules` (with correct `source_category` field) NOT `bp_table` for cross-cat ops.
-fn compute_led_delegation(
-    cat_name: &str,
-    cat_cast_rules: &[CastRule],
-    all_cast_rules: &[CastRule],
-    cross_rules: &[CrossCategoryRule],
-    bp_table: &crate::binding_power::BindingPowerTable,
-    projection_rules: &HashMap<String, String>,
-) -> Vec<LedDelegationSource> {
-    if cat_cast_rules.is_empty() {
-        return Vec::new();
-    }
-
-    let mut sources: Vec<LedDelegationSource> = Vec::with_capacity(cat_cast_rules.len());
-
-    for cast_rule in cat_cast_rules {
-        let source = &cast_rule.source_category;
-
-        // Check if source has same-category operators
-        let has_infix = !bp_table.operators_for_category(source).is_empty();
-        let has_postfix = !bp_table.postfix_operators_for_category(source).is_empty();
-        let has_mixfix = !bp_table.mixfix_operators_for_category(source).is_empty();
-
-        // Collect cross-category operators FROM this source
-        let mut cross_cat_ops: Vec<CrossCatLedOp> = Vec::new();
-        for cross_rule in cross_rules {
-            if cross_rule.source_category != *source {
-                continue;
-            }
-
-            // Find the re-wrap cast rule: result_category → cat_name
-            // E.g., if cross_rule.result_category == "Bool" and cat_name == "Proc",
-            // find CastRule { source: "Bool", target: "Proc", label: "CastBool" }
-            let rewrap = all_cast_rules.iter().find(|cr| {
-                cr.source_category == cross_rule.result_category
-                    && cr.target_category == cat_name
-            });
-
-            if let Some(rewrap_rule) = rewrap {
-                // Get BP from the BP table for this cross-cat operator
-                let bp_op = bp_table.operators.iter().find(|op| {
-                    op.label == cross_rule.label && op.is_cross_category
-                });
-                let (left_bp, right_bp) = bp_op
-                    .map(|op| (op.left_bp, op.right_bp))
-                    .unwrap_or((0, 0));
-
-                cross_cat_ops.push(CrossCatLedOp {
-                    terminal: cross_rule.operator.clone(),
-                    result_category: cross_rule.result_category.clone(),
-                    label: cross_rule.label.clone(),
-                    rewrap_label: rewrap_rule.label.clone(),
-                    left_bp,
-                    right_bp,
-                });
-            }
-            // If no re-wrap rule exists, skip this cross-cat operator
-            // (can't wrap the result back into the sum type)
-        }
-
-        // Only include source if it has at least one LED-relevant operator
-        if !has_infix && !has_postfix && !has_mixfix && cross_cat_ops.is_empty() {
-            continue;
-        }
-
-        let projection_label = projection_rules.get(source).cloned();
-
-        sources.push(LedDelegationSource {
-            cast_label: cast_rule.label.clone(),
-            source_category: source.clone(),
-            has_infix,
-            has_postfix,
-            has_mixfix,
-            cross_cat_ops,
-            projection_label,
-        });
-    }
-
-    sources
-}
-
-/// Detect projection rules in the grammar.
-///
-/// A projection rule is one where:
-/// - It has exactly one NonTerminal parameter of the sum-type category
-/// - The result category is a constituent (has a cast INTO the sum type)
-/// - It is NOT itself a cast rule or infix rule
-///
-/// Returns a map: source_category → projection_label.
-fn detect_projection_rules(
-    cat_name: &str,
-    cat_cast_rules: &[CastRule],
-    rd_rules: &[crate::recursive::RDRuleInfo],
-) -> HashMap<String, String> {
-    let constituent_sources: HashSet<&str> = cat_cast_rules
-        .iter()
-        .map(|cr| cr.source_category.as_str())
-        .collect();
-
-    let mut projections: HashMap<String, String> = HashMap::new();
-
-    for rd_rule in rd_rules {
-        // The result category must be a constituent (has cast into sum type)
-        if !constituent_sources.contains(rd_rule.category.as_str()) {
-            continue;
-        }
-
-        // A valid projection rule has EXACTLY ONE NonTerminal parameter total,
-        // and that one parameter must be of the sum-type category. Multi-param
-        // rules like `IntBin . a:Proc, w:Int` are NOT projections — they are
-        // cast operations requiring additional arguments — and attempting to
-        // construct them with a single `Box::new(lhs.clone())` argument is a
-        // compile error.
-        let all_nt_params: Vec<&crate::recursive::RDSyntaxItem> = rd_rule.items.iter()
-            .filter(|item| matches!(
-                item,
-                crate::recursive::RDSyntaxItem::NonTerminal { .. }
-            ))
-            .collect();
-
-        if all_nt_params.len() != 1 {
-            continue;
-        }
-
-        let is_sum_param = matches!(
-            all_nt_params[0],
-            crate::recursive::RDSyntaxItem::NonTerminal { category, .. }
-                if category == cat_name
-        );
-        if !is_sum_param {
-            continue;
-        }
-
-        // Must not already have a projection for this target category
-        if projections.contains_key(&rd_rule.category) {
-            continue;
-        }
-
-        projections.insert(rd_rule.category.clone(), rd_rule.label.clone());
-    }
-
-    projections
-}
+// Stage 10.5 (2026-05-04): `compute_led_delegation` and `detect_projection_rules`
+// DELETED. Both fed `TrampolineConfig::led_delegation` (Block 4) and were the only
+// callers. Walker (WPDS) handles cross-category LED naturally via Fork+AmbiguityFanout
+// over weighted PDA edges.
 
 /// Recursively collect all terminal strings from a list of syntax items.
 ///
@@ -5376,60 +4589,9 @@ fn emit_prediction_wfst_static(
 ///
 /// These arrays are consumed by `RecoveryWfst::from_flat()` at runtime when
 /// full context-aware recovery is needed (Sprint 4).
-fn emit_recovery_wfst_static(buf: &mut String, recovery_wfsts: &[crate::recovery::RecoveryWfst]) {
-    use std::fmt::Write;
-
-    for recovery_wfst in recovery_wfsts {
-        let cat = recovery_wfst.category();
-
-        // Sync token IDs (sorted)
-        let sync_ids: Vec<u16> = recovery_wfst.sync_tokens().iter().copied().collect();
-        write!(buf, "static RECOVERY_SYNC_TOKENS_{cat}: &[u16] = &[",).unwrap();
-        for (i, id) in sync_ids.iter().enumerate() {
-            if i > 0 {
-                buf.push(',');
-            }
-            write!(buf, "{}_u16", id).unwrap();
-        }
-        buf.push_str("];");
-
-        // Sync sources: (token_id, source_tag)
-        // 0=Eof, 1=StructuralDelimiter, 2=FollowSet
-        write!(buf, "static RECOVERY_SYNC_SOURCES_{cat}: &[(u16, u8)] = &[",).unwrap();
-        for (i, &id) in sync_ids.iter().enumerate() {
-            if i > 0 {
-                buf.push(',');
-            }
-            let source_tag = match recovery_wfst.token_name(id) {
-                Some("Eof") => 0_u8,
-                Some("RParen" | "RBrace" | "RBracket" | "Semi" | "Comma") => 1_u8,
-                _ => 2_u8,
-            };
-            write!(buf, "({}_u16, {}_u8)", id, source_tag).unwrap();
-        }
-        buf.push_str("];");
-
-        // Token names for reconstructing TokenIdMap
-        let mut token_names: Vec<String> = Vec::new();
-        // Recover all token names from the sync set
-        for &id in recovery_wfst.sync_tokens() {
-            if let Some(name) = recovery_wfst.token_name(id) {
-                token_names.push(name.to_string());
-            }
-        }
-        token_names.sort();
-        token_names.dedup();
-
-        write!(buf, "static RECOVERY_TOKEN_NAMES_{cat}: &[&str] = &[",).unwrap();
-        for (i, name) in token_names.iter().enumerate() {
-            if i > 0 {
-                buf.push(',');
-            }
-            write!(buf, "\"{}\"", name).unwrap();
-        }
-        buf.push_str("];");
-    }
-}
+// Stage 10.5r-d (2026-05-05): emit_recovery_wfst_static DELETED. Emitted
+// RECOVERY_SYNC_TOKENS_<cat>/RECOVERY_SYNC_SOURCES_<cat>/RECOVERY_TOKEN_NAMES_<cat>
+// statics consumed only by the now-deleted wfst_recover_<cat> function.
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ParseSimulator static embedding (Tier 3 recovery simulation)
@@ -5449,77 +4611,10 @@ fn emit_recovery_wfst_static(buf: &mut String, recovery_wfsts: &[crate::recovery
 ///     ParseSimulator::from_flat(SIM_FIRST_SETS, SIM_FOLLOW_SETS, SIM_INFIX_SETS, 5)
 /// });
 /// ```
-fn emit_parse_simulator_static(
-    buf: &mut String,
-    first_sets: &std::collections::HashMap<String, crate::prediction::FirstSet>,
-    follow_sets: &std::collections::HashMap<String, crate::prediction::FirstSet>,
-    bp_table: &crate::binding_power::BindingPowerTable,
-    category_names: &[String],
-    token_id_map: &crate::token_id::TokenIdMap,
-) {
-    use std::fmt::Write;
-
-    // Helper to emit a set-of-sets array: &[(&str, &[u16])]
-    let emit_set_array = |buf: &mut String, name: &str, sets: &std::collections::HashMap<String, crate::prediction::FirstSet>| {
-        write!(buf, "static {}: &[(&str, &[u16])] = &[", name).unwrap();
-        let mut first = true;
-        for cat in category_names {
-            if let Some(fs) = sets.get(cat) {
-                if !first { buf.push(','); }
-                first = false;
-                let ids: Vec<u16> = fs.sorted_tokens()
-                    .iter()
-                    .filter_map(|t| token_id_map.get(*t))
-                    .collect();
-                write!(buf, "(\"{}\", &[", cat).unwrap();
-                for (i, id) in ids.iter().enumerate() {
-                    if i > 0 { buf.push(','); }
-                    write!(buf, "{}_u16", id).unwrap();
-                }
-                buf.push_str("])");
-            }
-        }
-        buf.push_str("];");
-    };
-
-    emit_set_array(buf, "SIM_FIRST_SETS", first_sets);
-    emit_set_array(buf, "SIM_FOLLOW_SETS", follow_sets);
-
-    // Build infix set from binding power table
-    write!(buf, "static SIM_INFIX_SETS: &[(&str, &[u16])] = &[").unwrap();
-    let mut first = true;
-    for cat in category_names {
-        let ops = bp_table.operators_for_category(cat);
-        if !first { buf.push(','); }
-        first = false;
-        write!(buf, "(\"{}\", &[", cat).unwrap();
-        let mut ids: Vec<u16> = ops
-            .iter()
-            .filter_map(|op| {
-                let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
-                token_id_map.get(&variant)
-            })
-            .collect();
-        ids.sort();
-        ids.dedup();
-        for (i, id) in ids.iter().enumerate() {
-            if i > 0 { buf.push(','); }
-            write!(buf, "{}_u16", id).unwrap();
-        }
-        buf.push_str("])");
-    }
-    buf.push_str("];");
-
-    // Emit LazyLock<ParseSimulator>
-    buf.push_str(
-        "static PARSE_SIMULATOR: std::sync::LazyLock<mettail_prattail::recovery::ParseSimulator> = \
-         std::sync::LazyLock::new(|| { \
-             mettail_prattail::recovery::ParseSimulator::from_flat(\
-                 SIM_FIRST_SETS, SIM_FOLLOW_SETS, SIM_INFIX_SETS, 5\
-             ) \
-         });"
-    );
-}
+// Stage 10.5r-d (2026-05-05): emit_parse_simulator_static DELETED. Emitted
+// SIM_FIRST_SETS/SIM_FOLLOW_SETS/SIM_INFIX_SETS + PARSE_SIMULATOR LazyLock
+// statics consumed only by the now-deleted wfst_recover_<cat> function
+// (Tier 3 recovery simulation).
 
 /// Emit a `token_to_id(t: &Token) -> u16` function mapping each Token variant to its TokenId.
 ///
@@ -5564,380 +4659,20 @@ fn emit_token_to_id_fn(
     buf.push_str("}}");
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// WFST recovery codegen (always-on)
-// ══════════════════════════════════════════════════════════════════════════════
+// Stage 10.5r-d (2026-05-05): WFST recovery codegen DELETED.
+// generate_wfst_recovery_fn emitted wfst_recover_<Cat> functions that had
+// ZERO callers — they referenced FRAME_STATE_<CAT>/RUNNING_WEIGHT_<CAT>/
+// PARENT_WEIGHT_<CAT> thread-locals last set by the deleted trampoline.rs.
+// Per Plan agent ac1ca5956a3783d6c: dead code eliminated; recovery now lives
+// purely in wpds_codegen/facade.rs::parse_<Cat>_via_wpds_recovering wrapper.
 
-/// Generate a WFST-based weighted recovery function for a category.
-///
-/// Emits a function `wfst_recover_Cat` that evaluates all 4 repair strategies
-/// (skip-to-sync, delete, insert, substitute) with context-aware cost adjustments
-/// from `RecoveryContext` (bracket balance, nesting depth, frame kind).
-///
-/// Also emits a helper `is_sync_token_Cat` for matching sync tokens.
-///
-/// Generated signatures:
-/// ```text
-/// fn wfst_recover_Cat<'a>(
-///     tokens: &[(Token<'a>, Range)],
-///     pos: &mut usize,
-///     depth: usize,
-///     binding_power: u8,
-///     open_parens: u16,
-///     open_braces: u16,
-///     open_brackets: u16,
-/// ) -> bool  // true if recovery succeeded
-/// ```
-fn generate_wfst_recovery_fn(
-    buf: &mut String,
-    category: &str,
-    recovery_wfst: &crate::recovery::RecoveryWfst,
-    has_cross_casts: bool,
-    optimization_gates: &crate::cost_benefit::OptimizationGates,
-) {
-    use std::fmt::Write;
-
-    // Collect sync token variant names for match patterns
-    let sync_patterns: Vec<String> = recovery_wfst
-        .sync_tokens()
-        .iter()
-        .filter_map(|&id| recovery_wfst.token_name(id))
-        .map(|name| {
-            crate::automata::TokenFamily::from_name(name).match_pattern()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("Token::{}", name))
-        })
-        .collect();
-
-    if sync_patterns.is_empty() {
-        return;
-    }
-
-    // Build bracket-specific insert patterns for close delimiters
-    let has_rparen = recovery_wfst
-        .sync_tokens()
-        .iter()
-        .any(|&id| recovery_wfst.token_name(id) == Some("RParen"));
-    let has_rbrace = recovery_wfst
-        .sync_tokens()
-        .iter()
-        .any(|&id| recovery_wfst.token_name(id) == Some("RBrace"));
-    let has_rbracket = recovery_wfst
-        .sync_tokens()
-        .iter()
-        .any(|&id| recovery_wfst.token_name(id) == Some("RBracket"));
-
-    let max_skip: usize = 32; // Same as recovery::costs::MAX_SKIP_LOOKAHEAD
-
-    // Generate the full 4-strategy context-aware recovery function
-    let cat_upper = category.to_uppercase();
-    write!(
-        buf,
-        "/// WFST-based 4-strategy context-aware recovery for category `{cat}`.
-         ///
-         /// Evaluates skip-to-sync, delete, insert, and substitute strategies with
-         /// context-aware cost adjustments from nesting depth, binding power,
-         /// frame kind, and bracket balance.
-         fn wfst_recover_{cat}<'a>(\
-            tokens: &[(Token<'a>, Range)], \
-            pos: &mut usize, \
-            depth: usize, \
-            binding_power: u8, \
-            open_parens: u16, \
-            open_braces: u16, \
-            open_brackets: u16, \
-         ) -> Option<String> {{ \
-            let start = *pos; \
-            let remaining = tokens.len() - start; \
-            let max_look = if remaining < {max_skip} {{ remaining }} else {{ {max_skip} }}; \
-            let mut best_pos: Option<usize> = None; \
-            let mut best_cost: f64 = f64::INFINITY; \
-            let mut best_desc: String = String::new(); \
-            /* Read frame state from thread-local (depth, frame_kind) */ \
-            let (frame_depth, frame_kind) = FRAME_STATE_{cat_upper}.with(|c| c.get()); \
-            let effective_depth = if frame_depth > 0 {{ frame_depth as usize }} else {{ depth }}; \
-            /* Tier 1: depth-based skip multiplier */ \
-            let skip_mult: f64 = if effective_depth > 1000 {{ 0.5 }} \
-                else if effective_depth < 10 {{ 2.0 }} else {{ 1.0 }}; \
-            /* Tier 1: BP-based skip multiplier */ \
-            let bp_mult: f64 = if binding_power < 4 {{ 0.75 }} else {{ 1.0 }}; \
-            /* Tier 1: frame-kind skip multiplier (InfixRHS = 1) */ \
-            let frame_skip_mult: f64 = if frame_kind == 1 {{ 0.75 }} else {{ 1.0 }}; \
-            let combined_skip_mult = skip_mult * bp_mult * frame_skip_mult{adaptive_skip_expr}; \
-            /* B2: Adaptive insert multiplier from running weight */ \
-            let adaptive_insert_mult: f64 = {adaptive_insert_expr}; \
-            /* Strategy 1: Skip to nearest sync token (0.5/token * context mult) */ \
-            for skip in 0..max_look {{ \
-                let idx = start + skip; \
-                if matches!(&tokens[idx].0, {sync_pats}) {{ \
-                    let cost = (skip as f64) * 0.5 * combined_skip_mult; \
-                    if cost < best_cost {{ \
-                        best_cost = cost; \
-                        best_pos = Some(idx); \
-                        best_desc = format!(\"skip {{}} token(s) to '{{:?}}'\", skip, &tokens[idx].0); \
-                    }} \
-                    break; \
-                }} \
-            }} \
-            /* Strategy 2: Delete one token (cost 1.0 * skip_mult) */ \
-            if remaining > 0 {{ \
-                let cost = 1.0 * combined_skip_mult; \
-                if cost < best_cost {{ \
-                    best_cost = cost; \
-                    best_pos = Some(start + 1); \
-                    best_desc = \"delete unexpected token\".to_string(); \
-                }} \
-            }} \
-            /* Strategy 3: Insert missing closing delimiter (bracket-aware) */ \
-            {{ \
-                /* frame_kind: 3=Collection (0.5x), 4=Group (0.5x) */ \
-                let frame_insert_mult: f64 = if frame_kind == 3 || frame_kind == 4 {{ 0.5 }} else {{ 1.0 }}; \
-                let base_insert = 2.0_f64 * frame_insert_mult * adaptive_insert_mult;",
-        cat = category,
-        cat_upper = cat_upper,
-        max_skip = max_skip,
-        sync_pats = sync_patterns.join(" | "),
-        adaptive_skip_expr = if optimization_gates.adaptive_recovery {
-            let config = crate::recovery::RecoveryConfig::default();
-            format!(
-                " * {{ let rw = RUNNING_WEIGHT_{}.with(|c| c.get()); \
-                 if rw < {:?} {{ {:?} }} else {{ 1.0 }} }}",
-                cat_upper,
-                config.adaptive_weight_threshold,
-                config.deterministic_skip_discount,
-            )
-        } else {
-            String::new()
-        },
-        adaptive_insert_expr = if optimization_gates.adaptive_recovery {
-            let config = crate::recovery::RecoveryConfig::default();
-            format!(
-                "{{ let rw = RUNNING_WEIGHT_{}.with(|c| c.get()); \
-                 if rw >= {:?} {{ {:?} }} else {{ 1.0 }} }}",
-                cat_upper,
-                config.adaptive_weight_threshold,
-                config.ambiguous_insert_discount,
-            )
-        } else {
-            "1.0".to_string()
-        },
-    )
-    .unwrap();
-
-    // Emit bracket-specific insert logic
-    if has_rparen {
-        write!(
-            buf,
-            "if open_parens > 0 {{ \
-                let cost = base_insert * 0.3; /* strongly prefer closing unmatched parens */ \
-                if cost < best_cost {{ \
-                    best_cost = cost; \
-                    best_pos = Some(start); /* phantom insert — don't advance */ \
-                    best_desc = \"insert missing ')'\".to_string(); \
-                }} \
-            }}"
-        )
-        .unwrap();
-    }
-    if has_rbrace {
-        write!(
-            buf,
-            "if open_braces > 0 {{ \
-                let cost = base_insert * 0.3; \
-                if cost < best_cost {{ \
-                    best_cost = cost; \
-                    best_pos = Some(start); \
-                    best_desc = \"insert missing '}}'\".to_string(); \
-                }} \
-            }}"
-        )
-        .unwrap();
-    }
-    if has_rbracket {
-        write!(
-            buf,
-            "if open_brackets > 0 {{ \
-                let cost = base_insert * 0.3; \
-                if cost < best_cost {{ \
-                    best_cost = cost; \
-                    best_pos = Some(start); \
-                    best_desc = \"insert missing ']'\".to_string(); \
-                }} \
-            }}"
-        )
-        .unwrap();
-    }
-
-    write!(
-        buf,
-        "   }} \
-            /* Strategy 4: Substitute current token with sync token (cost 1.5 * sub_mult) */ \
-            if remaining > 0 {{ \
-                /* frame_kind: 5=Mixfix (0.75x) */ \
-                let sub_mult: f64 = if frame_kind == 5 {{ 0.75 }} else {{ 1.0 }}; \
-                let cost = 1.5 * sub_mult; \
-                if cost < best_cost {{ \
-                    best_cost = cost; \
-                    best_pos = Some(start + 1); \
-                    best_desc = \"substitute unexpected token\".to_string(); \
-                }} \
-            }} \
-            /* Tier 3: ParseSimulator rescoring — simulate continuation after best repair */ \
-            if let Some(new_pos) = best_pos {{ \
-                let sim_ids: Vec<u16> = tokens[new_pos..].iter().map(|(t, _)| token_to_id(t)).collect(); \
-                let sim_result = PARSE_SIMULATOR.simulate_after_repair(&sim_ids, 0, \"{cat}\"); \
-                let sim_mult = PARSE_SIMULATOR.cost_multiplier(&sim_result); \
-                best_cost *= sim_mult; \
-            }} \
-            /* Multi-step Viterbi: evaluate composite repair sequences */ \
-            {{ \
-                let all_ids: Vec<u16> = tokens[start..].iter().map(|(t, _)| token_to_id(t)).collect(); \
-                let sync_set: std::collections::BTreeSet<u16> = \
-                    RECOVERY_SYNC_TOKENS_{cat}.iter().copied().collect(); \
-                if let Some(seq) = mettail_prattail::recovery::viterbi_multi_step(\
-                    &all_ids, 0, &sync_set, &mettail_prattail::recovery::RecoveryConfig::default()\
-                ) {{ \
-                    let multi_cost = seq.total_cost.left.value(); \
-                    if multi_cost < best_cost {{ \
-                        best_cost = multi_cost; \
-                        best_pos = Some(start + seq.new_pos); \
-                        best_desc = format!(\"{{}} action(s): {{}}\", \
-                            seq.actions.len(), \
-                            seq.actions.iter().map(|a| format!(\"{{:?}}\", a)).collect::<Vec<_>>().join(\", \") \
-                        ); \
-                    }} \
-                }} \
-            }}",
-        cat = category,
-    )
-    .unwrap();
-
-    // Strategy 6: Cross-category recovery (only for grammars with cast rules to this category)
-    if has_cross_casts {
-        buf.push_str("/* Strategy 6: Cross-category recovery via cast rules */");
-        buf.push_str("if remaining > 0 {");
-        buf.push_str("let err_tok_id = token_to_id(&tokens[start].0);");
-        buf.push_str(&format!(
-            "for &(source_cat, source_first_ids) in CROSS_CAT_CASTS_{}.iter() {{",
-            category,
-        ));
-        buf.push_str("if source_first_ids.contains(&err_tok_id) {");
-        buf.push_str("let cast_cost = 1.5_f64 * 0.5_f64;");
-        buf.push_str("if cast_cost < best_cost {");
-        buf.push_str("best_cost = cast_cost;");
-        buf.push_str("best_pos = Some(start);");
-        buf.push_str(&format!(
-            r#"best_desc = format!("try parsing as {{}} (cast to {})", source_cat);"#,
-            category,
-        ));
-        buf.push_str("} break; } } }");
-    }
-
-    buf.push_str(
-        "/* Apply best strategy */ \
-            match best_pos { \
-                Some(new_pos) => { *pos = new_pos; Some(best_desc) } \
-                None => None \
-            } \
-         }",
-    );
-}
-
-/// Generate recovering parser variant that uses WFST recovery instead of sync_to.
-///
-/// On parse error, calls `wfst_recover_Cat()` with context parameters (depth,
-/// binding power, bracket counters) for context-aware recovery with all 4 strategies.
-///
-/// Bracket counters are maintained inline: incremented on open delimiters,
-/// decremented on close delimiters. This provides Tier 2 (bracket balance)
-/// context to the recovery function at zero overhead on the happy path.
-fn write_trampolined_parser_recovering_wfst(
-    buf: &mut String,
-    config: &crate::trampoline::TrampolineConfig,
-) {
-    use std::fmt::Write;
-
-    let cat = &config.category;
-    // PDA merge: when cross_cat_prefix_arms is non-empty, the trampoline IS
-    // the top-level parser — use parse_Cat directly (no _own suffix).
-    let pda_merged = !config.cross_cat_prefix_arms.is_empty();
-    let parse_fn = if config.needs_dispatch && !pda_merged {
-        format!("parse_{}_own_recovering", cat)
-    } else {
-        format!("parse_{}_recovering", cat)
-    };
-
-    let own_parse_fn = if config.needs_dispatch && !pda_merged {
-        format!("parse_{}_own", cat)
-    } else {
-        format!("parse_{}", cat)
-    };
-
-    // Cascade prevention window (from RecoveryConfig default).
-    let cascade_window = crate::recovery::RecoveryConfig::default().cascade_window;
-
-    // Emit thread-local bracket state for incremental tracking.
-    // State: (last_scanned_pos, paren_count, brace_count, bracket_count).
-    // On each error, only scan tokens from last_scanned_pos to current pos,
-    // giving O(total_tokens) across all errors instead of O(pos * num_errors).
-    write!(
-        buf,
-        "thread_local! {{ \
-            static BRACKET_STATE_{cat}: std::cell::Cell<(usize, u16, u16, u16)> = \
-                std::cell::Cell::new((0, 0, 0, 0)); \
-            static LAST_ERROR_POS_{cat}: std::cell::Cell<usize> = \
-                std::cell::Cell::new(usize::MAX); \
-        }} \
-        fn {parse_fn}<'a>(\
-            tokens: &[(Token<'a>, Range)], \
-            pos: &mut usize, \
-            min_bp: u8, \
-            errors: &mut Vec<ParseError>, \
-        ) -> Option<{cat}> {{ \
-            if min_bp == 0 {{ \
-                BRACKET_STATE_{cat}.with(|c| c.set((0, 0, 0, 0))); \
-                LAST_ERROR_POS_{cat}.with(|c| c.set(usize::MAX)); \
-            }} \
-            match {own_parse_fn}(tokens, pos, min_bp) {{ \
-                Ok(v) => Some(v), \
-                Err(e) => {{ \
-                    /* Cascade prevention: if this error is within {cascade_window} tokens \
-                       of the last error, suppress it and just advance by 1 */ \
-                    let last_err = LAST_ERROR_POS_{cat}.with(|c| c.get()); \
-                    if last_err != usize::MAX && *pos <= last_err + {cascade_window} {{ \
-                        if *pos < tokens.len() {{ *pos += 1; }} \
-                        return None; \
-                    }} \
-                    LAST_ERROR_POS_{cat}.with(|c| c.set(*pos)); \
-                    /* Incremental bracket balance: scan only new tokens since last error */ \
-                    let (op, ob, ok) = BRACKET_STATE_{cat}.with(|c| {{ \
-                        let (last, mut op, mut ob, mut ok) = c.get(); \
-                        let scan_to = if *pos < tokens.len() {{ *pos }} else {{ tokens.len() }}; \
-                        for i in last..scan_to {{ \
-                            match &tokens[i].0 {{ \
-                                Token::RBracket => ok = ok.saturating_sub(1), \
-                                _ => {{}} \
-                            }} \
-                        }} \
-                        c.set((scan_to, op, ob, ok)); \
-                        (op, ob, ok) \
-                    }}); \
-                    let repair_range = e.range(); \
-                    match wfst_recover_{cat}(tokens, pos, 0, min_bp, op, ob, ok) {{ \
-                        Some(desc) => errors.push(ParseError::RecoveryApplied {{ \
-                            original_error: Box::new(e), \
-                            repair_description: desc, \
-                            range: repair_range, \
-                        }}), \
-                        None => errors.push(e), \
-                    }} \
-                    None \
-                }} \
-            }} \
-        }}",
-    )
-    .unwrap();
-}
+// Stage 10.5 (2026-05-04): `write_trampolined_parser_recovering_wfst` DELETED.
+// It emitted `parse_<cat>_own_recovering` calling now-gone `parse_<cat>_own`.
+// Walker emits `parse_<Cat>_via_wpds_recovering` via `wpds_codegen/facade.rs`,
+// which is what `Cat::parse_recovering` already routes through (atomic swap
+// completed in earlier WPDS migration phases). Stage 10.5r migrates the
+// recovery-feature wiring (bracket counters, cascade prevention, wfst_recover_<cat>
+// invocation) to the Walker codegen path with PDA-stack-based state extraction.
 
 // ══════════════════════════════════════════════════════════════════════════════
 // INT-01: WPDS PredictionWfst Weight Refinement
@@ -6054,64 +4789,10 @@ fn wpds_confirm_trie_dead_rules(
 // CEK-4: Dead Frame Computation
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Compute dead frame variant names from WPDS poststar analysis.
-///
-/// Iterates the CEK bijection's `frame_to_symbol` entries and queries the
-/// P-automaton to determine which frame variants are unreachable in all valid
-/// stack contexts. Internal symbols (names starting with "::") are skipped.
-fn compute_dead_frames(
-    analysis: &crate::wpds::WpdsAnalysis,
-) -> std::collections::HashSet<String> {
-    // All categories that have frames in the WPDS bijection — these are
-    // declared language categories that are independently parseable.
-    let all_categories: std::collections::HashSet<String> = analysis
-        .cek_bijection
-        .frame_to_symbol
-        .values()
-        .map(|s| s.category.clone())
-        .collect();
-    let mut dead = std::collections::HashSet::new();
-    for (frame_name, symbol) in &analysis.cek_bijection.frame_to_symbol {
-        // Skip internal symbols
-        if frame_name.starts_with("::") {
-            continue;
-        }
-        if !analysis.pautomaton.is_symbol_in_any_configuration(symbol) {
-            // The frame's symbol is not in the P-automaton (WPDS can't reach it
-            // from the primary category). However, in multi-type languages, each
-            // declared category is independently parseable via parse_term().
-            //
-            // Only mark a frame dead if its category is NOT a declared language
-            // category. Declared categories are always parseable, so their frames
-            // must remain alive even if the WPDS (primary-category-centric)
-            // can't reach them. Only truly orphan categories (declared but with
-            // no cross-category references AND the test grammar's specific
-            // Orphan pattern) should have dead frames.
-            //
-            // Orphan detection: a category is orphan if it's in the WPDS types
-            // but has NO frames reachable from the primary. We check: does ANY
-            // frame from this category appear in the P-automaton?
-            let cat = &symbol.category;
-            let cat_has_any_reachable = analysis
-                .cek_bijection
-                .frame_to_symbol
-                .values()
-                .any(|s| s.category == *cat && analysis.pautomaton.is_symbol_in_any_configuration(s));
-
-            if !cat_has_any_reachable && !is_independently_parseable(cat, &all_categories) {
-                dead.insert(frame_name.clone());
-            }
-        }
-    }
-    dead
-}
-
-/// All declared categories are independently parseable — `parse_term()` tries
-/// each category independently. A frame is only truly dead if its entire
-/// category is unreachable AND has no independent parse path.
-fn is_independently_parseable(cat: &str, all_categories: &std::collections::HashSet<String>) -> bool {
-    all_categories.contains(cat)
-}
+// Stage 10.7 (2026-05-05): compute_dead_frames + is_independently_parseable
+// DELETED. Both implemented CEK03 dead-frame elimination over Frame_Cat enum
+// variants — Frame_Cat is gone with trampoline.rs (Stage 10.6); Walker uses
+// WPDS stack symbols (rule_idx, src_idx) not named frame variants.
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Green Thread Safety Analysis (feature = "green-threads")
@@ -7143,7 +5824,7 @@ mod tests {
                     element_category: "Arg".to_string(),
                     separator: ",".to_string(),
                     key_val_separator: None,
-                    kind: crate::recursive::CollectionKind::Vec,
+                    kind: crate::grammar::ir::CollectionKind::Vec,
                 },
                 SyntaxItemSpec::Terminal(")".to_string()),
             ]),

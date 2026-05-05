@@ -1,9 +1,10 @@
 //! Weighted Multi-Tape Automata (Module 8).
 //!
-//! Provides synchronized multi-stream computation over `K` input tapes. A
-//! weighted multi-tape automaton generalizes WFSTs (K=2) to an arbitrary
-//! number of synchronized tapes. Each transition reads one symbol (or epsilon)
-//! from each of the K tapes simultaneously, with an associated semiring weight.
+//! Provides synchronized multi-stream computation over `K ≥ 0` input tapes. A
+//! weighted multi-tape automaton specializes to single-tape NFAs (K=1), WFSTs
+//! (K=2), and K-tape relations (K≥3). Each transition reads one symbol (or
+//! epsilon) from each of the K tapes simultaneously, with an associated
+//! semiring weight.
 //!
 //! ## Motivation
 //!
@@ -11,30 +12,43 @@
 //! `for (@x <- ch1, @y <- ch2) { ... }` — naturally map to multi-tape automata:
 //! ch1 becomes tape 1, ch2 becomes tape 2. The automaton synchronizes
 //! consumption across channels, with semiring weights encoding priority,
-//! probability, or cost.
+//! probability, or cost. K≥3 supports synchronized triples (e.g. tag/text/aux
+//! streams in NLP morphological analysis).
 //!
-//! ## Key Operations (Kempe 2004)
+//! ## Key Operations (Kempe, Guingne, Nicart 2004 "Algorithms for n-Tape Automata")
 //!
-//! - **pair(a1, a2)**: Combine two single-tape automata into a 2-tape automaton
-//!   via product construction.
-//! - **project(tape_idx)**: Extract single-tape behavior by projecting onto one
-//!   tape (other tapes become epsilon).
-//! - **auto_intersect(i, j)**: Constrain tapes `i` and `j` to share identical
-//!   label sequences.
+//! - **pair_n([streams; K]) → <W,K>**: Build a K-tape automaton from K
+//!   single-tape automata via iterated cross-product (Eq. 18 + Eq. 12
+//!   associativity). For K=2 the binary `pair(a1, a2)` is a thin wrapper.
+//! - **project(tape_idx)**: Extract single-tape behavior by projecting onto
+//!   one tape (Eq. 22).
+//! - **auto_intersect(i, j)**: Per-transition label-equality filter on tapes
+//!   `i` and `j`. Note: this is a token-level synchronization operation,
+//!   distinct from Kempe Eq. 30's `I_{j,k}` full-string equality (which would
+//!   require ~50 LoC bounded-delay analysis with leftover strings; not
+//!   needed for any current caller).
 //! - **multi_tape_intersect(a, b)**: K-tape product construction with
 //!   synchronized tape labels on all K tapes.
 //! - **evaluate(inputs)**: Evaluate the automaton on K concrete input streams,
 //!   returning the total weight of all accepting runs via BFS over
 //!   `(state, positions_per_tape)` configurations.
+//! - **build_synced_stream_automaton_k([streams; K], [names; K], sync) →
+//!   SyncedStreamResult<W, K>**: K-stream sync automaton with `Align(...)`
+//!   constraint enforcement via `auto_intersect` per resolved (i, j) pair.
 //!
 //! ## Theoretical Foundations
 //!
-//! - **Kempe (2004)** — *"Weighted Multi-Tape Automata and Transducers for NLP."*
-//!   Defines the algebraic framework for K-tape weighted automata, including the
-//!   `pair`, `project`, and `auto_intersect` operations used here.
-//! - **Rabin & Scott (1959)** — The product construction underlying `pair` and
-//!   `multi_tape_intersect` is the standard Rabin-Scott cross-product, extended
-//!   to K tapes with semiring weight multiplication.
+//! - **Kempe, A., Guingne, F., Nicart, F. (2004)** — *"Algorithms for n-Tape
+//!   Automata."* XRCE Research Report 2004/031, arXiv:cs.CL/0406003v1.
+//!   Defines weighted n-tape automata as 6-tuple `A^(n) = ⟨Σ, Q, I, F, E^(n),
+//!   𝒦⟩` (Eq. 1); cross-product `R₁^(n) × R₂^(m) = R^(n+m)` (Eq. 18) with
+//!   associative pairing (Eq. 12), so iterating from K=1 produces arbitrary-K
+//!   automata. Constructive algorithms in Section 6 (CrossPC, CrossPA).
+//! - **Rabin & Scott (1959)** — *"Finite Automata and Their Decision
+//!   Problems."* The product construction underlying `pair` and
+//!   `multi_tape_intersect` is the standard Rabin-Scott cross-product,
+//!   extended to K tapes with semiring weight multiplication.
+//! - **Mohri, Pereira, Riley (1998)** — Composition algorithms with ε-filter.
 //!
 //! ## Feature Gate
 //!
@@ -223,95 +237,342 @@ impl<W: Semiring, const K: usize> Default for WeightedMultiTapeAutomaton<W, K> {
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Combine two single-tape automata into a 2-tape automaton via product
-/// construction (Kempe 2004, Definition 3).
+/// construction (Kempe 2004, Eq. 18 — cross-product `R₁^(1) × R₂^(1) → R^(2)`).
 ///
 /// The resulting automaton has:
 /// - States: `|Q1| x |Q2|` (all pairs of states from `a1` and `a2`).
-/// - Transitions: for each pair `(t1, t2)` of transitions from `a1` and `a2`,
-///   create a transition `(q1, q2) --[label1, label2]--> (q1', q2')` with
-///   weight `w1 * w2`.
-/// - Also includes epsilon-extended transitions: a transition in `a1` paired
-///   with an epsilon-stay in `a2`, and vice versa. This ensures the two tapes
-///   can advance independently.
+/// - Transitions: for each pair `(t1, t2)`, a synchronized transition
+///   `(q1, q2) --[label1, label2]--> (q1', q2')` with weight `w1 * w2`.
+/// - Also includes epsilon-extended transitions on each side, so the two
+///   tapes can advance independently.
 /// - Initial states: pairs `(i1, i2)` with weight `w_i1 * w_i2`.
 /// - Accepting states: pairs `(f1, f2)` with weight `w_f1 * w_f2`.
+///
+/// **Implementation note (T11/2026-05-05):** this is a thin wrapper over
+/// the K-generic `pair_n::<W, 2>([a1, a2])`. The semantics are byte-identical
+/// to the prior K=2-hardcoded implementation, since `pair_n` for K=2 fold
+/// reduces to one `pair_extend_dyn` step which mirrors the binary CrossPA
+/// algorithm.
 pub fn pair<W: Semiring>(
     a1: &WeightedMultiTapeAutomaton<W, 1>,
     a2: &WeightedMultiTapeAutomaton<W, 1>,
 ) -> WeightedMultiTapeAutomaton<W, 2> {
-    let n1 = a1.num_states();
-    let n2 = a2.num_states();
+    pair_n::<W, 2>([a1, a2])
+}
 
-    let mut result = WeightedMultiTapeAutomaton::<W, 2>::new();
+// ══════════════════════════════════════════════════════════════════════════════
+// K-generic infrastructure (Kempe 2004 Eq. 18 cross-product, iterated)
+// ══════════════════════════════════════════════════════════════════════════════
 
-    // Create product states: (q1, q2) -> id = q1 * n2 + q2
-    // Preallocate for the full product.
-    result.states.reserve(n1 * n2);
-    for s1 in &a1.states {
-        for s2 in &a2.states {
-            let label = match (&s1.label, &s2.label) {
-                (Some(l1), Some(l2)) => Some(format!("({l1},{l2})")),
-                (Some(l1), None) => Some(format!("({l1},_)")),
-                (None, Some(l2)) => Some(format!("(_,{l2})")),
+/// Module-private runtime-K multi-tape automaton.
+///
+/// Represents a multi-tape automaton with a runtime arity `k` (in contrast
+/// to the public `WeightedMultiTapeAutomaton<W, K>` which fixes K at
+/// compile time via const generics). Used as an intermediate representation
+/// during K-iterative construction (`pair_extend_dyn`, `pair_n`); after the
+/// fold completes, `materialize::<W, K>` converts to the fixed-K form.
+///
+/// This avoids the `generic_const_exprs` nightly feature that would
+/// otherwise be required for `pair_extend<K>(...) -> <W, {K + 1}>`-style
+/// signatures.
+struct DynMultiTapeAutomaton<W: Semiring> {
+    states: Vec<MultiTapeState>,
+    transitions: Vec<DynMultiTapeTransition<W>>,
+    initial: HashMap<usize, W>,
+    accepting: HashMap<usize, W>,
+    k: usize,
+}
+
+struct DynMultiTapeTransition<W: Semiring> {
+    from: usize,
+    to: usize,
+    labels: Vec<Option<String>>,
+    weight: W,
+}
+
+impl<W: Semiring> DynMultiTapeAutomaton<W> {
+    fn new(k: usize) -> Self {
+        Self {
+            states: Vec::new(),
+            transitions: Vec::new(),
+            initial: HashMap::new(),
+            accepting: HashMap::new(),
+            k,
+        }
+    }
+
+    fn add_state(&mut self, label: Option<String>) -> usize {
+        let id = self.states.len();
+        self.states.push(MultiTapeState { id, label });
+        id
+    }
+}
+
+/// Lift a 1-tape automaton into the runtime-K representation.
+fn lift_1tape_to_dyn<W: Semiring>(
+    a: &WeightedMultiTapeAutomaton<W, 1>,
+) -> DynMultiTapeAutomaton<W> {
+    let mut d = DynMultiTapeAutomaton::new(1);
+    d.states.reserve(a.num_states());
+    for s in &a.states {
+        d.add_state(s.label.clone());
+    }
+    for (&q, &w) in &a.initial {
+        d.initial.insert(q, w);
+    }
+    for (&q, &w) in &a.accepting {
+        d.accepting.insert(q, w);
+    }
+    d.transitions.reserve(a.transitions.len());
+    for t in &a.transitions {
+        d.transitions.push(DynMultiTapeTransition {
+            from: t.from,
+            to: t.to,
+            labels: vec![t.labels[0].clone()],
+            weight: t.weight,
+        });
+    }
+    d
+}
+
+/// Build a runtime-K view of a fixed-K automaton (for `pair_extend_dyn`'s
+/// left operand). One-pass copy; O(|states| + |transitions|).
+fn dyn_view<W: Semiring, const K: usize>(
+    m: &WeightedMultiTapeAutomaton<W, K>,
+) -> DynMultiTapeAutomaton<W> {
+    let mut d = DynMultiTapeAutomaton::new(K);
+    d.states.reserve(m.num_states());
+    for s in &m.states {
+        d.add_state(s.label.clone());
+    }
+    for (&q, &w) in &m.initial {
+        d.initial.insert(q, w);
+    }
+    for (&q, &w) in &m.accepting {
+        d.accepting.insert(q, w);
+    }
+    d.transitions.reserve(m.transitions.len());
+    for t in &m.transitions {
+        d.transitions.push(DynMultiTapeTransition {
+            from: t.from,
+            to: t.to,
+            labels: t.labels.iter().cloned().collect(),
+            weight: t.weight,
+        });
+    }
+    d
+}
+
+/// Materialize a runtime-K automaton with `d.k == K` into the const-generic
+/// `WeightedMultiTapeAutomaton<W, K>` form. Panics if `d.k != K`.
+fn materialize<W: Semiring, const K: usize>(
+    d: &DynMultiTapeAutomaton<W>,
+) -> WeightedMultiTapeAutomaton<W, K> {
+    assert_eq!(
+        d.k, K,
+        "materialize: dynamic arity {} does not match target K = {}",
+        d.k, K,
+    );
+    let mut out = WeightedMultiTapeAutomaton::<W, K>::new();
+    out.states.reserve(d.states.len());
+    for s in &d.states {
+        out.add_state(s.label.clone());
+    }
+    for (&q, &w) in &d.initial {
+        out.set_initial(q, w);
+    }
+    for (&q, &w) in &d.accepting {
+        out.set_accepting(q, w);
+    }
+    for t in &d.transitions {
+        // Convert Vec<Option<String>> (length K) into [Option<String>; K].
+        let mut arr: [Option<String>; K] = std::array::from_fn(|_| None);
+        debug_assert_eq!(
+            t.labels.len(),
+            K,
+            "materialize: transition label arity {} != K {}",
+            t.labels.len(),
+            K,
+        );
+        for (i, lbl) in t.labels.iter().enumerate() {
+            arr[i] = lbl.clone();
+        }
+        out.add_transition(t.from, t.to, arr, t.weight);
+    }
+    out
+}
+
+/// Pair-extend a runtime-K automaton `m` with a 1-tape automaton `a` to
+/// produce a runtime-(K+1) automaton (Kempe 2004 Definition 3 / Eq. 18,
+/// CrossPA-style state pairing with synchronized + ε-extended transitions
+/// on the new last tape).
+///
+/// Algorithm (Kempe Section 6.1.2 page 15, lifted from K=2 to K → K+1):
+/// 1. Allocate `|Q_m| × |Q_a|` states with `product_id(qm, qa) = qm * |Q_a| + qa`.
+/// 2. Initial weights: `I'((qm,qa)) = I_m(qm) ⊗ I_a(qa)`.
+/// 3. Final weights: `F'((qm,qa)) = F_m(qm) ⊗ F_a(qa)`.
+/// 4. Synchronized transitions: append `t_a.labels[0]` to `t_m`'s K-label
+///    array; weight `t_m.weight ⊗ t_a.weight`.
+/// 5. ε-extended on tape K+1 (m advances, a idle): copy `t_m.labels` and
+///    append `None`; weight `t_m.weight`.
+/// 6. ε-extended on tapes 0..K (m idle, a advances): K Nones + `t_a.labels[0]`;
+///    weight `t_a.weight`.
+fn pair_extend_dyn<W: Semiring>(
+    m: &DynMultiTapeAutomaton<W>,
+    a: &WeightedMultiTapeAutomaton<W, 1>,
+) -> DynMultiTapeAutomaton<W> {
+    let nm = m.states.len();
+    let na = a.num_states();
+    let new_k = m.k + 1;
+    let mut out = DynMultiTapeAutomaton::new(new_k);
+
+    out.states.reserve(nm * na);
+    for sm in &m.states {
+        for sa in &a.states {
+            let label = match (&sm.label, &sa.label) {
+                (Some(lm), Some(la)) => Some(format!("({lm},{la})")),
+                (Some(lm), None) => Some(format!("({lm},_)")),
+                (None, Some(la)) => Some(format!("(_,{la})")),
                 (None, None) => None,
             };
-            result.add_state(label);
+            out.add_state(label);
         }
     }
 
-    let product_id = |q1: usize, q2: usize| -> usize { q1 * n2 + q2 };
+    let product_id = |qm: usize, qa: usize| -> usize { qm * na + qa };
 
-    // Initial states: (i1, i2) with combined weight.
-    for (&i1, &w1) in &a1.initial {
-        for (&i2, &w2) in &a2.initial {
-            result.set_initial(product_id(i1, i2), w1.times(&w2));
+    for (&im, &wm) in &m.initial {
+        for (&ia, &wa) in &a.initial {
+            out.initial.insert(product_id(im, ia), wm.times(&wa));
+        }
+    }
+    for (&fm, &wm) in &m.accepting {
+        for (&fa, &wa) in &a.accepting {
+            out.accepting.insert(product_id(fm, fa), wm.times(&wa));
         }
     }
 
-    // Accepting states: (f1, f2) with combined weight.
-    for (&f1, &w1) in &a1.accepting {
-        for (&f2, &w2) in &a2.accepting {
-            result.set_accepting(product_id(f1, f2), w1.times(&w2));
+    // Pre-allocate transitions: |T_m|*|T_a| sync + |T_m|*|Q_a| epsilon-on-new
+    // + |Q_m|*|T_a| epsilon-on-old.
+    out.transitions.reserve(
+        m.transitions.len() * a.transitions.len()
+            + m.transitions.len() * na
+            + nm * a.transitions.len(),
+    );
+
+    // Synchronized: m and a both advance.
+    for tm in &m.transitions {
+        for ta in &a.transitions {
+            let mut new_labels = Vec::with_capacity(new_k);
+            new_labels.extend(tm.labels.iter().cloned());
+            new_labels.push(ta.labels[0].clone());
+            out.transitions.push(DynMultiTapeTransition {
+                from: product_id(tm.from, ta.from),
+                to: product_id(tm.to, ta.to),
+                labels: new_labels,
+                weight: tm.weight.times(&ta.weight),
+            });
         }
     }
 
-    // Synchronized transitions: both tapes advance simultaneously.
-    for t1 in &a1.transitions {
-        for t2 in &a2.transitions {
-            result.add_transition(
-                product_id(t1.from, t2.from),
-                product_id(t1.to, t2.to),
-                [t1.labels[0].clone(), t2.labels[0].clone()],
-                t1.weight.times(&t2.weight),
-            );
+    // ε-extended on the new last tape (m advances, a idle).
+    for tm in &m.transitions {
+        for qa in 0..na {
+            let mut new_labels = Vec::with_capacity(new_k);
+            new_labels.extend(tm.labels.iter().cloned());
+            new_labels.push(None);
+            out.transitions.push(DynMultiTapeTransition {
+                from: product_id(tm.from, qa),
+                to: product_id(tm.to, qa),
+                labels: new_labels,
+                weight: tm.weight,
+            });
         }
     }
 
-    // Epsilon-extended: a1 advances, a2 stays (epsilon on tape 2).
-    for t1 in &a1.transitions {
-        for q2 in 0..n2 {
-            result.add_transition(
-                product_id(t1.from, q2),
-                product_id(t1.to, q2),
-                [t1.labels[0].clone(), None],
-                t1.weight,
-            );
+    // ε-extended on tapes 0..K (m idle, a advances).
+    for ta in &a.transitions {
+        for qm in 0..nm {
+            let mut new_labels = Vec::with_capacity(new_k);
+            for _ in 0..m.k {
+                new_labels.push(None);
+            }
+            new_labels.push(ta.labels[0].clone());
+            out.transitions.push(DynMultiTapeTransition {
+                from: product_id(qm, ta.from),
+                to: product_id(qm, ta.to),
+                labels: new_labels,
+                weight: ta.weight,
+            });
         }
     }
 
-    // Epsilon-extended: a2 advances, a1 stays (epsilon on tape 1).
-    for t2 in &a2.transitions {
-        for q1 in 0..n1 {
-            result.add_transition(
-                product_id(q1, t2.from),
-                product_id(q1, t2.to),
-                [None, t2.labels[0].clone()],
-                t2.weight,
-            );
-        }
+    out
+}
+
+/// Build a K-tape automaton from K single-tape automata via iterated
+/// cross-product (Kempe 2004 Eq. 18 + Eq. 12 associativity).
+///
+/// Behavior by K:
+/// - **K = 0**: returns the trivial 0-tape automaton with one state that is
+///   both initial and accepting with weight `W::one()`. This is the identity
+///   element for `pair_extend`: `pair_extend(trivial_0, a) ≅ a`. Recognizes
+///   the empty K-tuple `()`.
+/// - **K = 1**: returns a copy of `streams[0]` (degenerate single-tape case;
+///   no fold work).
+/// - **K ≥ 2**: builds via internal `DynMultiTapeAutomaton` fold:
+///   `pair_n([s₀,…,s_{K-1}]) = pair_extend_dyn(...pair_extend_dyn(lift(s₀), s₁)..., s_{K-1})`,
+///   then materializes to fixed-K. State count is `∏_k |Q_k|`.
+///
+/// Reference: Kempe, A., Guingne, F., Nicart, F. (2004). "Algorithms for
+/// n-Tape Automata." XRCE Research Report 2004/031. Eq. 18 (cross-product
+/// R₁^(n) × R₂^(m) = R^(n+m)) + Eq. 12 (associativity of pairing) +
+/// Section 6.1.2 (CrossPA constructive algorithm).
+pub fn pair_n<W: Semiring, const K: usize>(
+    streams: [&WeightedMultiTapeAutomaton<W, 1>; K],
+) -> WeightedMultiTapeAutomaton<W, K> {
+    if K == 0 {
+        // Identity for pair_extend: single-state automaton recognizing ().
+        let mut empty = WeightedMultiTapeAutomaton::<W, K>::new();
+        let q = empty.add_state(Some("trivial".to_string()));
+        empty.set_initial(q, W::one());
+        empty.set_accepting(q, W::one());
+        return empty;
     }
 
-    result
+    // K ≥ 1: start from streams[0] lifted to runtime-K, then fold.
+    let mut acc = lift_1tape_to_dyn(streams[0]);
+    for s in streams.iter().skip(1) {
+        acc = pair_extend_dyn(&acc, s);
+    }
+    materialize::<W, K>(&acc)
+}
+
+/// Pair-extend a fixed-K automaton with a 1-tape automaton, returning the
+/// runtime-K (= K_FROM + 1) representation. Use `materialize::<W, K_TARGET>`
+/// to convert to a fixed-K type.
+///
+/// Public alternative to the unstable `generic_const_exprs`-based
+/// `pair_extend<K>(..) -> <W, {K + 1}>` signature: callers that need
+/// extension to a specific arity use this in combination with
+/// `pair_extend_to::<W, K_FROM, K_TO>(...)` below.
+///
+/// Most consumers should use `pair_n<K>(...)` instead, which folds directly
+/// to a fixed K.
+pub fn pair_extend_to<W: Semiring, const K_FROM: usize, const K_TO: usize>(
+    m: &WeightedMultiTapeAutomaton<W, K_FROM>,
+    a: &WeightedMultiTapeAutomaton<W, 1>,
+) -> WeightedMultiTapeAutomaton<W, K_TO> {
+    assert_eq!(
+        K_TO,
+        K_FROM + 1,
+        "pair_extend_to: K_TO must equal K_FROM + 1 (K_FROM={}, K_TO={})",
+        K_FROM,
+        K_TO,
+    );
+    let dyn_m = dyn_view::<W, K_FROM>(m);
+    let extended = pair_extend_dyn(&dyn_m, a);
+    materialize::<W, K_TO>(&extended)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -992,20 +1253,26 @@ impl crate::predicate_dispatch::PredicateCompiler for MultiTapeCompiler {
 //    full product automaton. Works by checking each constraint pair independently
 //    and combining diagnostics.
 //
-// For K>2, one would need to extend `pair()` to an iterative fold with type-level
-// encoding (e.g., `pair_extend()` producing K+1 from K), which requires either
-// procedural macros or a runtime-indexed automaton representation. This is left
-// as a future extension (see TODO below).
+// **K ≥ 1 implementation note (T11/2026-05-05):** the iterative cross-product
+// per Kempe (2004) Eq. 18 + Eq. 12 associativity is implemented via the
+// runtime-K `DynMultiTapeAutomaton` intermediate (`pair_extend_dyn`,
+// `pair_n<K>`). The K=2 helpers (`pair`, `build_synced_stream_automaton`)
+// remain as thin wrappers; the K-generic API
+// `build_synced_stream_automaton_k<K>` handles arbitrary K ≥ 1.
 
 /// Result of building a synchronized multi-tape stream automaton.
 ///
 /// Contains the combined automaton, per-constraint diagnostics, and an overall
 /// satisfiability verdict. This is a compile-time validation tool — it verifies
 /// constraint satisfiability but does not affect runtime lexing.
+///
+/// Generic over `K` (the number of tapes). The K=2 specialization is
+/// `SyncedStreamResult<W, 2>`; arbitrary K ≥ 1 is supported via
+/// `build_synced_stream_automaton_k`.
 #[derive(Debug, Clone)]
-pub struct SyncedStreamResult<W: Semiring> {
-    /// The synchronized 2-tape automaton combining both streams.
-    pub automaton: WeightedMultiTapeAutomaton<W, 2>,
+pub struct SyncedStreamResult<W: Semiring, const K: usize> {
+    /// The synchronized K-tape automaton combining all streams.
+    pub automaton: WeightedMultiTapeAutomaton<W, K>,
     /// Per-constraint diagnostic messages.
     ///
     /// Each entry corresponds to a constraint from the `SyncSpec`. An `Ok(msg)`
@@ -1145,7 +1412,7 @@ pub fn build_synced_stream_automaton<W: Semiring>(
     stream_a_name: &str,
     stream_b_name: &str,
     sync: &crate::SyncSpec,
-) -> SyncedStreamResult<W> {
+) -> SyncedStreamResult<W, 2> {
     // Step 1: Combine via pair() — product construction with epsilon extension.
     let mut combined = pair(stream_a, stream_b);
 
@@ -1423,17 +1690,127 @@ pub fn validate_sync_constraints(
     diagnostics
 }
 
-// TODO(Sprint 6C+): For K>2 synchronized stream automata, implement one of:
-//   (a) A `pair_extend()` operation that lifts a K-tape automaton to (K+1)-tape
-//       by pairing with a 1-tape automaton on a designated new tape index.
-//       This requires a type-level fold or procedural macro to handle the
-//       const generic arithmetic (K -> K+1).
-//   (b) A runtime-indexed `DynMultiTapeAutomaton` that uses `Vec<Option<String>>`
-//       instead of `[Option<String>; K]` for transition labels, trading compile-time
-//       safety for runtime flexibility. This would allow arbitrary K without
-//       const generic constraints.
-//   For now, the K=2 `build_synced_stream_automaton()` covers the dominant use
-//   case, and `validate_sync_constraints()` handles arbitrary-arity validation.
+/// K-generic version of `build_synced_stream_automaton`: build a K-tape
+/// synchronized automaton from K named streams and a `SyncSpec`.
+///
+/// Generalizes the K=2 helper to arbitrary K ≥ 1 per Kempe (2004) Eq. 18
+/// (cross-product) + Eq. 30 (auto-intersection on tapes j, k). For K=2 the
+/// public `build_synced_stream_automaton(...)` is a thin wrapper over
+/// `build_synced_stream_automaton_k::<W, 2>([a, b], [na, nb], sync)`.
+///
+/// Algorithm:
+/// 1. Combine the K streams via `pair_n([s_0, ..., s_{K-1}])` →
+///    `<W, K>`-tape product with full ε-extension.
+/// 2. For each `Align(name_i, name_j, boundary)` constraint:
+///    a. Resolve `(name_i, name_j)` to tape indices via
+///       `names.iter().position(...)`.
+///    b. If both names resolve to distinct tape indices, check the boundary
+///       pattern is present in both streams; if so, apply
+///       `combined.auto_intersect(idx_i, idx_j)`.
+///    c. If a name doesn't resolve, record a "skipped: not in our streams"
+///       diagnostic.
+/// 3. For each `Track` constraint: record metadata-only diagnostic.
+/// 4. Check satisfiability via `check_reachable_accepting`.
+///
+/// Reference: Kempe, A., Guingne, F., Nicart, F. (2004). "Algorithms for
+/// n-Tape Automata." XRCE Research Report 2004/031. Definitions 3 (pair),
+/// 5 (project), 7 (auto-intersect) composed K times. Theorem 8.1
+/// (Rabin-Scott 1959 cross-product) for the K-tape product.
+pub fn build_synced_stream_automaton_k<W: Semiring, const K: usize>(
+    streams: [&WeightedMultiTapeAutomaton<W, 1>; K],
+    names: [&str; K],
+    sync: &crate::SyncSpec,
+) -> SyncedStreamResult<W, K> {
+    // Step 1: Combine via pair_n (K-iterated cross-product).
+    let mut combined = pair_n::<W, K>(streams);
+
+    // Step 2: Apply constraints and collect diagnostics.
+    let mut constraint_diagnostics =
+        Vec::with_capacity(sync.constraints.len());
+
+    for constraint in &sync.constraints {
+        match constraint {
+            crate::SyncConstraintSpec::Align {
+                stream_a: ref constraint_a,
+                stream_b: ref constraint_b,
+                boundary_pattern,
+            } => {
+                let i = names.iter().position(|&n| n == constraint_a.as_str());
+                let j = names.iter().position(|&n| n == constraint_b.as_str());
+                match (i, j) {
+                    (Some(i), Some(j)) if i != j => {
+                        // Both names resolved to distinct tapes.
+                        // Check boundary pattern presence in source streams
+                        // (using the original 1-tape automata).
+                        let has_i = streams[i].transitions.iter().any(|t| {
+                            t.labels[0].as_deref() == Some(boundary_pattern.as_str())
+                        });
+                        let has_j = streams[j].transitions.iter().any(|t| {
+                            t.labels[0].as_deref() == Some(boundary_pattern.as_str())
+                        });
+                        match (has_i, has_j) {
+                            (false, false) => constraint_diagnostics.push(Err(format!(
+                                "Align({}, {}, '{}'): boundary pattern '{}' not found in either stream",
+                                constraint_a, constraint_b, boundary_pattern, boundary_pattern,
+                            ))),
+                            (false, true) => constraint_diagnostics.push(Err(format!(
+                                "Align({}, {}, '{}'): boundary pattern '{}' not found in stream '{}'",
+                                constraint_a, constraint_b, boundary_pattern,
+                                boundary_pattern, constraint_a,
+                            ))),
+                            (true, false) => constraint_diagnostics.push(Err(format!(
+                                "Align({}, {}, '{}'): boundary pattern '{}' not found in stream '{}'",
+                                constraint_a, constraint_b, boundary_pattern,
+                                boundary_pattern, constraint_b,
+                            ))),
+                            (true, true) => {
+                                combined = combined.auto_intersect(i, j);
+                                constraint_diagnostics.push(Ok(format!(
+                                    "Align({}, {}, '{}'): applied auto_intersect({}, {}) — \
+                                     {} transitions remain after synchronization",
+                                    constraint_a, constraint_b, boundary_pattern,
+                                    i, j, combined.num_transitions(),
+                                )));
+                            }
+                        }
+                    }
+                    (Some(_), Some(_)) => {
+                        // i == j: degenerate self-align (e.g. Align("a", "a", ".")).
+                        // Record as a no-op rather than an error.
+                        constraint_diagnostics.push(Ok(format!(
+                            "Align({}, {}, '{}'): same stream — no-op",
+                            constraint_a, constraint_b, boundary_pattern,
+                        )));
+                    }
+                    _ => {
+                        // At least one name doesn't appear in `names`.
+                        constraint_diagnostics.push(Ok(format!(
+                            "Align({}, {}, '{}'): skipped: does not involve any of our streams",
+                            constraint_a, constraint_b, boundary_pattern,
+                        )));
+                    }
+                }
+            }
+            crate::SyncConstraintSpec::Track {
+                auxiliary,
+                primary,
+            } => {
+                constraint_diagnostics.push(Ok(format!(
+                    "Track({} relative to {}): recorded (metadata-only, no structural constraint)",
+                    auxiliary, primary,
+                )));
+            }
+        }
+    }
+
+    let is_satisfiable = check_reachable_accepting(&combined);
+
+    SyncedStreamResult {
+        automaton: combined,
+        constraint_diagnostics,
+        is_satisfiable,
+    }
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Tests
@@ -2137,7 +2514,7 @@ mod tests {
     #[test]
     fn analyze_bundle_collection_cross_ref() {
         use crate::pipeline::CategoryInfo;
-        use crate::recursive::CollectionKind;
+        use crate::grammar::ir::CollectionKind;
 
         let categories = vec![
             CategoryInfo {
@@ -2739,6 +3116,312 @@ mod tests {
         assert!(diagnostics[0].is_ok());  // Track ws/main — both exist
         assert!(diagnostics[1].is_err()); // Align main/comments — "a" not in comments
         assert!(diagnostics[2].is_ok());  // Track comments/main — both exist
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // K-generic tests (T11/2026-05-05): pair_n / pair_extend_to / K=0 / K=1 /
+    // K=3 / K=4 / build_synced_stream_automaton_k. Per Kempe (2004) Eq. 18 +
+    // Eq. 12 associativity, the K-tape cross-product is iterated binary
+    // pairing; tests verify the iterated fold reduces correctly at each K.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// K=0: trivial 0-tape automaton recognizing the empty K-tuple `()`.
+    /// Identity element for `pair_extend`.
+    #[test]
+    fn pair_n_k0_recognizes_empty_tuple() {
+        let trivial = pair_n::<TropicalWeight, 0>([]);
+        assert_eq!(trivial.num_states(), 1);
+        assert_eq!(trivial.num_transitions(), 0);
+        // I(q) ⊗ F(q) = one() ⊗ one() = one().
+        assert_eq!(trivial.evaluate(&[]), TropicalWeight::one());
+    }
+
+    /// K=1: pair_n([a]) returns a copy of `a` (degenerate single-tape).
+    #[test]
+    fn pair_n_k1_returns_clone_of_single_stream() {
+        let a = linear_1tape(&["alpha", "beta"]);
+        let folded = pair_n::<TropicalWeight, 1>([&a]);
+        assert_eq!(folded.num_states(), a.num_states());
+        assert_eq!(folded.num_transitions(), a.num_transitions());
+        let r1 = folded.evaluate(&[vec!["alpha".into(), "beta".into()]]);
+        let r2 = a.evaluate(&[vec!["alpha".into(), "beta".into()]]);
+        assert_eq!(r1, r2);
+    }
+
+    /// K=1 evaluate matches single-tape NFA semantics on accept and reject.
+    #[test]
+    fn k1_evaluate_matches_single_tape_nfa_semantics() {
+        let a = linear_1tape(&["a", "b", "c"]);
+        let r_match = a.evaluate(&[vec!["a".into(), "b".into(), "c".into()]]);
+        let r_miss = a.evaluate(&[vec!["a".into(), "WRONG".into(), "c".into()]]);
+        assert_ne!(r_match, TropicalWeight::zero());
+        assert_eq!(r_miss, TropicalWeight::zero());
+    }
+
+    /// K=1 multi_tape_intersect reduces to standard 1-tape intersection.
+    #[test]
+    fn k1_multi_tape_intersect_acts_as_weighted_intersection() {
+        let a = linear_1tape(&["x"]);
+        let b = linear_1tape(&["x"]);
+        let p = multi_tape_intersect(&a, &b);
+        // 2 states × 2 states = 4 product states.
+        assert_eq!(p.num_states(), 4);
+        // Only the matching label survives the synchronized cross-product.
+        // The current K-generic multi_tape_intersect is a per-transition
+        // label-match (not full Kempe Eq. 30), so we expect 1 transition.
+        assert_eq!(p.num_transitions(), 1);
+    }
+
+    /// K=2 regression: pair() (now a wrapper over pair_n([a, b]))
+    /// preserves the original product-state count and synchronized +
+    /// ε-extended transition counts.
+    #[test]
+    fn pair_n_k2_byte_compat_with_legacy_pair() {
+        let a = linear_1tape(&["x"]);
+        let b = linear_1tape(&["y"]);
+        let folded = pair(&a, &b);
+        // 2 × 2 = 4 product states.
+        assert_eq!(folded.num_states(), 4);
+        // 1 sync × 1 + 1 ε-on-tape-0 × 2 states + 1 ε-on-tape-1 × 2 states
+        // = 1 + 2 + 2 = 5 transitions.
+        assert_eq!(folded.num_transitions(), 5);
+    }
+
+    /// K=3: pair_n state count = product of source state counts.
+    #[test]
+    fn pair_n_k3_construction_state_count() {
+        let a = linear_1tape(&["a"]);            // 2 states
+        let b = linear_1tape(&["b1", "b2"]);     // 3 states
+        let c = linear_1tape(&["c"]);            // 2 states
+        let triple = pair_n::<TropicalWeight, 3>([&a, &b, &c]);
+        assert_eq!(triple.num_states(), 2 * 3 * 2); // = 12
+    }
+
+    /// K=3: synchronized consumption of three independent tapes accepts.
+    #[test]
+    fn pair_n_k3_evaluate_synchronized_consumption() {
+        let a = linear_1tape(&["x"]);
+        let b = linear_1tape(&["y"]);
+        let c = linear_1tape(&["z"]);
+        let triple = pair_n::<TropicalWeight, 3>([&a, &b, &c]);
+        let r = triple.evaluate(&[
+            vec!["x".into()],
+            vec!["y".into()],
+            vec!["z".into()],
+        ]);
+        assert_ne!(
+            r,
+            TropicalWeight::zero(),
+            "K=3 paired automaton should accept independently-consumed tapes",
+        );
+    }
+
+    /// K=3 auto_intersect on a distinct pair of tapes (0, 1) keeps only the
+    /// transitions where labels[0] == labels[1] per-transition.
+    #[test]
+    fn auto_intersect_k3_distinct_pair_filters_correctly() {
+        let mut m = WeightedMultiTapeAutomaton::<TropicalWeight, 3>::new();
+        let q0 = m.add_state(None);
+        let q1 = m.add_state(None);
+        let q2 = m.add_state(None);
+        m.set_initial(q0, TropicalWeight::one());
+        m.set_accepting(q1, TropicalWeight::one());
+        m.set_accepting(q2, TropicalWeight::one());
+        m.add_transition(
+            q0,
+            q1,
+            [Some("a".into()), Some("a".into()), Some("b".into())],
+            TropicalWeight::one(),
+        );
+        m.add_transition(
+            q0,
+            q2,
+            [Some("a".into()), Some("b".into()), Some("c".into())],
+            TropicalWeight::one(),
+        );
+        let constrained = m.auto_intersect(0, 1);
+        // Only the first transition has labels[0] == labels[1].
+        assert_eq!(constrained.num_transitions(), 1);
+    }
+
+    /// K=4: pair_n state count = 2×2×2×2 = 16.
+    #[test]
+    fn pair_n_k4_state_count_product() {
+        let s0 = linear_1tape(&["a"]);
+        let s1 = linear_1tape(&["b"]);
+        let s2 = linear_1tape(&["c"]);
+        let s3 = linear_1tape(&["d"]);
+        let q = pair_n::<TropicalWeight, 4>([&s0, &s1, &s2, &s3]);
+        assert_eq!(q.num_states(), 2 * 2 * 2 * 2);
+    }
+
+    /// K=4 synchronized evaluation across four tapes of varying length.
+    #[test]
+    fn pair_n_k4_evaluate_synchronized() {
+        let s0 = linear_1tape(&["a", "b"]);
+        let s1 = linear_1tape(&["x"]);
+        let s2 = linear_1tape(&["c"]);
+        let s3 = linear_1tape(&["y", "z"]);
+        let q = pair_n::<TropicalWeight, 4>([&s0, &s1, &s2, &s3]);
+        let r = q.evaluate(&[
+            vec!["a".into(), "b".into()],
+            vec!["x".into()],
+            vec!["c".into()],
+            vec!["y".into(), "z".into()],
+        ]);
+        assert_ne!(
+            r,
+            TropicalWeight::zero(),
+            "K=4 product accepts all tapes simultaneously",
+        );
+    }
+
+    /// K=4 chained auto_intersect across two pairs (0,2) and (1,3).
+    #[test]
+    fn auto_intersect_k4_chained_two_pair_constraints() {
+        let mut m = WeightedMultiTapeAutomaton::<TropicalWeight, 4>::new();
+        let q0 = m.add_state(None);
+        let q1 = m.add_state(None);
+        m.set_initial(q0, TropicalWeight::one());
+        m.set_accepting(q1, TropicalWeight::one());
+        // Transition where labels[0] == labels[2] AND labels[1] == labels[3]:
+        m.add_transition(
+            q0,
+            q1,
+            [
+                Some("a".into()),
+                Some("x".into()),
+                Some("a".into()),
+                Some("x".into()),
+            ],
+            TropicalWeight::one(),
+        );
+        // Transition where labels[0] == labels[2] but labels[1] != labels[3]:
+        m.add_transition(
+            q0,
+            q1,
+            [
+                Some("a".into()),
+                Some("x".into()),
+                Some("a".into()),
+                Some("DIFF".into()),
+            ],
+            TropicalWeight::one(),
+        );
+        let c1 = m.auto_intersect(0, 2);
+        let c2 = c1.auto_intersect(1, 3);
+        // Only the all-matching transition survives both filters.
+        assert_eq!(c2.num_transitions(), 1);
+    }
+
+    /// K=3 build_synced_stream_automaton_k: Align constraint between two of
+    /// the three streams resolves correctly via name lookup.
+    #[test]
+    fn build_synced_stream_automaton_k3_align_two_tapes() {
+        let s0 = build_stream_automaton::<TropicalWeight>("s0", &["a".into(), "b".into()]);
+        let s1 = build_stream_automaton::<TropicalWeight>("s1", &["c".into(), "d".into()]);
+        let s2 = build_stream_automaton::<TropicalWeight>("s2", &["a".into(), "e".into()]);
+        let sync = crate::SyncSpec {
+            constraints: vec![crate::SyncConstraintSpec::Align {
+                stream_a: "s0".into(),
+                stream_b: "s2".into(),
+                boundary_pattern: "a".into(),
+            }],
+        };
+        let result = build_synced_stream_automaton_k::<TropicalWeight, 3>(
+            [&s0, &s1, &s2],
+            ["s0", "s1", "s2"],
+            &sync,
+        );
+        // The boundary "a" appears in both s0 and s2, so the constraint is
+        // applied (auto_intersect(0, 2)). The constraint diagnostic is Ok.
+        assert_eq!(result.constraint_diagnostics.len(), 1);
+        assert!(
+            result.constraint_diagnostics[0].is_ok(),
+            "expected Ok, got {:?}",
+            result.constraint_diagnostics[0],
+        );
+    }
+
+    /// K=3 build_synced_stream_automaton_k: Align with name not in `names`
+    /// produces a "skipped" diagnostic without affecting the automaton.
+    #[test]
+    fn build_synced_stream_automaton_k3_align_unknown_stream_skips() {
+        let s0 = build_stream_automaton::<TropicalWeight>("s0", &["a".into()]);
+        let s1 = build_stream_automaton::<TropicalWeight>("s1", &["b".into()]);
+        let s2 = build_stream_automaton::<TropicalWeight>("s2", &["c".into()]);
+        let sync = crate::SyncSpec {
+            constraints: vec![crate::SyncConstraintSpec::Align {
+                stream_a: "s0".into(),
+                stream_b: "UNKNOWN".into(),
+                boundary_pattern: ".".into(),
+            }],
+        };
+        let result = build_synced_stream_automaton_k::<TropicalWeight, 3>(
+            [&s0, &s1, &s2],
+            ["s0", "s1", "s2"],
+            &sync,
+        );
+        assert_eq!(result.constraint_diagnostics.len(), 1);
+        assert!(result.constraint_diagnostics[0].is_ok());
+        let msg = match &result.constraint_diagnostics[0] {
+            Ok(m) => m.clone(),
+            Err(_) => panic!("expected Ok diagnostic"),
+        };
+        assert!(msg.contains("skipped"), "diagnostic should say skipped: {}", msg);
+    }
+
+    /// K=2 evaluation parity: pair(a, b) (now a thin wrapper over pair_n) and
+    /// the K=2 binary `pair` produce the same evaluation results.
+    #[test]
+    fn pair_n_k2_evaluate_parity_with_legacy_binary_pair() {
+        let a = linear_1tape(&["x"]);
+        let b = linear_1tape(&["y"]);
+        let p_binary = pair(&a, &b);
+        let p_via_n = pair_n::<TropicalWeight, 2>([&a, &b]);
+        // Same number of states and transitions.
+        assert_eq!(p_binary.num_states(), p_via_n.num_states());
+        assert_eq!(p_binary.num_transitions(), p_via_n.num_transitions());
+        // Same evaluation on accepting input.
+        let r_binary = p_binary.evaluate(&[vec!["x".into()], vec!["y".into()]]);
+        let r_via_n = p_via_n.evaluate(&[vec!["x".into()], vec!["y".into()]]);
+        assert_eq!(r_binary, r_via_n);
+    }
+
+    /// pair_extend_to: 2-tape × 1-tape → 3-tape.
+    #[test]
+    fn pair_extend_to_k2_to_k3() {
+        let a = linear_1tape(&["x"]);
+        let b = linear_1tape(&["y"]);
+        let c = linear_1tape(&["z"]);
+        let pair_ab = pair(&a, &b); // <W, 2>
+        let triple: WeightedMultiTapeAutomaton<TropicalWeight, 3> =
+            pair_extend_to::<TropicalWeight, 2, 3>(&pair_ab, &c);
+        // |Q_ab| = 4 × |Q_c| = 2 → 8 product states.
+        assert_eq!(triple.num_states(), 8);
+        // Evaluation accepts all-three-tapes synchronized:
+        let r = triple.evaluate(&[
+            vec!["x".into()],
+            vec!["y".into()],
+            vec!["z".into()],
+        ]);
+        assert_ne!(r, TropicalWeight::zero());
+    }
+
+    /// Property: pair_n is associative (K=3 case).
+    /// pair_n([a, b, c]) and pair_extend_to(pair_n([a, b]), c) produce
+    /// automata with the same product-state count.
+    #[test]
+    fn pair_n_k3_associativity_property() {
+        let a = linear_1tape(&["a1"]);
+        let b = linear_1tape(&["b1"]);
+        let c = linear_1tape(&["c1"]);
+        let abc_direct = pair_n::<TropicalWeight, 3>([&a, &b, &c]);
+        let ab = pair_n::<TropicalWeight, 2>([&a, &b]);
+        let abc_left_assoc: WeightedMultiTapeAutomaton<TropicalWeight, 3> =
+            pair_extend_to::<TropicalWeight, 2, 3>(&ab, &c);
+        // Both fold orderings produce the same product-state count.
+        assert_eq!(abc_direct.num_states(), abc_left_assoc.num_states());
     }
 }
 

@@ -104,23 +104,10 @@ fn test_generated_code_imports_runtime_types() {
     );
 }
 
-#[test]
-fn test_generated_code_references_parse_error_variants() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // The parser code constructs ParseError variants — verify they appear in generated code
-    assert!(code_str.contains("ParseError"), "generated code should reference ParseError");
-    assert!(
-        code_str.contains("UnexpectedToken"),
-        "generated code should reference UnexpectedToken"
-    );
-    assert!(
-        code_str.contains("UnexpectedEof"),
-        "generated code should reference UnexpectedEof"
-    );
-}
+// Stage 10.5b conclusion (2026-05-05): `test_generated_code_references_parse_error_variants`
+// MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
+// (Walker emits WpdsParseError + ParseFailed variants; the trampoline-emitted
+// ParseError::UnexpectedToken / UnexpectedEof variants are gone with their emitters).
 
 #[test]
 fn test_generated_code_contains_position_and_range() {
@@ -201,18 +188,10 @@ fn test_format_error_context() {
 
 // -- Expected message generation --
 
-#[test]
-fn test_error_message_includes_integer_literal() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // Int category with i32 native type should mention "integer literal" in expected messages
-    assert!(
-        code_str.contains("integer literal"),
-        "expected messages for Int (i32) should include 'integer literal'"
-    );
-}
+// Stage 10.5r migration (2026-05-04): `test_error_message_includes_integer_literal`
+// MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
+// (Walker codegen lives in the macros crate, downstream of prattail; the
+// expected-message strings are emitted by `wpds_codegen/recovery.rs::emit_recovery_module`).
 
 #[test]
 fn test_error_message_includes_identifier() {
@@ -227,57 +206,24 @@ fn test_error_message_includes_identifier() {
     );
 }
 
-#[test]
-fn test_error_message_includes_boolean_literal() {
-    let spec = typed_calc_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
+// Stage 10.5r migration (2026-05-04): `test_error_message_includes_boolean_literal`
+// MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
+// (Walker codegen lives in the macros crate; expected-message strings are
+// emitted by `wpds_codegen/recovery.rs::emit_recovery_module`).
 
-    // Bool category with bool native type should mention "boolean literal"
-    assert!(
-        code_str.contains("boolean literal"),
-        "expected messages for Bool (bool) should include 'boolean literal'"
-    );
-}
-
-#[test]
-fn test_error_message_includes_category_name() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // The expected message should reference the category name
-    assert!(
-        code_str.contains("Int expression"),
-        "expected messages should reference the category name (e.g., 'Int expression')"
-    );
-}
+// Stage 10.5r migration (2026-05-04): `test_error_message_includes_category_name`
+// MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
+// (category name appears in Walker-emitted expected-message strings via
+// `wpds_codegen/recovery.rs::emit_recovery_module`).
 
 // -- Error helper function generation --
 
-#[test]
-fn test_generated_code_contains_expect_token() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    assert!(
-        code_str.contains("expect_token"),
-        "generated code should contain expect_token helper function"
-    );
-}
-
-#[test]
-fn test_generated_code_contains_expect_ident() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    assert!(
-        code_str.contains("expect_ident"),
-        "generated code should contain expect_ident helper function"
-    );
-}
+// Stage 10.5b conclusion (2026-05-05): `test_generated_code_contains_expect_token`
+// + `test_generated_code_contains_expect_ident` DELETED. Both tested trampoline-
+// internal helpers (expect_token, expect_ident) emitted by the now-deleted
+// pratt::write_parser_helpers. Walker uses WpdsParseError + RecoveryAttempt
+// directly (no expect_* wrappers). The error-reporting FEATURE survives via
+// WpdsParseError, asserted in macros::tests::walker_emits_wpds_parse_error_type.
 
 #[test]
 fn test_runtime_types_provides_format_error_context() {
@@ -296,39 +242,17 @@ fn test_runtime_types_provides_format_error_context() {
 
 // -- EOF error handling --
 
-#[test]
-fn test_prefix_handler_has_eof_check() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // The prefix handler should check for EOF before matching tokens
-    assert!(
-        code_str.contains("UnexpectedEof"),
-        "prefix handler should check for EOF and return UnexpectedEof"
-    );
-}
+// Stage 10.5b conclusion (2026-05-05): `test_prefix_handler_has_eof_check` DELETED.
+// `UnexpectedEof` was a trampoline-side ParseError variant emitted by the
+// deleted prefix handlers. Walker EOF detection lives in WpdsWalker::run_to_end_of_input
+// (returns WpdsState::Error / WpdsResolveResult::ParseError naturally).
 
 // -- Missing cast rule diagnostics (Sprint 10a) --
 
-#[test]
-fn test_multi_category_emits_cast_suggestions() {
-    // typed_calc_spec has Int and Bool with NO cast rules between them.
-    // The generated code for Int's prefix handler should suggest Bool → Int,
-    // and Bool's handler should suggest Int → Bool.
-    let spec = typed_calc_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // Cast suggestions should appear in the generated code as match arms
-    // that map token variants to source category names for missing cast hints.
-    // The Int prefix handler should mention Bool tokens as potential cast sources,
-    // and vice versa.
-    assert!(
-        code_str.contains("cast rule exists"),
-        "multi-category code should contain cast rule hint text"
-    );
-}
+// Stage 10.5r migration (2026-05-04): `test_multi_category_emits_cast_suggestions`
+// MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests
+// (cast-suggestion hints are emitted by Walker codegen; test asserts against
+// Walker output, which lives in the macros crate).
 
 #[test]
 fn test_single_category_no_cast_suggestions() {
