@@ -1,0 +1,998 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{stmaryrd}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds}
+\usepackage{enumitem}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!50!black
+}
+
+% --- Theorem environments ---
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+\newtheorem{construction}[theorem]{Construction}
+
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+% --- Notation ---
+\newcommand{\sem}[1]{\llbracket\,#1\,\rrbracket}
+\newcommand{\reflect}[1]{\ulcorner #1 \urcorner}
+\newcommand{\rew}{\leadsto}
+\newcommand{\Rew}{\Longrightarrow}
+\newcommand{\Names}{\mathcal{N}}
+\newcommand{\Procs}{\mathcal{P}}
+\newcommand{\Terms}{\mathcal{T}}
+\newcommand{\Pos}{\mathbb{P}}
+\newcommand{\States}{\mathcal{S}}
+\newcommand{\Lhs}{\mathcal{L}}
+\newcommand{\Patterns}{\mathcal{L}}
+\newcommand{\hd}{\mathsf{hd}}
+\newcommand{\arity}[1]{\##1}
+\newcommand{\dom}{\mathcal{D}}
+\newcommand{\edges}{\mathcal{E}}
+\newcommand{\rdep}{R_{\mathsf{dep}}}
+\newcommand{\rop}{R_{\mathsf{op}}}
+\newcommand{\gcp}{\mathsf{gcp}}
+\newcommand{\reduce}{\mathsf{reduce}}
+\newcommand{\deriv}{\mathsf{deriv}}
+\newcommand{\lift}{\mathsf{lift}}
+\newcommand{\surface}{\mathsf{surf}}
+\newcommand{\holes}{\mathsf{holes}}
+\newcommand{\true}{\mathsf{true}}
+\newcommand{\false}{\mathsf{false}}
+\newcommand{\Match}{\mathit{match}}
+\newcommand{\nil}{\mathbf{0}}
+
+% Short rho-syntax
+\newcommand{\Send}[2]{#1 \,!\, (#2)}
+\newcommand{\Recv}[3]{\mathsf{for}\,(#1 \Leftarrow #2)\,\{\,#3\,\}}
+\newcommand{\Let}[3]{\mathsf{let}\;#1 = #2\;\mathsf{in}\;#3}
+
+\title{Optimal Channel Naming for Compositional Rewrite Translations\\
+       via Set Automaton Partial Evaluation}
+\author{L.G.~Meredith\\\small F1R3FLY.io}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present a translation scheme that compiles graph-structured lambda-theory
+(GSLT) rewrites into the rho calculus, and we identify the channel name for
+each rewrite context as the canonical reflection of a state in a Bouwman--Erkens
+set automaton. Treating the polymorphic compilation step
+$\Let{tc}{\sem{K}}{\cdots}$ as a partial evaluation of the set automaton
+against the context $K$ yields a closed-form formula
+$tc(K) = \reflect{\delta^{*}(s_{0}, \surface(K))}$. We then transport the
+three principal theorems of the Bouwman--Erkens construction --- symbol-once
+inspection, prune-preserves-work, and the coarsest-sound-partition theorem
+for the outermost-preserving dependency relation --- into the channel-based
+setting. The resulting scheme is optimal in three precise senses:
+each surface symbol of every redex context is consumed by exactly one
+\textsf{for}-receive, inner reductions never invalidate outer channels, and
+the channel quotient induced by $tc(\cdot)$ is the coarsest equivalence on
+contexts that preserves outermost firing. We discuss the non-linear
+extension via rho-calculus consistency receives, and outline the changes
+required to support dynamic rule sets.
+\end{abstract}
+
+\tableofcontents
+
+\section{Introduction}\label{sec:intro}
+
+Compiling a rewrite system into a process calculus poses a tension that does
+not arise when implementing a rewrite engine in an imperative or functional
+host language. In the latter setting, a rewrite procedure can freely re-traverse
+the term being rewritten, and an efficient pattern matcher --- such as the
+set automaton of Bouwman and Erkens~\cite{BouwmanErkens2022,ErkensGroote2021}
+--- ensures that each function symbol is inspected only once per redex search.
+In the former setting, every traversal step is a communication, every
+intermediate matching state must be reified as a channel or process, and
+every redex firing must be expressible as a send-receive pair.
+
+The translation scheme considered here, due to Meredith, compiles a single
+rewrite rule $L \rew R$ as
+\begin{equation}\label{eq:single-rule}
+\sem{L \rew R}(t\!\ell)
+\;\;=\;\;
+\Recv{\sem{L}}{t\!\ell}{\,\Send{t\!\ell}{\sem{R}}\,}
+\end{equation}
+and a contextual rewrite as
+\begin{equation}\label{eq:context-rule}
+\sem{L_{1} \rew R_{1}, \ldots, L_{n} \rew R_{n}
+     \;\Rightarrow\; K(L_{1}, \ldots, L_{n}) \rew K'(R_{1}, \ldots, R_{n})}
+\;\;=\;\;
+\Let{tc}{\sem{K}}{\,
+  \Recv{(\sem{L_{1}}, \ldots, \sem{L_{n}})}{tc}{\,
+    \Send{tc}{\sem{K'}(\sem{R_{1}}, \ldots, \sem{R_{n}})}\,}
+\,}
+\end{equation}
+The polymorphic interpretation of $\Let{tc}{\sem{K}}{\cdots}$ is the locus
+of optimisation. Since $K$ is a context (a term with $n$ holes), the channel
+$tc$ is a function of $K$'s shape; the question is which function makes the
+overall translation optimal.
+
+We argue that the right answer is given by partial evaluation of a
+set automaton built from the left-hand sides $\{L_{1}, \ldots, L_{n}\}$.
+Concretely:
+\[
+  tc(K) \;=\; \reflect{\delta^{*}(s_{0}, \surface(K))},
+\]
+where $(\States, s_{0}, L, \delta, \eta)$ is the set automaton for the
+pattern set, $\surface(K)$ is the function-symbol skeleton of $K$ in the
+inspection order prescribed by the state-labelling function $L$, and
+$\reflect{\cdot}$ is the rho-calculus reflection of an automaton state into
+a channel name. Two contexts $K$ and $K'$ that lead the automaton to the
+same state are then assigned the same channel; two contexts that the
+automaton distinguishes are assigned distinct channels. We show that the
+partition on contexts induced by $tc(\cdot)$ is the coarsest partition
+sound for outermost firing.
+
+\paragraph{Contributions.}
+\begin{itemize}[leftmargin=*]
+  \item A formal definition of the channel-naming function $tc(K)$ as a
+        partial evaluation of a set automaton (\S\ref{sec:construction}).
+  \item Three optimality theorems transported from~\cite{BouwmanErkens2022}:
+        symbol-once inspection (Theorem~\ref{thm:symbol-once}),
+        prune-preserves-work (Theorem~\ref{thm:prune-preserves}), and
+        coarsest sound partition (Theorem~\ref{thm:coarsest}).
+  \item A treatment of the non-linear case
+        (\S\ref{sec:nonlinear}) via consistency receives, paralleling
+        the Bouwman--Erkens \emph{ambiguous/disabled/enabled} bookkeeping.
+  \item A discussion of dynamic rule sets and other engineering caveats
+        (\S\ref{sec:caveats}).
+\end{itemize}
+
+\paragraph{Outline.}
+Section~\ref{sec:prelim} fixes notation for the rho calculus, GSLT rewrites,
+and set automata. Section~\ref{sec:translation} reviews the translation
+scheme and isolates the polymorphic step.
+Section~\ref{sec:construction} gives the channel-computation algorithm.
+Section~\ref{sec:optimality} proves the optimality theorems.
+Section~\ref{sec:nonlinear} treats non-linearity.
+Section~\ref{sec:caveats} discusses caveats and future work.
+
+\section{Preliminaries}\label{sec:prelim}
+
+\subsection{Terms, contexts, and rewrites}
+
+Fix a finite ranked alphabet $\mathbb{F}$ with arity map
+$\arity{\cdot}: \mathbb{F} \to \mathbb{N}$ and a countable set of variables
+$V$. The set $\Terms(\mathbb{F}, V)$ is generated as usual. We follow the
+notational conventions of~\cite{BouwmanErkens2022,Baader1998}:
+$\dom(t) \subseteq \Pos$ for the domain of a term, $\edges(t) \subseteq \dom(t)$
+for the variable positions, $\dom_{\setminus\edges}(t)$ for the
+function-symbol positions, $t|_{p}$ for the subterm of $t$ at position $p$,
+$t[u]_{p}$ for replacement, and $\hd(\ell)$ for the head symbol of a
+pattern $\ell$.
+
+A \emph{context} of arity $n$ is a term-with-holes $K(\Box_{1}, \ldots, \Box_{n})$
+in which each hole occurs exactly once. We write $K[t_{1}, \ldots, t_{n}]$
+for the term obtained by simultaneous substitution.
+
+A \emph{rewrite rule} $L \rew R$ is a pattern $L$ paired with a term $R$
+such that $\mathit{vars}(R) \subseteq \mathit{vars}(L)$. A
+\emph{contextual rewrite} is a sequent
+\[
+  L_{1} \rew R_{1}, \ldots, L_{n} \rew R_{n}
+  \;\Rightarrow\;
+  K(L_{1}, \ldots, L_{n}) \rew K'(R_{1}, \ldots, R_{n}),
+\]
+asserting that, in any context where the inner rewrites are
+applicable, the outer pattern reduces to the outer right-hand side. We
+take a \emph{graph-structured lambda theory} (GSLT) to be a finite set
+$\mathcal{R}$ of rewrite rules and contextual rewrites. The set of
+\emph{left-hand sides} of $\mathcal{R}$ is $\Lhs = \{L \mid L \rew R \in \mathcal{R}\} \cup
+\{L_{i} \mid L_{1} \rew R_{1}, \ldots, L_{n} \rew R_{n} \Rightarrow \cdots \in \mathcal{R}, 1 \le i \le n\}$.
+
+\subsection{Rho calculus, briefly}
+
+We use a minimal fragment of the rho calculus~\cite{MeredithRadestock2005}.
+Processes $P$ and names $x$ are mutually defined by
+\[
+  P \;::=\; \nil \;\mid\; x!(P) \;\mid\; \mathsf{for}\,(y \Leftarrow x)\,\{P\}
+       \;\mid\; P \mid P \;\mid\; *x,
+  \qquad
+  x \;::=\; @P,
+\]
+with the structural conventions of standard presentations: $\Recv{y}{x}{P}$
+is a persistent receive, $@P$ is the reflection of process $P$ to a name,
+and $*x$ is the dereference of name $x$ to a process. We use
+$\Let{x}{P}{Q}$ as syntactic sugar for $Q[@P/x]$ when $P$ is a name-valued
+expression. We treat tuple-pattern receives
+$\Recv{(y_{1}, \ldots, y_{n})}{x}{P}$ as the standard pattern-match on
+incoming names, decomposable into a finite number of nested single-name
+receives guarded by name equality (an explicit elaboration is unnecessary
+for what follows).
+
+The reflection bracket $\reflect{\cdot}$, used in the body of the paper, is
+a section of $@\cdot$ chosen so that distinguishable mathematical objects
+are mapped to distinct names. For automaton states $s \in \States$,
+$\reflect{s}$ denotes a canonical name unique to $s$.
+
+\subsection{Set automata}\label{ssec:set-automata}
+
+We recall just enough of~\cite{BouwmanErkens2022,ErkensGroote2021} to fix
+notation. A \emph{set automaton} for a finite pattern set $\Lhs$ over
+$\mathbb{F}$ is a tuple
+$M = (\States, s_{0}, L, \delta, \eta)$ where $\States$ is a finite set of
+states, $s_{0}$ is initial, $L : \States \to \Pos$ is a state-labelling
+function, $\delta : \States \times \mathbb{F} \to \mathcal{P}(\States \times \Pos)$
+is the transition relation, and
+$\eta : \States \times \mathbb{F} \to \mathcal{P}(\Lhs \times \Pos)$ is the
+output relation.
+
+States are encoded as non-empty sets of \emph{match goals}
+$\ell_{1}@p_{1}, \ldots, \ell_{n}@p_{n} \hookrightarrow \ell@p$, each
+representing a residual matching task: ``in order to announce a match for
+$\ell$ at $p$, it remains to observe each subpattern $\ell_{i}$ at
+position $p_{i}$''. The initial state contains exactly the fresh root
+goals $\{\ell@\epsilon \hookrightarrow \ell@\epsilon \mid \ell \in \Lhs\}$.
+The construction proceeds by computing the $f$-derivative of a state $s$
+(reducing every goal whose obligation contains $L(s)$, leaving the others
+unchanged, and adding fresh subgoals at the children of $L(s)$),
+partitioning the result by an equivalence $\sim$ on goal positions,
+and lifting each equivalence class by the greatest common prefix of its
+match-announcement positions. Distinct equivalence classes yield distinct
+successor states; the position-lift of each class records the relative
+offset stored in the transition.
+
+The two equivalences relevant to us are the \emph{direct dependency}
+relation $\rdep$, where $g_{1} \rdep g_{2}$ iff their match obligations
+share a position, and the \emph{outermost-preserving} relation $\rop$,
+where $g_{1} \rop g_{2}$ iff their match-announcement positions are
+prefix-comparable. The first gives the smallest automaton sound for
+arbitrary strategies; the second gives a (larger but still finite)
+automaton in which a depth-first traversal yields outermost matches first
+\cite[\S 7]{BouwmanErkens2022}. We freely write $\delta^{*}(s, w)$ for the
+iterated transition along a sequence $w \in \mathbb{F}^{*}$ of observations.
+
+\section{The translation scheme}\label{sec:translation}
+
+\subsection{Compilation of terms, rules, and contexts}
+
+We write $\sem{\cdot}$ for the compilation function from terms to processes
+(or to names, depending on context); we leave its base cases on function
+symbols and variables abstract, since the optimality argument is
+parametric in them. The operative clauses are
+\eqref{eq:single-rule}--\eqref{eq:context-rule} from the introduction,
+which we restate in a form convenient for the analysis.
+
+\begin{definition}[Compilation of rewrite rules]\label{def:compile}
+For a single rule $L \rew R$ on translation channel $t\!\ell$,
+\[
+  \sem{L \rew R}(t\!\ell)
+  \;=\;
+  \Recv{\sem{L}}{t\!\ell}{\,\Send{t\!\ell}{\sem{R}}\,}.
+\]
+For a contextual rewrite,
+\[
+  \sem{\,L_{1} \rew R_{1}, \ldots, L_{n} \rew R_{n}
+        \,\Rightarrow\, K \rew K'\,}
+  \;=\;
+  \Let{tc}{\sem{K}}{\,
+    \Recv{(\sem{L_{1}}, \ldots, \sem{L_{n}})}{tc}{\,
+      \Send{tc}{\sem{K'}(\sem{R_{1}}, \ldots, \sem{R_{n}})}\,}
+  \,}.
+\]
+\end{definition}
+
+The \emph{polymorphic interpretation} of $\Let{tc}{\sem{K}}{\cdots}$ is
+this: $\sem{K}$ is a function only of the surface shape of $K$, not of the
+hole-fillers. Holes are deliberately absent from the channel formula; they
+are precisely the data communicated on $tc$ when the rule fires.
+
+\subsection{What ``optimal'' means here}\label{ssec:optimal-meaning}
+
+Three properties characterise an optimal translation:
+
+\begin{description}[leftmargin=*]
+  \item[(O1) Symbol-once.] Each function symbol of $K$, whenever the rule fires,
+        is processed by exactly one \textsf{for}-receive in the translation.
+  \item[(O2) Prune-preserves.] When an inner contextual rewrite fires
+        \emph{below} the position $p$ of the surrounding $K$, the channels
+        and pending receives strictly outside $p$ remain valid; no
+        re-establishment of the outer channel structure is needed.
+  \item[(O3) Coarsest sound.] If two contexts $K$, $K'$ are
+        observationally equivalent --- in the sense that no choice of
+        hole-filling distinguishes which rule of $\mathcal{R}$ fires --- they
+        share a channel; if they are observationally distinct, they receive
+        distinct channels.
+\end{description}
+
+A naive choice such as $tc(K) = @K$ (reflect the syntactic context
+verbatim) trivially satisfies (O3) but fails (O1): two syntactically distinct
+contexts that match the same patterns receive different channels and so
+duplicate the for-receive work. Choices that collapse too many contexts,
+e.g.\ $tc(K) = @\hd(K)$, satisfy (O1) cheaply but fail (O3). The set
+automaton sits exactly at the equivalence quotient that satisfies all
+three.
+
+\section{The channel-naming construction}\label{sec:construction}
+
+\subsection{From a context to a state}
+
+\begin{definition}[Surface of a context]\label{def:surface}
+Let $K$ be an $n$-ary context with hole positions $H_{K} \subseteq \dom(K)$.
+The \emph{surface} of $K$ is the partial term obtained from $K$ by
+collapsing each hole to a fresh wildcard: $\surface(K)$ has the same
+function-symbol positions as $K$, with $\hd(\surface(K)|_{p}) = \hd(K|_{p})$
+for $p \in \dom_{\setminus\edges}(K) \setminus H_{K}$, and is undefined on
+$H_{K}$.
+\end{definition}
+
+\begin{definition}[Automaton trace of a context]\label{def:trace}
+Let $M = (\States, s_{0}, L, \delta, \eta)$ be a set automaton for the
+left-hand-side set of $\mathcal{R}$. The \emph{automaton trace} of a context
+$K$ is the unique configuration tree $T_{M}(K)$ obtained by running the
+matching procedure of~\cite[\S 3]{BouwmanErkens2022} on $\surface(K)$,
+suspended at every configuration $(s, p)$ whose inspection position
+$p \cdot L(s)$ lies in a hole $H_{K}$.
+\end{definition}
+
+The trace $T_{M}(K)$ is a finite tree because $\surface(K)$ is finite and
+the automaton is deterministic at every transition step.
+
+\begin{definition}[Channel of a context]\label{def:channel}
+Define
+\[
+  tc(K) \;=\; \reflect{\,T_{M}(K)\,},
+\]
+the canonical reflection of the suspended automaton trace.
+\end{definition}
+
+In the unhybridised case where $K$ has a single hole and the automaton is
+deterministic enough that $T_{M}(K)$ collapses to a single suspended
+configuration $(s, p)$, the formula simplifies to
+$tc(K) = \reflect{\delta^{*}(s_{0}, \surface(K))}$, which is the slogan
+quoted in the introduction. The general definition in terms of the
+suspended configuration tree is the technically correct one, accommodating
+$\rdep$-induced parallelism among independent holes and the look-ahead
+phenomenon noted in~\cite[\S 1.1]{BouwmanErkens2022}.
+
+\subsection{The compiled rule, in detail}
+
+Substituting Definition~\ref{def:channel} into Definition~\ref{def:compile},
+the contextual rule compiles to
+\[
+  \Let{tc}{\reflect{T_{M}(K)}}{\,
+    \Recv{(\sem{L_{1}}, \ldots, \sem{L_{n}})}{tc}{\,
+      \Send{tc}{\sem{K'}(\sem{R_{1}}, \ldots, \sem{R_{n}})}\,}
+  \,}.
+\]
+The for-receive on $tc$ blocks until $n$ names arrive, one per hole. Their
+arrival corresponds, automaton-side, to taking the suspended transitions
+and continuing matching on the hole-fillers. The send on $tc$ in the body
+emits the rewritten right-hand side, ready to be received by another
+contextual rule whose hole sits where this one's outer pattern fires.
+
+\begin{example}[Boolean simplification]\label{ex:if-not}
+Take $\mathcal{R}$ to be the running example
+of~\cite[Ex.~8]{BouwmanErkens2022}:
+\begin{align*}
+  R_{1} &: \mathit{if}(\true, x, y) \rew x &
+  R_{2} &: \mathit{if}(\false, x, y) \rew y \\
+  R_{3} &: \mathit{not}(\true) \rew \false &
+  R_{4} &: \mathit{not}(\false) \rew \true \\
+  R_{5} &: \mathit{not}(\mathit{not}(x)) \rew x &&
+\end{align*}
+The set automaton has four states $s_{0}, s_{1}, s_{2}, s_{3}$ with
+$L(s_{0}) = \epsilon$, $L(s_{1}) = 1$, $L(s_{2}) = 1$, and the transitions
+displayed in~\cite[Fig.~3]{BouwmanErkens2022}.
+\par\medskip\noindent
+Consider the context $K = \mathit{if}(\Box, \false, \true)$ in a
+contextual rewrite whose inner rule is $R_{5}$ (so the hole is at position
+$1$). Running the automaton on $\surface(K)$:
+\[
+  (s_{0}, \epsilon) \xrightarrow{\;\;\mathit{if}\;\;}
+  (s_{1}, \epsilon) \xrightarrow{\;\;\Box\;\;}
+  \text{suspend}.
+\]
+We have $tc(K) = \reflect{(s_{1}, \epsilon)}$, a single-configuration trace.
+The compiled rule listens on this channel for an $\mathit{if}$-headed
+sub-context filler, performs whatever inner work is needed to bind $x$, and
+sends the result back on $tc$.
+\par\medskip\noindent
+Now consider the context $K' = \mathit{if}(\Box, e, e)$, where the two
+$\Box$-positioned arguments are required to coincide (a non-linear hole
+pattern). The set-automaton trace is the same up to position $1$, but the
+hole-equality constraint is communicated on a side-channel; see
+\S\ref{sec:nonlinear}.
+\end{example}
+
+\subsection{Algorithmic construction of $tc$}\label{ssec:algorithm}
+
+We summarise the calculation as a procedure (Construction~\ref{constr:tc}) for
+clarity. Pre-conditions: a fixed set automaton $M$ for $\mathcal{R}$ has
+been constructed off-line.
+
+\begin{construction}[Computing $tc(K)$]\label{constr:tc}\rm
+\begin{enumerate}[leftmargin=2em,label=\arabic*.]
+  \item Initialise the configuration tree $T \gets \mathsf{B}(s_{0}, \epsilon)$.
+  \item While $T$ contains a bud $\mathsf{B}(s, p)$ with
+        $p \cdot L(s) \notin H_{K}$:
+    \begin{enumerate}[label=2.\arabic*]
+      \item Let $f = \hd(\surface(K)|_{p \cdot L(s)})$.
+      \item Replace the bud by
+            $\mathsf{N}(s, p, \{\mathsf{B}(s', p \cdot p') \mid (s', p') \in \delta(s, f)\})$.
+    \end{enumerate}
+  \item Return $\reflect{T}$.
+\end{enumerate}
+\end{construction}
+
+\noindent
+The loop terminates because each iteration either grows a bud into a node
+with strictly more nodes-of-context-positions, or transitions into the
+empty successor set; the number of iterations is bounded by
+$|\dom_{\setminus\edges}(\surface(K))|$, in agreement
+with~\cite[Theorem~1]{BouwmanErkens2022}. The reflection in step~3 is a
+syntactic operation on a finite tree of automaton states, hence
+computable.
+
+\section{Optimality}\label{sec:optimality}
+
+We now state and prove the three optimality theorems. All three are
+transports of theorems from~\cite{BouwmanErkens2022} into the channel
+setting.
+
+\subsection{Symbol-once inspection}
+
+\begin{theorem}[Symbol-once]\label{thm:symbol-once}
+Let $\rho$ be a rho-calculus term obtained by translating a GSLT
+$\mathcal{R}$ via Definition~\ref{def:compile} with $tc(\cdot)$ as in
+Definition~\ref{def:channel}. For any reduction sequence of $\rho$ that
+fires a contextual rewrite at outer-context $K$, each function symbol of
+$K$ is consumed by exactly one
+\textsf{for}-receive among the compiled rules.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+By Construction~\ref{constr:tc}, $tc(K)$ is determined by the suspended
+configuration tree $T_{M}(K)$, whose nodes are in bijection with
+$\dom_{\setminus\edges}(\surface(K))$ by~\cite[Theorem~1]{BouwmanErkens2022}.
+Each node corresponds to one application of step~2.2, which, in the
+operational reading of the channel scheme, corresponds to one transition
+through a sub-channel of $tc$ --- i.e.\ one for-receive in the compiled
+rule. Conversely, no surface symbol of $K$ is observed twice, by the
+deterministic-transition guarantee of the set-automaton construction.
+Hence the map (surface symbol of $K$) $\mapsto$ (for-receive that
+consumes it) is total and injective, and its image equals the set of
+for-receives in the compiled rule.
+\end{proof}
+
+\subsection{Prune-preserves-work}
+
+In the imperative implementation of~\cite{BouwmanErkens2022}, when a redex
+fires at position $p$ the configuration tree is \emph{pruned} to the
+initialisation configuration of the redex; matching done strictly above $p$
+is preserved. The rho-calculus analogue is that the channel structure
+strictly outside the inner-context position remains live across the inner
+firing.
+
+\begin{theorem}[Prune-preserves-work]\label{thm:prune-preserves}
+Let $\rho$ contain a compiled outer rule $\sem{\Phi_{\mathrm{outer}}}$ with
+context $K$ and channel $tc(K)$, and a compiled inner rule
+$\sem{\Phi_{\mathrm{inner}}}$ with context $K_{\mathrm{in}}$ situated at
+hole position $p$ of $K$. After firing $\Phi_{\mathrm{inner}}$, the
+process state restricted to channel $tc(K)$ and to all sub-channels of
+$tc(K)$ that correspond to surface symbols of $K$ at positions $q$ with
+$q \not\succeq p$ is unchanged.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Translate the prune-correctness lemma of~\cite[Lemma~1]{BouwmanErkens2022}
+across Construction~\ref{constr:tc}. The relevant invariant is the third
+clause: $\mathsf{prune}(\mathsf{ct}, p) \sqsubseteq \mathsf{ct}$, i.e.\
+pruning never adds nodes. In the channel scheme, ``adding nodes'' would
+correspond to creating new for-receives outside the prune position. Since
+no such creation occurs, the for-receives outside $p$ are exactly those
+that existed before $\Phi_{\mathrm{inner}}$ fired. The send in the inner
+rule's body discharges its message on $tc(K_{\mathrm{in}})$, which is a
+sub-channel of $tc(K)$; the outer for-receive then proceeds to match,
+finding the same surface symbols of $K$ outside $p$ as before. No
+re-establishment of the outer channel structure is required.
+\end{proof}
+
+\subsection{Coarsest sound partition}
+
+The third theorem is the central one. It says that no compilation scheme
+that compiles different contexts to different channels can collapse more
+context pairs than $tc(\cdot)$ does, on pain of unsound firing.
+
+\begin{theorem}[Coarsest sound]\label{thm:coarsest}
+Let $\sim_{\mathrm{op}}$ be the equivalence on contexts induced by the
+$\rop$-set-automaton: $K \sim_{\mathrm{op}} K'$ iff
+$T_{M_{\rop}}(K) = T_{M_{\rop}}(K')$. Then $\sim_{\mathrm{op}}$ is the
+coarsest equivalence on contexts such that, for every GSLT $\mathcal{R}$,
+$K \sim_{\mathrm{op}} K'$ implies that for any choice of hole-fillers
+$t_{1}, \ldots, t_{n}$, the set of rules of $\mathcal{R}$ that fire at the
+outermost position of $K[t_{1}, \ldots, t_{n}]$ equals the set of rules
+that fire at the outermost position of $K'[t_{1}, \ldots, t_{n}]$.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Soundness: if $K \sim_{\mathrm{op}} K'$, the suspended traces coincide, so
+the suspended automaton states coincide, so by the matching-correctness
+theorem~\cite[Theorem~2]{BouwmanErkens2022} the set of redexes announced
+by the automaton on $K[t_{i}]$ equals the set on $K'[t_{i}]$, for every
+choice of $t_{i}$. The outermost subset coincides because $\rop$ preserves
+prefix-comparability of match-announcement positions
+\cite[\S 7]{BouwmanErkens2022}.
+
+Coarsest: suppose $\sim'$ is strictly coarser, i.e.\ there exist
+$K \sim' K'$ with $T_{M_{\rop}}(K) \neq T_{M_{\rop}}(K')$. Then the two
+traces differ at some configuration, so there is some symbol observation
+sequence that induces different state-transitions. By the construction of
+$\rop$~\cite[\S 7]{BouwmanErkens2022}, this difference corresponds to at
+least one match goal that is reduced in one trace and not in the other.
+Choose hole-fillers $t_{i}$ that complete the partial match in one and
+not the other (such fillers exist, since the goal-reduction step expects
+a specific head symbol). The resulting outermost-match sets at $K[t_{i}]$
+and $K'[t_{i}]$ disagree, contradicting soundness of $\sim'$.
+\end{proof}
+
+The use of $\rop$ rather than $\rdep$ in Theorem~\ref{thm:coarsest} is
+deliberate: $\rdep$ gives a strictly coarser partition that is sound for
+\emph{some} strategy but unsound for outermost firing (the very point
+made in~\cite[\S 7]{BouwmanErkens2022}, motivating the introduction of
+$\rop$). For non-outermost strategies, the analogous coarsest-sound theorem
+holds with $\sim_{\mathrm{op}}$ replaced by the equivalence induced by
+the strategy-appropriate dependency relation.
+
+\section{Worked examples}\label{sec:examples}
+
+We now present two extended examples that exhibit the construction in
+characteristic settings. The first is the lambda calculus with weak
+head reduction, the canonical example of a contextual rewrite. The
+second is the rho calculus itself compiled into rho --- a reflective
+example that illustrates what the optimality theorems deliver when
+the object language and the target language coincide.
+
+\subsection{Lambda calculus with head-context reduction}\label{ssec:lambda}
+
+\paragraph{The GSLT.}
+Take the function symbols $\mathit{app}$ (arity~2) and $\mathit{lam}$
+(arity~1, body-binding). Variables of the object language are
+represented by a single function symbol $\mathit{var}$ (arity~1, name
+position) which we suppress where it would only clutter notation. The
+reduction theory has one principal rule and one contextual rule:
+\begin{align*}
+  (\beta) \quad
+    & \mathit{app}(\mathit{lam}(M), N) \;\rew\; M[N/x], \\
+  (\textsc{Head}) \quad
+    & M \rew M' \;\;\Rightarrow\;\;
+      \mathit{app}(M, N) \rew \mathit{app}(M', N).
+\end{align*}
+Here $(\textsc{Head})$ encodes weak head reduction: we may reduce in
+the function position of an application, but not in the argument
+position and not under a $\mathit{lam}$.
+
+The pattern set for the set automaton is
+$\Lhs = \{\,\mathit{app}(\mathit{lam}(M), N)\,\}$ --- a single LHS of
+depth two. We treat the bound-variable apparatus of $M$ and the
+substitution $M[N/x]$ as orthogonal to the channel calculation: they
+are realised by whatever metaprogramming primitive the host
+implementation provides, and do not figure in the automaton.
+
+\paragraph{The set automaton.}
+Tracing the construction of \S\ref{ssec:set-automata}:
+\begin{itemize}[leftmargin=*]
+  \item $s_{0}$: initial state, $L(s_{0}) = \epsilon$, with the single
+        root goal
+        $\mathit{app}(\mathit{lam}(M), N)@\epsilon \hookrightarrow
+         \mathit{app}(\mathit{lam}(M), N)@\epsilon$.
+  \item Reading $\mathit{app}$ at $\epsilon$ reduces this goal to
+        $\mathit{lam}(M)@1 \hookrightarrow \ell @\epsilon$ (where
+        $\ell = \mathit{app}(\mathit{lam}(M), N)$); the variable $N$
+        at position $2$ is discarded as a residual. Adding fresh
+        root goals at the children of $\epsilon$ and partitioning by
+        $\rdep$ yields two equivalence classes: one containing the
+        position-$1$ work, one consisting of a fresh root goal at
+        position $2$.
+  \item After lifting, we obtain
+        $\delta(s_{0}, \mathit{app}) = \{(s_{\mathit{app}}, \epsilon),
+                                          (s_{0}, 2)\}$.
+        The transition $(s_{0}, 2)$ continues redex search in the
+        argument position; the transition $(s_{\mathit{app}},
+        \epsilon)$ continues the root-level $\beta$-attempt.
+  \item $L(s_{\mathit{app}}) = 1$, the unique obligation position of
+        $s_{\mathit{app}}$'s root goal.
+  \item Reading $\mathit{lam}$ at position $1$ from $s_{\mathit{app}}$
+        completes the goal --- $\mathit{lam}$'s body $M$ is a
+        variable, so the reduce operation produces $\emptyset$ --- and
+        announces the match in $\eta(s_{\mathit{app}},
+        \mathit{lam})$.
+\end{itemize}
+We do not need the rest of the state graph for the channel calculation.
+The crucial fact is the position label $L(s_{\mathit{app}}) = 1$.
+
+\paragraph{Computing the channel.}
+The contextual rewrite $(\textsc{Head})$ has outer context
+$K = \mathit{app}(\Box, N)$, with hole at position $1$ and the variable
+$N$ at position~$2$. Since $N$ is a schema variable that ranges over
+arbitrary terms, position~$2$ is also effectively a hole from the
+matcher's point of view: no LHS depends on its content.\footnote{This
+is the precise meaning of the parenthetical in the theorem of
+\S\ref{ssec:optimal-meaning}: the surface of $K$ is what the automaton
+\emph{actually} consults, not the syntactic rendering of $K$. Schema
+variables that no LHS inspects are surface holes.}
+Running Construction~\ref{constr:tc} on $K$:
+\begin{enumerate}[leftmargin=2em,label=\arabic*.]
+  \item Start with $T \gets \mathsf{B}(s_{0}, \epsilon)$.
+  \item Bud $\mathsf{B}(s_{0}, \epsilon)$: the inspection position is
+        $\epsilon \cdot L(s_{0}) = \epsilon$, not a hole. Read
+        $\mathit{app}$. Replace by
+        $\mathsf{N}(s_{0}, \epsilon, \{\mathsf{B}(s_{\mathit{app}},
+        \epsilon), \mathsf{B}(s_{0}, 2)\})$.
+  \item Bud $\mathsf{B}(s_{\mathit{app}}, \epsilon)$: the inspection
+        position is $\epsilon \cdot L(s_{\mathit{app}}) = 1$, a hole.
+        Suspend.
+  \item Bud $\mathsf{B}(s_{0}, 2)$: the inspection position is $2 \cdot
+        L(s_{0}) = 2$, a hole. Suspend.
+\end{enumerate}
+The suspended trace contains a single non-trivial bud at
+$(s_{\mathit{app}}, \epsilon)$ awaiting position $1$, plus a
+``redex-search'' bud at $(s_{0}, 2)$ awaiting position $2$. The
+canonical reflection $tc(K) = \reflect{T_{M}(K)}$ encodes both. The
+compiled rule, eliding the boilerplate, is:
+\[
+  \Let{tc}{\reflect{T_{M}(K)}}{\,
+    \Recv{\sem{\mathit{app}(\mathit{lam}(M), N)}}{tc}{\,
+      \Send{tc}{\sem{\mathit{app}(M[N/x], N)}}\,}
+  \,}.
+\]
+
+\paragraph{What optimality delivers.}
+The interesting consequences arrive when we consider a chain of head
+$\beta$-redexes such as
+\[
+  t_{0} \;=\; \mathit{app}(\mathit{app}(\mathit{app}(\mathit{lam}(M_{3}),
+              N_{3}), N_{2}), N_{1}),
+\]
+where weak head reduction proceeds by three successive $\beta$-firings
+at progressively deeper positions in the head spine.
+
+\begin{itemize}[leftmargin=*]
+  \item \emph{Symbol-once} (Theorem~\ref{thm:symbol-once}). The three
+        $\mathit{app}$ symbols of $t_{0}$ are processed by exactly
+        three for-receives in the channel encoding, regardless of how
+        many $\beta$-firings occur. Naive translation, in which each
+        head-context instance allocates fresh receivers for the
+        application symbols already on the spine, would re-process the
+        outer $\mathit{app}$s after every inner reduction --- giving
+        quadratic work in the spine length. The set-automaton encoding
+        keeps it linear.
+  \item \emph{Prune-preserves-work} (Theorem~\ref{thm:prune-preserves}).
+        After the innermost $\beta$ fires --- replacing
+        $\mathit{app}(\mathit{lam}(M_{3}), N_{3})$ with $M_{3}[N_{3}/x]$
+        --- the for-receives associated with the outer two
+        $\mathit{app}$s remain live on their channels. They have already
+        consumed their respective $\mathit{app}$ symbols and are now
+        blocked waiting for hole content; no re-establishment is
+        needed.
+  \item \emph{Coarsest-sound} (Theorem~\ref{thm:coarsest}). The argument
+        $N$ in $K = \mathit{app}(\Box, N)$ does not appear in any LHS
+        of $\Lhs$, so the suspended trace $T_{M}(K)$ is the same for
+        every choice of $N$. All instances of $(\textsc{Head})$ share
+        a single channel structure regardless of argument shape; this
+        is the maximal sharing consistent with the firing semantics.
+\end{itemize}
+
+In short, weak head normalisation of a head-redex chain of length $n$
+takes $O(n)$ work in the channel encoding, with sharing across instances
+of the head-context rule that no syntax-directed translation could
+achieve.
+
+\subsection{The rho calculus into itself}\label{ssec:rho-into-rho}
+
+\paragraph{The GSLT.}
+We now take the source GSLT to be the rho calculus presented as a term
+rewriting theory, and compile it into the rho calculus itself. The
+function symbols are the syntactic constructors of rho:
+$\mathit{par}$ (arity~2), $\mathit{in}$ (arity~3), $\mathit{out}$
+(arity~2), $\mathit{drop}$ (arity~1), $\mathit{nil}$ (arity~0). We
+write $\mathit{in}(x, y, P)$ for $\Recv{y}{x}{P}$ and $\mathit{out}(x,
+P)$ for $\Send{x}{P}$. The reduction theory has the principal
+$\textsc{Comm}$ rule and two structural contextual rules:
+\begin{align*}
+  (\textsc{Comm}) \quad
+    & \mathit{par}(\mathit{in}(x, y, P), \mathit{out}(x, Q))
+      \;\rew\; P[@Q / y], \\
+  (\textsc{Par}_{L}) \quad
+    & M \rew M' \;\;\Rightarrow\;\;
+      \mathit{par}(M, Q) \rew \mathit{par}(M', Q), \\
+  (\textsc{Par}_{R}) \quad
+    & M \rew M' \;\;\Rightarrow\;\;
+      \mathit{par}(P, M) \rew \mathit{par}(P, M').
+\end{align*}
+The $\textsc{Comm}$ rule has a non-linear LHS: the channel name $x$
+appears in both the $\mathit{in}$- and the $\mathit{out}$-prefix. We
+treat the non-linearity per \S\ref{sec:nonlinear}, with a consistency
+receive that checks $x =_{\Names} x'$.
+
+\paragraph{The set automaton.}
+The pattern set is $\Lhs = \{\,\mathit{par}(\mathit{in}(x, y, P),
+\mathit{out}(x', Q))\,\}$ (linearised by renaming the second occurrence
+of $x$, with the equality recorded for non-linear post-checking). We
+trace the relevant part of the construction:
+\begin{itemize}[leftmargin=*]
+  \item $s_{0}$: initial, $L(s_{0}) = \epsilon$, with the fresh root
+        goal at $\epsilon$.
+  \item Reading $\mathit{par}$ at $\epsilon$ produces the reduced
+        obligations $\mathit{in}(x, y, P)@1 \hookrightarrow \ell
+        @\epsilon$ and $\mathit{out}(x', Q)@2 \hookrightarrow
+        \ell@\epsilon$, plus fresh root goals at positions $1$ and $2$.
+  \item Crucially, partitioning by $\rdep$ yields \emph{two}
+        equivalence classes: positions $1$ and $2$ are independent.
+        Lifting gives a transition with two target states ---
+        $(s_{\mathit{in}}, 1)$ for the in-prefix work and
+        $(s_{\mathit{out}}, 2)$ for the out-prefix work --- which the
+        matcher may explore in either order or in parallel.
+  \item Each of $s_{\mathit{in}}$ and $s_{\mathit{out}}$ has its own
+        local labelling and transitions; details are unilluminating for
+        the channel calculation. The match for the $\textsc{Comm}$
+        LHS is announced once both branches reach their respective
+        completion states.
+\end{itemize}
+The non-linearity check $x =_{\Names} x'$ is dispatched, per
+Definition~\ref{def:consistency}, on a side channel.
+
+\paragraph{Computing the channel.}
+For the contextual rule $(\textsc{Par}_{L})$, the outer context is
+$K_{L} = \mathit{par}(\Box, Q)$ with hole at position~$1$ and schema
+variable $Q$ at position~$2$. As in the lambda example, $Q$ is a
+schema variable that no LHS inspects \emph{at the outer level} ---
+the only LHS is the $\textsc{Comm}$ pattern, and that pattern's match
+work at position $2$ is initiated only after the entire LHS commits to
+matching at the root. From the standpoint of $(\textsc{Par}_{L})$'s
+own surface, position~$2$ is a hole. Construction~\ref{constr:tc}
+yields:
+\begin{enumerate}[leftmargin=2em,label=\arabic*.]
+  \item Read $\mathit{par}$ at $\epsilon$, producing buds at
+        $(s_{\mathit{in}}, 1)$ and $(s_{\mathit{out}}, 2)$.
+  \item Bud $(s_{\mathit{in}}, 1)$: inspection position is $1 \cdot
+        L(s_{\mathit{in}})$; if the relevant offset is in the
+        hole-region of $K_{L}$ (which it is, the hole being at
+        position~$1$), suspend.
+  \item Bud $(s_{\mathit{out}}, 2)$: inspection position is $2 \cdot
+        L(s_{\mathit{out}})$; this is in the schema-variable region of
+        $K_{L}$ at the outer level, suspend.
+\end{enumerate}
+Both branches are suspended, the two suspensions are independent (they
+arose from distinct $\rdep$-classes), and $tc(K_{L}) =
+\reflect{T_{M}(K_{L})}$ records both suspended configurations. The
+symmetric calculation gives $tc(K_{R})$ for $(\textsc{Par}_{R})$, with
+the in/out roles of positions $1$ and $2$ exchanged.
+
+\paragraph{What optimality delivers.}
+This example highlights five distinct benefits, three from the
+optimality theorems of \S\ref{sec:optimality} and two that are
+specific to the reflective setting.
+
+\begin{itemize}[leftmargin=*]
+  \item \emph{Symbol-once.} In a process pool $P_{1} \mid P_{2} \mid
+        \cdots \mid P_{n}$, parsed as a left-associated $\mathit{par}$
+        tree of depth $n-1$, each $\mathit{par}$ is consumed by exactly
+        one for-receive. The number of $\mathit{par}$-symbol
+        observations in the meta-evaluator's run is $O(n)$, not the
+        $O(n^{2})$ of a naive ``try every pair of children'' matcher.
+  \item \emph{Concurrent firing.} The $\rdep$-independence of
+        positions~$1$ and~$2$ in the $\textsc{Comm}$ LHS means
+        $tc(K_{L})$ and $tc(K_{R})$ refer to genuinely independent
+        sub-channels. The compiled rules for $(\textsc{Par}_{L})$ and
+        $(\textsc{Par}_{R})$ may fire concurrently --- as the rho
+        calculus's own structural-congruence rules already permit ---
+        and the channel encoding inherits this concurrency directly
+        from the automaton's partition structure.\footnote{Recall the
+        forward-looking remark of \S\ref{sec:caveats} on parallel
+        firing: this example is the cleanest setting in which to
+        observe that $\rdep$ is doing the work of a concurrency
+        analysis.}
+  \item \emph{Prune-preserves-work.} In a deeply nested process tree
+        with multiple simultaneously-enabled $\textsc{Comm}$ redexes,
+        the firing of any one redex does not invalidate the for-receives
+        associated with the surrounding $\mathit{par}$ structure. The
+        meta-evaluator does not have to ``re-parse'' the process tree
+        after each communication step.
+  \item \emph{Coarsest-sound.} All contexts $\mathit{par}(\Box, Q)$
+        share the channel $tc(K_{L})$ regardless of $Q$, and dually for
+        $(\textsc{Par}_{R})$. The redex-discovery work is shared across
+        every site where the corresponding contextual rule could fire.
+  \item \emph{Reflective coherence.} The meta-evaluator's channel
+        structure mirrors the object-level rho calculus's channel
+        structure: outer $\mathit{par}$s correspond to outer channels,
+        inner $\textsc{Comm}$ redexes correspond to inner channels, and
+        substitution is realised by sending and receiving names. The
+        optimality of the matcher is therefore inherited as the
+        optimality of the meta-evaluator's parallel structure ---
+        precisely the coherence property that makes a self-applicable
+        rewrite-based language definition (in the sense
+        of~\cite{F1R3FLY-mettail}) admit efficient bootstrapping.
+\end{itemize}
+
+A pleasant corollary: in a process pool with $n$ parallel components and
+$m$ enabled $\textsc{Comm}$ redexes, the meta-evaluator's redex-discovery
+phase costs $O(n + m)$ communications, not the $O(n^{2})$ that a naive
+self-interpreter would incur from trying every $(\mathit{in},
+\mathit{out})$ pair. The optimality of the underlying set automaton is
+exactly what bridges the gap.
+
+\section{Non-linear extensions}\label{sec:nonlinear}
+
+When some $L_{i}$ is non-linear --- some variable repeats --- the set
+automaton is not powerful enough to enforce the equality constraint
+\cite[\S 6]{BouwmanErkens2022,Comon2007}. Bouwman--Erkens delegate
+consistency checking to the rewrite procedure, maintaining three sets
+\textit{ambiguous}, \textit{disabled}, \textit{enabled} of pre-matches.
+We mirror this in the channel scheme by introducing
+auxiliary \emph{consistency channels}.
+
+\begin{definition}[Consistency receive]\label{def:consistency}
+Let $L$ be a pattern with non-linear partition $\pi(L) \subseteq
+\mathcal{P}(\edges(L))$. For each non-singleton class $P \in \pi(L)$ with
+$P = \{q_{1}, \ldots, q_{k}\}$ ($k \ge 2$), define a guarded receive
+\[
+  \Match{P}(t) \;=\;
+  \mathsf{for}\,(z_{1}, \ldots, z_{k} \Leftarrow @t|_{q_{1}}, \ldots, @t|_{q_{k}})\,\{\,
+    \mathit{if}\;\bigwedge_{i=2}^{k} z_{1} =_{\mathcal{N}} z_{i}\;\mathit{then}\;\mathit{enable}\;\mathit{else}\;\mathit{disable}\,
+  \}
+\]
+where $=_{\mathcal{N}}$ is rho-calculus name equality.
+\end{definition}
+
+The compiled non-linear rule then becomes
+\[
+  \Let{tc}{\reflect{T_{M}(K)}}{\,
+    \Recv{(\sem{L_{1}}, \ldots, \sem{L_{n}})}{tc}{\,
+      \bigl(\bigparallel_{i, P \in \pi(L_{i}), |P| \ge 2} \Match{P}(L_{i})\bigr)
+      \mid \mathit{enable\text{-}guarded}(\Send{tc}{\sem{K'}(\ldots)})\,}
+  \,}.
+\]
+The send is emitted only if all consistency receives report \emph{enable}.
+This is exactly the \textit{ambiguous} $\to$ \textit{enabled} transition
+of~\cite[Algorithm~2, lines 12--17]{BouwmanErkens2022}, lifted to channel
+form. The \textit{disabled} state holds via the absence of the enable
+signal.
+
+\begin{remark}[Re-checking on inner firing]\label{rem:recheck}
+\cite[Algorithm~2, lines 24--31]{BouwmanErkens2022} re-classifies a
+disabled or enabled match as ambiguous if an inner rewrite changes a
+subterm referenced by a non-singleton class of $\pi(L)$. In the channel
+scheme, the analogous behaviour is automatic: on inner firing, the inner
+rule's send pushes a fresh value to $tc(K_{\mathrm{in}})$, which causes
+the enclosing $\Match{P}$ receives to re-fire with the new value. No
+explicit administrative loop is required, modulo the persistent-receive
+semantics of $\Leftarrow$.
+\end{remark}
+
+\section{Caveats and future work}\label{sec:caveats}
+
+\paragraph{Look-ahead.}
+The set automaton requires a look-ahead bounded by the maximum LHS depth
+\cite[\S 1.1]{BouwmanErkens2022}; equivalently, the channel $tc(K)$ may
+suspend before observing the entire surface of $K$, waiting for hole
+content to determine which sub-pattern to match. This corresponds, in
+implementation terms, to ``intermediate channels'' that exist between
+$tc(K)$ and $tc(K_{\mathrm{in}})$. Their construction is mechanical
+(unfold step~2 of Construction~\ref{constr:tc} until either a match or a
+hole is reached) but they should be made explicit in any concrete
+implementation, as they bear on memory cost.
+
+\paragraph{Canonical state choice.}
+The state-labelling function $L : \States \to \Pos$ is, in
+\cite{BouwmanErkens2022}, chosen non-deterministically among the
+positions of root match obligations. For $tc(\cdot)$ to be a function
+rather than a relation, the choice must be fixed at automaton-construction
+time; a lexicographic policy on positions is the obvious canonical
+choice and is what one would implement.
+
+\paragraph{Dynamic rule sets.}
+A fully-reflective GSLT --- e.g.\ MeTTaIL~\cite{F1R3FLY-mettail} ---
+permits new rewrite rules to be introduced at runtime. The
+construction of \S\ref{sec:construction} assumes a closed set $\Lhs$ to
+build the automaton from. Two extension strategies are available:
+incremental automaton update (recompute $\delta$ for the affected states
+as new patterns are added) or stratified compilation (a fresh
+sub-automaton per dynamic rule batch, dispatched by an outer name-equality
+check). The former preserves the optimality theorems but at higher
+construction cost; the latter is cheaper but degrades (O3) to a coarser
+partition that may distinguish a context $K$ across batches.
+
+\paragraph{Concurrent firing.}
+The rho calculus permits concurrent application of non-conflicting rules
+in a way that the imperative model of~\cite{BouwmanErkens2022} does not.
+The $\rdep$-partition at the heart of the set-automaton construction is
+exactly an analysis of independent sub-matchings; under the channel
+encoding it becomes an analysis of independent sub-channels that may be
+serviced in parallel. A precise statement and proof of a
+parallel-firing theorem --- ``two contextual rewrites whose outer contexts
+share no $\rdep$-class fire concurrently'' --- is a natural follow-up to
+this paper.
+
+\paragraph{Right-hand-side precompilation.}
+\cite[\S 8]{BouwmanErkens2022} suggest precompiling the configuration
+tree fragments arising from right-hand sides, so that the symbols of $R$
+need not be matched again after substitution. The channel-side analogue
+is to precompile the trace $T_{M}(R)$ (with holes at the variables of
+$R$) and have the inner rule's send emit not $\sem{R}$ but a process
+already partially matched, attached at the trace's bud channels. The
+optimisation is an adaptation of Construction~\ref{constr:tc} to
+right-hand sides and is straightforward.
+
+\section{Conclusion}\label{sec:conclusion}
+
+We have given a closed-form construction of the channel $tc(K)$ in the
+contextual-rewrite translation scheme of Definition~\ref{def:compile},
+identified it with the canonical reflection of a set-automaton trace, and
+proved that it is optimal in three precise senses inherited from the
+Bouwman--Erkens framework. The construction is parametric in the state
+encoding, in the choice of dependency relation (and hence of strategy),
+and in the rho-calculus reflection bracket; this parametricity is what
+makes the polymorphic $\Let{tc}{\sem{K}}{\cdots}$ step --- the original
+locus of the question --- precise, computable, and theory-grounded. The
+non-linear extension and the dynamic-rule extension are sketched and left
+as engineering follow-ups.
+
+\paragraph{Acknowledgements.}
+The author thanks Mike Stay, Brian Beckman, and Hannah Adams for ongoing
+discussions that shaped the F1R3FLY platform context in which this work
+sits, and acknowledges the Bouwman--Erkens paper~\cite{BouwmanErkens2022}
+as the immediate technical foundation.
+
+\begin{thebibliography}{9}
+
+\bibitem{BouwmanErkens2022}
+M.~Bouwman and R.~Erkens.
+\newblock Term rewriting based on set automaton matching.
+\newblock arXiv:2202.08687, 2022.
+
+\bibitem{ErkensGroote2021}
+R.~Erkens and J.F.~Groote.
+\newblock A set automaton to locate all pattern matches in a term.
+\newblock In \emph{Theoretical Aspects of Computing -- ICTAC 2021},
+  LNCS 12819, Springer, pp.~67--85, 2021.
+
+\bibitem{Baader1998}
+F.~Baader and T.~Nipkow.
+\newblock \emph{Term Rewriting and All That}.
+\newblock Cambridge University Press, 1998.
+
+\bibitem{MeredithRadestock2005}
+L.G.~Meredith and M.~Radestock.
+\newblock A reflective higher-order calculus.
+\newblock \emph{Electronic Notes in Theoretical Computer Science},
+  141(5):49--67, 2005.
+
+\bibitem{Comon2007}
+H.~Comon, M.~Dauchet, R.~Gilleron, C.~L\"oding, F.~Jacquemard,
+  D.~Lugiez, S.~Tison, and M.~Tommasi.
+\newblock Tree automata techniques and applications.
+\newblock \texttt{http://tata.gforge.inria.fr/}, 2007.
+
+\bibitem{F1R3FLY-mettail}
+L.G.~Meredith.
+\newblock The MeTTaIL language: defining languages as triples of syntactic
+  types, equations, and rewrites.
+\newblock F1R3FLY.io technical report and prototype,
+  \texttt{https://github.com/F1R3FLY-io/mettail-rust}, 2025.
+
+\end{thebibliography}
+
+\end{document}

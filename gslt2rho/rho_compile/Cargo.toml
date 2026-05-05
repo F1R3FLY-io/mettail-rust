@@ -1,0 +1,17 @@
+[package]
+name = "rho_compile"
+version = "0.1.0"
+edition = "2021"
+authors = ["F1R3FLY.io"]
+description = "Compiles a MeTTaIL GSLT specification to rho-calculus terms via set-automaton-driven optimal channel naming."
+license = "MIT"
+
+# Declare an isolated workspace so this crate builds independently
+# of any enclosing workspace (e.g. when dropped into mettail-rust/
+# for review). Remove this section when integrating the crate as
+# a workspace member of mettail-rust.
+[workspace]
+
+[dependencies]
+
+[dev-dependencies]
