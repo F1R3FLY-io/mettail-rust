@@ -409,46 +409,73 @@ impl<W: Semiring> ForkBranch<W> {
 /// introduces `OptGroupAbsent { replace_symbol }` for the Opt-Group SKIP
 /// branch (which needs pop+push+log, not just push).
 ///
-/// Stage 3.16 unified-framework variants (Commit 2, 2026-05-05): all execute
-/// the same Push semantics as `Push` — they're discriminator markers used by
-/// diagnostics (`branch_cursors_for_test`, telemetry) and by lex-min final
-/// tiebreaks where redundant tier biases ensure correctness even on weight
-/// equality. Future variants (Recovery for Cluster 5 / Commit 4) will use
-/// distinct cursor-side semantics.
+/// Stage 3.16 unified-framework (Commit 2 / Mechanism γ, 2026-05-05):
+/// payload-carrying action variants that mirror the existing `WpdsStepAction`
+/// operations. Each variant carries the EXACT payload of its WpdsStepAction
+/// counterpart (e.g. `ConsumeAndReplace { symbol, new_state }` mirrors
+/// `WpdsStepAction::ConsumeAndReplace`). Walker's `apply_action::Fork`
+/// dispatches on `action_kind` to perform the corresponding cursor mutation,
+/// avoiding the sentinel-pop overhead of a "Push-only" Fork model and
+/// generalizing to ALL future grammars with deliberate ambiguity at any
+/// dispatch site (G1: close == sep; G2: mixfix elision; G3: bare-elem
+/// collections; G4: close == valid ident; G5: ambiguous prefix arms).
+///
+/// Per the unified framework: `consume_trigger: bool` on the Fork itself is
+/// only used by Push branches that historically advanced pos at allocation
+/// time; the new variants encode their own intrinsic consume semantics, so
+/// callers emit `consume_trigger: false` for them.
 #[derive(Clone, Debug)]
 pub enum ForkActionKind {
     /// Default: cursor pushes `branch.symbol` onto its GSS chain.
     /// Implicit Push-time side effects (CollectionMarker id allocation,
     /// OptionalGroupAt(1) scope opening) are handled by
-    /// `emit_push_side_effects`.
+    /// `emit_push_side_effects`. Pos advancement controlled by Fork's
+    /// `consume_trigger: bool`.
     Push,
+
     /// Opt-Group SKIP branch: emit `BuilderDelta::PushOptionalAbsent`,
     /// pop the cursor's outer RuleAt, push `replace_symbol` (the
     /// advanced outer RuleAt at next outer position).
     OptGroupAbsent { replace_symbol: StackSymbolV2 },
-    /// Cluster 1 (Stage 3.16) — BinderListLoop close-branch (matched the
-    /// closing delimiter of a binder list). Same semantics as Push;
-    /// distinct kind for diagnostics.
-    BinderListClose,
-    /// Cluster 1 (Stage 3.16) — CollectionLoop close-branch.
-    CollectionClose,
-    /// Cluster 1 (Stage 3.16) — Mixfix separator-match branch.
-    MixfixSeparator,
-    /// Cluster 3 (Stage 3.18) — InfixLoop infix-tier branch.
-    BPTierInfix,
-    /// Cluster 3 (Stage 3.18) — InfixLoop cross-cat-LHS-tier branch.
-    BPTierCrossCat,
-    /// Cluster 3 (Stage 3.18) — InfixLoop postfix-tier branch.
-    BPTierPostfix,
-    /// Cluster 3 (Stage 3.18) — InfixLoop mixfix-tier branch.
-    BPTierMixfix,
-    /// Cluster 2 #12 (Stage 3.14) — lex-alternative branch. Replay logs
-    /// `BuilderDelta::CommitLexAlternative { pos, alt_idx, kind, text }` onto
-    /// the cursor (production wiring of CommitLexAlternative replay lands in
-    /// Commit 4 alongside MutableMultiTokenSource threading; default
-    /// `SliceTokenSource::peek_alternatives` returns `&[]`, so the Fork
-    /// branch is never allocated in practice for default lexers).
-    LexAlt { alt_idx: u16 },
+
+    /// Stage 3.16 (Cluster 1) — Replace top-of-GSS with `branch.symbol` and
+    /// consume one token. Mirrors `WpdsStepAction::ConsumeAndReplace`.
+    /// Fork must emit `consume_trigger: false` because this action consumes
+    /// intrinsically.
+    ConsumeAndReplace,
+
+    /// Stage 3.16 (Cluster 1) — Consume one token, no GSS change. Mirrors
+    /// `WpdsStepAction::Consume`. Fork must emit `consume_trigger: false`.
+    Consume,
+
+    /// Stage 3.16 (Cluster 1) — Consume identifier token: optionally start
+    /// binder scope, push ident name to builder, then replace top-of-GSS
+    /// with `branch.symbol`. Mirrors `WpdsStepAction::ConsumeIdentAndReplace`.
+    /// Fork must emit `consume_trigger: false`.
+    ConsumeIdentAndReplace { start_scope: bool },
+
+    /// Stage 3.16 (Cluster 1) — Pop top-of-GSS frame, transition to
+    /// `branch.new_state`. Used for mixfix last-operand elision (G2).
+    /// Mirrors `WpdsStepAction::Pop`. Fork must emit `consume_trigger: false`.
+    Pop,
+
+    /// Stage 3.16 (Cluster 1) — Consume token AND pop top-of-GSS frame.
+    /// Used for empty-collection close branches. Mirrors
+    /// `WpdsStepAction::ConsumeAndPop`. Fork must emit `consume_trigger: false`.
+    ConsumeAndPop,
+
+    /// Stage 3.16 (Cluster 1) — Consume token + replace top-of-GSS, but ALSO
+    /// log a builder delta (e.g. `StartBinderScope { names: vec![] }` for
+    /// the empty-list bootstrap branch). Mirrors `ConsumeAndReplace` plus a
+    /// pre-replace effect.
+    ConsumeAndReplaceWithEffect { effect: BuilderDelta },
+
+    /// Stage 3.14 (Cluster 2 #12) — lex-alternative branch. The walker's
+    /// apply_action::Fork allocates the child cursor with Push semantics
+    /// AND logs a `BuilderDelta::CommitLexAlternative { pos, alt_idx, kind,
+    /// text }` onto its pending ops. Replay (commit_winner) drives the
+    /// MutableMultiTokenSource to commit the alt at parse time.
+    LexAlt { alt_idx: u16, kind: TokenKind, text: String },
 }
 
 impl<W: Semiring> std::fmt::Debug for ForkBranch<W>
@@ -2188,19 +2215,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // `OptGroupAbsent` mirrors `apply_action::OptGroupAbsent`
                     // for the SKIP branch of an Opt-Group Fork.
                     match branch.action_kind {
-                        // Cluster 1+3 marker variants share Push semantics —
-                        // they only differ in the `action_kind` discriminator
-                        // for diagnostics + final-tiebreak ordering. Lex-min
-                        // weight bias enforces the actual ordering.
-                        ForkActionKind::Push
-                        | ForkActionKind::BinderListClose
-                        | ForkActionKind::CollectionClose
-                        | ForkActionKind::MixfixSeparator
-                        | ForkActionKind::BPTierInfix
-                        | ForkActionKind::BPTierCrossCat
-                        | ForkActionKind::BPTierPostfix
-                        | ForkActionKind::BPTierMixfix
-                        | ForkActionKind::LexAlt { .. } => {
+                        ForkActionKind::Push => {
                             // Stage 3.12 latent-bug fix (2026-05-01): apply
                             // emit_push_side_effects on each branch so
                             // OptionalGroupAt(1) and CollectionMarker
@@ -2288,6 +2303,211 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let _ = self.cursor_gss_push(
                                 &mut child,
                                 replace_symbol,
+                                pos_after,
+                                branch.weight.clone(),
+                            );
+                            children.push(child);
+                        }
+
+                        // Stage 3.16 (Cluster 1, Mechanism γ, 2026-05-05) —
+                        // payload-carrying action variants. Each arm mirrors
+                        // its WpdsStepAction counterpart's apply_action body.
+                        // Fork emits these with `consume_trigger: false`
+                        // because each variant intrinsically encodes its own
+                        // consume semantics; the per-branch consume happens
+                        // INSIDE this arm, not at allocation time.
+                        ForkActionKind::ConsumeAndReplace => {
+                            let mut child = BranchCursor {
+                                node: cursor.node,
+                                pos: pos_after,
+                                weight: cursor.weight.times(&branch.weight),
+                                inner_state: branch.new_state.clone(),
+                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                collection_stack: cursor.collection_stack.clone(),
+                                source_priority: child_source_priority,
+                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                            };
+                            let pos_now = child.pos;
+                            let _ = self.cursor_gss_replace_top(
+                                &mut child,
+                                branch.symbol,
+                                pos_now,
+                                branch.weight.clone(),
+                            );
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                        }
+
+                        ForkActionKind::Consume => {
+                            let mut child = BranchCursor {
+                                node: cursor.node,
+                                pos: pos_after,
+                                weight: cursor.weight.times(&branch.weight),
+                                inner_state: branch.new_state.clone(),
+                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                collection_stack: cursor.collection_stack.clone(),
+                                source_priority: child_source_priority,
+                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                            };
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                        }
+
+                        ForkActionKind::ConsumeIdentAndReplace { start_scope } => {
+                            let mut child = BranchCursor {
+                                node: cursor.node,
+                                pos: pos_after,
+                                weight: cursor.weight.times(&branch.weight),
+                                inner_state: branch.new_state.clone(),
+                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                collection_stack: cursor.collection_stack.clone(),
+                                source_priority: child_source_priority,
+                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                            };
+                            // Read ident-text BEFORE pos advances. If peek_kind
+                            // isn't Ident at runtime, this branch's cursor will
+                            // produce a stuck/dropped configuration via downstream
+                            // dispatch (no panic — the lex-min winner is among the
+                            // surviving cursors).
+                            let text = tokens
+                                .peek_text(child.pos)
+                                .unwrap_or("")
+                                .to_string();
+                            if start_scope {
+                                self.emit_start_binder_scope(
+                                    &mut child,
+                                    vec![text.clone()],
+                                );
+                            } else {
+                                let pos_now = child.pos;
+                                self.emit_push_ident(&mut child, text, pos_now);
+                            }
+                            let pos_now = child.pos;
+                            let _ = self.cursor_gss_replace_top(
+                                &mut child,
+                                branch.symbol,
+                                pos_now,
+                                branch.weight.clone(),
+                            );
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                        }
+
+                        ForkActionKind::Pop => {
+                            let mut child = BranchCursor {
+                                node: cursor.node,
+                                pos: pos_after,
+                                weight: cursor.weight.times(&branch.weight),
+                                inner_state: branch.new_state.clone(),
+                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                collection_stack: cursor.collection_stack.clone(),
+                                source_priority: child_source_priority,
+                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                            };
+                            let popped_symbol =
+                                self.gss.node(child.node).map(|n| n.symbol);
+                            let pred_id = self
+                                .cursor_gss_pop_via_edge(&mut child)
+                                .unwrap_or(crate::gss::GSS_NODE_NONE);
+                            self.apply_pop_body_to_cursor(
+                                &mut child,
+                                pred_id,
+                                popped_symbol,
+                                &branch.weight,
+                                branch.new_state.clone(),
+                            );
+                            children.push(child);
+                        }
+
+                        ForkActionKind::ConsumeAndPop => {
+                            let mut child = BranchCursor {
+                                node: cursor.node,
+                                pos: pos_after,
+                                weight: cursor.weight.times(&branch.weight),
+                                inner_state: branch.new_state.clone(),
+                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                collection_stack: cursor.collection_stack.clone(),
+                                source_priority: child_source_priority,
+                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                            };
+                            let popped_symbol =
+                                self.gss.node(child.node).map(|n| n.symbol);
+                            let pred_id = self
+                                .cursor_gss_pop_via_edge(&mut child)
+                                .unwrap_or(crate::gss::GSS_NODE_NONE);
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            self.apply_pop_body_to_cursor(
+                                &mut child,
+                                pred_id,
+                                popped_symbol,
+                                &branch.weight,
+                                branch.new_state.clone(),
+                            );
+                            children.push(child);
+                        }
+
+                        ForkActionKind::ConsumeAndReplaceWithEffect { effect } => {
+                            let mut child = BranchCursor {
+                                node: cursor.node,
+                                pos: pos_after,
+                                weight: cursor.weight.times(&branch.weight),
+                                inner_state: branch.new_state.clone(),
+                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                collection_stack: cursor.collection_stack.clone(),
+                                source_priority: child_source_priority,
+                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                            };
+                            child.pending_builder_ops.push(effect);
+                            let pos_now = child.pos;
+                            let _ = self.cursor_gss_replace_top(
+                                &mut child,
+                                branch.symbol,
+                                pos_now,
+                                branch.weight.clone(),
+                            );
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                        }
+
+                        ForkActionKind::LexAlt { alt_idx, kind, text } => {
+                            let mut sym = branch.symbol;
+                            let mut child = BranchCursor {
+                                node: cursor.node,
+                                pos: pos_after,
+                                weight: cursor.weight.times(&branch.weight),
+                                inner_state: branch.new_state.clone(),
+                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                collection_stack: cursor.collection_stack.clone(),
+                                source_priority: child_source_priority,
+                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                            };
+                            child.pending_builder_ops.push(
+                                BuilderDelta::CommitLexAlternative {
+                                    pos: child.pos,
+                                    alt_idx,
+                                    kind,
+                                    text,
+                                },
+                            );
+                            self.emit_push_side_effects(&mut child, &mut sym);
+                            let _ = self.cursor_gss_push(
+                                &mut child,
+                                sym,
                                 pos_after,
                                 branch.weight.clone(),
                             );
