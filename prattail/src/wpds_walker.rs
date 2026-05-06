@@ -52,6 +52,7 @@
 //! engine returns [`WpdsStepAction::Idle`] (nothing more to derive).
 
 use std::any::Any;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::automata::semiring::Semiring;
@@ -60,7 +61,8 @@ use crate::gss::{WpdsGss, WpdsGssNode};
 use crate::wpds_runtime::{
     pack_action_id, ActionArg, ActionEntry, CheckpointReason, SemanticBuilder, StackSymbolV2,
     SymbolKind, WpdsConfiguration, WpdsControl, WpdsEvent, WpdsMaxStepsExceeded,
-    WpdsResolveResult, WpdsState, WpdsTokenSource, WpdsTraceEntry, WpdsTransition,
+    WpdsMutableTokenSource, WpdsResolveResult, WpdsState, WpdsTokenSource, WpdsTraceEntry,
+    WpdsTransition,
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -322,6 +324,18 @@ pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
     /// pushes a `RecoveryEvent` here. Read-only consumers via
     /// `recovery_trace()`. Cleared on `reset()`.
     recovery_events: Vec<RecoveryEvent>,
+    /// Stage 3.20 / L12 (Commit A, 2026-05-06): caller-managed mutable
+    /// token source for recovery mutations. Threaded via
+    /// `set_mutable_token_source` before driving `run_to_*`. Stored as a
+    /// raw pointer to avoid cascading `'a` through the struct (~100
+    /// callsites). SAFETY: caller MUST keep the source alive until
+    /// `clear_mutable_token_source()` or `reset()`. The Drop impl clears
+    /// the slot defensively. None by default; replay paths
+    /// (SubstituteToken/InsertToken/CommitLexAlternative) surface a clean
+    /// Error if the slot is None when they fire — no graceful-degradation.
+    mutable_token_source: Option<*mut dyn WpdsMutableTokenSource>,
+    /// Phantom data marker for the lifetime-erased mutable source slot.
+    _mutable_source_lifetime: PhantomData<()>,
 }
 
 /// Stage 3.9 / ι Phase 4 (2026-05-01): always-cursor walker mode.
@@ -1138,6 +1152,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
             recovery_events: Vec::new(),
+            mutable_token_source: None,
+            _mutable_source_lifetime: PhantomData,
         }
     }
 
@@ -1187,6 +1203,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
             recovery_events: Vec::new(),
+            mutable_token_source: None,
+            _mutable_source_lifetime: PhantomData,
         }
     }
 
@@ -1231,6 +1249,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
             recovery_events: Vec::new(),
+            mutable_token_source: None,
+            _mutable_source_lifetime: PhantomData,
         }
     }
 
@@ -1259,6 +1279,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         self.step_counter = 0;
         // Stage 3.20 / L12 (Commit 4, 2026-05-06): clear recovery trace.
         self.recovery_events.clear();
+        // Stage 3.20 / L12 (Commit A, 2026-05-06): clear the mutable
+        // token source slot defensively — the source from the prior
+        // parse may be dropped by the time reset() is called.
+        self.mutable_token_source = None;
     }
 
     /// Read-only access to the cursor mode (Lazy/Strict).
@@ -1274,6 +1298,39 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// entry into a `RecoveryAttempt` for surfacing to the user.
     pub fn recovery_trace(&self) -> &[RecoveryEvent] {
         &self.recovery_events
+    }
+
+    /// Stage 3.20 / L12 (Commit A, 2026-05-06): thread a mutable token
+    /// source into the walker for recovery-driven token-stream mutations
+    /// (SubstituteToken / InsertToken / CommitLexAlternative deltas
+    /// replayed at commit_winner time call this source).
+    ///
+    /// SAFETY: the walker stores `source as *mut dyn WpdsMutableTokenSource`
+    /// to avoid cascading `'a` through the struct. The caller MUST keep
+    /// `source` alive until `clear_mutable_token_source()` or `reset()`
+    /// is called. The Drop impl on WpdsWalker clears the slot defensively.
+    /// The lifetime of the trait object is erased via raw-pointer cast +
+    /// transmute to satisfy the struct's `'static` field type — the
+    /// caller-managed contract above is the load-bearing safety invariant.
+    pub fn set_mutable_token_source<'src>(
+        &mut self,
+        source: &'src mut dyn WpdsMutableTokenSource,
+    ) {
+        // Erase the source's `'src` lifetime to fit the struct's
+        // lifetime-free pointer slot. Sound under the documented SAFETY
+        // contract: the caller must keep the source alive until the
+        // walker clears the slot via clear_mutable_token_source/reset/Drop.
+        let raw: *mut (dyn WpdsMutableTokenSource + 'src) = source as *mut _;
+        let erased: *mut (dyn WpdsMutableTokenSource + 'static) =
+            unsafe { std::mem::transmute(raw) };
+        self.mutable_token_source = Some(erased);
+    }
+
+    /// Stage 3.20 / L12 (Commit A, 2026-05-06): clear the mutable token
+    /// source slot. Call before dropping the source if the walker outlives
+    /// it (e.g. wrapper-level usage with explicit lifetime separation).
+    pub fn clear_mutable_token_source(&mut self) {
+        self.mutable_token_source = None;
     }
 
     /// Stage 6 G6+ (2026-05-02): build a flat per-cursor census of the
@@ -4360,6 +4417,17 @@ impl<W: Semiring> WalkerConsumer<W> for AbortAfterConsumer {
 // ══════════════════════════════════════════════════════════════════════════════
 // WpdsWalker::run_with_consumer
 // ══════════════════════════════════════════════════════════════════════════════
+
+/// Stage 3.20 / L12 (Commit A, 2026-05-06): defensive Drop impl that
+/// clears the mutable_token_source slot if the walker outlives the
+/// caller's source. Prevents stale-pointer reuse in pathological cases
+/// (e.g. walker stored in a long-lived consumer struct, source borrowed
+/// per-parse).
+impl<W: Semiring, E: WpdsStepEngine<W>> Drop for WpdsWalker<W, E> {
+    fn drop(&mut self) {
+        self.mutable_token_source = None;
+    }
+}
 
 impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Drive the walker reactively with a [`WalkerConsumer`] attached.

@@ -774,6 +774,57 @@ pub trait WpdsMutableTokenSource: WpdsTokenSource {
         pos: usize,
         alt_idx: u16,
     ) -> Result<(usize, usize), std::string::String>;
+
+    /// Stage 3.20 / L12 (Commit A, 2026-05-06): substitute the token at
+    /// `pos` with new (kind, text). Default implementation looks up the
+    /// token's byte span via `byte_span_of(pos)` and calls
+    /// `replace_range(start, end, &text)`. Sources without byte-range
+    /// tracking should override `byte_span_of` to return `None` — that
+    /// surfaces as a clear `Err` rather than a silent no-op.
+    ///
+    /// `kind` is recorded for diagnostics; the actual TokenKind after
+    /// re-lexing is determined by the lexer applied to `new_bytes`.
+    fn substitute_token(
+        &mut self,
+        pos: usize,
+        kind: TokenKind,
+        text: std::string::String,
+    ) -> Result<(usize, usize), std::string::String> {
+        let _ = kind; // recorded by walker; lexer determines actual kind
+        let (start, end) = self.byte_span_of(pos).ok_or_else(|| {
+            format!("substitute_token: no byte span at pos {}", pos)
+        })?;
+        self.replace_range(start, end, &text)
+    }
+
+    /// Stage 3.20 / L12 (Commit A, 2026-05-06): insert a synthetic token
+    /// before `pos`. Default implementation: locates the byte position for
+    /// `pos` (start byte) and calls `replace_range(start, start, text + " ")`
+    /// so the lexer re-segments with proper word boundary.
+    fn insert_token(
+        &mut self,
+        pos: usize,
+        kind: TokenKind,
+        text: std::string::String,
+    ) -> Result<(usize, usize), std::string::String> {
+        let _ = kind;
+        let (start, _) = self.byte_span_of(pos).ok_or_else(|| {
+            format!("insert_token: no byte span at pos {}", pos)
+        })?;
+        let with_sep = format!("{} ", text);
+        self.replace_range(start, start, &with_sep)
+    }
+
+    /// Stage 3.20 / L12 (Commit A, 2026-05-06): lookup byte span for the
+    /// token at `pos`. Required for the default `substitute_token` /
+    /// `insert_token` implementations. Returns `None` for sources that
+    /// don't track byte spans (e.g. synthetic kinds-only test inputs);
+    /// such sources cannot support byte-level recovery and the caller
+    /// surfaces a clean `Err`.
+    fn byte_span_of(&self, pos: usize) -> Option<(usize, usize)> {
+        let _ = pos;
+        None
+    }
 }
 
 /// L10 (2026-04-28): a `WpdsMutableTokenSource` that wraps a
@@ -943,6 +994,17 @@ where
         } else {
             Ok((pos, pos + 1))
         }
+    }
+
+    /// Stage 3.20 / L12 (Commit A, 2026-05-06): MutableMultiTokenSource has
+    /// real byte-span tracking — entries carry `byte_start` and the entry's
+    /// primary alternative carries `end_byte`. Returns the byte range of
+    /// the token at `pos`. Used by the default `substitute_token` /
+    /// `insert_token` implementations.
+    fn byte_span_of(&self, pos: usize) -> Option<(usize, usize)> {
+        let entry = self.inner.stream.entries.get(pos)?;
+        let primary = entry.alternatives.first()?;
+        Some((entry.byte_start, primary.end_byte))
     }
 }
 
