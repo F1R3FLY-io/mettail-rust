@@ -136,24 +136,23 @@ pub(crate) fn emit_engine_impl_full(
                         }
                     }
                     WpdsState::PrefixDispatch { pos, cur_bp } => {
-                        // Phase 4: empty-collection bootstrap. If frontier_top
-                        // is a CollectionMarker AND the next token is the
-                        // close delim, emit ConsumeAndPop directly so the
-                        // empty-collection finalize action fires.
+                        // Stage 3.16 / Hack #7 (Cluster 1, Mechanism γ,
+                        // 2026-05-05): Fork over close + cross-cat-redirect
+                        // branches. For shipped grammars the conditions
+                        // are mutually-exclusive on token (the Fork
+                        // degenerates to one surviving cursor — the other
+                        // drops via Idle on its next step). For G3-style
+                        // future grammars where the close-token equals an
+                        // element-start token, lex-min + source-order
+                        // tiebreak picks close (branch_idx 0 < redirect's
+                        // branch_idx 1; weight 0.0 < SKIP_BIAS).
                         //
-                        // Hack #7 review (Stage 3.16 / 2026-05-05): the
-                        // empty-close vs cross-cat-redirect dispatch is
-                        // mutually-exclusive on STRUCTURAL conditions
-                        // (token-equality + codegen-time index comparison),
-                        // not a tiebreak between simultaneously-matching
-                        // alternatives. Per `feedback_use_wpds_disambiguation_not_heuristics.md`
-                        // the rule targets ambiguity tiebreakers; this site
-                        // is principled-deterministic and stays as-is.
-                        // For grammars with deliberate ambiguity at this
-                        // dispatch (close-token equals an element token AND
-                        // is also a cross-cat-redirect target), the
-                        // ConsumeAndPop close path wins by source order
-                        // (checked first) — same as a 2-branch Fork would.
+                        // Walker companion: the apply_action::Fork dispatch
+                        // (wpds_walker.rs:2188) transfers the live builder's
+                        // open collection_stack to the parent cursor on
+                        // Lazy→Strict promotion, fixing the LIFO invariant
+                        // for empty cross-cat collections (Hack #7's hot
+                        // path). See `feedback_use_wpds_disambiguation_not_heuristics.md`.
                         if let Some(node) = frontier_top {
                             if node.symbol.kind
                                 == mettail_prattail::wpds_runtime::SymbolKind::CollectionMarker
@@ -162,39 +161,59 @@ pub(crate) fn emit_engine_impl_full(
                                 let rule_idx = node.symbol.rule_index_in_category;
                                 let close_lookup: Option<&'static str> = #collection_close_lookup;
                                 let token_text = tokens.peek_text(*pos).unwrap_or("");
-                                if Some(token_text) == close_lookup {
-                                    return WpdsStepAction::ConsumeAndPop {
-                                        weight: LexicographicWeight::from_cost(
-                                            0.0, result_src_idx, rule_idx,
-                                        ),
-                                        new_state: WpdsState::Unwinding,
-                                    };
-                                }
-                                // B7 cross-cat element redirect: when
-                                // element_src_idx ≠ result_src_idx, the
-                                // result category's prefix arms cannot
-                                // match the element token (e.g. List's
-                                // arms won't match a Proc literal). Push
-                                // CategoryEntry(element_src) on top so
-                                // dispatch routes to the element category.
+                                let token_is_close = Some(token_text) == close_lookup;
                                 let element_src_lookup: Option<u16> = {
                                     let result_src_idx = result_src_idx;
                                     let rule_idx = rule_idx;
                                     #collection_element_src_lookup
                                 };
-                                if let Some(element_src_idx) = element_src_lookup {
-                                    if element_src_idx != result_src_idx {
-                                        return WpdsStepAction::Push {
-                                            symbol: StackSymbolV2::category_entry(
-                                                element_src_idx,
-                                            ),
-                                            weight: LexicographicWeight::one(),
-                                            new_state: WpdsState::PrefixDispatch {
-                                                pos: *pos,
-                                                cur_bp: *cur_bp,
+                                let needs_redirect = element_src_lookup
+                                    .map(|esi| esi != result_src_idx)
+                                    .unwrap_or(false);
+                                if token_is_close || needs_redirect {
+                                    let mut __branches: Vec<
+                                        mettail_prattail::wpds_walker::ForkBranch<
+                                            LexicographicWeight,
+                                        >,
+                                    > = Vec::with_capacity(2);
+                                    if token_is_close {
+                                        __branches.push(
+                                            mettail_prattail::wpds_walker::ForkBranch {
+                                                symbol: StackSymbolV2::category_entry(0),
+                                                weight: LexicographicWeight::from_cost(
+                                                    0.0, result_src_idx, rule_idx,
+                                                ),
+                                                new_state: WpdsState::Unwinding,
+                                                action_kind:
+                                                    mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndPop,
                                             },
-                                        };
+                                        );
                                     }
+                                    if needs_redirect {
+                                        let element_src_idx =
+                                            element_src_lookup.unwrap();
+                                        __branches.push(
+                                            mettail_prattail::wpds_walker::ForkBranch {
+                                                symbol: StackSymbolV2::category_entry(
+                                                    element_src_idx,
+                                                ),
+                                                weight: LexicographicWeight::from_cost(
+                                                    mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                                                    result_src_idx, rule_idx,
+                                                ),
+                                                new_state: WpdsState::PrefixDispatch {
+                                                    pos: *pos,
+                                                    cur_bp: *cur_bp,
+                                                },
+                                                action_kind:
+                                                    mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                            },
+                                        );
+                                    }
+                                    return WpdsStepAction::Fork {
+                                        branches: __branches,
+                                        consume_trigger: false,
+                                    };
                                 }
                             }
                         }

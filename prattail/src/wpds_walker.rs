@@ -2186,6 +2186,27 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::Fork { branches, consume_trigger } => {
+                // Stage 3.16 (Mechanism γ closure / Hack #7 walker fix,
+                // 2026-05-05) — L2 Lazy→Strict transition: when the live
+                // builder still owns an open collection slot (e.g., Hack #7
+                // emits a Fork at PrefixDispatch with a CollectionMarker
+                // frontier — the marker push happened in Lazy mode and
+                // populated `self.builder.collection_stack`, but
+                // `cursor.collection_stack` is empty because Lazy mutates
+                // the live builder directly), transfer the live slot stack
+                // into the parent cursor so children inherit aligned slot
+                // ownership. Without this transfer, the close cursor's
+                // ConsumeAndPop logs a `FinalizeCollection { id: 0 }` while
+                // the live builder still has 1 slot — replay's LIFO
+                // assertion (`live.collection_stack_len() == id`) panics.
+                //
+                // This closes the Lazy→Strict transfer gap that
+                // `seed_from_live`'s docstring (lines 622-636) anticipated
+                // but the constructor-only call sites left unaddressed.
+                // Idempotent — only runs at the actual mode boundary.
+                if self.cursor_mode == CursorMode::Lazy {
+                    cursor.collection_stack = self.builder.take_collection_stack();
+                }
                 // Stage 3.9 / ι Phase 4 (2026-05-01) — L2: promote to Strict.
                 self.cursor_mode = CursorMode::Strict;
                 let pos_after = if consume_trigger {

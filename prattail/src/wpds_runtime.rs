@@ -1684,6 +1684,18 @@ impl SemanticBuilder {
         self.collection_stack.len()
     }
 
+    /// Stage 3.16 / Hack #7 walker fix (Mechanism γ closure, 2026-05-05) —
+    /// remove the live builder's collection_stack and return ownership.
+    /// Used at the Lazy→Strict mode promotion in `apply_action::Fork` to
+    /// transfer Lazy-time-allocated collection slots into the parent
+    /// cursor's `collection_stack` so children inherit aligned slot
+    /// ownership. After this call the live builder's stack is empty —
+    /// `adopt_collection_stack` can subsequently re-populate it from the
+    /// winning cursor.
+    pub fn take_collection_stack(&mut self) -> Vec<Vec<ActionArg>> {
+        std::mem::take(&mut self.collection_stack)
+    }
+
     /// Stage 3.12.8 (2026-05-03): re-push a previously-drained
     /// collection slot. Used by `BuilderDelta::FinalizeCollection`
     /// replay to restore the LIFO top so the subsequent
