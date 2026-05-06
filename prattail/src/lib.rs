@@ -79,6 +79,12 @@ pub mod lattice;
 pub mod lint;
 pub mod prefix_trie;
 pub mod recovery;
+/// Stage 3.20 / L12 (Commit C, 2026-05-06): WPDS-edge-driven recovery dispatch.
+/// `emit_recovery_fork` constructs lex-min-ranked Fork branches at every
+/// PrefixDispatch dead-end (engine_impl.rs:254 `_ => Idle` orphan,
+/// rewired in Commit D). Replaces the wrapper-level skip-to-sync retry
+/// loop in facade.rs (deleted in Commit E).
+pub mod recovery_dispatch;
 pub mod runtime_types;
 pub mod tensor;
 pub mod transducer;
