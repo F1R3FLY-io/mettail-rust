@@ -781,13 +781,50 @@ pub fn emit_prefix_arms_for_category(
     // via BigInt's transitive FIRST chain) is resolved by lex-min over
     // `from_cost(0.0, src, rule_idx)` — preserves source-order tiebreak.
 
-    // Pass 1: atomic-shape arms (LiteralPatterned, TerminalKeyword,
-    // VarRule, LiteralInteger/Boolean/String/Float). CrossCatProjection
-    // and CrossCatPrefixUnary shapes contribute zero atomic arms here.
+    // Pass 1: atomic-shape arms — Hack #8 (Stage 3.16, Mechanism γ,
+    // 2026-05-05) bucket-then-Fork emission. Collect descriptors,
+    // bucket by (pat, guard), emit singleton arm per bucket OR Fork arm
+    // when ≥2 rules share a key. For shipped grammars every category's
+    // atomic arms have distinct keys (verified by Plan agent), so the
+    // bucket path is byte-identical to first-match-wins. For G5 future
+    // grammars (two atomic rules with the same FIRST token), the Fork
+    // emission with lex-min over from_cost(0.0, src, rule_idx) picks
+    // the lower rule_idx winner via source-order tiebreak.
+    let mut atomic_descriptors: Vec<PrefixArmDescriptor> = Vec::new();
     for &(rule_idx, rule) in rules_in_category {
         let shape = classify_atomic(rule, language);
-        for arm in emit_atomic_arms(category_src_idx, rule_idx, &shape) {
-            arms.push(arm);
+        atomic_descriptors.extend(atomic_arm_descriptors(
+            category_src_idx, rule_idx, &shape,
+        ));
+    }
+    // Bucket by stringified (pat, guard) — BTreeMap for deterministic
+    // iteration order matching pre-Hack-#8 source-order arm emission.
+    let mut atomic_buckets: std::collections::BTreeMap<
+        (String, String),
+        Vec<PrefixArmDescriptor>,
+    > = std::collections::BTreeMap::new();
+    // Preserve insertion order across buckets via the order of first
+    // appearance — collect bucket keys in insertion order.
+    let mut bucket_order: Vec<(String, String)> = Vec::new();
+    for desc in atomic_descriptors {
+        let pat_str = desc.pattern.to_string();
+        let guard_str = desc
+            .extra_guard
+            .as_ref()
+            .map(|g| g.to_string())
+            .unwrap_or_default();
+        let key = (pat_str, guard_str);
+        if !atomic_buckets.contains_key(&key) {
+            bucket_order.push(key.clone());
+        }
+        atomic_buckets.entry(key).or_default().push(desc);
+    }
+    for key in bucket_order {
+        let descs = atomic_buckets.remove(&key).unwrap();
+        if descs.len() == 1 {
+            arms.push(emit_atomic_arm_singleton(&descs[0]));
+        } else {
+            arms.push(emit_atomic_arm_fork(&descs));
         }
     }
     // Pass 2a: collect cross-cat projections, then emit bucket-then-Fork.
@@ -1015,6 +1052,147 @@ fn emit_cross_cat_prefix_unary_arm(
 /// `state_cat_src_idx == #category_src_idx` check is always appended so
 /// shared token variants dispatch to different categories depending on
 /// current frame.
+/// Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ, 2026-05-05) — descriptor
+/// for a single atomic prefix arm. Used by `emit_prefix_arms_for_category`'s
+/// bucket-then-Fork emission to detect atomic arms sharing a `(pat, guard)`
+/// key and emit a multi-branch Fork instead of first-match-wins.
+///
+/// Shipped grammars have ZERO multi-arm buckets (every category's atomic
+/// arms have distinct (pat, guard) pairs by construction), so the bucket
+/// path is inert for current grammars — codegen output is byte-identical.
+/// The bucket-then-Fork code path activates when a future G5-style grammar
+/// introduces deliberate atomic-arm ambiguity (e.g., two rules in the same
+/// category sharing a FIRST token).
+struct PrefixArmDescriptor {
+    pattern: TokenStream,
+    extra_guard: Option<TokenStream>,
+    rule_idx: u16,
+    category_src_idx: u16,
+}
+
+/// Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ, 2026-05-05) — extracted
+/// pattern/guard pairs for an atomic shape. Replaces the eager TokenStream
+/// emission in `emit_atomic_arms` so the caller can bucket by (pat, guard)
+/// before emitting either a singleton arm or a Fork.
+fn atomic_arm_descriptors(
+    category_src_idx: u16,
+    rule_idx: u16,
+    shape: &AtomicShape,
+) -> Vec<PrefixArmDescriptor> {
+    let pattern_guards: Vec<(TokenStream, Option<TokenStream>)> = match shape {
+        AtomicShape::LiteralInteger => vec![(
+            quote! { Some(mettail_prattail::automata::TokenKind::Integer) },
+            None,
+        )],
+        AtomicShape::LiteralBoolean => vec![(
+            quote! {
+                Some(mettail_prattail::automata::TokenKind::True)
+                | Some(mettail_prattail::automata::TokenKind::False)
+                | Some(mettail_prattail::automata::TokenKind::BooleanLit)
+            },
+            None,
+        )],
+        AtomicShape::LiteralString => vec![(
+            quote! { Some(mettail_prattail::automata::TokenKind::StringLit) },
+            None,
+        )],
+        AtomicShape::LiteralFloat => vec![(
+            quote! { Some(mettail_prattail::automata::TokenKind::Float) },
+            None,
+        )],
+        AtomicShape::LiteralPatterned { cat_name, family, native_type, .. } => {
+            let nk = NativeKind::from_syn_type(native_type);
+            literal_patterned_pattern_and_guard_for_kind(
+                cat_name,
+                *family,
+                Some(&nk),
+                EmissionContext::HomeCategory,
+            )
+        }
+        AtomicShape::TerminalKeyword { terminal_text, .. } => vec![(
+            quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
+            Some(quote! { __kw == #terminal_text }),
+        )],
+        AtomicShape::VarRule { .. } => vec![(
+            quote! { Some(mettail_prattail::automata::TokenKind::Ident) },
+            None,
+        )],
+        AtomicShape::CrossCatProjection { .. } | AtomicShape::CrossCatPrefixUnary { .. } => {
+            return Vec::new()
+        }
+        AtomicShape::NonAtomic => return Vec::new(),
+    };
+    pattern_guards
+        .into_iter()
+        .map(|(pattern, extra_guard)| PrefixArmDescriptor {
+            pattern,
+            extra_guard,
+            rule_idx,
+            category_src_idx,
+        })
+        .collect()
+}
+
+/// Emit a singleton atomic arm — byte-identical to the pre-Hack-#8 emission.
+fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
+    let pat = &desc.pattern;
+    let category_src_idx = desc.category_src_idx;
+    let rule_idx = desc.rule_idx;
+    let guard = match &desc.extra_guard {
+        Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
+        None => quote! { state_cat_src_idx == #category_src_idx },
+    };
+    quote! {
+        #pat if #guard => {
+            return WpdsStepAction::ConsumeAndPush {
+                symbol: StackSymbolV2::rule_at(
+                    #category_src_idx, #rule_idx, 0, Some(_outer_bp),
+                ).with_kind_return(),
+                weight: LexicographicWeight::from_cost(0.0, #category_src_idx, #rule_idx),
+                new_state: WpdsState::Unwinding,
+                capture_token: true,
+            };
+        }
+    }
+}
+
+/// Emit a multi-arm bucket as a Fork over the per-rule branches. Triggers
+/// only when ≥2 rules share the same `(pat, guard)` key — for shipped
+/// grammars this branch is unreachable; for G5 future grammars it emits
+/// principled lex-min disambiguation.
+fn emit_atomic_arm_fork(descs: &[PrefixArmDescriptor]) -> TokenStream {
+    debug_assert!(descs.len() >= 2);
+    let category_src_idx = descs[0].category_src_idx;
+    let pat = &descs[0].pattern;
+    let guard = match &descs[0].extra_guard {
+        Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
+        None => quote! { state_cat_src_idx == #category_src_idx },
+    };
+    let branches: Vec<TokenStream> = descs.iter().map(|d| {
+        let rule_idx = d.rule_idx;
+        let csi = d.category_src_idx;
+        quote! {
+            mettail_prattail::wpds_walker::ForkBranch {
+                symbol: StackSymbolV2::rule_at(
+                    #csi, #rule_idx, 0, Some(_outer_bp),
+                ).with_kind_return(),
+                weight: LexicographicWeight::from_cost(0.0, #csi, #rule_idx),
+                new_state: WpdsState::Unwinding,
+                action_kind: mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndCaptureAndPush,
+            }
+        }
+    }).collect();
+    quote! {
+        #pat if #guard => {
+            return WpdsStepAction::Fork {
+                branches: vec![ #( #branches ),* ],
+                consume_trigger: false,
+            };
+        }
+    }
+}
+
+#[allow(dead_code)]
 fn emit_atomic_arms(
     category_src_idx: u16,
     rule_idx: u16,

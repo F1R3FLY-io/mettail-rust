@@ -476,6 +476,17 @@ pub enum ForkActionKind {
     /// text }` onto its pending ops. Replay (commit_winner) drives the
     /// MutableMultiTokenSource to commit the alt at parse time.
     LexAlt { alt_idx: u16, kind: TokenKind, text: String },
+
+    /// Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ, 2026-05-05) — atomic
+    /// literal multi-arm Fork branch. Mirrors `WpdsStepAction::ConsumeAndPush
+    /// { capture_token: true }`: emit_push_token captures the literal text
+    /// onto the cursor's pending_builder_ops/live builder, then push the
+    /// `branch.symbol` (the rule's Return marker) onto the GSS, then advance
+    /// pos by 1. Used when codegen buckets atomic prefix arms by (pat, guard)
+    /// and a bucket has ≥2 rules — the Fork emits one branch per rule with
+    /// this action_kind, and lex-min via from_cost(0.0, src, rule_idx) picks
+    /// the lower rule_idx winner.
+    ConsumeAndCaptureAndPush,
 }
 
 impl<W: Semiring> std::fmt::Debug for ForkBranch<W>
@@ -2532,6 +2543,55 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos_after,
                                 branch.weight.clone(),
                             );
+                            children.push(child);
+                        }
+
+                        ForkActionKind::ConsumeAndCaptureAndPush => {
+                            // Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ,
+                            // 2026-05-05): atomic literal multi-arm Fork
+                            // branch. Mirrors WpdsStepAction::ConsumeAndPush
+                            // with capture_token=true (prefix.rs Pass-1
+                            // emission). Captures the trigger token onto the
+                            // builder (live or pending depending on mode),
+                            // pushes the branch's symbol (rule's Return
+                            // marker), and advances pos by 1. Used when
+                            // codegen buckets atomic prefix arms and a
+                            // bucket has ≥2 rules with the same (pat, guard)
+                            // — lex-min via from_cost(0.0, src, rule_idx)
+                            // picks the lower rule_idx winner.
+                            let mut sym = branch.symbol;
+                            let mut child = BranchCursor {
+                                node: cursor.node,
+                                pos: pos_after,
+                                weight: cursor.weight.times(&branch.weight),
+                                inner_state: branch.new_state.clone(),
+                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                collection_stack: cursor.collection_stack.clone(),
+                                source_priority: child_source_priority,
+                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                            };
+                            // Capture the token at child.pos BEFORE advancing
+                            // (mirrors live ConsumeAndPush at line 2086-2099).
+                            if let Some(kind) = tokens.peek_kind(child.pos) {
+                                let text = tokens
+                                    .peek_text(child.pos)
+                                    .unwrap_or("")
+                                    .to_string();
+                                let pos_now = child.pos;
+                                self.emit_push_token(&mut child, kind, text, pos_now);
+                            }
+                            self.emit_push_side_effects(&mut child, &mut sym);
+                            let pos_now = child.pos;
+                            let _ = self.cursor_gss_push(
+                                &mut child,
+                                sym,
+                                pos_now,
+                                branch.weight.clone(),
+                            );
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
                             children.push(child);
                         }
                     }
