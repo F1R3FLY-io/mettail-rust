@@ -252,7 +252,20 @@ pub(crate) fn emit_engine_impl_full(
                                     // with cur_bp = the bp encoded in the popped
                                     // symbol. The Return's bp was set at
                                     // ConsumeAndPush time to the outer cur_bp.
-                                    let outer_bp = node.symbol.bp.unwrap_or(0);
+                                    //
+                                    // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
+                                    // 2026-05-06): Return symbols ALWAYS carry
+                                    // `bp = Some(outer_bp)` per codegen invariant
+                                    // (constructed via with_kind_return on a
+                                    // RuleAt that itself had Some(*cur_bp) at the
+                                    // ConsumeAndPush site). Use expect() to surface
+                                    // any codegen-invariant violation instead of
+                                    // silently substituting 0 — a `feedback_no_stubs_timebombs`
+                                    // safeguard.
+                                    let outer_bp = node.symbol.bp.expect(
+                                        "Return symbol invariant: bp must be Some(outer_bp) \
+                                         set at the originating ConsumeAndPush site"
+                                    );
                                     WpdsStepAction::Pop {
                                         weight: LexicographicWeight::one(),
                                         new_state: WpdsState::InfixLoop { cur_bp: outer_bp },
@@ -276,7 +289,17 @@ pub(crate) fn emit_engine_impl_full(
                                     // CollectionLoop to dispatch on close/sep.
                                     let result_src_idx = node.symbol.category_src_idx;
                                     let rule_idx = node.symbol.rule_index_in_category;
-                                    let accumulator_id = node.symbol.bp.unwrap_or(0);
+                                    // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
+                                    // 2026-05-06): CollectionMarker symbols ALWAYS
+                                    // carry `bp = Some(accumulator_id)` per the
+                                    // codegen invariant in
+                                    // StackSymbolV2::collection_marker. expect()
+                                    // surfaces invariant violations instead of
+                                    // silently substituting 0.
+                                    let accumulator_id = node.symbol.bp.expect(
+                                        "CollectionMarker invariant: bp must be \
+                                         Some(accumulator_id) set at construction"
+                                    );
                                     let element_src_lookup: Option<u16> = {
                                         let result_src_idx = result_src_idx;
                                         let rule_idx = rule_idx;
@@ -307,6 +330,20 @@ pub(crate) fn emit_engine_impl_full(
                                     // would prematurely Pop+InfixLoop after
                                     // the first sub-parse and the closing
                                     // delimiters would remain in the input.
+                                    //
+                                    // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
+                                    // 2026-05-06): RuleAt's `bp: Option<u8>` is
+                                    // genuinely Optional per
+                                    // `StackSymbolV2::rule_at(.., bp: Option<u8>)`.
+                                    // Some callers thread `Some(*outer_bp)` (when
+                                    // a precedenced parent context exists);
+                                    // others pass `None` (top-level RuleAt where
+                                    // no outer_bp is tracked). The `unwrap_or(0)`
+                                    // fallback is the legitimate Optional
+                                    // handling — `0` is the canonical "top-level
+                                    // cur_bp" sentinel used everywhere a Pratt
+                                    // dispatch starts fresh. This is NOT a stub;
+                                    // it's the documented Optional-default.
                                     let outer_bp = node.symbol.bp.unwrap_or(0);
                                     let result_src_idx = node.symbol.category_src_idx;
                                     let rule_idx = node.symbol.rule_index_in_category;
@@ -338,7 +375,16 @@ pub(crate) fn emit_engine_impl_full(
                                     // is transparent (no AST node, no action);
                                     // the inner Term remains on the builder
                                     // as the result.
-                                    let outer_bp = node.symbol.bp.unwrap_or(0);
+                                    //
+                                    // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
+                                    // 2026-05-06): GroupingMarker symbols ALWAYS
+                                    // carry `bp = Some(outer_bp)` per the codegen
+                                    // invariant in StackSymbolV2::grouping_marker.
+                                    // expect() surfaces invariant violations.
+                                    let outer_bp = node.symbol.bp.expect(
+                                        "GroupingMarker invariant: bp must be \
+                                         Some(outer_bp) — saved cur_bp at the open paren"
+                                    );
                                     match tokens.peek_text(_pos) {
                                         Some(")") => WpdsStepAction::ConsumeAndPop {
                                             weight: LexicographicWeight::one(),
@@ -361,10 +407,37 @@ pub(crate) fn emit_engine_impl_full(
                                     // the last operand).
                                     let result_src_idx = node.symbol.category_src_idx;
                                     let rule_idx = node.symbol.rule_index_in_category;
-                                    let completed_idx = node.symbol.bp.unwrap_or(0);
-                                    let parts_len = mixfix_parts_len(
+                                    // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
+                                    // 2026-05-06): MixfixMarker symbols ALWAYS
+                                    // carry `bp = Some(operands_completed)` per
+                                    // the codegen invariant in
+                                    // StackSymbolV2::mixfix_marker. expect()
+                                    // surfaces invariant violations.
+                                    let completed_idx = node.symbol.bp.expect(
+                                        "MixfixMarker invariant: bp must be \
+                                         Some(operands_completed) set at construction"
+                                    );
+                                    // Stage 3.16 / Hack #19 (Cluster 4, Mechanism γ,
+                                    // 2026-05-06): mixfix_parts_len returning None
+                                    // means the (result_src_idx, rule_idx) pair
+                                    // is missing from the codegen-time mixfix-parts
+                                    // table — a hard codegen invariant violation,
+                                    // not a parse-time choice. Surface as Error
+                                    // with a precise message instead of silently
+                                    // substituting 0 (which would skip the mixfix
+                                    // dispatch entirely). Per
+                                    // `feedback_no_stubs_timebombs.md`.
+                                    let parts_len = match mixfix_parts_len(
                                         result_src_idx, rule_idx,
-                                    ).unwrap_or(0);
+                                    ) {
+                                        Some(n) => n,
+                                        None => return WpdsStepAction::Error(format!(
+                                            "mixfix_parts_len(result={}, rule={}) returned None — \
+                                             codegen invariant violated: every MixfixMarker symbol \
+                                             must have a mixfix-parts table entry",
+                                            result_src_idx, rule_idx,
+                                        )),
+                                    };
                                     let part = mixfix_part(
                                         result_src_idx, rule_idx, completed_idx,
                                     );
@@ -455,9 +528,20 @@ pub(crate) fn emit_engine_impl_full(
                                     // executed (Replace/ConsumeAndReplace set
                                     // OptionalGroupAt(next_sub_pos)). Resume
                                     // the OptionalGroup state at that sub_pos.
+                                    //
+                                    // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
+                                    // 2026-05-06): OptionalGroupAt symbols ALWAYS
+                                    // carry `bp = Some(outer_bp)` per the codegen
+                                    // invariant in
+                                    // StackSymbolV2::optional_group_at.
                                     let result_src_idx = node.symbol.category_src_idx;
                                     let rule_idx = node.symbol.rule_index_in_category;
-                                    let outer_bp = node.symbol.bp.unwrap_or(0);
+                                    let outer_bp = node.symbol.bp.expect(
+                                        "OptionalGroupAt invariant: bp must be \
+                                         Some(outer_bp) — preserved across the group \
+                                         so on group exit BinderRule resumes at the \
+                                         correct precedence"
+                                    );
                                     return WpdsStepAction::Advance(
                                         WpdsState::OptionalGroup {
                                             result_src_idx,
