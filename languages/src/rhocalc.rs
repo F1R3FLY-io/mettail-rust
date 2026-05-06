@@ -168,6 +168,26 @@ language! {
                 Box::new(n.clone()),
             )
         }] fold;
+        InputBindPolyadic . lhs:Name, lhss:Vec(Name), n:Name
+        |- lhs "," lhss.*sep(",") "<-" n : InputBind ![{
+            let mut items = Vec::with_capacity(1 + lhss.len());
+            items.push(crate::rhocalc::receive::name_pattern_to_proc(&lhs));
+            items.extend(lhss.iter().map(crate::rhocalc::receive::name_pattern_to_proc));
+            InputBind::InputBindQuoted(
+                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                Box::new(n.clone()),
+            )
+        }] fold;
+        InputBindPersistentPolyadic . lhs:Name, lhss:Vec(Name), n:Name
+        |- lhs "," lhss.*sep(",") "<=" n : InputBind ![{
+            let mut items = Vec::with_capacity(1 + lhss.len());
+            items.push(crate::rhocalc::receive::name_pattern_to_proc(&lhs));
+            items.extend(lhss.iter().map(crate::rhocalc::receive::name_pattern_to_proc));
+            InputBind::InputBindQuotedPersistent(
+                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                Box::new(n.clone()),
+            )
+        }] fold;
         InputBindQuotedPersistent . pat:Proc, n:Name
         |- "@" pat "<" "=" n : InputBind ![{
             InputBind::InputBindQuotedPersistent(
@@ -309,6 +329,12 @@ language! {
             }}
         ] fold;
 
+        // Process parallel composition without outer braces (same multiset semantics as `{ P | Q }`).
+        // Declared looser than boolean/arithmetic ops so sends/receives compose as expected.
+        PParInfix . a:Proc, b:Proc |- a "|" b : Proc ![{
+            crate::rhocalc::merge_pp_parallel(a.clone(), b.clone())
+        }] fold;
+
         // Infix precedence (declaration order = loosest → tightest for PraTTaIL):
         // or/and, then comparisons, then arithmetic — so `a/b == c/d` and `x==y and z==w` parse correctly.
         Or . a:Proc, b:Proc |- a "or" b : Proc ![
@@ -332,7 +358,7 @@ language! {
         ] fold;
 
         // Bitwise (looser precedence than arithmetic)
-        // Use `bitor` (not `|`) so `{ P | Q }` stays parallel composition (PPar separator).
+        // Use `bitor` (not `|`) so `{ P | Q }` and bare `P | Q` stay process parallel composition.
         BitOr . a:Proc, b:Proc |- a "bitor" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
@@ -1161,6 +1187,12 @@ language! {
             if let Name::NQuote(ref p) = n.as_ref(),
             let res = p.as_ref().clone();
 
+        // Ensure bare infix parallel reaches canonical PPar during execution so COMM can fire.
+        fold_proc(s.clone(), res) <--
+            proc(s),
+            if let Proc::PParInfix(ref a, ref b) = s,
+            let res = crate::rhocalc::merge_pp_parallel(a.as_ref().clone(), b.as_ref().clone());
+
         // Evaluate guarded communication helper introduced by CommPatternWhere.
         // This bridges rewrite-time construction (`CommWhere ...`) to runtime semantics:
         // - successful match + true guard => reduced body
@@ -1253,6 +1285,25 @@ language! {
         //     proc(p),name(n),
         //     !(proc(k), trans(p,k,q), can_comm(q,n));
     },
+}
+
+fn merge_pp_parallel(lhs: Proc, rhs: Proc) -> Proc {
+    let mut bag = mettail_runtime::HashBag::new();
+    fn flatten(bag: &mut mettail_runtime::HashBag<Proc>, p: Proc) {
+        match p {
+            Proc::PPar(ps) => {
+                for (elem, count) in ps.iter() {
+                    for _ in 0..count {
+                        flatten(bag, elem.clone());
+                    }
+                }
+            },
+            other => bag.insert(other),
+        }
+    }
+    flatten(&mut bag, lhs);
+    flatten(&mut bag, rhs);
+    Proc::PPar(bag)
 }
 
 fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {

@@ -108,6 +108,30 @@ pub struct Repl {
 }
 
 impl Repl {
+    fn strip_ws(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    fn resolve_graph_start_id(
+        results: &AscentResults,
+        parsed_term: &dyn mettail_runtime::Term,
+    ) -> u64 {
+        let parsed_id = parsed_term.term_id();
+        if results.all_terms.iter().any(|t| t.term_id == parsed_id) {
+            return parsed_id;
+        }
+        let parsed_display = format!("{}", parsed_term);
+        let parsed_no_ws = Self::strip_ws(&parsed_display);
+        if let Some(matched) = results
+            .all_terms
+            .iter()
+            .find(|t| Self::strip_ws(&t.display) == parsed_no_ws)
+        {
+            return matched.term_id;
+        }
+        parsed_id
+    }
+
     fn non_self_rewrites_from(
         results: &AscentResults,
         term_id: u64,
@@ -124,26 +148,59 @@ impl Repl {
         start_id: u64,
     ) -> Option<&TermInfo> {
         let term_by_id = |id: u64| results.all_terms.iter().find(|t| t.term_id == id);
-        let _start = term_by_id(start_id)?;
+        let start = term_by_id(start_id)?;
         let mut visited = std::collections::HashSet::new();
-        let mut queue = std::collections::VecDeque::from([start_id]);
+        let mut queue = std::collections::VecDeque::from([(start_id, false)]);
         visited.insert(start_id);
-        while let Some(id) = queue.pop_front() {
-            let outgoing = Self::non_self_rewrites_from(results, id);
-            if outgoing.is_empty() {
-                if let Some(info) = term_by_id(id) {
-                    return Some(info);
+        let mut fallback_normal_form_id: Option<u64> = None;
+
+        while let Some((id, progressed)) = queue.pop_front() {
+            if let Some(info) = term_by_id(id) {
+                if info.is_normal_form {
+                    if progressed {
+                        return Some(info);
+                    }
+                    if fallback_normal_form_id.is_none() {
+                        fallback_normal_form_id = Some(id);
+                    }
                 }
-                continue;
             }
+
+            let outgoing = Self::non_self_rewrites_from(results, id);
+
+            for eq_id in Self::equiv_neighbors(results, id) {
+                if visited.insert(eq_id) {
+                    queue.push_back((eq_id, progressed));
+                }
+            }
+
             for rw in outgoing {
                 let to_id = rw.to_id;
                 if visited.insert(to_id) {
-                    queue.push_back(to_id);
+                    queue.push_back((to_id, true));
                 }
             }
         }
-        None
+
+        if let Some(id) = fallback_normal_form_id {
+            return term_by_id(id);
+        }
+        Some(start)
+    }
+
+    fn equiv_neighbors(results: &AscentResults, term_id: u64) -> Vec<u64> {
+        results
+            .equivalences
+            .iter()
+            .find(|eq| eq.term_ids.contains(&term_id))
+            .map(|eq| {
+                eq.term_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| *id != term_id)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Create a new REPL
@@ -1122,7 +1179,7 @@ impl Repl {
         println!("  - {} normal forms", results.normal_forms().len());
         println!();
 
-        let initial_id = term.term_id();
+        let initial_id = Self::resolve_graph_start_id(&results, term.as_ref());
 
         if step_mode {
             // Step: always show initial term so user can apply rewrites one by one
@@ -1630,5 +1687,133 @@ impl Repl {
         println!();
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Repl;
+    use mettail_languages::rhocalc::RhoCalcLanguage;
+    use mettail_runtime::Language;
+    use mettail_runtime::{AscentResults, EquivClass, Rewrite, TermInfo};
+
+    #[test]
+    fn progress_normal_form_prefers_reachable_rewrite_progress_over_equivalent_stuck_start() {
+        let results = AscentResults {
+            all_terms: vec![
+                TermInfo {
+                    term_id: 1,
+                    display: "x!!(1,2,3) | for(a,b,c <- x){[a,b,c]}".to_string(),
+                    is_normal_form: true,
+                },
+                TermInfo {
+                    term_id: 2,
+                    display: "{x!!([1,2,3]) | for(a,b,c <- x){[a,b,c]}}".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 3,
+                    display: "{x!!([1,2,3]) | [1,2,3]}".to_string(),
+                    is_normal_form: true,
+                },
+            ],
+            rewrites: vec![Rewrite {
+                from_id: 2,
+                to_id: 3,
+                rule_name: Some("CommPattern".to_string()),
+            }],
+            equivalences: vec![EquivClass { term_ids: vec![1, 2] }],
+            custom_relations: std::collections::HashMap::new(),
+        };
+
+        let chosen = Repl::progress_normal_form_reachable_from(&results, 1)
+            .expect("expected a reachable terminal term");
+        assert_eq!(chosen.term_id, 3, "should prefer term reached by rewrite progress");
+    }
+
+    #[test]
+    fn progress_normal_form_falls_back_to_start_when_no_progress_path_exists() {
+        let results = AscentResults {
+            all_terms: vec![TermInfo {
+                term_id: 1,
+                display: "stuck".to_string(),
+                is_normal_form: true,
+            }],
+            rewrites: vec![],
+            equivalences: vec![],
+            custom_relations: std::collections::HashMap::new(),
+        };
+
+        let chosen = Repl::progress_normal_form_reachable_from(&results, 1)
+            .expect("expected start term fallback");
+        assert_eq!(chosen.term_id, 1);
+    }
+
+    #[test]
+    fn progress_normal_form_can_choose_reachable_nf_even_when_rewrites_continue_elsewhere() {
+        let results = AscentResults {
+            all_terms: vec![
+                TermInfo {
+                    term_id: 1,
+                    display: "x!(1,2,3) | for(a,b,c <- x){[a,b,c]}".to_string(),
+                    is_normal_form: true,
+                },
+                TermInfo {
+                    term_id: 2,
+                    display: "{x!([1,2,3]) | for(a,b,c <- x){[a,b,c]}}".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 3,
+                    display: "[1,2,3]".to_string(),
+                    is_normal_form: true,
+                },
+                TermInfo {
+                    term_id: 4,
+                    display: "{x!([1,2,3]) | for(a,b,c <- x){[a,b,c]} | noise}".to_string(),
+                    is_normal_form: false,
+                },
+            ],
+            rewrites: vec![
+                Rewrite {
+                    from_id: 2,
+                    to_id: 3,
+                    rule_name: Some("CommPattern".to_string()),
+                },
+                Rewrite {
+                    from_id: 2,
+                    to_id: 4,
+                    rule_name: Some("ParCong".to_string()),
+                },
+            ],
+            equivalences: vec![EquivClass { term_ids: vec![1, 2] }],
+            custom_relations: std::collections::HashMap::new(),
+        };
+
+        let chosen = Repl::progress_normal_form_reachable_from(&results, 1)
+            .expect("expected a reachable normal form");
+        assert_eq!(chosen.term_id, 3, "should pick progressed reachable normal form");
+    }
+
+    #[test]
+    fn progress_normal_form_with_real_rhocalc_polyadic_comm_should_not_stay_unreduced() {
+        mettail_runtime::clear_var_cache();
+        let lang = RhoCalcLanguage;
+        let term_raw = lang
+            .parse_term("x!(1,2,3) | for (a, b, c <- x) {[a, b, c]}")
+            .expect("parse");
+        let term = lang.normalize_term(term_raw.as_ref());
+        let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
+        let initial_id = Repl::resolve_graph_start_id(&results, term.as_ref());
+
+        let chosen = Repl::progress_normal_form_reachable_from(&results, initial_id)
+            .expect("expected chosen result");
+        assert!(
+            !chosen.display.contains("for("),
+            "expected reduced result, got `{}`; initial_id={}; rewrites_total={}",
+            chosen.display,
+            initial_id,
+            results.rewrites.len()
+        );
     }
 }

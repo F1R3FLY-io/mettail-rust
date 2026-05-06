@@ -468,6 +468,46 @@ mod comm {
     }
 
     #[test]
+    fn polyadic_receive_binds_list_payload_from_polyadic_send() {
+        assert_reduces_to("{x!(1,2,3) | for(a, b, c <- x){[a,b,c]}}", "[1,2,3]");
+    }
+
+    #[test]
+    fn persistent_polyadic_receive_keeps_listener() {
+        let results = run("{x!(1,2,3) | for(a, b, c <= x){[a,b,c]}}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays.iter().any(|d| d.contains("[1,2,3]")
+                && d.contains("for(a,b")
+                && d.contains("c<=x){[a,b,c]}")),
+            "expected polyadic persistent receive to fire and remain, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn polyadic_receive_arity_mismatch_blocks() {
+        assert_reduces_to(
+            "{x!(1,2) | for(a, b, c <- x){[a,b,c]}}",
+            "{x!([1,2]) | for(a,b , c<-x){[a,b,c]}}",
+        );
+    }
+
+    #[test]
+    fn polyadic_receive_in_join_row_works() {
+        assert_reduces_to("{x!(1,2) | z!(ok) | for(a, b <- x & y <- z){[a,b,y]}}", "[1,2,ok]");
+    }
+
+    #[test]
+    fn polyadic_receive_where_guard_works() {
+        assert_reduces_to("{x!(1,2,3) | for(a, b, c <- x where c > 2){[a,b,c]}}", "[1,2,3]");
+    }
+
+    #[test]
     fn pattern_comm_var_matches_payload() {
         assert_reduces_to("{for(x <- c){*x} | c!(p)}", "p");
     }
@@ -1711,6 +1751,68 @@ mod parsing {
     #[test]
     fn persistent_receive_join_where_parses() {
         let _ = run("for(y <= x & z <- c where z == ok){z}");
+    }
+
+    #[test]
+    fn polyadic_receive_parses() {
+        let _ = run("for(a, b, c <- x){[a,b,c]}");
+    }
+
+    #[test]
+    fn persistent_polyadic_receive_parses() {
+        let _ = run("for(a, b, c <= x){[a,b,c]}");
+    }
+
+    #[test]
+    fn bare_parallel_equivalent_to_braced_par() {
+        fresh();
+        let braced = parse("{x!!(1,2,3) | for(a, b, c <- x){[a,b,c]}}");
+        let bare = parse("x!!(1,2,3) | for(a, b, c <- x){[a,b,c]}");
+        assert!(
+            braced.term_eq(&bare),
+            "expected bare top-level `|` to match braced PPar, braced={} bare={}",
+            braced,
+            bare
+        );
+    }
+
+    #[test]
+    fn polyadic_persistent_send_and_receive_without_outer_braces_reduces() {
+        assert_reduces_to("x!!(1,2,3) | for(a, b, c <- x){[a,b,c]}", "[1,2,3]");
+    }
+
+    #[test]
+    fn polyadic_send_and_receive_without_outer_braces_reduces() {
+        assert_reduces_to("x!(1,2,3) | for(a, b, c <- x){[a,b,c]}", "[1,2,3]");
+    }
+
+    #[test]
+    fn polyadic_send_and_persistent_receive_without_outer_braces_reduces() {
+        let (results, initial_id) = run_with_initial("x!(1,2,3) | for(a, b, c <= x){[a,b,c]}");
+        let nfs = reachable_normal_form_displays(&results, initial_id);
+        assert!(
+            nfs.iter().any(|nf| nf.contains("[1,2,3]")
+                && nf.contains("for(a,b")
+                && nf.contains("c<=x){[a,b,c]}")),
+            "expected persistent receive to remain and produce payload, got {:?}",
+            nfs
+        );
+    }
+
+    #[test]
+    fn polyadic_persistent_send_and_persistent_receive_without_outer_braces_reduces() {
+        let (results, initial_id) = run_with_initial("x!!(1,2,3) | for(a, b, c <= x){[a,b,c]}");
+        let nfs = reachable_normal_form_displays(&results, initial_id);
+        assert!(
+            nfs.iter().any(|nf| {
+                nf.contains("[1,2,3]")
+                    && nf.contains("x!!([1,2,3])")
+                    && nf.contains("for(a,b")
+                    && nf.contains("c<=x){[a,b,c]}")
+            }),
+            "expected both persistent endpoints to remain and produce payload, got {:?}",
+            nfs
+        );
     }
 
     #[test]

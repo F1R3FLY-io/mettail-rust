@@ -18,6 +18,18 @@ pub(crate) fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
     match bind {
         InputBind::InputBind(lhs, _) => Some(name_pattern_to_proc(lhs.as_ref())),
         InputBind::InputBindPersistent(lhs, _) => Some(name_pattern_to_proc(lhs.as_ref())),
+        InputBind::InputBindPolyadic(lhs, lhss, _) => {
+            let mut items = Vec::with_capacity(1 + lhss.len());
+            items.push(name_pattern_to_proc(lhs.as_ref()));
+            items.extend(lhss.iter().map(name_pattern_to_proc));
+            Some(Proc::CastList(Box::new(List::ListLit(items))))
+        },
+        InputBind::InputBindPersistentPolyadic(lhs, lhss, _) => {
+            let mut items = Vec::with_capacity(1 + lhss.len());
+            items.push(name_pattern_to_proc(lhs.as_ref()));
+            items.extend(lhss.iter().map(name_pattern_to_proc));
+            Some(Proc::CastList(Box::new(List::ListLit(items))))
+        },
         InputBind::InputBindQuery(lhs, _, _) => Some(name_pattern_to_proc(lhs.as_ref())),
         InputBind::InputBindEmpty(_) => {
             Some(Proc::PVar(OrdVar(Var::Free(FreeVar::fresh_named("__wild_recv")))))
@@ -39,6 +51,8 @@ fn bind_channel_name(bind: &InputBind) -> Option<&Name> {
     match bind {
         InputBind::InputBind(_, n) => Some(n.as_ref()),
         InputBind::InputBindPersistent(_, n) => Some(n.as_ref()),
+        InputBind::InputBindPolyadic(_, _, n) => Some(n.as_ref()),
+        InputBind::InputBindPersistentPolyadic(_, _, n) => Some(n.as_ref()),
         InputBind::InputBindQuery(_, n, _) => Some(n.as_ref()),
         InputBind::InputBindEmpty(n) => Some(n.as_ref()),
         InputBind::InputBindEmptyPersistent(n) => Some(n.as_ref()),
@@ -54,6 +68,7 @@ fn is_persistent_bind(bind: &InputBind) -> bool {
     matches!(
         bind,
         InputBind::InputBindPersistent(_, _)
+            | InputBind::InputBindPersistentPolyadic(_, _, _)
             | InputBind::InputBindEmptyPersistent(_)
             | InputBind::InputBindQuotedPersistent(_, _)
     )
