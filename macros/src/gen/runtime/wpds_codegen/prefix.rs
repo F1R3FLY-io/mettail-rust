@@ -469,28 +469,33 @@ fn collect_first_set(
             }
         }
     }
-    // Synthetic Var rule: user-defined categories without native_type get a
-    // synthetic Var rule (Phase 5a in synthetic.rs). Add Ident to FIRST.
-    if let Some(lang_type) = language.types.iter().find(|t| t.name.to_string() == cat_name) {
-        if lang_type.native_type.is_none() {
-            // Has-user-var-rule check: if any user rule for this cat
-            // matches NonTerminal(Var), don't add (the user rule covers it).
-            let has_user_var = language.terms.iter().any(|r| {
-                r.category.to_string() == cat_name
-                    && r.items.first().map(|item| {
-                        matches!(item, mettail_ast::grammar::GrammarItem::NonTerminal {
-                            kind: mettail_ast::grammar::NonTerminalKind::Var, ..
-                        })
-                    }).unwrap_or(false)
+    // Synthetic Var rule: every declared category that lacks an explicit
+    // user Var rule gets a synthetic Var rule (Phase 5a in synthetic.rs).
+    // Add Ident to FIRST.
+    //
+    // Stage 3.20 / Commit 4 part 2 (Plan agent Fix A, 2026-05-06): the
+    // pre-fix gate `lang_type.native_type.is_none()` was wrong — it
+    // caused FIRST(Int) etc. to omit Ident even though `gen/types/enums.rs`
+    // unconditionally emits `Int::IVar(...)` AST variants. Now the FIRST
+    // set mirrors the AST surface for every category.
+    if let Some(_lang_type) = language.types.iter().find(|t| t.name.to_string() == cat_name) {
+        // Has-user-var-rule check: if any user rule for this cat matches
+        // NonTerminal(Var), don't add (the user rule covers it).
+        let has_user_var = language.terms.iter().any(|r| {
+            r.category.to_string() == cat_name
+                && r.items.first().map(|item| {
+                    matches!(item, mettail_ast::grammar::GrammarItem::NonTerminal {
+                        kind: mettail_ast::grammar::NonTerminalKind::Var, ..
+                    })
+                }).unwrap_or(false)
+        });
+        if !has_user_var {
+            acc.push(FirstToken {
+                pattern: quote! {
+                    Some(mettail_prattail::automata::TokenKind::Ident)
+                },
+                extra_guard: None,
             });
-            if !has_user_var {
-                acc.push(FirstToken {
-                    pattern: quote! {
-                        Some(mettail_prattail::automata::TokenKind::Ident)
-                    },
-                    extra_guard: None,
-                });
-            }
         }
     }
     // B7 Pattern 3 fix: synthetic collection-literal rules (`ListLit`,
@@ -667,6 +672,121 @@ pub fn emit_grouping_arms(categories: &[String]) -> TokenStream {
                         cur_bp: 0,
                     },
                     capture_token: false,
+                };
+            }
+        });
+    }
+    quote! { #(#arms)* }
+}
+
+/// Stage 3.20 / Commit 4 part 2 (Plan agent Fix, 2026-05-06): emit `(`-trigger
+/// dispatch arms that handle BOTH the B7 paren-grouping AND any binder
+/// rule whose first trigger is `"("`. For categories with no `(`-binder,
+/// this degenerates to the simple grouping arm (byte-identical to
+/// `emit_grouping_arms`). For categories like Lambda's `Term` that have
+/// a paren-triggered App rule, this emits a `WpdsStepAction::Fork` over
+/// {grouping_branch, binder_rule_branches...} so lex-min disambiguates
+/// per `feedback_use_wpds_disambiguation_not_heuristics.md`. The grouping
+/// branch uses `LexicographicWeight::one()` (max src/rule indices) so
+/// any concrete binder rule beats it on lex-min ties.
+///
+/// Verified empirically across `target/generated/*/wpds.rs`: only Lambda
+/// has a `(`-triggered binder rule; for all other shipped grammars the
+/// emitted output is byte-identical to `emit_grouping_arms`.
+pub fn emit_paren_dispatch_arms(
+    categories: &[String],
+    _language: &mettail_ast::language::LanguageDef,
+    per_cat: &[Vec<mettail_ast::grammar::GrammarRule>],
+) -> TokenStream {
+    let mut arms = Vec::new();
+    for (cat_i, _cat_name) in categories.iter().enumerate() {
+        let result_src_idx = cat_i as u16;
+        // Find binder rules in this category with `(` first trigger.
+        let paren_binder_rules: Vec<(u16, super::binder::BinderShape)> = per_cat[cat_i]
+            .iter()
+            .enumerate()
+            .filter_map(|(rule_i, rule)| {
+                let shape = super::binder::classify_binder(rule)?;
+                let first_trigger = rule.syntax_pattern.as_ref()?.first()?;
+                match first_trigger {
+                    mettail_ast::grammar::SyntaxExpr::Literal(text) if text == "(" => {
+                        Some((rule_i as u16, shape))
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        if paren_binder_rules.is_empty() {
+            // No conflict: emit the simple grouping arm (byte-identical
+            // to emit_grouping_arms).
+            arms.push(quote! {
+                Some(mettail_prattail::automata::TokenKind::Fixed(__open))
+                    if __open == "(" && state_cat_src_idx == #result_src_idx => {
+                    return WpdsStepAction::ConsumeAndPush {
+                        symbol: StackSymbolV2::grouping_marker(
+                            #result_src_idx, *cur_bp,
+                        ),
+                        weight: LexicographicWeight::one(),
+                        new_state: WpdsState::PrefixDispatch {
+                            pos: *pos + 1,
+                            cur_bp: 0,
+                        },
+                        capture_token: false,
+                    };
+                }
+            });
+            continue;
+        }
+        // Fork over {grouping, binder_rule_branches...}. consume_trigger:
+        // true → walker advances pos by 1 before allocating cursors.
+        let mut branches: Vec<TokenStream> = Vec::new();
+        // Branch 0: grouping. Uses one() (max src/rule via u16::MAX) so
+        // any concrete binder rule beats it on lex-min ties.
+        branches.push(quote! {
+            mettail_prattail::wpds_walker::ForkBranch {
+                symbol: StackSymbolV2::grouping_marker(
+                    #result_src_idx, *cur_bp,
+                ),
+                weight: LexicographicWeight::one(),
+                new_state: WpdsState::PrefixDispatch {
+                    pos: *pos + 1,
+                    cur_bp: 0,
+                },
+                action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
+            }
+        });
+        // Branches 1..N: each binder rule with `(` trigger.
+        for (rule_idx, shape) in &paren_binder_rules {
+            let body_src_idx = match &shape.body_cat {
+                Some(name) => super::binder::lookup_src_idx(name, categories)
+                    .unwrap_or(result_src_idx),
+                None => result_src_idx,
+            };
+            let rule_idx_lit = *rule_idx;
+            branches.push(quote! {
+                mettail_prattail::wpds_walker::ForkBranch {
+                    symbol: StackSymbolV2::rule_at(
+                        #result_src_idx, #rule_idx_lit, 1u8, Some(_outer_bp),
+                    ),
+                    weight: LexicographicWeight::from_cost(
+                        0.0, #result_src_idx, #rule_idx_lit,
+                    ),
+                    new_state: WpdsState::BinderRule {
+                        result_src_idx: #result_src_idx,
+                        rule_idx: #rule_idx_lit,
+                        body_src_idx: #body_src_idx,
+                        outer_bp: _outer_bp,
+                    },
+                    action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
+                }
+            });
+        }
+        arms.push(quote! {
+            Some(mettail_prattail::automata::TokenKind::Fixed(__open))
+                if __open == "(" && state_cat_src_idx == #result_src_idx => {
+                return WpdsStepAction::Fork {
+                    branches: vec![ #( #branches ),* ],
+                    consume_trigger: true,
                 };
             }
         });

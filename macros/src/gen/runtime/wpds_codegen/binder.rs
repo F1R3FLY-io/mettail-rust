@@ -455,7 +455,7 @@ fn arrow_codomain_name(ty: &TypeExpr) -> Option<String> {
 }
 
 /// Look up a category name's src_idx in the categories slice.
-fn lookup_src_idx(name: &str, categories: &[String]) -> Option<u16> {
+pub(crate) fn lookup_src_idx(name: &str, categories: &[String]) -> Option<u16> {
     categories.iter().position(|c| c == name).map(|i| i as u16)
 }
 
@@ -511,6 +511,15 @@ pub(crate) fn emit_binder_prefix_arms(
                 Some(SyntaxExpr::Literal(text)) => text.clone(),
                 _ => continue,
             };
+            // Stage 3.20 / Commit 4 part 2 (Plan agent Fix, 2026-05-06):
+            // skip `(`-triggered binders here — they're handled by
+            // `prefix.rs::emit_paren_dispatch_arms` which emits a Fork
+            // combining grouping + binder rule(s) so lex-min disambiguates
+            // the `(`-conflict (e.g. Lambda's App rule shares `(` with the
+            // B7 paren-grouping arm). Per `feedback_use_wpds_disambiguation_not_heuristics.md`.
+            if trigger == "(" {
+                continue;
+            }
             let key = (trigger, cat_i as u16);
             groups.entry(key).or_default().push(RuleEntry {
                 rule_i,

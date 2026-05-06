@@ -243,10 +243,16 @@ pub(crate) fn build_per_category_rules(
         let Some(&i) = cat_idx.get(cat_name.as_str()) else {
             continue;
         };
-        // Skip categories with a native_type (they're literal-only).
-        if type_def.native_type.is_some() {
-            continue;
-        }
+        // Stage 3.20 / Commit 4 part 2 (Plan agent Fix A, 2026-05-06):
+        // native-typed categories (e.g. Int with `![i32] as Int`) ALSO
+        // get synthetic Var rules. `gen/types/enums.rs:113-118` auto-emits
+        // matching `IVar`/`BVar`/`FVar` AST variants UNCONDITIONALLY for
+        // every category lacking an explicit user Var rule, so the parser
+        // must follow. Pre-fix, native-typed categories had AST variants
+        // but no parser rule — `Int::parse_recovering("x")` failed with
+        // "no Ident arm" at PrefixDispatch even though `Int::IVar(...)`
+        // exists in the AST. Symptom: test_calc_recovery_variable failed.
+        //
         // Skip if the user already wrote an explicit Var rule for this category.
         let has_user_var_rule = per_cat[i].iter().any(|r| {
             r.items
@@ -360,13 +366,20 @@ mod tests {
         let categories = vec!["Int".to_string(), "Bool".to_string()];
         let per_cat = build_per_category_rules(&lang, &categories);
         assert_eq!(per_cat.len(), 2);
-        // Int: one synthetic rule labeled "NumLit".
-        assert_eq!(per_cat[0].len(), 1);
+        // Stage 3.20 / Commit 4 part 2 (Plan agent Fix A, 2026-05-06):
+        // native-typed categories now also get a synthetic Var rule
+        // (matching the unconditional `gen/types/enums.rs:113-118`
+        // emission of `IVar`/`BVar` AST variants), so per_cat[i] has
+        // BOTH the literal-patterned rule AND the synthetic Var rule.
+        // Int: literal-patterned "NumLit" + synthetic Var "IVar".
+        assert_eq!(per_cat[0].len(), 2);
         assert_eq!(per_cat[0][0].label.to_string(), "NumLit");
         assert_eq!(per_cat[0][0].category.to_string(), "Int");
-        // Bool: one synthetic rule labeled "BoolLit".
-        assert_eq!(per_cat[1].len(), 1);
+        assert_eq!(per_cat[0][1].label.to_string(), "IVar");
+        // Bool: literal-patterned "BoolLit" + synthetic Var "BVar".
+        assert_eq!(per_cat[1].len(), 2);
         assert_eq!(per_cat[1][0].label.to_string(), "BoolLit");
+        assert_eq!(per_cat[1][1].label.to_string(), "BVar");
     }
 
     #[test]
@@ -377,15 +390,30 @@ mod tests {
         // categories need a parseable target — without synthesis, the
         // cross-cat dispatch falls back to recursing into the result
         // category (e.g., Proc → Proc) and fails.
+        //
+        // Stage 3.20 / Commit 4 part 2 (Plan agent Fix A, 2026-05-06):
+        // native-typed categories also get a synthetic Var rule
+        // (matching the unconditional AST `IVar`/`BVar` emission).
         let mut lang = lang_with_int_and_bool_literals();
         lang.token_defs.clear(); // Remove all literal blocks.
         let categories = vec!["Int".to_string(), "Bool".to_string()];
         let per_cat = build_per_category_rules(&lang, &categories);
         // Both Int and Bool have native_type so each gets a synthetic
-        // literal-patterned rule even after removing token_defs.
-        assert_eq!(per_cat[0].len(), 1, "Int should have 1 synthetic rule");
-        assert_eq!(per_cat[1].len(), 1, "Bool should have 1 synthetic rule");
+        // literal-patterned rule even after removing token_defs PLUS a
+        // synthetic Var rule.
+        assert_eq!(
+            per_cat[0].len(),
+            2,
+            "Int should have 2 synthetic rules (NumLit + IVar)"
+        );
+        assert_eq!(
+            per_cat[1].len(),
+            2,
+            "Bool should have 2 synthetic rules (BoolLit + BVar)"
+        );
         assert_eq!(per_cat[0][0].label.to_string(), "NumLit");
         assert_eq!(per_cat[1][0].label.to_string(), "BoolLit");
+        assert_eq!(per_cat[0][1].label.to_string(), "IVar");
+        assert_eq!(per_cat[1][1].label.to_string(), "BVar");
     }
 }

@@ -87,7 +87,17 @@ pub(crate) fn emit_engine_impl_full(
     // the user mandate "no per-grammar order; backend change". Emitted
     // BEFORE generic prefix_arms so `(` matches grouping rather than
     // any rule that happens to start with `(`.
-    let grouping_arms = super::prefix::emit_grouping_arms(categories);
+    // Stage 3.20 / Commit 4 part 2 (Plan agent Fix, 2026-05-06): replace
+    // `emit_grouping_arms` with `emit_paren_dispatch_arms` that detects
+    // `(`-trigger conflicts (e.g. Lambda's App rule shares `(` with the
+    // B7 paren-grouping arm) and emits a Fork combining both
+    // interpretations so lex-min disambiguates per
+    // `feedback_use_wpds_disambiguation_not_heuristics.md`. For grammars
+    // without a `(`-triggered binder rule (all shipped except Lambda),
+    // the output is byte-identical to `emit_grouping_arms`.
+    let grouping_arms = super::prefix::emit_paren_dispatch_arms(
+        categories, language, per_cat,
+    );
 
     let action_for_body =
         semantic_actions::emit_action_for_body(language, categories, &per_cat_indexed);
