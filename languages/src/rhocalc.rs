@@ -77,10 +77,17 @@ language! {
 
         POutput . n:Name, q:Proc
         |- n "!" "(" q ")" : Proc ;
+        PPersistOutput . n:Name, q:Proc
+        |- n "!!" "(" q ")" : Proc ;
         // Empty send sugar: `x!()` sends empty process payload.
         POutputEmpty . n:Name
         |- n "!" "(" ")" : Proc ![{
             Proc::POutput(Box::new(n.clone()), Box::new(Proc::PZero))
+        }] fold;
+        // Empty persistent send sugar: `x!!()` sends empty process payload.
+        PPersistOutputEmpty . n:Name
+        |- n "!!" "(" ")" : Proc ![{
+            Proc::PPersistOutput(Box::new(n.clone()), Box::new(Proc::PZero))
         }] fold;
         // Sugar for polyadic send: `x!(a, b, c)` is parsed as `x!([a, b, c])`.
         //
@@ -91,6 +98,17 @@ language! {
             items.push(a.clone());
             items.extend(bs.clone());
             Proc::POutput(
+                Box::new(n.clone()),
+                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+            )
+        }] fold;
+        // Sugar for polyadic persistent send: `x!!(a, b, c)` is parsed as `x!!([a, b, c])`.
+        PPersistOutput2Plus . n:Name, a:Proc, bs:Vec(Proc)
+        |- n "!!" "(" a "," bs.*sep(",") ")" : Proc ![{
+            let mut items = Vec::with_capacity(1 + bs.len());
+            items.push(a.clone());
+            items.extend(bs.clone());
+            Proc::PPersistOutput(
                 Box::new(n.clone()),
                 Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
             )
@@ -1086,6 +1104,19 @@ language! {
                     Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
                 )
             };
+        // Normalize polyadic persistent send sugar `x!!(a, b, ...)` similarly.
+        fold_proc(s.clone(), res) <--
+            proc(s),
+            if let Proc::PPersistOutput2Plus(ref n, ref a, ref bs) = s,
+            let res = {
+                let mut items = Vec::with_capacity(1 + bs.len());
+                items.push(a.as_ref().clone());
+                items.extend(bs.iter().cloned());
+                Proc::PPersistOutput(
+                    Box::new(n.as_ref().clone()),
+                    Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                )
+            };
 
         // fold *(@(P)) to P so that remove(*(@(bag)), *(@(elem))) can reduce (Exec semantics in fold)
         fold_proc(s.clone(), res) <--
@@ -1196,6 +1227,17 @@ fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {
             items.push(a_norm);
             items.extend(bs_norm);
             Proc::POutput(
+                Box::new(n.as_ref().clone()),
+                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+            )
+        },
+        Proc::PPersistOutput2Plus(n, a, bs) => {
+            let a_norm = normalize_query_send_sugar_proc(a.as_ref());
+            let bs_norm: Vec<Proc> = bs.iter().map(normalize_query_send_sugar_proc).collect();
+            let mut items = Vec::with_capacity(1 + bs_norm.len());
+            items.push(a_norm);
+            items.extend(bs_norm);
+            Proc::PPersistOutput(
                 Box::new(n.as_ref().clone()),
                 Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
             )

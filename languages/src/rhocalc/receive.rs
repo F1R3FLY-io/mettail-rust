@@ -528,8 +528,8 @@ fn try_comm_single(
     let n_for_output = bind_channel_name(b)?;
     let pat = bind_pattern_proc(b)?;
     for (cand, _) in whole_bag.iter() {
-        if let Proc::POutput(n_out, _) = cand {
-            if n_out.as_ref() == n_for_output {
+        if let Some((n_out, _q)) = output_parts(cand) {
+            if &n_out == n_for_output {
                 return finish_single_comm(whole_bag, for_key, cand, &pat, cont, where_cond);
             }
         }
@@ -545,24 +545,26 @@ fn finish_single_comm(
     cont: &Proc,
     where_cond: Option<&Proc>,
 ) -> Option<Proc> {
-    let Proc::POutput(n_out, q) = output_key else {
-        return None;
-    };
-    if !pat.pattern_matches(q) {
+    let (n_out, q) = output_parts(output_key)?;
+    if !pat.pattern_matches(&q) {
         return None;
     }
     let new_center = if let Some(c) = where_cond {
         Proc::CommWhere(
             Box::new(pat.clone()),
-            Box::new(n_out.as_ref().clone()),
-            Box::new(q.as_ref().clone()),
+            Box::new(n_out.clone()),
+            Box::new(q.clone()),
             Box::new(c.clone()),
             Box::new(cont.clone()),
         )
     } else {
-        cont.apply_pattern(pat, q.as_ref())?
+        cont.apply_pattern(pat, &q)?
     };
-    ppar_remove_two_insert(whole_bag, for_key, output_key, new_center)
+    if matches!(output_key, Proc::PPersistOutput(_, _)) {
+        ppar_remove_one_insert(whole_bag, for_key, new_center)
+    } else {
+        ppar_remove_two_insert(whole_bag, for_key, output_key, new_center)
+    }
 }
 
 /// Remove exactly one `key1`, one `key2`, and insert one `ins` in a new `PPar`.
@@ -580,6 +582,25 @@ fn ppar_remove_two_insert(
     Some(Proc::PPar(b))
 }
 
+/// Remove exactly one `key` and insert one `ins` in a new `PPar`.
+fn ppar_remove_one_insert(whole_bag: &HashBag<Proc>, key: &Proc, ins: Proc) -> Option<Proc> {
+    let mut b = whole_bag.clone();
+    if !b.remove(key) {
+        return None;
+    }
+    b.insert(ins);
+    Some(Proc::PPar(b))
+}
+
+fn output_parts(p: &Proc) -> Option<(Name, Proc)> {
+    match p {
+        Proc::POutput(n, q) | Proc::PPersistOutput(n, q) => {
+            Some((n.as_ref().clone(), q.as_ref().clone()))
+        },
+        _ => None,
+    }
+}
+
 fn try_comm_join(
     b: &InputBind,
     bs: &[InputBind],
@@ -595,26 +616,32 @@ fn try_comm_join(
     }
     let mut ns_collected: Vec<Name> = Vec::new();
     let mut qs: Vec<Proc> = Vec::new();
+    let mut matched_outputs: Vec<Proc> = Vec::new();
     for n in expected_ns {
         let to_remove = work.iter().find_map(|(p, _)| {
-            if let Proc::POutput(n_out, _q) = p {
-                if n_out.as_ref() == &n {
+            if let Some((n_out, _q)) = output_parts(p) {
+                if n_out == n {
                     return Some(p.clone());
                 }
             }
             None
         })?;
-        if !work.remove(&to_remove) {
+        let (n_out, q) = output_parts(&to_remove)?;
+        let is_persistent = matches!(to_remove, Proc::PPersistOutput(_, _));
+        if !is_persistent && !work.remove(&to_remove) {
             return None;
         }
-        if let Proc::POutput(n_out, q) = &to_remove {
-            ns_collected.push(n_out.as_ref().clone());
-            qs.push(q.as_ref().clone());
-        } else {
-            return None;
-        }
+        ns_collected.push(n_out);
+        qs.push(q);
+        matched_outputs.push(to_remove);
     }
     let res = comm_pforjoin_subst(b, bs, &ns_collected, &qs, cond, cont)?;
+    // Reinsert persistent outputs: they matched but must remain available.
+    for p in matched_outputs {
+        if matches!(p, Proc::PPersistOutput(_, _)) {
+            work.insert(p);
+        }
+    }
     work.insert(res);
     Some(Proc::PPar(work))
 }

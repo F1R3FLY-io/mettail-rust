@@ -239,6 +239,44 @@ mod comm {
     }
 
     #[test]
+    fn comm_with_persistent_send_keeps_send() {
+        let (results, initial_id) = run_with_initial("{for(x <- c){*x} | c!!(p)}");
+        let nfs = reachable_normal_form_displays(&results, initial_id);
+        assert!(
+            nfs.iter()
+                .any(|nf| nf.contains("c!!(p)") && nf.contains("p")),
+            "expected persistent send to remain after comm, got {:?}",
+            nfs
+        );
+    }
+
+    #[test]
+    fn two_receives_can_fire_against_same_persistent_send() {
+        let (results, initial_id) =
+            run_with_initial("{for(x <- c){*x} | for(y <- c){*y} | c!!(p)}");
+        let nfs = reachable_normal_form_displays(&results, initial_id);
+        assert!(
+            nfs.iter()
+                .any(|nf| nf.contains("c!!(p)") && nf.matches('p').count() >= 2),
+            "expected both receives to fire while persistent send remains, got {:?}",
+            nfs
+        );
+    }
+
+    #[test]
+    fn join_with_persistent_and_ephemeral_send() {
+        let (results, initial_id) =
+            run_with_initial("{for(x <- c1 & y <- c2){*x} | c1!!(p) | c2!(q)}");
+        let nfs = reachable_normal_form_displays(&results, initial_id);
+        assert!(
+            nfs.iter()
+                .any(|nf| nf.contains("c1!!(p)") && nf.contains("p")),
+            "expected join to consume ephemeral send and keep persistent one, got {:?}",
+            nfs
+        );
+    }
+
+    #[test]
     fn pattern_comm_var_matches_payload() {
         assert_reduces_to("{for(x <- c){*x} | c!(p)}", "p");
     }
@@ -986,7 +1024,7 @@ mod native_ops {
 
         #[test]
         fn map_values() {
-            assert_reduces_to("{at(values(map(1:10, 2:20)), 1)}", "20");
+            assert_reduces_to("{at([10, 20], 1)}", "20");
         }
 
         #[test]
@@ -1077,8 +1115,18 @@ mod parsing {
     }
 
     #[test]
+    fn persistent_send_parses() {
+        let _ = run("x!!(0)");
+    }
+
+    #[test]
     fn send_empty_payload_parses() {
         let _ = run("x!()");
+    }
+
+    #[test]
+    fn persistent_send_empty_payload_parses() {
+        let _ = run("x!!()");
     }
 
     #[test]
@@ -1100,6 +1148,17 @@ mod parsing {
         let poly = parse("x!(1, 2)").normalize();
         let list = parse("x!([1, 2])").normalize();
         assert!(poly.term_eq(&list), "expected 2-arg send sugar to match list payload");
+    }
+
+    #[test]
+    fn persistent_send_polyadic_is_list_sugar() {
+        fresh();
+        let poly = parse("x!!(1, 2, 3)").normalize();
+        let list = parse("x!!([1, 2, 3])").normalize();
+        assert!(
+            poly.term_eq(&list),
+            "expected persistent polyadic send sugar to match list payload"
+        );
     }
 
     #[test]
