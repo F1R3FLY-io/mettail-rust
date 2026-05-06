@@ -155,16 +155,23 @@ pub(crate) fn emit_parse_fns(
             /// alongside the parse result. Returns
             /// `(Result<#cat_ident, WpdsParseError>, Vec<RecoveryAttempt>)`:
             /// - `Ok` with empty `attempts`: clean parse, no recovery.
-            /// - `Ok` with non-empty `attempts`: parse succeeded after
-            ///   one or more sync-token skips; the trail records each.
-            /// - `Err(ParseFailed)` with non-empty `attempts`: every retry
-            ///   round and the final failure surface in the error's own
-            ///   `attempts` vec; the returned vec mirrors that data so
-            ///   callers don't need to pattern-match the variant.
+            /// - `Ok` with non-empty `attempts`: parse succeeded but the
+            ///   walker dispatched recovery one or more times along the
+            ///   way; the trail records each recovery action that the
+            ///   lex-min winner committed.
+            /// - `Err(ParseFailed)` with non-empty `attempts`: walker
+            ///   exhausted all bounded recovery dispatches without
+            ///   finding an accepting derivation; the trail records every
+            ///   recovery action attempted before failure.
             ///
-            /// (#64 / L12 will replace the wrapper-level retry loop with
-            /// principled WPDS-edge recovery — Skip/Delete/Insert/Substitute
-            /// Fork branches at PrefixDispatch dead-ends.)
+            /// Stage 3.20 / L12 (Commit E, 2026-05-06): the legacy
+            /// wrapper-level skip-to-sync retry loop has been deleted.
+            /// Recovery is now intrinsic to the walker via
+            /// `recovery_dispatch::emit_recovery_fork`, bounded by
+            /// `RecoveryConfig.max_recovery_depth` (default 3) and the
+            /// per-cursor `visited_recovery` cycle defense. Each
+            /// `RecoveryEvent` the walker logs becomes one
+            /// `RecoveryAttempt` in the returned trail.
             pub fn #recovering_fn_name(
                 kinds: &[mettail_prattail::automata::TokenKind],
                 texts: &[&str],
@@ -178,114 +185,79 @@ pub(crate) fn emit_parse_fns(
                 // Stage 6 G6+ (2026-05-02): default 1M; PRATTAIL_MAX_STEPS env
                 // var overrides via run_to_end_of_input_env_aware.
                 const MAX_STEPS: usize = 1_000_000;
-                const MAX_RECOVERY_ROUNDS: usize = 4;
-                const SYNC_TOKENS: &[&str] = &[")", "}", "]", ";", ","];
-                let mut attempts: Vec<RecoveryAttempt> = Vec::new();
-                let mut recovery_rounds = 0usize;
-                let mut start_pos: usize = 0;
-                loop {
-                    let mut walker = WpdsWalker::<LexicographicWeight, _>::new_for_category(
-                        #engine_ident::default(),
-                        #cat_src_idx_u16,
-                        min_bp,
-                    );
-                    let kinds_slice: &[mettail_prattail::automata::TokenKind] =
-                        &kinds[start_pos..];
-                    let texts_slice: &[&str] = &texts[start_pos..];
-                    let src = mettail_prattail::wpds_runtime::SliceTokenSource::with_texts(
-                        kinds_slice, texts_slice,
-                    );
-                    // Stage 3.5b (2026-05-01): WPDS-correct EOI resolution.
-                    // The wrapper-level recovery loop stays in place
-                    // pre-Stage-3.20; ParseError surfaces from
-                    // resolve_at_end_of_input and the wrapper retries
-                    // from the next sync token.
-                    let resolve = match walker.run_to_end_of_input_env_aware(MAX_STEPS, &src) {
-                        Ok(()) => walker.resolve_at_end_of_input(&src),
-                        Err(exceeded) => {
-                            return (
-                                Err(WpdsParseError::Incomplete {
-                                    position: start_pos + exceeded.position,
-                                }),
-                                attempts,
-                            );
-                        }
-                    };
-                    match resolve {
-                        WpdsResolveResult::Accepted { term, .. }
-                        | WpdsResolveResult::AcceptedAmbiguous { term, .. } => {
-                            *pos = start_pos + walker.position();
-                            // Stage 3.6 / ι Phase 1 (2026-05-01): Arc downcast.
-                            let result = std::sync::Arc::downcast::<#cat_ident>(term)
-                                .map(|arc| std::sync::Arc::try_unwrap(arc)
-                                    .unwrap_or_else(|arc| (*arc).clone()))
-                                .map_err(|_| WpdsParseError::EmptyResult);
-                            return (result, attempts);
-                        }
-                        WpdsResolveResult::ParseError { message, position } => {
-                            let err_pos = start_pos + position;
-                            if recovery_rounds < MAX_RECOVERY_ROUNDS {
-                                let mut next_sync: Option<usize> = None;
-                                for i in (err_pos + 1)..kinds.len() {
-                                    let text = texts.get(i).copied().unwrap_or("");
-                                    if SYNC_TOKENS.iter().any(|s| *s == text) {
-                                        next_sync = Some(i + 1);
-                                        break;
-                                    }
-                                }
-                                match next_sync {
-                                    Some(new_start) => {
-                                        attempts.push(RecoveryAttempt {
-                                            message: message.clone(),
-                                            position: err_pos,
-                                            recovery: Some(format!(
-                                                "skipped to position {}",
-                                                new_start,
-                                            )),
-                                        });
-                                        recovery_rounds += 1;
-                                        start_pos = new_start;
-                                        continue;
-                                    }
-                                    None => {
-                                        attempts.push(RecoveryAttempt {
-                                            message: message.clone(),
-                                            position: err_pos,
-                                            recovery: None,
-                                        });
-                                        return (
-                                            Err(WpdsParseError::ParseFailed {
-                                                message,
-                                                position: err_pos,
-                                                attempts: attempts.clone(),
-                                            }),
-                                            attempts,
-                                        );
-                                    }
-                                }
-                            }
-                            attempts.push(RecoveryAttempt {
-                                message: message.clone(),
-                                position: err_pos,
-                                recovery: None,
-                            });
-                            return (
-                                Err(WpdsParseError::ParseFailed {
-                                    message,
-                                    position: err_pos,
-                                    attempts: attempts.clone(),
-                                }),
-                                attempts,
-                            );
-                        }
-                        WpdsResolveResult::MaxStepsExceeded { position } => {
-                            return (
-                                Err(WpdsParseError::Incomplete {
-                                    position: start_pos + position,
-                                }),
-                                attempts,
-                            );
-                        }
+                let mut walker = WpdsWalker::<LexicographicWeight, _>::new_for_category(
+                    #engine_ident::default(),
+                    #cat_src_idx_u16,
+                    min_bp,
+                );
+                let src = mettail_prattail::wpds_runtime::SliceTokenSource::with_texts(
+                    kinds, texts,
+                );
+                let resolve = match walker.run_to_end_of_input_env_aware(MAX_STEPS, &src) {
+                    Ok(()) => walker.resolve_at_end_of_input(&src),
+                    Err(exceeded) => {
+                        return (
+                            Err(WpdsParseError::Incomplete {
+                                position: exceeded.position,
+                            }),
+                            Vec::new(),
+                        );
+                    }
+                };
+                // Stage 3.20 / L12 (Commit E, 2026-05-06): map walker's
+                // recovery_trace into RecoveryAttempt for the public API.
+                // Each RecoveryEvent the lex-min winner committed appears
+                // in the trace; the action_kind discriminator + position
+                // + token text describe what the walker did.
+                let attempts: Vec<RecoveryAttempt> = walker
+                    .recovery_trace()
+                    .iter()
+                    .map(|ev| RecoveryAttempt {
+                        message: format!(
+                            "recovery action_kind={} cost={:.3}",
+                            ev.action_kind, ev.cost_tropical,
+                        ),
+                        position: ev.pos,
+                        recovery: match ev.action_kind {
+                            0 => Some("skip-to-sync".into()),
+                            1 => Some("delete-token".into()),
+                            2 => Some(format!(
+                                "insert-token {:?}",
+                                ev.text.as_deref().unwrap_or(""),
+                            )),
+                            3 => Some(format!(
+                                "substitute-token {:?}",
+                                ev.text.as_deref().unwrap_or(""),
+                            )),
+                            5 => Some("composite-recovery".into()),
+                            7 => Some(format!(
+                                "lex-alternative idx={}",
+                                ev.alt_idx.unwrap_or(0),
+                            )),
+                            _ => None,
+                        },
+                    })
+                    .collect();
+                match resolve {
+                    WpdsResolveResult::Accepted { term, .. }
+                    | WpdsResolveResult::AcceptedAmbiguous { term, .. } => {
+                        *pos = walker.position();
+                        let result = std::sync::Arc::downcast::<#cat_ident>(term)
+                            .map(|arc| std::sync::Arc::try_unwrap(arc)
+                                .unwrap_or_else(|arc| (*arc).clone()))
+                            .map_err(|_| WpdsParseError::EmptyResult);
+                        (result, attempts)
+                    }
+                    WpdsResolveResult::ParseError { message, position } => {
+                        let err = WpdsParseError::ParseFailed {
+                            message,
+                            position,
+                            attempts: attempts.clone(),
+                        };
+                        (Err(err), attempts)
+                    }
+                    WpdsResolveResult::MaxStepsExceeded { position } => {
+                        (Err(WpdsParseError::Incomplete { position }), attempts)
                     }
                 }
             }
