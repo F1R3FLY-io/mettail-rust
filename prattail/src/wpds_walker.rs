@@ -52,12 +52,14 @@
 //! engine returns [`WpdsStepAction::Idle`] (nothing more to derive).
 
 use std::any::Any;
+use std::collections::BTreeSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::automata::semiring::Semiring;
 use crate::automata::TokenKind;
 use crate::gss::{WpdsGss, WpdsGssNode};
+use crate::recovery::RecoveryConfig;
 use crate::wpds_runtime::{
     pack_action_id, ActionArg, ActionEntry, CheckpointReason, SemanticBuilder, StackSymbolV2,
     SymbolKind, WpdsConfiguration, WpdsControl, WpdsEvent, WpdsMaxStepsExceeded,
@@ -336,6 +338,13 @@ pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
     mutable_token_source: Option<*mut dyn WpdsMutableTokenSource>,
     /// Phantom data marker for the lifetime-erased mutable source slot.
     _mutable_source_lifetime: PhantomData<()>,
+    /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): walker-owned
+    /// recovery configuration. The `apply_action_to_cursor::Fork` arm
+    /// reads `max_recovery_depth` from here when checking each
+    /// recovery-Fork dispatch's per-cursor depth bound. Initialized via
+    /// `RecoveryConfig::default()`; callers may override via
+    /// `with_recovery_config` for per-grammar tuning.
+    recovery_config: RecoveryConfig,
 }
 
 /// Stage 3.9 / ι Phase 4 (2026-05-01): always-cursor walker mode.
@@ -603,6 +612,26 @@ pub struct BranchCursor<W: Semiring> {
     /// reached the GSS root sentinel (cursor.node == GSS_NODE_NONE).
     /// Bounded by recursion depth at parse time.
     pub incoming_edge_stack: Vec<crate::gss::GssEdgeId>,
+    /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): per-cursor count
+    /// of recovery dispatches this cursor (or any of its ancestors) has
+    /// experienced. Capped at `RecoveryConfig.max_recovery_depth`. The
+    /// `apply_action_to_cursor::Fork` arm increments by 1 on each child
+    /// allocation when the action is a recovery Fork (detected by
+    /// inspecting per-branch `BuilderDelta` effect kind). When this
+    /// reaches the cap, the next recovery Fork is rejected (cursor
+    /// transitions to Error). Bounds the 8^N cursor-explosion that
+    /// recursive recovery dispatch would otherwise produce.
+    pub recovery_depth: u8,
+    /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): per-cursor
+    /// configurations at which recovery has already been attempted.
+    /// Each entry is `(pos, state_cat_src_idx, cur_bp)` — the cursor
+    /// refuses to dispatch recovery at any configuration it has already
+    /// tried. Catches cycle scenarios where two recovery branches
+    /// alternate between configurations (e.g., Insert at pos=5 →
+    /// Delete at pos=5 → Insert at pos=5 → ...). Bounded in size by
+    /// `recovery_depth` (each insert here corresponds to a depth
+    /// increment).
+    pub visited_recovery: BTreeSet<(usize, u16, u8)>,
 }
 
 impl<W: Semiring> std::fmt::Debug for BranchCursor<W>
@@ -641,6 +670,8 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
             collection_stack: self.collection_stack.clone(),
             source_priority: self.source_priority,
             incoming_edge_stack: self.incoming_edge_stack.clone(),
+            recovery_depth: self.recovery_depth,
+            visited_recovery: self.visited_recovery.clone(),
         }
     }
 }
@@ -697,6 +728,45 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // (no push has been made). cursor_gss_push appends to this
             // stack on every push.
             incoming_edge_stack: Vec::new(),
+            // Bounded recovery (Stage 3.20 / L12, 2026-05-06): seed cursor
+            // has not experienced any recovery, so depth 0 + empty
+            // visited set.
+            recovery_depth: 0,
+            visited_recovery: BTreeSet::new(),
+        }
+    }
+
+    /// Allocate a Fork-child cursor inheriting the parent's
+    /// pending_builder_ops, collection_stack, incoming_edge_stack,
+    /// recovery_depth, and visited_recovery. The caller overrides
+    /// `pos`, `weight`, `inner_state`, and `source_priority` from the
+    /// branch's data.
+    ///
+    /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): when the Fork
+    /// being dispatched is a recovery Fork (detected at the Fork-arm
+    /// entry via `is_recovery_fork`), the caller increments the child's
+    /// `recovery_depth` by 1 and inserts the dispatch configuration into
+    /// `visited_recovery` BEFORE pushing into the children vec. For
+    /// non-recovery Forks (Push, OptGroupAbsent, lex-alt, etc.), the
+    /// child inherits the parent's recovery state unchanged.
+    pub fn fork_child(
+        parent: &Self,
+        pos: usize,
+        weight: W,
+        new_state: WpdsState,
+        source_priority: u32,
+    ) -> Self {
+        BranchCursor {
+            node: parent.node,
+            pos,
+            weight,
+            inner_state: new_state,
+            pending_builder_ops: parent.pending_builder_ops.clone(),
+            collection_stack: parent.collection_stack.clone(),
+            source_priority,
+            incoming_edge_stack: parent.incoming_edge_stack.clone(),
+            recovery_depth: parent.recovery_depth,
+            visited_recovery: parent.visited_recovery.clone(),
         }
     }
 }
@@ -1140,6 +1210,94 @@ where
     }
 }
 
+/// Bounded recovery (Stage 3.20 / L12, 2026-05-06): detect whether a
+/// `WpdsStepAction::Fork` was emitted by `recovery_dispatch::emit_recovery_fork`
+/// (vs. a regular ambiguity Fork from binder / lex-alt / multi-rule etc.).
+///
+/// A recovery Fork is identified by having at least one branch whose
+/// `action_kind` is `ConsumeAndReplaceWithEffect { effect: <recovery delta> }`,
+/// where the recovery deltas are exactly the four built by
+/// `repair_result_to_fork_branch` and `repair_sequence_to_fork_branch`:
+///   - `BuilderDelta::RecoveryEvent` (Skip / Delete branches)
+///   - `BuilderDelta::InsertToken`   (Insert branches)
+///   - `BuilderDelta::SubstituteToken` (Substitute branches)
+///   - `BuilderDelta::ApplyRecoverySequence` (multi-step Viterbi)
+///
+/// These four deltas are NOT used by any non-recovery emitter — the
+/// detection is robust against accidental conflation.
+fn is_recovery_fork<W: Semiring>(branches: &[ForkBranch<W>]) -> bool {
+    branches.iter().any(|b| {
+        matches!(
+            &b.action_kind,
+            ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::RecoveryEvent { .. }
+                    | BuilderDelta::InsertToken { .. }
+                    | BuilderDelta::SubstituteToken { .. }
+                    | BuilderDelta::ApplyRecoverySequence { .. }
+            }
+        )
+    })
+}
+
+/// Bounded recovery (Stage 3.20 / L12, 2026-05-06): forward-progress
+/// filter for recovery branches.
+///
+/// A recovery branch is allowed if either:
+///   1. Its `new_state` is `PrefixDispatch { pos, .. }` with `pos > base_pos`
+///      (i.e., the cursor advances past the dead-end token), OR
+///   2. The branch carries a `BuilderDelta::InsertToken` effect (the only
+///      legitimate non-advancing repair — synthetic token splice; the
+///      live stream is mutated at commit time so the cursor's view of
+///      the world changes, even though the synthesis-time pos doesn't).
+///
+/// Branches that meet neither criterion are dropped — they would
+/// re-fire the same recovery dispatch at the same configuration,
+/// producing an infinite loop the visited-set defense would catch but
+/// at the cost of a wasted depth increment.
+fn forward_progress_or_insert<W: Semiring>(branch: &ForkBranch<W>, base_pos: usize) -> bool {
+    let advances = match &branch.new_state {
+        WpdsState::PrefixDispatch { pos, .. } => *pos > base_pos,
+        // Non-PrefixDispatch new_states (rare; recovery_dispatch only
+        // emits PrefixDispatch but be defensive) are conservatively
+        // allowed — they leave the dead-end loop by virtue of state
+        // change.
+        _ => true,
+    };
+    advances
+        || matches!(
+            &branch.action_kind,
+            ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::InsertToken { .. }
+            }
+        )
+}
+
+/// Bounded recovery (Stage 3.20 / L12, 2026-05-06): extract the
+/// `(pos, cat_src_idx, cur_bp)` configuration at which a recovery
+/// dispatch fires. Inserted into the cursor's `visited_recovery` set
+/// after dispatch so subsequent dispatches at the same configuration
+/// are refused (cursor cycle defense).
+///
+/// Returns `None` if the cursor's `inner_state` isn't `PrefixDispatch`
+/// — recovery only fires from PrefixDispatch dead-ends per
+/// `engine_impl.rs`'s codegen, so this is normally unreachable. The
+/// caller falls back to bumping `recovery_depth` without a visited
+/// entry in that case (the cap still bites).
+fn extract_recovery_dispatch_config<W: Semiring>(
+    cursor: &BranchCursor<W>,
+    gss: &WpdsGss<W>,
+) -> Option<(usize, u16, u8)> {
+    if let WpdsState::PrefixDispatch { pos, cur_bp } = &cursor.inner_state {
+        let cat_src = gss
+            .node(cursor.node)
+            .map(|n| n.symbol.category_src_idx)
+            .unwrap_or(0);
+        Some((*pos, cat_src, *cur_bp))
+    } else {
+        None
+    }
+}
+
 impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Construct a fresh walker in `Ready { min_bp }` state.
     ///
@@ -1174,6 +1332,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             recovery_events: Vec::new(),
             mutable_token_source: None,
             _mutable_source_lifetime: PhantomData,
+            recovery_config: RecoveryConfig::default(),
         }
     }
 
@@ -1225,6 +1384,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             recovery_events: Vec::new(),
             mutable_token_source: None,
             _mutable_source_lifetime: PhantomData,
+            recovery_config: RecoveryConfig::default(),
         }
     }
 
@@ -1271,6 +1431,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             recovery_events: Vec::new(),
             mutable_token_source: None,
             _mutable_source_lifetime: PhantomData,
+            recovery_config: RecoveryConfig::default(),
         }
     }
 
@@ -1598,6 +1759,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // singleton has no recorded push history (the resolved
                     // GSS state is canonical for the surviving branch).
                     incoming_edge_stack: Vec::new(),
+                    // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
+                    // post-resolution singleton resets recovery
+                    // book-keeping — the resolved parse path doesn't
+                    // carry its ancestors' recovery history.
+                    recovery_depth: 0,
+                    visited_recovery: BTreeSet::new(),
                 }];
                 self.state = new_state.clone();
                 let trace = WpdsTraceEntry {
@@ -2187,6 +2354,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // Stage 3.12.6 (2026-05-02): post-Drop reset starts
                     // with empty stack history.
                     incoming_edge_stack: Vec::new(),
+                    // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
+                    // post-Drop reset resets recovery book-keeping.
+                    recovery_depth: 0,
+                    visited_recovery: BTreeSet::new(),
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -2381,7 +2552,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::Fork { branches, consume_trigger } => {
+            WpdsStepAction::Fork { mut branches, consume_trigger } => {
                 // Stage 3.16 (Mechanism γ closure / Hack #7 walker fix,
                 // 2026-05-05) — L2 Lazy→Strict transition: when the live
                 // builder still owns an open collection slot (e.g., Hack #7
@@ -2405,6 +2576,69 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 }
                 // Stage 3.9 / ι Phase 4 (2026-05-01) — L2: promote to Strict.
                 self.cursor_mode = CursorMode::Strict;
+                // Bounded recovery (Stage 3.20 / L12, 2026-05-06): detect
+                // whether this Fork is a recovery dispatch (any branch
+                // carries a recovery-typed BuilderDelta effect:
+                // RecoveryEvent / InsertToken / SubstituteToken /
+                // ApplyRecoverySequence). If so, enforce three principled
+                // bounds BEFORE allocating children:
+                //   1. cursor.recovery_depth < max_recovery_depth.
+                //   2. (pos, cat_src, cur_bp) ∉ cursor.visited_recovery.
+                //   3. forward-progress filter: drop branches whose
+                //      new_state.pos == base_pos AND no InsertToken
+                //      effect.
+                // After child allocation, bump each child's recovery_depth
+                // by 1 and insert the dispatch config into visited_recovery.
+                let is_recovery = is_recovery_fork(&branches);
+                let recovery_dispatch_config: Option<(usize, u16, u8)> = if is_recovery {
+                    extract_recovery_dispatch_config(cursor, &self.gss)
+                } else {
+                    None
+                };
+                if is_recovery {
+                    let max_depth = self.recovery_config.max_recovery_depth;
+                    if cursor.recovery_depth >= max_depth {
+                        let msg = format!(
+                            "recovery depth limit {} exceeded at pos {} (cursor depth = {}) — \
+                             unrecoverable parse; refusing further recovery dispatch",
+                            max_depth, cursor.pos, cursor.recovery_depth,
+                        );
+                        self.set_cursor_inner_state(
+                            cursor,
+                            WpdsState::Error { message: msg },
+                        );
+                        return CursorOutcome::Drop;
+                    }
+                    if let Some(key) = recovery_dispatch_config {
+                        if cursor.visited_recovery.contains(&key) {
+                            let msg = format!(
+                                "recovery already attempted at (pos={}, cat_src={}, cur_bp={}) — \
+                                 refusing to re-dispatch (cursor cycle defense)",
+                                key.0, key.1, key.2,
+                            );
+                            self.set_cursor_inner_state(
+                                cursor,
+                                WpdsState::Error { message: msg },
+                            );
+                            return CursorOutcome::Drop;
+                        }
+                    }
+                    let base_pos = cursor.pos;
+                    let pre_count = branches.len();
+                    branches.retain(|b| forward_progress_or_insert(b, base_pos));
+                    if branches.is_empty() {
+                        let msg = format!(
+                            "all {} recovery branches at pos {} violate forward-progress invariant — \
+                             bounded recovery refusing to dispatch",
+                            pre_count, base_pos,
+                        );
+                        self.set_cursor_inner_state(
+                            cursor,
+                            WpdsState::Error { message: msg },
+                        );
+                        return CursorOutcome::Drop;
+                    }
+                }
                 let pos_after = if consume_trigger {
                     cursor.pos + 1
                 } else {
@@ -2462,6 +2696,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // stack-suffix history; the push below appends
                                 // a new edge id to it.
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Bounded recovery (Stage 3.20 / L12,
+                                // 2026-05-06): inherit parent's recovery
+                                // book-keeping. The Fork-arm prologue
+                                // (when this is a recovery Fork) bumps
+                                // depth + extends visited_recovery on
+                                // each child after allocation; for
+                                // non-recovery Forks (Push, OptGroupAbsent,
+                                // lex-alt, etc.) the inherited values
+                                // pass through unchanged.
+                                recovery_depth: cursor.recovery_depth,
+                                visited_recovery: cursor.visited_recovery.clone(),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -2497,6 +2742,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // Stage 3.12.6 (2026-05-02): inherit parent's
                                 // stack-suffix history.
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Bounded recovery (Stage 3.20 / L12,
+                                // 2026-05-06): inherit parent's recovery
+                                // book-keeping. The Fork-arm prologue
+                                // (when this is a recovery Fork) bumps
+                                // depth + extends visited_recovery on
+                                // each child after allocation; for
+                                // non-recovery Forks (Push, OptGroupAbsent,
+                                // lex-alt, etc.) the inherited values
+                                // pass through unchanged.
+                                recovery_depth: cursor.recovery_depth,
+                                visited_recovery: cursor.visited_recovery.clone(),
                             };
                             // Strict mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -2543,6 +2799,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 collection_stack: cursor.collection_stack.clone(),
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Bounded recovery (Stage 3.20 / L12,
+                                // 2026-05-06): inherit parent's recovery
+                                // book-keeping. The Fork-arm prologue
+                                // (when this is a recovery Fork) bumps
+                                // depth + extends visited_recovery on
+                                // each child after allocation; for
+                                // non-recovery Forks (Push, OptGroupAbsent,
+                                // lex-alt, etc.) the inherited values
+                                // pass through unchanged.
+                                recovery_depth: cursor.recovery_depth,
+                                visited_recovery: cursor.visited_recovery.clone(),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -2568,6 +2835,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 collection_stack: cursor.collection_stack.clone(),
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Bounded recovery (Stage 3.20 / L12,
+                                // 2026-05-06): inherit parent's recovery
+                                // book-keeping. The Fork-arm prologue
+                                // (when this is a recovery Fork) bumps
+                                // depth + extends visited_recovery on
+                                // each child after allocation; for
+                                // non-recovery Forks (Push, OptGroupAbsent,
+                                // lex-alt, etc.) the inherited values
+                                // pass through unchanged.
+                                recovery_depth: cursor.recovery_depth,
+                                visited_recovery: cursor.visited_recovery.clone(),
                             };
                             child.pos += 1;
                             if self.cursor_mode == CursorMode::Lazy {
@@ -2586,6 +2864,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 collection_stack: cursor.collection_stack.clone(),
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Bounded recovery (Stage 3.20 / L12,
+                                // 2026-05-06): inherit parent's recovery
+                                // book-keeping. The Fork-arm prologue
+                                // (when this is a recovery Fork) bumps
+                                // depth + extends visited_recovery on
+                                // each child after allocation; for
+                                // non-recovery Forks (Push, OptGroupAbsent,
+                                // lex-alt, etc.) the inherited values
+                                // pass through unchanged.
+                                recovery_depth: cursor.recovery_depth,
+                                visited_recovery: cursor.visited_recovery.clone(),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -2629,6 +2918,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 collection_stack: cursor.collection_stack.clone(),
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Bounded recovery (Stage 3.20 / L12,
+                                // 2026-05-06): inherit parent's recovery
+                                // book-keeping. The Fork-arm prologue
+                                // (when this is a recovery Fork) bumps
+                                // depth + extends visited_recovery on
+                                // each child after allocation; for
+                                // non-recovery Forks (Push, OptGroupAbsent,
+                                // lex-alt, etc.) the inherited values
+                                // pass through unchanged.
+                                recovery_depth: cursor.recovery_depth,
+                                visited_recovery: cursor.visited_recovery.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -2655,6 +2955,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 collection_stack: cursor.collection_stack.clone(),
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Bounded recovery (Stage 3.20 / L12,
+                                // 2026-05-06): inherit parent's recovery
+                                // book-keeping. The Fork-arm prologue
+                                // (when this is a recovery Fork) bumps
+                                // depth + extends visited_recovery on
+                                // each child after allocation; for
+                                // non-recovery Forks (Push, OptGroupAbsent,
+                                // lex-alt, etc.) the inherited values
+                                // pass through unchanged.
+                                recovery_depth: cursor.recovery_depth,
+                                visited_recovery: cursor.visited_recovery.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -2685,6 +2996,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 collection_stack: cursor.collection_stack.clone(),
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Bounded recovery (Stage 3.20 / L12,
+                                // 2026-05-06): inherit parent's recovery
+                                // book-keeping. The Fork-arm prologue
+                                // (when this is a recovery Fork) bumps
+                                // depth + extends visited_recovery on
+                                // each child after allocation; for
+                                // non-recovery Forks (Push, OptGroupAbsent,
+                                // lex-alt, etc.) the inherited values
+                                // pass through unchanged.
+                                recovery_depth: cursor.recovery_depth,
+                                visited_recovery: cursor.visited_recovery.clone(),
                             };
                             child.pending_builder_ops.push(effect);
                             let pos_now = child.pos;
@@ -2712,6 +3034,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 collection_stack: cursor.collection_stack.clone(),
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Bounded recovery (Stage 3.20 / L12,
+                                // 2026-05-06): inherit parent's recovery
+                                // book-keeping. The Fork-arm prologue
+                                // (when this is a recovery Fork) bumps
+                                // depth + extends visited_recovery on
+                                // each child after allocation; for
+                                // non-recovery Forks (Push, OptGroupAbsent,
+                                // lex-alt, etc.) the inherited values
+                                // pass through unchanged.
+                                recovery_depth: cursor.recovery_depth,
+                                visited_recovery: cursor.visited_recovery.clone(),
                             };
                             child.pending_builder_ops.push(
                                 BuilderDelta::CommitLexAlternative {
@@ -2754,6 +3087,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 collection_stack: cursor.collection_stack.clone(),
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Bounded recovery (Stage 3.20 / L12,
+                                // 2026-05-06): inherit parent's recovery
+                                // book-keeping. The Fork-arm prologue
+                                // (when this is a recovery Fork) bumps
+                                // depth + extends visited_recovery on
+                                // each child after allocation; for
+                                // non-recovery Forks (Push, OptGroupAbsent,
+                                // lex-alt, etc.) the inherited values
+                                // pass through unchanged.
+                                recovery_depth: cursor.recovery_depth,
+                                visited_recovery: cursor.visited_recovery.clone(),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -2778,6 +3122,32 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 self.pos = child.pos;
                             }
                             children.push(child);
+                        }
+                    }
+                }
+                // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
+                // post-loop bump for recovery Forks. Each child inherited
+                // the parent's recovery_depth via the per-arm allocation
+                // (added to all 10 ForkActionKind arms via replace_all);
+                // here we bump the depth by 1 and insert the dispatch
+                // config into visited_recovery so the next dispatch at
+                // the same configuration is refused. For non-recovery
+                // Forks the inherited values pass through unchanged.
+                if is_recovery {
+                    if let Some(key) = recovery_dispatch_config {
+                        for child in children.iter_mut() {
+                            child.recovery_depth =
+                                child.recovery_depth.saturating_add(1);
+                            child.visited_recovery.insert(key);
+                        }
+                    } else {
+                        // is_recovery true but config missing: cursor wasn't
+                        // in PrefixDispatch when the recovery Fork was
+                        // dispatched. Treat as malformed dispatch — bump
+                        // depth without visited entry so the cap still bites.
+                        for child in children.iter_mut() {
+                            child.recovery_depth =
+                                child.recovery_depth.saturating_add(1);
                         }
                     }
                 }
@@ -3491,6 +3861,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             // Stage 3.12.6 (2026-05-02): preserve winner's stack-suffix
             // history so subsequent pops follow the winner's path.
             incoming_edge_stack: winner.incoming_edge_stack,
+            // Bounded recovery (Stage 3.20 / L12, 2026-05-06): preserve
+            // winner's recovery state — subsequent recovery dispatches
+            // continue counting against the same depth budget.
+            recovery_depth: winner.recovery_depth,
+            visited_recovery: winner.visited_recovery,
         }];
     }
 
@@ -6080,6 +6455,8 @@ mod tests {
             collection_stack: Vec::new(),
             source_priority: 0,
             incoming_edge_stack: Vec::new(),
+            recovery_depth: 0,
+            visited_recovery: BTreeSet::new(),
         };
         let cloned = cursor.clone();
         assert_eq!(cloned.pending_builder_ops.len(), 1);
@@ -6718,5 +7095,130 @@ mod tests {
         assert!(BP_TIER_INFIX < BP_TIER_CROSSCAT_LHS);
         assert!(BP_TIER_CROSSCAT_LHS < BP_TIER_POSTFIX);
         assert!(BP_TIER_POSTFIX < BP_TIER_MIXFIX);
+    }
+
+    /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): `is_recovery_fork`
+    /// distinguishes recovery Forks (whose branches carry RecoveryEvent /
+    /// InsertToken / SubstituteToken / ApplyRecoverySequence effects) from
+    /// regular ambiguity Forks. Mis-detection on either side would either
+    /// (a) bound regular Forks unnecessarily (false positive — would break
+    /// shipped grammars by capping legitimate disambiguation depth) or
+    /// (b) leave recovery Forks unbounded (false negative — recovery
+    /// dispatch would loop infinitely as the bound never trips).
+    #[test]
+    fn bounded_recovery_detects_recovery_fork() {
+        let recovery_event_branch = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(1.0, 0, 0),
+            new_state: WpdsState::PrefixDispatch { pos: 1, cur_bp: 0 },
+            action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::RecoveryEvent {
+                    action_kind: 0,
+                    pos: 0,
+                    cost_tropical: 0.5,
+                },
+            },
+        };
+        assert!(
+            is_recovery_fork(&[recovery_event_branch]),
+            "RecoveryEvent effect must be classified as recovery Fork"
+        );
+        let insert_branch = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(2.0, 0, 0),
+            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::InsertToken {
+                    pos: 0,
+                    kind: TokenKind::Fixed(")".into()),
+                    text: ")".into(),
+                },
+            },
+        };
+        assert!(
+            is_recovery_fork(&[insert_branch]),
+            "InsertToken effect must be classified as recovery Fork"
+        );
+        let plain_push_branch: ForkBranch<LexicographicWeight> = ForkBranch::push(
+            StackSymbolV2::category_entry(0),
+            lex(0.0, 0, 0),
+            WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+        );
+        assert!(
+            !is_recovery_fork(&[plain_push_branch]),
+            "regular Push branch must NOT be classified as recovery Fork"
+        );
+        let opt_group_branch = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(0.0, 0, 0),
+            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            action_kind: ForkActionKind::OptGroupAbsent {
+                replace_symbol: StackSymbolV2::category_entry(0),
+            },
+        };
+        assert!(
+            !is_recovery_fork(&[opt_group_branch]),
+            "OptGroupAbsent branch (regular ambiguity disambiguation) must NOT \
+             be classified as recovery Fork"
+        );
+    }
+
+    /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): the
+    /// `forward_progress_or_insert` filter accepts branches that either
+    /// advance pos past `base_pos` OR carry an `InsertToken` effect.
+    /// Branches that meet neither criterion are dropped — they would
+    /// re-fire the same recovery dispatch at the same configuration.
+    #[test]
+    fn bounded_recovery_forward_progress_filter() {
+        let advancing: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(1.0, 0, 0),
+            new_state: WpdsState::PrefixDispatch { pos: 5, cur_bp: 0 },
+            action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::RecoveryEvent {
+                    action_kind: 1,
+                    pos: 3,
+                    cost_tropical: 1.0,
+                },
+            },
+        };
+        assert!(
+            forward_progress_or_insert(&advancing, 3),
+            "branch with new_state.pos=5 > base_pos=3 must pass filter"
+        );
+        let non_advancing_delete: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(1.0, 0, 0),
+            new_state: WpdsState::PrefixDispatch { pos: 3, cur_bp: 0 },
+            action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::RecoveryEvent {
+                    action_kind: 1,
+                    pos: 3,
+                    cost_tropical: 1.0,
+                },
+            },
+        };
+        assert!(
+            !forward_progress_or_insert(&non_advancing_delete, 3),
+            "branch with new_state.pos==base_pos AND no InsertToken effect \
+             must be dropped (loop defense)"
+        );
+        let non_advancing_insert: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(2.0, 0, 0),
+            new_state: WpdsState::PrefixDispatch { pos: 3, cur_bp: 0 },
+            action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::InsertToken {
+                    pos: 3,
+                    kind: TokenKind::Fixed(")".into()),
+                    text: ")".into(),
+                },
+            },
+        };
+        assert!(
+            forward_progress_or_insert(&non_advancing_insert, 3),
+            "branch with new_state.pos==base_pos AND InsertToken effect must \
+             pass filter (synthetic splice — live stream mutates at commit)"
+        );
     }
 }

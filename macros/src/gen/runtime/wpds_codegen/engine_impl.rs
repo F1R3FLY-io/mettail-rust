@@ -251,7 +251,54 @@ pub(crate) fn emit_engine_impl_full(
                             // Phase 5: binder-rule trigger-literal arms.
                             #binder_arms
                             #all_prefix_arms
-                            _ => WpdsStepAction::Idle,
+                            _ => {
+                                // Stage 3.20 / L12 (Commit D, 2026-05-06):
+                                // WPDS-edge recovery. The wrapper-level
+                                // skip-to-sync loop in facade.rs is replaced
+                                // by intrinsic Walker recovery emitted via
+                                // recovery_dispatch::emit_recovery_fork. Up
+                                // to K=8 lex-min-ranked branches
+                                // (Skip/Delete/Insert/Substitute) replace
+                                // the prior Idle that hung the parse on
+                                // dead-end. Per `feedback_use_wpds_disambiguation_not_heuristics.md`.
+                                //
+                                // Bounded recovery (2026-05-06): the walker's
+                                // apply_action_to_cursor::Fork detects this
+                                // recovery Fork (via branches' BuilderDelta
+                                // effect kind) and enforces three principled
+                                // WPDS-correct bounds before allocating
+                                // children:
+                                //   1. cursor.recovery_depth < RecoveryConfig.max_recovery_depth
+                                //   2. (pos, cat, cur_bp) ∉ cursor.visited_recovery
+                                //   3. forward-progress filter: branches with
+                                //      new_pos == base_pos AND no InsertToken
+                                //      effect are dropped
+                                // No EOF heuristic; recovery_dispatch's
+                                // empty-token-ids path returns Error cleanly,
+                                // and the depth/visited bounds catch any
+                                // mid-stream loops.
+                                match recovery_infra_for(state_cat_src_idx) {
+                                    Some(infra) => {
+                                        let view = mettail_prattail::recovery_dispatch::WalkerRuntimeView::new(
+                                            _gss,
+                                            frontier_top,
+                                            *pos,
+                                            state_cat_src_idx,
+                                            *cur_bp,
+                                        );
+                                        mettail_prattail::recovery_dispatch::emit_recovery_fork::<LexicographicWeight>(
+                                            view,
+                                            tokens,
+                                            infra,
+                                        )
+                                    }
+                                    None => WpdsStepAction::Error(format!(
+                                        "no recovery infra for category src_idx {} at pos {} — \
+                                         codegen invariant violated (recovery_infra_for is exhaustive)",
+                                        state_cat_src_idx, *pos,
+                                    )),
+                                }
+                            }
                         }
                     }
                     WpdsState::Unwinding => {

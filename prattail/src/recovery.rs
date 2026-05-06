@@ -203,6 +203,20 @@ pub struct RecoveryConfig {
     /// Lower values make insert cheaper when the parse path is ambiguous,
     /// preserving context when confidence is low. Default: 0.5.
     pub ambiguous_insert_discount: f64,
+
+    // ── Bounded recovery (Stage 3.20 / L12, 2026-05-06) ─────────────────
+    /// Maximum number of recovery dispatches a single cursor may experience
+    /// before the walker emits Error instead of allocating another recovery
+    /// Fork. Bounds the 8^N cursor-explosion that recursive recovery
+    /// dispatch would otherwise produce when every Fork branch transitions
+    /// back to PrefixDispatch and re-encounters the orphan dead-end.
+    /// Default 3 — empirically sufficient for real-world parses while
+    /// keeping post-merge cursor count bounded under the walker's
+    /// `beam_size` cap. Each `apply_action_to_cursor::Fork` arm increments
+    /// the child's `recovery_depth` by 1 when it detects a recovery Fork
+    /// (branches whose BuilderDelta effect is RecoveryEvent / InsertToken /
+    /// SubstituteToken / ApplyRecoverySequence).
+    pub max_recovery_depth: u8,
 }
 
 impl Default for RecoveryConfig {
@@ -232,6 +246,7 @@ impl Default for RecoveryConfig {
             adaptive_weight_threshold: 1.0,
             deterministic_skip_discount: 0.75,
             ambiguous_insert_discount: 0.5,
+            max_recovery_depth: 3,
         }
     }
 }

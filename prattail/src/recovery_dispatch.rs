@@ -273,6 +273,39 @@ where
         ));
     }
 
+    // Bounded recovery (Stage 3.20 / L12, 2026-05-06): synthesis-side
+    // forward-progress filter (defense in depth — the walker's
+    // apply_action::Fork mirrors this filter on the consuming side).
+    // A recovery branch is allowed if either:
+    //   (a) Its new_state is `PrefixDispatch { pos, .. }` with
+    //       `pos > base_pos` (the cursor advances past the dead-end), OR
+    //   (b) The branch carries a `BuilderDelta::InsertToken` effect
+    //       (the only legitimate non-advancing repair — synthetic
+    //       token splice; the live stream is mutated at commit time
+    //       so the cursor's view of the world changes even though
+    //       synthesis-time pos doesn't).
+    let pre_count = branches.len();
+    branches.retain(|b| {
+        let advances = match &b.new_state {
+            WpdsState::PrefixDispatch { pos: bp, .. } => *bp > pos,
+            _ => true,
+        };
+        advances
+            || matches!(
+                &b.action_kind,
+                ForkActionKind::ConsumeAndReplaceWithEffect {
+                    effect: BuilderDelta::InsertToken { .. }
+                }
+            )
+    });
+    if branches.is_empty() {
+        return WpdsStepAction::Error(format!(
+            "all {} recovery branches at pos {} violate forward-progress \
+             invariant — bounded recovery refusing to dispatch",
+            pre_count, pos,
+        ));
+    }
+
     branches.truncate(RECOVERY_FORK_MAX_BRANCHES);
     WpdsStepAction::Fork {
         branches,
