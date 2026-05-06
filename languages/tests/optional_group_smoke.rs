@@ -217,3 +217,176 @@ fn display_int_no_else_no_trailing_whitespace() {
     );
     let _ = parse_int(&displayed).expect("re-parse must succeed for opt-absent");
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// T-3 (Stage 3.12 closure / Class A.i Opt-Group invariant, Commit 5,
+// 2026-05-06): 3-deep nested IfElse dangling-else tests. Verifies that
+// right-associative dangling-else semantics — each `else` binds to the
+// most-recent unmatched `then` — work correctly through 3 levels of
+// nesting. The Opt-Group A.i Fork emission (binder.rs:992-1046) plus
+// the BinderListLoop close/sep/ident Fork (Hack #2) plus the InfixLoop
+// tier Fork (Hacks #17+#20) all interact at this depth.
+//
+// Existing tests cover 1-deep dangling-else (basic Opt-Group take/skip)
+// and the IfElse AST round-trip. T-3 fills the 3-deep gap.
+// ════════════════════════════════════════════════════════════════════════
+
+/// 3-deep nested IfElse with NO `else` clauses: each level's optional
+/// is absent. AST = `IfElse(_, IfElse(_, IfElse(_, _, None), None), None)`.
+#[test]
+fn three_deep_nested_ifelse_no_elses() {
+    let term = parse_int("if false then if false then if false then 1")
+        .expect("parse should succeed");
+    match &term {
+        Int::IfElse(_, t1, e1) => {
+            assert!(e1.is_none(), "outermost else should be None");
+            match t1.as_ref() {
+                Int::IfElse(_, t2, e2) => {
+                    assert!(e2.is_none(), "middle else should be None");
+                    match t2.as_ref() {
+                        Int::IfElse(_, t3, e3) => {
+                            assert!(e3.is_none(), "innermost else should be None");
+                            assert!(matches!(t3.as_ref(), Int::NumLit(1)));
+                        }
+                        _ => panic!("innermost not IfElse: {:?}", t2),
+                    }
+                }
+                _ => panic!("middle not IfElse: {:?}", t1),
+            }
+        }
+        _ => panic!("not IfElse: {:?}", term),
+    }
+}
+
+/// 3-deep with one `else` — right-associative binds to the INNERMOST
+/// unmatched `then`. AST = `IfElse(_, IfElse(_, IfElse(_, 1, Some(2)), None), None)`.
+#[test]
+fn three_deep_nested_ifelse_innermost_else_only() {
+    let term = parse_int("if false then if false then if false then 1 else 2")
+        .expect("parse should succeed");
+    match &term {
+        Int::IfElse(_, t1, e1) => {
+            assert!(e1.is_none(), "outermost else should be None");
+            match t1.as_ref() {
+                Int::IfElse(_, t2, e2) => {
+                    assert!(e2.is_none(), "middle else should be None");
+                    match t2.as_ref() {
+                        Int::IfElse(_, _, e3) => {
+                            assert!(e3.is_some(), "innermost else should be Some(2)");
+                            assert!(matches!(
+                                e3.as_ref().unwrap().as_ref(),
+                                Int::NumLit(2)
+                            ));
+                        }
+                        _ => panic!("innermost not IfElse: {:?}", t2),
+                    }
+                }
+                _ => panic!("middle not IfElse: {:?}", t1),
+            }
+        }
+        _ => panic!("not IfElse: {:?}", term),
+    }
+}
+
+/// 3-deep with two `else`s — right-associative binds first to innermost
+/// (else 2), second to middle (else 3). Outermost remains None.
+/// AST = `IfElse(_, IfElse(_, IfElse(_, 1, Some(2)), Some(3)), None)`.
+#[test]
+fn three_deep_nested_ifelse_innermost_and_middle_elses() {
+    let term =
+        parse_int("if false then if false then if false then 1 else 2 else 3")
+            .expect("parse should succeed");
+    match &term {
+        Int::IfElse(_, t1, e1) => {
+            assert!(e1.is_none(), "outermost else should be None");
+            match t1.as_ref() {
+                Int::IfElse(_, t2, e2) => {
+                    assert!(e2.is_some(), "middle else should be Some(3)");
+                    assert!(matches!(
+                        e2.as_ref().unwrap().as_ref(),
+                        Int::NumLit(3)
+                    ));
+                    match t2.as_ref() {
+                        Int::IfElse(_, _, e3) => {
+                            assert!(e3.is_some(), "innermost else should be Some(2)");
+                            assert!(matches!(
+                                e3.as_ref().unwrap().as_ref(),
+                                Int::NumLit(2)
+                            ));
+                        }
+                        _ => panic!("innermost not IfElse: {:?}", t2),
+                    }
+                }
+                _ => panic!("middle not IfElse: {:?}", t1),
+            }
+        }
+        _ => panic!("not IfElse: {:?}", term),
+    }
+}
+
+/// 3-deep with all three `else`s — innermost gets 2, middle gets 3,
+/// outermost gets 4 via right-associative greedy binding.
+/// AST = `IfElse(_, IfElse(_, IfElse(_, 1, Some(2)), Some(3)), Some(4))`.
+#[test]
+fn three_deep_nested_ifelse_all_three_elses() {
+    let term =
+        parse_int("if false then if false then if false then 1 else 2 else 3 else 4")
+            .expect("parse should succeed");
+    match &term {
+        Int::IfElse(_, t1, e1) => {
+            assert!(e1.is_some(), "outermost else should be Some(4)");
+            assert!(matches!(
+                e1.as_ref().unwrap().as_ref(),
+                Int::NumLit(4)
+            ));
+            match t1.as_ref() {
+                Int::IfElse(_, t2, e2) => {
+                    assert!(e2.is_some(), "middle else should be Some(3)");
+                    assert!(matches!(
+                        e2.as_ref().unwrap().as_ref(),
+                        Int::NumLit(3)
+                    ));
+                    match t2.as_ref() {
+                        Int::IfElse(_, _, e3) => {
+                            assert!(e3.is_some(), "innermost else should be Some(2)");
+                            assert!(matches!(
+                                e3.as_ref().unwrap().as_ref(),
+                                Int::NumLit(2)
+                            ));
+                        }
+                        _ => panic!("innermost not IfElse: {:?}", t2),
+                    }
+                }
+                _ => panic!("middle not IfElse: {:?}", t1),
+            }
+        }
+        _ => panic!("not IfElse: {:?}", term),
+    }
+}
+
+/// 3-deep dangling-else parse-display roundtrip: AST → display → re-parse
+/// yields the same AST. Verifies the Display impl correctly threads the
+/// optional else clauses across three levels of nesting.
+#[test]
+fn three_deep_nested_ifelse_display_roundtrip() {
+    let inputs = [
+        "if false then if false then if false then 1",
+        "if false then if false then if false then 1 else 2",
+        "if false then if false then if false then 1 else 2 else 3",
+        "if false then if false then if false then 1 else 2 else 3 else 4",
+    ];
+    for input in &inputs {
+        let term = parse_int(input)
+            .unwrap_or_else(|e| panic!("parse failed for {:?}: {:?}", input, e));
+        let displayed = format!("{}", term);
+        let reparsed = parse_int(&displayed).unwrap_or_else(|e| {
+            panic!("re-parse failed for {:?}: {:?}", displayed, e)
+        });
+        let redisplayed = format!("{}", reparsed);
+        assert_eq!(
+            displayed, redisplayed,
+            "round-trip not stable for input {:?}: displayed={:?} redisplayed={:?}",
+            input, displayed, redisplayed,
+        );
+    }
+}
