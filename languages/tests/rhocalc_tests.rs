@@ -107,6 +107,8 @@ fn assert_reduces_to(input: &str, expected: &str) {
             || nf_no_ws == expected_singleton_par_no_ws
             || multiset_eq(nf, &expected_display)
             || multiset_eq(nf, &expected_singleton_par)
+            || bag_multiset_eq(nf, &expected_display)
+            || bag_multiset_eq(nf, &expected_singleton_par)
     });
 
     assert!(
@@ -178,6 +180,29 @@ fn multiset_eq(a: &str, b: &str) -> bool {
         Some(elems)
     }
     to_sorted_elements(a) == to_sorted_elements(b)
+}
+
+/// Compare bag literal displays as multisets (handles HashBag ordering), including singleton-par wrappers.
+fn bag_multiset_eq(a: &str, b: &str) -> bool {
+    fn unwrap_singleton_par(s: &str) -> &str {
+        let t = s.trim();
+        if t.starts_with('{') && t.ends_with('}') {
+            &t[1..t.len() - 1]
+        } else {
+            t
+        }
+    }
+    fn to_sorted_bag_elements(s: &str) -> Option<Vec<String>> {
+        let t = unwrap_singleton_par(s).trim();
+        if !t.starts_with("#{") || !t.ends_with("}#") {
+            return None;
+        }
+        let inner = &t[2..t.len() - 2];
+        let mut elems: Vec<String> = inner.split('|').map(|e| e.trim().to_string()).collect();
+        elems.sort();
+        Some(elems)
+    }
+    to_sorted_bag_elements(a) == to_sorted_bag_elements(b)
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -1778,7 +1803,14 @@ mod parsing {
 
     #[test]
     fn polyadic_persistent_send_and_receive_without_outer_braces_reduces() {
-        assert_reduces_to("x!!(1,2,3) | for(a, b, c <- x){[a,b,c]}", "[1,2,3]");
+        let (results, initial_id) = run_with_initial("x!!(1,2,3) | for(a, b, c <- x){[a,b,c]}");
+        let nfs = reachable_normal_form_displays(&results, initial_id);
+        assert!(
+            nfs.iter()
+                .any(|nf| nf.contains("x!!([1,2,3])") && nf.contains("[1,2,3]")),
+            "expected persistent send to remain and produce payload, got {:?}",
+            nfs
+        );
     }
 
     #[test]

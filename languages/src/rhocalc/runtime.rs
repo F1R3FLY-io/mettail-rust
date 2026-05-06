@@ -1,0 +1,126 @@
+use super::{List, Proc};
+use mettail_runtime::HashBag;
+
+pub(crate) fn merge_pp_parallel(lhs: Proc, rhs: Proc) -> Proc {
+    let mut bag = mettail_runtime::HashBag::new();
+    fn flatten(bag: &mut mettail_runtime::HashBag<Proc>, p: Proc) {
+        match p {
+            Proc::PPar(ps) => {
+                for (elem, count) in ps.iter() {
+                    for _ in 0..count {
+                        flatten(bag, elem.clone());
+                    }
+                }
+            },
+            other => bag.insert(other),
+        }
+    }
+    flatten(&mut bag, lhs);
+    flatten(&mut bag, rhs);
+    Proc::PPar(bag)
+}
+
+pub(crate) fn normalize_bag_elements(bag: &HashBag<Proc>) -> HashBag<Proc> {
+    fn flatten_proc_into_bag(out: &mut HashBag<Proc>, p: &Proc) {
+        match p {
+            Proc::PPar(ps) => {
+                for (elem, count) in ps.iter() {
+                    for _ in 0..count {
+                        flatten_proc_into_bag(out, elem);
+                    }
+                }
+            },
+            Proc::PParInfix(a, b) => {
+                flatten_proc_into_bag(out, a);
+                flatten_proc_into_bag(out, b);
+            },
+            other => {
+                out.insert(other.clone());
+            },
+        }
+    }
+
+    let mut out = HashBag::new();
+    for (elem, count) in bag.iter() {
+        for _ in 0..count {
+            flatten_proc_into_bag(&mut out, elem);
+        }
+    }
+    out
+}
+
+fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {
+    match p {
+        Proc::PParInfix(a, b) => {
+            let a_norm = normalize_query_send_sugar_proc(a.as_ref());
+            let b_norm = normalize_query_send_sugar_proc(b.as_ref());
+            merge_pp_parallel(a_norm, b_norm)
+        },
+        Proc::POutput2Plus(n, a, bs) => {
+            let a_norm = normalize_query_send_sugar_proc(a.as_ref());
+            let bs_norm: Vec<Proc> = bs.iter().map(normalize_query_send_sugar_proc).collect();
+            let mut items = Vec::with_capacity(1 + bs_norm.len());
+            items.push(a_norm);
+            items.extend(bs_norm);
+            Proc::POutput(
+                Box::new(n.as_ref().clone()),
+                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+            )
+        },
+        Proc::PPersistOutput2Plus(n, a, bs) => {
+            let a_norm = normalize_query_send_sugar_proc(a.as_ref());
+            let bs_norm: Vec<Proc> = bs.iter().map(normalize_query_send_sugar_proc).collect();
+            let mut items = Vec::with_capacity(1 + bs_norm.len());
+            items.push(a_norm);
+            items.extend(bs_norm);
+            Proc::PPersistOutput(
+                Box::new(n.as_ref().clone()),
+                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+            )
+        },
+        Proc::PForUser(rows, body) => {
+            let body_norm = normalize_query_send_sugar_proc(body.as_ref());
+            if crate::rhocalc::receive::pfor_user_still_has_query_rows(rows) {
+                normalize_query_send_sugar_proc(&crate::rhocalc::receive::desugar_for_rows(
+                    rows.clone(),
+                    &body_norm,
+                ))
+            } else {
+                Proc::PForUser(rows.clone(), Box::new(body_norm))
+            }
+        },
+        Proc::PPar(ps) => {
+            let mut out = mettail_runtime::HashBag::new();
+            for (elem, count) in ps.iter() {
+                let norm_elem = normalize_query_send_sugar_proc(elem);
+                for _ in 0..count {
+                    Proc::insert_into_ppar(&mut out, norm_elem.clone());
+                }
+            }
+            Proc::PPar(out)
+        },
+        Proc::PNew(scope) => {
+            let (binders, body) = scope.clone().unbind();
+            let norm_body = normalize_query_send_sugar_proc(&body);
+            Proc::PNew(mettail_runtime::Scope::new(binders, Box::new(norm_body)))
+        },
+        _ => p.clone(),
+    }
+}
+
+impl Proc {
+    pub fn term_eq(&self, other: &Self) -> bool {
+        let lhs = normalize_query_send_sugar_proc(self);
+        let rhs = normalize_query_send_sugar_proc(other);
+        mettail_runtime::BoundTerm::term_eq(&lhs, &rhs)
+    }
+
+    /// Try exactly one custom COMM rewrite step for `PForUser` receives inside a `PPar`.
+    ///
+    /// This is useful for bounded semantic assertions in tests where full fixpoint search may diverge
+    /// (e.g. persistent receive + persistent send loops).
+    pub fn try_comm_once(&self) -> Option<Self> {
+        let normalized = normalize_query_send_sugar_proc(self);
+        crate::rhocalc::receive::try_comm_rw_proc(&normalized)
+    }
+}

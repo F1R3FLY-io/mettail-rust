@@ -152,7 +152,7 @@ fn collect_pattern_bindings(
     match (pattern, value) {
         (Proc::PVar(OrdVar(Var::Free(fv))), v) => {
             if let Some(bound) = env.get(fv) {
-                bound == v
+                bound.term_eq(v)
             } else {
                 env.insert(fv.clone(), v.clone());
                 true
@@ -166,11 +166,11 @@ fn collect_pattern_bindings(
                         .zip(vs.iter())
                         .all(|(pp, vv)| collect_pattern_bindings(pp, vv, env))
             },
-            _ => pattern == value,
+            _ => pattern.term_eq(value),
         },
         (Proc::CastBag(p), Proc::CastBag(v)) => match (p.as_ref(), v.as_ref()) {
             (Bag::BagLit(pb), Bag::BagLit(vb)) => match_bag_pattern(pb, vb, env),
-            _ => pattern == value,
+            _ => pattern.term_eq(value),
         },
         (Proc::CastMap(p), Proc::CastMap(v)) => match (p.as_ref(), v.as_ref()) {
             (Map::MapLit(pm), Map::MapLit(vm)) => {
@@ -181,9 +181,9 @@ fn collect_pattern_bindings(
                             .unwrap_or(false)
                     })
             },
-            _ => pattern == value,
+            _ => pattern.term_eq(value),
         },
-        _ => pattern == value,
+        _ => pattern.term_eq(value),
     }
 }
 
@@ -240,7 +240,10 @@ pub(crate) fn receive_apply(pattern: &Proc, value: &Proc, body: &Proc) -> Option
     if !collect_pattern_bindings(pattern, value, &mut env) {
         return None;
     }
+    Some(apply_pattern_env(body, &env))
+}
 
+fn apply_pattern_env(body: &Proc, env: &HashMap<FreeVar<String>, Proc>) -> Proc {
     let vars_owned: Vec<FreeVar<String>> = env.keys().cloned().collect();
     let vars_refs: Vec<&FreeVar<String>> = vars_owned.iter().collect();
     let proc_repls: Vec<Proc> = vars_owned
@@ -253,7 +256,7 @@ pub(crate) fn receive_apply(pattern: &Proc, value: &Proc, body: &Proc) -> Option
         .collect();
 
     let proc_substituted = body.subst(&vars_refs, &proc_repls);
-    Some(proc_substituted.subst_name(&vars_refs, &name_repls))
+    proc_substituted.subst_name(&vars_refs, &name_repls)
 }
 
 pub fn comm_pforwhere_subst(pat: &Proc, n: &Name, q: &Proc, cond: &Proc, body: &Proc) -> Proc {
@@ -478,19 +481,48 @@ pub fn comm_pforjoin_subst(
         aligned_qs.push(&qs[idx]);
     }
     let binds: Vec<&InputBind> = std::iter::once(b).chain(bs.iter()).collect();
-    let mut acc_body = body.clone();
-    let mut acc_cond = cond.clone();
+    let mut env: HashMap<FreeVar<String>, Proc> = HashMap::new();
     for (ib, q) in binds.iter().zip(aligned_qs.iter()) {
-        let pat = bind_pattern_proc(ib)?;
-        let nb = receive_apply(&pat, q, &acc_body)?;
-        acc_body = nb;
-        let nc = receive_apply(&pat, q, &acc_cond)?;
-        acc_cond = nc;
+        if !collect_input_bindings(ib, q, &mut env) {
+            return None;
+        }
     }
+    let acc_body = apply_pattern_env(body, &env);
+    let acc_cond = apply_pattern_env(cond, &env);
 
     match eval_guard_bool(&acc_cond) {
         Some(true) => Some(acc_body),
         _ => None,
+    }
+}
+
+fn collect_input_bindings(
+    ib: &InputBind,
+    q: &Proc,
+    env: &mut HashMap<FreeVar<String>, Proc>,
+) -> bool {
+    match ib {
+        InputBind::InputBind(lhs, _) | InputBind::InputBindPersistent(lhs, _) => {
+            match lhs.as_ref() {
+                Name::NVar(OrdVar(Var::Free(fv))) => {
+                    if let Some(bound) = env.get(fv) {
+                        bound.term_eq(q)
+                    } else {
+                        env.insert(fv.clone(), q.clone());
+                        true
+                    }
+                },
+                _ => false,
+            }
+        },
+        InputBind::InputBindEmpty(_) | InputBind::InputBindEmptyPersistent(_) => true,
+        _ => {
+            let pat = match bind_pattern_proc(ib) {
+                Some(p) => p,
+                None => return false,
+            };
+            collect_pattern_bindings(&pat, q, env)
+        },
     }
 }
 
@@ -510,10 +542,32 @@ pub fn try_comm_rw_proc(s: &Proc) -> Option<Proc> {
     let Proc::PPar(bag) = s else {
         return None;
     };
-    for (cand, _) in bag.iter() {
+    let mut flat_bag = HashBag::new();
+    fn flatten_into(bag: &mut HashBag<Proc>, p: &Proc) {
+        match p {
+            Proc::PPar(ps) => {
+                for (elem, count) in ps.iter() {
+                    for _ in 0..count {
+                        flatten_into(bag, elem);
+                    }
+                }
+            },
+            Proc::PParInfix(a, b) => {
+                flatten_into(bag, a);
+                flatten_into(bag, b);
+            },
+            other => bag.insert(other.clone()),
+        }
+    }
+    for (elem, count) in bag.iter() {
+        for _ in 0..count {
+            flatten_into(&mut flat_bag, elem);
+        }
+    }
+    for (cand, _) in flat_bag.iter() {
         if let Proc::PForUser(rows, body) = cand {
             if !rows.is_empty() {
-                if let Some(p) = try_comm_on_pfor_user(bag, cand, rows, body.as_ref()) {
+                if let Some(p) = try_comm_on_pfor_user(&flat_bag, cand, rows, body.as_ref()) {
                     return Some(p);
                 }
             }
@@ -600,7 +654,7 @@ fn try_comm_single(
     for (cand, _) in whole_bag.iter() {
         if let Some((n_out, _q)) = output_parts(cand) {
             if &n_out == n_for_output {
-                return finish_single_comm(
+                if let Some(next) = finish_single_comm(
                     whole_bag,
                     for_key,
                     cand,
@@ -608,7 +662,9 @@ fn try_comm_single(
                     cont,
                     where_cond,
                     persistent_recv,
-                );
+                ) {
+                    return Some(next);
+                }
             }
         }
     }
@@ -625,9 +681,6 @@ fn finish_single_comm(
     persistent_recv: bool,
 ) -> Option<Proc> {
     let (n_out, q) = output_parts(output_key)?;
-    if !pat.pattern_matches(&q) {
-        return None;
-    }
     let new_center = if let Some(c) = where_cond {
         Proc::CommWhere(
             Box::new(pat.clone()),
@@ -637,7 +690,7 @@ fn finish_single_comm(
             Box::new(cont.clone()),
         )
     } else {
-        cont.apply_pattern(pat, &q)?
+        receive_apply(pat, &q, cont)?
     };
     let persistent_send = matches!(output_key, Proc::PPersistOutput(_, _));
     match (persistent_recv, persistent_send) {
@@ -646,6 +699,9 @@ fn finish_single_comm(
         (true, false) => ppar_remove_one_insert(whole_bag, output_key, new_center),
         (true, true) => {
             let mut b = whole_bag.clone();
+            if b.iter().any(|(p, _)| p.term_eq(&new_center)) {
+                return None;
+            }
             b.insert(new_center);
             Some(Proc::PPar(b))
         },
