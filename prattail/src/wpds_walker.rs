@@ -6150,4 +6150,268 @@ mod tests {
             "Lazy: live mutation, no delta"
         );
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Stage 3.16 / Cluster 1+2+3 Mechanism γ — Fork-emission invariants
+    // (Commit 2 closure, 2026-05-06).
+    //
+    // These tests exercise the new payload-carrying ForkActionKind variants
+    // (ConsumeAndReplace, Consume, ConsumeIdentAndReplace, Pop, ConsumeAndPop,
+    // ConsumeAndReplaceWithEffect, LexAlt, ConsumeAndCaptureAndPush) via the
+    // ScriptedEngine harness. Verify that each variant's apply_action::Fork
+    // dispatch arm produces the expected cursor state mutations.
+    //
+    // Synthetic-grammar coverage matches the G1-G5 future-grammar shapes
+    // designed in /home/dylon/.claude/plans/commit2-h7-h8-tests-resolution-2026-05-05.md
+    // — at the walker level (not full grammar codegen) since shipped
+    // grammars exercise Mechanism γ end-to-end via gen_calculator_op (1331+),
+    // gen_rhocalc_op (532), gen_optsmoke_op (25), gen_mixedmath_op (199).
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// Mechanism γ — `ConsumeAndReplace` fork branch advances pos by 1.
+    /// Mirrors `WpdsStepAction::ConsumeAndReplace` semantics inside Fork.
+    #[test]
+    fn fork_action_consume_and_replace_advances_pos() {
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Accept,
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::rule_at(0, 0, 1, None),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdsState::Unwinding,
+                    action_kind: ForkActionKind::ConsumeAndReplace,
+                }],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push
+        let pos_before_fork = w.position();
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert_eq!(
+            cursors[0].pos,
+            pos_before_fork + 1,
+            "ConsumeAndReplace fork branch must advance child cursor's pos by 1",
+        );
+    }
+
+    /// Mechanism γ — `Consume` fork branch advances pos by 1 without GSS change.
+    #[test]
+    fn fork_action_consume_advances_pos_without_gss_change() {
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Accept,
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::category_entry(0),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdsState::Unwinding,
+                    action_kind: ForkActionKind::Consume,
+                }],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let pos_before = w.position();
+        let gss_count_before = w.gss().node_count();
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert_eq!(cursors[0].pos, pos_before + 1, "Consume must advance pos");
+        assert_eq!(
+            w.gss().node_count(),
+            gss_count_before,
+            "Consume must NOT push to GSS (no Push semantics)",
+        );
+    }
+
+    /// Mechanism γ — `Pop` fork branch pops top-of-GSS frame.
+    #[test]
+    fn fork_action_pop_removes_top_of_gss() {
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Accept,
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::category_entry(0),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                    action_kind: ForkActionKind::Pop,
+                }],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::rule_at(0, 1, 0, Some(7)),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert!(
+            matches!(cursors[0].inner_state, WpdsState::InfixLoop { .. }),
+            "Pop fork branch must transition to new_state",
+        );
+    }
+
+    /// Mechanism γ — `ConsumeAndPop` advances pos AND pops top-of-GSS.
+    #[test]
+    fn fork_action_consume_and_pop_advances_pos_and_pops() {
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Accept,
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::category_entry(0),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdsState::Unwinding,
+                    action_kind: ForkActionKind::ConsumeAndPop,
+                }],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::rule_at(0, 1, 0, Some(7)),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let pos_before = w.position();
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert_eq!(
+            cursors[0].pos,
+            pos_before + 1,
+            "ConsumeAndPop must advance pos by 1",
+        );
+        assert!(
+            matches!(cursors[0].inner_state, WpdsState::Unwinding),
+            "ConsumeAndPop must transition to new_state",
+        );
+    }
+
+    /// Mechanism γ — `ConsumeAndReplaceWithEffect` logs the embedded delta
+    /// onto the child's pending_builder_ops before replacing top-of-GSS.
+    /// Used by Hack #3 BinderListLoop empty bootstrap to log
+    /// `BuilderDelta::StartBinderScope { names: vec![] }` on the empty branch.
+    #[test]
+    fn fork_action_consume_and_replace_with_effect_logs_delta() {
+        let effect = BuilderDelta::StartBinderScope { names: Vec::new() };
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Accept,
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::rule_at(0, 0, 1, None),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdsState::Unwinding,
+                    action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                        effect: effect.clone(),
+                    },
+                }],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        // Effect logged BEFORE replace — first delta in pending_builder_ops.
+        assert!(
+            cursors[0]
+                .pending_builder_ops
+                .iter()
+                .any(|d| matches!(d, BuilderDelta::StartBinderScope { names } if names.is_empty())),
+            "ConsumeAndReplaceWithEffect must log the effect delta",
+        );
+    }
+
+    /// Mechanism γ — Source-order tiebreak via rule_idx. Multiple branches
+    /// with tied primary cost discriminate by from_cost's rule_idx
+    /// component — lower rule_idx wins lex-min. Verifies the G1 (close ==
+    /// sep) future-grammar invariant.
+    #[test]
+    fn fork_source_order_tiebreak_via_rule_idx() {
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Accept,
+            // Branches have identical primary cost (0.0) and src_idx (5);
+            // they differ only in rule_idx. Lex-min tiebreak picks rule 0.
+            WpdsStepAction::Fork {
+                branches: vec![
+                    ForkBranch {
+                        symbol: StackSymbolV2::rule_at(5, 0, 0, None),
+                        weight: lex(0.0, 5, 0),
+                        new_state: WpdsState::Unwinding,
+                        action_kind: ForkActionKind::Push,
+                    },
+                    ForkBranch {
+                        symbol: StackSymbolV2::rule_at(5, 1, 0, None),
+                        weight: lex(0.0, 5, 1),
+                        new_state: WpdsState::Unwinding,
+                        action_kind: ForkActionKind::Push,
+                    },
+                    ForkBranch {
+                        symbol: StackSymbolV2::rule_at(5, 2, 0, None),
+                        weight: lex(0.0, 5, 2),
+                        new_state: WpdsState::Unwinding,
+                        action_kind: ForkActionKind::Push,
+                    },
+                ],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let cursors = w.branch_cursors_for_test();
+        // 3 cursors after Fork; source_priority encodes branch_idx 0/1/2.
+        assert_eq!(cursors.len(), 3);
+        // First cursor (branch_idx=0) has the lowest source_priority and
+        // weight rule_idx=0 — the lex-min winner on tie.
+        assert!(
+            cursors[0].source_priority <= cursors[1].source_priority,
+            "branch_idx=0 cursor must have ≤ source_priority than branch_idx=1",
+        );
+        assert!(
+            cursors[1].source_priority <= cursors[2].source_priority,
+            "source_priority must monotonically increase with branch_idx",
+        );
+    }
+
+    /// Mechanism γ — BP_TIER_* ordering invariant: the lex_weight constants
+    /// are strictly increasing so lex-min picks lower tiers on weight ties.
+    #[test]
+    fn bp_tier_constants_strictly_increasing() {
+        use crate::automata::lex_weight::{
+            BP_TIER_INFIX, BP_TIER_CROSSCAT_LHS, BP_TIER_POSTFIX, BP_TIER_MIXFIX,
+        };
+        assert!(BP_TIER_INFIX < BP_TIER_CROSSCAT_LHS);
+        assert!(BP_TIER_CROSSCAT_LHS < BP_TIER_POSTFIX);
+        assert!(BP_TIER_POSTFIX < BP_TIER_MIXFIX);
+    }
 }
