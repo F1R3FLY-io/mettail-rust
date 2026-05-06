@@ -794,12 +794,6 @@ pub struct RecoveryEvent {
     pub text: Option<String>,
     /// Lex alternative index for CommitLexAlt; None for other actions.
     pub alt_idx: Option<u16>,
-    /// Whether the underlying token-source mutation was actually applied
-    /// (true when a `WpdsMutableTokenSource` was threaded; false when the
-    /// recovery descriptor was logged but mutation was skipped because no
-    /// mutable source was available — the caller can still surface the
-    /// descriptor to the user as a "would-have-applied" diagnostic).
-    pub applied: bool,
 }
 
 impl RecoveryEvent {
@@ -811,10 +805,9 @@ impl RecoveryEvent {
             kind: None,
             text: None,
             alt_idx: None,
-            applied: true,
         }
     }
-    pub fn substitute(pos: usize, kind: TokenKind, text: String, applied: bool) -> Self {
+    pub fn substitute(pos: usize, kind: TokenKind, text: String) -> Self {
         RecoveryEvent {
             action_kind: 3,
             pos,
@@ -822,10 +815,9 @@ impl RecoveryEvent {
             kind: Some(kind),
             text: Some(text),
             alt_idx: None,
-            applied,
         }
     }
-    pub fn insert(pos: usize, kind: TokenKind, text: String, applied: bool) -> Self {
+    pub fn insert(pos: usize, kind: TokenKind, text: String) -> Self {
         RecoveryEvent {
             action_kind: 2,
             pos,
@@ -833,7 +825,6 @@ impl RecoveryEvent {
             kind: Some(kind),
             text: Some(text),
             alt_idx: None,
-            applied,
         }
     }
     pub fn lex_commit(
@@ -841,7 +832,6 @@ impl RecoveryEvent {
         alt_idx: u16,
         kind: TokenKind,
         text: String,
-        applied: bool,
     ) -> Self {
         RecoveryEvent {
             action_kind: 7,
@@ -850,7 +840,6 @@ impl RecoveryEvent {
             kind: Some(kind),
             text: Some(text),
             alt_idx: Some(alt_idx),
-            applied,
         }
     }
 }
@@ -997,6 +986,27 @@ pub enum BuilderDelta {
         kind: TokenKind,
         text: String,
     },
+    /// Stage 3.20 / L12 (Commit B, 2026-05-06): atomically replay a
+    /// sequence of recovery primitives (Skip / Delete / Insert /
+    /// Substitute) at commit_winner time. Used by `recovery_dispatch::
+    /// emit_recovery_fork` when `viterbi_multi_step` returns a multi-action
+    /// repair sequence. The entire sequence applies as one unit; partial
+    /// application would leave the token stream in an inconsistent state.
+    ///
+    /// `actions` is `Arc<[RepairAction]>` for cheap clone on Fork-branch
+    /// allocation (each cursor's pending_builder_ops gets its own clone
+    /// of the Arc, sharing the slice contents).
+    ///
+    /// `base_pos` is the token position at which the first action applies;
+    /// subsequent actions advance `cur_pos` per their semantics.
+    ///
+    /// `total_cost_tropical` is the multi-step Viterbi-best cost; recorded
+    /// on each emitted `RecoveryEvent` for downstream cost-based selection.
+    ApplyRecoverySequence {
+        actions: Arc<[crate::recovery::RepairAction]>,
+        base_pos: usize,
+        total_cost_tropical: f64,
+    },
 }
 
 impl std::fmt::Debug for BuilderDelta {
@@ -1078,6 +1088,16 @@ impl std::fmt::Debug for BuilderDelta {
                 .field("alt_idx", alt_idx)
                 .field("kind", kind)
                 .field("text", text)
+                .finish(),
+            BuilderDelta::ApplyRecoverySequence {
+                actions,
+                base_pos,
+                total_cost_tropical,
+            } => f
+                .debug_struct("ApplyRecoverySequence")
+                .field("actions_len", &actions.len())
+                .field("base_pos", base_pos)
+                .field("total_cost_tropical", total_cost_tropical)
                 .finish(),
         }
     }
@@ -3289,31 +3309,41 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     ));
                 }
                 BuilderDelta::SubstituteToken { pos, kind, text } => {
-                    // Stage 3.20 / L12 (Commit 4, 2026-05-06): log a
-                    // descriptor-only Substitute event. Actual token-stream
-                    // mutation (via WpdsMutableTokenSource::substitute_token)
-                    // is performed by the active recovery context — for
-                    // shipped grammars using SliceTokenSource, mutation is
-                    // not possible, so the descriptor is "unapplied" and
-                    // the wrapper surfaces it to the user as a "would-have-
-                    // applied" diagnostic. Future commits wire mutable token
-                    // source threading; the descriptor surface is stable.
-                    self.recovery_events.push(RecoveryEvent::substitute(
-                        pos,
-                        kind,
-                        text,
-                        /* applied: */ false,
-                    ));
+                    // Stage 3.20 / L12 (Commit B, 2026-05-06): live replay.
+                    // Mutates the token source via WpdsMutableTokenSource::
+                    // substitute_token AND records the recovery event. If
+                    // no mutable source is threaded, panic loudly — per
+                    // `feedback_no_stubs_timebombs.md`, "applied: false"
+                    // graceful-degradation is forbidden.
+                    let raw = self.mutable_token_source.expect(
+                        "BuilderDelta::SubstituteToken replayed without a \
+                         mutable token source — caller must thread one via \
+                         walker.set_mutable_token_source() before driving",
+                    );
+                    // SAFETY: raw is non-null (Some), and the caller-managed
+                    // contract on set_mutable_token_source guarantees the
+                    // pointee is alive until clear/reset/Drop.
+                    let src = unsafe { &mut *raw };
+                    src.substitute_token(pos, kind.clone(), text.clone())
+                        .expect("substitute_token: byte-span lookup or \
+                                replace_range failed");
+                    self.recovery_events
+                        .push(RecoveryEvent::substitute(pos, kind, text));
                 }
                 BuilderDelta::InsertToken { pos, kind, text } => {
-                    // Stage 3.20 / L12: same descriptor-only treatment as
-                    // SubstituteToken.
-                    self.recovery_events.push(RecoveryEvent::insert(
-                        pos,
-                        kind,
-                        text,
-                        /* applied: */ false,
-                    ));
+                    // Stage 3.20 / L12 (Commit B, 2026-05-06): same pattern
+                    // as SubstituteToken — live replay or panic.
+                    let raw = self.mutable_token_source.expect(
+                        "BuilderDelta::InsertToken replayed without a \
+                         mutable token source — caller must thread one via \
+                         walker.set_mutable_token_source() before driving",
+                    );
+                    let src = unsafe { &mut *raw };
+                    src.insert_token(pos, kind.clone(), text.clone())
+                        .expect("insert_token: byte-span lookup or \
+                                replace_range failed");
+                    self.recovery_events
+                        .push(RecoveryEvent::insert(pos, kind, text));
                 }
                 BuilderDelta::CommitLexAlternative {
                     pos,
@@ -3321,24 +3351,123 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     kind,
                     text,
                 } => {
-                    // Stage 3.14 / Hack #12 + Stage 3.20 / L12: log a
-                    // descriptor-only LexAlt commit. Actual MutableMulti-
-                    // TokenSource::commit_alternative mutation requires
-                    // a mutable source threaded through the walker — for
-                    // shipped grammars (default SliceTokenSource), the
-                    // descriptor is logged with applied=false. The Fork
-                    // emission at PrefixDispatch (forks.rs) only fires
-                    // when tokens.is_ambiguous_at(*pos) returns true,
-                    // which the default SliceTokenSource never does, so
-                    // this code path is exercised only when a future
-                    // MutableMultiTokenSource is in use.
+                    // Stage 3.14 / Hack #12 + Stage 3.20 / L12 (Commit B,
+                    // 2026-05-06): live replay. Calls
+                    // MutableMultiTokenSource::commit_alternative which
+                    // rewrites the lex stream's primary alt at `pos` AND
+                    // records the recovery event. Panic if no mutable
+                    // source — per the strict no-graceful-degradation rule.
+                    let raw = self.mutable_token_source.expect(
+                        "BuilderDelta::CommitLexAlternative replayed without \
+                         a mutable token source — Hack #12 lex-fork emission \
+                         requires WpdsMutableTokenSource threading",
+                    );
+                    let src = unsafe { &mut *raw };
+                    src.commit_alternative(pos, alt_idx)
+                        .expect("commit_alternative: bounds check failed");
                     self.recovery_events.push(RecoveryEvent::lex_commit(
-                        pos,
-                        alt_idx,
-                        kind,
-                        text,
-                        /* applied: */ false,
+                        pos, alt_idx, kind, text,
                     ));
+                }
+                BuilderDelta::ApplyRecoverySequence {
+                    actions,
+                    base_pos,
+                    total_cost_tropical,
+                } => {
+                    // Stage 3.20 / L12 (Commit B, 2026-05-06): atomic
+                    // multi-step recovery replay. Iterates the actions
+                    // sequence, applying each primitive (Skip / Delete /
+                    // Insert / Substitute) to the live token source and
+                    // recording per-action RecoveryEvents.
+                    let raw = self.mutable_token_source.expect(
+                        "BuilderDelta::ApplyRecoverySequence replayed without \
+                         a mutable token source",
+                    );
+                    let src = unsafe { &mut *raw };
+                    let mut cur_pos = base_pos;
+                    for action in actions.iter() {
+                        match action {
+                            crate::recovery::RepairAction::SkipToSync {
+                                skip_count,
+                                ..
+                            } => {
+                                cur_pos += *skip_count as usize;
+                                self.recovery_events.push(
+                                    RecoveryEvent::from_action_kind(
+                                        0,
+                                        cur_pos,
+                                        total_cost_tropical,
+                                    ),
+                                );
+                            }
+                            crate::recovery::RepairAction::DeleteToken => {
+                                cur_pos += 1;
+                                self.recovery_events.push(
+                                    RecoveryEvent::from_action_kind(
+                                        1,
+                                        cur_pos,
+                                        total_cost_tropical,
+                                    ),
+                                );
+                            }
+                            crate::recovery::RepairAction::InsertToken {
+                                token,
+                            } => {
+                                let kind =
+                                    TokenKind::Fixed(format!("{}", token));
+                                let text = format!("{}", token);
+                                src.insert_token(
+                                    cur_pos,
+                                    kind.clone(),
+                                    text.clone(),
+                                )
+                                .expect(
+                                    "insert_token: in ApplyRecoverySequence",
+                                );
+                                self.recovery_events.push(
+                                    RecoveryEvent::insert(cur_pos, kind, text),
+                                );
+                            }
+                            crate::recovery::RepairAction::SubstituteToken {
+                                replacement,
+                            } => {
+                                let kind = TokenKind::Fixed(format!(
+                                    "{}",
+                                    replacement
+                                ));
+                                let text = format!("{}", replacement);
+                                src.substitute_token(
+                                    cur_pos,
+                                    kind.clone(),
+                                    text.clone(),
+                                )
+                                .expect(
+                                    "substitute_token: in ApplyRecoverySequence",
+                                );
+                                self.recovery_events.push(
+                                    RecoveryEvent::substitute(
+                                        cur_pos, kind, text,
+                                    ),
+                                );
+                                cur_pos += 1;
+                            }
+                            crate::recovery::RepairAction::SwapTokens { .. }
+                            | crate::recovery::RepairAction::Composite {
+                                ..
+                            }
+                            | crate::recovery::RepairAction::CategorySwitch {
+                                ..
+                            } => {
+                                panic!(
+                                    "ApplyRecoverySequence: nested \
+                                     SwapTokens/Composite/CategorySwitch \
+                                     not supported — codegen invariant \
+                                     violated"
+                                );
+                            }
+                        }
+                    }
+                    self.pos = cur_pos;
                 }
             }
         }
