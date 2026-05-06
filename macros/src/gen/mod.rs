@@ -631,6 +631,27 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             .collect();
                         match result {
                             Ok(v) => {
+                                // Stage 3.20 / Boy-Scout (Commit 4, 2026-05-06):
+                                // recovering-mode contract — return the
+                                // partial parse PLUS the trailing-tokens
+                                // error rather than discarding the parse
+                                // entirely. The non-recovering `parse` /
+                                // `parse_structured` paths return Err for
+                                // trailing tokens; `parse_recovering`'s
+                                // contract is "what parsed + what went
+                                // wrong" so the user gets the partial AST
+                                // and a structured trailing-tokens error
+                                // they can surface in IDE diagnostics.
+                                // Pre-fix (since 0e75400, 2026-04-28) this
+                                // returned (None, errors) which violated the
+                                // recovering-mode contract — the partial
+                                // parse was lost. recovery_integration_tests
+                                // (test_calc_recovery_missing_operator,
+                                // test_calc_recovery_trailing_integer,
+                                // test_float_recovery_trailing,
+                                // test_str_recovery_trailing) all assert
+                                // result.is_some() for inputs with trailing
+                                // tokens — restoring the documented contract.
                                 if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
                                     errors.push(ParseError::TrailingTokens {
                                         found: format_token_friendly(&tokens[pos].0),
@@ -639,7 +660,6 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                             "the parser finished but input remains; check for missing operators or extra tokens",
                                         )),
                                     });
-                                    return (None, errors);
                                 }
                                 (Some(v), errors)
                             }

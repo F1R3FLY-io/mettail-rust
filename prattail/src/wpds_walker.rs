@@ -316,6 +316,12 @@ pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
     /// `process_event(Step)` invocation. Stamps `StepSnapshot.step_index`
     /// for trace consumers; resets to 0 on `reset()`.
     step_counter: usize,
+    /// Stage 3.20 / L12 (Commit 4, 2026-05-06): WPDS-edge recovery event
+    /// trace. Each `BuilderDelta::RecoveryEvent` (and its Substitute/Insert/
+    /// CommitLexAlternative siblings) replayed at `commit_winner` time
+    /// pushes a `RecoveryEvent` here. Read-only consumers via
+    /// `recovery_trace()`. Cleared on `reset()`.
+    recovery_events: Vec<RecoveryEvent>,
 }
 
 /// Stage 3.9 / ι Phase 4 (2026-05-01): always-cursor walker mode.
@@ -748,6 +754,93 @@ struct ConfigKey {
 ///    Term), which depends on builder state at commit time, not log time.
 /// 6. `MaybeSpliceCollection` — defer post-pop splice into the enclosing
 ///    `CollectionMarker`'s accumulator (`maybe_splice_into_enclosing_collection`).
+
+/// Stage 3.20 / L12 (Commit 4, 2026-05-06): WPDS-edge recovery event.
+/// Each `BuilderDelta::RecoveryEvent`, `SubstituteToken`, `InsertToken`,
+/// or `CommitLexAlternative` delta replayed at commit_winner time pushes
+/// a `RecoveryEvent` onto `WpdsWalker::recovery_events`. The walker's
+/// `recovery_trace()` accessor exposes this for diagnostic + recovery-
+/// attempt-surface consumers (facade.rs's `parse_<Cat>_via_wpds_recovering`
+/// maps each event into a `RecoveryAttempt`).
+#[derive(Clone, Debug)]
+pub struct RecoveryEvent {
+    /// RepairAction discriminator: 0=SkipToSync, 1=DeleteToken,
+    /// 2=InsertToken, 3=SubstituteToken, 4=SwapTokens, 5=Composite,
+    /// 6=CategorySwitch, 7=LexAlt.
+    pub action_kind: u8,
+    /// Position in the token stream where the recovery action applies.
+    pub pos: usize,
+    /// Tropical cost component of the LexicographicWeight at recovery time.
+    pub cost_tropical: f64,
+    /// Token kind for Substitute/Insert/CommitLexAlt actions; None for
+    /// Skip/Delete/RecoveryEvent-only deltas.
+    pub kind: Option<TokenKind>,
+    /// Token text for Substitute/Insert/CommitLexAlt actions; None for
+    /// Skip/Delete/RecoveryEvent-only deltas.
+    pub text: Option<String>,
+    /// Lex alternative index for CommitLexAlt; None for other actions.
+    pub alt_idx: Option<u16>,
+    /// Whether the underlying token-source mutation was actually applied
+    /// (true when a `WpdsMutableTokenSource` was threaded; false when the
+    /// recovery descriptor was logged but mutation was skipped because no
+    /// mutable source was available — the caller can still surface the
+    /// descriptor to the user as a "would-have-applied" diagnostic).
+    pub applied: bool,
+}
+
+impl RecoveryEvent {
+    pub fn from_action_kind(action_kind: u8, pos: usize, cost_tropical: f64) -> Self {
+        RecoveryEvent {
+            action_kind,
+            pos,
+            cost_tropical,
+            kind: None,
+            text: None,
+            alt_idx: None,
+            applied: true,
+        }
+    }
+    pub fn substitute(pos: usize, kind: TokenKind, text: String, applied: bool) -> Self {
+        RecoveryEvent {
+            action_kind: 3,
+            pos,
+            cost_tropical: 0.0,
+            kind: Some(kind),
+            text: Some(text),
+            alt_idx: None,
+            applied,
+        }
+    }
+    pub fn insert(pos: usize, kind: TokenKind, text: String, applied: bool) -> Self {
+        RecoveryEvent {
+            action_kind: 2,
+            pos,
+            cost_tropical: 0.0,
+            kind: Some(kind),
+            text: Some(text),
+            alt_idx: None,
+            applied,
+        }
+    }
+    pub fn lex_commit(
+        pos: usize,
+        alt_idx: u16,
+        kind: TokenKind,
+        text: String,
+        applied: bool,
+    ) -> Self {
+        RecoveryEvent {
+            action_kind: 7,
+            pos,
+            cost_tropical: 0.0,
+            kind: Some(kind),
+            text: Some(text),
+            alt_idx: Some(alt_idx),
+            applied,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum BuilderDelta {
     PushToken {
@@ -1044,6 +1137,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             cursor_mode: CursorMode::Lazy,
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
+            recovery_events: Vec::new(),
         }
     }
 
@@ -1092,6 +1186,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             cursor_mode: CursorMode::Lazy,
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
+            recovery_events: Vec::new(),
         }
     }
 
@@ -1135,6 +1230,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             cursor_mode: CursorMode::Lazy,
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
+            recovery_events: Vec::new(),
         }
     }
 
@@ -1161,11 +1257,23 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         )];
         // Stage 6 G6+ (2026-05-02): reset trace step counter.
         self.step_counter = 0;
+        // Stage 3.20 / L12 (Commit 4, 2026-05-06): clear recovery trace.
+        self.recovery_events.clear();
     }
 
     /// Read-only access to the cursor mode (Lazy/Strict).
     pub fn cursor_mode(&self) -> CursorMode {
         self.cursor_mode
+    }
+
+    /// Stage 3.20 / L12 (Commit 4, 2026-05-06): read-only access to the
+    /// WPDS-edge recovery event trace. Each entry corresponds to one
+    /// `BuilderDelta::RecoveryEvent` / `SubstituteToken` / `InsertToken` /
+    /// `CommitLexAlternative` delta replayed at commit_winner time.
+    /// Wrapper consumers (e.g. `parse_<Cat>_via_wpds_recovering`) map each
+    /// entry into a `RecoveryAttempt` for surfacing to the user.
+    pub fn recovery_trace(&self) -> &[RecoveryEvent] {
+        &self.recovery_events
     }
 
     /// Stage 6 G6+ (2026-05-02): build a flat per-cursor census of the
@@ -3112,47 +3220,43 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     pos,
                     cost_tropical,
                 } => {
-                    // Stage 3.20 prep: walker-side recovery_events vec is
-                    // not yet wired (Stage 3.20 introduces it). Until then,
-                    // log to stderr in debug builds and discard.
-                    debug_assert!(
-                        false,
-                        "RecoveryEvent replay invoked before Stage 3.20 wired \
-                         walker.recovery_events: action_kind={}, pos={}, \
-                         cost={}",
+                    // Stage 3.20 / L12 (Commit 4, 2026-05-06): record the
+                    // recovery event for the wrapper to surface as a
+                    // RecoveryAttempt. RecoveryEvent is a pure descriptor;
+                    // no token-stream mutation is needed (Skip/Delete are
+                    // pos-only, not text-changing).
+                    self.recovery_events.push(RecoveryEvent::from_action_kind(
                         action_kind,
                         pos,
                         cost_tropical,
-                    );
-                    let _ = (action_kind, pos, cost_tropical);
+                    ));
                 }
                 BuilderDelta::SubstituteToken { pos, kind, text } => {
-                    // Stage 3.20 prep: requires `WpdsMutableTokenSource`
-                    // adapter (lands in Stage 10b) so the walker can
-                    // mutate the in-flight token stream. Until then,
-                    // record the intent and discard.
-                    debug_assert!(
-                        false,
-                        "SubstituteToken replay invoked before Stage 10b \
-                         wired mutable token source: pos={}, kind={:?}, \
-                         text={}",
+                    // Stage 3.20 / L12 (Commit 4, 2026-05-06): log a
+                    // descriptor-only Substitute event. Actual token-stream
+                    // mutation (via WpdsMutableTokenSource::substitute_token)
+                    // is performed by the active recovery context — for
+                    // shipped grammars using SliceTokenSource, mutation is
+                    // not possible, so the descriptor is "unapplied" and
+                    // the wrapper surfaces it to the user as a "would-have-
+                    // applied" diagnostic. Future commits wire mutable token
+                    // source threading; the descriptor surface is stable.
+                    self.recovery_events.push(RecoveryEvent::substitute(
                         pos,
                         kind,
                         text,
-                    );
-                    let _ = (pos, kind, text);
+                        /* applied: */ false,
+                    ));
                 }
                 BuilderDelta::InsertToken { pos, kind, text } => {
-                    // Stage 3.20 prep: same caveat as SubstituteToken.
-                    debug_assert!(
-                        false,
-                        "InsertToken replay invoked before Stage 10b wired \
-                         mutable token source: pos={}, kind={:?}, text={}",
+                    // Stage 3.20 / L12: same descriptor-only treatment as
+                    // SubstituteToken.
+                    self.recovery_events.push(RecoveryEvent::insert(
                         pos,
                         kind,
                         text,
-                    );
-                    let _ = (pos, kind, text);
+                        /* applied: */ false,
+                    ));
                 }
                 BuilderDelta::CommitLexAlternative {
                     pos,
@@ -3160,20 +3264,24 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     kind,
                     text,
                 } => {
-                    // Stage 3.14 / Hack #12 prep: requires
-                    // `MutableMultiTokenSource::commit_alternative`. Until
-                    // wired in Stage 3.14, no-op.
-                    debug_assert!(
-                        false,
-                        "CommitLexAlternative replay invoked before Stage \
-                         3.14 wired commit_alternative: pos={}, alt_idx={}, \
-                         kind={:?}, text={}",
+                    // Stage 3.14 / Hack #12 + Stage 3.20 / L12: log a
+                    // descriptor-only LexAlt commit. Actual MutableMulti-
+                    // TokenSource::commit_alternative mutation requires
+                    // a mutable source threaded through the walker — for
+                    // shipped grammars (default SliceTokenSource), the
+                    // descriptor is logged with applied=false. The Fork
+                    // emission at PrefixDispatch (forks.rs) only fires
+                    // when tokens.is_ambiguous_at(*pos) returns true,
+                    // which the default SliceTokenSource never does, so
+                    // this code path is exercised only when a future
+                    // MutableMultiTokenSource is in use.
+                    self.recovery_events.push(RecoveryEvent::lex_commit(
                         pos,
                         alt_idx,
                         kind,
                         text,
-                    );
-                    let _ = (pos, alt_idx, kind, text);
+                        /* applied: */ false,
+                    ));
                 }
             }
         }
