@@ -1,5 +1,5 @@
 use super::{
-    Bag, Bool, ForRow, InputBind, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm,
+    Bag, Bool, ForRow, InputBind, List, Map, Name, Pathmap, Proc, RhoCalcLanguage, RhoCalcTerm,
     RhoCalcTermInner,
 };
 use crate::rhocalc::receive;
@@ -30,6 +30,13 @@ fn infer_receive_pattern_names(pat: &Proc, out: &mut Vec<String>) {
         },
         Proc::CastMap(m) => {
             if let Map::MapLit(items) = m.as_ref() {
+                for (_, value) in items.iter() {
+                    infer_receive_pattern_names(value, out);
+                }
+            }
+        },
+        Proc::CastPathmap(m) => {
+            if let Pathmap::PathmapLit(items) = m.as_ref() {
                 for (_, value) in items.iter() {
                     infer_receive_pattern_names(value, out);
                 }

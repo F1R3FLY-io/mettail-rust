@@ -817,6 +817,7 @@ fn format_syntax_item(item: &SyntaxItemSpec) -> String {
                 CollectionKind::HashSet => "HashSet",
                 CollectionKind::Vec => "Vec",
                 CollectionKind::HashMap => "HashMap",
+                CollectionKind::PathMap => "PathMap",
             };
             format!("{{ {} / \"{}\" }}  (* {} *)", element_category, separator, kind_str)
         },
@@ -938,6 +939,7 @@ fn format_rule_annotation(
                 CollectionKind::HashSet => "HashSet",
                 CollectionKind::Vec => "Vec",
                 CollectionKind::HashMap => "HashMap",
+                CollectionKind::PathMap => "PathMap",
             })
             .unwrap_or("collection");
         parts.push(kind.to_string());

@@ -868,7 +868,8 @@ fn generate_var_collection_impl(
                                                         }
                                                     }
                                                 },
-                                                crate::ast::types::CollectionType::HashMap => {
+                                                crate::ast::types::CollectionType::HashMap
+                                                | crate::ast::types::CollectionType::PathMap => {
                                                     quote! {
                                                         for (k, v) in #field_name.iter() {
                                                             Self::#impl_fn_name(root_term, k, result, seen);
@@ -1019,7 +1020,8 @@ fn generate_var_collection_impl(
                                             Self::#impl_fn_name(root_term, elem, result, seen);
                                         }
                                     },
-                                    crate::ast::types::CollectionType::HashMap => quote! {
+                                    crate::ast::types::CollectionType::HashMap
+                                    | crate::ast::types::CollectionType::PathMap => quote! {
                                         for (k, v) in #field_name.iter() {
                                             Self::#impl_fn_name(root_term, k, result, seen);
                                             Self::#impl_fn_name(root_term, v, result, seen);

@@ -10,6 +10,7 @@ pub enum CollectionType {
     HashSet,
     Vec,
     HashMap,
+    PathMap,
 }
 
 //=============================================================================
@@ -61,6 +62,7 @@ impl std::fmt::Display for TypeExpr {
                     CollectionType::HashBag => "HashBag",
                     CollectionType::HashSet => "HashSet",
                     CollectionType::HashMap => "HashMap",
+                    CollectionType::PathMap => "PathMap",
                 };
                 write!(f, "{}({})", coll_name, element)
             },

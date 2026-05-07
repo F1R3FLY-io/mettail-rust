@@ -1032,6 +1032,27 @@ mod native_ops {
             assert_reduces_to("{len(mapdelete(map(1:10, 2:20), 1))}", "1");
             assert_reduces_to("{get(mapdelete(map(1:10, 2:20), 1), 2)}", "20");
         }
+
+        #[test]
+        fn pathmap_get() {
+            assert_reduces_to("{pathGet(pathmap(1:10), 1)}", "10");
+        }
+
+        #[test]
+        fn pathmap_put() {
+            assert_reduces_to("{pathGet(pathPut(pathmap(), 1, 10), 1)}", "10");
+        }
+
+        #[test]
+        fn pathmap_merge() {
+            assert_reduces_to("{pathGet(pathMerge(pathmap(1:10), pathmap(2:20)), 2)}", "20");
+        }
+
+        #[test]
+        fn pathmap_has() {
+            assert_reduces_to("{pathHas(pathmap(1:2), 1)}", "true");
+            assert_reduces_to("{pathHas(pathmap(1:2), 3)}", "false");
+        }
     }
 
     mod type_conversion {

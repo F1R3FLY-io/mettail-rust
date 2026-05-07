@@ -56,7 +56,7 @@ pub enum RDSyntaxItem {
         separator: String,
         kind: CollectionKind,
         /// Map-only separator between key and value (e.g., ":").
-        /// Must be `Some` when `kind == HashMap`, otherwise `None`.
+        /// Must be `Some` when `kind == HashMap` or `kind == PathMap`, otherwise `None`.
         key_val_separator: Option<String>,
     },
     /// A separated list using #sep pattern op.
@@ -88,6 +88,7 @@ pub enum CollectionKind {
     HashSet,
     Vec,
     HashMap,
+    PathMap,
 }
 
 /// Generate a recursive descent handler for a single rule.
@@ -180,6 +181,7 @@ fn collection_init_str(kind: &CollectionKind) -> &'static str {
         CollectionKind::HashSet => "std::collections::HashSet::new()",
         CollectionKind::Vec => "Vec::new()",
         CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
+        CollectionKind::PathMap => "mettail_runtime::PathMapLit::new()",
     }
 }
 
@@ -187,7 +189,7 @@ fn insert_method_str(kind: &CollectionKind) -> &'static str {
     match kind {
         CollectionKind::HashBag | CollectionKind::HashSet => "insert",
         CollectionKind::Vec => "push",
-        CollectionKind::HashMap => "insert",
+        CollectionKind::HashMap | CollectionKind::PathMap => "insert",
     }
 }
 
@@ -250,10 +252,10 @@ fn write_parse_items(
                 let init = collection_init_str(kind);
                 let method = insert_method_str(kind);
 
-                if *kind == CollectionKind::HashMap {
+                if matches!(*kind, CollectionKind::HashMap | CollectionKind::PathMap) {
                     let kv = key_val_separator
                         .as_ref()
-                        .expect("HashMap collections require key_val_separator");
+                        .expect("HashMap/PathMap collections require key_val_separator");
                     let kv_variant = terminal_to_variant_name(kv);
                     write!(
                         buf,

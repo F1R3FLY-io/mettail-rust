@@ -1,6 +1,6 @@
 use super::{
-    Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Proc, Str,
-    UInt32,
+    Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Pathmap,
+    Proc, Str, UInt32,
 };
 use mettail_runtime::{Binder, FreeVar, HashBag, OrdVar, Scope, Var};
 use std::cmp::Ordering;
@@ -142,6 +142,17 @@ fn collect_pattern_bindings(
         },
         (Proc::CastMap(p), Proc::CastMap(v)) => match (p.as_ref(), v.as_ref()) {
             (Map::MapLit(pm), Map::MapLit(vm)) => {
+                pm.len() == vm.len()
+                    && pm.iter().all(|(k, pv)| {
+                        vm.get(k)
+                            .map(|vv| collect_pattern_bindings(pv, vv, env))
+                            .unwrap_or(false)
+                    })
+            },
+            _ => pattern == value,
+        },
+        (Proc::CastPathmap(p), Proc::CastPathmap(v)) => match (p.as_ref(), v.as_ref()) {
+            (Pathmap::PathmapLit(pm), Pathmap::PathmapLit(vm)) => {
                 pm.len() == vm.len()
                     && pm.iter().all(|(k, pv)| {
                         vm.get(k)

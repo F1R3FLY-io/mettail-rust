@@ -39,6 +39,9 @@ fn generate_variant_from_items_for_term_context(
                     CollectionType::HashMap => {
                         quote! { mettail_runtime::HashMapLit<#element_type, #element_type> }
                     },
+                    CollectionType::PathMap => {
+                        quote! { mettail_runtime::PathMapLit<#element_type, #element_type> }
+                    },
                 };
                 field_types.push(coll_ts);
             },
@@ -119,6 +122,10 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                 let nt = quote! { #native_type }.to_string();
                 if matches!(collection_kind, CollectionCategory::Map(_)) && nt.trim() == "HashMap" {
                     elem_type.map(|elem_type| quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> })
+                } else if matches!(collection_kind, CollectionCategory::Pathmap(_))
+                    && nt.trim() == "PathMapLit"
+                {
+                    elem_type.map(|elem_type| quote! { mettail_runtime::PathMapLit<#elem_type, #elem_type> })
                 } else {
                     Some(quote! { #native_type })
                 }
@@ -127,6 +134,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                     CollectionCategory::List(_) => quote! { Vec<#elem_type> },
                     CollectionCategory::Bag(_) => quote! { mettail_runtime::HashBag<#elem_type> },
                     CollectionCategory::Map(_) => quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> },
+                    CollectionCategory::Pathmap(_) => quote! { mettail_runtime::PathMapLit<#elem_type, #elem_type> },
                 })
             };
             if let (Some(payload_type), false) = (payload_opt, has_literal_rule) {
@@ -134,6 +142,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                     CollectionCategory::List(_) => quote::format_ident!("ListLit"),
                     CollectionCategory::Bag(_) => quote::format_ident!("BagLit"),
                     CollectionCategory::Map(_) => quote::format_ident!("MapLit"),
+                    CollectionCategory::Pathmap(_) => quote::format_ident!("PathmapLit"),
                 };
                 variants.push(quote! {
                     #literal_label(#payload_type)
@@ -322,6 +331,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
                     CollectionType::HashSet => quote! { std::collections::HashSet },
                     CollectionType::Vec => quote! { Vec },
                     CollectionType::HashMap => quote! { mettail_runtime::HashMapLit },
+                    CollectionType::PathMap => quote! { mettail_runtime::PathMapLit },
                 };
                 quote! { #label(#coll_type_ident<#element_type>) }
             },
@@ -343,6 +353,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
                         CollectionType::HashSet => quote! { std::collections::HashSet },
                         CollectionType::Vec => quote! { Vec },
                         CollectionType::HashMap => quote! { mettail_runtime::HashMapLit },
+                        CollectionType::PathMap => quote! { mettail_runtime::PathMapLit },
                     };
                     quote! { #coll_type_ident<#element_type> }
                 },
@@ -455,6 +466,7 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
                         CollectionType::Vec => quote! { Vec },
                         // Map collection fields are not supported in old-syntax GrammarItem::Collection.
                         CollectionType::HashMap => quote! { mettail_runtime::HashBag },
+                        CollectionType::PathMap => quote! { mettail_runtime::PathMapLit },
                     };
                     fields.push(quote! { #coll_type_ident<#element_type> });
                 },
@@ -524,6 +536,9 @@ fn type_expr_to_field_type_with_fresh_ident(
                 CollectionType::HashMap => {
                     quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
                 },
+                CollectionType::PathMap => {
+                    quote! { mettail_runtime::PathMapLit<#elem_type, #elem_type> }
+                },
             }
         },
         TypeExpr::Map { key, value } => {
@@ -555,6 +570,9 @@ fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
                 CollectionType::Vec => quote! { Vec<#elem_type> },
                 CollectionType::HashMap => {
                     quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
+                },
+                CollectionType::PathMap => {
+                    quote! { mettail_runtime::PathMapLit<#elem_type, #elem_type> }
                 },
             }
         },

@@ -252,8 +252,9 @@ fn generate_collection_projection_population(
                     format_ident!("{}_contains", constructor_label.to_string().to_lowercase());
 
                 let iter_clause = match coll_type {
-                    crate::ast::types::CollectionType::HashMap => {
-                        // Map-as-collection fields are not supported in Phase 1.
+                    crate::ast::types::CollectionType::HashMap
+                    | crate::ast::types::CollectionType::PathMap => {
+                        // Map/PathMap-as-collection fields are not supported in Phase 1.
                         continue;
                     },
                     crate::ast::types::CollectionType::Vec => {

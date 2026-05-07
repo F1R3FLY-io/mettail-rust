@@ -30,6 +30,7 @@ language! {
         ![Vec<Proc>] as List ["[", "]", ","]
         ![mettail_runtime::HashBag<Proc>] as Bag [ "#{", "}#", "|" ]
         ![HashMap<Proc, Proc>] as Map
+        ![PathMapLit<Proc, Proc>] as Pathmap
     },
 
     literals {
@@ -232,6 +233,7 @@ language! {
         CastList . l:List |- l : Proc;
         CastBag . b:Bag |- b : Proc;
         CastMap . m:Map |- m : Proc;
+        CastPathmap . m:Pathmap |- m : Proc;
 
         // Numeric casts (see `docs/design/made/native-types/numeric-casting.md`): binary width required.
         IntBinProc . a:Proc, w:Int |- "int" "(" a "," w ")" : Proc ![{
@@ -885,6 +887,52 @@ language! {
             }}
         ] fold;
 
+        // Pathmap operations.
+        PathGet . m:Proc, k:Proc |- "pathGet" "(" m "," k ")" : Proc ![
+            { match &m {
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref payload) => payload.get(&k).cloned().unwrap_or(Proc::Err),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PathPut . m:Proc, k:Proc, v:Proc |- "pathPut" "(" m "," k "," v ")" : Proc ![
+            { match &m {
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref payload) => {
+                        let mut new_map = payload.clone();
+                        new_map.insert(k.clone(), v.clone());
+                        Proc::CastPathmap(Box::new(Pathmap::PathmapLit(new_map)))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PathMerge . a:Proc, b:Proc |- "pathMerge" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+                    (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
+                        let mut m = pa.clone();
+                        for (k, v) in pb.iter() { m.insert(k.clone(), v.clone()); }
+                        Proc::CastPathmap(Box::new(Pathmap::PathmapLit(m)))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PathHas . m:Proc, k:Proc |- "pathHas" "(" m "," k ")" : Proc ![
+            { match &m {
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref payload) => Proc::CastBool(Box::new(Bool::BoolLit(payload.get(&k).is_some()))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
         Not . a:Proc |- "not" a : Proc ![
             { match &a {
                 Proc::CastBool(b) => match &**b {
@@ -907,6 +955,10 @@ language! {
                 },
                 Proc::CastMap(m) => match m.as_ref() {
                     Map::MapLit(ref payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))),
+                    _ => Proc::Err,
+                },
+                Proc::CastPathmap(m) => match m.as_ref() {
+                    Pathmap::PathmapLit(ref payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -1068,7 +1120,18 @@ language! {
         KeysMapCong . | S ~> T |- (KeysMap S) ~> (KeysMap T);
         ValuesMapCong . | S ~> T |- (ValuesMap S) ~> (ValuesMap T);
 
+        PathGetCongL . | S ~> T |- (PathGet S X) ~> (PathGet T X);
+        PathGetCongR . | S ~> T |- (PathGet X S) ~> (PathGet X T);
+        PathPutCongL . | S ~> T |- (PathPut S K V) ~> (PathPut T K V);
+        PathPutCongKey . | S ~> T |- (PathPut M S V) ~> (PathPut M T V);
+        PathPutCongVal . | S ~> T |- (PathPut M K S) ~> (PathPut M K T);
+        PathMergeCongL . | S ~> T |- (PathMerge S X) ~> (PathMerge T X);
+        PathMergeCongR . | S ~> T |- (PathMerge X S) ~> (PathMerge X T);
+        PathHasCongL . | S ~> T |- (PathHas S X) ~> (PathHas T X);
+        PathHasCongR . | S ~> T |- (PathHas X S) ~> (PathHas X T);
+
         CastMapCong . | S ~> T |- (CastMap S) ~> (CastMap T);
+        CastPathmapCong . | S ~> T |- (CastPathmap S) ~> (CastPathmap T);
         CastIntCong . | S ~> T |- (CastInt S) ~> (CastInt T);
         CastUInt32Cong . | S ~> T |- (CastUInt32 S) ~> (CastUInt32 T);
         CastBigIntCong . | S ~> T |- (CastBigInt S) ~> (CastBigInt T);

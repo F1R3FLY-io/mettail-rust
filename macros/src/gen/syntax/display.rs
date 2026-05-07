@@ -65,7 +65,7 @@ fn generate_display_impl(
         match_arms.push(var_arm);
     }
 
-    // Display for List/Bag/Map literal variants (ListLit, BagLit, MapLit)
+    // Display for List/Bag/Map/Pathmap literal variants (ListLit, BagLit, MapLit, PathmapLit)
     if let Some(ref ck) = language
         .get_type(category)
         .and_then(|t| t.collection_kind.clone())
@@ -123,6 +123,27 @@ fn generate_display_impl(
                         let mut parts: Vec<(String, String)> =
                             map.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
                         // Deterministic output.
+                        parts.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+                        write!(f, "{}", #open)?;
+                        for (i, (k, v)) in parts.iter().enumerate() {
+                            if i > 0 { write!(f, "{}", #sep)?; }
+                            write!(f, "{}{}{}", k, #key_val_sep, v)?;
+                        }
+                        write!(f, "{}", #close)
+                    }
+                });
+            },
+            CollectionCategory::Pathmap(d) => {
+                let open = LitStr::new(&d.open, Span::call_site());
+                let close = LitStr::new(&d.close, Span::call_site());
+                let sep = LitStr::new(&d.sep, Span::call_site());
+                let key_val_sep =
+                    LitStr::new(d.key_val_sep.as_deref().unwrap_or(":"), Span::call_site());
+                let lit_label = syn::Ident::new("PathmapLit", Span::call_site());
+                match_arms.push(quote! {
+                    #category::#lit_label(ref map) => {
+                        let mut parts: Vec<(String, String)> =
+                            map.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
                         parts.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
                         write!(f, "{}", #open)?;
                         for (i, (k, v)) in parts.iter().enumerate() {

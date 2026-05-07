@@ -326,6 +326,19 @@ fn generate_unify_freevars_arm(
                                     }
                                 }
                             },
+                            CollectionType::PathMap => {
+                                quote! {
+                                    {
+                                        let mut m = mettail_runtime::PathMapLit::new();
+                                        for (k, v) in #name.iter() {
+                                            let ku = k.unify_freevars_impl();
+                                            let vu = v.unify_freevars_impl();
+                                            m.insert(ku, vu);
+                                        }
+                                        m
+                                    }
+                                }
+                            },
                         }
                     } else {
                         quote! { Box::new((**#name).unify_freevars_impl()) }
@@ -371,6 +384,19 @@ fn generate_unify_freevars_arm(
                 quote! {
                     #category::#label(map) => {
                         let mut m = mettail_runtime::HashMapLit::new();
+                        for (k, v) in map.iter() {
+                            let ku = k.unify_freevars_impl();
+                            let vu = v.unify_freevars_impl();
+                            m.insert(ku, vu);
+                        }
+                        #category::#label(m)
+                    }
+                }
+            },
+            CollectionType::PathMap => {
+                quote! {
+                    #category::#label(map) => {
+                        let mut m = mettail_runtime::PathMapLit::new();
                         for (k, v) in map.iter() {
                             let ku = k.unify_freevars_impl();
                             let vu = v.unify_freevars_impl();
@@ -545,6 +571,19 @@ fn generate_subst_by_name_arm(
                                     }
                                 }
                             },
+                            CollectionType::PathMap => {
+                                quote! {
+                                    {
+                                        let mut m = mettail_runtime::PathMapLit::new();
+                                        for (k, v) in #name.iter() {
+                                            let ks = k.#method(env_map);
+                                            let vs = v.#method(env_map);
+                                            m.insert(ks, vs);
+                                        }
+                                        m
+                                    }
+                                }
+                            },
                         }
                     } else {
                         // Regular boxed field - recurse (same pattern as generate_regular_subst_arm)
@@ -593,6 +632,19 @@ fn generate_subst_by_name_arm(
                     quote! {
                         #category::#label(map) => {
                             let mut m = mettail_runtime::HashMapLit::new();
+                            for (k, v) in map.iter() {
+                                let ks = k.#method(env_map);
+                                let vs = v.#method(env_map);
+                                m.insert(ks, vs);
+                            }
+                            #category::#label(m)
+                        }
+                    }
+                },
+                CollectionType::PathMap => {
+                    quote! {
+                        #category::#label(map) => {
+                            let mut m = mettail_runtime::PathMapLit::new();
                             for (k, v) in map.iter() {
                                 let ks = k.#method(env_map);
                                 let vs = v.#method(env_map);
@@ -866,6 +918,17 @@ fn generate_subst_cross_var_arm(
                                     }
                                 }
                             },
+                            CollectionType::PathMap => {
+                                quote! {
+                                    {
+                                        let mut m = mettail_runtime::PathMapLit::new();
+                                        for (k, v) in #_name.iter() {
+                                            m.insert(k.subst_cross_var(env), v.subst_cross_var(env));
+                                        }
+                                        m
+                                    }
+                                }
+                            },
                         }
                     } else {
                         quote! { Box::new((**#_name).subst_cross_var(env)) }
@@ -898,6 +961,15 @@ fn generate_subst_cross_var_arm(
             CollectionType::HashMap => quote! {
                 #category::#label(map) => {
                     let mut m = mettail_runtime::HashMapLit::new();
+                    for (k, v) in map.iter() {
+                        m.insert(k.subst_cross_var(env), v.subst_cross_var(env));
+                    }
+                    #category::#label(m)
+                }
+            },
+            CollectionType::PathMap => quote! {
+                #category::#label(map) => {
+                    let mut m = mettail_runtime::PathMapLit::new();
                     for (k, v) in map.iter() {
                         m.insert(k.subst_cross_var(env), v.subst_cross_var(env));
                     }
@@ -1028,6 +1100,9 @@ pub(crate) fn collect_category_variants(
                 CollectionCategory::List(_) => (format_ident!("ListLit"), CollectionType::Vec),
                 CollectionCategory::Bag(_) => (format_ident!("BagLit"), CollectionType::HashBag),
                 CollectionCategory::Map(_) => (format_ident!("MapLit"), CollectionType::HashMap),
+                CollectionCategory::Pathmap(_) => {
+                    (format_ident!("PathmapLit"), CollectionType::PathMap)
+                },
             };
             variants.push(VariantKind::Collection { label, element_cat: elem_cat, coll_type });
         }
@@ -1417,6 +1492,10 @@ fn generate_subst_impl(
     let has_list = language.types.iter().any(|t| t.name.to_string() == "List");
     let has_bag = language.types.iter().any(|t| t.name.to_string() == "Bag");
     let has_map = language.types.iter().any(|t| t.name.to_string() == "Map");
+    let has_pathmap = language
+        .types
+        .iter()
+        .any(|t| t.name.to_string() == "Pathmap");
     let proc_list_ctor: Option<Ident> = if is_proc {
         variants.iter().find_map(|v| match v {
             VariantKind::Regular { label, fields }
@@ -1451,6 +1530,20 @@ fn generate_subst_impl(
                 if fields.len() == 1
                     && !fields[0].is_collection
                     && fields[0].category.to_string() == "Map" =>
+            {
+                Some(label.clone())
+            },
+            _ => None,
+        })
+    } else {
+        None
+    };
+    let proc_pathmap_ctor: Option<Ident> = if is_proc {
+        variants.iter().find_map(|v| match v {
+            VariantKind::Regular { label, fields }
+                if fields.len() == 1
+                    && !fields[0].is_collection
+                    && fields[0].category.to_string() == "Pathmap" =>
             {
                 Some(label.clone())
             },
@@ -1542,6 +1635,11 @@ fn generate_subst_impl(
         } else {
             quote! {}
         };
+        let pathmap_arm = if let Some(pathmap_ctor) = proc_pathmap_ctor.as_ref() {
+            quote! { (Proc::#pathmap_ctor(p), Proc::#pathmap_ctor(v)) => Self::match_pathmap_pattern(p.as_ref(), v.as_ref(), env), }
+        } else {
+            quote! {}
+        };
         let list_helper = if has_list {
             quote! {
                 fn match_list_pattern(
@@ -1617,6 +1715,29 @@ fn generate_subst_impl(
         } else {
             quote! {}
         };
+        let pathmap_helper = if has_pathmap {
+            quote! {
+                fn match_pathmap_pattern(
+                    pat: &Pathmap,
+                    val: &Pathmap,
+                    env: &mut std::collections::HashMap<mettail_runtime::FreeVar<String>, Self>,
+                ) -> bool {
+                    match (pat, val) {
+                        (Pathmap::PathmapLit(pm), Pathmap::PathmapLit(vm)) => {
+                            pm.len() == vm.len()
+                                && pm.iter().all(|(k, pvv)| {
+                                    vm.get(k)
+                                        .map(|vv| Self::collect_pattern_bindings(pvv, vv, env))
+                                        .unwrap_or(false)
+                                })
+                        }
+                        _ => pat == val,
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
         quote! {
             fn collect_pattern_bindings(
                 pattern: &Self,
@@ -1635,6 +1756,7 @@ fn generate_subst_impl(
                     #list_arm
                     #bag_arm
                     #map_arm
+                    #pathmap_arm
                     _ => pattern == value,
                 }
             }
@@ -1680,6 +1802,7 @@ fn generate_subst_impl(
             #list_helper
             #bag_helper
             #map_helper
+            #pathmap_helper
         }
     } else {
         quote! {}
@@ -1954,6 +2077,19 @@ fn generate_regular_subst_arm(
                             }
                         }
                     },
+                    CollectionType::PathMap => {
+                        quote! {
+                            {
+                                let mut m = mettail_runtime::PathMapLit::new();
+                                for (k, v) in #name.iter() {
+                                    let ks = k.#method(vars, repls);
+                                    let vs = v.#method(vars, repls);
+                                    m.insert(ks, vs);
+                                }
+                                m
+                            }
+                        }
+                    },
                 }
             } else {
                 // Regular boxed field - recurse
@@ -2010,6 +2146,19 @@ fn generate_collection_subst_arm(
             quote! {
                 #category::#label(map) => {
                     let mut m = mettail_runtime::HashMapLit::new();
+                    for (k, v) in map.iter() {
+                        let ks = k.#method(vars, repls);
+                        let vs = v.#method(vars, repls);
+                        m.insert(ks, vs);
+                    }
+                    #category::#label(m)
+                }
+            }
+        },
+        CollectionType::PathMap => {
+            quote! {
+                #category::#label(map) => {
+                    let mut m = mettail_runtime::PathMapLit::new();
                     for (k, v) in map.iter() {
                         let ks = k.#method(vars, repls);
                         let vs = v.#method(vars, repls);
