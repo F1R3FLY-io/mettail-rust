@@ -6,22 +6,18 @@ use mettail_runtime::{Binder, FreeVar, HashBag, OrdVar, Scope, Var};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-fn list_proc(items: Vec<Proc>) -> Proc {
-    Proc::CastList(Box::new(List::ListLit(items)))
-}
-
 pub(crate) fn canonicalize_arity_payload(payload: &Proc) -> Proc {
     match payload {
         Proc::CastList(_) => payload.clone(),
-        Proc::PZero => list_proc(vec![]),
-        _ => list_proc(vec![payload.clone()]),
+        Proc::PZero => crate::rhocalc::runtime::mk_proc_list(vec![]),
+        _ => crate::rhocalc::runtime::mk_proc_list(vec![payload.clone()]),
     }
 }
 
 pub(crate) fn canonicalize_arity_pattern(pattern: &Proc) -> Proc {
     match pattern {
         Proc::CastList(_) => pattern.clone(),
-        _ => list_proc(vec![pattern.clone()]),
+        _ => crate::rhocalc::runtime::mk_proc_list(vec![pattern.clone()]),
     }
 }
 
@@ -30,18 +26,20 @@ fn bind_to_arity_pattern(bind: &InputBind) -> Option<Proc> {
         InputBind::InputBind(lhs, _)
         | InputBind::InputBindPersistent(lhs, _)
         | InputBind::InputBindQuery(lhs, _, _) => {
-            Some(list_proc(vec![name_pattern_to_proc(lhs.as_ref())]))
+            Some(crate::rhocalc::runtime::mk_proc_list(vec![name_pattern_to_proc(lhs.as_ref())]))
         },
         InputBind::InputBindPolyadic(lhs, lhss, _)
         | InputBind::InputBindPersistentPolyadic(lhs, lhss, _) => {
             let mut items = Vec::with_capacity(1 + lhss.len());
             items.push(name_pattern_to_proc(lhs.as_ref()));
             items.extend(lhss.iter().map(name_pattern_to_proc));
-            Some(list_proc(items))
+            Some(crate::rhocalc::runtime::mk_proc_list(items))
         },
         InputBind::InputBindEmpty(_)
         | InputBind::InputBindEmptyPersistent(_)
-        | InputBind::InputBindEmptyQuery(_, _) => Some(list_proc(vec![])),
+        | InputBind::InputBindEmptyQuery(_, _) => {
+            Some(crate::rhocalc::runtime::mk_proc_list(vec![]))
+        },
         InputBind::InputBindQuoted(pat, _)
         | InputBind::InputBindQuotedPersistent(pat, _)
         | InputBind::InputBindQuotedQuery(pat, _, _) => {
@@ -314,7 +312,7 @@ fn mk_query_send(channel: &Name, ret: &Name, args: &[Proc]) -> Proc {
     let mut items = Vec::with_capacity(1 + args.len());
     items.push(Proc::PDrop(Box::new(ret.clone())));
     items.extend(args.iter().cloned());
-    Proc::POutput(Box::new(channel.clone()), Box::new(list_proc(items)))
+    crate::rhocalc::runtime::mk_output(channel, items, false)
 }
 
 fn desugar_query_bind(
@@ -694,10 +692,7 @@ fn finish_single_comm(
     } else {
         receive_apply(pat, &q, cont)?
     };
-    let persistent_send = matches!(
-        output_key,
-        Proc::PPersistOutput(_, _) | Proc::PPersistOutputEmpty(_) | Proc::PPersistOutput2Plus(_, _, _)
-    );
+    let persistent_send = is_persistent_output(output_key);
     match (persistent_recv, persistent_send) {
         (false, false) => ppar_remove_two_insert(whole_bag, for_key, output_key, new_center),
         (false, true) => ppar_remove_one_insert(whole_bag, for_key, new_center),
@@ -744,16 +739,25 @@ fn output_parts(p: &Proc) -> Option<(Name, Proc)> {
             Some((n.as_ref().clone(), q.as_ref().clone()))
         },
         Proc::POutputEmpty(n) | Proc::PPersistOutputEmpty(n) => {
-            Some((n.as_ref().clone(), list_proc(vec![])))
+            Some((n.as_ref().clone(), crate::rhocalc::runtime::mk_proc_list(vec![])))
         },
         Proc::POutput2Plus(n, a, bs) | Proc::PPersistOutput2Plus(n, a, bs) => {
             let mut items = Vec::with_capacity(1 + bs.len());
             items.push(a.as_ref().clone());
             items.extend(bs.iter().cloned());
-            Some((n.as_ref().clone(), list_proc(items)))
+            Some((n.as_ref().clone(), crate::rhocalc::runtime::mk_proc_list(items)))
         },
         _ => None,
     }
+}
+
+fn is_persistent_output(p: &Proc) -> bool {
+    matches!(
+        p,
+        Proc::PPersistOutput(_, _)
+            | Proc::PPersistOutputEmpty(_)
+            | Proc::PPersistOutput2Plus(_, _, _)
+    )
 }
 
 fn try_comm_join(
@@ -783,10 +787,7 @@ fn try_comm_join(
             None
         })?;
         let (n_out, q) = output_parts(&to_remove)?;
-        let is_persistent = matches!(
-            to_remove,
-            Proc::PPersistOutput(_, _) | Proc::PPersistOutputEmpty(_) | Proc::PPersistOutput2Plus(_, _, _)
-        );
+        let is_persistent = is_persistent_output(&to_remove);
         if !is_persistent && !work.remove(&to_remove) {
             return None;
         }
@@ -797,10 +798,7 @@ fn try_comm_join(
     let res = comm_pforjoin_subst(b, bs, &ns_collected, &qs, cond, cont)?;
     // Reinsert persistent outputs: they matched but must remain available.
     for p in matched_outputs {
-        if matches!(
-            p,
-            Proc::PPersistOutput(_, _) | Proc::PPersistOutputEmpty(_) | Proc::PPersistOutput2Plus(_, _, _)
-        ) {
+        if is_persistent_output(&p) {
             work.insert(p);
         }
     }

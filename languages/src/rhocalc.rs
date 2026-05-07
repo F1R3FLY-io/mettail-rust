@@ -85,7 +85,7 @@ language! {
         |- n "!" "(" ")" : Proc ![{
             Proc::POutput(
                 Box::new(n.clone()),
-                Box::new(Proc::CastList(Box::new(List::ListLit(vec![])))),
+                Box::new(crate::rhocalc::runtime::mk_proc_list(vec![])),
             )
         }] fold;
         // Empty persistent send sugar: `x!!()` parses as `x!!([])`.
@@ -93,7 +93,7 @@ language! {
         |- n "!!" "(" ")" : Proc ![{
             Proc::PPersistOutput(
                 Box::new(n.clone()),
-                Box::new(Proc::CastList(Box::new(List::ListLit(vec![])))),
+                Box::new(crate::rhocalc::runtime::mk_proc_list(vec![])),
             )
         }] fold;
         // Sugar for polyadic send: `x!(a, b, c)` parses as `x!([a, b, c])`.
@@ -106,7 +106,7 @@ language! {
             items.extend(bs.clone());
             Proc::POutput(
                 Box::new(n.clone()),
-                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
             )
         }] fold;
         // Sugar for polyadic persistent send: `x!!(a, b, c)` parses as `x!!([a, b, c])`.
@@ -117,7 +117,7 @@ language! {
             items.extend(bs.clone());
             Proc::PPersistOutput(
                 Box::new(n.clone()),
-                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
             )
         }] fold;
         POutputQuoted . n:Name, q:Proc
@@ -181,7 +181,7 @@ language! {
             items.push(crate::rhocalc::receive::name_pattern_to_proc(&lhs));
             items.extend(lhss.iter().map(crate::rhocalc::receive::name_pattern_to_proc));
             InputBind::InputBindQuoted(
-                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
                 Box::new(n.clone()),
             )
         }] fold;
@@ -191,7 +191,7 @@ language! {
             items.push(crate::rhocalc::receive::name_pattern_to_proc(&lhs));
             items.extend(lhss.iter().map(crate::rhocalc::receive::name_pattern_to_proc));
             InputBind::InputBindQuotedPersistent(
-                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
                 Box::new(n.clone()),
             )
         }] fold;
@@ -824,7 +824,7 @@ language! {
         ConcatList . a:Proc, b:Proc |- "concat" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
                 (Proc::CastList(la), Proc::CastList(lb)) => match (la.as_ref(), lb.as_ref()) {
-                    (List::ListLit(va), List::ListLit(vb)) => { let mut o = va.clone(); o.extend(vb.iter().cloned()); Proc::CastList(Box::new(List::ListLit(o))) },
+                    (List::ListLit(va), List::ListLit(vb)) => { let mut o = va.clone(); o.extend(vb.iter().cloned()); crate::rhocalc::runtime::mk_proc_list(o) },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -839,7 +839,7 @@ language! {
         DeleteList . a:Proc, i:Proc |- "delete" "(" a "," i ")" : Proc ![
             { match (&a, &i) {
                 (Proc::CastList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) {
-                    (List::ListLit(v), Int::NumLit(n)) => { let idx = *n as usize; let mut vec = v.clone(); if idx >= vec.len() { panic!("delete: index out of bounds"); } vec.remove(idx); Proc::CastList(Box::new(List::ListLit(vec))) },
+                    (List::ListLit(v), Int::NumLit(n)) => { let idx = *n as usize; let mut vec = v.clone(); if idx >= vec.len() { panic!("delete: index out of bounds"); } vec.remove(idx); crate::rhocalc::runtime::mk_proc_list(vec) },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -973,7 +973,7 @@ language! {
         KeysMap . m:Proc |- "keys" "(" m ")" : Proc ![
             { match &m {
                 Proc::CastMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => Proc::CastList(Box::new(List::ListLit(payload.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()))),
+                    Map::MapLit(ref payload) => crate::rhocalc::runtime::mk_proc_list(payload.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -982,7 +982,7 @@ language! {
         ValuesMap . m:Proc |- "values" "(" m ")" : Proc ![
             { match &m {
                 Proc::CastMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => Proc::CastList(Box::new(List::ListLit(payload.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()))),
+                    Map::MapLit(ref payload) => crate::rhocalc::runtime::mk_proc_list(payload.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -1205,7 +1205,7 @@ language! {
                 items.extend(bs.iter().cloned());
                 Proc::POutput(
                     Box::new(n.as_ref().clone()),
-                    Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                    Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
                 )
             };
         // Normalize polyadic persistent send sugar `x!!(a, b, ...)` similarly.
@@ -1218,7 +1218,7 @@ language! {
                 items.extend(bs.iter().cloned());
                 Proc::PPersistOutput(
                     Box::new(n.as_ref().clone()),
-                    Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                    Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
                 )
             };
 

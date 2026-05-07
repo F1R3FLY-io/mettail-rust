@@ -1,6 +1,19 @@
 use super::{List, Proc};
 use mettail_runtime::HashBag;
 
+pub(crate) fn mk_proc_list(items: Vec<Proc>) -> Proc {
+    Proc::CastList(Box::new(List::ListLit(items)))
+}
+
+pub(crate) fn mk_output(name: &super::Name, items: Vec<Proc>, persistent: bool) -> Proc {
+    let payload = Box::new(mk_proc_list(items));
+    if persistent {
+        Proc::PPersistOutput(Box::new(name.clone()), payload)
+    } else {
+        Proc::POutput(Box::new(name.clone()), payload)
+    }
+}
+
 pub(crate) fn merge_pp_parallel(lhs: Proc, rhs: Proc) -> Proc {
     let mut bag = mettail_runtime::HashBag::new();
     fn flatten(bag: &mut mettail_runtime::HashBag<Proc>, p: Proc) {
@@ -56,24 +69,19 @@ fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {
             let b_norm = normalize_query_send_sugar_proc(b.as_ref());
             merge_pp_parallel(a_norm, b_norm)
         },
-        Proc::POutputEmpty(n) => Proc::POutput(
-            Box::new(n.as_ref().clone()),
-            Box::new(Proc::CastList(Box::new(List::ListLit(vec![])))),
-        ),
-        Proc::PPersistOutputEmpty(n) => Proc::PPersistOutput(
-            Box::new(n.as_ref().clone()),
-            Box::new(Proc::CastList(Box::new(List::ListLit(vec![])))),
-        ),
+        Proc::POutputEmpty(n) => {
+            Proc::POutput(Box::new(n.as_ref().clone()), Box::new(mk_proc_list(vec![])))
+        },
+        Proc::PPersistOutputEmpty(n) => {
+            Proc::PPersistOutput(Box::new(n.as_ref().clone()), Box::new(mk_proc_list(vec![])))
+        },
         Proc::POutput2Plus(n, a, bs) => {
             let a_norm = normalize_query_send_sugar_proc(a.as_ref());
             let bs_norm: Vec<Proc> = bs.iter().map(normalize_query_send_sugar_proc).collect();
             let mut items = Vec::with_capacity(1 + bs_norm.len());
             items.push(a_norm);
             items.extend(bs_norm);
-            Proc::POutput(
-                Box::new(n.as_ref().clone()),
-                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
-            )
+            Proc::POutput(Box::new(n.as_ref().clone()), Box::new(mk_proc_list(items)))
         },
         Proc::PPersistOutput2Plus(n, a, bs) => {
             let a_norm = normalize_query_send_sugar_proc(a.as_ref());
@@ -81,10 +89,7 @@ fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {
             let mut items = Vec::with_capacity(1 + bs_norm.len());
             items.push(a_norm);
             items.extend(bs_norm);
-            Proc::PPersistOutput(
-                Box::new(n.as_ref().clone()),
-                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
-            )
+            Proc::PPersistOutput(Box::new(n.as_ref().clone()), Box::new(mk_proc_list(items)))
         },
         Proc::POutput(n, q) => {
             let q_norm = crate::rhocalc::receive::canonicalize_arity_payload(q.as_ref());
