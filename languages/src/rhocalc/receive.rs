@@ -88,6 +88,26 @@ fn is_persistent_bind(bind: &InputBind) -> bool {
     )
 }
 
+fn is_empty_bind(bind: &InputBind) -> bool {
+    matches!(
+        bind,
+        InputBind::InputBindEmpty(_)
+            | InputBind::InputBindEmptyPersistent(_)
+            | InputBind::InputBindEmptyQuery(_, _)
+    )
+}
+
+fn empty_bind_matches_payload(q: &Proc) -> bool {
+    let q_norm = canonicalize_arity_payload(q);
+    match q_norm {
+        Proc::CastList(list) => match list.as_ref() {
+            List::ListLit(items) => !items.is_empty(),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 pub fn guard_then(cond: &Proc, body: &Proc) -> Proc {
     match cond {
         Proc::CastBool(b) => match b.as_ref() {
@@ -510,13 +530,8 @@ fn collect_input_bindings(
     q: &Proc,
     env: &mut HashMap<FreeVar<String>, Proc>,
 ) -> bool {
-    if matches!(
-        ib,
-        InputBind::InputBindEmpty(_)
-            | InputBind::InputBindEmptyPersistent(_)
-            | InputBind::InputBindEmptyQuery(_, _)
-    ) {
-        return true;
+    if is_empty_bind(ib) {
+        return empty_bind_matches_payload(q);
     }
     let pat = match bind_to_arity_pattern(ib) {
         Some(p) => p,
@@ -651,8 +666,12 @@ fn try_comm_single(
     let n_for_output = bind_channel_name(b)?;
     let pat = bind_pattern_proc(b)?;
     let persistent_recv = is_persistent_bind(b);
+    let empty_bind = is_empty_bind(b);
     for (cand, _) in whole_bag.iter() {
-        if let Some((n_out, _q)) = output_parts(cand) {
+        if let Some((n_out, q)) = output_parts(cand) {
+            if empty_bind && !empty_bind_matches_payload(&q) {
+                continue;
+            }
             if &n_out == n_for_output {
                 if let Some(next) = finish_single_comm(
                     whole_bag,
@@ -662,6 +681,7 @@ fn try_comm_single(
                     cont,
                     where_cond,
                     persistent_recv,
+                    empty_bind,
                 ) {
                     return Some(next);
                 }
@@ -679,18 +699,33 @@ fn finish_single_comm(
     cont: &Proc,
     where_cond: Option<&Proc>,
     persistent_recv: bool,
+    empty_bind: bool,
 ) -> Option<Proc> {
     let (n_out, q) = output_parts(output_key)?;
-    let new_center = if let Some(c) = where_cond {
-        Proc::CommWhere(
-            Box::new(pat.clone()),
-            Box::new(n_out.clone()),
-            Box::new(q.clone()),
-            Box::new(c.clone()),
-            Box::new(cont.clone()),
-        )
+    let new_center = if empty_bind {
+        if !empty_bind_matches_payload(&q) {
+            return None;
+        }
+        if let Some(c) = where_cond {
+            match eval_guard_bool(c) {
+                Some(true) => cont.clone(),
+                _ => return None,
+            }
+        } else {
+            cont.clone()
+        }
     } else {
-        receive_apply(pat, &q, cont)?
+        if let Some(c) = where_cond {
+            Proc::CommWhere(
+                Box::new(pat.clone()),
+                Box::new(n_out.clone()),
+                Box::new(q.clone()),
+                Box::new(c.clone()),
+                Box::new(cont.clone()),
+            )
+        } else {
+            receive_apply(pat, &q, cont)?
+        }
     };
     let persistent_send = is_persistent_output(output_key);
     match (persistent_recv, persistent_send) {

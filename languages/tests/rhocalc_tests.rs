@@ -1929,6 +1929,44 @@ mod parsing {
     }
 
     #[test]
+    fn empty_receiver_with_bool_payload_and_string_body_reduces() {
+        assert_reduces_to("x!(true) | for(<- x){\"ok\"}", "\"ok\"");
+    }
+
+    #[test]
+    fn empty_receiver_with_empty_payload_does_not_reduce_without_braces() {
+        assert_reduces_to("x!() | for(<- x){\"ok\"}", "x!() | for(<- x){\"ok\"}");
+    }
+
+    #[test]
+    fn unary_send_and_persistent_receive_reduces() {
+        let results = run("x!(1) | for(name <= x){\"ok\"}");
+        let displays: Vec<String> = results.all_terms.iter().map(|t| t.display.clone()).collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("\"ok\"") && d.contains("for(name <= x){\"ok\"}")),
+            "expected persistent receive to remain and emit body, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn unary_persistent_send_and_persistent_receive_cycle_shape() {
+        let results = run("x!!(1) | for(name <= x){\"ok\"}");
+        let displays: Vec<String> = results.all_terms.iter().map(|t| t.display.clone()).collect();
+        assert!(
+            displays.iter().any(|d| {
+                d.contains("\"ok\"")
+                    && (d.contains("x!!([1])") || d.contains("x!!(1)"))
+                    && d.contains("for(name <= x){\"ok\"}")
+            }),
+            "expected persistent send/receive cycle shape, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
     fn empty_receiver_plain_join_with_bound_var() {
         assert_reduces_to("{for(<- x & q <- c){q} | x!(ignored) | c!(ok)}", "ok");
     }
