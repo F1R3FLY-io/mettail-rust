@@ -872,16 +872,27 @@ pub fn emit_prefix_arms_for_category(
     // source category actually matches the input survives; siblings die
     // via PrefixDispatch dead-end (their guarded recovery is bounded by
     // Commit D's max_recovery_depth + visited_recovery checks).
-    struct LhsBucketEntry {
-        pat: TokenStream,
-        extra_guard: Option<TokenStream>,
-        sources: Vec<u16>,
-    }
+    // B7 (2026-05-07): unified bucket for cross-cat-LHS (Pass 0) +
+    // atomic-shape (Pass 1) descriptors. Keying on `(pat, guard)`, a
+    // bucket may contain a mix of CrossCatLhs and Atomic descriptors.
+    // Singleton buckets emit byte-identical to the pre-B7 path; mixed
+    // buckets emit a Fork with weights:
+    //   - Atomic-home tier=0.0
+    //   - Cross-cat-LHS tier=BP_TIER_CROSSCAT_LHS (0.05)
+    // so lex-min picks atomic-home on parse-success ties and cross-cat
+    // when only that branch survives. Per
+    // `feedback_use_wpds_disambiguation_not_heuristics.md`. Eliminates
+    // the silent-shadowing bug where Pass 0's cross-cat-LHS arm killed
+    // Pass 1's home-cat atomic arm by Rust's first-match-wins semantics
+    // when both shared a (pat, guard) key (e.g. `Some(Ident) if state==Proc`
+    // shared by POutput's Name LHS delegation and PVar's atomic arm).
     let mut sorted_sources: Vec<&String> = cross_cat_infix_sources.iter().collect();
     sorted_sources.sort();
-    let mut buckets: std::collections::BTreeMap<(String, String), LhsBucketEntry> =
-        std::collections::BTreeMap::new();
-    let mut bucket_order: Vec<(String, String)> = Vec::new();
+    let mut unified_buckets: std::collections::BTreeMap<
+        (String, String),
+        UnifiedBucket,
+    > = std::collections::BTreeMap::new();
+    let mut unified_order: Vec<(String, String)> = Vec::new();
     for source_cat_name in &sorted_sources {
         let source_src_idx = categories
             .iter()
@@ -897,74 +908,16 @@ pub fn emit_prefix_arms_for_category(
                 .map(|g| g.to_string())
                 .unwrap_or_default();
             let key = (pat_str, guard_str);
-            if !buckets.contains_key(&key) {
-                bucket_order.push(key.clone());
+            if !unified_buckets.contains_key(&key) {
+                unified_order.push(key.clone());
             }
-            let entry = buckets.entry(key).or_insert_with(|| LhsBucketEntry {
+            let entry = unified_buckets.entry(key).or_insert_with(|| UnifiedBucket {
                 pat: ft.pattern.clone(),
                 extra_guard: ft.extra_guard.clone(),
-                sources: Vec::new(),
+                descs: Vec::new(),
             });
-            entry.sources.push(source_src_idx);
-        }
-    }
-    for key in bucket_order {
-        let entry = buckets.remove(&key).expect("bucket present in order");
-        let pat = entry.pat;
-        let guard = match &entry.extra_guard {
-            Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
-            None => quote! { state_cat_src_idx == #category_src_idx },
-        };
-        if entry.sources.len() == 1 {
-            let source_src_idx = entry.sources[0];
-            arms.push(quote! {
-                #pat if #guard => {
-                    // Stage 1.2: cross-cat infix LHS delegation (single-source).
-                    // Push CategoryEntry(source_cat) for the LHS sub-parse.
-                    // After LHS returns, InfixLoop on operand_cat will see
-                    // the cross-cat operator + complete the rule.
-                    return WpdsStepAction::Push {
-                        symbol: StackSymbolV2::category_entry(#source_src_idx),
-                        weight: LexicographicWeight::one(),
-                        new_state: WpdsState::PrefixDispatch {
-                            pos: *pos,
-                            cur_bp: *cur_bp,
-                        },
-                    };
-                }
-            });
-        } else {
-            let branches: Vec<TokenStream> = entry
-                .sources
-                .iter()
-                .map(|&src_idx| {
-                    quote! {
-                        mettail_prattail::wpds_walker::ForkBranch {
-                            symbol: StackSymbolV2::category_entry(#src_idx),
-                            weight: LexicographicWeight::from_cost(
-                                0.0, #category_src_idx, #src_idx,
-                            ),
-                            new_state: WpdsState::PrefixDispatch {
-                                pos: *pos,
-                                cur_bp: *cur_bp,
-                            },
-                            action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
-                        }
-                    }
-                })
-                .collect();
-            arms.push(quote! {
-                #pat if #guard => {
-                    // B4 fix: cross-cat infix LHS delegation (multi-source Fork).
-                    // Multiple source categories share this FIRST token; emit
-                    // a Fork over all sources so Walker's lex-min picks the
-                    // one whose subsequent parse succeeds. Per
-                    // `feedback_use_wpds_disambiguation_not_heuristics.md`.
-                    return WpdsStepAction::Fork {
-                        branches: vec![ #( #branches ),* ],
-                        consume_trigger: false,
-                    };
-                }
+            entry.descs.push(UnifiedDescriptor::CrossCatLhs {
+                source_src_idx,
             });
         }
     }
@@ -991,15 +944,12 @@ pub fn emit_prefix_arms_for_category(
     // via BigInt's transitive FIRST chain) is resolved by lex-min over
     // `from_cost(0.0, src, rule_idx)` — preserves source-order tiebreak.
 
-    // Pass 1: atomic-shape arms — Hack #8 (Stage 3.16, Mechanism γ,
-    // 2026-05-05) bucket-then-Fork emission. Collect descriptors,
-    // bucket by (pat, guard), emit singleton arm per bucket OR Fork arm
-    // when ≥2 rules share a key. For shipped grammars every category's
-    // atomic arms have distinct keys (verified by Plan agent), so the
-    // bucket path is byte-identical to first-match-wins. For G5 future
-    // grammars (two atomic rules with the same FIRST token), the Fork
-    // emission with lex-min over from_cost(0.0, src, rule_idx) picks
-    // the lower rule_idx winner via source-order tiebreak.
+    // B7 (2026-05-07): atomic-shape descriptors fold into the SAME
+    // unified bucket map as cross-cat-LHS sources above. When a (pat,
+    // guard) key appears in BOTH cross-cat-LHS and atomic, the bucket
+    // emits a Fork mixing both branch kinds with the per-tier weights
+    // documented above. When only one kind appears, emission is
+    // byte-identical to pre-B7.
     let mut atomic_descriptors: Vec<PrefixArmDescriptor> = Vec::new();
     for &(rule_idx, rule) in rules_in_category {
         let shape = classify_atomic(rule, language);
@@ -1007,15 +957,6 @@ pub fn emit_prefix_arms_for_category(
             category_src_idx, rule_idx, &shape,
         ));
     }
-    // Bucket by stringified (pat, guard) — BTreeMap for deterministic
-    // iteration order matching pre-Hack-#8 source-order arm emission.
-    let mut atomic_buckets: std::collections::BTreeMap<
-        (String, String),
-        Vec<PrefixArmDescriptor>,
-    > = std::collections::BTreeMap::new();
-    // Preserve insertion order across buckets via the order of first
-    // appearance — collect bucket keys in insertion order.
-    let mut bucket_order: Vec<(String, String)> = Vec::new();
     for desc in atomic_descriptors {
         let pat_str = desc.pattern.to_string();
         let guard_str = desc
@@ -1024,18 +965,19 @@ pub fn emit_prefix_arms_for_category(
             .map(|g| g.to_string())
             .unwrap_or_default();
         let key = (pat_str, guard_str);
-        if !atomic_buckets.contains_key(&key) {
-            bucket_order.push(key.clone());
+        if !unified_buckets.contains_key(&key) {
+            unified_order.push(key.clone());
         }
-        atomic_buckets.entry(key).or_default().push(desc);
+        let entry = unified_buckets.entry(key).or_insert_with(|| UnifiedBucket {
+            pat: desc.pattern.clone(),
+            extra_guard: desc.extra_guard.clone(),
+            descs: Vec::new(),
+        });
+        entry.descs.push(UnifiedDescriptor::Atomic(desc));
     }
-    for key in bucket_order {
-        let descs = atomic_buckets.remove(&key).unwrap();
-        if descs.len() == 1 {
-            arms.push(emit_atomic_arm_singleton(&descs[0]));
-        } else {
-            arms.push(emit_atomic_arm_fork(&descs));
-        }
+    for key in unified_order {
+        let entry = unified_buckets.remove(&key).expect("bucket present in order");
+        arms.push(emit_unified_arm(category_src_idx, &entry));
     }
     // Pass 2a: collect cross-cat projections, then emit bucket-then-Fork.
     // F8 (2026-04-28): replaces per-rule emission + IntSuffix runtime guard.
@@ -1341,6 +1283,114 @@ fn atomic_arm_descriptors(
             category_src_idx,
         })
         .collect()
+}
+
+/// B7 (2026-05-07) — unified descriptor for the merged Pass 0/Pass 1
+/// bucket map. Each bucket entry is a list of these; singleton buckets
+/// emit a direct arm matching their kind; mixed buckets emit a Fork.
+enum UnifiedDescriptor {
+    /// Cross-cat infix LHS delegation arm — pushes
+    /// `CategoryEntry(source_src_idx)` so the LHS sub-parses against
+    /// the source category before InfixLoop sees the cross-cat operator.
+    /// Per-tier weight: `BP_TIER_CROSSCAT_LHS = 0.05`.
+    CrossCatLhs { source_src_idx: u16 },
+    /// Atomic-shape arm — `ConsumeAndPush(rule_at(...).Return)` for a
+    /// home-category leaf rule (literal, var, terminal-keyword, etc.).
+    /// Per-tier weight: `0.0` (atomic-home).
+    Atomic(PrefixArmDescriptor),
+}
+
+/// B7 (2026-05-07) — unified bucket entry. Replaces the separate
+/// LhsBucketEntry (Pass 0) and atomic bucket map (Pass 1).
+struct UnifiedBucket {
+    pat: TokenStream,
+    extra_guard: Option<TokenStream>,
+    descs: Vec<UnifiedDescriptor>,
+}
+
+/// B7 (2026-05-07) — emit a unified bucket as either a singleton arm
+/// (byte-identical to the pre-B7 emission for the matching kind) or a
+/// Fork mixing CrossCatLhs and Atomic branches with per-tier weights:
+///   - Atomic-home: `from_cost(0.0, csi, rule_idx)`.
+///   - Cross-cat-LHS: `from_cost(BP_TIER_CROSSCAT_LHS, csi, src_idx)`.
+///
+/// Lex-min picks atomic-home on parse-success ties (preserves bare
+/// PVar parsing as Proc when no operator follows); cross-cat-LHS wins
+/// when only that branch survives (e.g. `x!(0)` requires Name LHS).
+fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStream {
+    let pat = &bucket.pat;
+    let guard = match &bucket.extra_guard {
+        Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
+        None => quote! { state_cat_src_idx == #category_src_idx },
+    };
+    if bucket.descs.len() == 1 {
+        match &bucket.descs[0] {
+            UnifiedDescriptor::CrossCatLhs { source_src_idx } => {
+                let source_src_idx = *source_src_idx;
+                quote! {
+                    #pat if #guard => {
+                        return WpdsStepAction::Push {
+                            symbol: StackSymbolV2::category_entry(#source_src_idx),
+                            weight: LexicographicWeight::one(),
+                            new_state: WpdsState::PrefixDispatch {
+                                pos: *pos,
+                                cur_bp: *cur_bp,
+                            },
+                        };
+                    }
+                }
+            }
+            UnifiedDescriptor::Atomic(desc) => emit_atomic_arm_singleton(desc),
+        }
+    } else {
+        let branches: Vec<TokenStream> = bucket
+            .descs
+            .iter()
+            .map(|d| match d {
+                UnifiedDescriptor::CrossCatLhs { source_src_idx } => {
+                    let src_idx = *source_src_idx;
+                    quote! {
+                        mettail_prattail::wpds_walker::ForkBranch {
+                            symbol: StackSymbolV2::category_entry(#src_idx),
+                            weight: LexicographicWeight::from_cost(
+                                mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
+                                #category_src_idx, #src_idx,
+                            ),
+                            new_state: WpdsState::PrefixDispatch {
+                                pos: *pos,
+                                cur_bp: *cur_bp,
+                            },
+                            action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
+                        }
+                    }
+                }
+                UnifiedDescriptor::Atomic(desc) => {
+                    let rule_idx = desc.rule_idx;
+                    let csi = desc.category_src_idx;
+                    quote! {
+                        mettail_prattail::wpds_walker::ForkBranch {
+                            symbol: StackSymbolV2::rule_at(
+                                #csi, #rule_idx, 0, Some(_outer_bp),
+                            ).with_kind_return(),
+                            weight: LexicographicWeight::from_cost(
+                                0.0, #csi, #rule_idx,
+                            ),
+                            new_state: WpdsState::Unwinding,
+                            action_kind: mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndCaptureAndPush,
+                        }
+                    }
+                }
+            })
+            .collect();
+        quote! {
+            #pat if #guard => {
+                return WpdsStepAction::Fork {
+                    branches: vec![ #( #branches ),* ],
+                    consume_trigger: false,
+                };
+            }
+        }
+    }
 }
 
 /// Emit a singleton atomic arm — byte-identical to the pre-Hack-#8 emission.
