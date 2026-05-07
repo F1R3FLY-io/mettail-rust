@@ -651,47 +651,58 @@ pub(crate) fn emit_binder_rule_body(
                 let arm = match position {
                     BinderPosition::Literal(text) => quote! {
                         (#result_src_idx, #rule_idx, #pos) => {
-                            let token_text = tokens.peek_text(_pos).unwrap_or("");
-                            if token_text != #text {
-                                return WpdsStepAction::Error(format!(
-                                    "expected '{}' at rule pos {}, got '{}'",
-                                    #text, #pos, token_text,
-                                ));
-                            }
-                            return WpdsStepAction::ConsumeAndReplace {
-                                symbol: StackSymbolV2::rule_at(
-                                    #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                ),
-                                weight: LexicographicWeight::one(),
-                                new_state: WpdsState::BinderRule {
-                                    result_src_idx: #result_src_idx,
-                                    rule_idx: #rule_idx,
-                                    body_src_idx: *_body_src_idx,
-                                    outer_bp: *outer_bp,
-                                },
+                            // Stage 3.20 / L12 Commit F (2026-05-06):
+                            // Cluster 1 hack #5 closure. Single-branch
+                            // GuardedConsumeAndReplace Fork — peek_text
+                            // == #text guard runs inside the walker,
+                            // failure produces no child (cursor dies via
+                            // step_fanout's empty-children pathway).
+                            return WpdsStepAction::Fork {
+                                branches: vec![mettail_prattail::wpds_walker::ForkBranch {
+                                    symbol: StackSymbolV2::rule_at(
+                                        #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
+                                    ),
+                                    weight: LexicographicWeight::one(),
+                                    new_state: WpdsState::BinderRule {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        body_src_idx: *_body_src_idx,
+                                        outer_bp: *outer_bp,
+                                    },
+                                    action_kind:
+                                        mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplace {
+                                            expected_text: #text.to_string(),
+                                        },
+                                }],
+                                consume_trigger: false,
                             };
                         }
                     },
                     BinderPosition::BinderIdent => quote! {
                         (#result_src_idx, #rule_idx, #pos) => {
-                            match tokens.peek_kind(_pos) {
-                                Some(mettail_prattail::automata::TokenKind::Ident) => {}
-                                _ => return WpdsStepAction::Error(format!(
-                                    "expected identifier at rule pos {}", #pos,
-                                )),
-                            }
-                            return WpdsStepAction::ConsumeIdentAndReplace {
-                                symbol: StackSymbolV2::rule_at(
-                                    #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                ),
-                                weight: LexicographicWeight::one(),
-                                new_state: WpdsState::BinderRule {
-                                    result_src_idx: #result_src_idx,
-                                    rule_idx: #rule_idx,
-                                    body_src_idx: *_body_src_idx,
-                                    outer_bp: *outer_bp,
-                                },
-                                start_scope: true,
+                            // Stage 3.20 / L12 Commit F (2026-05-06):
+                            // Cluster 1 hack #6 closure. Single-branch
+                            // GuardedConsumeIdentAndReplace Fork —
+                            // peek_kind == Ident guard runs inside the
+                            // walker.
+                            return WpdsStepAction::Fork {
+                                branches: vec![mettail_prattail::wpds_walker::ForkBranch {
+                                    symbol: StackSymbolV2::rule_at(
+                                        #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
+                                    ),
+                                    weight: LexicographicWeight::one(),
+                                    new_state: WpdsState::BinderRule {
+                                        result_src_idx: #result_src_idx,
+                                        rule_idx: #rule_idx,
+                                        body_src_idx: *_body_src_idx,
+                                        outer_bp: *outer_bp,
+                                    },
+                                    action_kind:
+                                        mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
+                                            start_scope: true,
+                                        },
+                                }],
+                                consume_trigger: false,
                             };
                         }
                     },
@@ -1131,25 +1142,28 @@ pub(crate) fn emit_optional_group_body(
                     let inner_arm = match ipos {
                         BinderPosition::Literal(text) => quote! {
                             (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
-                                let token_text = tokens.peek_text(_pos).unwrap_or("");
-                                if token_text != #text {
-                                    return WpdsStepAction::Error(format!(
-                                        "expected '{}' inside optional group at sub_pos {}, got '{}'",
-                                        #text, #sp, token_text,
-                                    ));
-                                }
-                                return WpdsStepAction::ConsumeAndReplace {
-                                    symbol: StackSymbolV2::optional_group_at(
-                                        #result_src_idx, #rule_idx, #next_sp, *outer_bp,
-                                    ),
-                                    weight: LexicographicWeight::one(),
-                                    new_state: WpdsState::OptionalGroup {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        group_idx: #group_idx_byte,
-                                        sub_pos: #next_sp,
-                                        outer_bp: *outer_bp,
-                                    },
+                                // Stage 3.20 / L12 Commit F (2026-05-06):
+                                // Cluster 1 hack #4 closure (opt-group
+                                // inner mirror of site #5).
+                                return WpdsStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpds_walker::ForkBranch {
+                                        symbol: StackSymbolV2::optional_group_at(
+                                            #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                        ),
+                                        weight: LexicographicWeight::one(),
+                                        new_state: WpdsState::OptionalGroup {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            group_idx: #group_idx_byte,
+                                            sub_pos: #next_sp,
+                                            outer_bp: *outer_bp,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplace {
+                                                expected_text: #text.to_string(),
+                                            },
+                                    }],
+                                    consume_trigger: false,
                                 };
                             }
                         },
@@ -1181,25 +1195,28 @@ pub(crate) fn emit_optional_group_body(
                         }
                         BinderPosition::BinderIdent => quote! {
                             (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
-                                match tokens.peek_kind(_pos) {
-                                    Some(mettail_prattail::automata::TokenKind::Ident) => {}
-                                    _ => return WpdsStepAction::Error(format!(
-                                        "expected identifier inside optional group at sub_pos {}", #sp,
-                                    )),
-                                }
-                                return WpdsStepAction::ConsumeIdentAndReplace {
-                                    symbol: StackSymbolV2::optional_group_at(
-                                        #result_src_idx, #rule_idx, #next_sp, *outer_bp,
-                                    ),
-                                    weight: LexicographicWeight::one(),
-                                    new_state: WpdsState::OptionalGroup {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        group_idx: #group_idx_byte,
-                                        sub_pos: #next_sp,
-                                        outer_bp: *outer_bp,
-                                    },
-                                    start_scope: true,
+                                // Stage 3.20 / L12 Commit F (2026-05-06):
+                                // Cluster 1 4th hack closure (opt-group
+                                // inner mirror of site #6).
+                                return WpdsStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpds_walker::ForkBranch {
+                                        symbol: StackSymbolV2::optional_group_at(
+                                            #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                        ),
+                                        weight: LexicographicWeight::one(),
+                                        new_state: WpdsState::OptionalGroup {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            group_idx: #group_idx_byte,
+                                            sub_pos: #next_sp,
+                                            outer_bp: *outer_bp,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
+                                                start_scope: true,
+                                            },
+                                    }],
+                                    consume_trigger: false,
                                 };
                             }
                         },

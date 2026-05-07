@@ -516,6 +516,30 @@ pub enum ForkActionKind {
     /// this action_kind, and lex-min via from_cost(0.0, src, rule_idx) picks
     /// the lower rule_idx winner.
     ConsumeAndCaptureAndPush,
+
+    /// Stage 3.20 / L12 Commit F (2026-05-06) — Cluster 1/6 hacks #4 & #5
+    /// closure. Mirrors `WpdsStepAction::ConsumeAndReplace` but gated on
+    /// a `peek_text == expected_text` equality check. Walker's
+    /// `apply_action_to_cursor::Fork` arm reads the peek'd text at
+    /// `pos_after`; on match, allocates the child like
+    /// `ForkActionKind::ConsumeAndReplace`; on miss, skips child
+    /// allocation entirely (no cursor pushed). When this is the only
+    /// surviving branch in the Fork, `step_fanout`'s empty-children
+    /// check raises `WpdsState::Error { message: "all fork branches
+    /// dropped" }` — same surface as the legacy eq-or-error pathway,
+    /// but routed through uniform Fork+lex-min plumbing per
+    /// `feedback_use_wpds_disambiguation_not_heuristics.md`. Behavioral
+    /// improvement over legacy: in mid-fanout populations, only the
+    /// guard-failing cursor dies; correct sibling cursors continue.
+    GuardedConsumeAndReplace { expected_text: String },
+
+    /// Stage 3.20 / L12 Commit F (2026-05-06) — Cluster 1/6 hacks #6 & 4th
+    /// closure. Mirrors `WpdsStepAction::ConsumeIdentAndReplace` but
+    /// gated on a `peek_kind == TokenKind::Ident` check. Pass → behaves
+    /// identically to `ConsumeIdentAndReplace { start_scope }`. Fail →
+    /// no child allocated. See `GuardedConsumeAndReplace` for the
+    /// fanout-survival rationale.
+    GuardedConsumeIdentAndReplace { start_scope: bool },
 }
 
 impl<W: Semiring> std::fmt::Debug for ForkBranch<W>
@@ -3114,6 +3138,85 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let _ = self.cursor_gss_push(
                                 &mut child,
                                 sym,
+                                pos_now,
+                                branch.weight.clone(),
+                            );
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                        }
+
+                        ForkActionKind::GuardedConsumeAndReplace { expected_text } => {
+                            // Stage 3.20 / L12 Commit F (2026-05-06):
+                            // Cluster 1/6 hack #4/#5 closure. Single-branch
+                            // Fork with `peek_text == expected_text` guard.
+                            // Pass → ConsumeAndReplace semantics. Fail →
+                            // skip child allocation (the only surviving
+                            // branch dies, step_fanout reports "all fork
+                            // branches dropped" via the standard pathway).
+                            let peek = tokens.peek_text(pos_after).unwrap_or("");
+                            if peek != expected_text.as_str() {
+                                continue;
+                            }
+                            let mut child = BranchCursor::fork_child(
+                                cursor,
+                                pos_after,
+                                cursor.weight.times(&branch.weight),
+                                branch.new_state.clone(),
+                                child_source_priority,
+                            );
+                            let pos_now = child.pos;
+                            let _ = self.cursor_gss_replace_top(
+                                &mut child,
+                                branch.symbol,
+                                pos_now,
+                                branch.weight.clone(),
+                            );
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                        }
+
+                        ForkActionKind::GuardedConsumeIdentAndReplace { start_scope } => {
+                            // Stage 3.20 / L12 Commit F (2026-05-06):
+                            // Cluster 1/6 hack #6/4th closure. Single-branch
+                            // Fork with `peek_kind == Ident` guard. Pass →
+                            // ConsumeIdentAndReplace { start_scope }
+                            // semantics. Fail → skip child allocation.
+                            if !matches!(
+                                tokens.peek_kind(pos_after),
+                                Some(crate::automata::TokenKind::Ident)
+                            ) {
+                                continue;
+                            }
+                            let mut child = BranchCursor::fork_child(
+                                cursor,
+                                pos_after,
+                                cursor.weight.times(&branch.weight),
+                                branch.new_state.clone(),
+                                child_source_priority,
+                            );
+                            let text = tokens
+                                .peek_text(child.pos)
+                                .unwrap_or("")
+                                .to_string();
+                            if start_scope {
+                                self.emit_start_binder_scope(
+                                    &mut child,
+                                    vec![text.clone()],
+                                );
+                            } else {
+                                let pos_now = child.pos;
+                                self.emit_push_ident(&mut child, text, pos_now);
+                            }
+                            let pos_now = child.pos;
+                            let _ = self.cursor_gss_replace_top(
+                                &mut child,
+                                branch.symbol,
                                 pos_now,
                                 branch.weight.clone(),
                             );
@@ -7025,6 +7128,128 @@ mod tests {
                 .iter()
                 .any(|d| matches!(d, BuilderDelta::StartBinderScope { names } if names.is_empty())),
             "ConsumeAndReplaceWithEffect must log the effect delta",
+        );
+    }
+
+    /// Stage 3.20 / L12 Commit F (2026-05-06) — `GuardedConsumeAndReplace`
+    /// allocates a child cursor when `peek_text(pos_after) ==
+    /// expected_text`. Mirrors `ConsumeAndReplace` semantics on guard
+    /// pass: replaces top-of-GSS, advances pos by 1.
+    #[test]
+    fn fork_action_guarded_consume_and_replace_pass_advances_pos() {
+        let tokens = [TokenKind::Fixed("=".into())];
+        let texts = ["="];
+        let token_src = SliceTokenSource::with_texts(&tokens, &texts);
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Accept,
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::rule_at(0, 0, 1, None),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdsState::Unwinding,
+                    action_kind: ForkActionKind::GuardedConsumeAndReplace {
+                        expected_text: "=".to_string(),
+                    },
+                }],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &token_src); // Push
+        let pos_before_fork = w.position();
+        let _ = w.process_event(WpdsEvent::Step, &token_src); // Fork (guard pass)
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1, "guard pass must produce one child");
+        assert_eq!(
+            cursors[0].pos,
+            pos_before_fork + 1,
+            "GuardedConsumeAndReplace on guard pass must advance child cursor's pos by 1",
+        );
+    }
+
+    /// Stage 3.20 / L12 Commit F (2026-05-06) — `GuardedConsumeAndReplace`
+    /// produces no child when `peek_text(pos_after) != expected_text`.
+    /// The single-branch Fork's empty `children` collapses via
+    /// `step_fanout`'s empty-cursors check into `WpdsState::Error { message:
+    /// "all fork branches dropped" }` — same surface as the legacy
+    /// eq-or-error pathway, but routed through Fork+lex-min.
+    #[test]
+    fn fork_action_guarded_consume_and_replace_fail_drops_cursor() {
+        let tokens = [TokenKind::Fixed("X".into())];
+        let texts = ["X"];
+        let token_src = SliceTokenSource::with_texts(&tokens, &texts);
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::rule_at(0, 0, 1, None),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdsState::Unwinding,
+                    action_kind: ForkActionKind::GuardedConsumeAndReplace {
+                        expected_text: "=".to_string(),
+                    },
+                }],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &token_src); // Push
+        let _ = w.process_event(WpdsEvent::Step, &token_src); // Fork (guard fail)
+        let final_state = w.run_to_saturation(50, &token_src);
+        match final_state {
+            WpdsState::Error { message } => assert!(
+                message.contains("all fork branches dropped")
+                    || message.contains("dropped"),
+                "expected 'all fork branches dropped'-style Error, got: {}",
+                message,
+            ),
+            other => panic!(
+                "expected Error after guard-fail single-branch Fork, got {:?}",
+                other,
+            ),
+        }
+    }
+
+    /// Stage 3.20 / L12 Commit F (2026-05-06) — `GuardedConsumeAndReplace`
+    /// and `GuardedConsumeIdentAndReplace` are NON-recovery Forks. The
+    /// `is_recovery_fork` predicate must NOT classify them as recovery,
+    /// otherwise the bounded-recovery prologue would erroneously bump
+    /// `recovery_depth` and insert into `visited_recovery` for branches
+    /// that aren't doing recovery at all.
+    #[test]
+    fn guarded_fork_variants_are_not_recovery_forks() {
+        let guarded_text: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(0.0, 0, 0),
+            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            action_kind: ForkActionKind::GuardedConsumeAndReplace {
+                expected_text: "=".to_string(),
+            },
+        };
+        assert!(
+            !is_recovery_fork(&[guarded_text]),
+            "GuardedConsumeAndReplace must NOT be classified as recovery Fork",
+        );
+        let guarded_ident: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(0.0, 0, 0),
+            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            action_kind: ForkActionKind::GuardedConsumeIdentAndReplace {
+                start_scope: true,
+            },
+        };
+        assert!(
+            !is_recovery_fork(&[guarded_ident]),
+            "GuardedConsumeIdentAndReplace must NOT be classified as recovery Fork",
         );
     }
 
