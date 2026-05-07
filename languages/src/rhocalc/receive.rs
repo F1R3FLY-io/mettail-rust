@@ -311,17 +311,10 @@ fn fresh_query_return(counter: &mut usize) -> (Binder<String>, Name) {
 }
 
 fn mk_query_send(channel: &Name, ret: &Name, args: &[Proc]) -> Proc {
-    if args.is_empty() {
-        return Proc::POutput(
-            Box::new(channel.clone()),
-            Box::new(Proc::PDrop(Box::new(ret.clone()))),
-        );
-    }
-    Proc::POutput2Plus(
-        Box::new(channel.clone()),
-        Box::new(Proc::PDrop(Box::new(ret.clone()))),
-        args.to_vec(),
-    )
+    let mut items = Vec::with_capacity(1 + args.len());
+    items.push(Proc::PDrop(Box::new(ret.clone())));
+    items.extend(args.iter().cloned());
+    Proc::POutput(Box::new(channel.clone()), Box::new(list_proc(items)))
 }
 
 fn desugar_query_bind(
@@ -701,7 +694,10 @@ fn finish_single_comm(
     } else {
         receive_apply(pat, &q, cont)?
     };
-    let persistent_send = matches!(output_key, Proc::PPersistOutput(_, _));
+    let persistent_send = matches!(
+        output_key,
+        Proc::PPersistOutput(_, _) | Proc::PPersistOutputEmpty(_) | Proc::PPersistOutput2Plus(_, _, _)
+    );
     match (persistent_recv, persistent_send) {
         (false, false) => ppar_remove_two_insert(whole_bag, for_key, output_key, new_center),
         (false, true) => ppar_remove_one_insert(whole_bag, for_key, new_center),
@@ -747,6 +743,15 @@ fn output_parts(p: &Proc) -> Option<(Name, Proc)> {
         Proc::POutput(n, q) | Proc::PPersistOutput(n, q) => {
             Some((n.as_ref().clone(), q.as_ref().clone()))
         },
+        Proc::POutputEmpty(n) | Proc::PPersistOutputEmpty(n) => {
+            Some((n.as_ref().clone(), list_proc(vec![])))
+        },
+        Proc::POutput2Plus(n, a, bs) | Proc::PPersistOutput2Plus(n, a, bs) => {
+            let mut items = Vec::with_capacity(1 + bs.len());
+            items.push(a.as_ref().clone());
+            items.extend(bs.iter().cloned());
+            Some((n.as_ref().clone(), list_proc(items)))
+        },
         _ => None,
     }
 }
@@ -778,7 +783,10 @@ fn try_comm_join(
             None
         })?;
         let (n_out, q) = output_parts(&to_remove)?;
-        let is_persistent = matches!(to_remove, Proc::PPersistOutput(_, _));
+        let is_persistent = matches!(
+            to_remove,
+            Proc::PPersistOutput(_, _) | Proc::PPersistOutputEmpty(_) | Proc::PPersistOutput2Plus(_, _, _)
+        );
         if !is_persistent && !work.remove(&to_remove) {
             return None;
         }
@@ -789,7 +797,10 @@ fn try_comm_join(
     let res = comm_pforjoin_subst(b, bs, &ns_collected, &qs, cond, cont)?;
     // Reinsert persistent outputs: they matched but must remain available.
     for p in matched_outputs {
-        if matches!(p, Proc::PPersistOutput(_, _)) {
+        if matches!(
+            p,
+            Proc::PPersistOutput(_, _) | Proc::PPersistOutputEmpty(_) | Proc::PPersistOutput2Plus(_, _, _)
+        ) {
             work.insert(p);
         }
     }
