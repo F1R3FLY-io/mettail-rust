@@ -509,88 +509,36 @@ pub(crate) fn emit_engine_impl_full(
                                     // are dispatched via the new
                                     // WpdsState::MixfixLiteralRun state machine
                                     // (see arm below).
-                                    let part = mixfix_part(
-                                        result_src_idx, rule_idx, completed_idx,
-                                    );
-                                    let following: Option<&'static str> = part
-                                        .and_then(|(_, _pre, fol)| fol.first().copied());
-                                    if completed_idx + 1 == parts_len {
-                                        // Last inner operand: pop the marker
-                                        // (auto-fires the rule's action with
-                                        // arity 1+parts.len) and resume the
-                                        // outer InfixLoop. outer_bp=0 is a
-                                        // pragmatic choice for top-level
-                                        // mixfix; if a future grammar nests
-                                        // mixfix inside a precedenced context,
-                                        // thread outer_bp via a dedicated
-                                        // marker field or state variant.
-                                        return WpdsStepAction::Pop {
-                                            weight: LexicographicWeight::one(),
-                                            new_state: WpdsState::InfixLoop { cur_bp: 0 },
-                                        };
-                                    }
-                                    // Stage 3.16 / Hack #10 (Cluster 1,
-                                    // Mechanism γ, 2026-05-05): two-branch
-                                    // Fork over separator-match and
-                                    // last-operand-elision (G2 future
-                                    // grammar support). Lex-min picks:
-                                    //   - separator-match (weight 0.0)
-                                    //     when token == following.
-                                    //   - last-operand-elision (weight
-                                    //     SKIP_BIAS) Pop the marker and
-                                    //     transition to InfixLoop. Fires
-                                    //     for grammars permitting optional
-                                    //     trailing separator (e.g.
-                                    //     `if c then a [else b] end`).
+                                    // L12 follow-up B6 step 3 (2026-05-07):
+                                    // route to MixfixLiteralRun to walk
+                                    // following_terminals + (next operand's)
+                                    // preceding_terminals before deciding
+                                    // whether to Pop or transition to the
+                                    // next operand's CategoryEntry.
                                     //
-                                    // (None, _) case is a codegen invariant
-                                    // violation — reachable only when the
-                                    // codegen-time mixfix-parts table is
-                                    // malformed; no Fork branch needed.
-                                    match (following, tokens.peek_text(_pos)) {
-                                        (Some(t), _) => {
-                                            let _ = t;
-                                            WpdsStepAction::Fork {
-                                                branches: vec![
-                                                    // BRANCH 1: separator-match.
-                                                    mettail_prattail::wpds_walker::ForkBranch {
-                                                        symbol: StackSymbolV2::category_entry(0),
-                                                        weight: LexicographicWeight::from_cost(
-                                                            0.0, result_src_idx, rule_idx,
-                                                        ),
-                                                        new_state: WpdsState::MixfixContinuation {
-                                                            result_src_idx,
-                                                            rule_idx,
-                                                            completed_idx: completed_idx + 1,
-                                                        },
-                                                        action_kind:
-                                                            mettail_prattail::wpds_walker::ForkActionKind::Consume,
-                                                    },
-                                                    // BRANCH 2: last-operand-elision (G2 support).
-                                                    mettail_prattail::wpds_walker::ForkBranch {
-                                                        symbol: StackSymbolV2::category_entry(0),
-                                                        weight: LexicographicWeight::from_cost(
-                                                            mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                                            result_src_idx, rule_idx,
-                                                        ),
-                                                        new_state: WpdsState::InfixLoop { cur_bp: 0 },
-                                                        action_kind:
-                                                            mettail_prattail::wpds_walker::ForkActionKind::Pop,
-                                                    },
-                                                ],
-                                                consume_trigger: false,
-                                            }
-                                        }
-                                        (None, _) => {
-                                            // Inner operand without trailing
-                                            // separator and not the last —
-                                            // codegen invariant violation.
-                                            WpdsStepAction::Error(format!(
-                                                "mixfix part {} for (result={}, rule={}) has no following terminal but isn't last (parts_len={})",
-                                                completed_idx, result_src_idx, rule_idx, parts_len
-                                            ))
-                                        }
-                                    }
+                                    // Single-literal Tern-style mixfix
+                                    // (following.len()==1, preceding.len()==0)
+                                    // walks through MixfixLiteralRun
+                                    // {kind=0, sub_pos=0..=1} with one
+                                    // ConsumeAndReplace per literal —
+                                    // semantically equivalent to the prior
+                                    // single-Consume Fork, but operates on
+                                    // the widened metadata vectors. The G2
+                                    // last-operand-elision path is removed;
+                                    // it can be reintroduced as a Fork
+                                    // option in MixfixLiteralRun's kind=0
+                                    // arm if a future grammar requires it.
+                                    let _ = parts_len;  // suppress unused warning
+                                    let _ = mixfix_part;  // path used in arm below
+                                    return WpdsStepAction::Advance(
+                                        WpdsState::MixfixLiteralRun {
+                                            result_src_idx,
+                                            rule_idx,
+                                            completed_idx,
+                                            kind: 0,
+                                            sub_pos: 0,
+                                        },
+                                    );
                                 }
                                 mettail_prattail::wpds_runtime::SymbolKind::OptionalGroupAt(sub_pos) => {
                                     // Opt-Group: inner ParamParse / Literal /
@@ -855,6 +803,128 @@ pub(crate) fn emit_engine_impl_full(
                             None => WpdsStepAction::Error(format!(
                                 "mixfix part {} not found for (result={}, rule={})",
                                 completed_idx, result_src_idx, rule_idx
+                            )),
+                        }
+                    }
+                    WpdsState::MixfixLiteralRun {
+                        result_src_idx,
+                        rule_idx,
+                        completed_idx,
+                        kind,
+                        sub_pos,
+                    } => {
+                        // L12 follow-up B6 step 3 (2026-05-07): walk
+                        // postfix-mixfix per-part literal sequences.
+                        // kind=0: consume following_terminals after the
+                        //         just-completed operand `completed_idx`.
+                        // kind=1: consume preceding_terminals before the
+                        //         next operand `completed_idx + 1`.
+                        let part = mixfix_part(
+                            *result_src_idx, *rule_idx, *completed_idx,
+                        );
+                        let parts_len = match mixfix_parts_len(
+                            *result_src_idx, *rule_idx,
+                        ) {
+                            Some(n) => n,
+                            None => return WpdsStepAction::Error(format!(
+                                "mixfix_parts_len(result={}, rule={}) returned None — \
+                                 codegen invariant violated",
+                                result_src_idx, rule_idx,
+                            )),
+                        };
+                        match (*kind, part) {
+                            (0, Some((_, _preceding, following))) => {
+                                if (*sub_pos as usize) < following.len() {
+                                    // Consume following[sub_pos].
+                                    let _expected = following[*sub_pos as usize];
+                                    WpdsStepAction::ConsumeAndReplace {
+                                        symbol: StackSymbolV2::mixfix_marker(
+                                            *result_src_idx,
+                                            *rule_idx,
+                                            *completed_idx,
+                                        ),
+                                        weight: LexicographicWeight::one(),
+                                        new_state: WpdsState::MixfixLiteralRun {
+                                            result_src_idx: *result_src_idx,
+                                            rule_idx: *rule_idx,
+                                            completed_idx: *completed_idx,
+                                            kind: 0,
+                                            sub_pos: sub_pos + 1,
+                                        },
+                                    }
+                                } else if *completed_idx + 1 == parts_len {
+                                    // Last operand done; Pop the marker.
+                                    WpdsStepAction::Pop {
+                                        weight: LexicographicWeight::one(),
+                                        new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                                    }
+                                } else {
+                                    // Transition to kind=1 to consume
+                                    // preceding_terminals of the next operand.
+                                    WpdsStepAction::Advance(
+                                        WpdsState::MixfixLiteralRun {
+                                            result_src_idx: *result_src_idx,
+                                            rule_idx: *rule_idx,
+                                            completed_idx: *completed_idx,
+                                            kind: 1,
+                                            sub_pos: 0,
+                                        },
+                                    )
+                                }
+                            }
+                            (1, _) => {
+                                let next_part = mixfix_part(
+                                    *result_src_idx, *rule_idx, *completed_idx + 1,
+                                );
+                                match next_part {
+                                    Some((operand_src_idx, preceding, _following)) => {
+                                        if (*sub_pos as usize) < preceding.len() {
+                                            let _expected = preceding[*sub_pos as usize];
+                                            WpdsStepAction::ConsumeAndReplace {
+                                                symbol: StackSymbolV2::mixfix_marker(
+                                                    *result_src_idx,
+                                                    *rule_idx,
+                                                    *completed_idx,
+                                                ),
+                                                weight: LexicographicWeight::one(),
+                                                new_state: WpdsState::MixfixLiteralRun {
+                                                    result_src_idx: *result_src_idx,
+                                                    rule_idx: *rule_idx,
+                                                    completed_idx: *completed_idx,
+                                                    kind: 1,
+                                                    sub_pos: sub_pos + 1,
+                                                },
+                                            }
+                                        } else {
+                                            // All literals consumed; push the next
+                                            // operand's CategoryEntry.
+                                            WpdsStepAction::ReplaceAndPush {
+                                                replace_symbol: StackSymbolV2::mixfix_marker(
+                                                    *result_src_idx,
+                                                    *rule_idx,
+                                                    *completed_idx + 1,
+                                                ),
+                                                push_symbol: StackSymbolV2::category_entry(
+                                                    operand_src_idx,
+                                                ),
+                                                weight: LexicographicWeight::one(),
+                                                new_state: WpdsState::PrefixDispatch {
+                                                    pos: _pos,
+                                                    cur_bp: 0,
+                                                },
+                                            }
+                                        }
+                                    }
+                                    None => WpdsStepAction::Error(format!(
+                                        "mixfix part {} not found for (result={}, rule={})",
+                                        completed_idx + 1, result_src_idx, rule_idx,
+                                    )),
+                                }
+                            }
+                            _ => WpdsStepAction::Error(format!(
+                                "MixfixLiteralRun: invalid kind={} or missing part \
+                                 for (result={}, rule={}, completed_idx={})",
+                                kind, result_src_idx, rule_idx, completed_idx,
                             )),
                         }
                     }

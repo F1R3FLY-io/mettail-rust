@@ -401,6 +401,37 @@ pub enum WpdsState {
         /// (i.e., index of the NEXT inner operand to parse).
         completed_idx: u8,
     },
+    /// L12 follow-up B6 step 3 (2026-05-07): walk the literal sequences
+    /// between mixfix operands. After an inner operand `completed_idx`
+    /// returns to Unwinding-MixfixMarker, the walker transitions here
+    /// with `kind = 0` to consume each literal in
+    /// `parts[completed_idx].following_terminals` in order. Once
+    /// exhausted: if `completed_idx + 1 == parts_len`, Pop (rule done);
+    /// else transition to `kind = 1` to consume each literal in
+    /// `parts[completed_idx + 1].preceding_terminals`. Once those are
+    /// exhausted, transition to MixfixContinuation { completed_idx + 1 }
+    /// to push the next operand's CategoryEntry.
+    ///
+    /// Generalizes over the entire class of postfix-mixfix shapes
+    /// (POutput-class) — supports any number of literals between/around
+    /// operands. Single-literal sequences (Tern's `:` between `b` and
+    /// `c`) are the degenerate case (kind=0, sub_pos=0..1).
+    MixfixLiteralRun {
+        /// Result category index.
+        result_src_idx: u16,
+        /// Rule index within the result category.
+        rule_idx: u16,
+        /// Index of the just-completed inner operand. `following_terminals`
+        /// of `parts[completed_idx]` are consumed when `kind == 0`;
+        /// `preceding_terminals` of `parts[completed_idx + 1]` are
+        /// consumed when `kind == 1`.
+        completed_idx: u8,
+        /// 0 = consuming following_terminals; 1 = consuming
+        /// preceding_terminals.
+        kind: u8,
+        /// Index into the literal vector being walked.
+        sub_pos: u8,
+    },
     /// Phase 5: mid-binder-rule. The engine progresses through the rule's
     /// `syntax_pattern` items (literals, binder ident slot, body parse)
     /// using `StackSymbolV2::rule_at(.., position, ..)` on the GSS top to

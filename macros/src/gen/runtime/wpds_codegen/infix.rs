@@ -138,21 +138,16 @@ fn classify_judgement(
         }
     }
 
-    // L12 follow-up B6 step 2 (2026-05-07) — Class 1 MIXFIX-LHS-PARAM:
-    // classify_postfix_mixfix is implemented below but NOT YET active in
-    // the dispatch chain. The classifier correctly recognizes POutput-class
-    // shapes (`Param Lit (Lit Param Lit)* ?Lit`), but enabling it requires
-    // additional walker work: the existing Unwinding-MixfixMarker arm and
-    // MixfixContinuation state assume single-literal separators between
-    // operands and don't consume preceding_terminals BEFORE the next
-    // operand sub-parse. Multi-literal preceding/following sequences need
-    // a new WpdsState::MixfixLiteralRun state (per the original Plan agent
-    // design) plus arg-ordering verification for 2-simple mixfix rules.
-    //
-    // Foundation in place (MixfixPart widened, classify_postfix_mixfix
-    // implemented). Activation deferred to a subsequent commit that
-    // adds the walker-side MixfixLiteralRun + arg verification.
-    let _ = classify_postfix_mixfix;  // suppress dead-code warning
+    // L12 follow-up B6 step 3 (2026-05-07) — Class 1 MIXFIX-LHS-PARAM:
+    // classify_postfix_mixfix is now ACTIVE in the dispatch chain. The
+    // walker-side `WpdsState::MixfixLiteralRun` (added in this same
+    // commit) walks the postfix-mixfix per-part literal sequences via
+    // per-iteration ConsumeAndReplace.
+    if simples.len() >= 2 && syntax_pattern.len() >= 3 {
+        if let Some(info) = classify_postfix_mixfix(rule, &simples, syntax_pattern) {
+            return Some(info);
+        }
+    }
 
     None
 }

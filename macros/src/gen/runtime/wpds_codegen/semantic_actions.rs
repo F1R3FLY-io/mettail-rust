@@ -541,14 +541,23 @@ fn emit_infix_action_entry(
             }
         }
     } else if info.is_mixfix {
-        // Arity-N for mixfix. All operands have the same category for
-        // Calculator's ternary (all Int). Generic emission iterates.
+        // Arity-N for mixfix. Per-position operand category: arg0 is the LHS
+        // (info.category), args 1..N are the per-part operand categories
+        // (info.mixfix_parts[i-1].operand_category). For Calculator's ternary
+        // these all equal `Int`; for POutput-shape (Name "(" Proc ")") the
+        // LHS and inner operand differ — required for B6 step 3 postfix-mixfix.
         let n = arity as usize;
         let pops: Vec<TokenStream> = (0..n)
             .map(|i| {
                 let var = format_ident!("arg{}", i);
+                let cat_str = if i == 0 {
+                    info.category.clone()
+                } else {
+                    info.mixfix_parts[i - 1].operand_category.clone()
+                };
+                let cat = format_ident!("{}", cat_str);
                 quote! {
-                    let #var = match iter.next().and_then(|a| a.into_term::<#operand_cat_ident>()) {
+                    let #var = match iter.next().and_then(|a| a.into_term::<#cat>()) {
                         Some(v) => v,
                         None => return,
                     };
