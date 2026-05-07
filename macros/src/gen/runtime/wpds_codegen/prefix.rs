@@ -847,35 +847,80 @@ pub fn emit_prefix_arms_for_category(
         }
     }
     let categories = super::collect_category_names_with_literals(language);
-    // Iterate cross-cat infix source category names in sorted order so the
-    // emitted prefix-arm ordering is deterministic across compilations.
-    // `HashSet<String>` iteration uses a randomized hasher; without sorting,
-    // the same grammar (Calculator is the only one with cross-cat infix)
-    // produces different `wpds.rs` bytes on each build, which defeats the
-    // `write_if_changed` short-circuit and forces cargo to invalidate
-    // `mettail-languages`'s fingerprint every invocation. Each emitted arm
-    // has a unique guard (`__cat == "Int"`, `__cat == "Fixed"`, …) so arm
-    // order doesn't change semantics. Mirrors the pattern at
-    // `wpds_codegen/auto_inject.rs:181`.
+    // B4 fix (2026-05-07): cross-cat infix LHS delegation with
+    // bucket-then-Fork emission. Pre-fix the per-source loop emitted
+    // duplicate Rust match arms with identical (pat, guard) keys when
+    // multiple source categories shared a FIRST token (e.g.
+    // `TokenKind::Ident` from auto-injected Var rules in
+    // Bool/Fixed/Float/Int/Str). Rust's first-match-wins meant only the
+    // alphabetically-first source's arm fired; arms for other sources
+    // were dead code. For shipped Calculator with cross-cat-Ident
+    // delegation across 4+ sources, this trapped the LHS sub-parse in
+    // the FIRST source's grammar regardless of which the input intended,
+    // cascading via Commit D's recovery rewire into "winner committed
+    // but builder result was empty" failures (58 Calculator tests).
+    //
+    // Fix: bucket by (pat, guard) and emit:
+    //   - Single-source bucket → Push (byte-identical to pre-fix).
+    //   - Multi-source bucket → Fork over branches with one source each,
+    //     using LexicographicWeight::from_cost(0.0, category, src_idx) so
+    //     source-order tiebreak (rule_idx slot = src_idx) selects deterministically
+    //     while genuine forward-progress lex-min selects the live cursor
+    //     across the parse — per `feedback_use_wpds_disambiguation_not_heuristics.md`.
+    //
+    // The per-cursor sub-parse fanout is bounded: only the cursor whose
+    // source category actually matches the input survives; siblings die
+    // via PrefixDispatch dead-end (their guarded recovery is bounded by
+    // Commit D's max_recovery_depth + visited_recovery checks).
+    struct LhsBucketEntry {
+        pat: TokenStream,
+        extra_guard: Option<TokenStream>,
+        sources: Vec<u16>,
+    }
     let mut sorted_sources: Vec<&String> = cross_cat_infix_sources.iter().collect();
     sorted_sources.sort();
-    for source_cat_name in sorted_sources {
+    let mut buckets: std::collections::BTreeMap<(String, String), LhsBucketEntry> =
+        std::collections::BTreeMap::new();
+    let mut bucket_order: Vec<(String, String)> = Vec::new();
+    for source_cat_name in &sorted_sources {
         let source_src_idx = categories
             .iter()
-            .position(|c| c == source_cat_name)
+            .position(|c| c == *source_cat_name)
             .map(|i| i as u16)
             .unwrap_or(0);
         let first_set = first_set_of_category(source_cat_name, language);
         for ft in first_set {
-            let pat = ft.pattern;
-            let guard = match ft.extra_guard {
-                Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
-                None => quote! { state_cat_src_idx == #category_src_idx },
-            };
+            let pat_str = ft.pattern.to_string();
+            let guard_str = ft
+                .extra_guard
+                .as_ref()
+                .map(|g| g.to_string())
+                .unwrap_or_default();
+            let key = (pat_str, guard_str);
+            if !buckets.contains_key(&key) {
+                bucket_order.push(key.clone());
+            }
+            let entry = buckets.entry(key).or_insert_with(|| LhsBucketEntry {
+                pat: ft.pattern.clone(),
+                extra_guard: ft.extra_guard.clone(),
+                sources: Vec::new(),
+            });
+            entry.sources.push(source_src_idx);
+        }
+    }
+    for key in bucket_order {
+        let entry = buckets.remove(&key).expect("bucket present in order");
+        let pat = entry.pat;
+        let guard = match &entry.extra_guard {
+            Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
+            None => quote! { state_cat_src_idx == #category_src_idx },
+        };
+        if entry.sources.len() == 1 {
+            let source_src_idx = entry.sources[0];
             arms.push(quote! {
                 #pat if #guard => {
-                    // Stage 1.2: cross-cat infix LHS delegation. Push
-                    // CategoryEntry(source_cat) for the LHS sub-parse.
+                    // Stage 1.2: cross-cat infix LHS delegation (single-source).
+                    // Push CategoryEntry(source_cat) for the LHS sub-parse.
                     // After LHS returns, InfixLoop on operand_cat will see
                     // the cross-cat operator + complete the rule.
                     return WpdsStepAction::Push {
@@ -885,6 +930,39 @@ pub fn emit_prefix_arms_for_category(
                             pos: *pos,
                             cur_bp: *cur_bp,
                         },
+                    };
+                }
+            });
+        } else {
+            let branches: Vec<TokenStream> = entry
+                .sources
+                .iter()
+                .map(|&src_idx| {
+                    quote! {
+                        mettail_prattail::wpds_walker::ForkBranch {
+                            symbol: StackSymbolV2::category_entry(#src_idx),
+                            weight: LexicographicWeight::from_cost(
+                                0.0, #category_src_idx, #src_idx,
+                            ),
+                            new_state: WpdsState::PrefixDispatch {
+                                pos: *pos,
+                                cur_bp: *cur_bp,
+                            },
+                            action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
+                        }
+                    }
+                })
+                .collect();
+            arms.push(quote! {
+                #pat if #guard => {
+                    // B4 fix: cross-cat infix LHS delegation (multi-source Fork).
+                    // Multiple source categories share this FIRST token; emit
+                    // a Fork over all sources so Walker's lex-min picks the
+                    // one whose subsequent parse succeeds. Per
+                    // `feedback_use_wpds_disambiguation_not_heuristics.md`.
+                    return WpdsStepAction::Fork {
+                        branches: vec![ #( #branches ),* ],
+                        consume_trigger: false,
                     };
                 }
             });
