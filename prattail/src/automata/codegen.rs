@@ -1161,7 +1161,21 @@ fn write_hybrid_lexer(
     // the hot path available while avoiding forced Cartesian-product
     // inlining at every token position.
     buf.push_str("#[inline] fn dfa_next(state: u32, class: u8) -> u32 { match state {");
-    for &state_idx in hot_states {
+    // Iterate hot states in numerical order so the generated match-arm
+    // ordering is deterministic across compilations. `HashSet<usize>`
+    // iteration uses a randomized hasher; without sorting, the same DFA
+    // produces different `parser.rs` bytes on each build, which defeats
+    // the `write_if_changed` short-circuit (macros/src/logic/writer.rs)
+    // and forces cargo to invalidate `mettail-languages`'s fingerprint
+    // every cargo invocation (~93s rebuild observed). Match-arm order
+    // is purely cosmetic — each arm's selector (`state_idx`) is unique
+    // across the set, so reordering is provably semantics-preserving
+    // under Rust `match` rules. Mirrors the same pattern at
+    // `wpds_codegen/auto_inject.rs:181` ("Sort kinds for deterministic
+    // emission order across runs").
+    let mut sorted_hot: Vec<usize> = hot_states.iter().copied().collect();
+    sorted_hot.sort_unstable();
+    for &state_idx in &sorted_hot {
         let state = &dfa.states[state_idx];
         let has_transitions = state.transitions.iter().any(|&t| t != DEAD_STATE);
         if !has_transitions {

@@ -1988,8 +1988,18 @@ pub fn generate_sync_predicate(
         }
     }
 
-    // Add FOLLOW set tokens
-    for token in &follow_set.tokens {
+    // Add FOLLOW set tokens. Iterate in sorted order so the emitted
+    // `is_sync_<Cat>` matches() pattern alternation order is deterministic
+    // across compilations. `FirstSet::tokens` is a `HashSet<String>` whose
+    // iteration uses a randomized hasher; without sorting, the same grammar
+    // produces different `parser.rs` bytes on each build, defeating the
+    // `write_if_changed` short-circuit and forcing cargo to invalidate
+    // `mettail-languages`'s fingerprint every invocation. Match-arm
+    // alternation order is purely cosmetic — `matches!(token, A | B | C)`
+    // semantics are independent of A/B/C order.
+    let mut sorted_follow_tokens: Vec<&String> = follow_set.tokens.iter().collect();
+    sorted_follow_tokens.sort();
+    for token in sorted_follow_tokens {
         let pattern = token_to_match_pattern(token);
         if !patterns.contains(&pattern) {
             patterns.push(pattern);

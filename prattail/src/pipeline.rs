@@ -4474,7 +4474,20 @@ fn emit_prediction_wfst_static(
 ) {
     use std::fmt::Write;
 
-    for (category, wfst) in prediction_wfsts {
+    // Iterate prediction_wfsts in sorted category order so the emitted
+    // WFST_TRANSITIONS_<Cat> / WFST_STATE_OFFSETS_<Cat> / WFST_TOKEN_NAMES_<Cat>
+    // / PREDICTION_<Cat> static blocks land in deterministic positions in
+    // the generated source. `HashMap<String, _>` iteration uses a randomized
+    // hasher; without sorting, the same grammar produces different
+    // `parser.rs` bytes on each build, which defeats the
+    // `write_if_changed` short-circuit (macros/src/logic/writer.rs) and
+    // forces cargo to invalidate `mettail-languages`'s fingerprint every
+    // invocation. Each emitted block is independent — reordering is
+    // semantics-preserving.
+    let mut sorted_wfsts: Vec<(&String, &crate::wfst::PredictionWfst)> =
+        prediction_wfsts.iter().collect();
+    sorted_wfsts.sort_by(|a, b| a.0.cmp(b.0));
+    for (category, wfst) in sorted_wfsts {
         if wfst.num_actions() == 0 {
             continue;
         }

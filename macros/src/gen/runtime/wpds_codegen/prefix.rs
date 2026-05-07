@@ -847,7 +847,19 @@ pub fn emit_prefix_arms_for_category(
         }
     }
     let categories = super::collect_category_names_with_literals(language);
-    for source_cat_name in &cross_cat_infix_sources {
+    // Iterate cross-cat infix source category names in sorted order so the
+    // emitted prefix-arm ordering is deterministic across compilations.
+    // `HashSet<String>` iteration uses a randomized hasher; without sorting,
+    // the same grammar (Calculator is the only one with cross-cat infix)
+    // produces different `wpds.rs` bytes on each build, which defeats the
+    // `write_if_changed` short-circuit and forces cargo to invalidate
+    // `mettail-languages`'s fingerprint every invocation. Each emitted arm
+    // has a unique guard (`__cat == "Int"`, `__cat == "Fixed"`, …) so arm
+    // order doesn't change semantics. Mirrors the pattern at
+    // `wpds_codegen/auto_inject.rs:181`.
+    let mut sorted_sources: Vec<&String> = cross_cat_infix_sources.iter().collect();
+    sorted_sources.sort();
+    for source_cat_name in sorted_sources {
         let source_src_idx = categories
             .iter()
             .position(|c| c == source_cat_name)
