@@ -284,9 +284,26 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
 
     // Walk syntax_pattern (skipping index 0 = trigger) building positions
     // + action_args in encountered-order (push order).
+    //
+    // L12 follow-up B2.f (2026-05-07): when a `BinderList` (Sep over a
+    // BinderList kind) is pushed as `BinderPosition::BinderListLoop`,
+    // the syntax_pattern's NEXT element is the loop's close delimiter
+    // (consumed by the BinderListLoop's close-branch dispatch). It must
+    // NOT be re-pushed as a separate `BinderPosition::Literal` — doing so
+    // produces a position-numbering bug where the close token is consumed
+    // twice (once by BinderListLoop's close branch, once by the spurious
+    // pos+1 Literal arm), causing rhocalc::PNew parses to fail with
+    // "expected '<close>' but found '<next>'" at every dispatch.
+    // `skip_next` tracks this and skips the close Literal at the next
+    // iteration.
     let mut positions = Vec::new();
     let mut action_args = Vec::new();
+    let mut skip_next: bool = false;
     for (i, item) in sp.iter().enumerate().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
         match item {
             SyntaxExpr::Literal(text) => {
                 positions.push(BinderPosition::Literal(text.clone()));
@@ -336,6 +353,12 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                             close,
                         });
                         action_args.push(ActionArgKind::BinderList);
+                        // Skip the close Literal at i+1 — it's already
+                        // absorbed into the BinderListLoop's close-branch
+                        // dispatch. Without this skip, the close token
+                        // would be double-consumed (once by BinderListLoop,
+                        // once by the spurious pos+1 Literal arm).
+                        skip_next = true;
                     }
                     _ => return None, // Phase 5b doesn't yet handle Sep over a Simple param (collection-style).
                 }
@@ -714,30 +737,27 @@ pub(crate) fn emit_binder_rule_body(
                         // separator to chain Ident captures.
                         quote! {
                             (#result_src_idx, #rule_idx, #pos) => {
-                                // Stage 3.16 / Hack #3 (Cluster 1, Mechanism γ,
-                                // 2026-05-05): two-branch Fork over empty
-                                // (close-delim) and non-empty (first-ident)
-                                // bootstrap paths. Lex-min picks the surviving
-                                // cursor:
-                                //   - empty (weight 0.0): wins when token ==
-                                //     close. Logs StartBinderScope { names:
-                                //     vec![] } via ConsumeAndReplaceWithEffect.
-                                //   - first-ident (weight SKIP_BIAS): wins
-                                //     when token is Ident (or anything else
-                                //     in default grammars). Penalized so
-                                //     close wins when its token matches.
+                                // L12 follow-up B2 (2026-05-07): two-branch
+                                // GuardedFork over empty (close-delim) and
+                                // non-empty (first-ident) bootstrap paths.
+                                // Each branch carries a runtime guard so at
+                                // most one fires per dispatch.
                                 //
-                                // The legacy `b_pre_finalize_empty_list()`
-                                // helper is replaced by an explicit
-                                // BuilderDelta::StartBinderScope effect on
-                                // the empty branch.
+                                //   - BRANCH 1 (empty): GuardedConsumeAndReplaceWithEffect
+                                //     fires only when peek_text == close.
+                                //     Logs StartBinderScope { names: vec![] }.
+                                //   - BRANCH 2 (first ident): GuardedConsumeIdentAndReplace
+                                //     fires only when peek_kind == Ident.
+                                //
+                                // Pre-fix: BRANCH 1 (ConsumeAndReplaceWithEffect)
+                                // and BRANCH 2 (ConsumeIdentAndReplace) BOTH
+                                // fired unconditionally on every dispatch,
+                                // contributing to BinderListLoop's exponential
+                                // cursor explosion on multi-binder grammars.
                                 let _ = tokens.peek_text(_pos);
                                 return WpdsStepAction::Fork {
                                     branches: vec![
-                                        // BRANCH 1: empty close — start empty
-                                        // binder scope (via effect), then
-                                        // ConsumeAndReplace into BinderRule
-                                        // at next_pos.
+                                        // BRANCH 1: empty close — GuardedConsumeAndReplaceWithEffect
                                         mettail_prattail::wpds_walker::ForkBranch {
                                             symbol: StackSymbolV2::rule_at(
                                                 #result_src_idx, #rule_idx,
@@ -753,17 +773,15 @@ pub(crate) fn emit_binder_rule_body(
                                                 outer_bp: *outer_bp,
                                             },
                                             action_kind:
-                                                mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndReplaceWithEffect {
+                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplaceWithEffect {
+                                                    expected_text: #close.to_string(),
                                                     effect:
                                                         mettail_prattail::wpds_walker::BuilderDelta::StartBinderScope {
                                                             names: Vec::new(),
                                                         },
                                                 },
                                         },
-                                        // BRANCH 2: first ident —
-                                        // ConsumeIdentAndReplace start_scope:
-                                        // true, transition to BinderListLoop
-                                        // for subsequent idents.
+                                        // BRANCH 2: first ident — GuardedConsumeIdentAndReplace
                                         mettail_prattail::wpds_walker::ForkBranch {
                                             symbol: StackSymbolV2::rule_at(
                                                 #result_src_idx, #rule_idx,
@@ -782,7 +800,7 @@ pub(crate) fn emit_binder_rule_body(
                                                 next_pos: #next_pos,
                                             },
                                             action_kind:
-                                                mettail_prattail::wpds_walker::ForkActionKind::ConsumeIdentAndReplace {
+                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
                                                     start_scope: true,
                                                 },
                                         },
@@ -907,31 +925,38 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
                     let rule_idx = rule_i as u16;
                     arms.push(quote! {
                         (#result_src_idx, #rule_idx) => {
-                            // Stage 3.16 / Hack #2 (Cluster 1, Mechanism γ,
-                            // 2026-05-05): three-branch Fork over close /
-                            // sep / ident. Lex-min picks the surviving
-                            // cursor:
-                            //   - close (weight 0.0): wins when token_text
-                            //     == close.
-                            //   - sep (weight 0.0): wins when token_text
-                            //     == separator (mutually-exclusive with
-                            //     close in standard grammars; on G1
-                            //     ambiguous close==sep, branch-source-order
-                            //     picks close).
-                            //   - ident (weight SKIP_BIAS): wins when token
-                            //     is Ident (or any other token in default
-                            //     grammars). Penalized so close/sep win
-                            //     their token matches; emerges only when
-                            //     close/sep guards fail.
+                            // L12 follow-up B2 (2026-05-07): three-branch
+                            // GuardedFork over close / sep / ident. Each
+                            // branch carries a runtime peek_text/peek_kind
+                            // guard so at most one branch's child cursor
+                            // is allocated per dispatch. Pre-fix the
+                            // unguarded `Consume` and `ConsumeIdentAndReplace`
+                            // branches fired on every dispatch regardless
+                            // of token, multiplying cursor count
+                            // exponentially per BinderListLoop iteration
+                            // — caused >4000s hangs on rhocalc::PNew
+                            // multi-binder grammars.
                             //
-                            // Branches whose runtime guard fails produce
-                            // dropped cursors via cursor_resolution_check.
+                            // Branch semantics:
+                            //   - BRANCH 1 (close): GuardedConsumeAndReplace
+                            //     fires only when peek_text == close.
+                            //     Weight 0.0; transitions to BinderRule.
+                            //   - BRANCH 2 (sep): GuardedConsume fires
+                            //     only when peek_text == separator.
+                            //     Weight 0.0; stays in BinderListLoop.
+                            //   - BRANCH 3 (ident): GuardedConsumeIdentAndReplace
+                            //     fires only when peek_kind == Ident.
+                            //     Weight EPSILON_OPT_SKIP; stays in
+                            //     BinderListLoop.
+                            //
+                            // When all three guards fail (e.g. unexpected
+                            // punctuation), `step_fanout`'s empty-children
+                            // pathway raises `Error("all fork branches
+                            // dropped")` cleanly.
                             let _ = tokens.peek_text(_pos);
                             return WpdsStepAction::Fork {
                                 branches: vec![
-                                    // BRANCH 1: close — ConsumeAndReplace
-                                    // outer RuleAt at next_pos, transition
-                                    // to BinderRule.
+                                    // BRANCH 1: close — GuardedConsumeAndReplace
                                     mettail_prattail::wpds_walker::ForkBranch {
                                         symbol: StackSymbolV2::rule_at(
                                             #result_src_idx, #rule_idx,
@@ -947,11 +972,11 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
                                             outer_bp: *outer_bp,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndReplace,
+                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplace {
+                                                expected_text: #close.to_string(),
+                                            },
                                     },
-                                    // BRANCH 2: sep — Consume separator,
-                                    // return to BinderListLoop for next
-                                    // ident.
+                                    // BRANCH 2: sep — GuardedConsume
                                     mettail_prattail::wpds_walker::ForkBranch {
                                         symbol: StackSymbolV2::category_entry(0),
                                         weight: LexicographicWeight::from_cost(
@@ -966,11 +991,11 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
                                             next_pos: *next_pos,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::Consume,
+                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsume {
+                                                expected_text: #separator.to_string(),
+                                            },
                                     },
-                                    // BRANCH 3: ident — ConsumeIdentAndReplace
-                                    // append to existing scope (start_scope:
-                                    // false), return to BinderListLoop.
+                                    // BRANCH 3: ident — GuardedConsumeIdentAndReplace
                                     mettail_prattail::wpds_walker::ForkBranch {
                                         symbol: StackSymbolV2::rule_at(
                                             #result_src_idx, #rule_idx,
@@ -989,7 +1014,7 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
                                             next_pos: *next_pos,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::ConsumeIdentAndReplace {
+                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
                                                 start_scope: false,
                                             },
                                     },

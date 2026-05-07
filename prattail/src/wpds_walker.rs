@@ -540,6 +540,31 @@ pub enum ForkActionKind {
     /// no child allocated. See `GuardedConsumeAndReplace` for the
     /// fanout-survival rationale.
     GuardedConsumeIdentAndReplace { start_scope: bool },
+
+    /// L12 follow-up B2 (2026-05-07) — closure for BinderListLoop's
+    /// separator branch. Mirrors `WpdsStepAction::Consume` but gated on
+    /// a `peek_text == expected_text` check. Pass → consume one token,
+    /// no GSS change. Fail → no child allocated. Replaces the
+    /// previously-unguarded `Consume` branch in BinderListLoop's
+    /// 3-branch Fork — that branch ran on every dispatch regardless of
+    /// token, causing exponential cursor multiplication and >4000s hangs
+    /// on rhocalc::PNew multi-binder grammars.
+    GuardedConsume { expected_text: String },
+
+    /// L12 follow-up B2 (2026-05-07) — closure for BinderListLoop
+    /// bootstrap empty-list branch. Mirrors
+    /// `WpdsStepAction::ConsumeAndReplace` plus a pre-replace
+    /// `BuilderDelta` effect (typically
+    /// `BuilderDelta::StartBinderScope { names: vec![] }`), gated on
+    /// `peek_text == expected_text`. Pass → log effect to
+    /// pending_builder_ops, replace top of GSS, advance pos. Fail →
+    /// no child allocated. Used by BinderListLoop's 2-branch bootstrap
+    /// (empty-list + first-ident) so the empty-list branch only fires
+    /// when the close delimiter is the next token.
+    GuardedConsumeAndReplaceWithEffect {
+        expected_text: String,
+        effect: BuilderDelta,
+    },
 }
 
 impl<W: Semiring> std::fmt::Debug for ForkBranch<W>
@@ -2909,16 +2934,24 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 .peek_text(child.pos)
                                 .unwrap_or("")
                                 .to_string();
+                            // L12 follow-up (B1, 2026-05-07): emit_push_ident MUST
+                            // run unconditionally — emit_start_binder_scope pushes
+                            // BinderHandle to binder_scopes, but the action body's
+                            // Ident-typed parameter expects ActionArg::Ident on
+                            // the arg stack regardless of start_scope. Mirrors the
+                            // canonical WpdsStepAction::ConsumeIdentAndReplace arm
+                            // at line ~2521. Pre-fix: when start_scope=true, the
+                            // else branch never ran, so emit_push_ident was
+                            // skipped → action body's Ident parameter missing →
+                            // malformed AST (e.g. Term::TVar instead of Term::Lam).
                             if start_scope {
                                 self.emit_start_binder_scope(
                                     &mut child,
                                     vec![text.clone()],
                                 );
-                            } else {
-                                let pos_now = child.pos;
-                                self.emit_push_ident(&mut child, text, pos_now);
                             }
                             let pos_now = child.pos;
+                            self.emit_push_ident(&mut child, text, pos_now);
                             let _ = self.cursor_gss_replace_top(
                                 &mut child,
                                 branch.symbol,
@@ -3204,15 +3237,86 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 .peek_text(child.pos)
                                 .unwrap_or("")
                                 .to_string();
+                            // L12 follow-up (B1, 2026-05-07): emit_push_ident MUST
+                            // run unconditionally — see twin fix at line ~2920 in
+                            // the in-Fork ConsumeIdentAndReplace arm. Mirrors
+                            // canonical WpdsStepAction::ConsumeIdentAndReplace at
+                            // line ~2521.
                             if start_scope {
                                 self.emit_start_binder_scope(
                                     &mut child,
                                     vec![text.clone()],
                                 );
-                            } else {
-                                let pos_now = child.pos;
-                                self.emit_push_ident(&mut child, text, pos_now);
                             }
+                            let pos_now = child.pos;
+                            self.emit_push_ident(&mut child, text, pos_now);
+                            let _ = self.cursor_gss_replace_top(
+                                &mut child,
+                                branch.symbol,
+                                pos_now,
+                                branch.weight.clone(),
+                            );
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                        }
+
+                        ForkActionKind::GuardedConsume { expected_text } => {
+                            // L12 follow-up B2 (2026-05-07): peek_text
+                            // equality guard. Pass → Consume semantics
+                            // (advance pos, no GSS change). Fail → skip
+                            // child allocation. Used by BinderListLoop's
+                            // separator branch — pre-fix this was the
+                            // unguarded `Consume` action_kind that fired
+                            // unconditionally and caused exponential
+                            // cursor multiplication on multi-binder rules.
+                            let peek = tokens.peek_text(pos_after).unwrap_or("");
+                            if peek != expected_text.as_str() {
+                                continue;
+                            }
+                            let mut child = BranchCursor::fork_child(
+                                cursor,
+                                pos_after,
+                                cursor.weight.times(&branch.weight),
+                                branch.new_state.clone(),
+                                child_source_priority,
+                            );
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                        }
+
+                        ForkActionKind::GuardedConsumeAndReplaceWithEffect {
+                            expected_text,
+                            effect,
+                        } => {
+                            // L12 follow-up B2 (2026-05-07): peek_text
+                            // equality guard wrapping ConsumeAndReplaceWithEffect.
+                            // Pass → log effect to pending_builder_ops,
+                            // replace top of GSS, advance pos. Fail →
+                            // skip child allocation. Used by BinderListLoop's
+                            // bootstrap empty-list branch (effect:
+                            // BuilderDelta::StartBinderScope { names: vec![] })
+                            // — pre-fix the unguarded effect-bearing branch
+                            // fired on every dispatch and produced spurious
+                            // empty-binder-scope cursors that contributed to
+                            // the exponential explosion.
+                            let peek = tokens.peek_text(pos_after).unwrap_or("");
+                            if peek != expected_text.as_str() {
+                                continue;
+                            }
+                            let mut child = BranchCursor::fork_child(
+                                cursor,
+                                pos_after,
+                                cursor.weight.times(&branch.weight),
+                                branch.new_state.clone(),
+                                child_source_priority,
+                            );
+                            child.pending_builder_ops.push(effect);
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
                                 &mut child,
