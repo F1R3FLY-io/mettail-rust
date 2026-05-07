@@ -56,6 +56,14 @@ fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {
             let b_norm = normalize_query_send_sugar_proc(b.as_ref());
             merge_pp_parallel(a_norm, b_norm)
         },
+        Proc::POutputEmpty(n) => Proc::POutput(
+            Box::new(n.as_ref().clone()),
+            Box::new(Proc::CastList(Box::new(List::ListLit(vec![])))),
+        ),
+        Proc::PPersistOutputEmpty(n) => Proc::PPersistOutput(
+            Box::new(n.as_ref().clone()),
+            Box::new(Proc::CastList(Box::new(List::ListLit(vec![])))),
+        ),
         Proc::POutput2Plus(n, a, bs) => {
             let a_norm = normalize_query_send_sugar_proc(a.as_ref());
             let bs_norm: Vec<Proc> = bs.iter().map(normalize_query_send_sugar_proc).collect();
@@ -77,6 +85,14 @@ fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {
                 Box::new(n.as_ref().clone()),
                 Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
             )
+        },
+        Proc::POutput(n, q) => {
+            let q_norm = crate::rhocalc::receive::canonicalize_arity_payload(q.as_ref());
+            Proc::POutput(Box::new(n.as_ref().clone()), Box::new(q_norm))
+        },
+        Proc::PPersistOutput(n, q) => {
+            let q_norm = crate::rhocalc::receive::canonicalize_arity_payload(q.as_ref());
+            Proc::PPersistOutput(Box::new(n.as_ref().clone()), Box::new(q_norm))
         },
         Proc::PForUser(rows, body) => {
             let body_norm = normalize_query_send_sugar_proc(body.as_ref());

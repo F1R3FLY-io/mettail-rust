@@ -6,6 +6,51 @@ use mettail_runtime::{Binder, FreeVar, HashBag, OrdVar, Scope, Var};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
+fn list_proc(items: Vec<Proc>) -> Proc {
+    Proc::CastList(Box::new(List::ListLit(items)))
+}
+
+pub(crate) fn canonicalize_arity_payload(payload: &Proc) -> Proc {
+    match payload {
+        Proc::CastList(_) => payload.clone(),
+        Proc::PZero => list_proc(vec![]),
+        _ => list_proc(vec![payload.clone()]),
+    }
+}
+
+pub(crate) fn canonicalize_arity_pattern(pattern: &Proc) -> Proc {
+    match pattern {
+        Proc::CastList(_) => pattern.clone(),
+        _ => list_proc(vec![pattern.clone()]),
+    }
+}
+
+fn bind_to_arity_pattern(bind: &InputBind) -> Option<Proc> {
+    match bind {
+        InputBind::InputBind(lhs, _)
+        | InputBind::InputBindPersistent(lhs, _)
+        | InputBind::InputBindQuery(lhs, _, _) => {
+            Some(list_proc(vec![name_pattern_to_proc(lhs.as_ref())]))
+        },
+        InputBind::InputBindPolyadic(lhs, lhss, _)
+        | InputBind::InputBindPersistentPolyadic(lhs, lhss, _) => {
+            let mut items = Vec::with_capacity(1 + lhss.len());
+            items.push(name_pattern_to_proc(lhs.as_ref()));
+            items.extend(lhss.iter().map(name_pattern_to_proc));
+            Some(list_proc(items))
+        },
+        InputBind::InputBindEmpty(_)
+        | InputBind::InputBindEmptyPersistent(_)
+        | InputBind::InputBindEmptyQuery(_, _) => Some(list_proc(vec![])),
+        InputBind::InputBindQuoted(pat, _)
+        | InputBind::InputBindQuotedPersistent(pat, _)
+        | InputBind::InputBindQuotedQuery(pat, _, _) => {
+            Some(canonicalize_arity_pattern(pat.as_ref()))
+        },
+        _ => None,
+    }
+}
+
 pub(crate) fn name_pattern_to_proc(name_pat: &Name) -> Proc {
     match name_pat {
         Name::NVar(v) => Proc::PVar(v.clone()),
@@ -15,36 +60,7 @@ pub(crate) fn name_pattern_to_proc(name_pat: &Name) -> Proc {
 }
 
 pub(crate) fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
-    match bind {
-        InputBind::InputBind(lhs, _) => Some(name_pattern_to_proc(lhs.as_ref())),
-        InputBind::InputBindPersistent(lhs, _) => Some(name_pattern_to_proc(lhs.as_ref())),
-        InputBind::InputBindPolyadic(lhs, lhss, _) => {
-            let mut items = Vec::with_capacity(1 + lhss.len());
-            items.push(name_pattern_to_proc(lhs.as_ref()));
-            items.extend(lhss.iter().map(name_pattern_to_proc));
-            Some(Proc::CastList(Box::new(List::ListLit(items))))
-        },
-        InputBind::InputBindPersistentPolyadic(lhs, lhss, _) => {
-            let mut items = Vec::with_capacity(1 + lhss.len());
-            items.push(name_pattern_to_proc(lhs.as_ref()));
-            items.extend(lhss.iter().map(name_pattern_to_proc));
-            Some(Proc::CastList(Box::new(List::ListLit(items))))
-        },
-        InputBind::InputBindQuery(lhs, _, _) => Some(name_pattern_to_proc(lhs.as_ref())),
-        InputBind::InputBindEmpty(_) => {
-            Some(Proc::PVar(OrdVar(Var::Free(FreeVar::fresh_named("__wild_recv")))))
-        },
-        InputBind::InputBindEmptyPersistent(_) => {
-            Some(Proc::PVar(OrdVar(Var::Free(FreeVar::fresh_named("__wild_recv")))))
-        },
-        InputBind::InputBindEmptyQuery(_, _) => {
-            Some(Proc::PVar(OrdVar(Var::Free(FreeVar::fresh_named("__wild_recv")))))
-        },
-        InputBind::InputBindQuoted(pat, _) => Some(pat.as_ref().clone()),
-        InputBind::InputBindQuotedPersistent(pat, _) => Some(pat.as_ref().clone()),
-        InputBind::InputBindQuotedQuery(pat, _, _) => Some(pat.as_ref().clone()),
-        _ => None,
-    }
+    bind_to_arity_pattern(bind)
 }
 
 fn bind_channel_name(bind: &InputBind) -> Option<&Name> {
@@ -237,7 +253,9 @@ fn match_bag_pattern(
 
 pub(crate) fn receive_apply(pattern: &Proc, value: &Proc, body: &Proc) -> Option<Proc> {
     let mut env: HashMap<FreeVar<String>, Proc> = HashMap::new();
-    if !collect_pattern_bindings(pattern, value, &mut env) {
+    let norm_pattern = canonicalize_arity_pattern(pattern);
+    let norm_value = canonicalize_arity_payload(value);
+    if !collect_pattern_bindings(&norm_pattern, &norm_value, &mut env) {
         return None;
     }
     Some(apply_pattern_env(body, &env))
@@ -501,29 +519,20 @@ fn collect_input_bindings(
     q: &Proc,
     env: &mut HashMap<FreeVar<String>, Proc>,
 ) -> bool {
-    match ib {
-        InputBind::InputBind(lhs, _) | InputBind::InputBindPersistent(lhs, _) => {
-            match lhs.as_ref() {
-                Name::NVar(OrdVar(Var::Free(fv))) => {
-                    if let Some(bound) = env.get(fv) {
-                        bound.term_eq(q)
-                    } else {
-                        env.insert(fv.clone(), q.clone());
-                        true
-                    }
-                },
-                _ => false,
-            }
-        },
-        InputBind::InputBindEmpty(_) | InputBind::InputBindEmptyPersistent(_) => true,
-        _ => {
-            let pat = match bind_pattern_proc(ib) {
-                Some(p) => p,
-                None => return false,
-            };
-            collect_pattern_bindings(&pat, q, env)
-        },
+    if matches!(
+        ib,
+        InputBind::InputBindEmpty(_)
+            | InputBind::InputBindEmptyPersistent(_)
+            | InputBind::InputBindEmptyQuery(_, _)
+    ) {
+        return true;
     }
+    let pat = match bind_to_arity_pattern(ib) {
+        Some(p) => p,
+        None => return false,
+    };
+    let q_norm = canonicalize_arity_payload(q);
+    collect_pattern_bindings(&pat, &q_norm, env)
 }
 
 /// Continuation process inside the outer `for` row: either the parsed body or

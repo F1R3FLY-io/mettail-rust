@@ -83,12 +83,18 @@ language! {
         // Empty send sugar: `x!()` sends empty process payload.
         POutputEmpty . n:Name
         |- n "!" "(" ")" : Proc ![{
-            Proc::POutput(Box::new(n.clone()), Box::new(Proc::PZero))
+            Proc::POutput(
+                Box::new(n.clone()),
+                Box::new(Proc::CastList(Box::new(List::ListLit(vec![])))),
+            )
         }] fold;
         // Empty persistent send sugar: `x!!()` sends empty process payload.
         PPersistOutputEmpty . n:Name
         |- n "!!" "(" ")" : Proc ![{
-            Proc::PPersistOutput(Box::new(n.clone()), Box::new(Proc::PZero))
+            Proc::PPersistOutput(
+                Box::new(n.clone()),
+                Box::new(Proc::CastList(Box::new(List::ListLit(vec![])))),
+            )
         }] fold;
         // Sugar for polyadic send: `x!(a, b, c)` is parsed as `x!([a, b, c])`.
         //
@@ -1215,6 +1221,21 @@ language! {
                     Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
                 )
             };
+
+        // Canonicalize unary/empty output payloads to list-shaped arity payload.
+        fold_proc(s.clone(), res) <--
+            proc(s),
+            if let Proc::POutput(ref n, ref q) = s,
+            let q_norm = crate::rhocalc::receive::canonicalize_arity_payload(q.as_ref()),
+            if !q_norm.term_eq(q.as_ref()),
+            let res = Proc::POutput(Box::new(n.as_ref().clone()), Box::new(q_norm));
+
+        fold_proc(s.clone(), res) <--
+            proc(s),
+            if let Proc::PPersistOutput(ref n, ref q) = s,
+            let q_norm = crate::rhocalc::receive::canonicalize_arity_payload(q.as_ref()),
+            if !q_norm.term_eq(q.as_ref()),
+            let res = Proc::PPersistOutput(Box::new(n.as_ref().clone()), Box::new(q_norm));
 
         // fold *(@(P)) to P so that remove(*(@(bag)), *(@(elem))) can reduce (Exec semantics in fold)
         fold_proc(s.clone(), res) <--

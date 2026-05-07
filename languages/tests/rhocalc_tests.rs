@@ -360,7 +360,7 @@ mod comm {
             out
         );
         assert!(
-            out.contains("c!!(p)"),
+            out.contains("c!!([p])") || out.contains("c!!(p)"),
             "expected persistent send to remain after one COMM step, got {}",
             out
         );
@@ -1399,6 +1399,27 @@ mod parsing {
     }
 
     #[test]
+    fn send_empty_is_list_sugar() {
+        fresh();
+        let empty = parse("x!()").normalize();
+        let list = parse("x!([])").normalize();
+        assert!(
+            empty.term_eq(&list),
+            "expected empty send sugar to match empty list payload: empty=`{}` list=`{}`",
+            empty,
+            list
+        );
+    }
+
+    #[test]
+    fn send_unary_is_list_sugar() {
+        fresh();
+        let unary = parse("x!(0)").normalize();
+        let list = parse("x!([0])").normalize();
+        assert!(unary.term_eq(&list), "expected unary send to canonicalize to singleton list");
+    }
+
+    #[test]
     fn send_polyadic_two_args_is_list_sugar() {
         fresh();
         let poly = parse("x!(1, 2)").normalize();
@@ -1414,6 +1435,30 @@ mod parsing {
         assert!(
             poly.term_eq(&list),
             "expected persistent polyadic send sugar to match list payload"
+        );
+    }
+
+    #[test]
+    fn persistent_send_empty_is_list_sugar() {
+        fresh();
+        let empty = parse("x!!()").normalize();
+        let list = parse("x!!([])").normalize();
+        assert!(
+            empty.term_eq(&list),
+            "expected persistent empty send sugar to match empty list payload: empty=`{}` list=`{}`",
+            empty,
+            list
+        );
+    }
+
+    #[test]
+    fn persistent_send_unary_is_list_sugar() {
+        fresh();
+        let unary = parse("x!!(0)").normalize();
+        let list = parse("x!!([0])").normalize();
+        assert!(
+            unary.term_eq(&list),
+            "expected persistent unary send to canonicalize to singleton list"
         );
     }
 
