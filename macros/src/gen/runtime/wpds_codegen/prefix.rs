@@ -432,6 +432,25 @@ pub fn first_set_of_category(
     // (e.g., `CanonicalBigInt`'s bare-Integer arm) are excluded — including
     // them here would shadow primitive-integer cross-cat projections.
     collect_first_set(cat_name, language, &mut acc, &mut visited);
+    // B10 / Option κ Fix A (2026-05-07): dedup by `(pattern_str, guard_str)`.
+    // The synthetic-Var pre-walk in `collect_first_set` AND the per-rule
+    // VarRule pass both push `Some(Ident)`; the recursive cross-cat-projection
+    // walk re-adds entries already present. Result was a Fork emission with
+    // byte-identical Push branches, multiplying cursor count without changing
+    // outcomes. The dedup key matches the `(pat_str, guard_str)` shape used
+    // by `unified_buckets` so consumer bucket-fill stays deduplication-safe.
+    let mut seen: std::collections::BTreeSet<(String, String)> =
+        std::collections::BTreeSet::new();
+    acc.retain(|ft| {
+        let key = (
+            ft.pattern.to_string(),
+            ft.extra_guard
+                .as_ref()
+                .map(|g| g.to_string())
+                .unwrap_or_default(),
+        );
+        seen.insert(key)
+    });
     acc
 }
 
@@ -975,27 +994,53 @@ pub fn emit_prefix_arms_for_category(
         });
         entry.descs.push(UnifiedDescriptor::Atomic(desc));
     }
+    // B10 / Option κ Fix B (2026-05-07): fold Pass 2a CrossCatProjection
+    // arms into the SAME unified_buckets so collisions with Pass 0/1
+    // entries on the same `(pat, guard)` key emit a Fork mixing all
+    // three kinds (atomic-home + cross-cat-LHS + cross-cat-projection).
+    // Replaces the prior separate `emit_cross_cat_projection_arms_bucketed`
+    // call which emitted projection arms AFTER the unified arms — Rust
+    // first-match-wins dead-coded any projection arm whose `(pat, guard)`
+    // was already taken by a Pass-1 atomic arm. Same SHAPE class as the
+    // Pass-0/1 silent-shadow bug B7 closed.
+    for &(rule_idx, rule) in rules_in_category {
+        if let AtomicShape::CrossCatProjection {
+            source_cat_name, ..
+        } = classify_atomic(rule, language)
+        {
+            let source_src_idx = categories
+                .iter()
+                .position(|c| c == &source_cat_name)
+                .map(|i| i as u16)
+                .unwrap_or(0);
+            for ft in first_set_of_category(&source_cat_name, language) {
+                let pat_str = ft.pattern.to_string();
+                let guard_str = ft
+                    .extra_guard
+                    .as_ref()
+                    .map(|g| g.to_string())
+                    .unwrap_or_default();
+                let key = (pat_str, guard_str);
+                if !unified_buckets.contains_key(&key) {
+                    unified_order.push(key.clone());
+                }
+                let entry = unified_buckets.entry(key).or_insert_with(|| {
+                    UnifiedBucket {
+                        pat: ft.pattern.clone(),
+                        extra_guard: ft.extra_guard.clone(),
+                        descs: Vec::new(),
+                    }
+                });
+                entry.descs.push(UnifiedDescriptor::CrossCatProjection {
+                    rule_idx,
+                    source_src_idx,
+                });
+            }
+        }
+    }
     for key in unified_order {
         let entry = unified_buckets.remove(&key).expect("bucket present in order");
         arms.push(emit_unified_arm(category_src_idx, &entry));
-    }
-    // Pass 2a: collect cross-cat projections, then emit bucket-then-Fork.
-    // F8 (2026-04-28): replaces per-rule emission + IntSuffix runtime guard.
-    let projections: Vec<(u16, String)> = rules_in_category
-        .iter()
-        .filter_map(|&(rule_idx, rule)| match classify_atomic(rule, language) {
-            AtomicShape::CrossCatProjection { source_cat_name, .. } => {
-                Some((rule_idx, source_cat_name))
-            }
-            _ => None,
-        })
-        .collect();
-    if !projections.is_empty() {
-        arms.push(emit_cross_cat_projection_arms_bucketed(
-            category_src_idx,
-            &projections,
-            language,
-        ));
     }
     // Pass 2b: cross-cat-prefix-unary arms (trigger-literal + delegation).
     // No shipped grammar shares a unary trigger across rules in the same
@@ -1020,145 +1065,14 @@ pub fn emit_prefix_arms_for_category(
     quote! { #(#arms)* }
 }
 
-/// F8 (2026-04-28): emit cross-cat projection arms for ALL projections in
-/// a result category, bucketed by `(pattern, extra_guard)`. Single-projection
-/// buckets emit `Push` arms; multi-projection buckets emit
-/// `WpdsStepAction::Fork` with one branch per projection. Lex-min over
-/// `from_cost(0.0, category_src, rule_idx)` picks the surviving branch
-/// (preserves source-order tiebreak).
-///
-/// Replaces the pre-F8 per-rule emission + `IntSuffix::from_text` runtime
-/// guard heuristic. Post-B11, `EmissionContext::FirstSet` excludes
-/// bare-Integer arms, so the IntSuffix guard was dead code; remaining
-/// ambiguity from category-bound FIRST tokens shared via transitive FIRST
-/// chains (e.g., Calculator's `IntToBigInt` cross-cat puts `IntegerLit("Int")`
-/// in BigInt's FIRST, shared by `Proc::ProcInt` and `Proc::ProcBigInt`) is
-/// resolved by Fork + lex-min — the principled WPDS mechanism.
-fn emit_cross_cat_projection_arms_bucketed(
-    category_src_idx: u16,
-    projections: &[(u16, String)],
-    language: &LanguageDef,
-) -> TokenStream {
-    use std::collections::BTreeMap;
-
-    struct ProjectionBranch {
-        rule_idx: u16,
-        source_src_idx: u16,
-    }
-    struct BucketEntry {
-        pat: TokenStream,
-        extra_guard: Option<TokenStream>,
-        branches: Vec<ProjectionBranch>,
-    }
-
-    let categories = super::collect_category_names_with_literals(language);
-    // Bucket key = (stringified pattern, stringified extra_guard).
-    // Two projections with same pat AND same guard go into one bucket
-    // (Fork). Same pat with different guards are mutually exclusive at
-    // runtime (e.g., `__cat == "Int"` vs `__cat == "BigInt"`) → separate
-    // buckets, first-match-wins is correct semantics.
-    //
-    // Option A (per-cursor collection support, 2026-04-28): the walker
-    // can now drive cursors through any FIRST token, including transitive
-    // cross-cat tokens that lead to collection-opening in the source
-    // category. Fork emission applies uniformly — no `via_cross_cat`
-    // filter needed.
-    let mut buckets: BTreeMap<(String, String), BucketEntry> = BTreeMap::new();
-    for (rule_idx, source_cat_name) in projections {
-        let source_src_idx = categories
-            .iter()
-            .position(|c| c == source_cat_name)
-            .map(|i| i as u16)
-            .unwrap_or(0);
-        for ft in first_set_of_category(source_cat_name, language) {
-            let pat_str = ft.pattern.to_string();
-            let guard_str = ft
-                .extra_guard
-                .as_ref()
-                .map(|g| g.to_string())
-                .unwrap_or_default();
-            let key = (pat_str, guard_str);
-            let entry = buckets.entry(key).or_insert_with(|| BucketEntry {
-                pat: ft.pattern.clone(),
-                extra_guard: ft.extra_guard.clone(),
-                branches: Vec::new(),
-            });
-            entry.branches.push(ProjectionBranch {
-                rule_idx: *rule_idx,
-                source_src_idx,
-            });
-        }
-    }
-
-    let mut arms = Vec::new();
-    for (_key, entry) in buckets {
-        let pat = entry.pat;
-        let guard = match &entry.extra_guard {
-            Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
-            None => quote! { state_cat_src_idx == #category_src_idx },
-        };
-        if entry.branches.len() == 1 {
-            // Single-projection bucket: emit Push directly.
-            let b = &entry.branches[0];
-            let rule_idx = b.rule_idx;
-            let source_src_idx = b.source_src_idx;
-            arms.push(quote! {
-                #pat if #guard => {
-                    return WpdsStepAction::Push {
-                        symbol: StackSymbolV2::rule_at(
-                            #category_src_idx, #rule_idx, 0, Some(_outer_bp),
-                        ).with_kind_return(),
-                        weight: LexicographicWeight::from_cost(
-                            0.0, #category_src_idx, #rule_idx,
-                        ),
-                        new_state: WpdsState::CrossCatDelegate {
-                            source_src_idx: #source_src_idx,
-                            outer_bp: _outer_bp,
-                        },
-                    };
-                }
-            });
-        } else {
-            // Multi-projection bucket: emit Fork over all candidates.
-            // `consume_trigger: false` because the FIRST token belongs to
-            // the source-category sub-parse (CrossCatDelegate dispatches
-            // into source's PrefixDispatch, which consumes the token).
-            let branches: Vec<TokenStream> = entry
-                .branches
-                .iter()
-                .map(|b| {
-                    let rule_idx = b.rule_idx;
-                    let source_src_idx = b.source_src_idx;
-                    quote! {
-                        mettail_prattail::wpds_walker::ForkBranch {
-                            symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 0, Some(_outer_bp),
-                            ).with_kind_return(),
-                            weight: LexicographicWeight::from_cost(
-                                0.0, #category_src_idx, #rule_idx,
-                            ),
-                            new_state: WpdsState::CrossCatDelegate {
-                                source_src_idx: #source_src_idx,
-                                outer_bp: _outer_bp,
-                            },
-                            // Stage 3.12 / Class A.i (2026-05-01): default Push.
-                            action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
-                        }
-                    }
-                })
-                .collect();
-            arms.push(quote! {
-                #pat if #guard => {
-                    return WpdsStepAction::Fork {
-                        branches: vec![ #( #branches ),* ],
-                        consume_trigger: false,
-                    };
-                }
-            });
-        }
-    }
-    quote! { #(#arms)* }
-}
+// B10 / Option κ Fix B (2026-05-07): `emit_cross_cat_projection_arms_bucketed`
+// removed. Pass 2a CrossCatProjection arms now fold into the same
+// `unified_buckets` map as Pass 0/1 in `emit_prefix_arms_for_category`,
+// emitted via `emit_unified_arm` with `BP_TIER_CROSSCAT_PROJECTION = 0.025`
+// weight. Closes the Pass-1/2a silent-shadow bug analogous to B7's Pass-0/1
+// fix: pre-B10 the projection arms were emitted AFTER unified arms, so any
+// projection sharing a `(pat, guard)` key with a Pass-1 atomic was dead
+// code via Rust's first-match-wins.
 
 /// Stage 1.1: emit a single prefix arm for a cross-cat prefix unary rule.
 fn emit_cross_cat_prefix_unary_arm(
@@ -1288,6 +1202,10 @@ fn atomic_arm_descriptors(
 /// B7 (2026-05-07) — unified descriptor for the merged Pass 0/Pass 1
 /// bucket map. Each bucket entry is a list of these; singleton buckets
 /// emit a direct arm matching their kind; mixed buckets emit a Fork.
+///
+/// B10 / Option κ Fix B (2026-05-07): adds `CrossCatProjection` so Pass 2a
+/// folds into the same bucket map. Closes the Pass-1/2a silent shadow
+/// twin of the Pass-0/1 bug B7 fixed.
 enum UnifiedDescriptor {
     /// Cross-cat infix LHS delegation arm — pushes
     /// `CategoryEntry(source_src_idx)` so the LHS sub-parses against
@@ -1298,6 +1216,11 @@ enum UnifiedDescriptor {
     /// home-category leaf rule (literal, var, terminal-keyword, etc.).
     /// Per-tier weight: `0.0` (atomic-home).
     Atomic(PrefixArmDescriptor),
+    /// B10 / Option κ Fix B — Pass 2a CrossCatProjection delegation arm.
+    /// Pushes `rule_at(category, rule_idx, 0).with_kind_return()` and
+    /// transitions to `CrossCatDelegate { source_src_idx, outer_bp }`.
+    /// Per-tier weight: `BP_TIER_CROSSCAT_PROJECTION = 0.025`.
+    CrossCatProjection { rule_idx: u16, source_src_idx: u16 },
 }
 
 /// B7 (2026-05-07) — unified bucket entry. Replaces the separate
@@ -1341,6 +1264,34 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 }
             }
             UnifiedDescriptor::Atomic(desc) => emit_atomic_arm_singleton(desc),
+            UnifiedDescriptor::CrossCatProjection {
+                rule_idx,
+                source_src_idx,
+            } => {
+                let rule_idx = *rule_idx;
+                let source_src_idx = *source_src_idx;
+                quote! {
+                    #pat if #guard => {
+                        // B10 / Option κ Fix B (2026-05-07): cross-cat
+                        // projection singleton — Push the rule's Return
+                        // marker and route to CrossCatDelegate so the
+                        // source-cat sub-parse fires; on return, the
+                        // projection's action wraps the source term.
+                        return WpdsStepAction::Push {
+                            symbol: StackSymbolV2::rule_at(
+                                #category_src_idx, #rule_idx, 0, Some(_outer_bp),
+                            ).with_kind_return(),
+                            weight: LexicographicWeight::from_cost(
+                                0.0, #category_src_idx, #rule_idx,
+                            ),
+                            new_state: WpdsState::CrossCatDelegate {
+                                source_src_idx: #source_src_idx,
+                                outer_bp: _outer_bp,
+                            },
+                        };
+                    }
+                }
+            }
         }
     } else {
         let branches: Vec<TokenStream> = bucket
@@ -1377,6 +1328,29 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             ),
                             new_state: WpdsState::Unwinding,
                             action_kind: mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndCaptureAndPush,
+                        }
+                    }
+                }
+                UnifiedDescriptor::CrossCatProjection {
+                    rule_idx,
+                    source_src_idx,
+                } => {
+                    let rule_idx = *rule_idx;
+                    let src_idx = *source_src_idx;
+                    quote! {
+                        mettail_prattail::wpds_walker::ForkBranch {
+                            symbol: StackSymbolV2::rule_at(
+                                #category_src_idx, #rule_idx, 0, Some(_outer_bp),
+                            ).with_kind_return(),
+                            weight: LexicographicWeight::from_cost(
+                                mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
+                                #category_src_idx, #rule_idx,
+                            ),
+                            new_state: WpdsState::CrossCatDelegate {
+                                source_src_idx: #src_idx,
+                                outer_bp: _outer_bp,
+                            },
+                            action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
                         }
                     }
                 }

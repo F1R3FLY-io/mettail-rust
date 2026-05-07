@@ -3676,6 +3676,22 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // grammars vs the prior exponential branch count.
         self.merge_equivalent_cursors();
 
+        // B10 / Option κ Part 3 (2026-05-07): lex-dominated cursor
+        // subsumption. After strict-key merge, group remaining cursors
+        // by RELAXED key `(state, gss-node-symbol, pos)` (intentionally
+        // dropping `incoming_edge_stack` — that discriminator exists
+        // for pop-time determinism with structural sharing, not for
+        // parse-time semantic distinctness). Within each group, drop
+        // any cursor C if a sibling S has `S.weight.lex_cmp(C.weight) ==
+        // Less`. This is algebraically equivalent to lex-min selection
+        // at EOI — pruning eagerly caps fanout before the next
+        // step_fanout iteration re-amplifies via Pass 0/1/2a Forks.
+        // Recovery semantics are unchanged; recovery dispatch can itself
+        // be lex-dominated and dropped iff a non-recovering sibling at
+        // the same configuration has lower weight, which is the
+        // WPDS-correct outcome.
+        self.subsume_lex_dominated_cursors();
+
         if self.branch_cursors.is_empty() {
             // CASE 1: all branches dropped.
             let s = WpdsState::Error {
@@ -3785,6 +3801,126 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             }
         }
         self.branch_cursors = merged;
+    }
+
+    /// B10 / Option κ Part 3 (2026-05-07) — lex-dominated cursor subsumption.
+    ///
+    /// Runs after `merge_equivalent_cursors`. Groups remaining cursors by a
+    /// RELAXED `(state, gss-node-symbol, pos)` key — intentionally dropping
+    /// the `incoming_edge_stack` discriminator from the merge-key. That
+    /// discriminator exists for pop-time determinism with structural sharing
+    /// (see `merge_equivalent_cursors` rationale at the `incoming_edge` field
+    /// comment); it is NOT a parse-time semantic distinguisher. Two cursors
+    /// at the same `(state, gss-node-symbol, pos)` but different edge
+    /// histories are at the SAME parse configuration — lex-min selects the
+    /// better one; the loser's edge history is consumed by GSS GC.
+    ///
+    /// Within each group, this pass drops any cursor C iff a sibling S has
+    /// `S.weight.lex_cmp(C.weight) == Less` AND
+    /// `S.source_priority <= C.source_priority` (the second clause prevents
+    /// reversing the existing source-priority tiebreak that
+    /// `merge_equivalent_cursors` enforces).
+    ///
+    /// **Algebraic equivalence**: pruning a strictly-dominated cursor is
+    /// definitionally what tropical lex-min does at EOI. This pass moves
+    /// that work to step time, where it caps fanout BEFORE the next
+    /// `step_fanout` iteration re-amplifies via Pass 0/1/2a Forks at shared-
+    /// FIRST tokens.
+    ///
+    /// **Recovery preservation**: recovery semantics are unchanged. Recovery
+    /// dispatch fires at the same dead-ends as before; if a non-recovering
+    /// sibling at the same parse configuration has lower weight, the
+    /// recovering cursor is lex-dominated — dropping it is the WPDS-correct
+    /// outcome (the parse already has a strictly-better path).
+    ///
+    /// **Rationale (LedTest cursor explosion)**: post-B7 mixed-bucket Forks
+    /// at shared-FIRST tokens (e.g. `Some(Integer)` for Num's atomic NumLit
+    /// + cross-cat-LHS EqNum/NeNum + cross-cat-projection PredToNum) generate
+    /// sibling cursors at the same `(state, node-symbol, pos)` configuration
+    /// but with diverging `incoming_edge_stack` tails. The strict-key
+    /// `merge_equivalent_cursors` cannot collapse them; without this pass,
+    /// every successor PrefixDispatch re-emits the same Fork, doubling the
+    /// live cursor count per recursive cross-cat cycle iteration (Pred → Num
+    /// → Pred → ...). Subsumption converges the live set to the lex-min
+    /// representative per configuration; the recursive cycle still exists
+    /// but is bounded.
+    fn subsume_lex_dominated_cursors(&mut self) {
+        if self.branch_cursors.len() < 2 {
+            return;
+        }
+        // Group by (state, node-symbol, pos). Cursors whose gss node has
+        // been GC'd (no live reference) get a `None` symbol key — they
+        // form a degenerate group of their own.
+        let mut by_relaxed: std::collections::HashMap<
+            (WpdsState, Option<crate::wpds_runtime::StackSymbolV2>, usize),
+            Vec<usize>,
+        > = std::collections::HashMap::with_capacity(self.branch_cursors.len());
+        for (idx, c) in self.branch_cursors.iter().enumerate() {
+            let symbol_key = self.gss.node(c.node).map(|n| n.symbol);
+            by_relaxed
+                .entry((c.inner_state.clone(), symbol_key, c.pos))
+                .or_default()
+                .push(idx);
+        }
+        // For each multi-cursor group, find the lex-min cursor (using the
+        // same `Semiring::plus` ordering as `pick_lex_min_resolved` —
+        // `a.plus(b) == a` iff `a` is the smaller of the two under the
+        // semiring's lex-min ordering). Drop strictly-dominated siblings.
+        let mut drop_set: std::collections::BTreeSet<usize> = Default::default();
+        for (_key, idxs) in &by_relaxed {
+            if idxs.len() < 2 {
+                continue;
+            }
+            // Linear scan to find the lex-min cursor in this group.
+            // Mirrors `pick_lex_min_resolved`'s loop semantics.
+            let mut best_idx = idxs[0];
+            for &idx in &idxs[1..] {
+                let merged = self.branch_cursors[best_idx]
+                    .weight
+                    .plus(&self.branch_cursors[idx].weight);
+                if merged != self.branch_cursors[best_idx].weight {
+                    best_idx = idx;
+                } else if merged == self.branch_cursors[idx].weight
+                    && self.branch_cursors[idx].source_priority
+                        < self.branch_cursors[best_idx].source_priority
+                {
+                    // True weight tie: lower `source_priority` wins
+                    // (matches `pick_lex_min_resolved`'s tiebreak).
+                    best_idx = idx;
+                }
+            }
+            let best_w = self.branch_cursors[best_idx].weight;
+            let best_p = self.branch_cursors[best_idx].source_priority;
+            for &idx in idxs {
+                if idx == best_idx {
+                    continue;
+                }
+                let c = &self.branch_cursors[idx];
+                // Strict domination: `best.plus(c) == best` AND `best != c`.
+                // The first clause is "best is at-or-better than c"; the
+                // second clause excludes ties (handled by merge_equivalent_
+                // cursors when keys match exactly; for ties at the relaxed
+                // key, we keep both — only STRICT dominance is grounds for
+                // drop). Source-priority guard: `best_p <= c.source_priority`
+                // prevents reversing the existing source-order tiebreak.
+                let merged = best_w.plus(&c.weight);
+                let strictly_dominates = merged == best_w
+                    && merged != c.weight;
+                if strictly_dominates && best_p <= c.source_priority {
+                    drop_set.insert(idx);
+                }
+            }
+        }
+        if drop_set.is_empty() {
+            return;
+        }
+        // swap_remove in descending index order to preserve stable indices
+        // for the remaining drops.
+        let mut drop_vec: Vec<usize> = drop_set.into_iter().collect();
+        drop_vec.sort_unstable_by(|a, b| b.cmp(a));
+        for idx in drop_vec {
+            self.branch_cursors.swap_remove(idx);
+        }
     }
 
     /// Lex-min selection across the indices in `resolved_indices` against

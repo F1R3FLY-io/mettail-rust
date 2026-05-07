@@ -235,6 +235,13 @@ pub const EPSILON_OPT_SKIP: f64 = 0.5;
 /// G5 — infix and postfix sharing the same trigger token at the same l_bp),
 /// these biases enforce the canonical interpretation.
 pub const BP_TIER_INFIX: f64 = 0.00;
+/// B10 / Option κ Fix B (2026-05-07): Pass 2a CrossCatProjection tier.
+/// Strictly between INFIX (0.0) and CROSSCAT_LHS (0.05) so atomic-home
+/// wins ties on the same `(pat, guard)` key (preserving home-cat parses)
+/// while cross-cat-projection (a direct cat→cat conversion) beats
+/// cross-cat-LHS (operator-driven, demands more grammar) when both
+/// branches are alive in a mixed bucket.
+pub const BP_TIER_CROSSCAT_PROJECTION: f64 = 0.025;
 pub const BP_TIER_CROSSCAT_LHS: f64 = 0.05;
 pub const BP_TIER_POSTFIX: f64 = 0.10;
 pub const BP_TIER_MIXFIX: f64 = 0.20;
