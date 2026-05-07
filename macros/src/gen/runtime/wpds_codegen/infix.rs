@@ -138,7 +138,135 @@ fn classify_judgement(
         }
     }
 
+    // L12 follow-up B6 step 2 (2026-05-07) — Class 1 MIXFIX-LHS-PARAM:
+    // classify_postfix_mixfix is implemented below but NOT YET active in
+    // the dispatch chain. The classifier correctly recognizes POutput-class
+    // shapes (`Param Lit (Lit Param Lit)* ?Lit`), but enabling it requires
+    // additional walker work: the existing Unwinding-MixfixMarker arm and
+    // MixfixContinuation state assume single-literal separators between
+    // operands and don't consume preceding_terminals BEFORE the next
+    // operand sub-parse. Multi-literal preceding/following sequences need
+    // a new WpdsState::MixfixLiteralRun state (per the original Plan agent
+    // design) plus arg-ordering verification for 2-simple mixfix rules.
+    //
+    // Foundation in place (MixfixPart widened, classify_postfix_mixfix
+    // implemented). Activation deferred to a subsequent commit that
+    // adds the walker-side MixfixLiteralRun + arg verification.
+    let _ = classify_postfix_mixfix;  // suppress dead-code warning
+
     None
+}
+
+/// L12 follow-up B6 step 2 (2026-05-07) — Class 1 classifier.
+///
+/// Recognizes Param-prefixed multi-element rules with possibly-consecutive
+/// literals between operands. The first Param is the LHS (cross-cat-source);
+/// the first Literal is the trigger; subsequent Literals are absorbed into
+/// preceding_terminals (before the next operand) or following_terminals
+/// (after the most-recent operand).
+///
+/// Returns InfixRuleInfo with `is_mixfix: true` so downstream dispatch
+/// (mixfix_bp_<cat> table, Unwinding-MixfixMarker arm, MixfixContinuation
+/// state) handles the rule via the existing mixfix machinery — the widened
+/// MixfixPart::preceding_terminals/following_terminals (B6 step 1) carry
+/// the multi-literal sequences.
+fn classify_postfix_mixfix(
+    rule: &GrammarRule,
+    simples: &[(&syn::Ident, &TypeExpr)],
+    syntax_pattern: &[SyntaxExpr],
+) -> Option<InfixRuleInfo> {
+    if simples.len() < 2 || syntax_pattern.len() < 3 {
+        return None;
+    }
+    // Position 0 must be the LHS Param.
+    let SyntaxExpr::Param(lhs_name) = &syntax_pattern[0] else {
+        return None;
+    };
+    let (lhs_simple_name, lhs_ty) = simples[0];
+    if lhs_simple_name != lhs_name {
+        return None;
+    }
+    let lhs_cat = base_type_name(lhs_ty)?;
+    let result_cat = rule.category.to_string();
+    let is_cross_category = lhs_cat != result_cat;
+
+    // Trigger: must be a Literal immediately after LHS.
+    let trigger = match syntax_pattern.get(1) {
+        Some(SyntaxExpr::Literal(t)) => t.clone(),
+        _ => return None,
+    };
+
+    // Walk the remaining pattern, accumulating preceding_terminals before
+    // each new operand and following_terminals after the most-recent one.
+    let mut preceding_buffer: Vec<String> = Vec::new();
+    let mut parts: Vec<mettail_prattail::binding_power::MixfixPart> = Vec::new();
+    let mut simple_idx: usize = 1; // simples[0] is the LHS already consumed.
+    let mut idx: usize = 2;
+    while idx < syntax_pattern.len() {
+        match &syntax_pattern[idx] {
+            SyntaxExpr::Literal(t) => {
+                if parts.is_empty() {
+                    // Before any inner operand — accumulate as preceding
+                    // for the next operand.
+                    preceding_buffer.push(t.clone());
+                } else {
+                    // After the most-recent operand — append to its
+                    // following_terminals.
+                    parts
+                        .last_mut()
+                        .expect("parts non-empty inside else branch")
+                        .following_terminals
+                        .push(t.clone());
+                }
+                idx += 1;
+            }
+            SyntaxExpr::Param(p) => {
+                let (sname, sty) = simples.get(simple_idx)?;
+                if sname != &p {
+                    return None;
+                }
+                let scat = base_type_name(sty)?;
+                parts.push(mettail_prattail::binding_power::MixfixPart {
+                    operand_category: scat,
+                    param_name: p.to_string(),
+                    preceding_terminals: std::mem::take(&mut preceding_buffer),
+                    following_terminals: Vec::new(),
+                });
+                simple_idx += 1;
+                idx += 1;
+            }
+            _ => return None,
+        }
+    }
+    // All simples must be consumed.
+    if simple_idx != simples.len() {
+        return None;
+    }
+    // preceding_buffer should be empty at end (literals after last operand
+    // were appended to its following_terminals). If the original pattern
+    // had a Literal-only tail past the last operand, the loop already
+    // routed those into the last part's following_terminals.
+    if !preceding_buffer.is_empty() {
+        // This can only happen if the rule has literals AFTER the trigger
+        // but no inner operands at all — which is degenerate (no parts to
+        // attach them to). Reject.
+        return None;
+    }
+
+    Some(InfixRuleInfo {
+        label: rule.label.to_string(),
+        terminal: trigger,
+        category: lhs_cat,
+        result_category: result_cat,
+        associativity: mettail_prattail::binding_power::Associativity::Left,
+        is_cross_category,
+        is_postfix: false,
+        // Treated as mixfix for downstream dispatch — the widened
+        // MixfixPart vectors carry the postfix-mixfix-specific terminal
+        // sequences.
+        is_mixfix: true,
+        mixfix_parts: parts,
+    })
 }
 
 fn classify_mixfix(
