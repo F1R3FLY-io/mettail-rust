@@ -1063,6 +1063,39 @@ pub enum BuilderDelta {
     /// drain semantics matching `FinalizeOptionalScopePresent`.
     FinalizeCollection { id: u8, drained: Vec<ActionArg> },
 
+    /// L12 follow-up B5 (2026-05-07): seed the live builder's
+    /// `collection_stack` with the slot list captured at a Lazy→Strict
+    /// transition. Logged at the Fork-arm prologue when the live builder
+    /// has pre-fork open collection slots. Replay pushes each slot back
+    /// onto live's `collection_stack` BEFORE any subsequent
+    /// `SpliceIntoCollection` / `PushToCollection` / `FinalizeCollection`
+    /// deltas execute, so those deltas' LIFO-id invariants hold against
+    /// a properly-seeded live state.
+    ///
+    /// Pre-B5: Stage 3.16's Fork prologue at Lazy→Strict transition
+    /// transferred live's pre-fork slots to the parent cursor's
+    /// `collection_stack` (children clone). At commit_winner time, the
+    /// winner's collection_stack was donated back to live via
+    /// `adopt_collection_stack` — but ONLY if the cursor had NOT
+    /// finalized those collections during its Strict-mode parse.
+    /// Cursors that closed pre-fork-allocated collections emitted
+    /// `FinalizeCollection { id: N>0 }` with drained content; at
+    /// replay, live started empty (winner.collection_stack empty after
+    /// all closes), so `FinalizeCollection { id: 1 }` panicked the
+    /// `live.len() == id` assert.
+    ///
+    /// Post-B5: SeedLive logs pre-fork slots at fork time; replay
+    /// re-seeds live before any cursor-emitted Strict-mode collection
+    /// deltas; the LIFO invariant holds for both pre-fork-allocated
+    /// and Strict-mode-allocated slots uniformly.
+    ///
+    /// Generalized over N≥0 nested collections at fork time. The
+    /// delta is omitted entirely (no log entry) when the live builder's
+    /// pre-fork `collection_stack` is empty — preserving byte-identity
+    /// of the codegen output for grammars without collection-inside-fork
+    /// patterns.
+    SeedLiveCollectionStack { slots: Vec<Vec<ActionArg>> },
+
     /// Stage 3.20 prep: cursor logs a recovery event. Replay invokes
     /// `walker.recovery_events.push(RecoveryEvent { action, pos, cost })`.
     /// `RecoveryActionKind` is the enum-encoded action variant; the
@@ -1168,6 +1201,10 @@ impl std::fmt::Debug for BuilderDelta {
             BuilderDelta::PushToCollection { id } => f
                 .debug_struct("PushToCollection")
                 .field("id", id)
+                .finish(),
+            BuilderDelta::SeedLiveCollectionStack { slots } => f
+                .debug_struct("SeedLiveCollectionStack")
+                .field("slot_count", &slots.len())
                 .finish(),
             BuilderDelta::FinalizeCollection { id, drained } => f
                 .debug_struct("FinalizeCollection")
@@ -2621,7 +2658,27 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // but the constructor-only call sites left unaddressed.
                 // Idempotent — only runs at the actual mode boundary.
                 if self.cursor_mode == CursorMode::Lazy {
-                    cursor.collection_stack = self.builder.take_collection_stack();
+                    let pre_fork_slots = self.builder.take_collection_stack();
+                    if !pre_fork_slots.is_empty() {
+                        // L12 follow-up B5 (2026-05-07): log the pre-fork
+                        // slot list so commit_winner replay can re-seed
+                        // live before any cursor-emitted FinalizeCollection
+                        // / SpliceIntoCollection / PushToCollection deltas
+                        // execute. Without this, cursors that finalized
+                        // pre-fork-allocated collections during their
+                        // Strict-mode parse emitted FinalizeCollection
+                        // { id: N>0 } against an empty live state at
+                        // replay, panicking the LIFO assert. The clone
+                        // below is necessary because pre_fork_slots is
+                        // simultaneously the source for cursor's mirror
+                        // and the delta payload.
+                        cursor.pending_builder_ops.push(
+                            BuilderDelta::SeedLiveCollectionStack {
+                                slots: pre_fork_slots.clone(),
+                            },
+                        );
+                    }
+                    cursor.collection_stack = pre_fork_slots;
                 }
                 // Stage 3.9 / ι Phase 4 (2026-05-01) — L2: promote to Strict.
                 self.cursor_mode = CursorMode::Strict;
@@ -3849,6 +3906,27 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // "post-pop splice" at log time for diagnostics.
                     self.builder.push_to_collection(id);
                 }
+                BuilderDelta::SeedLiveCollectionStack { slots } => {
+                    // L12 follow-up B5 (2026-05-07): seed live's
+                    // collection_stack with pre-fork slots captured at
+                    // Lazy→Strict transition. At fork prologue, live's
+                    // collection_stack was drained via take_collection_stack
+                    // and the slots transferred to the parent cursor's
+                    // mirror; this delta replays the seed at commit time
+                    // so subsequent FinalizeCollection / SpliceIntoCollection
+                    // deltas operate against a properly-seeded live state.
+                    debug_assert_eq!(
+                        self.builder.collection_stack_len(),
+                        0,
+                        "SeedLiveCollectionStack: live builder \
+                         collection_stack must be empty at seed time; \
+                         got {} residual slots",
+                        self.builder.collection_stack_len(),
+                    );
+                    for slot in slots {
+                        self.builder.push_collection_slot(slot);
+                    }
+                }
                 BuilderDelta::FinalizeCollection { id, drained } => {
                     // Stage 3.12.8 (2026-05-03): re-push the drained slot
                     // onto the live builder's collection_stack at `id`
@@ -4283,6 +4361,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             CursorMode::Strict => {
                 let id = cursor.collection_stack.len() as u8;
                 cursor.collection_stack.push(Vec::new());
+                // L12 follow-up B5 (2026-05-07): log StartCollection so
+                // commit_winner replay allocates a matching slot on
+                // live's collection_stack. Without this, Strict-mode
+                // SpliceIntoCollection / PushToCollection / FinalizeCollection
+                // deltas operate on indices live doesn't have, silently
+                // dropping elements (push_to_collection's get_mut returns
+                // None on out-of-bounds id) or panicking the LIFO assert
+                // (FinalizeCollection's `live.len() == id` check).
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::StartCollection);
                 id
             }
         }
@@ -4520,14 +4609,27 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             if symbol.kind == SymbolKind::CollectionMarker
                 && self.cursor_mode == CursorMode::Strict
             {
-                let id = symbol.bp.unwrap_or(0);
-                let drained = cursor
-                    .collection_stack
-                    .pop()
-                    .unwrap_or_default();
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::FinalizeCollection { id, drained });
+                // L12 follow-up B5 (2026-05-07): pop the cursor's
+                // collection_stack mirror to keep id allocation in
+                // sync with subsequent Strict-mode emit_start_collection
+                // calls, but DO NOT log FinalizeCollection. The slot's
+                // content lives on live (seeded via
+                // SeedLiveCollectionStack for pre-fork-allocated slots
+                // OR allocated via StartCollection delta + populated
+                // via SpliceIntoCollection / PushToCollection deltas
+                // for Strict-mode-allocated slots). The subsequent
+                // FireAction(CollectionMarker) replay calls
+                // action_fn → drain_collection(id) which LIFO-pops
+                // live's top slot.
+                //
+                // Pre-B5 the FinalizeCollection delta re-pushed the
+                // cursor's drained content onto live; this re-push
+                // assumed live started empty at replay. With pre-fork
+                // collections seeded via SeedLive and Strict-allocated
+                // collections allocated via StartCollection deltas,
+                // live now has the right slots already — re-pushing
+                // would create duplicates and panic the LIFO assert.
+                let _ = cursor.collection_stack.pop();
             }
         }
         // Per-child FireAction (keyed on popped_symbol — same across all
