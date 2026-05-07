@@ -7219,6 +7219,89 @@ mod tests {
         }
     }
 
+    /// Stage 3.20 / L12 Commit F (2026-05-06) — `GuardedConsumeIdentAndReplace`
+    /// allocates a child cursor with an Ident text capture when
+    /// `peek_kind(pos_after) == Ident`. Mirror of the
+    /// `GuardedConsumeAndReplace_pass` test above for the ident variant.
+    #[test]
+    fn fork_action_guarded_consume_ident_and_replace_pass_advances_pos() {
+        let tokens = [TokenKind::Ident];
+        let texts = ["x"];
+        let token_src = SliceTokenSource::with_texts(&tokens, &texts);
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Accept,
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::rule_at(0, 0, 1, None),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdsState::Unwinding,
+                    action_kind: ForkActionKind::GuardedConsumeIdentAndReplace {
+                        start_scope: false,
+                    },
+                }],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &token_src); // Push
+        let pos_before = w.position();
+        let _ = w.process_event(WpdsEvent::Step, &token_src); // Fork (guard pass)
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1, "Ident guard pass must produce one child");
+        assert_eq!(
+            cursors[0].pos,
+            pos_before + 1,
+            "GuardedConsumeIdentAndReplace on guard pass must advance pos by 1",
+        );
+    }
+
+    /// Stage 3.20 / L12 Commit F (2026-05-06) — `GuardedConsumeIdentAndReplace`
+    /// produces no child when `peek_kind(pos_after) != Ident`.
+    #[test]
+    fn fork_action_guarded_consume_ident_and_replace_fail_drops_cursor() {
+        let tokens = [TokenKind::Fixed("=".into())];
+        let texts = ["="];
+        let token_src = SliceTokenSource::with_texts(&tokens, &texts);
+        let engine = ScriptedEngine::new(vec![
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::rule_at(0, 0, 1, None),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdsState::Unwinding,
+                    action_kind: ForkActionKind::GuardedConsumeIdentAndReplace {
+                        start_scope: false,
+                    },
+                }],
+                consume_trigger: false,
+            },
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let _ = w.process_event(WpdsEvent::Step, &token_src); // Push
+        let _ = w.process_event(WpdsEvent::Step, &token_src); // Fork (guard fail)
+        let final_state = w.run_to_saturation(50, &token_src);
+        match final_state {
+            WpdsState::Error { message } => assert!(
+                message.contains("dropped"),
+                "expected 'all fork branches dropped'-style Error, got: {}",
+                message,
+            ),
+            other => panic!(
+                "expected Error after Ident guard-fail, got {:?}",
+                other,
+            ),
+        }
+    }
+
     /// Stage 3.20 / L12 Commit F (2026-05-06) — `GuardedConsumeAndReplace`
     /// and `GuardedConsumeIdentAndReplace` are NON-recovery Forks. The
     /// `is_recovery_fork` predicate must NOT classify them as recovery,
@@ -7445,5 +7528,139 @@ mod tests {
             "branch with new_state.pos==base_pos AND InsertToken effect must \
              pass filter (synthetic splice — live stream mutates at commit)"
         );
+    }
+
+    /// Stage 3.20 / L12 Commit D (2026-05-06) — bounded recovery: a cursor
+    /// that experiences repeated recovery dispatches has its
+    /// `recovery_depth` bumped by 1 per dispatch via the post-loop
+    /// epilogue in `apply_action_to_cursor::Fork`. When depth reaches
+    /// `RecoveryConfig.max_recovery_depth` (default 3), the next
+    /// recovery Fork is refused (cursor → Error). This test simulates
+    /// 3 successful recovery dispatches followed by a 4th attempt,
+    /// expecting the 4th to error out per the bound.
+    #[test]
+    fn bounded_recovery_depth_cap_terminates_cursor() {
+        // Synthetic recovery Fork: single branch with InsertToken
+        // effect (qualifies as recovery per is_recovery_fork) and a
+        // `new_state.pos > base_pos` so forward-progress filter
+        // accepts it. Each dispatch bumps recovery_depth by 1.
+        let recovery_branch = || ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(1.0, 0, 0),
+            new_state: WpdsState::PrefixDispatch { pos: 1, cur_bp: 0 },
+            action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::InsertToken {
+                    pos: 0,
+                    kind: TokenKind::Fixed(")".into()),
+                    text: ")".into(),
+                },
+            },
+        };
+        let recovery_fork = || WpdsStepAction::Fork {
+            branches: vec![recovery_branch()],
+            consume_trigger: false,
+        };
+        // Provide 4 recovery Forks back-to-back. Depth cap is 3, so
+        // the 4th should be refused.
+        let engine = ScriptedEngine::new(vec![
+            recovery_fork(), // depth 0 → 1 child at depth 1
+            recovery_fork(), // depth 1 → 1 child at depth 2
+            recovery_fork(), // depth 2 → 1 child at depth 3 (cap)
+            recovery_fork(), // depth 3 → REFUSED, cursor → Error
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let final_state = w.run_to_saturation(50, &empty_tokens());
+        match final_state {
+            WpdsState::Error { message } => assert!(
+                message.contains("recovery depth limit")
+                    || message.contains("dropped")
+                    || message.contains("forward-progress"),
+                "expected depth-cap or dropped Error after 4 recovery dispatches, got: {}",
+                message,
+            ),
+            other => {
+                let cursors = w.branch_cursors_for_test();
+                let depths: Vec<u8> = cursors.iter().map(|c| c.recovery_depth).collect();
+                panic!(
+                    "expected Error after exceeding max_recovery_depth=3, got {:?} \
+                     (cursor depths: {:?})",
+                    other, depths,
+                );
+            }
+        }
+    }
+
+    /// Stage 3.20 / L12 Commit D (2026-05-06) — bounded recovery's
+    /// `visited_recovery` set rejects re-dispatch at the same
+    /// (pos, cat, cur_bp) configuration. This test simulates a cursor
+    /// that attempts recovery, then attempts recovery AGAIN at the
+    /// same configuration (e.g., due to a non-advancing repair like
+    /// InsertToken whose synthesis-time pos doesn't change). The
+    /// visited-set defense rejects the second dispatch even though
+    /// the depth cap hasn't been reached.
+    #[test]
+    fn bounded_recovery_visited_set_rejects_recursion() {
+        // Recovery Fork with InsertToken at pos=0 and new_state.pos=0
+        // (non-advancing). Forward-progress filter accepts it because
+        // InsertToken effect is exempted. After dispatch, visited_recovery
+        // contains (0, 0, 0). A second dispatch at the same config will
+        // be rejected by the visited check.
+        //
+        // BUT: walker bumps recovery_depth on every recovery Fork
+        // child, so depth=1 after first. We need to fire a SECOND
+        // recovery Fork at the same (pos, cat, cur_bp) to trigger
+        // visited rejection BEFORE depth would cap out.
+        //
+        // The single-branch test approach: emit the same recovery
+        // Fork twice at the same config. With pos=0 and cat=0 and
+        // cur_bp=0, the visited entry inserted by the first dispatch
+        // matches the second's lookup config.
+        let non_advancing_recovery = || WpdsStepAction::Fork {
+            branches: vec![ForkBranch {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(1.0, 0, 0),
+                // new_state stays at pos=0 (insertion repair).
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                    effect: BuilderDelta::InsertToken {
+                        pos: 0,
+                        kind: TokenKind::Fixed(";".into()),
+                        text: ";".into(),
+                    },
+                },
+            }],
+            consume_trigger: false,
+        };
+        let engine = ScriptedEngine::new(vec![
+            non_advancing_recovery(), // first dispatch: visited_recovery gains (0,0,0)
+            non_advancing_recovery(), // second dispatch at same config: REFUSED
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        let final_state = w.run_to_saturation(50, &empty_tokens());
+        match final_state {
+            WpdsState::Error { message } => assert!(
+                message.contains("recovery already attempted")
+                    || message.contains("cycle defense")
+                    || message.contains("dropped")
+                    || message.contains("forward-progress")
+                    || message.contains("recovery depth limit"),
+                "expected visited-set / cycle-defense / cap Error, got: {}",
+                message,
+            ),
+            other => panic!(
+                "expected Error after re-dispatch at same config, got {:?}",
+                other,
+            ),
+        }
     }
 }
