@@ -7441,7 +7441,11 @@ fn lint_par04_mixfix_ambiguous_delimiter(
     // Check mixfix middle delimiters
     for op in ctx.bp_table.operators.iter().filter(|op| op.is_mixfix) {
         for part in &op.mixfix_parts {
-            if let Some(ref following) = part.following_terminal {
+            // L12 follow-up B6 (2026-05-07): iterate vector terminals.
+            // Lint each literal in following_terminals (preceding ones
+            // are typically opening brackets which won't conflict with
+            // infix; but iterate both for completeness).
+            for following in &part.following_terminals {
                 if infix_tokens.contains(following.as_str()) {
                     diagnostics.push(LintDiagnostic {
                         id: DiagnosticId::PAR04,

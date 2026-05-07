@@ -344,8 +344,15 @@ fn write_precedence_table(
         let op_str = if op.is_mixfix {
             let mut parts = vec![op.terminal.clone()];
             for part in &op.mixfix_parts {
-                if let Some(ref sep) = part.following_terminal {
-                    parts.push(sep.clone());
+                // L12 follow-up B6 (2026-05-07): iterate vector terminals.
+                // Pre-fix used `Option<String>` (single literal); post-fix
+                // uses `Vec<String>` for postfix-mixfix shapes with
+                // consecutive literal sequences between operands.
+                for lit in &part.preceding_terminals {
+                    parts.push(lit.clone());
+                }
+                for lit in &part.following_terminals {
+                    parts.push(lit.clone());
                 }
             }
             parts.join(" ")
@@ -1599,12 +1606,17 @@ mod tests {
                     parts.push(crate::binding_power::MixfixPart {
                         operand_category: category.clone(),
                         param_name: param_name.clone(),
-                        following_terminal: None,
+                        preceding_terminals: Vec::new(),
+                        following_terminals: Vec::new(),
                     });
                 },
                 SyntaxItemSpec::Terminal(t) if after_trigger => {
+                    // L12 follow-up B6 (2026-05-07): append literal to the
+                    // last part's following_terminals vec. Pre-fix
+                    // overwrote a single Option, dropping any extra
+                    // consecutive literals (POutput-class would lose them).
                     if let Some(last_part) = parts.last_mut() {
-                        last_part.following_terminal = Some(t.clone());
+                        last_part.following_terminals.push(t.clone());
                     }
                 },
                 _ => {},

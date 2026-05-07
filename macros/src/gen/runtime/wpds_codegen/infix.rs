@@ -162,19 +162,27 @@ fn classify_mixfix(
                     }
                     if param_idx > 0 {
                         let cat = base_type_name(pty)?;
+                        // L12 follow-up B6 (2026-05-07): widened from
+                        // `following_terminal: Option<String>` to vectors.
+                        // For traditional mixfix the per-part separator
+                        // appears as a single-element following_terminals
+                        // vec; preceding_terminals stays empty (the trigger
+                        // OR the previous part's following_terminals
+                        // already consumed the literals before this operand).
                         let following = if i + 1 < syntax_pattern.len() {
                             if let SyntaxExpr::Literal(t) = &syntax_pattern[i + 1] {
-                                Some(t.clone())
+                                vec![t.clone()]
                             } else {
                                 return None;
                             }
                         } else {
-                            None
+                            Vec::new()
                         };
                         parts.push(MixfixPart {
                             operand_category: cat,
                             param_name: p.to_string(),
-                            following_terminal: following,
+                            preceding_terminals: Vec::new(),
+                            following_terminals: following,
                         });
                     }
                 }
@@ -374,12 +382,23 @@ fn emit_mixfix_bp_fn(
     }
 }
 
-/// B7 Pattern 1: emit per-rule mixfix-parts metadata. Returns
-/// `mixfix_part(result_src_idx, rule_idx, part_idx) -> Option<(operand_src_idx, following_terminal: Option<&'static str>)>`.
-/// `following_terminal` is `Some(t)` for inner-not-last operands (the
-/// separator after that operand) and `None` for the last operand.
-/// `mixfix_parts_len(result_src_idx, rule_idx) -> Option<u8>` returns the
-/// number of inner operands so the engine knows when to stop.
+/// B7 Pattern 1 + L12 follow-up B6 (2026-05-07): emit per-rule
+/// mixfix-parts metadata. Returns
+/// `mixfix_part(result_src_idx, rule_idx, part_idx) ->
+///   Option<(operand_src_idx, preceding: &'static [&'static str],
+///           following: &'static [&'static str])>`.
+///
+/// `preceding` is the literal sequence consumed BEFORE the operand
+/// sub-parse (used for postfix-mixfix shapes like POutput's `(`
+/// between trigger and inner operand). `following` is the literal
+/// sequence consumed AFTER the operand sub-parse (used for trailing
+/// brackets and per-part separators). Pre-B6 this was a single
+/// `Option<&'static str>` for `following_terminal` only — widened to
+/// vectors so postfix-mixfix patterns with consecutive literals are
+/// expressible.
+///
+/// `mixfix_parts_len(result_src_idx, rule_idx) -> Option<u8>` returns
+/// the number of inner operands so the engine knows when to stop.
 fn emit_mixfix_parts_fn(
     bp_table: &BindingPowerTable,
     categories: &[String],
@@ -404,23 +423,36 @@ fn emit_mixfix_parts_fn(
                 .position(|c| c == &part.operand_category)
                 .map(|i| i as u16)
                 .unwrap_or(0);
-            let following_arm = match &part.following_terminal {
-                Some(t) => quote! { Some((#operand_src_idx, Some(#t))) },
-                None => quote! { Some((#operand_src_idx, None)) },
-            };
+            let preceding_lits: Vec<TokenStream> = part
+                .preceding_terminals
+                .iter()
+                .map(|t| quote! { #t })
+                .collect();
+            let following_lits: Vec<TokenStream> = part
+                .following_terminals
+                .iter()
+                .map(|t| quote! { #t })
+                .collect();
             part_arms.push(quote! {
-                (#result_src_idx, #rule_idx, #part_idx) => #following_arm,
+                (#result_src_idx, #rule_idx, #part_idx) => Some((
+                    #operand_src_idx,
+                    &[ #( #preceding_lits ),* ][..],
+                    &[ #( #following_lits ),* ][..],
+                )),
             });
         }
     }
     quote! {
-        /// Mixfix per-part metadata: returns `(operand_src_idx, following_terminal)`.
+        /// Mixfix per-part metadata: returns
+        /// `(operand_src_idx, preceding_terminals, following_terminals)`.
+        /// L12 follow-up B6 (2026-05-07): widened to vector terminals
+        /// for postfix-mixfix support.
         #[allow(non_snake_case, dead_code)]
         fn mixfix_part(
             result_src_idx: u16,
             rule_idx: u16,
             part_idx: u8,
-        ) -> Option<(u16, Option<&'static str>)> {
+        ) -> Option<(u16, &'static [&'static str], &'static [&'static str])> {
             match (result_src_idx, rule_idx, part_idx) {
                 #(#part_arms)*
                 _ => None,

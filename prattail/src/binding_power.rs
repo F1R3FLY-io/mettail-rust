@@ -52,20 +52,50 @@ pub struct InfixOperator {
 
 /// A part of a mixfix operator after the trigger terminal.
 ///
-/// Each part describes an operand to parse, and optionally a terminal
-/// separator that follows it (all parts except the last have a separator).
+/// Each part describes an operand to parse, with literal sequences that
+/// must be consumed before and after the operand sub-parse.
+///
+/// L12 follow-up B6 (2026-05-07): widened from
+/// `following_terminal: Option<String>` to vectors so postfix-mixfix
+/// rules with consecutive literals between operands (e.g. POutput's
+/// `n "!" "(" q ")"`) can be expressed without classifier dead zones.
+/// The previous `Option<String>` is the degenerate `Vec` of length 0
+/// or 1 — existing classic mixfix rules (Tern's `a "?" b ":" c`)
+/// produce single-element preceding/following vectors.
 ///
 /// Example: `a "?" b ":" c` has parts:
-/// - MixfixPart { category: "Int", param: "b", following: Some(":") }
-/// - MixfixPart { category: "Int", param: "c", following: None }
+/// - MixfixPart {
+///     operand_category: "Int", param_name: "b",
+///     preceding_terminals: vec![],  following_terminals: vec![":"]
+///   }
+/// - MixfixPart {
+///     operand_category: "Int", param_name: "c",
+///     preceding_terminals: vec![],  following_terminals: vec![]
+///   }
+///
+/// Example: POutput `n "!" "(" q ")"` (Class 1 MIXFIX-LHS-PARAM) has parts:
+/// - MixfixPart {
+///     operand_category: "Proc", param_name: "q",
+///     preceding_terminals: vec!["("], following_terminals: vec![")"]
+///   }
 #[derive(Debug, Clone)]
 pub struct MixfixPart {
     /// Category of the operand to parse.
     pub operand_category: String,
     /// Parameter name (for AST construction).
     pub param_name: String,
-    /// Terminal separator that follows this operand (None for the last operand).
-    pub following_terminal: Option<String>,
+    /// Literals that MUST be consumed BEFORE the operand sub-parse
+    /// begins. Empty for traditional mixfix where the trigger absorbs
+    /// the first literal; non-empty for postfix-mixfix shapes like
+    /// POutput where the trigger `!` is followed by `(` BEFORE the
+    /// operand.
+    pub preceding_terminals: Vec<String>,
+    /// Literals that MUST be consumed AFTER the operand sub-parse
+    /// returns. For traditional mixfix the per-part separator (e.g.
+    /// `:` between `b` and `c`) appears here as a single-element
+    /// vector; for trailing closers like `)` the last part carries
+    /// multi-element vectors.
+    pub following_terminals: Vec<String>,
 }
 
 impl InfixOperator {
@@ -515,12 +545,14 @@ mod tests {
             MixfixPart {
                 operand_category: "Int".to_string(),
                 param_name: "b".to_string(),
-                following_terminal: Some(":".to_string()),
+                preceding_terminals: vec![],
+                following_terminals: vec![":".to_string()],
             },
             MixfixPart {
                 operand_category: "Int".to_string(),
                 param_name: "c".to_string(),
-                following_terminal: None,
+                preceding_terminals: vec![],
+                following_terminals: vec![],
             },
         ];
         table.operators.push(ternary);

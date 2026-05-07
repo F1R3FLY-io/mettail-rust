@@ -209,12 +209,16 @@ fn extract_mixfix_parts_for_display(syntax: &[SyntaxItemSpec]) -> (bool, Vec<BpM
                 parts.push(BpMixfixPart {
                     operand_category: category.clone(),
                     param_name: param_name.clone(),
-                    following_terminal: None,
+                    preceding_terminals: Vec::new(),
+                    following_terminals: Vec::new(),
                 });
             },
             SyntaxItemSpec::Terminal(t) if after_trigger => {
+                // L12 follow-up B6 (2026-05-07): append literal to the
+                // last part's following_terminals vec for postfix-mixfix
+                // support (consecutive literals between operands).
                 if let Some(last_part) = parts.last_mut() {
-                    last_part.following_terminal = Some(t.clone());
+                    last_part.following_terminals.push(t.clone());
                 }
             },
             _ => {},

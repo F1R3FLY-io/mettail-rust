@@ -495,10 +495,25 @@ pub(crate) fn emit_engine_impl_full(
                                             result_src_idx, rule_idx,
                                         )),
                                     };
+                                    // L12 follow-up B6 (2026-05-07): widened metadata.
+                                    // mixfix_part returns
+                                    //   Option<(operand_src, &[&str] preceding,
+                                    //                        &[&str] following)>.
+                                    // For traditional Tern-style mixfix the
+                                    // following slice has 0 or 1 element and
+                                    // preceding is empty; the existing single-
+                                    // separator Fork emission below handles
+                                    // those cases by reading following.first().
+                                    // Postfix-mixfix shapes (POutput-class)
+                                    // with multi-element preceding/following
+                                    // are dispatched via the new
+                                    // WpdsState::MixfixLiteralRun state machine
+                                    // (see arm below).
                                     let part = mixfix_part(
                                         result_src_idx, rule_idx, completed_idx,
                                     );
-                                    let following = part.and_then(|(_, t)| t);
+                                    let following: Option<&'static str> = part
+                                        .and_then(|(_, _pre, fol)| fol.first().copied());
                                     if completed_idx + 1 == parts_len {
                                         // Last inner operand: pop the marker
                                         // (auto-fires the rule's action with
@@ -811,8 +826,16 @@ pub(crate) fn emit_engine_impl_full(
                         // `completed_idx` (= next operand index) AND a new
                         // CategoryEntry(operand_src_idx) goes on top to
                         // route the sub-parse to the correct element cat.
+                        // L12 follow-up B6 (2026-05-07): widened tuple.
+                        // mixfix_part returns
+                        //   Option<(operand_src, preceding, following)>
+                        // where preceding/following are &[&str].
+                        // The MixfixContinuation path uses operand_src to
+                        // route the sub-parse; preceding/following are
+                        // consumed by Unwinding-MixfixMarker and
+                        // MixfixLiteralRun (when needed).
                         match mixfix_part(*result_src_idx, *rule_idx, *completed_idx) {
-                            Some((operand_src_idx, _following)) => {
+                            Some((operand_src_idx, _preceding, _following)) => {
                                 WpdsStepAction::ReplaceAndPush {
                                     replace_symbol: StackSymbolV2::mixfix_marker(
                                         *result_src_idx,
