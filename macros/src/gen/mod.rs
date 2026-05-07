@@ -695,9 +695,50 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                                 (None, errors)
                             }
-                            // ParseFailed: `attempts` already accumulates every round —
-                            // the parse_recovering result above already contains them.
-                            Err(WpdsParseError::ParseFailed { .. }) => {
+                            // Stage 3.20 / L12 (post-Commit-G regression fix,
+                            // 2026-05-06): when ParseFailed has empty attempts
+                            // (walker died before any recovery committed —
+                            // e.g., GroupingMarker close-paren miss,
+                            // BinderRule literal-guard fail at EOF, Unwinding
+                            // expected `)`), synthesize a structured
+                            // ParseError::UnexpectedToken from `message` and
+                            // `position` so callers see a non-empty errors
+                            // Vec. Mirrors the symmetric fold in
+                            // `parse_structured` at the
+                            // `Err(ParseFailed { message, position, .. })`
+                            // arm above.
+                            //
+                            // Pre-Commit-E (f83ce6d) the wrapper's
+                            // MAX_RECOVERY_ROUNDS=4 outer loop pushed a
+                            // RecoveryAttempt for every retry round,
+                            // guaranteeing non-empty attempts. Commit E
+                            // deleted the loop without auditing this
+                            // empty-attempts case. The walker's
+                            // `recovery_events` only populates at
+                            // `commit_winner_at_eoi` time, so cliff-edge
+                            // errors that bypass commit produce empty
+                            // attempts. This fold restores the contract
+                            // that `parse_recovering` always reports
+                            // non-empty errors on parse failure.
+                            Err(WpdsParseError::ParseFailed { message, position, attempts: _ }) => {
+                                let range = tokens
+                                    .get(position)
+                                    .map(|(_, r)| *r)
+                                    .unwrap_or_else(|| {
+                                        tokens
+                                            .last()
+                                            .map(|(_, r)| *r)
+                                            .unwrap_or(Range::zero())
+                                    });
+                                errors.push(ParseError::UnexpectedToken {
+                                    expected: Cow::Owned(message),
+                                    found: tokens
+                                        .get(position)
+                                        .map(|(t, _)| format_token_friendly(t))
+                                        .unwrap_or_else(|| "end of input".to_string()),
+                                    range,
+                                    hint: None,
+                                });
                                 (None, errors)
                             }
                         }

@@ -7663,4 +7663,222 @@ mod tests {
             ),
         }
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Stage 3.20 / L12 Commit G follow-up (2026-05-06): ApplyRecoverySequence
+    // delta replay tests. These exercise the commit_winner replay path
+    // (wpds_walker.rs:3845-3944) that Commit B added — verifying that
+    // multi-step Viterbi recovery sequences (Skip / Delete / Insert /
+    // Substitute) replay onto the walker's recovery_events trace in order
+    // with correct action_kind discriminators.
+    //
+    // The replay path requires set_mutable_token_source for the Insert and
+    // Substitute primitives. We use MutableMultiTokenSource with a trivial
+    // whitespace-tokenizing fake_lex (mirroring wpds_runtime.rs:1810).
+    // ════════════════════════════════════════════════════════════════════════
+
+    use crate::recovery::RepairAction;
+    use crate::token_id::TokenId;
+    use crate::wpds_runtime::MutableMultiTokenSource;
+
+    /// Helper: trivial whitespace-tokenizing lexer for replay tests.
+    fn fake_lex_for_replay(
+        input: &str,
+    ) -> Result<crate::lexer_types::LexStream, String> {
+        let mut entries = Vec::new();
+        let bytes = input.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if bytes[i].is_ascii_whitespace() {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            let text = &input[start..i];
+            entries.push(crate::lexer_types::LexEntry {
+                byte_start: start,
+                alternatives: vec![crate::lexer_types::LexAlternative {
+                    kind: TokenKind::Ident,
+                    text: text.to_string(),
+                    end_byte: i,
+                    weight: crate::automata::semiring::TropicalWeight(1.0),
+                }],
+            });
+        }
+        Ok(crate::lexer_types::LexStream { entries })
+    }
+
+    /// Helper: drive a walker through a Fork(recovery)→Accept sequence so
+    /// commit_winner replays the recovery deltas. Returns the walker's
+    /// recovery_trace after commit.
+    ///
+    /// We split the read-only token source (used by the engine's step
+    /// loop) from the mutable token source (used by commit_winner's
+    /// replay path) to avoid aliasing — the walker sees them as
+    /// independent objects. The InsertToken / SubstituteToken replay
+    /// mutates `mutable_src` but the test only asserts on
+    /// `walker.recovery_trace()`, not on the source state, so the split
+    /// is invisible to the assertions.
+    fn drive_recovery_replay(
+        recovery_effect: BuilderDelta,
+    ) -> Vec<RecoveryEvent> {
+        let mut mutable_src =
+            MutableMultiTokenSource::new("foo bar baz".to_string(), fake_lex_for_replay)
+                .expect("construct MutableMultiTokenSource");
+        // Single-token read_src so that after the Fork's
+        // ConsumeAndReplaceWithEffect arm advances child.pos to 1, the
+        // cursor is at logical EOI (pos == tokens.len()) and qualifies
+        // as an accepting candidate at resolve_at_end_of_input time.
+        let read_tokens = [TokenKind::Ident];
+        let read_texts = ["foo"];
+        let read_src = SliceTokenSource::with_texts(&read_tokens, &read_texts);
+        // Single-branch recovery Fork → child cursor with the effect →
+        // Accept on next step → commit_winner replays the effect.
+        let engine = ScriptedEngine::new(vec![
+            // Step 3 (popped first): Accept resolves the cursor at EOI.
+            WpdsStepAction::Accept,
+            // Step 2: Fork emitting a recovery branch carrying the effect.
+            WpdsStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::category_entry(0),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdsState::Accepted,
+                    action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                        effect: recovery_effect,
+                    },
+                }],
+                consume_trigger: false,
+            },
+            // Step 1: Push to seed the GSS with a non-root frame so
+            // ConsumeAndReplaceWithEffect's cursor_gss_replace_top has a
+            // top to operate on.
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdsWalker::new(engine, 0);
+        w.set_mutable_token_source(&mut mutable_src);
+        // Drive to end-of-input (sets up parked frontier in AmbiguityFanout),
+        // then resolve to fire commit_winner_at_eoi which replays the winner's
+        // pending_builder_ops onto walker.recovery_events.
+        let _ = w.run_to_end_of_input(50, &read_src);
+        let _ = w.resolve_at_end_of_input(&read_src);
+        w.clear_mutable_token_source();
+        w.recovery_trace().to_vec()
+    }
+
+    /// Stage 3.20 / L12 Commit G follow-up — `ApplyRecoverySequence` with a
+    /// `SkipToSync` step replays as a `RecoveryEvent` with action_kind=0
+    /// at the post-skip position.
+    #[test]
+    fn replay_apply_recovery_sequence_skip_to_sync() {
+        let actions: std::sync::Arc<[RepairAction]> = std::sync::Arc::from(vec![
+            RepairAction::SkipToSync {
+                skip_count: 2,
+                sync_token: TokenId::MAX,
+            },
+        ].into_boxed_slice());
+        let trace = drive_recovery_replay(BuilderDelta::ApplyRecoverySequence {
+            actions,
+            base_pos: 0,
+            total_cost_tropical: 0.5,
+        });
+        assert_eq!(trace.len(), 1, "SkipToSync must produce 1 RecoveryEvent");
+        assert_eq!(trace[0].action_kind, 0, "SkipToSync → action_kind=0");
+        assert_eq!(trace[0].pos, 2, "SkipToSync advances cur_pos by skip_count");
+    }
+
+    /// Stage 3.20 / L12 Commit G follow-up — `ApplyRecoverySequence` with a
+    /// `DeleteToken` step replays as action_kind=1 with cur_pos+=1.
+    #[test]
+    fn replay_apply_recovery_sequence_delete_token() {
+        let actions: std::sync::Arc<[RepairAction]> = std::sync::Arc::from(vec![
+            RepairAction::DeleteToken,
+        ].into_boxed_slice());
+        let trace = drive_recovery_replay(BuilderDelta::ApplyRecoverySequence {
+            actions,
+            base_pos: 0,
+            total_cost_tropical: 1.0,
+        });
+        assert_eq!(trace.len(), 1, "DeleteToken must produce 1 RecoveryEvent");
+        assert_eq!(trace[0].action_kind, 1, "DeleteToken → action_kind=1");
+        assert_eq!(trace[0].pos, 1, "DeleteToken advances cur_pos by 1");
+    }
+
+    /// Stage 3.20 / L12 Commit G follow-up — `ApplyRecoverySequence` with an
+    /// `InsertToken` step replays as a synthetic token splice via
+    /// `src.insert_token` AND logs RecoveryEvent::insert (action_kind=2).
+    #[test]
+    fn replay_apply_recovery_sequence_insert_token() {
+        let actions: std::sync::Arc<[RepairAction]> = std::sync::Arc::from(vec![
+            RepairAction::InsertToken { token: 0u16 as TokenId },
+        ].into_boxed_slice());
+        let trace = drive_recovery_replay(BuilderDelta::ApplyRecoverySequence {
+            actions,
+            base_pos: 0,
+            total_cost_tropical: 2.0,
+        });
+        assert_eq!(trace.len(), 1, "InsertToken must produce 1 RecoveryEvent");
+        assert_eq!(trace[0].action_kind, 2, "InsertToken → action_kind=2");
+        assert!(
+            trace[0].kind.is_some() && trace[0].text.is_some(),
+            "InsertToken event must carry kind + text",
+        );
+    }
+
+    /// Stage 3.20 / L12 Commit G follow-up — `ApplyRecoverySequence` with a
+    /// `SubstituteToken` step replays as a token substitution via
+    /// `src.substitute_token` AND logs RecoveryEvent::substitute
+    /// (action_kind=3) with cur_pos+=1.
+    #[test]
+    fn replay_apply_recovery_sequence_substitute_token() {
+        let actions: std::sync::Arc<[RepairAction]> = std::sync::Arc::from(vec![
+            RepairAction::SubstituteToken { replacement: 0u16 as TokenId },
+        ].into_boxed_slice());
+        let trace = drive_recovery_replay(BuilderDelta::ApplyRecoverySequence {
+            actions,
+            base_pos: 0,
+            total_cost_tropical: 1.5,
+        });
+        assert_eq!(trace.len(), 1, "SubstituteToken must produce 1 RecoveryEvent");
+        assert_eq!(trace[0].action_kind, 3, "SubstituteToken → action_kind=3");
+        assert_eq!(trace[0].pos, 0, "SubstituteToken records cur_pos at site");
+        assert!(
+            trace[0].kind.is_some() && trace[0].text.is_some(),
+            "SubstituteToken event must carry kind + text",
+        );
+    }
+
+    /// Stage 3.20 / L12 Commit G follow-up — Multi-action
+    /// `ApplyRecoverySequence` (Composite-style, multi-step Viterbi)
+    /// replays each step in order, producing one RecoveryEvent per step
+    /// with the correct action_kind sequence and accumulating cur_pos.
+    #[test]
+    fn replay_apply_recovery_sequence_multi_step_in_order() {
+        let actions: std::sync::Arc<[RepairAction]> = std::sync::Arc::from(vec![
+            RepairAction::DeleteToken,
+            RepairAction::SkipToSync {
+                skip_count: 1,
+                sync_token: TokenId::MAX,
+            },
+        ].into_boxed_slice());
+        let trace = drive_recovery_replay(BuilderDelta::ApplyRecoverySequence {
+            actions,
+            base_pos: 0,
+            total_cost_tropical: 1.5,
+        });
+        assert_eq!(trace.len(), 2, "2-step sequence must produce 2 RecoveryEvents");
+        assert_eq!(trace[0].action_kind, 1, "first event = Delete (action_kind=1)");
+        assert_eq!(trace[1].action_kind, 0, "second event = Skip (action_kind=0)");
+        assert!(
+            trace[0].pos < trace[1].pos,
+            "cur_pos must advance monotonically across multi-step replay (got {} → {})",
+            trace[0].pos, trace[1].pos,
+        );
+    }
 }
