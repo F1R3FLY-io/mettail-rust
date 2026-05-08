@@ -3104,6 +3104,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 new_state,
             } => {
                 let _ = self.cursor_gss_replace_top(cursor, replace_symbol, cursor.pos, weight);
+                // B9 / Class 2 (2026-05-08): apply emit_push_side_effects
+                // BEFORE pushing the symbol — for CollectionMarker, this
+                // allocates an accumulator id and patches symbol.bp =
+                // Some(id), and pushes ActionArg::CollectionId(id) so the
+                // owning rule's terminal action can drain it. Pre-fix the
+                // ReplaceAndPush path silently skipped these side effects,
+                // breaking Class-2 binder rules whose collection-slot
+                // dispatch uses ReplaceAndPush(CollectionMarker). Mirrors
+                // the Push arm at line ~2998 and Fork arms at ~3390.
+                let mut push_symbol = push_symbol;
+                self.emit_push_side_effects(cursor, &mut push_symbol);
                 let _ = self.cursor_gss_push(cursor, push_symbol, cursor.pos, weight);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);

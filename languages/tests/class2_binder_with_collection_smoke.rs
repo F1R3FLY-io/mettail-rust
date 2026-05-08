@@ -64,12 +64,19 @@ fn pred3_three_element_collection() {
 }
 
 #[test]
-fn pred5_missing_close_paren_errors() {
-    // PRED-5: missing close paren → Err.
+fn pred5_missing_close_paren_recovers() {
+    // PRED-5 (revised): missing close paren — the WPDS walker's L12
+    // intrinsic bounded recovery auto-completes the missing `)`, so the
+    // parse succeeds with a recovered AST. The original B9 plan
+    // predicted Err here, but the walker's recovery (added in Stage 3.20
+    // / L12 Commit E, 2026-05-06) treats this as a recoverable elision
+    // rather than a hard parse failure. Whether recovery returns Choose
+    // or some other valid Proc shape is grammar-dependent; the
+    // observable invariant is that a fully-formed Proc is produced.
     let result = Proc::parse_via_wpds("choose 0 ( 0 | 0");
     assert!(
-        result.is_err(),
-        "missing close paren should error, got {:?}",
+        result.is_ok(),
+        "WPDS bounded recovery should produce a recovered parse, got {:?}",
         result
     );
 }
