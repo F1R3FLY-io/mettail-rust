@@ -8,7 +8,7 @@ use mettail_languages::rhocalc::*;
 use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
 
-// Dead rules detected by WFST analysis: {"Proc::DeleteMap", "Proc::Len", "Proc::PInputs", "Proc::DeleteList", "Proc::ToStr", "BoolToInt", "CastBigRat", "Proc::FloatBinProc", "Proc::ValuesMap", "Int::CountBag", "Proc::UnionBag", "CastStr", "Proc::UIntBinProc", "Proc::MergeMap", "Proc::DiffBag", "Proc::ToBool", "CastBag", "CastMap", "Proc::IntBinProc", "Proc::BigintCastProc", "CastBool", "CastInt", "CastBigInt", "Proc::KeysMap", "Proc::PDrop", "Proc::BigratCastProc", "Proc::FixedBinProc", "Proc::HasMap", "Proc::RemoveBag", "Proc::ElemList", "Proc::GetMap", "Proc::FractionProc", "Proc::POutput", "Proc::PNew", "CastList", "CastUInt32", "Proc::ConcatList", "UInt32ToInt", "Proc::PutMap"}
+// Dead rules detected by WFST analysis: {"Proc::UIntBinProc", "Proc::KeysMap", "Proc::ToStr", "Proc::Len", "Proc::ValuesMap", "Proc::FractionProc", "CastInt", "CastBool", "UInt32ToInt", "Proc::PNew", "Proc::ConcatList", "CastList", "Proc::PDrop", "Proc::BigratCastProc", "Proc::ToBool", "Proc::PutMap", "Proc::RemoveBag", "CastBag", "CastBigRat", "Proc::IntBinProc", "Proc::DiffBag", "Proc::HasMap", "BoolToInt", "Proc::BigintCastProc", "Proc::PInputs", "Proc::ElemList", "Proc::FloatBinProc", "Proc::DeleteList", "Proc::POutput", "Proc::UnionBag", "CastStr", "CastBigInt", "Int::CountBag", "Proc::GetMap", "Proc::FixedBinProc", "CastMap", "Proc::MergeMap", "CastUInt32", "Proc::DeleteMap"}
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
