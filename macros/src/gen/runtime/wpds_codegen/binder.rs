@@ -1260,8 +1260,20 @@ pub(crate) fn emit_binder_rule_body(
     }
 }
 
-/// Phase 5b: emit the body of `WpdsState::BinderListLoop`. Loop captures
-/// `Ident, separator, Ident, separator, ..., close` into the binder scope.
+/// Phase 5b + B8 (2026-05-08): emit the body of `WpdsState::BinderListLoop`.
+/// The state body dispatches on `(result_src_idx, rule_idx, sub_pos)`.
+///
+/// PNew-style rules (inner_positions=[BinderIdent], collection_param_cat=
+/// None) emit ONE arm at sub_pos=0: the legacy 3-branch fork over close /
+/// sep / ident — the third branch's GuardedConsumeIdentAndReplace
+/// captures the Ident inline and stays at sub_pos=0.
+///
+/// Class 3 ZIP-MAP-SEP rules (inner_positions has multiple slots,
+/// collection_param_cat=Some(elem_cat)) emit ARMS for sub_pos=0 (3-branch
+/// fork over close / sep / first inner) PLUS one arm per
+/// inner_positions[i] at sub_pos=i+1 (dispatching the i-th inner slot)
+/// PLUS a wrap arm at sub_pos=inner_positions.len()+1 that loops back
+/// to sub_pos=0.
 pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
@@ -1276,7 +1288,7 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
                     let result_src_idx = cat_i as u16;
                     let rule_idx = rule_i as u16;
                     arms.push(quote! {
-                        (#result_src_idx, #rule_idx) => {
+                        (#result_src_idx, #rule_idx, 0u8) => {
                             // L12 follow-up B2 (2026-05-07): three-branch
                             // GuardedFork over close / sep / ident. Each
                             // branch carries a runtime peek_text/peek_kind
@@ -1386,7 +1398,7 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
     }
     quote! {
         {
-            match (*result_src_idx, *rule_idx) {
+            match (*result_src_idx, *rule_idx, *sub_pos) {
                 #(#arms)*
                 _ => WpdsStepAction::Idle,
             }
