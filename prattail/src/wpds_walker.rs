@@ -3227,46 +3227,59 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         return CursorOutcome::Drop;
                     }
                 }
-                // B12 / Candidate E (2026-05-07): cross-cat projection
-                // cycle defense. If this Fork is a projection Fork (any
-                // branch transitions to CrossCatDelegate) AND the cursor
-                // has already dispatched a projection Fork at the current
-                // (pos, cat_src, cur_bp), the cursor is in a recursive
-                // cross-cat re-entry cycle (e.g. LedTest's Pred ↔ Num
-                // via PredToNum projection ↔ EqNum/NeNum cross-cat-LHS).
-                // Drop the cursor; the lex-min winner is among siblings
-                // that did not enter this cycle (typically the atomic-home
-                // branch that consumed the trigger token directly).
+                // B14 / C5 (2026-05-08): per-projection-branch GLL
+                // descriptor uniqueness. Extends B12's per-Fork cycle
+                // defense (gated by `is_projection_fork` requiring ALL
+                // branches CrossCatDelegate) to per-branch: any individual
+                // CrossCatDelegate branch that would re-enter the same
+                // (pos, cat_src, cur_bp) is dropped — productive non-
+                // projection siblings (atomic Var, cross-cat-LHS) keep
+                // competing via lex-min weights. The fix bounds LedTest's
+                // mixed-Fork Pred ↔ Num cycle (PredToNum projection
+                // sharing a Fork with NumVar atomic), which the per-Fork
+                // gate could not catch (mixed Fork → is_projection_fork
+                // false → no defense fires).
                 //
-                // Mirrors the recovery cycle defense above. Distinct
-                // because non-projection Forks (atomic prefix, lex-alt,
-                // multi-rule, Opt-Group) must NOT be cycle-gated — they
-                // are the legitimate ambiguity dispatches that lex-min
-                // disambiguates by weight; only projection Forks have
-                // the structural-cycle property that GLL descriptor-
-                // uniqueness (Scott & Johnstone 2010) bounds.
-                let is_projection = !is_recovery && is_projection_fork(&branches);
-                let projection_dispatch_config: Option<(usize, u16, u8)> =
-                    if is_projection {
-                        extract_dispatch_config(cursor, &self.gss)
-                    } else {
+                // Rationale: a projection-spawned descriptor's history
+                // is independent of its non-projection siblings'. The
+                // per-branch gate is the natural per-descriptor extension
+                // of GLL descriptor uniqueness (Scott & Johnstone 2010).
+                //
+                // Mirrors the recovery cycle defense above; distinct in
+                // that the gate is per-branch (not per-Fork) and applies
+                // to mixed Forks. Non-projection branches in the same
+                // Fork pass through unchanged — atomic prefix, lex-alt,
+                // multi-rule, Opt-Group dispatches keep their lex-min
+                // ambiguity-resolution semantics.
+                let parent_dispatch_config: Option<(usize, u16, u8)> =
+                    if is_recovery {
                         None
+                    } else {
+                        extract_dispatch_config(cursor, &self.gss)
                     };
-                if is_projection {
-                    if let Some(key) = projection_dispatch_config {
-                        if cursor.visited_dispatch.contains(&key) {
-                            let msg = format!(
-                                "cross-cat projection cycle detected at \
-                                 (pos={}, cat_src={}, cur_bp={}) — refusing \
-                                 to re-dispatch projection Fork (B12 cycle defense)",
-                                key.0, key.1, key.2,
-                            );
-                            self.set_cursor_inner_state(
-                                cursor,
-                                WpdsState::Error { message: msg },
-                            );
-                            return CursorOutcome::Drop;
-                        }
+                let parent_in_visited: bool = parent_dispatch_config
+                    .map(|k| cursor.visited_dispatch.contains(&k))
+                    .unwrap_or(false);
+                // Fast-path retained: pure-projection Fork already-visited
+                // would have every branch skipped by the per-branch gate
+                // below, leaving zero children. Drop the entire cursor
+                // here as a single optimization (algebraically equivalent
+                // to per-branch dropping all branches).
+                let is_pure_projection_fork =
+                    !is_recovery && is_projection_fork(&branches);
+                if is_pure_projection_fork && parent_in_visited {
+                    if let Some(key) = parent_dispatch_config {
+                        let msg = format!(
+                            "cross-cat projection cycle detected at \
+                             (pos={}, cat_src={}, cur_bp={}) — refusing \
+                             to re-dispatch projection Fork (B14 C5 cycle defense)",
+                            key.0, key.1, key.2,
+                        );
+                        self.set_cursor_inner_state(
+                            cursor,
+                            WpdsState::Error { message: msg },
+                        );
+                        return CursorOutcome::Drop;
                     }
                 }
                 let pos_after = if consume_trigger {
@@ -3275,8 +3288,25 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     cursor.pos
                 };
                 let mut children = Vec::with_capacity(branches.len());
+                // B14 C5: parallel tracker — for each child pushed below,
+                // record whether its originating branch was CrossCatDelegate.
+                // Used post-loop for per-child visited_dispatch insertion.
+                let mut child_came_from_cross_cat: Vec<bool> =
+                    Vec::with_capacity(branches.len());
                 let branches_count = branches.len() as u32;
                 for (branch_idx, branch) in branches.into_iter().enumerate() {
+                    // B14 C5 per-branch gate: skip CrossCatDelegate branches
+                    // that would re-enter the same dispatch config (GLL
+                    // descriptor uniqueness). Productive non-projection
+                    // siblings in the same Fork are unaffected.
+                    let is_cross_cat_delegate_branch =
+                        matches!(&branch.new_state, WpdsState::CrossCatDelegate { .. });
+                    if !is_recovery
+                        && parent_in_visited
+                        && is_cross_cat_delegate_branch
+                    {
+                        continue;
+                    }
                     // Stage 3.12 Fix 2(ii) (2026-05-02): Fork-source-order
                     // priority. Encode the cursor's full Fork path via
                     // `parent.priority * num_branches + branch_idx`. For
@@ -3352,6 +3382,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
                         ForkActionKind::OptGroupAbsent { replace_symbol } => {
                             // Stage 3.12 / Class A.i (2026-05-01): SKIP
@@ -3414,6 +3445,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
                         // Stage 3.16 (Cluster 1, Mechanism γ, 2026-05-05) —
@@ -3459,6 +3491,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 self.pos = child.pos;
                             }
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
                         ForkActionKind::Consume => {
@@ -3490,6 +3523,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 self.pos = child.pos;
                             }
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
                         ForkActionKind::ConsumeIdentAndReplace { start_scope } => {
@@ -3554,6 +3588,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 self.pos = child.pos;
                             }
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
                         ForkActionKind::Pop => {
@@ -3593,6 +3628,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.new_state.clone(),
                             );
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
                         ForkActionKind::ConsumeAndPop => {
@@ -3636,6 +3672,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.new_state.clone(),
                             );
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
                         ForkActionKind::ConsumeAndReplaceWithEffect { effect } => {
@@ -3677,6 +3714,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 self.pos = child.pos;
                             }
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
                         ForkActionKind::LexAlt { alt_idx, kind, text } => {
@@ -3722,6 +3760,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
                         ForkActionKind::ConsumeAndCaptureAndPush => {
@@ -3784,6 +3823,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 self.pos = child.pos;
                             }
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
                         ForkActionKind::GuardedConsumeAndReplace { expected_text } => {
@@ -3817,6 +3857,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 self.pos = child.pos;
                             }
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
                         ForkActionKind::GuardedConsumeIdentAndReplace { start_scope } => {
@@ -3866,6 +3907,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 self.pos = child.pos;
                             }
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
                         ForkActionKind::GuardedConsume { expected_text } => {
@@ -3893,6 +3935,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 self.pos = child.pos;
                             }
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
                         ForkActionKind::GuardedConsumeAndReplaceWithEffect {
@@ -3936,6 +3979,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 self.pos = child.pos;
                             }
                             children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
                     }
                 }
@@ -3965,16 +4009,30 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         }
                     }
                 }
-                // B12 / Candidate E (2026-05-07): post-allocation projection
-                // cycle bookkeeping. Each child inherited the parent's
-                // visited_dispatch via per-arm allocation; here we insert
-                // the current dispatch config so the next projection Fork
-                // at the same (pos, cat_src, cur_bp) on this child's path
-                // hits the cycle-defense check above and is dropped.
-                if is_projection {
-                    if let Some(key) = projection_dispatch_config {
-                        for child in children.iter_mut() {
-                            child.visited_dispatch.insert(key);
+                // B14 C5 (2026-05-08): per-child conditional insertion of
+                // the dispatch config. Only children whose originating
+                // branch was CrossCatDelegate get the key inserted into
+                // their visited_dispatch — productive non-projection
+                // siblings (atomic Var, cross-cat-LHS) keep their clean
+                // visited_dispatch sets and can compete via lex-min on
+                // subsequent dispatches without false-positive cycle drops.
+                //
+                // Replaces B12's blanket `if is_projection` insertion,
+                // which fired only on pure-projection Forks. The C5 gate
+                // fires per-branch in mixed Forks; the matching post-loop
+                // insertion ensures the gate has a key to detect on the
+                // next iteration.
+                if let Some(key) = parent_dispatch_config {
+                    if !is_recovery {
+                        debug_assert_eq!(
+                            children.len(),
+                            child_came_from_cross_cat.len(),
+                            "B14 C5: parallel tracker out of sync with children",
+                        );
+                        for (idx, child) in children.iter_mut().enumerate() {
+                            if child_came_from_cross_cat[idx] {
+                                child.visited_dispatch.insert(key);
+                            }
                         }
                     }
                 }
