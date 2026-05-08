@@ -681,6 +681,23 @@ pub struct BranchCursor<W: Semiring> {
     /// `recovery_depth` (each insert here corresponds to a depth
     /// increment).
     pub visited_recovery: BTreeSet<(usize, u16, u8)>,
+    /// B12 / Candidate E (2026-05-07): per-cursor configurations at
+    /// which a CROSS-CAT-PROJECTION Fork has already fired on this
+    /// cursor's path. Each entry is `(pos, state_cat_src_idx, cur_bp)`
+    /// — the same key shape as `visited_recovery` because the
+    /// termination lemma is identical: a cursor that re-enters the
+    /// same dispatch configuration via a projection Fork is in a
+    /// non-productive recursive cross-cat cycle (e.g. LedTest's
+    /// Pred → Num via PredToNum, where Num's PrefixDispatch then
+    /// fires PredToNum projection back to Pred's PrefixDispatch).
+    /// Distinct from `visited_recovery` because non-recovery dispatch
+    /// has unrelated termination criteria (recovery uses
+    /// `RecoveryConfig.max_recovery_depth`; projection cycles use
+    /// the GLL descriptor-uniqueness argument — Scott & Johnstone
+    /// 2010). Mirrors `visited_recovery` propagation: cloned to each
+    /// child on Fork, inserted with the parent's dispatch config
+    /// after a projection Fork emission.
+    pub visited_dispatch: BTreeSet<(usize, u16, u8)>,
 }
 
 impl<W: Semiring> std::fmt::Debug for BranchCursor<W>
@@ -721,6 +738,7 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
             incoming_edge_stack: self.incoming_edge_stack.clone(),
             recovery_depth: self.recovery_depth,
             visited_recovery: self.visited_recovery.clone(),
+            visited_dispatch: self.visited_dispatch.clone(),
         }
     }
 }
@@ -782,6 +800,9 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // visited set.
             recovery_depth: 0,
             visited_recovery: BTreeSet::new(),
+            // B12 / Candidate E (2026-05-07): seed cursor has not
+            // dispatched any projection Fork yet — empty visited set.
+            visited_dispatch: BTreeSet::new(),
         }
     }
 
@@ -816,6 +837,10 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             incoming_edge_stack: parent.incoming_edge_stack.clone(),
             recovery_depth: parent.recovery_depth,
             visited_recovery: parent.visited_recovery.clone(),
+            // B12 / Candidate E (2026-05-07): inherit parent's projection
+            // visited set; the Fork-arm post-allocation step inserts the
+            // current dispatch config when this fork IS a projection Fork.
+            visited_dispatch: parent.visited_dispatch.clone(),
         }
     }
 }
@@ -1384,6 +1409,50 @@ fn extract_recovery_dispatch_config<W: Semiring>(
     }
 }
 
+/// B12 / Candidate E (2026-05-07): a *projection Fork* is a non-recovery
+/// Fork whose branches transition to `WpdsState::CrossCatDelegate { .. }`.
+/// These are exactly the Forks emitted by codegen for cross-category
+/// projection (Pass 2a, `UnifiedDescriptor::CrossCatProjection`) and
+/// cross-cat-prefix-unary (Pass 2b). Atomic-prefix Forks (lex-min
+/// disambiguation between same-cat atomic rules), lex-alt Forks,
+/// multi-rule Forks, and Opt-Group Forks do NOT produce
+/// CrossCatDelegate transitions and are exempt from the projection
+/// cycle defense.
+///
+/// Used by the Fork arm of `apply_action_to_cursor` to decide whether
+/// to apply the visited-dispatch cycle check; see `BranchCursor::
+/// visited_dispatch` and the GLL descriptor-uniqueness rationale
+/// (Scott & Johnstone 2010).
+fn is_projection_fork<W: Semiring>(branches: &[ForkBranch<W>]) -> bool {
+    branches.iter().any(|b| {
+        matches!(&b.new_state, WpdsState::CrossCatDelegate { .. })
+    })
+}
+
+/// B12 / Candidate E (2026-05-07): extract the `(pos, cat_src_idx, cur_bp)`
+/// configuration at which a projection Fork fires. Returns `None` if the
+/// cursor is not in `PrefixDispatch` — projection Forks fire only from
+/// PrefixDispatch by codegen invariant; the caller falls back to
+/// inserting nothing into `visited_dispatch` in that case (no cycle
+/// defense possible without a meaningful key).
+///
+/// Identical body to `extract_recovery_dispatch_config` — kept separate
+/// so future refactors can vary one without affecting the other.
+fn extract_dispatch_config<W: Semiring>(
+    cursor: &BranchCursor<W>,
+    gss: &WpdsGss<W>,
+) -> Option<(usize, u16, u8)> {
+    if let WpdsState::PrefixDispatch { pos, cur_bp } = &cursor.inner_state {
+        let cat_src = gss
+            .node(cursor.node)
+            .map(|n| n.symbol.category_src_idx)
+            .unwrap_or(0);
+        Some((*pos, cat_src, *cur_bp))
+    } else {
+        None
+    }
+}
+
 impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Construct a fresh walker in `Ready { min_bp }` state.
     ///
@@ -1851,6 +1920,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // carry its ancestors' recovery history.
                     recovery_depth: 0,
                     visited_recovery: BTreeSet::new(),
+                    // B12 / Candidate E (2026-05-07): same rationale —
+                    // post-resolution singleton resets projection
+                    // visited set.
+                    visited_dispatch: BTreeSet::new(),
                 }];
                 self.state = new_state.clone();
                 let trace = WpdsTraceEntry {
@@ -2444,6 +2517,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // post-Drop reset resets recovery book-keeping.
                     recovery_depth: 0,
                     visited_recovery: BTreeSet::new(),
+                    // B12 / Candidate E (2026-05-07): same rationale —
+                    // post-Drop reset clears projection visited set.
+                    visited_dispatch: BTreeSet::new(),
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -2494,6 +2570,38 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::Push { mut symbol, weight, new_state } => {
+                // B12 / Candidate E (2026-05-07): cross-cat projection
+                // cycle defense for SINGLETON projection arms. Singleton
+                // bucket emits `WpdsStepAction::Push` (not Fork) when only
+                // one descriptor matches a (pat, guard) — see
+                // `prefix.rs::emit_unified_arm` UnifiedDescriptor::
+                // CrossCatProjection branch's singleton emission. This
+                // path bypasses the Fork-arm cycle defense, so we mirror
+                // the same check here: if the new_state is CrossCatDelegate
+                // (the projection mechanism) AND the cursor has already
+                // dispatched a projection at the current (pos, cat_src,
+                // cur_bp), drop. Otherwise insert into visited_dispatch
+                // before transitioning so the next projection at the same
+                // configuration on this cursor's path is caught.
+                if matches!(&new_state, WpdsState::CrossCatDelegate { .. }) {
+                    if let Some(key) = extract_dispatch_config(cursor, &self.gss) {
+                        if cursor.visited_dispatch.contains(&key) {
+                            let msg = format!(
+                                "cross-cat projection cycle detected at \
+                                 (pos={}, cat_src={}, cur_bp={}) — refusing \
+                                 to re-dispatch projection Push (B12 cycle \
+                                 defense, singleton-bucket path)",
+                                key.0, key.1, key.2,
+                            );
+                            self.set_cursor_inner_state(
+                                cursor,
+                                WpdsState::Error { message: msg },
+                            );
+                            return CursorOutcome::Drop;
+                        }
+                        cursor.visited_dispatch.insert(key);
+                    }
+                }
                 // Stage 3.9 / ι Phase 4 (2026-05-01): symbol-kind-driven
                 // implicit Push-time side effects via centralized helper.
                 // Handles CollectionMarker (id alloc + bp patch + arg push)
@@ -2745,6 +2853,48 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         return CursorOutcome::Drop;
                     }
                 }
+                // B12 / Candidate E (2026-05-07): cross-cat projection
+                // cycle defense. If this Fork is a projection Fork (any
+                // branch transitions to CrossCatDelegate) AND the cursor
+                // has already dispatched a projection Fork at the current
+                // (pos, cat_src, cur_bp), the cursor is in a recursive
+                // cross-cat re-entry cycle (e.g. LedTest's Pred ↔ Num
+                // via PredToNum projection ↔ EqNum/NeNum cross-cat-LHS).
+                // Drop the cursor; the lex-min winner is among siblings
+                // that did not enter this cycle (typically the atomic-home
+                // branch that consumed the trigger token directly).
+                //
+                // Mirrors the recovery cycle defense above. Distinct
+                // because non-projection Forks (atomic prefix, lex-alt,
+                // multi-rule, Opt-Group) must NOT be cycle-gated — they
+                // are the legitimate ambiguity dispatches that lex-min
+                // disambiguates by weight; only projection Forks have
+                // the structural-cycle property that GLL descriptor-
+                // uniqueness (Scott & Johnstone 2010) bounds.
+                let is_projection = !is_recovery && is_projection_fork(&branches);
+                let projection_dispatch_config: Option<(usize, u16, u8)> =
+                    if is_projection {
+                        extract_dispatch_config(cursor, &self.gss)
+                    } else {
+                        None
+                    };
+                if is_projection {
+                    if let Some(key) = projection_dispatch_config {
+                        if cursor.visited_dispatch.contains(&key) {
+                            let msg = format!(
+                                "cross-cat projection cycle detected at \
+                                 (pos={}, cat_src={}, cur_bp={}) — refusing \
+                                 to re-dispatch projection Fork (B12 cycle defense)",
+                                key.0, key.1, key.2,
+                            );
+                            self.set_cursor_inner_state(
+                                cursor,
+                                WpdsState::Error { message: msg },
+                            );
+                            return CursorOutcome::Drop;
+                        }
+                    }
+                }
                 let pos_after = if consume_trigger {
                     cursor.pos + 1
                 } else {
@@ -2813,6 +2963,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // pass through unchanged.
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
+                                visited_dispatch: cursor.visited_dispatch.clone(),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -2859,6 +3010,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // pass through unchanged.
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
+                                visited_dispatch: cursor.visited_dispatch.clone(),
                             };
                             // Strict mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -2916,6 +3068,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // pass through unchanged.
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
+                                visited_dispatch: cursor.visited_dispatch.clone(),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -2952,6 +3105,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // pass through unchanged.
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
+                                visited_dispatch: cursor.visited_dispatch.clone(),
                             };
                             child.pos += 1;
                             if self.cursor_mode == CursorMode::Lazy {
@@ -2981,6 +3135,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // pass through unchanged.
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
+                                visited_dispatch: cursor.visited_dispatch.clone(),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -3043,6 +3198,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // pass through unchanged.
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
+                                visited_dispatch: cursor.visited_dispatch.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3080,6 +3236,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // pass through unchanged.
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
+                                visited_dispatch: cursor.visited_dispatch.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3121,6 +3278,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // pass through unchanged.
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
+                                visited_dispatch: cursor.visited_dispatch.clone(),
                             };
                             child.pending_builder_ops.push(effect);
                             let pos_now = child.pos;
@@ -3159,6 +3317,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // pass through unchanged.
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
+                                visited_dispatch: cursor.visited_dispatch.clone(),
                             };
                             child.pending_builder_ops.push(
                                 BuilderDelta::CommitLexAlternative {
@@ -3212,6 +3371,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // pass through unchanged.
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
+                                visited_dispatch: cursor.visited_dispatch.clone(),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -3412,6 +3572,19 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         for child in children.iter_mut() {
                             child.recovery_depth =
                                 child.recovery_depth.saturating_add(1);
+                        }
+                    }
+                }
+                // B12 / Candidate E (2026-05-07): post-allocation projection
+                // cycle bookkeeping. Each child inherited the parent's
+                // visited_dispatch via per-arm allocation; here we insert
+                // the current dispatch config so the next projection Fork
+                // at the same (pos, cat_src, cur_bp) on this child's path
+                // hits the cycle-defense check above and is dropped.
+                if is_projection {
+                    if let Some(key) = projection_dispatch_config {
+                        for child in children.iter_mut() {
+                            child.visited_dispatch.insert(key);
                         }
                     }
                 }
@@ -4287,6 +4460,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             // continue counting against the same depth budget.
             recovery_depth: winner.recovery_depth,
             visited_recovery: winner.visited_recovery,
+            // B12 / Candidate E (2026-05-07): preserve winner's projection
+            // visited set so post-commit projection cycle defense
+            // continues to apply across the parse path.
+            visited_dispatch: winner.visited_dispatch,
         }];
     }
 
@@ -6902,6 +7079,7 @@ mod tests {
             incoming_edge_stack: Vec::new(),
             recovery_depth: 0,
             visited_recovery: BTreeSet::new(),
+            visited_dispatch: BTreeSet::new(),
         };
         let cloned = cursor.clone();
         assert_eq!(cloned.pending_builder_ops.len(), 1);
