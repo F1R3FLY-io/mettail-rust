@@ -17,8 +17,8 @@ use mettail_runtime::BehavioralPred;
 //   Grouping             weight: 0.0000
 //   IntLit               weight: 0.0000
 //   Neg                  weight: 0.0000
-//   VarInt               weight: 2.0000
 //   VarBool              weight: 2.0000
+//   VarInt               weight: 2.0000
 // Category weights:
 //   Int                  weight: 0.5000
 //   Bool                 weight: 0.5000
