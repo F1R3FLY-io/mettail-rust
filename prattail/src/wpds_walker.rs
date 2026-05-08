@@ -6985,6 +6985,8 @@ mod tests {
             static ACTION: ActionEntry = ActionEntry {
                 action_fn: int_lit_action,
                 arity: 1,
+                expected_input_cats: &[crate::wpds_runtime::ANY_CAT],
+                output_cat: 0,
             };
             if src_idx == 0 && rule_idx == 0 {
                 Some(&ACTION)
@@ -7077,10 +7079,14 @@ mod tests {
     static COLL_ELEM_ENTRY: ActionEntry = ActionEntry {
         action_fn: coll_elem_action,
         arity: 0,
+        expected_input_cats: &[],
+        output_cat: 0,
     };
     static COLL_FINALIZE_ENTRY: ActionEntry = ActionEntry {
         action_fn: coll_finalize_action,
         arity: 1,
+        expected_input_cats: &[crate::wpds_runtime::ANY_CAT],
+        output_cat: 0,
     };
 
     impl WpdsStepEngine<LexicographicWeight> for CollAwareScriptedEngine {
@@ -7517,6 +7523,14 @@ mod tests {
         static UNDERFLOW_ENTRY: ActionEntry = ActionEntry {
             action_fn: underflow_action,
             arity: 5,
+            expected_input_cats: &[
+                crate::wpds_runtime::ANY_CAT,
+                crate::wpds_runtime::ANY_CAT,
+                crate::wpds_runtime::ANY_CAT,
+                crate::wpds_runtime::ANY_CAT,
+                crate::wpds_runtime::ANY_CAT,
+            ],
+            output_cat: 0,
         };
         impl WpdsStepEngine<LexicographicWeight> for ArityBugScriptedEngine {
             fn step(
