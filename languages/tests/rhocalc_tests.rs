@@ -1053,6 +1053,17 @@ mod native_ops {
             assert_reduces_to("{pathHas(pathmap(1:2), 1)}", "true");
             assert_reduces_to("{pathHas(pathmap(1:2), 3)}", "false");
         }
+
+        #[test]
+        fn pathmap_list_path_get() {
+            assert_reduces_to("{pathGet(pathmap([1,2]:10), [1,2])}", "10");
+        }
+
+        #[test]
+        fn pathmap_list_path_has() {
+            assert_reduces_to("{pathHas(pathmap([1,2]:10), [1,2])}", "true");
+            assert_reduces_to("{pathHas(pathmap([1,2]:10), [1,3])}", "false");
+        }
     }
 
     mod type_conversion {

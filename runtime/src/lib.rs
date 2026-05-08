@@ -54,6 +54,9 @@ pub use hashmap_lit::HashMapLit;
 
 mod pathmap_lit;
 pub use pathmap_lit::PathMapLit;
+mod pathmap_codec;
+pub use pathmap::PathMap as RawPathMap;
+pub use pathmap_codec::{flatten_segments, unflatten_segments, ESCAPE_BYTE, SEGMENT_DELIM};
 
 // Language metadata for REPL introspection
 mod metadata;

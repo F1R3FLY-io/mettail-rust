@@ -891,7 +891,9 @@ language! {
         PathGet . m:Proc, k:Proc |- "pathGet" "(" m "," k ")" : Proc ![
             { match &m {
                 Proc::CastPathmap(inner) => match inner.as_ref() {
-                    Pathmap::PathmapLit(ref payload) => payload.get(&k).cloned().unwrap_or(Proc::Err),
+                    Pathmap::PathmapLit(ref payload) => {
+                        crate::rhocalc::pathmap_get(payload, &k).unwrap_or(Proc::Err)
+                    },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -926,7 +928,9 @@ language! {
         PathHas . m:Proc, k:Proc |- "pathHas" "(" m "," k ")" : Proc ![
             { match &m {
                 Proc::CastPathmap(inner) => match inner.as_ref() {
-                    Pathmap::PathmapLit(ref payload) => Proc::CastBool(Box::new(Bool::BoolLit(payload.get(&k).is_some()))),
+                    Pathmap::PathmapLit(ref payload) => {
+                        Proc::CastBool(Box::new(Bool::BoolLit(crate::rhocalc::pathmap_has(payload, &k))))
+                    },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -1341,4 +1345,41 @@ impl Proc {
         let rhs = normalize_query_send_sugar_proc(other);
         mettail_runtime::BoundTerm::term_eq(&lhs, &rhs)
     }
+}
+
+fn proc_to_path_segments(key: &Proc) -> Vec<Vec<u8>> {
+    match key {
+        Proc::CastList(inner) => match inner.as_ref() {
+            List::ListLit(items) => items
+                .iter()
+                .map(|segment| segment.to_string().into_bytes())
+                .collect(),
+            _ => vec![key.to_string().into_bytes()],
+        },
+        _ => vec![key.to_string().into_bytes()],
+    }
+}
+
+fn proc_to_path_key_bytes(key: &Proc) -> Vec<u8> {
+    mettail_runtime::flatten_segments(&proc_to_path_segments(key))
+}
+
+fn pathmap_trie_from_lit(
+    payload: &mettail_runtime::PathMapLit<Proc, Proc>,
+) -> mettail_runtime::RawPathMap<Proc> {
+    let mut trie = mettail_runtime::RawPathMap::new();
+    for (key, value) in payload.iter() {
+        trie.set_val_at(&proc_to_path_key_bytes(key), value.clone());
+    }
+    trie
+}
+
+fn pathmap_get(payload: &mettail_runtime::PathMapLit<Proc, Proc>, key: &Proc) -> Option<Proc> {
+    let trie = pathmap_trie_from_lit(payload);
+    trie.get_val_at(&proc_to_path_key_bytes(key)).cloned()
+}
+
+fn pathmap_has(payload: &mettail_runtime::PathMapLit<Proc, Proc>, key: &Proc) -> bool {
+    let trie = pathmap_trie_from_lit(payload);
+    trie.get_val_at(&proc_to_path_key_bytes(key)).is_some()
 }
