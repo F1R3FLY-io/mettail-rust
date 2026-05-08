@@ -702,18 +702,52 @@ fn generate_engine_regular_arm(
                     nt_idx += 1;
                 }
             },
-            GrammarItem::Collection { separator, delimiters, .. } => {
+            GrammarItem::Collection { coll_type, separator, delimiters, .. } => {
                 if let Some(((_, _), field_name)) = field_iter.next() {
                     // Collection fields write inline (elements may not be deeply nested)
                     let sep = separator.clone();
+                    // B9 / Class 2 (2026-05-08): branch on coll_type. Vec
+                    // yields bare elements; HashBag yields (elem, count)
+                    // tuples; HashSet yields bare elements with order
+                    // preservation via sort. The previous unconditional
+                    // (elem, count) pattern only matched HashBag and
+                    // failed to compile when Vec collections appeared
+                    // (e.g. Class-2 binder rule with Vec<Proc> slot or a
+                    // Class-5 collection rule with Vec element type).
+                    let items_expr = match coll_type {
+                        mettail_ast::types::CollectionType::Vec => quote! {
+                            let items: Vec<String> = #field_name.iter()
+                                .map(|elem| elem.to_string())
+                                .collect();
+                        },
+                        mettail_ast::types::CollectionType::HashSet => quote! {
+                            let mut items: Vec<String> = #field_name.iter()
+                                .map(|elem| elem.to_string())
+                                .collect();
+                            items.sort();
+                        },
+                        mettail_ast::types::CollectionType::HashBag => quote! {
+                            let mut items: Vec<String> = #field_name.iter().map(|(elem, count)| {
+                                (0..count).map(|_| elem.to_string()).collect::<Vec<_>>().join(&format!(" {} ", #sep))
+                            }).collect();
+                            items.sort();
+                        },
+                        mettail_ast::types::CollectionType::HashMap => quote! {
+                            // HashMap display path is handled separately;
+                            // defensive fallback that yields each entry's
+                            // Display form. Pilot grammars do not exercise
+                            // HashMap-in-binder Class 2.
+                            let mut items: Vec<String> = #field_name.iter()
+                                .map(|(k, v)| format!("{} : {}", k, v))
+                                .collect();
+                            items.sort();
+                        },
+                    };
                     if let Some((open, close)) = delimiters {
                         forward_ops.push(quote! {
                             {
                                 let mut s = String::from(#open);
-                                let mut items: Vec<String> = #field_name.iter().map(|(elem, count)| {
-                                    (0..count).map(|_| elem.to_string()).collect::<Vec<_>>().join(&format!(" {} ", #sep))
-                                }).collect();
-                                items.sort();
+                                #items_expr
                                 if !items.is_empty() {
                                     s.push_str(&items.join(&format!(" {} ", #sep)));
                                 }
@@ -724,10 +758,7 @@ fn generate_engine_regular_arm(
                     } else {
                         forward_ops.push(quote! {
                             {
-                                let mut items: Vec<String> = #field_name.iter().map(|(elem, count)| {
-                                    (0..count).map(|_| elem.to_string()).collect::<Vec<_>>().join(&format!(" {} ", #sep))
-                                }).collect();
-                                items.sort();
+                                #items_expr
                                 stack.push(DisplayTask::WriteString(items.join(&format!(" {} ", #sep))));
                             }
                         });
@@ -1374,7 +1405,7 @@ fn generate_engine_pattern_op(
     abstraction_binder: &Option<String>,
     _abstraction_body: &Option<String>,
     _body_cat_ident: &Option<syn::Ident>,
-    _param_types: &HashMap<String, &TypeExpr>,
+    param_types: &HashMap<String, &TypeExpr>,
     prev_outer_is_param: bool,
     next_outer_is_param: bool,
 ) -> TokenStream {
@@ -1401,16 +1432,56 @@ fn generate_engine_pattern_op(
                     }
                 }
             } else {
+                // B9 / Class 2 (2026-05-08): branch on the collection
+                // param's coll_type. Vec yields bare elements; HashBag/
+                // HashSet yield (elem, count) tuples (HashBag has count >= 1,
+                // HashSet count == 1 by construction). Pre-B9 the
+                // unconditional (item, count) iteration assumed HashBag,
+                // breaking Class-5 Vec collections AND Class-2 binder-rule
+                // Vec collection slots (the smoke test's `qs:Vec(Proc)`).
+                let coll_kind = param_types.get(&coll_name).and_then(|ty| {
+                    if let TypeExpr::Collection { coll_type, .. } = ty {
+                        Some(coll_type.clone())
+                    } else {
+                        None
+                    }
+                });
                 let coll_ident = syn::Ident::new(&coll_name, proc_macro2::Span::call_site());
-                quote! {
-                    {
-                        let mut parts = Vec::new();
+                let iter_body = match coll_kind {
+                    Some(mettail_ast::types::CollectionType::Vec) => quote! {
+                        for item in #coll_ident.iter() {
+                            parts.push(item.to_string());
+                        }
+                        // Vec preserves insertion order — no sort.
+                    },
+                    Some(mettail_ast::types::CollectionType::HashSet) => quote! {
+                        for item in #coll_ident.iter() {
+                            parts.push(item.to_string());
+                        }
+                        parts.sort();
+                    },
+                    Some(mettail_ast::types::CollectionType::HashMap) => quote! {
+                        // HashMap: pair-wise iteration — defensive; pilot
+                        // grammars do not exercise HashMap-in-binder.
+                        for (k, v) in #coll_ident.iter() {
+                            parts.push(format!("{} : {}", k, v));
+                        }
+                        parts.sort();
+                    },
+                    // Default (HashBag or unknown): preserve pre-B9 behavior.
+                    Some(mettail_ast::types::CollectionType::HashBag) | None => quote! {
                         for (item, count) in #coll_ident.iter() {
                             for _ in 0..count {
                                 parts.push(item.to_string());
                             }
                         }
                         parts.sort();
+                    },
+                };
+                quote! {
+                    {
+                        let mut parts = Vec::new();
+                        #iter_body
                         stack.push(DisplayTask::WriteString(parts.join(#sep_with_spaces)));
                     }
                 }

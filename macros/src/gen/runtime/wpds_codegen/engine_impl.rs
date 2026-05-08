@@ -66,6 +66,11 @@ pub(crate) fn emit_engine_impl_full(
         super::collection::emit_collection_close_lookup(language, per_cat);
     let collection_element_src_lookup =
         super::collection::emit_collection_element_src_lookup(language, categories, per_cat);
+    // B9 / Class 2 (2026-05-08): per-rule lookup for Class-2 binder rules'
+    // internal collection slots. Used by the walker's CollectionMarker-pop
+    // arm to suppress the default FireAction.
+    let is_binder_internal_collection_lookup =
+        super::collection::emit_is_binder_internal_collection_lookup(per_cat);
     // Phase 5: binder rule prefix arms (recognize trigger literal of binder
     // rules) + BinderRule state body (multi-step state machine per rule).
     let binder_arms = super::binder::emit_binder_prefix_arms(language, categories, per_cat);
@@ -1040,6 +1045,14 @@ pub(crate) fn emit_engine_impl_full(
                 rule_idx: u16,
             ) -> Option<&mettail_prattail::wpds_runtime::ActionEntry> {
                 #action_for_body
+            }
+
+            fn is_binder_internal_collection(
+                &self,
+                result_src_idx: u16,
+                rule_idx: u16,
+            ) -> bool {
+                #is_binder_internal_collection_lookup
             }
         }
     }

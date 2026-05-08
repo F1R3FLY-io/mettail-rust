@@ -308,6 +308,25 @@ fn generate_collection_projection_population(
             continue;
         }
 
+        // B9 / Class 2 (2026-05-08): skip multi-Simple-param constructors
+        // whose collection slot is part of a binder-rule body. The
+        // generated `if let Proc::Label(ref coll_field) = parent` pattern
+        // expects a single-arg tuple variant (Class-5 collection-literal
+        // pattern); for Class-2 binder rules with shape e.g.
+        // `Choose . a:Proc, qs:Vec(Proc)`, the variant has 2 fields and
+        // the pattern would fail with E0023. Future work: emit a Class-2
+        // variant of the projection that matches the multi-field tuple
+        // and projects the collection slot.
+        if let Some(ref ctx) = constructor.term_context {
+            let simple_count = ctx
+                .iter()
+                .filter(|p| matches!(p, mettail_ast::grammar::TermParam::Simple { .. }))
+                .count();
+            if simple_count > 1 {
+                continue;
+            }
+        }
+
         // Check if this constructor has a collection field
         for item in &constructor.items {
             if let GrammarItem::Collection { element_type, coll_type, .. } = item {
@@ -380,6 +399,19 @@ fn generate_projection_seeding_rules(category: &Ident, language: &LanguageDef) -
         // Skip multi-binder constructors
         if is_multi_binder(constructor) {
             continue;
+        }
+
+        // B9 / Class 2 (2026-05-08): skip multi-Simple-param constructors
+        // whose collection slot is part of a binder-rule body — same
+        // rationale as `generate_collection_projection_population`.
+        if let Some(ref ctx) = constructor.term_context {
+            let simple_count = ctx
+                .iter()
+                .filter(|p| matches!(p, mettail_ast::grammar::TermParam::Simple { .. }))
+                .count();
+            if simple_count > 1 {
+                continue;
+            }
         }
 
         // Check if this constructor has a collection field

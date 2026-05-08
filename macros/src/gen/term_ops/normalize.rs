@@ -77,6 +77,23 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
             if has_multi_binder {
                 continue;
             }
+            // B9 / Class 2 (2026-05-08): skip flatten helper for multi-Param
+            // rules whose collection slot is part of a binder-rule body
+            // (e.g. `Choose . a:Proc, qs:Vec(Proc) |- "choose" a "(" qs.* ")"`).
+            // The auto-flatten codegen assumes a single-arg HashBag-typed
+            // tuple variant (Class-5 collection-literal pattern) and emits
+            // `Proc::Label(inner)` matching with `(item, count)` HashBag
+            // iteration. Both assumptions break for Class-2 binder rules.
+            // The flatten helper is meaningful only for single-Simple-param
+            // rules whose param is a Collection — i.e. classify_collection
+            // candidates.
+            let simple_count = ctx
+                .iter()
+                .filter(|p| matches!(p, TermParam::Simple { .. }))
+                .count();
+            if simple_count > 1 {
+                continue;
+            }
         }
 
         let has_collection = rule

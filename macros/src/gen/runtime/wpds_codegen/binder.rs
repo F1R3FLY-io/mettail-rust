@@ -22,7 +22,7 @@
 
 use mettail_ast::grammar::{GrammarRule, PatternOp, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
-use mettail_ast::types::TypeExpr;
+use mettail_ast::types::{CollectionType, TypeExpr};
 use mettail_prattail::binding_power::compute_prefix_bp;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -113,7 +113,19 @@ pub enum BinderPosition {
     /// reaches `positions.len() + 1`, the rule's RuleAt symbol pops in
     /// Unwinding and the action fires (no separate `is_final` flag needed
     /// — it's encoded by position arithmetic).
-    ParamParse { cat: String },
+    ///
+    /// B9 / Class 2 (2026-05-08): when the param is `Sep`-driven over a
+    /// SimpleCollection (e.g. `Vec(Proc).*sep("|") ")"`), `collection`
+    /// is `Some(...)`. The dispatch arm pushes a CollectionMarker onto
+    /// the GSS, transitioning to PrefixDispatch where the existing
+    /// CollectionLoop apparatus parses elements separated by `separator`
+    /// until `close`. On close, the marker pops — but the FireAction is
+    /// suppressed (binder-internal collection); the binder rule's
+    /// terminal action drains the CollectionId via `CollectionDrain`.
+    ParamParse {
+        cat: String,
+        collection: Option<CollectionSepInfo>,
+    },
     /// `Param(guard)` for `?guard:Guard` — parse predicate inline via
     /// `parse_predicate_from_tokens`. Advance position.
     GuardSlot,
@@ -141,6 +153,19 @@ pub enum BinderPosition {
     },
 }
 
+/// B9 / Class 2 (2026-05-08): separator + close + container-kind info
+/// for a `ParamParse` slot whose source is a `Sep`-driven collection.
+/// Mirrors `CollectionShape` (collection.rs) but lives on the binder
+/// position because the slot is INSIDE a multi-position binder rule
+/// rather than the rule itself BEING a collection rule.
+#[derive(Debug, Clone)]
+pub struct CollectionSepInfo {
+    pub separator: String,
+    pub close: String,
+    pub coll_kind: CollectionType,
+    pub elem_cat: String,
+}
+
 /// What kind of arg the action body extracts at each position (in push order).
 #[derive(Debug, Clone)]
 pub enum ActionArgKind {
@@ -159,6 +184,16 @@ pub enum ActionArgKind {
     /// Vec<ActionArg>>)` and produces `Some(...)` / `None` for each
     /// `Option<T>` field of the AST variant in inner-args order.
     Optional(Vec<ActionArgKind>),
+    /// B9 / Class 2 (2026-05-08): a CollectionId arg pushed by the
+    /// CollectionMarker push helper. The action body calls
+    /// `b.drain_collection(id)` to materialize the elements into the
+    /// container type per `coll_kind`. Mirrors the body of
+    /// `emit_collection_action_entry::action_fn` but for a SLOT inside
+    /// a multi-position binder rule.
+    CollectionDrain {
+        elem_cat: String,
+        coll_kind: CollectionType,
+    },
 }
 
 /// Try to classify a `GrammarRule` as a multi-step rule (binder, multi-Param,
@@ -175,6 +210,44 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
         return None;
     }
 
+    // B9 / Class 2 (2026-05-08): Class-5 collection-rule structural exclusion.
+    // A rule with exactly one Simple param of Collection type AND a syntax
+    // pattern matching the Class-5 shape — `[Literal(open), Op(Sep), Literal(close)]`
+    // (3 elements) or `[Literal(open_kw), Literal("("), Op(Sep), Literal(close)]`
+    // (4 elements, synthesized by `synthetic.rs` for default-form open delims
+    // like `"list("`) — is a Class-5 collection rule classified by
+    // `classify_collection`. Reject here so classify_binder does NOT
+    // double-classify these rules. Without this exclusion, my B9 changes
+    // (which now accept Collection-typed Simple params via
+    // ParamKind::SimpleCollection) would emit binder prefix arms +
+    // action entries that conflict with the existing Class-5 emission.
+    if tc.len() == 1 {
+        if let TermParam::Simple {
+            ty: TypeExpr::Collection { .. },
+            ..
+        } = &tc[0]
+        {
+            let class5_shape_3 = sp.len() == 3
+                && matches!(&sp[0], SyntaxExpr::Literal(_))
+                && matches!(
+                    &sp[1],
+                    SyntaxExpr::Op(PatternOp::Sep { source: None, .. })
+                )
+                && matches!(&sp[2], SyntaxExpr::Literal(_));
+            let class5_shape_4 = sp.len() == 4
+                && matches!(&sp[0], SyntaxExpr::Literal(_))
+                && matches!(&sp[1], SyntaxExpr::Literal(s) if s == "(")
+                && matches!(
+                    &sp[2],
+                    SyntaxExpr::Op(PatternOp::Sep { source: None, .. })
+                )
+                && matches!(&sp[3], SyntaxExpr::Literal(_));
+            if class5_shape_3 || class5_shape_4 {
+                return None;
+            }
+        }
+    }
+
     // Build a map: param name → (kind, type_info).
     enum ParamKind {
         Simple { cat: String },
@@ -182,6 +255,16 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
         BinderList,
         Body { cat: String },
         Guard,
+        /// B9 / Class 2 (2026-05-08): a `Simple` param whose type is
+        /// `Collection { coll_type: Vec/HashBag/HashSet, element: Base(elem) }`.
+        /// Distinct from the collection-rule case (handled by
+        /// `classify_collection`) because Class-2 rules have OTHER
+        /// non-collection params (e.g. a tag param + a collection param);
+        /// `classify_collection` requires `tc.len() == 1`.
+        SimpleCollection {
+            elem_cat: String,
+            coll_kind: CollectionType,
+        },
     }
     let mut param_map: std::collections::HashMap<String, ParamKind> =
         std::collections::HashMap::new();
@@ -226,6 +309,26 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                         param_cats.push(cat.clone());
                         param_map.insert(name.to_string(), ParamKind::Simple { cat });
                     }
+                    // B9 / Class 2 (2026-05-08): SimpleCollection. The
+                    // pilot supports Vec / HashBag / HashSet over a Base
+                    // element type; HashMap and nested collections are
+                    // out of pilot scope.
+                    TypeExpr::Collection { coll_type, element } => match (coll_type, element.as_ref()) {
+                        (CollectionType::Vec, TypeExpr::Base(elem))
+                        | (CollectionType::HashBag, TypeExpr::Base(elem))
+                        | (CollectionType::HashSet, TypeExpr::Base(elem)) => {
+                            let elem_cat = elem.to_string();
+                            param_cats.push(elem_cat.clone());
+                            param_map.insert(
+                                name.to_string(),
+                                ParamKind::SimpleCollection {
+                                    elem_cat,
+                                    coll_kind: coll_type.clone(),
+                                },
+                            );
+                        }
+                        _ => return None,
+                    },
                     _ => return None,
                 },
                 TermParam::Abstraction { binder, body, ty } => {
@@ -319,6 +422,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     ParamKind::Body { cat } | ParamKind::Simple { cat } => {
                         positions.push(BinderPosition::ParamParse {
                             cat: cat.clone(),
+                            collection: None,
                         });
                         action_args.push(ActionArgKind::Term(cat.clone()));
                     }
@@ -329,6 +433,12 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     ParamKind::BinderList => {
                         // BinderList shouldn't appear as a bare Param —
                         // it's expressed as Op(Sep) below. Defensive.
+                        return None;
+                    }
+                    ParamKind::SimpleCollection { .. } => {
+                        // SimpleCollection appears only as Op(Sep) below.
+                        // Bare Param reference is invalid — the collection
+                        // requires a separator + close delim.
                         return None;
                     }
                 }
@@ -360,7 +470,36 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                         // once by the spurious pos+1 Literal arm).
                         skip_next = true;
                     }
-                    _ => return None, // Phase 5b doesn't yet handle Sep over a Simple param (collection-style).
+                    ParamKind::SimpleCollection { elem_cat, coll_kind } => {
+                        // B9 / Class 2 (2026-05-08): Sep-driven collection
+                        // slot in a multi-position binder rule. Lower to
+                        // ParamParse{collection: Some(...)} which dispatches
+                        // by pushing a CollectionMarker into the GSS — the
+                        // existing CollectionLoop apparatus then parses
+                        // elements separated by `separator` until `close`.
+                        // The action body extracts CollectionDrain.
+                        let close = match sp.get(i + 1) {
+                            Some(SyntaxExpr::Literal(text)) => text.clone(),
+                            _ => return None,
+                        };
+                        positions.push(BinderPosition::ParamParse {
+                            cat: elem_cat.clone(),
+                            collection: Some(CollectionSepInfo {
+                                separator: separator.clone(),
+                                close,
+                                coll_kind: coll_kind.clone(),
+                                elem_cat: elem_cat.clone(),
+                            }),
+                        });
+                        action_args.push(ActionArgKind::CollectionDrain {
+                            elem_cat: elem_cat.clone(),
+                            coll_kind: coll_kind.clone(),
+                        });
+                        // Skip the close Literal at i+1 — absorbed into
+                        // CollectionLoop's close-branch dispatch.
+                        skip_next = true;
+                    }
+                    _ => return None, // bare Simple, Body, Guard, Binder are not Sep-eligible.
                 }
             }
             SyntaxExpr::Op(PatternOp::Opt { inner }) => {
@@ -394,6 +533,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                 ParamKind::Body { cat } | ParamKind::Simple { cat } => {
                                     inner_positions.push(BinderPosition::ParamParse {
                                         cat: cat.clone(),
+                                        collection: None,
                                     });
                                     inner_action_args.push(ActionArgKind::Term(cat.clone()));
                                 }
@@ -402,6 +542,13 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                     inner_action_args.push(ActionArgKind::Predicate);
                                 }
                                 ParamKind::BinderList => {
+                                    return None;
+                                }
+                                // B9 pilot: SimpleCollection inside Optional
+                                // is out of pilot scope. The optional-group
+                                // inner walker doesn't yet support nested
+                                // collection sub-parses.
+                                ParamKind::SimpleCollection { .. } => {
                                     return None;
                                 }
                             }
@@ -448,6 +595,21 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
     // Skip pure-literal rules (no params, no binder, no guard) — those are
     // already handled by the TerminalKeyword classifier.
     if action_args.is_empty() {
+        return None;
+    }
+
+    // B9 / Class 2 (2026-05-08) pilot constraint: at most ONE SimpleCollection
+    // slot per rule. The static `(result_src, rule_idx)` keying for the
+    // emit_collection_close_lookup / emit_collection_loop_arm tables doesn't
+    // accommodate two slots in the same rule. Multi-collection-slot Class 2
+    // is a future extension; reject silently here so multi-slot rules fall
+    // through to other classifiers (currently no other classifier handles
+    // them, so they'll surface as rule-not-classified errors).
+    let collection_slot_count = positions
+        .iter()
+        .filter(|p| matches!(p, BinderPosition::ParamParse { collection: Some(_), .. }))
+        .count();
+    if collection_slot_count > 1 {
         return None;
     }
 
@@ -810,7 +972,7 @@ pub(crate) fn emit_binder_rule_body(
                             }
                         }
                     }
-                    BinderPosition::ParamParse { cat } => {
+                    BinderPosition::ParamParse { cat, collection } => {
                         let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
                         // Stage 3.27d (G-PREFIX-BP, 2026-04-30): for unary-prefix
                         // rules, install `cur_bp = prefix_bp` so the operand sub-parse
@@ -819,23 +981,72 @@ pub(crate) fn emit_binder_rule_body(
                             .get(&(result_src_idx, rule_idx))
                             .copied()
                             .unwrap_or(0u8);
-                        quote! {
-                            (#result_src_idx, #rule_idx, #pos) => {
-                                // Replace marker to next_pos so when the
-                                // sub-parse returns, Unwinding-RuleAt sees
-                                // the post-param position. THEN push
-                                // CategoryEntry on top of the new marker.
-                                return WpdsStepAction::ReplaceAndPush {
-                                    replace_symbol: StackSymbolV2::rule_at(
-                                        #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                    ),
-                                    push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
-                                    weight: LexicographicWeight::one(),
-                                    new_state: WpdsState::PrefixDispatch {
-                                        pos: _pos,
-                                        cur_bp: #cur_bp_lit,
-                                    },
-                                };
+                        match collection {
+                            None => quote! {
+                                (#result_src_idx, #rule_idx, #pos) => {
+                                    // Replace marker to next_pos so when the
+                                    // sub-parse returns, Unwinding-RuleAt sees
+                                    // the post-param position. THEN push
+                                    // CategoryEntry on top of the new marker.
+                                    return WpdsStepAction::ReplaceAndPush {
+                                        replace_symbol: StackSymbolV2::rule_at(
+                                            #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
+                                        ),
+                                        push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
+                                        weight: LexicographicWeight::one(),
+                                        new_state: WpdsState::PrefixDispatch {
+                                            pos: _pos,
+                                            cur_bp: #cur_bp_lit,
+                                        },
+                                    };
+                                }
+                            },
+                            Some(_) => {
+                                // B9 / Class 2 (2026-05-08): the slot is a
+                                // Sep-driven collection. Replace the rule's
+                                // RuleAt marker with `next_pos` (so when the
+                                // CollectionMarker pops, Unwinding-RuleAt
+                                // sees the post-collection position) AND
+                                // push a CollectionMarker keyed on this
+                                // rule's `(result_src_idx, rule_idx)`.
+                                //
+                                // The walker's emit_push_side_effects logic
+                                // sees the CollectionMarker push, allocates
+                                // an accumulator id, patches symbol.bp =
+                                // Some(id), and pushes ActionArg::CollectionId
+                                // onto the args stack. The transition state
+                                // is PrefixDispatch{cur_bp: 0} — the next
+                                // step's frontier_top is the marker, and
+                                // the existing CollectionLoop apparatus
+                                // (emit_collection_close_lookup +
+                                // emit_collection_loop_arm, extended in
+                                // collection.rs to recognize Class-2 binder
+                                // rules) parses elements separated by
+                                // `separator` until `close`.
+                                //
+                                // On close, the CollectionMarker pops and
+                                // the walker checks is_binder_internal_collection
+                                // — for Class-2 rules this returns true, so
+                                // FireAction is suppressed (the binder
+                                // rule's terminal action will drain the
+                                // CollectionId at its own RuleAt pop).
+                                quote! {
+                                    (#result_src_idx, #rule_idx, #pos) => {
+                                        return WpdsStepAction::ReplaceAndPush {
+                                            replace_symbol: StackSymbolV2::rule_at(
+                                                #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
+                                            ),
+                                            push_symbol: StackSymbolV2::collection_marker(
+                                                #result_src_idx, #rule_idx, 0,
+                                            ),
+                                            weight: LexicographicWeight::one(),
+                                            new_state: WpdsState::PrefixDispatch {
+                                                pos: _pos,
+                                                cur_bp: 0u8,
+                                            },
+                                        };
+                                    }
+                                }
                             }
                         }
                     }
@@ -1192,7 +1403,10 @@ pub(crate) fn emit_optional_group_body(
                                 };
                             }
                         },
-                        BinderPosition::ParamParse { cat } => {
+                        BinderPosition::ParamParse { cat, collection: _ } => {
+                            // B9: SimpleCollection inside Optional is rejected
+                            // by classify_binder's optional-group walker, so
+                            // `collection` is always None at this site.
                             let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
                             quote! {
                                 (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
@@ -1407,6 +1621,58 @@ pub(crate) fn emit_binder_action_entry(
                 });
                 binder_list_holder = Some(var.clone());
             }
+            ActionArgKind::CollectionDrain { elem_cat, coll_kind } => {
+                // B9 / Class 2 (2026-05-08): drain the cursor's collection
+                // accumulator. The CollectionMarker push at the binder rule's
+                // ParamParse{collection: Some(...)} dispatch pushed an
+                // ActionArg::CollectionId(id); now we consume it, drain the
+                // accumulator, materialize a container of `coll_kind`, and
+                // emit the bare value (no Box::new wrapping — the AST
+                // variant takes a bare container per language!-macro
+                // codegen convention).
+                let elem_id = format_ident!("{}", elem_cat);
+                let materialize_body = match coll_kind {
+                    CollectionType::Vec => quote! {
+                        let elems: std::vec::Vec<#elem_id> = drained
+                            .into_iter()
+                            .filter_map(|a| a.into_term::<#elem_id>())
+                            .collect();
+                        let #var = elems;
+                    },
+                    CollectionType::HashBag => quote! {
+                        let #var = mettail_runtime::HashBag::<#elem_id>::from_iter(
+                            drained
+                                .into_iter()
+                                .filter_map(|a| a.into_term::<#elem_id>())
+                        );
+                    },
+                    CollectionType::HashSet => quote! {
+                        let #var = std::collections::HashSet::<#elem_id>::from_iter(
+                            drained
+                                .into_iter()
+                                .filter_map(|a| a.into_term::<#elem_id>())
+                        );
+                    },
+                    CollectionType::HashMap => quote! {
+                        // HashMap collection in Class-2 binder rules is out
+                        // of pilot scope (rejected at classify_binder).
+                        // Defensive: emit a panic if reached.
+                        let #var = panic!("B9 pilot: HashMap collection in Class-2 binder rule unsupported");
+                    },
+                };
+                extracts.push(quote! {
+                    let id = match iter.next().and_then(|a| a.as_collection_id()) {
+                        Some(i) => i,
+                        None => return,
+                    };
+                    let drained = b.drain_collection(id);
+                    #materialize_body
+                });
+                // Bare value — no Box::new wrapping (the AST variant takes
+                // bare Vec<T> / HashBag<T> / HashSet<T> per language! macro
+                // convention).
+                field_names.push(quote! { #var });
+            }
             ActionArgKind::Optional(inner_kinds) => {
                 // Opt-Group: extract the Optional arg, exposing each inner
                 // field as `Option<Box<T>>` (or Option<...> per inner kind).
@@ -1469,6 +1735,13 @@ pub(crate) fn emit_binder_action_entry(
                             // unreachable. If the rejection lifts, extract
                             // the nested ActionArg::Optional and recursively
                             // unwrap.
+                            let #inner_var: () = ();
+                        },
+                        ActionArgKind::CollectionDrain { .. } => quote! {
+                            // B9 / Class 2 (2026-05-08): SimpleCollection
+                            // inside Optional is rejected by classify_binder
+                            // (out of pilot scope), so this arm is
+                            // unreachable. Defensive `()` placeholder.
                             let #inner_var: () = ();
                         },
                     };

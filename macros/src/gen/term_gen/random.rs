@@ -338,10 +338,29 @@ fn generate_random_depth_d(
             .iter()
             .any(|item| matches!(item, GrammarItem::Collection { .. }));
 
-        if has_collections {
+        // B9 / Class 2 (2026-05-08): skip the collection-constructor random
+        // generator for multi-Param rules whose collection slot is part of
+        // a binder-rule body. The collection-constructor codegen assumes a
+        // single-arg HashBag-typed tuple variant (Class-5 collection-literal
+        // pattern); both assumptions break for Class-2 binder rules. Future
+        // work: add a Class-2 random-term generator that fills both the
+        // tag param(s) and the collection.
+        let is_class2_binder = rule.term_context.as_ref().is_some_and(|ctx| {
+            let simple_count = ctx
+                .iter()
+                .filter(|p| matches!(p, TermParam::Simple { .. }))
+                .count();
+            simple_count > 1
+        });
+
+        if has_collections && !is_class2_binder {
             // Handle collection constructors
             constructor_cases
                 .push(generate_random_collection_constructor(cat_name, rule, language));
+            continue;
+        }
+        if has_collections && is_class2_binder {
+            // Class-2 binder rule with collection slot: skip random gen.
             continue;
         }
 

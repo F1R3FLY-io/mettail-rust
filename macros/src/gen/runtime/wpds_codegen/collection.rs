@@ -18,6 +18,8 @@ use mettail_ast::types::{CollectionType, TypeExpr};
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use super::binder::{classify_binder, BinderPosition};
+
 /// Classification of a collection-literal rule.
 #[derive(Debug, Clone)]
 pub struct CollectionShape {
@@ -249,6 +251,28 @@ pub(crate) fn emit_collection_loop_arm(
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
             let Some(shape) = classify_collection(rule, language) else {
+                // B9 / Class 2 (2026-05-08): if this rule is a Class-2
+                // binder rule with a SimpleCollection slot, register its
+                // (close, sep) here too so the CollectionMarker pushed
+                // by the binder rule's ParamParse{collection: Some(...)}
+                // dispatch routes to the same CollectionLoop apparatus.
+                if let Some(shape) = classify_binder(rule) {
+                    if let Some(BinderPosition::ParamParse {
+                        collection: Some(info),
+                        ..
+                    }) = shape.positions.iter().find(|p| matches!(
+                        p,
+                        BinderPosition::ParamParse { collection: Some(_), .. }
+                    )) {
+                        let result_src_idx = cat_i as u16;
+                        let rule_idx = rule_i as u16;
+                        let close = &info.close;
+                        let sep = &info.separator;
+                        lookup_arms.push(quote! {
+                            (#result_src_idx, #rule_idx) => Some((#close, #sep)),
+                        });
+                    }
+                }
                 continue;
             };
             let result_src_idx = cat_i as u16;
@@ -366,6 +390,30 @@ pub(crate) fn emit_collection_element_src_lookup(
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
             let Some(shape) = classify_collection(rule, language) else {
+                // B9 / Class 2 (2026-05-08): also register Class-2 binder
+                // rules' collection slot element category. The element
+                // category is `info.elem_cat` — which the cursor's
+                // CollectionLoop transition uses to drive ParamParse for
+                // each element.
+                if let Some(shape) = classify_binder(rule) {
+                    if let Some(BinderPosition::ParamParse {
+                        collection: Some(info),
+                        ..
+                    }) = shape.positions.iter().find(|p| matches!(
+                        p,
+                        BinderPosition::ParamParse { collection: Some(_), .. }
+                    )) {
+                        if let Some(element_src_idx) =
+                            lookup_element_src_idx(&info.elem_cat, categories)
+                        {
+                            let result_src_idx = cat_i as u16;
+                            let rule_idx = rule_i as u16;
+                            arms.push(quote! {
+                                (#result_src_idx, #rule_idx) => Some(#element_src_idx),
+                            });
+                        }
+                    }
+                }
                 continue;
             };
             let Some(element_src_idx) = lookup_element_src_idx(&shape.element_cat, categories)
@@ -403,6 +451,25 @@ pub(crate) fn emit_collection_close_lookup(
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
             let Some(shape) = classify_collection(rule, language) else {
+                // B9 / Class 2 (2026-05-08): also register Class-2 binder
+                // rules' collection slot close delim. Used by the empty-
+                // collection bootstrap path in PrefixDispatch.
+                if let Some(shape) = classify_binder(rule) {
+                    if let Some(BinderPosition::ParamParse {
+                        collection: Some(info),
+                        ..
+                    }) = shape.positions.iter().find(|p| matches!(
+                        p,
+                        BinderPosition::ParamParse { collection: Some(_), .. }
+                    )) {
+                        let result_src_idx = cat_i as u16;
+                        let rule_idx = rule_i as u16;
+                        let close = &info.close;
+                        arms.push(quote! {
+                            (#result_src_idx, #rule_idx) => Some(#close),
+                        });
+                    }
+                }
                 continue;
             };
             let result_src_idx = cat_i as u16;
@@ -429,6 +496,54 @@ fn lookup_element_src_idx(element_cat: &str, categories: &[String]) -> Option<u1
         .iter()
         .position(|c| c == element_cat)
         .map(|i| i as u16)
+}
+
+/// B9 / Class 2 (2026-05-08): emit a per-rule lookup that returns true
+/// when `(result_src_idx, rule_idx)` identifies a Class-2 binder rule's
+/// internal collection slot. Used by the walker's CollectionMarker-pop
+/// arm to SUPPRESS the default FireAction (the binder rule's terminal
+/// action will drain the CollectionId at its own RuleAt pop, not at
+/// CollectionMarker pop).
+///
+/// For Class-5 collection-rule CollectionMarkers, returns false → the
+/// walker fires the collection-finalize action as today.
+pub(crate) fn emit_is_binder_internal_collection_lookup(
+    per_cat: &[Vec<GrammarRule>],
+) -> TokenStream {
+    let mut arms = Vec::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        for (rule_i, rule) in rules.iter().enumerate() {
+            let Some(shape) = classify_binder(rule) else {
+                continue;
+            };
+            let has_collection_slot = shape.positions.iter().any(|p| {
+                matches!(
+                    p,
+                    BinderPosition::ParamParse {
+                        collection: Some(_),
+                        ..
+                    }
+                )
+            });
+            if !has_collection_slot {
+                continue;
+            }
+            let result_src_idx = cat_i as u16;
+            let rule_idx = rule_i as u16;
+            arms.push(quote! {
+                (#result_src_idx, #rule_idx) => true,
+            });
+        }
+    }
+    if arms.is_empty() {
+        return quote! { false };
+    }
+    quote! {
+        match (result_src_idx, rule_idx) {
+            #(#arms)*
+            _ => false,
+        }
+    }
 }
 
 

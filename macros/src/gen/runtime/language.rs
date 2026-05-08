@@ -1473,13 +1473,25 @@ fn generate_var_collection_impl(
                                             Self::#impl_fn_name(root_term, __v.as_ref(), result, seen);
                                         })
                                     },
-                                    TypeExpr::Collection { element, .. } => {
+                                    TypeExpr::Collection { coll_type, element } => {
                                         if let TypeExpr::Base(id) = element.as_ref() {
                                             if id.to_string() == primary_type.to_string() {
-                                                Some(quote! {
-                                                    for (elem, _) in __v.iter() {
-                                                        Self::#impl_fn_name(root_term, elem, result, seen);
-                                                    }
+                                                // B9 / Class 2 (2026-05-08):
+                                                // branch on coll_type. Vec
+                                                // yields bare elements;
+                                                // HashBag/HashSet yield
+                                                // (elem, count) tuples.
+                                                Some(match coll_type {
+                                                    mettail_ast::types::CollectionType::Vec => quote! {
+                                                        for elem in __v.iter() {
+                                                            Self::#impl_fn_name(root_term, elem, result, seen);
+                                                        }
+                                                    },
+                                                    _ => quote! {
+                                                        for (elem, _) in __v.iter() {
+                                                            Self::#impl_fn_name(root_term, elem, result, seen);
+                                                        }
+                                                    },
                                                 })
                                             } else {
                                                 None
@@ -1660,15 +1672,26 @@ fn generate_var_collection_impl(
                             field_idx += 1;
                             item_idx += 1;
                         },
-                        GrammarItem::Collection { element_type, .. } => {
+                        GrammarItem::Collection { element_type, coll_type, .. } => {
                             let field_name = &field_names[field_idx];
                             let elem_str = element_type.to_string();
                             if elem_str == primary_type.to_string() {
-                                recurse_calls.push(quote! {
-                                    for (elem, _) in #field_name.iter() {
-                                        Self::#impl_fn_name(root_term, elem, result, seen);
-                                    }
-                                });
+                                // B9 / Class 2 (2026-05-08): branch on
+                                // coll_type. Vec yields bare elements;
+                                // HashBag/HashSet yield (elem, count).
+                                let iter_body = match coll_type {
+                                    mettail_ast::types::CollectionType::Vec => quote! {
+                                        for elem in #field_name.iter() {
+                                            Self::#impl_fn_name(root_term, elem, result, seen);
+                                        }
+                                    },
+                                    _ => quote! {
+                                        for (elem, _) in #field_name.iter() {
+                                            Self::#impl_fn_name(root_term, elem, result, seen);
+                                        }
+                                    },
+                                };
+                                recurse_calls.push(iter_body);
                             }
                             field_idx += 1;
                             item_idx += 1;
@@ -3478,34 +3501,56 @@ fn classify_rule_for_cek(rule: &GrammarRule) -> CekRuleKind {
         }
 
         // Check for collection params (separator comes from syntax_pattern, not TypeExpr)
-        for p in term_context {
-            if let mettail_ast::grammar::TermParam::Simple { ty, .. } = p {
-                if let mettail_ast::types::TypeExpr::Collection { .. } = ty {
-                    // Determine separator from syntax_pattern
-                    let sep = rule
-                        .syntax_pattern
-                        .as_ref()
-                        .and_then(|sp| {
-                            sp.iter().find_map(|expr| {
-                                if let mettail_ast::grammar::SyntaxExpr::Op(
-                                    mettail_ast::grammar::PatternOp::Sep { separator, .. },
-                                ) = expr
-                                {
-                                    Some(separator.clone())
-                                } else {
-                                    None
-                                }
+        // B9 / Class 2 (2026-05-08): only classify as Collection-kind when
+        // the rule has EXACTLY one Simple param of Collection type — i.e.
+        // a Class-5 collection-literal rule. Multi-Param Class-2 binder
+        // rules with Vec/HashBag slots fall through to Compound, where
+        // the default `(..)` pattern matches their multi-field tuple
+        // variant correctly.
+        if simple_count == 1 {
+            for p in term_context {
+                if let mettail_ast::grammar::TermParam::Simple { ty, .. } = p {
+                    if let mettail_ast::types::TypeExpr::Collection { .. } = ty {
+                        // Determine separator from syntax_pattern
+                        let sep = rule
+                            .syntax_pattern
+                            .as_ref()
+                            .and_then(|sp| {
+                                sp.iter().find_map(|expr| {
+                                    if let mettail_ast::grammar::SyntaxExpr::Op(
+                                        mettail_ast::grammar::PatternOp::Sep { separator, .. },
+                                    ) = expr
+                                    {
+                                        Some(separator.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
                             })
-                        })
-                        .unwrap_or_default();
-                    return CekRuleKind::Collection { separator: sep };
+                            .unwrap_or_default();
+                        return CekRuleKind::Collection { separator: sep };
+                    }
                 }
             }
         }
 
         // Check syntax_pattern for operator terminals between params
         if let Some(ref syntax_pattern) = rule.syntax_pattern {
-            if simple_count == 2 {
+            // B9 / Class 2 (2026-05-08): exclude rules with a Collection-
+            // typed Simple param from Infix classification. The Infix arm
+            // emits `Proc::Label(f0, f1)` and calls `format!("{}", f1)`,
+            // but f1 may be `Vec<Proc>` (or HashBag) which doesn't impl
+            // Display. Class-2 binder rules fall through to Compound.
+            let has_collection_param = term_context.iter().any(|p| {
+                matches!(
+                    p,
+                    mettail_ast::grammar::TermParam::Simple {
+                        ty: mettail_ast::types::TypeExpr::Collection { .. },
+                        ..
+                    }
+                )
+            });
+            if simple_count == 2 && !has_collection_param {
                 // Look for Terminal between the two param references
                 for item in syntax_pattern {
                     if let mettail_ast::grammar::SyntaxExpr::Literal(op) = item {

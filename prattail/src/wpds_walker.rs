@@ -102,6 +102,23 @@ pub trait WpdsStepEngine<W: Semiring> {
         let _ = (src_idx, rule_idx);
         None
     }
+
+    /// B9 / Class 2 (2026-05-08): predicate identifying CollectionMarker
+    /// pops that belong to a Class-2 binder rule's internal collection
+    /// slot (rather than a Class-5 standalone collection rule).
+    ///
+    /// When this returns `true` for the popped marker's `(result_src_idx,
+    /// rule_idx)`, the walker SUPPRESSES the default FireAction at the
+    /// pop site — the binder rule's terminal action will drain the
+    /// CollectionId arg at its own RuleAt-pop FireAction, not at the
+    /// inner CollectionMarker pop.
+    ///
+    /// Default returns `false` for backward compatibility (Class-5
+    /// collections fire their own finalize action at marker pop).
+    fn is_binder_internal_collection(&self, src_idx: u16, rule_idx: u16) -> bool {
+        let _ = (src_idx, rule_idx);
+        false
+    }
 }
 
 /// One step of action returned by a [`WpdsStepEngine`].
@@ -5537,19 +5554,38 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // collections allocated via StartCollection deltas,
                 // live now has the right slots already — re-pushing
                 // would create duplicates and panic the LIFO assert.
+                //
+                // B9 / Class 2 (2026-05-08): invalidate the consistency
+                // memo since collection_stack mutation can affect dry-run
+                // arity.
+                cursor.consistency_memo.set(None);
                 let _ = cursor.collection_stack.pop();
             }
         }
         // Per-child FireAction (keyed on popped_symbol — same across all
         // children since they share the popped frame).
+        //
+        // B9 / Class 2 (2026-05-08): suppress FireAction at CollectionMarker
+        // pop when the marker belongs to a Class-2 binder rule's internal
+        // collection slot. The binder rule's terminal action (firing at
+        // the OUTER RuleAt pop) will drain the CollectionId arg via
+        // CollectionDrain extraction.
         if let Some(symbol) = popped_symbol {
-            if matches!(
-                symbol.kind,
-                SymbolKind::Return
-                    | SymbolKind::CollectionMarker
-                    | SymbolKind::RuleAt(_)
-                    | SymbolKind::MixfixMarker
-            ) {
+            let suppress_for_binder_internal =
+                symbol.kind == SymbolKind::CollectionMarker
+                    && self.engine.is_binder_internal_collection(
+                        symbol.category_src_idx,
+                        symbol.rule_index_in_category,
+                    );
+            if !suppress_for_binder_internal
+                && matches!(
+                    symbol.kind,
+                    SymbolKind::Return
+                        | SymbolKind::CollectionMarker
+                        | SymbolKind::RuleAt(_)
+                        | SymbolKind::MixfixMarker
+                )
+            {
                 self.emit_fire_action(cursor, symbol);
             }
         }
