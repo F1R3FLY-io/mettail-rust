@@ -82,7 +82,7 @@ pub(crate) fn emit_engine_impl_full(
     let binder_rule_body =
         super::binder::emit_binder_rule_body(categories, per_cat, &prefix_bp_map);
     // Phase 5b: BinderListLoop body for multi-binder list (^[xs]).
-    let binder_list_loop_body = super::binder::emit_binder_list_loop_body(per_cat);
+    let binder_list_loop_body = super::binder::emit_binder_list_loop_body(categories, per_cat);
     // B8 / Path P1 (2026-05-08): per-rule predicate for routing
     // OptionalGroupAt symbols to BinderListLoop when the rule is Class 3.
     let is_binderlist_inner_lookup =

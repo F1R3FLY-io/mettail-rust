@@ -1314,7 +1314,10 @@ pub(crate) fn emit_binderlist_inner_lookup(per_cat: &[Vec<GrammarRule>]) -> Toke
 /// inner_positions[i] at sub_pos=i+1 (dispatching the i-th inner slot)
 /// PLUS a wrap arm at sub_pos=inner_positions.len()+1 that loops back
 /// to sub_pos=0.
-pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
+pub(crate) fn emit_binder_list_loop_body(
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
@@ -1322,11 +1325,20 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
                 continue;
             };
             for (idx, position) in shape.positions.iter().enumerate() {
-                if let BinderPosition::BinderListLoop { separator, close, .. } = position {
+                if let BinderPosition::BinderListLoop {
+                    separator,
+                    close,
+                    inner_positions,
+                    inner_action_args: _,
+                    binder_param_idx: _,
+                    collection_param_cat,
+                } = position {
                     let pos = (idx + 1) as u8;
                     let next_pos = pos + 1;
                     let result_src_idx = cat_i as u16;
                     let rule_idx = rule_i as u16;
+                    let is_class3 = collection_param_cat.is_some();
+                    if !is_class3 {
                     arms.push(quote! {
                         (#result_src_idx, #rule_idx, 0u8) => {
                             // L12 follow-up B2 (2026-05-07): three-branch
@@ -1429,6 +1441,240 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
                             };
                         }
                     });
+                    } else {
+                        // B8 Class 3 (2026-05-08): emit per-sub_pos arms.
+                        let inner_count = inner_positions.len() as u8;
+                        // sub_pos=0: 3-branch fork over close / sep / first-
+                        // inner-dispatch. The first-inner branch pushes
+                        // OptionalGroupAt(rule, 1, outer_bp) without
+                        // consuming a token; transitions to BinderListLoop
+                        // {sub_pos:1}, where the inner walk dispatches the
+                        // first inner_position.
+                        arms.push(quote! {
+                            (#result_src_idx, #rule_idx, 0u8) => {
+                                let _ = tokens.peek_text(_pos);
+                                return WpdsStepAction::Fork {
+                                    branches: vec![
+                                        // BRANCH 1: close → finish loop.
+                                        mettail_prattail::wpds_walker::ForkBranch {
+                                            symbol: StackSymbolV2::rule_at(
+                                                #result_src_idx, #rule_idx,
+                                                #next_pos, Some(*outer_bp),
+                                            ),
+                                            weight: LexicographicWeight::from_cost(
+                                                0.0, #result_src_idx, #rule_idx,
+                                            ),
+                                            new_state: WpdsState::BinderRule {
+                                                result_src_idx: #result_src_idx,
+                                                rule_idx: #rule_idx,
+                                                body_src_idx: *body_src_idx,
+                                                outer_bp: *outer_bp,
+                                            },
+                                            action_kind:
+                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplace {
+                                                    expected_text: #close.to_string(),
+                                                },
+                                        },
+                                        // BRANCH 2: sep → next iteration.
+                                        mettail_prattail::wpds_walker::ForkBranch {
+                                            symbol: StackSymbolV2::category_entry(0),
+                                            weight: LexicographicWeight::from_cost(
+                                                0.0, #result_src_idx, #rule_idx,
+                                            ),
+                                            new_state: WpdsState::BinderListLoop {
+                                                result_src_idx: #result_src_idx,
+                                                rule_idx: #rule_idx,
+                                                body_src_idx: *body_src_idx,
+                                                outer_bp: *outer_bp,
+                                                marker_pos: *marker_pos,
+                                                next_pos: *next_pos,
+                                                sub_pos: 0u8,
+                                            },
+                                            action_kind:
+                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsume {
+                                                    expected_text: #separator.to_string(),
+                                                },
+                                        },
+                                        // BRANCH 3: first-inner — Push
+                                        // OptionalGroupAt(rule, 1, outer_bp)
+                                        // and transition to sub_pos:1 where
+                                        // the inner walk takes over. No
+                                        // token consumed at this branch.
+                                        mettail_prattail::wpds_walker::ForkBranch {
+                                            symbol: StackSymbolV2::optional_group_at(
+                                                #result_src_idx, #rule_idx,
+                                                1u8, *outer_bp,
+                                            ),
+                                            weight: LexicographicWeight::from_cost(
+                                                mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                                                #result_src_idx, #rule_idx,
+                                            ),
+                                            new_state: WpdsState::BinderListLoop {
+                                                result_src_idx: #result_src_idx,
+                                                rule_idx: #rule_idx,
+                                                body_src_idx: *body_src_idx,
+                                                outer_bp: *outer_bp,
+                                                marker_pos: *marker_pos,
+                                                next_pos: *next_pos,
+                                                sub_pos: 1u8,
+                                            },
+                                            action_kind:
+                                                mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                        },
+                                    ],
+                                    consume_trigger: false,
+                                };
+                            }
+                        });
+                        // sub_pos=N for N=1..=inner_count: dispatch
+                        // inner_positions[N-1].
+                        for (i, inner_pos) in inner_positions.iter().enumerate() {
+                            let cur_sp = (i + 1) as u8;
+                            let next_sp = if i + 1 == inner_positions.len() { 0u8 } else { (i + 2) as u8 };
+                            let arm = match inner_pos {
+                                BinderPosition::Literal(text) => {
+                                    let txt = text.clone();
+                                    quote! {
+                                        (#result_src_idx, #rule_idx, #cur_sp) => {
+                                            return WpdsStepAction::Fork {
+                                                branches: vec![
+                                                    mettail_prattail::wpds_walker::ForkBranch {
+                                                        symbol: StackSymbolV2::optional_group_at(
+                                                            #result_src_idx, #rule_idx,
+                                                            #next_sp, *outer_bp,
+                                                        ),
+                                                        weight: LexicographicWeight::from_cost(
+                                                            0.0, #result_src_idx, #rule_idx,
+                                                        ),
+                                                        new_state: WpdsState::BinderListLoop {
+                                                            result_src_idx: #result_src_idx,
+                                                            rule_idx: #rule_idx,
+                                                            body_src_idx: *body_src_idx,
+                                                            outer_bp: *outer_bp,
+                                                            marker_pos: *marker_pos,
+                                                            next_pos: *next_pos,
+                                                            sub_pos: #next_sp,
+                                                        },
+                                                        action_kind:
+                                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplace {
+                                                                expected_text: #txt.to_string(),
+                                                            },
+                                                    },
+                                                ],
+                                                consume_trigger: false,
+                                            };
+                                        }
+                                    }
+                                }
+                                BinderPosition::BinderIdent => {
+                                    // Capture ident as binder name. On the
+                                    // last inner step, transition back to
+                                    // sub_pos=0 AND replace top with the
+                                    // RuleAt marker so the next iteration
+                                    // sees BinderListLoop's marker.
+                                    let is_last = i + 1 == inner_positions.len();
+                                    if is_last {
+                                        quote! {
+                                            (#result_src_idx, #rule_idx, #cur_sp) => {
+                                                return WpdsStepAction::Fork {
+                                                    branches: vec![
+                                                        mettail_prattail::wpds_walker::ForkBranch {
+                                                            symbol: StackSymbolV2::rule_at(
+                                                                #result_src_idx, #rule_idx,
+                                                                *marker_pos, Some(*outer_bp),
+                                                            ),
+                                                            weight: LexicographicWeight::from_cost(
+                                                                0.0, #result_src_idx, #rule_idx,
+                                                            ),
+                                                            new_state: WpdsState::BinderListLoop {
+                                                                result_src_idx: #result_src_idx,
+                                                                rule_idx: #rule_idx,
+                                                                body_src_idx: *body_src_idx,
+                                                                outer_bp: *outer_bp,
+                                                                marker_pos: *marker_pos,
+                                                                next_pos: *next_pos,
+                                                                sub_pos: 0u8,
+                                                            },
+                                                            action_kind:
+                                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
+                                                                    start_scope: false,
+                                                                },
+                                                        },
+                                                    ],
+                                                    consume_trigger: false,
+                                                };
+                                            }
+                                        }
+                                    } else {
+                                        quote! {
+                                            (#result_src_idx, #rule_idx, #cur_sp) => {
+                                                return WpdsStepAction::Fork {
+                                                    branches: vec![
+                                                        mettail_prattail::wpds_walker::ForkBranch {
+                                                            symbol: StackSymbolV2::optional_group_at(
+                                                                #result_src_idx, #rule_idx,
+                                                                #next_sp, *outer_bp,
+                                                            ),
+                                                            weight: LexicographicWeight::from_cost(
+                                                                0.0, #result_src_idx, #rule_idx,
+                                                            ),
+                                                            new_state: WpdsState::BinderListLoop {
+                                                                result_src_idx: #result_src_idx,
+                                                                rule_idx: #rule_idx,
+                                                                body_src_idx: *body_src_idx,
+                                                                outer_bp: *outer_bp,
+                                                                marker_pos: *marker_pos,
+                                                                next_pos: *next_pos,
+                                                                sub_pos: #next_sp,
+                                                            },
+                                                            action_kind:
+                                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
+                                                                    start_scope: false,
+                                                                },
+                                                        },
+                                                    ],
+                                                    consume_trigger: false,
+                                                };
+                                            }
+                                        }
+                                    }
+                                }
+                                BinderPosition::ParamParse { cat, collection: _ } => {
+                                    // Push CategoryEntry, transition to
+                                    // PrefixDispatch. The current top is
+                                    // OptionalGroupAt(rule, cur_sp); we
+                                    // replace it with OptionalGroupAt(rule,
+                                    // next_sp) so on Unwinding we land at
+                                    // sub_pos=next_sp.
+                                    let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
+                                    quote! {
+                                        (#result_src_idx, #rule_idx, #cur_sp) => {
+                                            return WpdsStepAction::ReplaceAndPush {
+                                                replace_symbol: StackSymbolV2::optional_group_at(
+                                                    #result_src_idx, #rule_idx,
+                                                    #next_sp, *outer_bp,
+                                                ),
+                                                push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
+                                                weight: LexicographicWeight::one(),
+                                                new_state: WpdsState::PrefixDispatch {
+                                                    pos: _pos,
+                                                    cur_bp: 0u8,
+                                                },
+                                            };
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    // Other inner positions (GuardSlot,
+                                    // OptionalGroup, BinderListLoop) out of
+                                    // pilot scope.
+                                    quote! {}
+                                }
+                            };
+                            arms.push(arm);
+                        }
+                        let _ = inner_count;
+                    }
                 }
             }
         }
@@ -1438,6 +1684,9 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
     }
     quote! {
         {
+            // Bind categories ref so the per-arm code can use
+            // lookup_src_idx — though Class 3 emits cat_src_idx as
+            // hard-coded literals, this is safe.
             match (*result_src_idx, *rule_idx, *sub_pos) {
                 #(#arms)*
                 _ => WpdsStepAction::Idle,
