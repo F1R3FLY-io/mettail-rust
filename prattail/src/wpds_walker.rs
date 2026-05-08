@@ -739,6 +739,23 @@ pub struct BranchCursor<W: Semiring> {
     /// child on Fork, inserted with the parent's dispatch config
     /// after a projection Fork emission.
     pub visited_dispatch: BTreeSet<(usize, u16, u8)>,
+    /// B13d-R Step 2 (2026-05-08): per-cursor memoization of
+    /// `cursor_committed_ops_consistent`. The outer `Option` is
+    /// uncomputed/computed; the inner `Option<bool>` is the tristate
+    /// (Some(true) consistent / Some(false) definitely-broken / None
+    /// indeterminate).
+    ///
+    /// Per Claim 1 (append-only contract for pending_builder_ops,
+    /// verified by exhaustive grep), the dry-run is monotone:
+    /// `Some(false)` is sticky for the lifetime of the cursor; for
+    /// `Some(true)` and `None`, an append CAN flip them. Invalidate
+    /// (`set(None)`) at every `pending_builder_ops.push(...)` site.
+    ///
+    /// Initialized to `Some(Some(true))` (Consistent) at construction
+    /// because empty pending = consistent dry-run by definition.
+    /// `Cell` (not `RefCell`) because the value is `Copy`; no borrow
+    /// tracking needed.
+    pub consistency_memo: std::cell::Cell<Option<Option<bool>>>,
 }
 
 impl<W: Semiring> std::fmt::Debug for BranchCursor<W>
@@ -780,6 +797,7 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
             recovery_depth: self.recovery_depth,
             visited_recovery: self.visited_recovery.clone(),
             visited_dispatch: self.visited_dispatch.clone(),
+            consistency_memo: std::cell::Cell::new(self.consistency_memo.get()),
         }
     }
 }
@@ -844,6 +862,8 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // B12 / Candidate E (2026-05-07): seed cursor has not
             // dispatched any projection Fork yet — empty visited set.
             visited_dispatch: BTreeSet::new(),
+            // B13d-R Step 2 (2026-05-08): empty pending = Consistent.
+            consistency_memo: std::cell::Cell::new(Some(Some(true))),
         }
     }
 
@@ -882,6 +902,10 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // visited set; the Fork-arm post-allocation step inserts the
             // current dispatch config when this fork IS a projection Fork.
             visited_dispatch: parent.visited_dispatch.clone(),
+            // B13d-R Step 2 (2026-05-08): inherit parent's memo (the child
+            // shares parent's pending_builder_ops at construction time;
+            // any subsequent push invalidates the child's memo).
+            consistency_memo: std::cell::Cell::new(parent.consistency_memo.get()),
         }
     }
 }
@@ -1983,6 +2007,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // post-resolution singleton resets projection
                     // visited set.
                     visited_dispatch: BTreeSet::new(),
+                    // B13d-R Step 2 (2026-05-08): post-resolution
+                    // singleton has empty pending → Consistent memo.
+                    consistency_memo: std::cell::Cell::new(Some(Some(true))),
                 }];
                 self.state = new_state.clone();
                 let trace = WpdsTraceEntry {
@@ -2674,11 +2701,22 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// treated as "viable" — we never override against weight on
     /// Indeterminate.
     fn cursor_committed_ops_consistent(&self, cursor: &BranchCursor<W>) -> Option<bool> {
-        match self.cursor_dry_run_state(cursor) {
+        // B13d-R Step 2 (2026-05-08): per-cursor memoization.
+        // `pending_builder_ops` is append-only (verified by exhaustive
+        // grep); the dry-run is therefore monotone: `Some(false)` is
+        // sticky for the lifetime of the cursor; `Some(true)` and
+        // `None` can flip on push, so the memo is invalidated at every
+        // push site (`set(None)`).
+        if let Some(cached) = cursor.consistency_memo.get() {
+            return cached;
+        }
+        let result = match self.cursor_dry_run_state(cursor) {
             DryRunState::Consistent { .. } => Some(true),
             DryRunState::DefinitelyBroken { .. } => Some(false),
             DryRunState::Indeterminate { .. } => None,
-        }
+        };
+        cursor.consistency_memo.set(Some(result));
+        result
     }
 
     /// Stage 3.12 fix (2026-05-02): "logical EOI" — true when the
@@ -2851,6 +2889,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-Drop reset clears projection visited set.
                     visited_dispatch: BTreeSet::new(),
+                    // B13d-R Step 2 (2026-05-08): post-Drop reset has
+                    // empty pending → Consistent memo.
+                    consistency_memo: std::cell::Cell::new(Some(Some(true))),
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -3111,6 +3152,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         // below is necessary because pre_fork_slots is
                         // simultaneously the source for cursor's mirror
                         // and the delta payload.
+                        // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
+                        cursor.consistency_memo.set(None);
                         cursor.pending_builder_ops.push(
                             BuilderDelta::SeedLiveCollectionStack {
                                 slots: pre_fork_slots.clone(),
@@ -3295,6 +3338,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
+                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -3342,6 +3386,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
+                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                             };
                             // Strict mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -3400,6 +3445,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
+                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -3437,6 +3483,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
+                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                             };
                             child.pos += 1;
                             if self.cursor_mode == CursorMode::Lazy {
@@ -3467,6 +3514,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
+                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -3530,6 +3578,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
+                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3568,6 +3617,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
+                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3610,7 +3660,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
+                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                             };
+                            // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
+                            child.consistency_memo.set(None);
                             child.pending_builder_ops.push(effect);
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -3649,7 +3702,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
+                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                             };
+                            // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
+                            child.consistency_memo.set(None);
                             child.pending_builder_ops.push(
                                 BuilderDelta::CommitLexAlternative {
                                     pos: child.pos,
@@ -3703,6 +3759,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
+                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -3864,6 +3921,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
+                            // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
+                            child.consistency_memo.set(None);
                             child.pending_builder_ops.push(effect);
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -4302,12 +4361,31 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         self.cursor_committed_ops_consistent(&merged[idx]);
                     let cursor_consistent =
                         self.cursor_committed_ops_consistent(&cursor);
+                    // B13d-R Step 3 (2026-05-08): shape-gate the override.
+                    // Pre-B13d-R, the weight gate paired only shape-
+                    // compatible cursors at the same ConfigKey (by GSS
+                    // push/pop invariants — `incoming_edge` in the strict
+                    // key implies congruent collection-stack history).
+                    // The B13d-R override now must explicitly reinstate
+                    // that pairing: when shapes diverge, fall through to
+                    // the pre-B13d-R weight + source_priority chain.
+                    // The `debug_assert_eq!` at line 4319 documents the
+                    // invariant; the shape guard reinstates it for the
+                    // override path. Without this guard, a consistency-
+                    // promoted cursor with mismatched collection_stack
+                    // depth corrupts commit_winner replay.
                     let consistency_override: Option<bool> =
-                        match (existing_consistent, cursor_consistent) {
-                            (Some(false), Some(false)) => None,
-                            (Some(false), Some(true)) | (Some(false), None) => Some(true),
-                            (Some(true), Some(false)) | (None, Some(false)) => Some(false),
-                            _ => None,
+                        if merged[idx].collection_stack.len()
+                            != cursor.collection_stack.len()
+                        {
+                            None
+                        } else {
+                            match (existing_consistent, cursor_consistent) {
+                                (Some(false), Some(false)) => None,
+                                (Some(false), Some(true)) | (Some(false), None) => Some(true),
+                                (Some(true), Some(false)) | (None, Some(false)) => Some(false),
+                                _ => None,
+                            }
                         };
                     let cursor_wins = match consistency_override {
                         Some(verdict) => verdict,
@@ -4454,6 +4532,21 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             }
             let best_w = self.branch_cursors[best_idx].weight;
             let best_p = self.branch_cursors[best_idx].source_priority;
+            // B13d-R Step 1 (2026-05-08): hoist `best_consistent` out
+            // of the per-sibling loop. `best_idx` is finalized by the
+            // promotion-scan above; computing `best_consistent` once
+            // is algebraically identical to recomputing it per sibling
+            // (the dry-run is a deterministic function of pending_
+            // builder_ops, and best_idx's pending_builder_ops is
+            // unchanged within the per-sibling loop).
+            //
+            // Pre-Step-1 the inner loop made 2 cursor_committed_ops_
+            // consistent calls per sibling × O(M) per call (M =
+            // pending_builder_ops.len(), capped only at 1M). Per
+            // group of k cursors this was O(k×M) redundant work.
+            // Post-Step-1 it's O(M) once + O(M) per sibling.
+            let best_consistent =
+                self.cursor_committed_ops_consistent(&self.branch_cursors[best_idx]);
             for &idx in idxs {
                 if idx == best_idx {
                     continue;
@@ -4468,8 +4561,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // (Indeterminate / Some(true) / Some(false)) cases
                 // fall through to existing strict-domination check.
                 let c_consistent = self.cursor_committed_ops_consistent(c);
-                let best_consistent =
-                    self.cursor_committed_ops_consistent(&self.branch_cursors[best_idx]);
                 let drop_by_consistency = matches!(
                     (best_consistent, c_consistent),
                     (Some(true), Some(false)) | (None, Some(false))
@@ -4873,6 +4964,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             // visited set so post-commit projection cycle defense
             // continues to apply across the parse path.
             visited_dispatch: winner.visited_dispatch,
+            // B13d-R Step 2 (2026-05-08): post-commit singleton has
+            // empty pending → Consistent memo (the winner's deltas
+            // were drained at replay; pending_builder_ops is now Vec::new()).
+            consistency_memo: std::cell::Cell::new(Some(Some(true))),
         }];
     }
 
@@ -5020,9 +5115,13 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     ) {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_token(kind, text, pos),
-            CursorMode::Strict => cursor
-                .pending_builder_ops
-                .push(BuilderDelta::PushToken { kind, text, pos }),
+            CursorMode::Strict => {
+                // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
+                cursor.consistency_memo.set(None);
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::PushToken { kind, text, pos });
+            }
         }
     }
 
@@ -5030,9 +5129,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     fn emit_push_ident(&mut self, cursor: &mut BranchCursor<W>, name: String, pos: usize) {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_ident(name, pos),
-            CursorMode::Strict => cursor
-                .pending_builder_ops
-                .push(BuilderDelta::PushIdent { name, pos }),
+            CursorMode::Strict => {
+                cursor.consistency_memo.set(None);
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::PushIdent { name, pos });
+            }
         }
     }
 
@@ -5044,9 +5146,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     ) {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_predicate_arc(pred),
-            CursorMode::Strict => cursor
-                .pending_builder_ops
-                .push(BuilderDelta::PushPredicate(pred)),
+            CursorMode::Strict => {
+                cursor.consistency_memo.set(None);
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::PushPredicate(pred));
+            }
         }
     }
 
@@ -5054,9 +5159,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     fn emit_start_binder_scope(&mut self, cursor: &mut BranchCursor<W>, names: Vec<String>) {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.start_binder_scope(names),
-            CursorMode::Strict => cursor
-                .pending_builder_ops
-                .push(BuilderDelta::StartBinderScope { names }),
+            CursorMode::Strict => {
+                cursor.consistency_memo.set(None);
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::StartBinderScope { names });
+            }
         }
     }
 
@@ -5064,9 +5172,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     fn emit_fire_action(&mut self, cursor: &mut BranchCursor<W>, symbol: StackSymbolV2) {
         match self.cursor_mode {
             CursorMode::Lazy => self.fire_action_for(symbol),
-            CursorMode::Strict => cursor
-                .pending_builder_ops
-                .push(BuilderDelta::FireAction { symbol }),
+            CursorMode::Strict => {
+                cursor.consistency_memo.set(None);
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::FireAction { symbol });
+            }
         }
     }
 
@@ -5091,6 +5202,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // dropping elements (push_to_collection's get_mut returns
                 // None on out-of-bounds id) or panicking the LIFO assert
                 // (FinalizeCollection's `live.len() == id` check).
+                // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
+                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::StartCollection);
@@ -5103,9 +5216,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     fn emit_push_collection_id(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_collection_id(id),
-            CursorMode::Strict => cursor
-                .pending_builder_ops
-                .push(BuilderDelta::PushCollectionId { id }),
+            CursorMode::Strict => {
+                cursor.consistency_memo.set(None);
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::PushCollectionId { id });
+            }
         }
     }
 
@@ -5113,9 +5229,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     fn emit_splice_into_collection(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_to_collection(id),
-            CursorMode::Strict => cursor
-                .pending_builder_ops
-                .push(BuilderDelta::SpliceIntoCollection { id }),
+            CursorMode::Strict => {
+                cursor.consistency_memo.set(None);
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::SpliceIntoCollection { id });
+            }
         }
     }
 
@@ -5123,9 +5242,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     fn emit_start_optional_scope(&mut self, cursor: &mut BranchCursor<W>) {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.start_optional_scope(),
-            CursorMode::Strict => cursor
-                .pending_builder_ops
-                .push(BuilderDelta::StartOptionalScope),
+            CursorMode::Strict => {
+                cursor.consistency_memo.set(None);
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::StartOptionalScope);
+            }
         }
     }
 
@@ -5180,9 +5302,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     fn emit_finalize_optional_scope_present(&mut self, cursor: &mut BranchCursor<W>) {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.finalize_optional_scope_present(),
-            CursorMode::Strict => cursor
-                .pending_builder_ops
-                .push(BuilderDelta::FinalizeOptionalScopePresent),
+            CursorMode::Strict => {
+                cursor.consistency_memo.set(None);
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::FinalizeOptionalScopePresent);
+            }
         }
     }
 
@@ -5190,9 +5315,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     fn emit_push_optional_absent(&mut self, cursor: &mut BranchCursor<W>) {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_optional_absent(),
-            CursorMode::Strict => cursor
-                .pending_builder_ops
-                .push(BuilderDelta::PushOptionalAbsent),
+            CursorMode::Strict => {
+                cursor.consistency_memo.set(None);
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::PushOptionalAbsent);
+            }
         }
     }
 
@@ -7495,6 +7623,7 @@ mod tests {
             recovery_depth: 0,
             visited_recovery: BTreeSet::new(),
             visited_dispatch: BTreeSet::new(),
+            consistency_memo: std::cell::Cell::new(None),
         };
         let cloned = cursor.clone();
         assert_eq!(cloned.pending_builder_ops.len(), 1);
