@@ -416,6 +416,47 @@ pub struct ForkBranch<W: Semiring> {
     pub action_kind: ForkActionKind,
 }
 
+/// B13d-R / Resolution R (2026-05-08): tristate result of the dry-run
+/// simulation over a cursor's `pending_builder_ops`. The simulation
+/// faithfully mirrors `commit_winner`'s replay against the runtime arg
+/// stack (main_stack + optional_stack of SemanticBuilder).
+///
+/// - `Consistent` → all FireActions encountered would succeed.
+///   `final_main_stack` and `final_optional_depth` describe the resulting
+///   active-stack state; `cursor_will_produce_term` checks for
+///   `final_main_stack.len() == 1 && final_optional_depth == 0`.
+/// - `DefinitelyBroken` → a logged FireAction would arity-underflow OR
+///   type-mismatch at runtime (action body's `into_term::<T>()` returns
+///   None and the action returns early without `push_term`). Monotone-
+///   stable: subsequent appends to pending_builder_ops cannot recover.
+/// - `Indeterminate` → simulation hit a delta whose semantic effect
+///   depends on payload values not available at the delta log alone
+///   (e.g., `PushToCollection` on an empty active stack — runtime is
+///   silent on this; we don't classify it as broken).
+#[derive(Debug)]
+enum DryRunState {
+    Consistent {
+        final_main_stack: Vec<Option<u16>>,
+        final_optional_depth: usize,
+    },
+    DefinitelyBroken {
+        kind: DryRunBrokenKind,
+    },
+    Indeterminate {
+        reason: &'static str,
+    },
+}
+
+#[derive(Debug)]
+enum DryRunBrokenKind {
+    /// FireAction's `pop_args(arity)` would underflow at runtime.
+    ArityUnderflow,
+    /// FireAction's `into_term::<Cat>()` would return None on at least
+    /// one arg slot whose `expected_input_cats[i]` is a non-ANY_CAT
+    /// category that doesn't match the popped tag.
+    TypeMismatch,
+}
+
 impl<W: Semiring> ForkBranch<W> {
     /// Stage 3.12 / Class A.i (2026-05-01): default constructor for
     /// branches with the standard `Push` action_kind. All 8 pre-Stage-3.12
@@ -2360,21 +2401,18 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Idle parking branch satisfy the first two conditions; the third
     /// is reached when the engine pops Returns up to the bottom.
     fn is_accepting_config(&self, cursor: &BranchCursor<W>) -> bool {
-        // B13c / Candidate H (2026-05-08): cursor_will_produce_term is
-        // currently DISABLED at the accepting-config gate. The dry-run
-        // logic is sound for individual cursors but proved too aggressive
-        // when run in isolation: the productive cross-cat-LHS cursors
-        // for the failing calculator tests are killed earlier by B10's
-        // lex-min subsumption, leaving only type-mismatched cursors at
-        // EOI. Filtering those leaves an empty accepting set for tests
-        // that pre-B7 had a valid productive cursor.
-        //
-        // The metadata infrastructure (expected_input_cats + output_cat
-        // on ActionEntry, plus the cursor_will_produce_term helper
-        // itself) IS in place and ready for use by a deeper fix that
-        // also adjusts B10's subsumption to preserve productive cross-
-        // cat cursors over type-mismatched atomic siblings.
-        let _ = self.cursor_will_produce_term(cursor);
+        // B13c / Candidate H (2026-05-08), activated by B13d-R
+        // (2026-05-08): builder-shape invariant. The C2-faithful
+        // `cursor_dry_run_state` correctly models Optional /
+        // PushToCollection scope semantics, so the previous false-
+        // positive concern (productive cross-cat-LHS cursors falsely
+        // classified as broken) is resolved. Cursors whose dry-run
+        // lands on Definitely_broken are filtered from the accepting
+        // set BEFORE lex-min. Indeterminate cases pass through (return
+        // true).
+        if !self.cursor_will_produce_term(cursor) {
+            return false;
+        }
         match &cursor.inner_state {
             WpdsState::Accepted => true,
             WpdsState::InfixLoop { .. } => true,
@@ -2395,47 +2433,59 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         }
     }
 
-    /// B13c / Candidate H (2026-05-08): dry-run the cursor's
-    /// `pending_builder_ops` to predict whether commit_winner's replay
-    /// will produce a single Term arg.
+    /// B13c / Candidate H (2026-05-08), refined as B13d-R Resolution R
+    /// (2026-05-08): dry-run the cursor's `pending_builder_ops` to
+    /// predict whether commit_winner's replay will produce a single
+    /// Term arg, returning a TRISTATE result via `cursor_dry_run_state`.
     ///
-    /// The virtual stack tracks `Option<u16>` per arg slot:
-    /// - `Some(cat)` — a Term arg of category index `cat` (a successful
-    ///   `FireAction` push).
-    /// - `None` — a non-Term arg (Token, Ident, Predicate, CollectionId,
-    ///   BinderScope) or unknown.
+    /// `cursor_will_produce_term` is the EOI-gate variant: returns
+    /// `true` if the cursor would produce exactly one Term arg of any
+    /// category, `false` if a logged FireAction is provably broken
+    /// (arity-underflow / type-mismatch). Indeterminate cases return
+    /// `true` (conservative: don't filter on uncertainty at the EOI
+    /// gate).
     ///
-    /// Per FireAction, look up the rule's `ActionEntry` via
-    /// `engine.action_for(src_idx, rule_idx)`. Pop `arity` entries and
-    /// check `expected_input_cats[i]`:
-    /// - `ANY_CAT` (sentinel) accepts any tag (including non-Term).
-    /// - real `cat` requires the popped tag to be `Some(cat)` exactly.
+    /// `cursor_committed_ops_consistent` is the merge/subsume override
+    /// variant: returns `Some(true)` for a viable cursor, `Some(false)`
+    /// for a Definitely_broken cursor, `None` for Indeterminate.
+    /// Override fires only on `Some(false)`; `None` falls through to
+    /// existing weight comparison.
     ///
-    /// Mismatch → return `false` (action would silently `return` early
-    /// at runtime). Otherwise push `Some(output_cat)` and continue.
-    ///
-    /// At the end:
-    /// - Strict mode: virtual stack must have exactly one entry that's
-    ///   `Some` (a Term tag).
-    /// - Lazy mode: live builder is checked separately (the cursor's
-    ///   `pending_builder_ops` is empty by L1 invariant). The Lazy
-    ///   short-circuit in `resolve_at_end_of_input` does its own check.
-    ///
-    /// Conservative: deltas not directly affecting the arg stack
-    /// (StartBinderScope, StartOptionalScope, recovery events, lex
-    /// alternatives, SeedLiveCollectionStack, etc.) are treated as
-    /// no-ops on the virtual stack. SpliceIntoCollection / FinalizeCollection
-    /// pop one entry; PushCollectionId pushes a None tag.
-    ///
-    /// Returns `true` for an empty pending_builder_ops (Lazy-mode cursor
-    /// whose live builder is the source of truth).
-    fn cursor_will_produce_term(&self, cursor: &BranchCursor<W>) -> bool {
+    /// Both are derived from `cursor_dry_run_state`, the C2-faithful
+    /// virtual-stack simulation that mirrors `commit_winner`'s replay
+    /// over `pending_builder_ops`. Models:
+    /// - main_stack + optional_stack (mirrors SemanticBuilder's two-
+    ///   level active arg stack — Optional scopes route subsequent
+    ///   pushes to a separate inner Vec).
+    /// - PushToken/PushIdent/PushPredicate/PushCollectionId/
+    ///   PushOptionalAbsent → push `None` onto active stack.
+    /// - FireAction → pop arity entries from active stack, type-check
+    ///   each against `expected_input_cats[i]` (ANY_CAT skips check),
+    ///   push `Some(output_cat)` on success.
+    /// - SpliceIntoCollection / PushToCollection → pop 1 from active
+    ///   stack (target a collection accumulator outside the arg stack).
+    /// - StartOptionalScope → optional_stack.push(Vec::new()) — opens
+    ///   a separate active arg cursor.
+    /// - FinalizeOptionalScopePresent → optional_stack.pop() — captures
+    ///   the entire inner buffer; pushes ONE Optional arg (None tag)
+    ///   onto the next-outer active stack.
+    /// - All other deltas (StartBinderScope, FinalizeCollection,
+    ///   SeedLiveCollectionStack, RecoveryEvent, SubstituteToken,
+    ///   InsertToken, CommitLexAlternative, ApplyRecoverySequence,
+    ///   StartCollection) → no effect on active arg stack.
+    fn cursor_dry_run_state(&self, cursor: &BranchCursor<W>) -> DryRunState {
         if cursor.pending_builder_ops.is_empty() {
-            // Lazy mode: live builder is checked separately by the
-            // Lazy-mode short-circuit. Don't reject.
-            return true;
+            // Lazy-mode short-circuit: live builder is canonical.
+            return DryRunState::Consistent {
+                final_main_stack: Vec::new(),
+                final_optional_depth: 0,
+            };
         }
-        let mut virt: Vec<Option<u16>> = Vec::with_capacity(8);
+        // Two parallel virtual stacks mirror the runtime:
+        //   - main_stack: SemanticBuilder.stack (Option<u16> tags)
+        //   - optional_stack: SemanticBuilder.optional_stack (each entry is a Vec<Option<u16>>)
+        let mut main_stack: Vec<Option<u16>> = Vec::with_capacity(8);
+        let mut optional_stack: Vec<Vec<Option<u16>>> = Vec::new();
         for delta in cursor.pending_builder_ops.iter() {
             match delta {
                 BuilderDelta::PushToken { .. }
@@ -2443,7 +2493,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 | BuilderDelta::PushPredicate(_)
                 | BuilderDelta::PushCollectionId { .. }
                 | BuilderDelta::PushOptionalAbsent => {
-                    virt.push(None);
+                    let active = if let Some(top) = optional_stack.last_mut() {
+                        top
+                    } else {
+                        &mut main_stack
+                    };
+                    active.push(None);
                 }
                 BuilderDelta::FireAction { symbol } => {
                     let action = match self.engine.action_for(
@@ -2451,32 +2506,53 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         symbol.rule_index_in_category,
                     ) {
                         Some(a) => a,
-                        // Unknown action — be conservative and accept.
+                        // Unknown action — be conservative and skip.
                         None => continue,
                     };
                     let arity = action.arity as usize;
-                    if virt.len() < arity {
-                        // Underflow — action would underflow at runtime
-                        // and almost certainly fail to push.
-                        return false;
+                    let active_len = if let Some(top) = optional_stack.last() {
+                        top.len()
+                    } else {
+                        main_stack.len()
+                    };
+                    if active_len < arity {
+                        // B13d-R correction (2026-05-08): underflow is
+                        // INDETERMINATE, not DefinitelyBroken. The
+                        // cursor's pending_builder_ops doesn't include
+                        // args pushed to the live builder BEFORE a
+                        // Lazy→Strict transition; my virt may be shorter
+                        // than the runtime active stack. At commit time,
+                        // the live's pre-fork stack provides the missing
+                        // args and the FireAction may succeed.
+                        // TypeMismatch (below) IS DefinitelyBroken
+                        // because it fires only when virt.top is `Some(_)`
+                        // — a known type from THIS cursor's prior
+                        // FireAction, not invisible live state.
+                        return DryRunState::Indeterminate {
+                            reason: "FireAction arity exceeds dry-run virt length \
+                                     — pre-fork live state may fill the gap",
+                        };
                     }
-                    let popped_start = virt.len() - arity;
-                    // Check each arg against expected category, popping
-                    // from the top: arg[i] in expected_input_cats matches
-                    // the i-th popped arg in argument order (the action
-                    // body iterates args.into_iter() so arg0 was pushed
-                    // FIRST → it's at virt[popped_start], arg1 at
-                    // virt[popped_start + 1], etc.).
+                    let active = if let Some(top) = optional_stack.last_mut() {
+                        top
+                    } else {
+                        &mut main_stack
+                    };
+                    let popped_start = active.len() - arity;
+                    // Type-check each arg against expected_input_cats.
+                    // arg[i] in expected_input_cats matches the i-th
+                    // popped arg in argument order (action body iterates
+                    // args.into_iter() so arg0 was pushed FIRST → it's
+                    // at popped_start, arg1 at popped_start+1, etc.).
                     let mut mismatch = false;
                     for i in 0..arity {
-                        let popped = virt[popped_start + i];
+                        let popped = active[popped_start + i];
                         let expected = action
                             .expected_input_cats
                             .get(i)
                             .copied()
                             .unwrap_or(crate::wpds_runtime::ANY_CAT);
                         if expected == crate::wpds_runtime::ANY_CAT {
-                            // Action accepts any arg type for this slot.
                             continue;
                         }
                         match popped {
@@ -2488,32 +2564,121 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         }
                     }
                     if mismatch {
-                        return false;
+                        return DryRunState::DefinitelyBroken {
+                            kind: DryRunBrokenKind::TypeMismatch,
+                        };
                     }
-                    virt.truncate(popped_start);
-                    virt.push(Some(action.output_cat));
+                    active.truncate(popped_start);
+                    active.push(Some(action.output_cat));
                 }
                 BuilderDelta::SpliceIntoCollection { .. }
-                | BuilderDelta::PushToCollection { .. }
-                | BuilderDelta::FinalizeOptionalScopePresent => {
-                    // Pops one arg from the virtual stack (consumed into
-                    // collection / optional scope). Underflow is benign
-                    // for prediction purposes — clamp.
-                    if !virt.is_empty() {
-                        virt.pop();
+                | BuilderDelta::PushToCollection { .. } => {
+                    // Runtime: active.pop() and append to collection_stack[id].
+                    // (Resolution R defect-fix #1: PushToCollection now
+                    // also pops; was a no-op pre-R.)
+                    let active = if let Some(top) = optional_stack.last_mut() {
+                        top
+                    } else {
+                        &mut main_stack
+                    };
+                    if active.is_empty() {
+                        // Runtime push_to_collection silently no-ops on
+                        // empty active; we cannot tell from the log alone
+                        // whether this was a logic error or a benign
+                        // edge case. Indeterminate.
+                        return DryRunState::Indeterminate {
+                            reason: "PushToCollection/SpliceIntoCollection pop on empty active stack",
+                        };
                     }
+                    active.pop();
+                }
+                BuilderDelta::StartOptionalScope => {
+                    // Runtime: optional_stack.push(Vec::new()).
+                    // (Resolution R defect-fix #2: was no-op pre-R.)
+                    optional_stack.push(Vec::new());
+                }
+                BuilderDelta::FinalizeOptionalScopePresent => {
+                    // Runtime: pop entire inner Vec, wrap as Optional(Some(inner)),
+                    // push ONE Optional arg onto next-outer active stack.
+                    // (Resolution R defect-fix #3: was virt.pop() pre-R.)
+                    if optional_stack.pop().is_none() {
+                        return DryRunState::Indeterminate {
+                            reason: "FinalizeOptionalScopePresent without matching StartOptionalScope",
+                        };
+                    }
+                    let active = if let Some(top) = optional_stack.last_mut() {
+                        top
+                    } else {
+                        &mut main_stack
+                    };
+                    active.push(None);
                 }
                 // Recovery events, lex alternatives, SeedLiveCollectionStack,
-                // FinalizeCollection (drains accumulator into builder elsewhere),
-                // StartBinderScope / StartOptionalScope / StartCollection,
+                // FinalizeCollection (drains accumulator outside the arg stack),
+                // StartBinderScope (separate binder_scopes substrate),
+                // StartCollection (separate collection_stack substrate),
                 // ApplyRecoverySequence, SubstituteToken, InsertToken,
-                // CommitLexAlternative, RecoveryEvent — no direct arg-stack
-                // effect from the dry-run perspective.
+                // CommitLexAlternative, RecoveryEvent — no effect on
+                // active arg stack.
                 _ => {}
             }
         }
-        // Final state must be exactly one Term tag.
-        virt.len() == 1 && virt[0].is_some()
+        DryRunState::Consistent {
+            final_main_stack: main_stack,
+            final_optional_depth: optional_stack.len(),
+        }
+    }
+
+    /// EOI-gate variant of `cursor_dry_run_state`: returns `true` if the
+    /// cursor's pending_builder_ops would replay cleanly AND end with
+    /// exactly one Term tag in the main stack (no leftover optional
+    /// scope). Indeterminate returns `true` (conservative; don't filter
+    /// on uncertainty).
+    fn cursor_will_produce_term(&self, cursor: &BranchCursor<W>) -> bool {
+        match self.cursor_dry_run_state(cursor) {
+            DryRunState::Consistent {
+                final_main_stack,
+                final_optional_depth,
+            } => {
+                // Empty pending = Lazy mode; live builder canonical.
+                if final_main_stack.is_empty() && final_optional_depth == 0 {
+                    return true;
+                }
+                final_optional_depth == 0
+                    && final_main_stack.len() == 1
+                    && final_main_stack[0].is_some()
+            }
+            DryRunState::DefinitelyBroken { .. } => false,
+            DryRunState::Indeterminate { .. } => true,
+        }
+    }
+
+    /// B13d-R / Resolution R (2026-05-08): tristate consistency oracle
+    /// for the merge/subsume override.
+    ///
+    /// Returns:
+    /// - `Some(true)`  → cursor's pending_builder_ops will replay cleanly
+    ///   at commit_winner (no arity underflow, no type mismatch). Whether
+    ///   it produces a valid Term is a separate question handled by
+    ///   `cursor_will_produce_term` at the EOI gate.
+    /// - `Some(false)` → at least one logged FireAction will hit
+    ///   `pop_args` underflow OR `into_term` early-return at runtime.
+    ///   By monotonicity (`pending_builder_ops` is append-only), this
+    ///   judgment is stable for all subsequent appends.
+    /// - `None` → simulation hit an indeterminate delta; caller MUST
+    ///   fall back to weight comparison.
+    ///
+    /// The override at `merge_equivalent_cursors` /
+    /// `subsume_lex_dominated_cursors` fires ONLY when EXACTLY ONE
+    /// cursor returns `Some(false)`. `Some(true)` and `None` are both
+    /// treated as "viable" — we never override against weight on
+    /// Indeterminate.
+    fn cursor_committed_ops_consistent(&self, cursor: &BranchCursor<W>) -> Option<bool> {
+        match self.cursor_dry_run_state(cursor) {
+            DryRunState::Consistent { .. } => Some(true),
+            DryRunState::DefinitelyBroken { .. } => Some(false),
+            DryRunState::Indeterminate { .. } => None,
+        }
     }
 
     /// Stage 3.12 fix (2026-05-02): "logical EOI" — true when the
@@ -4086,7 +4251,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             std::collections::HashMap::with_capacity(self.branch_cursors.len());
         let mut merged: Vec<BranchCursor<W>> =
             Vec::with_capacity(self.branch_cursors.len());
-        for cursor in self.branch_cursors.drain(..) {
+        // B13d-R (2026-05-08): drain into a local Vec FIRST so subsequent
+        // `self.cursor_committed_ops_consistent(...)` calls (which take
+        // `&self`) don't conflict with the mutable borrow of
+        // `self.branch_cursors`.
+        let drained: Vec<BranchCursor<W>> = self.branch_cursors.drain(..).collect();
+        for cursor in drained {
             let key = ConfigKey {
                 state: cursor.inner_state.clone(),
                 node: cursor.node,
@@ -4116,9 +4286,35 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // Opt-Group merges. Pre-3.12 the receiver-on-Equal
                     // semantics of `LexicographicWeight::plus` were
                     // order-dependent on insertion timing.
-                    let cursor_wins = weight_strict_win
-                        || (weight_tied
-                            && cursor.source_priority < merged[idx].source_priority);
+                    //
+                    // B13d-R / Resolution R (2026-05-08): consistency
+                    // override. If EXACTLY ONE cursor is provably broken
+                    // at commit_winner replay (Definitely_broken via
+                    // cursor_committed_ops_consistent), the other wins
+                    // regardless of weight. Two consistent or two
+                    // Indeterminate / mixed cases fall through to the
+                    // weight + source_priority chain. This preserves
+                    // genuine ambiguity (two consistent cursors compete
+                    // by lex-min) while preventing silent loss of a
+                    // productive cursor against a dead-on-arrival
+                    // sibling.
+                    let existing_consistent =
+                        self.cursor_committed_ops_consistent(&merged[idx]);
+                    let cursor_consistent =
+                        self.cursor_committed_ops_consistent(&cursor);
+                    let consistency_override: Option<bool> =
+                        match (existing_consistent, cursor_consistent) {
+                            (Some(false), Some(false)) => None,
+                            (Some(false), Some(true)) | (Some(false), None) => Some(true),
+                            (Some(true), Some(false)) | (None, Some(false)) => Some(false),
+                            _ => None,
+                        };
+                    let cursor_wins = match consistency_override {
+                        Some(verdict) => verdict,
+                        None => weight_strict_win
+                            || (weight_tied
+                                && cursor.source_priority < merged[idx].source_priority),
+                    };
                     if cursor_wins {
                         debug_assert_eq!(
                             merged[idx].collection_stack.len(),
@@ -4228,13 +4424,60 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     best_idx = idx;
                 }
             }
+            // B13d-R / Resolution R (2026-05-08): if best_idx is
+            // Definitely_broken at commit-replay AND any sibling is
+            // Definitely_consistent, promote a consistent sibling to
+            // best_idx and mark the broken best for drop. This handles
+            // the case where lex-min weight picks a broken cursor over
+            // a consistent one — the consistent cursor's productive
+            // pending_builder_ops must survive.
+            let best_consistent_initial =
+                self.cursor_committed_ops_consistent(&self.branch_cursors[best_idx]);
+            if matches!(best_consistent_initial, Some(false)) {
+                let mut promoted: Option<usize> = None;
+                for &idx in idxs {
+                    if idx == best_idx {
+                        continue;
+                    }
+                    if matches!(
+                        self.cursor_committed_ops_consistent(&self.branch_cursors[idx]),
+                        Some(true),
+                    ) {
+                        promoted = Some(idx);
+                        break;
+                    }
+                }
+                if let Some(new_best) = promoted {
+                    drop_set.insert(best_idx);
+                    best_idx = new_best;
+                }
+            }
             let best_w = self.branch_cursors[best_idx].weight;
             let best_p = self.branch_cursors[best_idx].source_priority;
             for &idx in idxs {
                 if idx == best_idx {
                     continue;
                 }
+                if drop_set.contains(&idx) {
+                    continue;
+                }
                 let c = &self.branch_cursors[idx];
+                // B13d-R / Resolution R (2026-05-08): consistency
+                // override at subsumption. If best is consistent and
+                // c is broken, drop c regardless of weight. Mixed
+                // (Indeterminate / Some(true) / Some(false)) cases
+                // fall through to existing strict-domination check.
+                let c_consistent = self.cursor_committed_ops_consistent(c);
+                let best_consistent =
+                    self.cursor_committed_ops_consistent(&self.branch_cursors[best_idx]);
+                let drop_by_consistency = matches!(
+                    (best_consistent, c_consistent),
+                    (Some(true), Some(false)) | (None, Some(false))
+                );
+                if drop_by_consistency {
+                    drop_set.insert(idx);
+                    continue;
+                }
                 // Strict domination: `best.plus(c) == best` AND `best != c`.
                 // The first clause is "best is at-or-better than c"; the
                 // second clause excludes ties (handled by merge_equivalent_
