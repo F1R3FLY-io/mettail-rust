@@ -1409,24 +1409,42 @@ fn extract_recovery_dispatch_config<W: Semiring>(
     }
 }
 
-/// B12 / Candidate E (2026-05-07): a *projection Fork* is a non-recovery
-/// Fork whose branches transition to `WpdsState::CrossCatDelegate { .. }`.
-/// These are exactly the Forks emitted by codegen for cross-category
-/// projection (Pass 2a, `UnifiedDescriptor::CrossCatProjection`) and
-/// cross-cat-prefix-unary (Pass 2b). Atomic-prefix Forks (lex-min
-/// disambiguation between same-cat atomic rules), lex-alt Forks,
-/// multi-rule Forks, and Opt-Group Forks do NOT produce
-/// CrossCatDelegate transitions and are exempt from the projection
-/// cycle defense.
+/// B12 / Candidate E (2026-05-07), tightened by B13 (2026-05-07): a
+/// *pure projection Fork* is a non-recovery Fork in which **every**
+/// branch transitions to `WpdsState::CrossCatDelegate { .. }`. Mixed
+/// buckets (atomic + projection, or cross-cat-LHS + projection)
+/// are EXEMPT from the cycle defense — their atomic / LHS arms are
+/// productive parse paths that B12 must not shadow via `visited_
+/// dispatch`.
+///
+/// **Why `all` instead of `any`** (B13, 2026-05-07): B10 Fix B unified
+/// Pass 2a CrossCatProjection arms into the same `unified_buckets`
+/// map as Pass 0 (cross-cat-LHS) and Pass 1 (atomic) in `prefix.rs::
+/// emit_prefix_arms_for_category`. Post-B10, a single Fork can mix
+/// atomic + cross-cat-LHS + projection branches (e.g. Calculator's
+/// Bool / Proc Ident bucket = atomic Var + cross-cat-LHS sources +
+/// cross-cat-projection wrappers). With `any`, B12 tagged ALL
+/// children's `visited_dispatch` whenever ANY branch was a projection
+/// — shadowing productive atomic / LHS cursors at downstream
+/// dispatches. The `all` predicate restricts the cycle defense to
+/// pure-projection Forks (no productive siblings to shadow).
+///
+/// LedTest's cycle bound is preserved via the **Push-arm** check at
+/// `apply_action_to_cursor::Push` (line ~2572), which fires on
+/// singleton-projection emissions (`WpdsStepAction::Push { new_state:
+/// CrossCatDelegate { .. } }`) regardless of this predicate. The
+/// Fork-arm check is the secondary line of defense for cases where
+/// a cycle traverses a multi-descriptor pure-projection bucket.
 ///
 /// Used by the Fork arm of `apply_action_to_cursor` to decide whether
 /// to apply the visited-dispatch cycle check; see `BranchCursor::
 /// visited_dispatch` and the GLL descriptor-uniqueness rationale
 /// (Scott & Johnstone 2010).
 fn is_projection_fork<W: Semiring>(branches: &[ForkBranch<W>]) -> bool {
-    branches.iter().any(|b| {
-        matches!(&b.new_state, WpdsState::CrossCatDelegate { .. })
-    })
+    !branches.is_empty()
+        && branches.iter().all(|b| {
+            matches!(&b.new_state, WpdsState::CrossCatDelegate { .. })
+        })
 }
 
 /// B12 / Candidate E (2026-05-07): extract the `(pos, cat_src_idx, cur_bp)`
