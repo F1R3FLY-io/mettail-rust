@@ -1044,8 +1044,21 @@ mod native_ops {
         }
 
         #[test]
+        fn pathmap_put_list_path() {
+            assert_reduces_to("{pathGet(pathPut(pathmap(), [1,2], 10), [1,2])}", "10");
+        }
+
+        #[test]
         fn pathmap_merge() {
             assert_reduces_to("{pathGet(pathMerge(pathmap(1:10), pathmap(2:20)), 2)}", "20");
+        }
+
+        #[test]
+        fn pathmap_merge_list_path() {
+            assert_reduces_to(
+                "{pathGet(pathMerge(pathmap([1,2]:10), pathmap([3,4]:20)), [3,4])}",
+                "20",
+            );
         }
 
         #[test]

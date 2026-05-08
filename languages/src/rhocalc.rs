@@ -903,9 +903,8 @@ language! {
             { match &m {
                 Proc::CastPathmap(inner) => match inner.as_ref() {
                     Pathmap::PathmapLit(ref payload) => {
-                        let mut new_map = payload.clone();
-                        new_map.insert(k.clone(), v.clone());
-                        Proc::CastPathmap(Box::new(Pathmap::PathmapLit(new_map)))
+                        let updated = crate::rhocalc::pathmap_put(payload, &k, &v);
+                        Proc::CastPathmap(Box::new(Pathmap::PathmapLit(updated)))
                     },
                     _ => Proc::Err,
                 },
@@ -916,9 +915,8 @@ language! {
             { match (&a, &b) {
                 (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
                     (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
-                        let mut m = pa.clone();
-                        for (k, v) in pb.iter() { m.insert(k.clone(), v.clone()); }
-                        Proc::CastPathmap(Box::new(Pathmap::PathmapLit(m)))
+                        let merged = crate::rhocalc::pathmap_merge(pa, pb);
+                        Proc::CastPathmap(Box::new(Pathmap::PathmapLit(merged)))
                     },
                     _ => Proc::Err,
                 },
@@ -1374,6 +1372,16 @@ fn pathmap_trie_from_lit(
     trie
 }
 
+fn pathmap_key_index_from_lit(
+    payload: &mettail_runtime::PathMapLit<Proc, Proc>,
+) -> std::collections::HashMap<Vec<u8>, Proc> {
+    let mut keys = std::collections::HashMap::new();
+    for (key, _) in payload.iter() {
+        keys.insert(proc_to_path_key_bytes(key), key.clone());
+    }
+    keys
+}
+
 fn pathmap_get(payload: &mettail_runtime::PathMapLit<Proc, Proc>, key: &Proc) -> Option<Proc> {
     let trie = pathmap_trie_from_lit(payload);
     trie.get_val_at(&proc_to_path_key_bytes(key)).cloned()
@@ -1382,4 +1390,46 @@ fn pathmap_get(payload: &mettail_runtime::PathMapLit<Proc, Proc>, key: &Proc) ->
 fn pathmap_has(payload: &mettail_runtime::PathMapLit<Proc, Proc>, key: &Proc) -> bool {
     let trie = pathmap_trie_from_lit(payload);
     trie.get_val_at(&proc_to_path_key_bytes(key)).is_some()
+}
+
+fn pathmap_put(
+    payload: &mettail_runtime::PathMapLit<Proc, Proc>,
+    key: &Proc,
+    value: &Proc,
+) -> mettail_runtime::PathMapLit<Proc, Proc> {
+    let mut trie = pathmap_trie_from_lit(payload);
+    let mut key_index = pathmap_key_index_from_lit(payload);
+    let encoded_key = proc_to_path_key_bytes(key);
+    trie.set_val_at(&encoded_key, value.clone());
+    key_index.insert(encoded_key, key.clone());
+
+    let mut out = mettail_runtime::PathMapLit::new();
+    for (encoded, proc_key) in key_index {
+        if let Some(v) = trie.get_val_at(&encoded) {
+            out.insert(proc_key, v.clone());
+        }
+    }
+    out
+}
+
+fn pathmap_merge(
+    left: &mettail_runtime::PathMapLit<Proc, Proc>,
+    right: &mettail_runtime::PathMapLit<Proc, Proc>,
+) -> mettail_runtime::PathMapLit<Proc, Proc> {
+    let mut trie = pathmap_trie_from_lit(left);
+    let mut key_index = pathmap_key_index_from_lit(left);
+
+    for (key, value) in right.iter() {
+        let encoded_key = proc_to_path_key_bytes(key);
+        trie.set_val_at(&encoded_key, value.clone());
+        key_index.insert(encoded_key, key.clone());
+    }
+
+    let mut out = mettail_runtime::PathMapLit::new();
+    for (encoded, proc_key) in key_index {
+        if let Some(v) = trie.get_val_at(&encoded) {
+            out.insert(proc_key, v.clone());
+        }
+    }
+    out
 }
