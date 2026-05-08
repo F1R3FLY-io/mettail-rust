@@ -664,25 +664,20 @@ fn try_comm_single(
     where_cond: Option<&Proc>,
 ) -> Option<Proc> {
     let n_for_output = bind_channel_name(b)?;
-    let pat = bind_pattern_proc(b)?;
-    let persistent_recv = is_persistent_bind(b);
-    let empty_bind = is_empty_bind(b);
+    let recv_ctx = SingleReceiveCtx {
+        pat: bind_pattern_proc(b)?,
+        cont,
+        where_cond,
+        persistent_recv: is_persistent_bind(b),
+        empty_bind: is_empty_bind(b),
+    };
     for (cand, _) in whole_bag.iter() {
         if let Some((n_out, q)) = output_parts(cand) {
-            if empty_bind && !empty_bind_matches_payload(&q) {
+            if recv_ctx.empty_bind && !empty_bind_matches_payload(&q) {
                 continue;
             }
             if &n_out == n_for_output {
-                if let Some(next) = finish_single_comm(
-                    whole_bag,
-                    for_key,
-                    cand,
-                    &pat,
-                    cont,
-                    where_cond,
-                    persistent_recv,
-                    empty_bind,
-                ) {
+                if let Some(next) = finish_single_comm(whole_bag, for_key, cand, &recv_ctx) {
                     return Some(next);
                 }
             }
@@ -691,44 +686,48 @@ fn try_comm_single(
     None
 }
 
+struct SingleReceiveCtx<'a> {
+    pat: Proc,
+    cont: &'a Proc,
+    where_cond: Option<&'a Proc>,
+    persistent_recv: bool,
+    empty_bind: bool,
+}
+
 fn finish_single_comm(
     whole_bag: &HashBag<Proc>,
     for_key: &Proc,
     output_key: &Proc,
-    pat: &Proc,
-    cont: &Proc,
-    where_cond: Option<&Proc>,
-    persistent_recv: bool,
-    empty_bind: bool,
+    recv_ctx: &SingleReceiveCtx<'_>,
 ) -> Option<Proc> {
     let (n_out, q) = output_parts(output_key)?;
-    let new_center = if empty_bind {
+    let new_center = if recv_ctx.empty_bind {
         if !empty_bind_matches_payload(&q) {
             return None;
         }
-        if let Some(c) = where_cond {
+        if let Some(c) = recv_ctx.where_cond {
             match eval_guard_bool(c) {
-                Some(true) => cont.clone(),
+                Some(true) => recv_ctx.cont.clone(),
                 _ => return None,
             }
         } else {
-            cont.clone()
+            recv_ctx.cont.clone()
         }
     } else {
-        if let Some(c) = where_cond {
+        if let Some(c) = recv_ctx.where_cond {
             Proc::CommWhere(
-                Box::new(pat.clone()),
+                Box::new(recv_ctx.pat.clone()),
                 Box::new(n_out.clone()),
                 Box::new(q.clone()),
                 Box::new(c.clone()),
-                Box::new(cont.clone()),
+                Box::new(recv_ctx.cont.clone()),
             )
         } else {
-            receive_apply(pat, &q, cont)?
+            receive_apply(&recv_ctx.pat, &q, recv_ctx.cont)?
         }
     };
     let persistent_send = is_persistent_output(output_key);
-    match (persistent_recv, persistent_send) {
+    match (recv_ctx.persistent_recv, persistent_send) {
         (false, false) => ppar_remove_two_insert(whole_bag, for_key, output_key, new_center),
         (false, true) => ppar_remove_one_insert(whole_bag, for_key, new_center),
         (true, false) => ppar_remove_one_insert(whole_bag, output_key, new_center),

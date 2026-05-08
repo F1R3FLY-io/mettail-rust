@@ -1941,7 +1941,11 @@ mod parsing {
     #[test]
     fn unary_send_and_persistent_receive_reduces() {
         let results = run("x!(1) | for(name <= x){\"ok\"}");
-        let displays: Vec<String> = results.all_terms.iter().map(|t| t.display.clone()).collect();
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
         assert!(
             displays
                 .iter()
@@ -1954,7 +1958,11 @@ mod parsing {
     #[test]
     fn unary_persistent_send_and_persistent_receive_cycle_shape() {
         let results = run("x!!(1) | for(name <= x){\"ok\"}");
-        let displays: Vec<String> = results.all_terms.iter().map(|t| t.display.clone()).collect();
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
         assert!(
             displays.iter().any(|d| {
                 d.contains("\"ok\"")
