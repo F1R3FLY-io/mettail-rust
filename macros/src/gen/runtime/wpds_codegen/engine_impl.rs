@@ -83,6 +83,10 @@ pub(crate) fn emit_engine_impl_full(
         super::binder::emit_binder_rule_body(categories, per_cat, &prefix_bp_map);
     // Phase 5b: BinderListLoop body for multi-binder list (^[xs]).
     let binder_list_loop_body = super::binder::emit_binder_list_loop_body(per_cat);
+    // B8 / Path P1 (2026-05-08): per-rule predicate for routing
+    // OptionalGroupAt symbols to BinderListLoop when the rule is Class 3.
+    let is_binderlist_inner_lookup =
+        super::binder::emit_binderlist_inner_lookup(per_cat);
     // Opt-Group (2026-04-29): per-rule per-group OptionalGroup state
     // dispatch — FIRST-set peek + inner-position walk + finalize.
     let optional_group_body =
@@ -548,41 +552,39 @@ pub(crate) fn emit_engine_impl_full(
                                 mettail_prattail::wpds_runtime::SymbolKind::OptionalGroupAt(sub_pos) => {
                                     // Opt-Group: inner ParamParse / Literal /
                                     // BinderIdent / GuardSlot just returned to
-                                    // the optional-group marker. The marker's
-                                    // sub_pos was advanced when the inner step
-                                    // executed (Replace/ConsumeAndReplace set
-                                    // OptionalGroupAt(next_sub_pos)). Resume
-                                    // the OptionalGroup state at that sub_pos.
+                                    // the optional-group marker.
                                     //
-                                    // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
-                                    // 2026-05-06): OptionalGroupAt symbols ALWAYS
-                                    // carry `bp = Some(outer_bp)` per the codegen
-                                    // invariant in
-                                    // StackSymbolV2::optional_group_at.
+                                    // B8 / Path P1 (2026-05-08): when the rule
+                                    // is a Class 3 BinderListLoop (per the
+                                    // is_binderlist_inner lookup), route to
+                                    // BinderListLoop{sub_pos} instead of
+                                    // OptionalGroup. The OptionalGroupAt symbol
+                                    // is reused as a pluggable inner-walk
+                                    // marker; the per-rule lookup disambiguates.
                                     let result_src_idx = node.symbol.category_src_idx;
                                     let rule_idx = node.symbol.rule_index_in_category;
                                     let outer_bp = node.symbol.bp.expect(
                                         "OptionalGroupAt invariant: bp must be \
-                                         Some(outer_bp) — preserved across the group \
-                                         so on group exit BinderRule resumes at the \
-                                         correct precedence"
+                                         Some(outer_bp) — preserved across the group"
                                     );
+                                    let is_binderlist_inner: bool = #is_binderlist_inner_lookup;
+                                    if is_binderlist_inner {
+                                        return WpdsStepAction::Advance(
+                                            WpdsState::BinderListLoop {
+                                                result_src_idx,
+                                                rule_idx,
+                                                body_src_idx: 0u16,
+                                                outer_bp,
+                                                marker_pos: 0u8,
+                                                next_pos: 0u8,
+                                                sub_pos,
+                                            },
+                                        );
+                                    }
                                     return WpdsStepAction::Advance(
                                         WpdsState::OptionalGroup {
                                             result_src_idx,
                                             rule_idx,
-                                            // group_idx isn't carried in the
-                                            // marker (the synthetic
-                                            // dispatch keys on (result, rule,
-                                            // group, sub_pos) but only one
-                                            // OptionalGroup can be live at any
-                                            // outer position). For pilot
-                                            // grammars with a single group per
-                                            // rule, group_idx=0; for
-                                            // multi-group rules the body
-                                            // dispatcher resolves group_idx
-                                            // from sub_pos via the per-rule
-                                            // table.
                                             group_idx: 0,
                                             sub_pos,
                                             outer_bp,

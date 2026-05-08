@@ -1260,6 +1260,46 @@ pub(crate) fn emit_binder_rule_body(
     }
 }
 
+/// B8 / Class 3 (2026-05-08): emit a per-rule predicate `is_binderlist_inner(rule_idx)`
+/// that returns `true` when the rule is a Class 3 ZIP-MAP-SEP rule (its
+/// BinderListLoop has more than one inner position). Used by the Unwinding-
+/// OptionalGroupAt arm to route back to BinderListLoop instead of
+/// OptionalGroup state when the symbol belongs to a Class 3 rule.
+pub(crate) fn emit_binderlist_inner_lookup(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
+    let mut arms = Vec::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        for (rule_i, rule) in rules.iter().enumerate() {
+            let Some(shape) = classify_binder(rule) else {
+                continue;
+            };
+            let is_class3 = shape.positions.iter().any(|p| {
+                matches!(
+                    p,
+                    BinderPosition::BinderListLoop {
+                        collection_param_cat: Some(_),
+                        ..
+                    }
+                )
+            });
+            if is_class3 {
+                let cat = cat_i as u16;
+                let rule_idx = rule_i as u16;
+                arms.push(quote! { (#cat, #rule_idx) => true, });
+            }
+        }
+    }
+    if arms.is_empty() {
+        quote! { false }
+    } else {
+        quote! {
+            match (result_src_idx, rule_idx) {
+                #(#arms)*
+                _ => false,
+            }
+        }
+    }
+}
+
 /// Phase 5b + B8 (2026-05-08): emit the body of `WpdsState::BinderListLoop`.
 /// The state body dispatches on `(result_src_idx, rule_idx, sub_pos)`.
 ///
