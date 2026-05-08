@@ -107,7 +107,32 @@ pub enum BinderPosition {
     /// list. Engine enters BinderListLoop sub-state, captures Idents
     /// separated by `separator`, until close delim of position N+1 (the
     /// next Literal in the syntax pattern).
-    BinderListLoop { separator: String, close: String },
+    ///
+    /// B8 / Class 3 ZIP-MAP-SEP (2026-05-08): extended fields support the
+    /// chained `Sep{source: Some(Map{source: Zip})}` pattern (e.g.
+    /// rhocalc PInputs `*zip(ns,xs).*map(|n,x| n "?" x).*sep(",")`).
+    /// `inner_positions` is the per-iteration inner walk; for PNew-style
+    /// rules it's `[BinderIdent]`. `binder_param_idx` is the index into
+    /// `inner_positions` of the binder slot (the BinderIdent for PNew,
+    /// or the binder slot inside the map body for Class 3).
+    /// `collection_param_cat` is `Some(elem_cat)` for Class 3 (the
+    /// synthesized Names accumulator's element category) and None for
+    /// PNew-style rules (no synthesized accumulator).
+    BinderListLoop {
+        separator: String,
+        close: String,
+        /// Per-iteration inner walk. PNew → `[BinderIdent]`. Class 3 →
+        /// the body of the Map closure (e.g. `[ParamParse{Name,
+        /// collection:Some(...)}, Literal("?"), BinderIdent]`).
+        inner_positions: Vec<BinderPosition>,
+        /// Action-arg layout for the inner walk; mirrors inner_positions.
+        inner_action_args: Vec<ActionArgKind>,
+        /// Index into inner_positions of the binder ident slot. PNew → 0.
+        binder_param_idx: u8,
+        /// For Class 3 rules: the element category of the synthesized
+        /// names accumulator. None for PNew-style rules.
+        collection_param_cat: Option<String>,
+    },
     /// `Param(name)` — sub-parse the param's category. After the parse
     /// returns, the marker advances to the next position. When the marker
     /// reaches `positions.len() + 1`, the rule's RuleAt symbol pops in
@@ -461,6 +486,14 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                         positions.push(BinderPosition::BinderListLoop {
                             separator: separator.clone(),
                             close,
+                            // B8 (2026-05-08): PNew-style — inner_positions
+                            // is `[BinderIdent]`; binder_param_idx=0;
+                            // collection_param_cat=None (no synthesized
+                            // accumulator).
+                            inner_positions: vec![BinderPosition::BinderIdent],
+                            inner_action_args: vec![ActionArgKind::BinderName],
+                            binder_param_idx: 0,
+                            collection_param_cat: None,
                         });
                         action_args.push(ActionArgKind::BinderList);
                         // Skip the close Literal at i+1 — it's already
@@ -501,6 +534,113 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     }
                     _ => return None, // bare Simple, Body, Guard, Binder are not Sep-eligible.
                 }
+            }
+            // B8 / Class 3 ZIP-MAP-SEP (2026-05-08): chained-Sep pattern
+            // `*zip(left,right).*map(|p1,p2| body).*sep(",")`. Used by
+            // rhocalc PInputs:
+            //   ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- "(" *zip(ns,xs)
+            //     .*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc;
+            // Per-iteration the inner walk parses a Name (n, spliced into
+            // the synthesized ns accumulator) and captures a binder ident
+            // (x, added to the xs binder scope).
+            SyntaxExpr::Op(PatternOp::Sep {
+                collection: _,
+                separator,
+                source: Some(source_op),
+            }) => {
+                // Source must be Map { source: Zip{left,right}, params, body }.
+                let (zip_left, zip_right, map_params, map_body) = match source_op.as_ref() {
+                    PatternOp::Map { source, params, body } => match source.as_ref() {
+                        PatternOp::Zip { left, right } => (left, right, params, body),
+                        _ => return None,
+                    },
+                    _ => return None,
+                };
+                if map_params.len() != 2 {
+                    return None;
+                }
+                // Validate left/right param kinds:
+                //   - left must be SimpleCollection (the names accumulator)
+                //   - right must be BinderList (the multi-binder)
+                let (collection_elem_cat,) = match param_map.get(&zip_left.to_string()) {
+                    Some(ParamKind::SimpleCollection { elem_cat, .. }) => (elem_cat.clone(),),
+                    _ => return None,
+                };
+                if !matches!(param_map.get(&zip_right.to_string()), Some(ParamKind::BinderList)) {
+                    return None;
+                }
+                // map_params[0] alias for the names-element; map_params[1]
+                // alias for the binder slot. Inside the body, Param(p1)
+                // refers to a Name parse, Param(p2) refers to the binder
+                // ident capture.
+                let map_param_n = map_params[0].to_string();
+                let map_param_x = map_params[1].to_string();
+                let close = match sp.get(i + 1) {
+                    Some(SyntaxExpr::Literal(text)) => text.clone(),
+                    _ => return None,
+                };
+                // Walk the map body; build inner_positions and
+                // inner_action_args per the Class 3 dispatch.
+                let mut inner_positions: Vec<BinderPosition> = Vec::new();
+                let mut inner_action_args: Vec<ActionArgKind> = Vec::new();
+                let mut binder_param_idx_opt: Option<u8> = None;
+                for inner_item in map_body {
+                    match inner_item {
+                        SyntaxExpr::Literal(text) => {
+                            inner_positions.push(BinderPosition::Literal(text.clone()));
+                        }
+                        SyntaxExpr::Param(p_name) => {
+                            let pn = p_name.to_string();
+                            if pn == map_param_n {
+                                // Names-element: parse as Name, splice into accumulator.
+                                inner_positions.push(BinderPosition::ParamParse {
+                                    cat: collection_elem_cat.clone(),
+                                    collection: Some(CollectionSepInfo {
+                                        separator: separator.clone(),
+                                        close: close.clone(),
+                                        coll_kind: CollectionType::Vec,
+                                        elem_cat: collection_elem_cat.clone(),
+                                    }),
+                                });
+                                inner_action_args.push(ActionArgKind::Term(
+                                    collection_elem_cat.clone(),
+                                ));
+                            } else if pn == map_param_x {
+                                // Binder-ident slot.
+                                if binder_param_idx_opt.is_none() {
+                                    binder_param_idx_opt = Some(inner_positions.len() as u8);
+                                }
+                                inner_positions.push(BinderPosition::BinderIdent);
+                                inner_action_args.push(ActionArgKind::BinderName);
+                            } else {
+                                return None; // unrecognized inner Param.
+                            }
+                        }
+                        SyntaxExpr::Op(_) => return None, // nested Op out of pilot.
+                    }
+                }
+                let binder_param_idx = binder_param_idx_opt?;
+                positions.push(BinderPosition::BinderListLoop {
+                    separator: separator.clone(),
+                    close,
+                    inner_positions,
+                    inner_action_args,
+                    binder_param_idx,
+                    collection_param_cat: Some(collection_elem_cat.clone()),
+                });
+                // Class 3 emits TWO action args: the synthesized Names
+                // accumulator drain + the binder list. Order: names first,
+                // then binder list — matches the order of the term_context
+                // entries (ns:Vec(Name), ^[xs].p) so the action body's
+                // field order is correct without extra reordering.
+                action_args.push(ActionArgKind::CollectionDrain {
+                    elem_cat: collection_elem_cat.clone(),
+                    coll_kind: CollectionType::Vec,
+                });
+                action_args.push(ActionArgKind::BinderList);
+                is_multi = true;
+                has_binder = true;
+                skip_next = true;
             }
             SyntaxExpr::Op(PatternOp::Opt { inner }) => {
                 // Opt-Group: recursively classify inner SyntaxExprs.
@@ -891,7 +1031,7 @@ pub(crate) fn emit_binder_rule_body(
                             };
                         }
                     },
-                    BinderPosition::BinderListLoop { separator: _, close } => {
+                    BinderPosition::BinderListLoop { separator: _, close, .. } => {
                         // Phase 5b: enter BinderListLoop sub-state. The
                         // first iteration here checks `close` (empty list)
                         // or starts collecting Idents; subsequent iterations
@@ -1129,7 +1269,7 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
                 continue;
             };
             for (idx, position) in shape.positions.iter().enumerate() {
-                if let BinderPosition::BinderListLoop { separator, close } = position {
+                if let BinderPosition::BinderListLoop { separator, close, .. } = position {
                     let pos = (idx + 1) as u8;
                     let next_pos = pos + 1;
                     let result_src_idx = cat_i as u16;
