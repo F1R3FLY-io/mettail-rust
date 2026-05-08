@@ -1100,6 +1100,7 @@ pub(crate) fn emit_binder_rule_body(
                                                 outer_bp: *outer_bp,
                                                 marker_pos: #pos,
                                                 next_pos: #next_pos,
+                                                sub_pos: 0u8,
                                             },
                                             action_kind:
                                                 mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
@@ -1340,6 +1341,7 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
                                             outer_bp: *outer_bp,
                                             marker_pos: *marker_pos,
                                             next_pos: *next_pos,
+                                            sub_pos: 0u8,
                                         },
                                         action_kind:
                                             mettail_prattail::wpds_walker::ForkActionKind::GuardedConsume {
@@ -1363,6 +1365,7 @@ pub(crate) fn emit_binder_list_loop_body(per_cat: &[Vec<GrammarRule>]) -> TokenS
                                             outer_bp: *outer_bp,
                                             marker_pos: *marker_pos,
                                             next_pos: *next_pos,
+                                            sub_pos: 0u8,
                                         },
                                         action_kind:
                                             mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {

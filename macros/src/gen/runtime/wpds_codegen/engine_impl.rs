@@ -984,8 +984,13 @@ pub(crate) fn emit_engine_impl_full(
                         outer_bp,
                         marker_pos,
                         next_pos,
+                        sub_pos,
                     } => {
                         // Phase 5b: ^[xs] binder list loop.
+                        // B8 (2026-05-08): sub_pos indexes per-iteration
+                        // inner walk for Class 3 ZIP-MAP-SEP. PNew-style
+                        // rules dispatch at sub_pos=0 only.
+                        let _ = sub_pos;
                         #binder_list_loop_body
                     }
                     WpdsState::CrossCatDelegate {

@@ -489,6 +489,16 @@ pub enum WpdsState {
     /// Phase 5b: mid-binder-list-loop (`^[xs]`). Captures `Ident,
     /// separator, Ident, separator, ..., close` into the active binder
     /// scope, then transitions back to BinderRule at `next_pos`.
+    ///
+    /// B8 / Class 3 ZIP-MAP-SEP (2026-05-08): `sub_pos` indexes the
+    /// per-iteration inner walk:
+    /// - 0 = peek close/sep/first-inner — choose between close-branch,
+    ///   sep-branch (next iteration), or first-inner-position dispatch.
+    /// - 1..=inner_positions.len() = walking inner_positions[sub_pos-1].
+    /// - inner_positions.len()+1 = end-of-iteration, dispatch back to
+    ///   sub_pos:0 to peek close/sep/next-iteration.
+    /// For PNew-style rules (single BinderIdent inner) the dispatch
+    /// collapses to the legacy 3-branch fork at sub_pos=0.
     BinderListLoop {
         result_src_idx: u16,
         rule_idx: u16,
@@ -498,6 +508,9 @@ pub enum WpdsState {
         marker_pos: u8,
         /// Position to advance to after the close delim is consumed.
         next_pos: u8,
+        /// B8: sub_pos indexes the per-iteration inner walk; 0 for the
+        /// PNew-style legacy fast path (no inner walk).
+        sub_pos: u8,
     },
     /// Stage 1.1: cross-category projection delegation. After the WPDS
     /// engine has pushed a Return marker for a cross-cat rule (e.g.
