@@ -2213,6 +2213,18 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         if self.cursor_mode == CursorMode::Lazy {
             return match self.state.clone() {
                 WpdsState::Accepted => {
+                    // B13c / Candidate H (2026-05-08): the Lazy-mode
+                    // positional invariant was implemented here but
+                    // proved to break recovery_integration_tests'
+                    // test_calc_recovery_trailing_integer / _missing_operator
+                    // / test_float_recovery_trailing / test_str_recovery_trailing
+                    // — those tests rely on the walker accepting at
+                    // sub-EOI and the wrapper handling trailing tokens
+                    // via recovery. The positional gate is left
+                    // unimplemented at this site; the wrapper's
+                    // post-resolution `pos < tokens.len()` check (in
+                    // codegen-emitted parse_<Cat>_via_wpds) handles
+                    // TrailingTokens correctly.
                     let term = self.builder.take_dyn_result();
                     let weight = self.weight.clone();
                     match term {
@@ -2348,6 +2360,21 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Idle parking branch satisfy the first two conditions; the third
     /// is reached when the engine pops Returns up to the bottom.
     fn is_accepting_config(&self, cursor: &BranchCursor<W>) -> bool {
+        // B13c / Candidate H (2026-05-08): cursor_will_produce_term is
+        // currently DISABLED at the accepting-config gate. The dry-run
+        // logic is sound for individual cursors but proved too aggressive
+        // when run in isolation: the productive cross-cat-LHS cursors
+        // for the failing calculator tests are killed earlier by B10's
+        // lex-min subsumption, leaving only type-mismatched cursors at
+        // EOI. Filtering those leaves an empty accepting set for tests
+        // that pre-B7 had a valid productive cursor.
+        //
+        // The metadata infrastructure (expected_input_cats + output_cat
+        // on ActionEntry, plus the cursor_will_produce_term helper
+        // itself) IS in place and ready for use by a deeper fix that
+        // also adjusts B10's subsumption to preserve productive cross-
+        // cat cursors over type-mismatched atomic siblings.
+        let _ = self.cursor_will_produce_term(cursor);
         match &cursor.inner_state {
             WpdsState::Accepted => true,
             WpdsState::InfixLoop { .. } => true,
@@ -2366,6 +2393,127 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             }
             _ => false,
         }
+    }
+
+    /// B13c / Candidate H (2026-05-08): dry-run the cursor's
+    /// `pending_builder_ops` to predict whether commit_winner's replay
+    /// will produce a single Term arg.
+    ///
+    /// The virtual stack tracks `Option<u16>` per arg slot:
+    /// - `Some(cat)` — a Term arg of category index `cat` (a successful
+    ///   `FireAction` push).
+    /// - `None` — a non-Term arg (Token, Ident, Predicate, CollectionId,
+    ///   BinderScope) or unknown.
+    ///
+    /// Per FireAction, look up the rule's `ActionEntry` via
+    /// `engine.action_for(src_idx, rule_idx)`. Pop `arity` entries and
+    /// check `expected_input_cats[i]`:
+    /// - `ANY_CAT` (sentinel) accepts any tag (including non-Term).
+    /// - real `cat` requires the popped tag to be `Some(cat)` exactly.
+    ///
+    /// Mismatch → return `false` (action would silently `return` early
+    /// at runtime). Otherwise push `Some(output_cat)` and continue.
+    ///
+    /// At the end:
+    /// - Strict mode: virtual stack must have exactly one entry that's
+    ///   `Some` (a Term tag).
+    /// - Lazy mode: live builder is checked separately (the cursor's
+    ///   `pending_builder_ops` is empty by L1 invariant). The Lazy
+    ///   short-circuit in `resolve_at_end_of_input` does its own check.
+    ///
+    /// Conservative: deltas not directly affecting the arg stack
+    /// (StartBinderScope, StartOptionalScope, recovery events, lex
+    /// alternatives, SeedLiveCollectionStack, etc.) are treated as
+    /// no-ops on the virtual stack. SpliceIntoCollection / FinalizeCollection
+    /// pop one entry; PushCollectionId pushes a None tag.
+    ///
+    /// Returns `true` for an empty pending_builder_ops (Lazy-mode cursor
+    /// whose live builder is the source of truth).
+    fn cursor_will_produce_term(&self, cursor: &BranchCursor<W>) -> bool {
+        if cursor.pending_builder_ops.is_empty() {
+            // Lazy mode: live builder is checked separately by the
+            // Lazy-mode short-circuit. Don't reject.
+            return true;
+        }
+        let mut virt: Vec<Option<u16>> = Vec::with_capacity(8);
+        for delta in cursor.pending_builder_ops.iter() {
+            match delta {
+                BuilderDelta::PushToken { .. }
+                | BuilderDelta::PushIdent { .. }
+                | BuilderDelta::PushPredicate(_)
+                | BuilderDelta::PushCollectionId { .. }
+                | BuilderDelta::PushOptionalAbsent => {
+                    virt.push(None);
+                }
+                BuilderDelta::FireAction { symbol } => {
+                    let action = match self.engine.action_for(
+                        symbol.category_src_idx,
+                        symbol.rule_index_in_category,
+                    ) {
+                        Some(a) => a,
+                        // Unknown action — be conservative and accept.
+                        None => continue,
+                    };
+                    let arity = action.arity as usize;
+                    if virt.len() < arity {
+                        // Underflow — action would underflow at runtime
+                        // and almost certainly fail to push.
+                        return false;
+                    }
+                    let popped_start = virt.len() - arity;
+                    // Check each arg against expected category, popping
+                    // from the top: arg[i] in expected_input_cats matches
+                    // the i-th popped arg in argument order (the action
+                    // body iterates args.into_iter() so arg0 was pushed
+                    // FIRST → it's at virt[popped_start], arg1 at
+                    // virt[popped_start + 1], etc.).
+                    let mut mismatch = false;
+                    for i in 0..arity {
+                        let popped = virt[popped_start + i];
+                        let expected = action
+                            .expected_input_cats
+                            .get(i)
+                            .copied()
+                            .unwrap_or(crate::wpds_runtime::ANY_CAT);
+                        if expected == crate::wpds_runtime::ANY_CAT {
+                            // Action accepts any arg type for this slot.
+                            continue;
+                        }
+                        match popped {
+                            Some(actual) if actual == expected => continue,
+                            _ => {
+                                mismatch = true;
+                                break;
+                            }
+                        }
+                    }
+                    if mismatch {
+                        return false;
+                    }
+                    virt.truncate(popped_start);
+                    virt.push(Some(action.output_cat));
+                }
+                BuilderDelta::SpliceIntoCollection { .. }
+                | BuilderDelta::PushToCollection { .. }
+                | BuilderDelta::FinalizeOptionalScopePresent => {
+                    // Pops one arg from the virtual stack (consumed into
+                    // collection / optional scope). Underflow is benign
+                    // for prediction purposes — clamp.
+                    if !virt.is_empty() {
+                        virt.pop();
+                    }
+                }
+                // Recovery events, lex alternatives, SeedLiveCollectionStack,
+                // FinalizeCollection (drains accumulator into builder elsewhere),
+                // StartBinderScope / StartOptionalScope / StartCollection,
+                // ApplyRecoverySequence, SubstituteToken, InsertToken,
+                // CommitLexAlternative, RecoveryEvent — no direct arg-stack
+                // effect from the dry-run perspective.
+                _ => {}
+            }
+        }
+        // Final state must be exactly one Term tag.
+        virt.len() == 1 && virt[0].is_some()
     }
 
     /// Stage 3.12 fix (2026-05-02): "logical EOI" — true when the

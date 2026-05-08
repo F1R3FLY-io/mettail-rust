@@ -1395,17 +1395,46 @@ pub type SemanticActionFn = fn(&mut SemanticBuilder, args: Vec<ActionArg>);
 ///
 /// Carries both the function pointer and the arity (how many top-of-stack
 /// args the walker should pop to pass to the action).
+///
+/// B13c / Candidate H (2026-05-08): extended with per-arg expected-input
+/// category indices and the action's output category. Used by
+/// `cursor_will_produce_term` (in `wpds_walker.rs`) to dry-run the
+/// FireAction sequence on a cursor's `pending_builder_ops` and decide
+/// whether the cursor would produce a valid Term term at EOI commit.
+/// Cursors whose dry-run lands on empty/underflow/type-mismatched
+/// state are filtered from the accepting set BEFORE lex-min runs,
+/// preventing the post-B7 failure mode where atomic-home cursors at
+/// the wrong category reach `Accepted` with empty / half-consumed
+/// builder state.
+///
+/// `expected_input_cats`: per-arg category index (matching
+/// `category_src_idx` used elsewhere). Length equals `arity`. Sentinel
+/// `u16::MAX` means "any category" (e.g., for token / ident slots
+/// where the action accepts any token regardless of category).
+///
+/// `output_cat`: the category the action's `push_term` lands in.
+/// Used as the type-tag for the cursor's projected arg-stack after
+/// the FireAction.
 #[derive(Clone, Copy)]
 pub struct ActionEntry {
     pub action_fn: SemanticActionFn,
     pub arity: u8,
+    pub expected_input_cats: &'static [u16],
+    pub output_cat: u16,
 }
+
+/// B13c / Candidate H: sentinel category index meaning "any category
+/// accepted" — used for non-Term arg slots (Ident, Token, Predicate,
+/// CollectionId, BinderScope) where category matching doesn't apply.
+pub const ANY_CAT: u16 = u16::MAX;
 
 impl fmt::Debug for ActionEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ActionEntry")
             .field("action_fn", &"fn(...)")
             .field("arity", &self.arity)
+            .field("expected_input_cats", &self.expected_input_cats)
+            .field("output_cat", &self.output_cat)
             .finish()
     }
 }
@@ -2215,7 +2244,12 @@ mod tests {
     #[test]
     fn action_entry_debug_hides_fn_body() {
         fn my_action(_b: &mut SemanticBuilder, _a: Vec<ActionArg>) {}
-        let e = ActionEntry { action_fn: my_action, arity: 3 };
+        let e = ActionEntry {
+            action_fn: my_action,
+            arity: 3,
+            expected_input_cats: &[ANY_CAT, ANY_CAT, ANY_CAT],
+            output_cat: 0,
+        };
         let s = format!("{:?}", e);
         assert!(s.contains("arity: 3"));
     }
@@ -2223,7 +2257,12 @@ mod tests {
     #[test]
     fn action_entry_is_copy() {
         fn my_action(_b: &mut SemanticBuilder, _a: Vec<ActionArg>) {}
-        let e = ActionEntry { action_fn: my_action, arity: 2 };
+        let e = ActionEntry {
+            action_fn: my_action,
+            arity: 2,
+            expected_input_cats: &[ANY_CAT, ANY_CAT],
+            output_cat: 0,
+        };
         let e2 = e; // Copy
         let _e3 = e; // Copy again — would fail if not Copy
         assert_eq!(e.arity, e2.arity);

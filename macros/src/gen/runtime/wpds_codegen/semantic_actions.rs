@@ -41,7 +41,7 @@ pub fn emit_action_for_body(
             // precedence over collection / atomic / infix classification.
             if let Some(shape) = classify_binder(rule) {
                 if let Some(entry) =
-                    emit_binder_action_entry(cat_i as u16, *rule_idx, &shape, &cat_ident)
+                    emit_binder_action_entry(cat_i as u16, *rule_idx, &shape, &cat_ident, categories)
                 {
                     arms.push(entry);
                 }
@@ -50,7 +50,7 @@ pub fn emit_action_for_body(
             // Phase 4: try classifying as a collection rule next.
             if let Some(shape) = classify_collection(rule, language) {
                 if let Some(entry) =
-                    emit_collection_action_entry(cat_i as u16, *rule_idx, &shape, &cat_ident)
+                    emit_collection_action_entry(cat_i as u16, *rule_idx, &shape, &cat_ident, categories)
                 {
                     arms.push(entry);
                 }
@@ -66,6 +66,7 @@ pub fn emit_action_for_body(
                     &shape,
                     &cat_ident,
                     refinement_name.as_deref(),
+                    categories,
                 ) {
                     arms.push(entry);
                 }
@@ -74,7 +75,7 @@ pub fn emit_action_for_body(
             // Phase 3: try classifying as an infix / postfix / mixfix rule.
             if let Some(info) = infix::classify_rule_public(rule) {
                 if let Some(entry) =
-                    emit_infix_action_entry(cat_i as u16, *rule_idx, &info, &cat_ident)
+                    emit_infix_action_entry(cat_i as u16, *rule_idx, &info, &cat_ident, categories)
                 {
                     arms.push(entry);
                 }
@@ -100,12 +101,38 @@ fn emit_action_entry_arm(
     shape: &AtomicShape,
     cat_ident: &Ident,
     refinement_name: Option<&str>,
+    categories: &[String],
 ) -> Option<TokenStream> {
-    let (action_fn, arity) = match shape {
-        AtomicShape::LiteralInteger => (emit_integer_literal_action(), 1u8),
-        AtomicShape::LiteralBoolean => (emit_boolean_literal_action(), 1u8),
-        AtomicShape::LiteralString => (emit_string_literal_action(), 1u8),
-        AtomicShape::LiteralFloat => (emit_float_literal_action(), 1u8),
+    // B13c / Candidate H (2026-05-08): per-shape input/output category
+    // metadata for cursor-side type-tag projection. Output cat is always
+    // the home cat (`src_idx`). Input cats:
+    //  - Token-typed shapes (LiteralInteger/Boolean/String/Float/Patterned,
+    //    TerminalKeyword, VarRule): single ANY_CAT slot (the action accepts
+    //    a Token / Ident, not a Term).
+    //  - Cross-cat-projection / Cross-cat-prefix-unary: single Term slot
+    //    of source_cat (the source category's index).
+    let any_cat = quote! { mettail_prattail::wpds_runtime::ANY_CAT };
+    let (action_fn, arity, expected_input_cats) = match shape {
+        AtomicShape::LiteralInteger => (
+            emit_integer_literal_action(),
+            1u8,
+            quote! { &[#any_cat] },
+        ),
+        AtomicShape::LiteralBoolean => (
+            emit_boolean_literal_action(),
+            1u8,
+            quote! { &[#any_cat] },
+        ),
+        AtomicShape::LiteralString => (
+            emit_string_literal_action(),
+            1u8,
+            quote! { &[#any_cat] },
+        ),
+        AtomicShape::LiteralFloat => (
+            emit_float_literal_action(),
+            1u8,
+            quote! { &[#any_cat] },
+        ),
         AtomicShape::LiteralPatterned {
             native_type,
             family,
@@ -122,14 +149,17 @@ fn emit_action_entry_arm(
                 refinement_name,
             ),
             1u8,
+            quote! { &[#any_cat] },
         ),
         AtomicShape::TerminalKeyword { wrapper_variant, .. } => (
             emit_terminal_keyword_action(cat_ident, wrapper_variant),
             1u8,
+            quote! { &[#any_cat] },
         ),
         AtomicShape::VarRule { wrapper_variant } => (
             emit_var_rule_action(cat_ident, wrapper_variant),
             1u8,
+            quote! { &[#any_cat] },
         ),
         // Stage 1.1: cross-cat wrap-action — pop 1 source-cat Term arg,
         // wrap as Cat::wrapper_variant(Box::new(arg)).
@@ -141,10 +171,18 @@ fn emit_action_entry_arm(
             source_cat_name,
             wrapper_variant,
             ..
-        } => (
-            emit_cross_cat_wrap_action(cat_ident, source_cat_name, wrapper_variant),
-            1u8,
-        ),
+        } => {
+            let source_src_idx = categories
+                .iter()
+                .position(|c| c == source_cat_name)
+                .map(|i| i as u16)
+                .unwrap_or(0);
+            (
+                emit_cross_cat_wrap_action(cat_ident, source_cat_name, wrapper_variant),
+                1u8,
+                quote! { &[#source_src_idx] },
+            )
+        }
         AtomicShape::NonAtomic => return None, // Phase 3 dispatch handled separately.
     };
     Some(quote! {
@@ -153,6 +191,8 @@ fn emit_action_entry_arm(
                 mettail_prattail::wpds_runtime::ActionEntry {
                     action_fn: #action_fn,
                     arity: #arity,
+                    expected_input_cats: #expected_input_cats,
+                    output_cat: #src_idx,
                 };
             Some(&ENTRY)
         }
@@ -399,6 +439,7 @@ fn emit_collection_action_entry(
     rule_idx: u16,
     shape: &CollectionShape,
     cat_ident: &Ident,
+    _categories: &[String],
 ) -> Option<TokenStream> {
     let label_ident = format_ident!("{}", shape.label);
     let element_cat_ident = format_ident!("{}", shape.element_cat);
@@ -493,12 +534,18 @@ fn emit_collection_action_entry(
             }
         },
     };
+    // B13c / Candidate H (2026-05-08): collection-finalize takes one
+    // CollectionId (not a Term), so input is ANY_CAT. Output is the home
+    // category.
+    let any_cat = quote! { mettail_prattail::wpds_runtime::ANY_CAT };
     Some(quote! {
         (#src_idx, #rule_idx) => {
             static ENTRY: mettail_prattail::wpds_runtime::ActionEntry =
                 mettail_prattail::wpds_runtime::ActionEntry {
                     action_fn: #action_fn,
                     arity: 1u8,
+                    expected_input_cats: &[#any_cat],
+                    output_cat: #src_idx,
                 };
             Some(&ENTRY)
         }
@@ -516,6 +563,7 @@ fn emit_infix_action_entry(
     rule_idx: u16,
     info: &InfixRuleInfo,
     cat_ident: &Ident,
+    categories: &[String],
 ) -> Option<TokenStream> {
     let arity: u8 = if info.is_postfix {
         1
@@ -527,6 +575,38 @@ fn emit_infix_action_entry(
     };
     let label_ident = format_ident!("{}", info.label);
     let operand_cat_ident = format_ident!("{}", info.category);
+    // B13c / Candidate H (2026-05-08): per-arg expected categories.
+    // Postfix: 1 arg of info.category.
+    // Binary infix: 2 args of info.category.
+    // Mixfix: arg0=info.category, args 1..N=info.mixfix_parts[i-1].operand_category.
+    let lookup_cat_idx = |name: &str| -> u16 {
+        categories
+            .iter()
+            .position(|c| c == name)
+            .map(|i| i as u16)
+            .unwrap_or(0)
+    };
+    let operand_cat_idx = lookup_cat_idx(&info.category);
+    let result_cat_idx = lookup_cat_idx(&info.result_category);
+    let expected_input_cats: Vec<u16> = if info.is_postfix {
+        vec![operand_cat_idx]
+    } else if info.is_mixfix {
+        let mut v = vec![operand_cat_idx];
+        for part in &info.mixfix_parts {
+            v.push(lookup_cat_idx(&part.operand_category));
+        }
+        v
+    } else {
+        vec![operand_cat_idx, operand_cat_idx]
+    };
+    let cats_lits: Vec<TokenStream> = expected_input_cats
+        .iter()
+        .map(|c| {
+            let c = *c;
+            quote! { #c }
+        })
+        .collect();
+    let expected_input_cats_ts = quote! { &[#(#cats_lits),*] };
     let action_fn = if info.is_postfix {
         // Arity-1: pop one operand, construct unary variant.
         quote! {
@@ -604,6 +684,8 @@ fn emit_infix_action_entry(
                 mettail_prattail::wpds_runtime::ActionEntry {
                     action_fn: #action_fn,
                     arity: #arity,
+                    expected_input_cats: #expected_input_cats_ts,
+                    output_cat: #result_cat_idx,
                 };
             Some(&ENTRY)
         }

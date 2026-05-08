@@ -1315,9 +1315,43 @@ pub(crate) fn emit_binder_action_entry(
     rule_idx: u16,
     shape: &BinderShape,
     cat_ident: &Ident,
+    categories: &[String],
 ) -> Option<TokenStream> {
     let label_ident = format_ident!("{}", shape.label);
     let arity = shape.action_arity;
+    // B13c / Candidate H (2026-05-08): per-arg expected categories for
+    // binder rules. Most binder slots are non-Term (BinderName, BinderList,
+    // Predicate, Optional) → ANY_CAT sentinel. Only `Term(cat)` slots have
+    // a real category index. Output is shape.result_cat (the home cat,
+    // since binder rules belong to one category at construction).
+    let lookup_cat_idx = |name: &str| -> u16 {
+        categories
+            .iter()
+            .position(|c| c == name)
+            .map(|i| i as u16)
+            .unwrap_or(0)
+    };
+    let result_cat_idx = lookup_cat_idx(&shape.result_cat);
+    // ANY_CAT = u16::MAX; matches mettail_prattail::wpds_runtime::ANY_CAT
+    // (this is in macros code so we can't reference the runtime constant
+    // by path; we emit `&[ANY_CAT]` literally in the generated code).
+    let any_cat_value: u16 = u16::MAX;
+    let expected_input_cats: Vec<u16> = shape
+        .action_args
+        .iter()
+        .map(|kind| match kind {
+            ActionArgKind::Term(cat) => lookup_cat_idx(cat),
+            _ => any_cat_value,
+        })
+        .collect();
+    let cats_lits: Vec<TokenStream> = expected_input_cats
+        .iter()
+        .map(|c| {
+            let c = *c;
+            quote! { #c }
+        })
+        .collect();
+    let expected_input_cats_ts = quote! { &[#(#cats_lits),*] };
 
     // Generate the per-arg extraction code in push order.
     let mut extracts: Vec<TokenStream> = Vec::new();
@@ -1516,6 +1550,8 @@ pub(crate) fn emit_binder_action_entry(
                 mettail_prattail::wpds_runtime::ActionEntry {
                     action_fn: #action_fn,
                     arity: #arity,
+                    expected_input_cats: #expected_input_cats_ts,
+                    output_cat: #result_cat_idx,
                 };
             Some(&ENTRY)
         }
