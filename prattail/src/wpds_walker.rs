@@ -659,6 +659,21 @@ pub enum ForkActionKind {
         expected_text: String,
         effects: Vec<BuilderDelta>,
     },
+
+    /// B8 / Issue C followup (2026-05-09): Class 3 non-empty bootstrap
+    /// variant. Replaces the top symbol with `replace_symbol`, then
+    /// pushes `branch.symbol` on top — mirroring engine-level
+    /// `WpdsStepAction::ReplaceAndPush` semantics inside a Fork branch.
+    /// No token consumed. Used by Class 3 BinderListLoop's non-empty
+    /// bootstrap to (a) replace the outer RuleAt(rule, marker_pos)
+    /// with RuleAt(rule, next_pos) so the post-loop unwind lands at
+    /// the next outer position, AND (b) push CollectionMarker for
+    /// the Names accumulator. emit_push_side_effects fires for the
+    /// pushed CollectionMarker (allocates accumulator, pushes
+    /// CollectionId arg, opens BinderScope per is_class3_collection).
+    ReplaceAndPush {
+        replace_symbol: StackSymbolV2,
+    },
 }
 
 impl<W: Semiring> std::fmt::Debug for ForkBranch<W>
@@ -4062,6 +4077,38 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             if self.cursor_mode == CursorMode::Lazy {
                                 self.pos = child.pos;
                             }
+                            children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        }
+
+                        ForkActionKind::ReplaceAndPush { replace_symbol } => {
+                            // B8 / Issue C followup (2026-05-09): Class 3
+                            // bootstrap. Replace top with replace_symbol,
+                            // then push branch.symbol on top, transition
+                            // state. No token consumed. emit_push_side_effects
+                            // fires for the pushed symbol.
+                            let mut child = BranchCursor::fork_child(
+                                cursor,
+                                pos_after,
+                                cursor.weight.times(&branch.weight),
+                                branch.new_state.clone(),
+                                child_source_priority,
+                            );
+                            let pos_now = child.pos;
+                            let _ = self.cursor_gss_replace_top(
+                                &mut child,
+                                replace_symbol,
+                                pos_now,
+                                branch.weight.clone(),
+                            );
+                            let mut sym = branch.symbol;
+                            self.emit_push_side_effects(&mut child, &mut sym);
+                            let _ = self.cursor_gss_push(
+                                &mut child,
+                                sym,
+                                pos_now,
+                                branch.weight.clone(),
+                            );
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }

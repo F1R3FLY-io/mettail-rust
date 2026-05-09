@@ -1098,9 +1098,16 @@ pub(crate) fn emit_binder_rule_body(
                                                         ],
                                                     },
                                             },
-                                            // BRANCH 2: non-empty — Push
-                                            // CollectionMarker, transition
-                                            // to BinderListLoop{sub_pos:0}.
+                                            // BRANCH 2: non-empty — ReplaceAndPush.
+                                            // Replace outer RuleAt(rule, marker_pos)
+                                            // with RuleAt(rule, next_pos) so when
+                                            // CollectionMarker pops post-action,
+                                            // the cursor unwinds cleanly past
+                                            // the loop slot. Push CollectionMarker
+                                            // for the Names accumulator;
+                                            // emit_push_side_effects allocates +
+                                            // pushes CollectionId arg + opens
+                                            // BinderScope (is_class3_collection).
                                             mettail_prattail::wpds_walker::ForkBranch {
                                                 symbol: StackSymbolV2::collection_marker(
                                                     #result_src_idx, #rule_idx, 0,
@@ -1119,7 +1126,12 @@ pub(crate) fn emit_binder_rule_body(
                                                     sub_pos: 0u8,
                                                 },
                                                 action_kind:
-                                                    mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                                    mettail_prattail::wpds_walker::ForkActionKind::ReplaceAndPush {
+                                                        replace_symbol: StackSymbolV2::rule_at(
+                                                            #result_src_idx, #rule_idx,
+                                                            #next_pos, Some(*outer_bp),
+                                                        ),
+                                                    },
                                             },
                                         ],
                                         consume_trigger: false,
