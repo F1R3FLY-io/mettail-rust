@@ -1031,12 +1031,87 @@ pub(crate) fn emit_binder_rule_body(
                             };
                         }
                     },
-                    BinderPosition::BinderListLoop { separator: _, close, .. } => {
+                    BinderPosition::BinderListLoop {
+                        separator: _,
+                        close,
+                        collection_param_cat,
+                        ..
+                    } => {
                         // Phase 5b: enter BinderListLoop sub-state. The
                         // first iteration here checks `close` (empty list)
                         // or starts collecting Idents; subsequent iterations
                         // (handled in BinderListLoop's own state) use the
                         // separator to chain Ident captures.
+                        //
+                        // B8 / Class 3 (2026-05-08): when collection_param_cat
+                        // is Some, this is a Class 3 ZIP-MAP-SEP rule and
+                        // the bootstrap differs: we Push a CollectionMarker
+                        // to allocate the Names accumulator (and push
+                        // ActionArg::CollectionId for the terminal action),
+                        // then transition directly into BinderListLoop
+                        // {sub_pos:0}. The StartBinderScope is opened at
+                        // the first BinderIdent capture inside the inner
+                        // walk via start_scope=true (or, in the empty-list
+                        // path, via the BRANCH 1 effect).
+                        if collection_param_cat.is_some() {
+                            quote! {
+                                (#result_src_idx, #rule_idx, #pos) => {
+                                    let _ = tokens.peek_text(_pos);
+                                    return WpdsStepAction::Fork {
+                                        branches: vec![
+                                            // BRANCH 1: empty close.
+                                            mettail_prattail::wpds_walker::ForkBranch {
+                                                symbol: StackSymbolV2::rule_at(
+                                                    #result_src_idx, #rule_idx,
+                                                    #next_pos, Some(*outer_bp),
+                                                ),
+                                                weight: LexicographicWeight::from_cost(
+                                                    0.0, #result_src_idx, #rule_idx,
+                                                ),
+                                                new_state: WpdsState::BinderRule {
+                                                    result_src_idx: #result_src_idx,
+                                                    rule_idx: #rule_idx,
+                                                    body_src_idx: *_body_src_idx,
+                                                    outer_bp: *outer_bp,
+                                                },
+                                                action_kind:
+                                                    mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplaceWithEffect {
+                                                        expected_text: #close.to_string(),
+                                                        effect:
+                                                            mettail_prattail::wpds_walker::BuilderDelta::StartBinderScope {
+                                                                names: Vec::new(),
+                                                            },
+                                                    },
+                                            },
+                                            // BRANCH 2: non-empty — Push
+                                            // CollectionMarker, transition
+                                            // to BinderListLoop{sub_pos:0}.
+                                            mettail_prattail::wpds_walker::ForkBranch {
+                                                symbol: StackSymbolV2::collection_marker(
+                                                    #result_src_idx, #rule_idx, 0,
+                                                ),
+                                                weight: LexicographicWeight::from_cost(
+                                                    mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                                                    #result_src_idx, #rule_idx,
+                                                ),
+                                                new_state: WpdsState::BinderListLoop {
+                                                    result_src_idx: #result_src_idx,
+                                                    rule_idx: #rule_idx,
+                                                    body_src_idx: *_body_src_idx,
+                                                    outer_bp: *outer_bp,
+                                                    marker_pos: #pos,
+                                                    next_pos: #next_pos,
+                                                    sub_pos: 0u8,
+                                                },
+                                                action_kind:
+                                                    mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                            },
+                                        ],
+                                        consume_trigger: false,
+                                    };
+                                }
+                            }
+                        } else {
                         quote! {
                             (#result_src_idx, #rule_idx, #pos) => {
                                 // L12 follow-up B2 (2026-05-07): two-branch
@@ -1111,6 +1186,7 @@ pub(crate) fn emit_binder_rule_body(
                                     consume_trigger: false,
                                 };
                             }
+                        }
                         }
                     }
                     BinderPosition::ParamParse { cat, collection } => {
