@@ -13,9 +13,9 @@ use mettail_runtime::BehavioralPred;
 // ═══════════════════════════════════════════════════════════
 // Constructor weights (lower = more frequent):
 //   IntLit               weight: 0.0000
-//   BoolLit              weight: 0.0000
 //   IfElse               weight: 0.0000
 //   Grouping             weight: 0.0000
+//   BoolLit              weight: 0.0000
 //   VarInt               weight: 2.0000
 //   VarBool              weight: 2.0000
 // Category weights:

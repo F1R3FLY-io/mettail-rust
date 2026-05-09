@@ -186,26 +186,26 @@ use mettail_runtime::BehavioralPred;
 //   - UInt32ToBigInt
 //   - UInt32ToBigRat
 // Constructor weights (lower = more frequent):
-//   PutMap               weight: 0.0000
-//   DeleteMap            weight: 0.0000
-//   BitNotBigInt         weight: 0.0000
-//   Neg                  weight: 0.0000
-//   NegFixed             weight: 0.0000
-//   RemoveBag            weight: 0.0000
-//   NegFloat             weight: 0.0000
-//   LenList              weight: 0.0000
-//   BigratCast           weight: 0.0000
-//   StrLit               weight: 0.0000
-//   BitNotFixed          weight: 0.0000
-//   ConcatList           weight: 0.0000
-//   UIntBin              weight: 0.0000
-//   BigintCast           weight: 0.0000
-//   IntToBool            weight: 0.0000
-//   Not                  weight: 0.0000
-//   FixedBin             weight: 0.0000
-//   ExpFloat             weight: 0.0000
+//   BitNotInt            weight: 0.0000
 //   UnionBag             weight: 0.0000
-//   CountBag             weight: 0.0000
+//   EqFloat              weight: 0.0000
+//   SinFloat             weight: 0.0000
+//   FixedBin             weight: 0.0000
+//   Fraction             weight: 0.0000
+//   BoolLit              weight: 0.0000
+//   HasMap               weight: 0.0000
+//   MergeMap             weight: 0.0000
+//   CastErrFixed         weight: 0.0000
+//   Err                  weight: 0.0000
+//   LenMap               weight: 0.0000
+//   DiffBag              weight: 0.0000
+//   LnFloat              weight: 0.0000
+//   FloatToInt           weight: 0.0000
+//   LenList              weight: 0.0000
+//   BitNotBigInt         weight: 0.0000
+//   PutMap               weight: 0.0000
+//   EqInt                weight: 0.0000
+//   BitNotBigRat         weight: 0.0000
 //   ... and 221 more
 // Category weights:
 //   Bool                 weight: 0.0179
@@ -218,8 +218,8 @@ use mettail_runtime::BehavioralPred;
 //   Bag                  weight: 0.3333
 //   UInt32               weight: 0.3333
 //   Map                  weight: 0.3333
-//   Str                  weight: 0.5000
 //   Proc                 weight: 0.5000
+//   Str                  weight: 0.5000
 //
 
 // ─────────────────────────────────────────────────────────
@@ -15447,123 +15447,6 @@ fn wfst_calculator_dispatch_ltfixed_eval() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn prec_calculator_bitoruint32_bitanduint32_tighter_than_1_bitand_2_bitor_3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: BitOrUInt32 binds tighter than BitAndUInt32
-    let input_str = "1 bitand 2 bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_bitanduint32_bitoruint32__1_bitand_2__bitor_3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (BitAndUInt32) BitOrUInt32
-    let input_str = "(1 bitand 2) bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_bitoruint32_adduint32_tighter_than_1___2_bitor_3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: BitOrUInt32 binds tighter than AddUInt32
-    let input_str = "1 + 2 bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_adduint32_bitoruint32__1___2__bitor_3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (AddUInt32) BitOrUInt32
-    let input_str = "(1 + 2) bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_bitanduint32_adduint32_tighter_than_1___2_bitand_3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: BitAndUInt32 binds tighter than AddUInt32
-    let input_str = "1 + 2 bitand 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_adduint32_bitanduint32__1___2__bitand_3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (AddUInt32) BitAndUInt32
-    let input_str = "(1 + 2) bitand 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn assoc_calculator_adduint32_left() {
-    mettail_runtime::clear_var_cache();
-    { // Associativity test: AddUInt32 is left-associative
-    let input_str = "1 + 2 + 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "6"),
-        "{} (left-assoc) should evaluate to 6, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn assoc_calculator_bitanduint32_left() {
-    mettail_runtime::clear_var_cache();
-    { // Associativity test: BitAndUInt32 is left-associative
-    let input_str = "1 bitand 2 bitand 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} (left-assoc) should evaluate to 0, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn assoc_calculator_bitoruint32_left() {
-    mettail_runtime::clear_var_cache();
-    { // Associativity test: BitOrUInt32 is left-associative
-    let input_str = "1 bitor 2 bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} (left-assoc) should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
 fn prec_calculator_divfloat_mulfloat_tighter_than_1_0___2_0___3_0() {
     mettail_runtime::clear_var_cache();
     { // Precedence test: DivFloat binds tighter than MulFloat
@@ -15769,6 +15652,123 @@ fn assoc_calculator_divfloat_left() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "0.16666666666666666"),
         "{} (left-assoc) should evaluate to 0.16666666666666666, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_bitoruint32_bitanduint32_tighter_than_1_bitand_2_bitor_3() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: BitOrUInt32 binds tighter than BitAndUInt32
+    let input_str = "1 bitand 2 bitor 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_bitanduint32_bitoruint32__1_bitand_2__bitor_3() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (BitAndUInt32) BitOrUInt32
+    let input_str = "(1 bitand 2) bitor 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_bitoruint32_adduint32_tighter_than_1___2_bitor_3() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: BitOrUInt32 binds tighter than AddUInt32
+    let input_str = "1 + 2 bitor 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_adduint32_bitoruint32__1___2__bitor_3() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (AddUInt32) BitOrUInt32
+    let input_str = "(1 + 2) bitor 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_bitanduint32_adduint32_tighter_than_1___2_bitand_3() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: BitAndUInt32 binds tighter than AddUInt32
+    let input_str = "1 + 2 bitand 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_adduint32_bitanduint32__1___2__bitand_3() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (AddUInt32) BitAndUInt32
+    let input_str = "(1 + 2) bitand 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn assoc_calculator_adduint32_left() {
+    mettail_runtime::clear_var_cache();
+    { // Associativity test: AddUInt32 is left-associative
+    let input_str = "1 + 2 + 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "6"),
+        "{} (left-assoc) should evaluate to 6, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn assoc_calculator_bitanduint32_left() {
+    mettail_runtime::clear_var_cache();
+    { // Associativity test: BitAndUInt32 is left-associative
+    let input_str = "1 bitand 2 bitand 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0"),
+        "{} (left-assoc) should evaluate to 0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn assoc_calculator_bitoruint32_left() {
+    mettail_runtime::clear_var_cache();
+    { // Associativity test: BitOrUInt32 is left-associative
+    let input_str = "1 bitor 2 bitor 3";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "3"),
+        "{} (left-assoc) should evaluate to 3, got {:?}", input_str, nfs);}
 }
 
 #[test]

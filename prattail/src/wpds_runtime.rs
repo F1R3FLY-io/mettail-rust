@@ -1658,6 +1658,20 @@ impl SemanticBuilder {
         self.binder_scopes.push(BinderHandle::new(names, depth));
     }
 
+    /// B8 / Issue C followup (2026-05-09): append a binder name to the
+    /// innermost open binder scope. Used by multi-binder loops where the
+    /// scope opens once at bootstrap with an empty names list, and each
+    /// iteration's BinderIdent capture extends the names list with the
+    /// captured ident. Without this, subsequent idents (start_scope=false)
+    /// only got pushed to the args stack as `ActionArg::Ident`, never
+    /// reaching the BinderHandle.names that the action's BinderScope
+    /// arg extraction reads.
+    pub fn extend_binder_scope(&mut self, name: String) {
+        if let Some(handle) = self.binder_scopes.last_mut() {
+            handle.names.push(name);
+        }
+    }
+
     /// End the innermost binder scope and leave a `BinderScope` arg on the
     /// active argument cursor (so a binder fired inside `*opt(...)` lands
     /// in the inner scope just like other captures).

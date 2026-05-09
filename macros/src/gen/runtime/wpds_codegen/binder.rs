@@ -1725,27 +1725,25 @@ pub(crate) fn emit_binder_list_loop_body(
                                 return WpdsStepAction::Fork {
                                     branches: vec![
                                         // BRANCH 1: close → finish loop.
+                                        // B8 / Issue C followup (2026-05-09):
+                                        // ConsumeAndPop the CollectionMarker
+                                        // (which is now on top after the
+                                        // last BinderIdent's ConsumeIdentAndPop
+                                        // popped its OptionalGroupAt). Log
+                                        // EndBinderScope so action's
+                                        // BinderScope arg is pushed. After
+                                        // this, top is RuleAt(rule, next_pos)
+                                        // (placed by ReplaceAndPush at
+                                        // bootstrap), state=Unwinding.
+                                        // Unwinding-RuleAt routes to BinderRule.
                                         mettail_prattail::wpds_walker::ForkBranch {
-                                            symbol: StackSymbolV2::rule_at(
-                                                #result_src_idx, #rule_idx,
-                                                #next_pos, Some(*outer_bp),
-                                            ),
+                                            symbol: StackSymbolV2::category_entry(0),
                                             weight: LexicographicWeight::from_cost(
                                                 0.0, #result_src_idx, #rule_idx,
                                             ),
-                                            new_state: WpdsState::BinderRule {
-                                                result_src_idx: #result_src_idx,
-                                                rule_idx: #rule_idx,
-                                                body_src_idx: *body_src_idx,
-                                                outer_bp: *outer_bp,
-                                            },
+                                            new_state: WpdsState::Unwinding,
                                             action_kind:
-                                                // B8 / Issue C followup
-                                                // (2026-05-09): close the
-                                                // open BinderScope (Class 3)
-                                                // so action's BinderScope
-                                                // arg is pushed.
-                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplaceWithEffect {
+                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndPopWithEffect {
                                                     expected_text: #close.to_string(),
                                                     effect:
                                                         mettail_prattail::wpds_walker::BuilderDelta::EndBinderScope,
@@ -1850,15 +1848,23 @@ pub(crate) fn emit_binder_list_loop_body(
                                     // sees BinderListLoop's marker.
                                     let is_last = i + 1 == inner_positions.len();
                                     if is_last {
+                                        // B8 / Issue C followup
+                                        // (2026-05-09): use
+                                        // ConsumeIdentAndPop so the
+                                        // OptionalGroupAt is popped
+                                        // (instead of replaced with
+                                        // RuleAt(rule, marker_pos)) —
+                                        // the next iteration sees the
+                                        // CollectionMarker on top, and
+                                        // sub_pos=0 close branch can
+                                        // ConsumeAndPop the marker
+                                        // cleanly.
                                         quote! {
                                             (#result_src_idx, #rule_idx, #cur_sp) => {
                                                 return WpdsStepAction::Fork {
                                                     branches: vec![
                                                         mettail_prattail::wpds_walker::ForkBranch {
-                                                            symbol: StackSymbolV2::rule_at(
-                                                                #result_src_idx, #rule_idx,
-                                                                *marker_pos, Some(*outer_bp),
-                                                            ),
+                                                            symbol: StackSymbolV2::category_entry(0),
                                                             weight: LexicographicWeight::from_cost(
                                                                 0.0, #result_src_idx, #rule_idx,
                                                             ),
@@ -1872,7 +1878,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                                 sub_pos: 0u8,
                                                             },
                                                             action_kind:
-                                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
+                                                                mettail_prattail::wpds_walker::ForkActionKind::ConsumeIdentAndPop {
                                                                     start_scope: false,
                                                                 },
                                                         },

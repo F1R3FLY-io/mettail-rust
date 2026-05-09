@@ -131,6 +131,19 @@ pub trait WpdsStepEngine<W: Semiring> {
         let _ = (src_idx, rule_idx);
         false
     }
+
+    /// B8 / Issue C followup (2026-05-09): predicate distinguishing
+    /// OptionalGroupAt symbols used as Class 3 BinderListLoop inner-
+    /// walk markers from genuine OptionalGroup `*opt(...)` markers.
+    /// When `true`, `emit_push_side_effects` skips the
+    /// `start_optional_scope` side effect on OptionalGroupAt(1)
+    /// pushes (the optional scope would never close, leaving the
+    /// builder's optional_stack non-empty at parse end).
+    /// Default returns `false`.
+    fn is_class3_inner_marker(&self, src_idx: u16, rule_idx: u16) -> bool {
+        let _ = (src_idx, rule_idx);
+        false
+    }
 }
 
 /// One step of action returned by a [`WpdsStepEngine`].
@@ -674,6 +687,27 @@ pub enum ForkActionKind {
     ReplaceAndPush {
         replace_symbol: StackSymbolV2,
     },
+
+    /// B8 / Issue C followup (2026-05-09): consume an Ident token,
+    /// optionally start a binder scope, push the ident name to builder,
+    /// THEN pop top-of-GSS. Mirrors `ConsumeIdentAndReplace` but Pops
+    /// instead of Replacing. Used by Class 3 BinderListLoop's last
+    /// inner BinderIdent step so the cursor returns to the
+    /// CollectionMarker (not to a duplicate RuleAt) when the loop
+    /// continues.
+    ConsumeIdentAndPop {
+        start_scope: bool,
+    },
+
+    /// B8 / Issue C followup (2026-05-09): consume a token + Pop top-
+    /// of-GSS + log a builder delta. Used by Class 3 BinderListLoop's
+    /// sub_pos=0 close branch to consume the close delim, pop the
+    /// CollectionMarker (the loop's marker), and log EndBinderScope
+    /// in one atomic action.
+    GuardedConsumeAndPopWithEffect {
+        expected_text: String,
+        effect: BuilderDelta,
+    },
 }
 
 impl<W: Semiring> std::fmt::Debug for ForkBranch<W>
@@ -1145,6 +1179,11 @@ pub enum BuilderDelta {
     /// close and BinderScope args never reach the action — affecting
     /// PNew, PInputs, and any binder rule with a multi-binder list.
     EndBinderScope,
+    /// B8 / Issue C followup (2026-05-09): append a name to the
+    /// innermost binder scope's names list. Used by multi-binder
+    /// iterations where the scope opens once at bootstrap with empty
+    /// names and each iteration extends the list.
+    ExtendBinderScope { name: String },
     FireAction {
         symbol: StackSymbolV2,
     },
@@ -1349,6 +1388,10 @@ impl std::fmt::Debug for BuilderDelta {
                 .finish(),
             BuilderDelta::EndBinderScope => f
                 .debug_struct("EndBinderScope")
+                .finish(),
+            BuilderDelta::ExtendBinderScope { name } => f
+                .debug_struct("ExtendBinderScope")
+                .field("name", name)
                 .finish(),
             BuilderDelta::FireAction { symbol } => f
                 .debug_struct("FireAction")
@@ -4081,6 +4124,72 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
+                        ForkActionKind::ConsumeIdentAndPop { start_scope: _ } => {
+                            // B8 / Issue C followup (2026-05-09): consume
+                            // ident token, EXTEND the open binder scope
+                            // with the captured name (instead of pushing
+                            // to args stack), Pop top-of-GSS. Used by
+                            // Class 3 multi-binder iterations where the
+                            // scope is opened once at bootstrap and each
+                            // iteration's BinderIdent extends names.
+                            if !matches!(
+                                tokens.peek_kind(pos_after),
+                                Some(crate::automata::TokenKind::Ident)
+                            ) {
+                                continue;
+                            }
+                            let mut child = BranchCursor::fork_child(
+                                cursor,
+                                pos_after,
+                                cursor.weight.times(&branch.weight),
+                                branch.new_state.clone(),
+                                child_source_priority,
+                            );
+                            let text = tokens
+                                .peek_text(child.pos)
+                                .unwrap_or("")
+                                .to_string();
+                            self.emit_extend_binder_scope(&mut child, text);
+                            // Pop top-of-GSS.
+                            let _ = self.cursor_gss_pop_via_edge(&mut child);
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        }
+
+                        ForkActionKind::GuardedConsumeAndPopWithEffect {
+                            expected_text,
+                            effect,
+                        } => {
+                            // B8 / Issue C followup (2026-05-09): peek_text
+                            // equality guard wrapping ConsumeAndPop with one
+                            // builder delta effect logged.
+                            let peek = tokens.peek_text(pos_after).unwrap_or("");
+                            if peek != expected_text.as_str() {
+                                continue;
+                            }
+                            let mut child = BranchCursor::fork_child(
+                                cursor,
+                                pos_after,
+                                cursor.weight.times(&branch.weight),
+                                branch.new_state.clone(),
+                                child_source_priority,
+                            );
+                            child.consistency_memo.set(None);
+                            child.pending_builder_ops.push(effect);
+                            // Pop top-of-GSS.
+                            let _ = self.cursor_gss_pop_via_edge(&mut child);
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        }
+
                         ForkActionKind::ReplaceAndPush { replace_symbol } => {
                             // B8 / Issue C followup (2026-05-09): Class 3
                             // bootstrap. Replace top with replace_symbol,
@@ -4896,6 +5005,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 BuilderDelta::EndBinderScope => {
                     self.builder.end_binder_scope();
                 }
+                BuilderDelta::ExtendBinderScope { name } => {
+                    self.builder.extend_binder_scope(name);
+                }
                 BuilderDelta::FireAction { symbol } => {
                     self.fire_action_for(symbol);
                     // Cleanup 3 (Option A refinement): fire_action_for sets
@@ -5401,6 +5513,19 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     }
 
     #[inline(always)]
+    fn emit_extend_binder_scope(&mut self, cursor: &mut BranchCursor<W>, name: String) {
+        match self.cursor_mode {
+            CursorMode::Lazy => self.builder.extend_binder_scope(name),
+            CursorMode::Strict => {
+                cursor.consistency_memo.set(None);
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::ExtendBinderScope { name });
+            }
+        }
+    }
+
+    #[inline(always)]
     fn emit_fire_action(&mut self, cursor: &mut BranchCursor<W>, symbol: StackSymbolV2) {
         match self.cursor_mode {
             CursorMode::Lazy => self.fire_action_for(symbol),
@@ -5537,7 +5662,18 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 }
             }
             SymbolKind::OptionalGroupAt(1) => {
-                self.emit_start_optional_scope(cursor);
+                // B8 / Issue C followup (2026-05-09): only open an
+                // optional scope when the OptionalGroupAt belongs to
+                // a genuine OptionalGroup (`*opt(...)`) — Class 3
+                // BinderListLoop inner-walk markers reuse the same
+                // SymbolKind but should NOT open an optional scope
+                // (would leave optional_stack non-empty at parse end).
+                if !self.engine.is_class3_inner_marker(
+                    symbol.category_src_idx,
+                    symbol.rule_index_in_category,
+                ) {
+                    self.emit_start_optional_scope(cursor);
+                }
             }
             _ => {}
         }

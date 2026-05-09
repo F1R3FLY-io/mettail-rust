@@ -96,6 +96,8 @@ pub(crate) fn emit_engine_impl_full(
     // CollectionMarker pushes that should also open a BinderScope.
     let is_class3_collection_lookup =
         super::binder::emit_is_class3_collection(per_cat);
+    let is_class3_inner_marker_lookup =
+        super::binder::emit_is_class3_collection(per_cat);
     // B8 / Issue C (2026-05-09): per-(rule, sub_pos) splice lookup
     // for Class 3 inner walk Name-parse return points.
     let binderlist_inner_post_splice_lookup =
@@ -1115,6 +1117,18 @@ pub(crate) fn emit_engine_impl_full(
                 rule_idx: u16,
             ) -> bool {
                 #is_class3_collection_lookup
+            }
+
+            fn is_class3_inner_marker(
+                &self,
+                src_idx: u16,
+                rule_idx: u16,
+            ) -> bool {
+                // B8 / Issue C followup: OptionalGroupAt symbols
+                // belonging to Class 3 binder rules' inner walks
+                // share the same (src, rule) pair as their
+                // CollectionMarkers — predicate is identical.
+                #is_class3_inner_marker_lookup
             }
         }
     }
