@@ -635,6 +635,19 @@ pub enum ForkActionKind {
         expected_text: String,
         effect: BuilderDelta,
     },
+
+    /// B8 / Issue B (2026-05-09): Class 3 empty-list bootstrap variant.
+    /// Same semantics as `GuardedConsumeAndReplaceWithEffect` but logs
+    /// MULTIPLE BuilderDelta effects in declaration order before the
+    /// replace. Used by Class 3 BinderListLoop's empty-close branch
+    /// to atomically log [StartCollection, PushCollectionId{id:0},
+    /// StartBinderScope] so the action's arity-3 expectation is met
+    /// even on the empty-list path (CollectionId arg pushed, scope
+    /// opened, accumulator drains to empty Vec at action time).
+    GuardedConsumeAndReplaceWithMultipleEffects {
+        expected_text: String,
+        effects: Vec<BuilderDelta>,
+    },
 }
 
 impl<W: Semiring> std::fmt::Debug for ForkBranch<W>
@@ -4007,6 +4020,46 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             child.consistency_memo.set(None);
                             child.pending_builder_ops.push(effect);
+                            let pos_now = child.pos;
+                            let _ = self.cursor_gss_replace_top(
+                                &mut child,
+                                branch.symbol,
+                                pos_now,
+                                branch.weight.clone(),
+                            );
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        }
+
+                        ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
+                            expected_text,
+                            effects,
+                        } => {
+                            // B8 / Issue B (2026-05-09): same as
+                            // GuardedConsumeAndReplaceWithEffect but logs
+                            // a Vec<BuilderDelta> in order. Used by Class 3
+                            // empty-list bootstrap to log
+                            // [StartCollection, PushCollectionId{id:0},
+                            // StartBinderScope] atomically.
+                            let peek = tokens.peek_text(pos_after).unwrap_or("");
+                            if peek != expected_text.as_str() {
+                                continue;
+                            }
+                            let mut child = BranchCursor::fork_child(
+                                cursor,
+                                pos_after,
+                                cursor.weight.times(&branch.weight),
+                                branch.new_state.clone(),
+                                child_source_priority,
+                            );
+                            child.consistency_memo.set(None);
+                            for effect in effects {
+                                child.pending_builder_ops.push(effect);
+                            }
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
                                 &mut child,

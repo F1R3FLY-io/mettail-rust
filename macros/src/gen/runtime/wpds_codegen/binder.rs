@@ -1059,7 +1059,15 @@ pub(crate) fn emit_binder_rule_body(
                                     let _ = tokens.peek_text(_pos);
                                     return WpdsStepAction::Fork {
                                         branches: vec![
-                                            // BRANCH 1: empty close.
+                                            // BRANCH 1: empty close — Class 3
+                                            // multi-effect: log
+                                            // [StartCollection,
+                                            // PushCollectionId{id:0},
+                                            // StartBinderScope] so the
+                                            // empty-list path matches the
+                                            // terminal action's arity-3
+                                            // expectation [CollectionId,
+                                            // BinderScope, Term<Proc>].
                                             mettail_prattail::wpds_walker::ForkBranch {
                                                 symbol: StackSymbolV2::rule_at(
                                                     #result_src_idx, #rule_idx,
@@ -1075,12 +1083,15 @@ pub(crate) fn emit_binder_rule_body(
                                                     outer_bp: *outer_bp,
                                                 },
                                                 action_kind:
-                                                    mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplaceWithEffect {
+                                                    mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
                                                         expected_text: #close.to_string(),
-                                                        effect:
+                                                        effects: vec![
+                                                            mettail_prattail::wpds_walker::BuilderDelta::StartCollection,
+                                                            mettail_prattail::wpds_walker::BuilderDelta::PushCollectionId { id: 0u8 },
                                                             mettail_prattail::wpds_walker::BuilderDelta::StartBinderScope {
                                                                 names: Vec::new(),
                                                             },
+                                                        ],
                                                     },
                                             },
                                             // BRANCH 2: non-empty — Push
