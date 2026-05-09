@@ -1091,6 +1091,10 @@ pub(crate) fn emit_binder_rule_body(
                                                             mettail_prattail::wpds_walker::BuilderDelta::StartBinderScope {
                                                                 names: Vec::new(),
                                                             },
+                                                            // B8 / Issue C followup: close the
+                                                            // empty scope so BinderScope arg
+                                                            // is pushed before the body parse.
+                                                            mettail_prattail::wpds_walker::BuilderDelta::EndBinderScope,
                                                         ],
                                                     },
                                             },
@@ -1161,12 +1165,19 @@ pub(crate) fn emit_binder_rule_body(
                                                 outer_bp: *outer_bp,
                                             },
                                             action_kind:
-                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplaceWithEffect {
+                                                // B8 / Issue C followup
+                                                // (2026-05-09): empty-list
+                                                // bootstrap MUST also close
+                                                // the scope so the action's
+                                                // BinderScope arg is pushed.
+                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
                                                     expected_text: #close.to_string(),
-                                                    effect:
+                                                    effects: vec![
                                                         mettail_prattail::wpds_walker::BuilderDelta::StartBinderScope {
                                                             names: Vec::new(),
                                                         },
+                                                        mettail_prattail::wpds_walker::BuilderDelta::EndBinderScope,
+                                                    ],
                                                 },
                                         },
                                         // BRANCH 2: first ident — GuardedConsumeIdentAndReplace
@@ -1387,6 +1398,69 @@ pub(crate) fn emit_binderlist_inner_lookup(per_cat: &[Vec<GrammarRule>]) -> Toke
     }
 }
 
+/// B8 / Issue C (2026-05-09): emit a per-(rule, sub_pos) lookup that
+/// returns `Some(accumulator_id)` when the just-completed inner step
+/// was a `ParamParse { collection: Some(_) }` whose parsed term
+/// must be spliced into the Names accumulator. Returns `None` for
+/// all other (rule, sub_pos) combinations.
+///
+/// The sub_pos value here is the sub_pos baked into the
+/// OptionalGroupAt symbol — i.e. the NEXT sub_pos to dispatch after
+/// the inner step landed. The just-completed step was
+/// `inner_positions[sub_pos - 2]`.
+///
+/// For PInputs's inner_positions = [ParamParse{Name,Some}, Literal,
+/// BinderIdent], this emits `(rule=PInputs, sub_pos=2) -> Some(0)`
+/// — at sub_pos=2 the prior step (inner_positions[0]) was the Name
+/// parse, so splice into accumulator 0.
+pub(crate) fn emit_binderlist_inner_post_splice_lookup(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
+    let mut arms = Vec::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        for (rule_i, rule) in rules.iter().enumerate() {
+            let Some(shape) = classify_binder(rule) else {
+                continue;
+            };
+            for position in shape.positions.iter() {
+                if let BinderPosition::BinderListLoop {
+                    inner_positions,
+                    collection_param_cat: Some(_),
+                    ..
+                } = position {
+                    for (i, inner) in inner_positions.iter().enumerate() {
+                        if let BinderPosition::ParamParse {
+                            collection: Some(_),
+                            ..
+                        } = inner {
+                            // Inner index i (0-based) → splice on landing
+                            // at sub_pos = i + 2. (sub_pos = 1 dispatches
+                            // inner_positions[0]; landing at sub_pos = 2
+                            // means inner_positions[0] just completed.)
+                            let cat = cat_i as u16;
+                            let rule_idx = rule_i as u16;
+                            let target_sub_pos = (i + 2) as u8;
+                            // Always splice into accumulator 0 (single
+                            // accumulator per Class 3 rule).
+                            arms.push(quote! {
+                                (#cat, #rule_idx, #target_sub_pos) => Some(0u8),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if arms.is_empty() {
+        quote! { None::<u8> }
+    } else {
+        quote! {
+            match (result_src_idx, rule_idx, sub_pos) {
+                #(#arms)*
+                _ => None::<u8>,
+            }
+        }
+    }
+}
+
 /// B8 / Issue D (2026-05-09): emit a per-rule predicate
 /// `is_class3_collection(rule_idx) -> bool` that returns `true` when
 /// the rule has a Class 3 BinderListLoop. Used by the walker's
@@ -1565,8 +1639,14 @@ pub(crate) fn emit_binder_list_loop_body(
                                             outer_bp: *outer_bp,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplace {
+                                            // B8 / Issue C followup
+                                            // (2026-05-09): close the open
+                                            // BinderScope so action's
+                                            // BinderScope arg is pushed.
+                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplaceWithEffect {
                                                 expected_text: #close.to_string(),
+                                                effect:
+                                                    mettail_prattail::wpds_walker::BuilderDelta::EndBinderScope,
                                             },
                                     },
                                     // BRANCH 2: sep — GuardedConsume
@@ -1648,8 +1728,15 @@ pub(crate) fn emit_binder_list_loop_body(
                                                 outer_bp: *outer_bp,
                                             },
                                             action_kind:
-                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplace {
+                                                // B8 / Issue C followup
+                                                // (2026-05-09): close the
+                                                // open BinderScope (Class 3)
+                                                // so action's BinderScope
+                                                // arg is pushed.
+                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplaceWithEffect {
                                                     expected_text: #close.to_string(),
+                                                    effect:
+                                                        mettail_prattail::wpds_walker::BuilderDelta::EndBinderScope,
                                                 },
                                         },
                                         // BRANCH 2: sep → next iteration.

@@ -140,6 +140,17 @@ pub trait WpdsStepEngine<W: Semiring> {
 pub enum WpdsStepAction<W: Semiring> {
     /// Move the FSM into a new state without touching the GSS.
     Advance(WpdsState),
+    /// B8 / Issue C (2026-05-09): Same as Advance, but logs a single
+    /// BuilderDelta effect to the cursor's pending_builder_ops before
+    /// the state transition. Used by the Unwinding-OptionalGroupAt arm
+    /// to splice a parsed Name into the Class 3 Names accumulator
+    /// after a `ParamParse{collection: Some(_)}` inner step returns.
+    /// Mirrors `Advance` for non-effect-bearing transitions and
+    /// avoids a new state machine.
+    AdvanceWithEffect {
+        new_state: WpdsState,
+        effect: BuilderDelta,
+    },
     /// WPDS push: emit a new symbol on top of the frontier, link to current top.
     Push {
         symbol: StackSymbolV2,
@@ -1110,6 +1121,15 @@ pub enum BuilderDelta {
     StartBinderScope {
         names: Vec<String>,
     },
+    /// B8 / Issue C followup (2026-05-09): cursor closes the active
+    /// binder scope. Replay calls `SemanticBuilder::end_binder_scope`
+    /// which pops the active BinderHandle and pushes
+    /// `ActionArg::BinderScope(handle)` onto the args stack so the
+    /// owning binder rule's terminal action can extract its `.names`.
+    /// Without this delta, scopes opened via `StartBinderScope` never
+    /// close and BinderScope args never reach the action — affecting
+    /// PNew, PInputs, and any binder rule with a multi-binder list.
+    EndBinderScope,
     FireAction {
         symbol: StackSymbolV2,
     },
@@ -1311,6 +1331,9 @@ impl std::fmt::Debug for BuilderDelta {
             BuilderDelta::StartBinderScope { names } => f
                 .debug_struct("StartBinderScope")
                 .field("names", names)
+                .finish(),
+            BuilderDelta::EndBinderScope => f
+                .debug_struct("EndBinderScope")
                 .finish(),
             BuilderDelta::FireAction { symbol } => f
                 .debug_struct("FireAction")
@@ -2981,6 +3004,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         match action {
             WpdsStepAction::Advance(s) => {
                 self.set_cursor_inner_state(cursor, s);
+                self.cursor_resolution_check(cursor)
+            }
+            WpdsStepAction::AdvanceWithEffect { new_state, effect } => {
+                // B8 / Issue C (2026-05-09): log effect to pending ops,
+                // invalidate consistency memo, then advance state.
+                cursor.consistency_memo.set(None);
+                cursor.pending_builder_ops.push(effect);
+                self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::Push { mut symbol, weight, new_state } => {
@@ -4814,6 +4845,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 }
                 BuilderDelta::StartBinderScope { names } => {
                     self.builder.start_binder_scope(names);
+                }
+                BuilderDelta::EndBinderScope => {
+                    self.builder.end_binder_scope();
                 }
                 BuilderDelta::FireAction { symbol } => {
                     self.fire_action_for(symbol);

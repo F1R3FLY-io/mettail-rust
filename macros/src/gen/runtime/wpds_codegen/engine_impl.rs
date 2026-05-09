@@ -96,6 +96,10 @@ pub(crate) fn emit_engine_impl_full(
     // CollectionMarker pushes that should also open a BinderScope.
     let is_class3_collection_lookup =
         super::binder::emit_is_class3_collection(per_cat);
+    // B8 / Issue C (2026-05-09): per-(rule, sub_pos) splice lookup
+    // for Class 3 inner walk Name-parse return points.
+    let binderlist_inner_post_splice_lookup =
+        super::binder::emit_binderlist_inner_post_splice_lookup(per_cat);
     // Opt-Group (2026-04-29): per-rule per-group OptionalGroup state
     // dispatch — FIRST-set peek + inner-position walk + finalize.
     let optional_group_body =
@@ -364,6 +368,22 @@ pub(crate) fn emit_engine_impl_full(
                                     // CollectionLoop to dispatch on close/sep.
                                     let result_src_idx = node.symbol.category_src_idx;
                                     let rule_idx = node.symbol.rule_index_in_category;
+                                    // B8 / Issue C followup (2026-05-09): for
+                                    // Class 3 binder rules, the CollectionMarker
+                                    // never runs through CollectionLoop —
+                                    // BinderListLoop handles iterations. After
+                                    // the outer rule's terminal action fires,
+                                    // the marker is left dangling at top. Pop
+                                    // it transparently when the per-rule
+                                    // `is_class3_collection` predicate confirms
+                                    // (not Class 2 which pops via ConsumeAndPop
+                                    // in CollectionLoop's close branch).
+                                    if self.is_class3_collection(result_src_idx, rule_idx) {
+                                        return WpdsStepAction::Pop {
+                                            weight: LexicographicWeight::one(),
+                                            new_state: WpdsState::Unwinding,
+                                        };
+                                    }
                                     // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
                                     // 2026-05-06): CollectionMarker symbols ALWAYS
                                     // carry `bp = Some(accumulator_id)` per the
@@ -585,17 +605,29 @@ pub(crate) fn emit_engine_impl_full(
                                         // marker_pos correctly.
                                         let (marker_pos, next_pos, body_src_idx): (u8, u8, u16) =
                                             #binderlist_inner_metadata;
-                                        return WpdsStepAction::Advance(
-                                            WpdsState::BinderListLoop {
-                                                result_src_idx,
-                                                rule_idx,
-                                                body_src_idx,
-                                                outer_bp,
-                                                marker_pos,
-                                                next_pos,
-                                                sub_pos,
-                                            },
-                                        );
+                                        let new_state = WpdsState::BinderListLoop {
+                                            result_src_idx,
+                                            rule_idx,
+                                            body_src_idx,
+                                            outer_bp,
+                                            marker_pos,
+                                            next_pos,
+                                            sub_pos,
+                                        };
+                                        // B8 / Issue C (2026-05-09): when the
+                                        // just-completed inner step was a
+                                        // ParamParse{collection:Some}, splice
+                                        // the parsed term into the Names
+                                        // accumulator (id=0).
+                                        let splice_id: Option<u8> =
+                                            #binderlist_inner_post_splice_lookup;
+                                        if let Some(id) = splice_id {
+                                            return WpdsStepAction::AdvanceWithEffect {
+                                                new_state,
+                                                effect: mettail_prattail::wpds_walker::BuilderDelta::SpliceIntoCollection { id },
+                                            };
+                                        }
+                                        return WpdsStepAction::Advance(new_state);
                                     }
                                     return WpdsStepAction::Advance(
                                         WpdsState::OptionalGroup {
