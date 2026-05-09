@@ -119,6 +119,18 @@ pub trait WpdsStepEngine<W: Semiring> {
         let _ = (src_idx, rule_idx);
         false
     }
+
+    /// B8 / Issue D (2026-05-09): predicate identifying Class 3
+    /// ZIP-MAP-SEP CollectionMarker pushes whose enclosing binder rule
+    /// has a `^[xs]` MultiAbstraction. When this returns `true`, the
+    /// walker's `emit_push_side_effects` ALSO opens a binder scope
+    /// (StartBinderScope { names: vec![] }) atomically with the
+    /// accumulator allocation. The scope spans all loop iterations.
+    /// Default returns `false`.
+    fn is_class3_collection(&self, src_idx: u16, rule_idx: u16) -> bool {
+        let _ = (src_idx, rule_idx);
+        false
+    }
 }
 
 /// One step of action returned by a [`WpdsStepEngine`].
@@ -5376,6 +5388,19 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 let id = self.emit_start_collection(cursor);
                 symbol.bp = Some(id);
                 self.emit_push_collection_id(cursor, id);
+                // B8 / Issue D (2026-05-09): when this CollectionMarker
+                // belongs to a Class 3 binder rule's BinderListLoop slot,
+                // also open a BinderScope so the inner walk's BinderIdent
+                // captures land in a single shared scope (one scope spans
+                // all iterations). Per-rule predicate
+                // `is_class3_collection` distinguishes this from Class-5
+                // standalone collection literals.
+                if self.engine.is_class3_collection(
+                    symbol.category_src_idx,
+                    symbol.rule_index_in_category,
+                ) {
+                    self.emit_start_binder_scope(cursor, Vec::new());
+                }
             }
             SymbolKind::OptionalGroupAt(1) => {
                 self.emit_start_optional_scope(cursor);

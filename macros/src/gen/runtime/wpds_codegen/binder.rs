@@ -1376,6 +1376,96 @@ pub(crate) fn emit_binderlist_inner_lookup(per_cat: &[Vec<GrammarRule>]) -> Toke
     }
 }
 
+/// B8 / Issue D (2026-05-09): emit a per-rule predicate
+/// `is_class3_collection(rule_idx) -> bool` that returns `true` when
+/// the rule has a Class 3 BinderListLoop. Used by the walker's
+/// `emit_push_side_effects` to atomically open a BinderScope alongside
+/// the Names accumulator allocation when a Class 3 CollectionMarker
+/// is pushed.
+pub(crate) fn emit_is_class3_collection(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
+    let mut arms = Vec::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        for (rule_i, rule) in rules.iter().enumerate() {
+            let Some(shape) = classify_binder(rule) else {
+                continue;
+            };
+            let is_class3 = shape.positions.iter().any(|p| {
+                matches!(
+                    p,
+                    BinderPosition::BinderListLoop {
+                        collection_param_cat: Some(_),
+                        ..
+                    }
+                )
+            });
+            if is_class3 {
+                let cat = cat_i as u16;
+                let rule_idx = rule_i as u16;
+                arms.push(quote! { (#cat, #rule_idx) => true, });
+            }
+        }
+    }
+    if arms.is_empty() {
+        quote! { false }
+    } else {
+        quote! {
+            match (src_idx, rule_idx) {
+                #(#arms)*
+                _ => false,
+            }
+        }
+    }
+}
+
+/// B8 / Issue A' (2026-05-09): emit a per-rule lookup that returns
+/// `(marker_pos, next_pos, body_src_idx)` for Class 3 BinderListLoop
+/// slots. Used by the Unwinding-OptionalGroupAt arm to reconstruct the
+/// outer BinderRule's slot coordinates when routing back into
+/// BinderListLoop after an inner-walk sub-parse returns. Pre-fix, the
+/// engine arm hardcoded `marker_pos: 0u8, next_pos: 0u8` which broke
+/// sub_pos=N arms that need the real outer-position values.
+///
+/// Returns `(0u8, 0u8, 0u16)` for non-Class-3 rules; the engine arm
+/// only consults this lookup when `is_binderlist_inner` returns true,
+/// so the default branch is unreachable in practice.
+pub(crate) fn emit_binderlist_inner_metadata(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
+    let mut arms = Vec::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        for (rule_i, rule) in rules.iter().enumerate() {
+            let Some(shape) = classify_binder(rule) else {
+                continue;
+            };
+            for (idx, position) in shape.positions.iter().enumerate() {
+                if let BinderPosition::BinderListLoop {
+                    collection_param_cat: Some(_),
+                    ..
+                } = position {
+                    let cat = cat_i as u16;
+                    let rule_idx = rule_i as u16;
+                    let marker_pos = (idx + 1) as u8;
+                    let next_pos = marker_pos + 1;
+                    // body_src_idx is the result category's idx — same
+                    // as cat_i for binder rules emitting their own cat.
+                    let body_src = cat_i as u16;
+                    arms.push(quote! {
+                        (#cat, #rule_idx) => (#marker_pos, #next_pos, #body_src),
+                    });
+                }
+            }
+        }
+    }
+    if arms.is_empty() {
+        quote! { (0u8, 0u8, 0u16) }
+    } else {
+        quote! {
+            match (result_src_idx, rule_idx) {
+                #(#arms)*
+                _ => (0u8, 0u8, 0u16),
+            }
+        }
+    }
+}
+
 /// Phase 5b + B8 (2026-05-08): emit the body of `WpdsState::BinderListLoop`.
 /// The state body dispatches on `(result_src_idx, rule_idx, sub_pos)`.
 ///

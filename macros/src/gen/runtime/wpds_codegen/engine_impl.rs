@@ -87,6 +87,15 @@ pub(crate) fn emit_engine_impl_full(
     // OptionalGroupAt symbols to BinderListLoop when the rule is Class 3.
     let is_binderlist_inner_lookup =
         super::binder::emit_binderlist_inner_lookup(per_cat);
+    // B8 / Issue A' (2026-05-09): per-rule lookup for outer-slot
+    // coordinates (marker_pos, next_pos, body_src_idx) used at
+    // Unwinding-OptionalGroupAt routing for Class 3 rules.
+    let binderlist_inner_metadata =
+        super::binder::emit_binderlist_inner_metadata(per_cat);
+    // B8 / Issue D (2026-05-09): per-rule predicate for Class 3
+    // CollectionMarker pushes that should also open a BinderScope.
+    let is_class3_collection_lookup =
+        super::binder::emit_is_class3_collection(per_cat);
     // Opt-Group (2026-04-29): per-rule per-group OptionalGroup state
     // dispatch — FIRST-set peek + inner-position walk + finalize.
     let optional_group_body =
@@ -569,14 +578,21 @@ pub(crate) fn emit_engine_impl_full(
                                     );
                                     let is_binderlist_inner: bool = #is_binderlist_inner_lookup;
                                     if is_binderlist_inner {
+                                        // B8 / Issue A' (2026-05-09): per-rule
+                                        // metadata lookup recovers outer-slot
+                                        // coordinates so sub_pos=N arms can
+                                        // reference the BinderListLoop's
+                                        // marker_pos correctly.
+                                        let (marker_pos, next_pos, body_src_idx): (u8, u8, u16) =
+                                            #binderlist_inner_metadata;
                                         return WpdsStepAction::Advance(
                                             WpdsState::BinderListLoop {
                                                 result_src_idx,
                                                 rule_idx,
-                                                body_src_idx: 0u16,
+                                                body_src_idx,
                                                 outer_bp,
-                                                marker_pos: 0u8,
-                                                next_pos: 0u8,
+                                                marker_pos,
+                                                next_pos,
                                                 sub_pos,
                                             },
                                         );
@@ -1059,6 +1075,14 @@ pub(crate) fn emit_engine_impl_full(
                 rule_idx: u16,
             ) -> bool {
                 #is_binder_internal_collection_lookup
+            }
+
+            fn is_class3_collection(
+                &self,
+                src_idx: u16,
+                rule_idx: u16,
+            ) -> bool {
+                #is_class3_collection_lookup
             }
         }
     }
