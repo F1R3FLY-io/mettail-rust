@@ -1192,7 +1192,18 @@ pub(crate) fn emit_binder_rule_body(
                                                     ],
                                                 },
                                         },
-                                        // BRANCH 2: first ident — GuardedConsumeIdentAndReplace
+                                        // BRANCH 2: first ident —
+                                        // GuardedConsumeBinderIdentAndReplace.
+                                        // B8 / Issue 3 (2026-05-10): use the
+                                        // binder-aware variant which opens
+                                        // a binder scope with [text] but
+                                        // does NOT push an Ident arg
+                                        // (the multi-binder rule's action
+                                        // expects BinderScope arg, not
+                                        // Ident). Lambda Lam-style single-
+                                        // binder rules continue to use the
+                                        // legacy GuardedConsumeIdentAndReplace
+                                        // at their direct BinderIdent arm.
                                         mettail_prattail::wpds_walker::ForkBranch {
                                             symbol: StackSymbolV2::rule_at(
                                                 #result_src_idx, #rule_idx,
@@ -1212,7 +1223,7 @@ pub(crate) fn emit_binder_rule_body(
                                                 sub_pos: 0u8,
                                             },
                                             action_kind:
-                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
+                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
                                                     start_scope: true,
                                                 },
                                         },
@@ -1473,6 +1484,61 @@ pub(crate) fn emit_binderlist_inner_post_splice_lookup(per_cat: &[Vec<GrammarRul
     }
 }
 
+/// B8 / Issue 2 (2026-05-10): emit a per-(src, rule, sub_pos)
+/// predicate that returns `true` when an OptionalGroupAt(sub_pos)
+/// push belongs to a Class 3 BinderListLoop inner walk (and thus
+/// should NOT open an optional scope). Returns `false` for genuine
+/// `*opt(...)` OptionalGroup markers, including the case where a
+/// rule has BOTH a Class 3 BinderListLoop AND a real *opt(...) in
+/// the same rule (different sub_pos values disambiguate).
+///
+/// For PInputs (Class 3, inner_positions=[ParamParse{Name}, Literal,
+/// BinderIdent]): returns true for sub_pos ∈ {1, 2, 3} (the inner
+/// walk arms). For pure-OptionalGroup rules: returns false at all
+/// sub_pos. For mixed Class3+OptionalGroup rules (hypothetical
+/// future): returns true ONLY at sub_pos values within the
+/// inner_positions range; false at OptionalGroup-internal sub_pos
+/// values.
+pub(crate) fn emit_is_class3_inner_marker_per_subpos(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
+    let mut arms = Vec::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        for (rule_i, rule) in rules.iter().enumerate() {
+            let Some(shape) = classify_binder(rule) else {
+                continue;
+            };
+            for position in shape.positions.iter() {
+                if let BinderPosition::BinderListLoop {
+                    inner_positions,
+                    collection_param_cat: Some(_),
+                    ..
+                } = position {
+                    let cat = cat_i as u16;
+                    let rule_idx = rule_i as u16;
+                    // Inner-walk sub_pos values: 1..=inner_positions.len()
+                    // (sub_pos=0 is the close/sep peek; sub_pos=N
+                    // dispatches inner_positions[N-1]).
+                    for i in 1..=inner_positions.len() {
+                        let sub_pos = i as u8;
+                        arms.push(quote! {
+                            (#cat, #rule_idx, #sub_pos) => true,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    if arms.is_empty() {
+        quote! { false }
+    } else {
+        quote! {
+            match (src_idx, rule_idx, sub_pos) {
+                #(#arms)*
+                _ => false,
+            }
+        }
+    }
+}
+
 /// B8 / Issue D (2026-05-09): emit a per-rule predicate
 /// `is_class3_collection(rule_idx) -> bool` that returns `true` when
 /// the rule has a Class 3 BinderListLoop. Used by the walker's
@@ -1681,7 +1747,16 @@ pub(crate) fn emit_binder_list_loop_body(
                                                 expected_text: #separator.to_string(),
                                             },
                                     },
-                                    // BRANCH 3: ident — GuardedConsumeIdentAndReplace
+                                    // BRANCH 3: subsequent ident.
+                                    // B8 / Issue 3 (2026-05-10): use the
+                                    // binder-aware variant. start_scope
+                                    // is false (scope already opened by
+                                    // BRANCH 2 first-ident); EXTEND the
+                                    // existing scope's names list with
+                                    // this ident. Without this fix, the
+                                    // captured ident leaks as ActionArg::
+                                    // Ident on the args stack and the
+                                    // scope's names list stays at length 1.
                                     mettail_prattail::wpds_walker::ForkBranch {
                                         symbol: StackSymbolV2::rule_at(
                                             #result_src_idx, #rule_idx,
@@ -1701,7 +1776,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                             sub_pos: 0u8,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
+                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
                                                 start_scope: false,
                                             },
                                     },

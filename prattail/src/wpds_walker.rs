@@ -132,16 +132,25 @@ pub trait WpdsStepEngine<W: Semiring> {
         false
     }
 
-    /// B8 / Issue C followup (2026-05-09): predicate distinguishing
-    /// OptionalGroupAt symbols used as Class 3 BinderListLoop inner-
-    /// walk markers from genuine OptionalGroup `*opt(...)` markers.
-    /// When `true`, `emit_push_side_effects` skips the
-    /// `start_optional_scope` side effect on OptionalGroupAt(1)
-    /// pushes (the optional scope would never close, leaving the
-    /// builder's optional_stack non-empty at parse end).
+    /// B8 / Issue C followup (2026-05-09); refined under Issue 2
+    /// (2026-05-10): predicate distinguishing OptionalGroupAt symbols
+    /// used as Class 3 BinderListLoop inner-walk markers from genuine
+    /// OptionalGroup `*opt(...)` markers. When `true`,
+    /// `emit_push_side_effects` skips the `start_optional_scope` side
+    /// effect on OptionalGroupAt(1) pushes (the optional scope would
+    /// never close, leaving the builder's optional_stack non-empty at
+    /// parse end).
+    ///
+    /// `sub_pos` discriminator: distinguishes the rule-level alias case
+    /// (a rule that has BOTH a Class 3 BinderListLoop AND a real
+    /// `*opt(...)` OptionalGroup) from a pure-Class-3 rule. For
+    /// pure-Class-3 rules, all OptionalGroupAt sub_pos values within
+    /// the Class 3 inner walk return `true`; OptionalGroupAt(1) for
+    /// a real optional group in the same rule returns `false` so the
+    /// genuine optional scope opens correctly.
     /// Default returns `false`.
-    fn is_class3_inner_marker(&self, src_idx: u16, rule_idx: u16) -> bool {
-        let _ = (src_idx, rule_idx);
+    fn is_class3_inner_marker(&self, src_idx: u16, rule_idx: u16, sub_pos: u8) -> bool {
+        let _ = (src_idx, rule_idx, sub_pos);
         false
     }
 }
@@ -707,6 +716,20 @@ pub enum ForkActionKind {
     GuardedConsumeAndPopWithEffect {
         expected_text: String,
         effect: BuilderDelta,
+    },
+
+    /// B8 / Issue 3 fix (2026-05-10): consume an Ident token; either
+    /// open a new binder scope with `[text]` (start_scope=true) OR
+    /// extend the innermost open scope's names list with `text`
+    /// (start_scope=false); replace top-of-GSS with `branch.symbol`;
+    /// advance pos by 1. Crucially, does NOT call `emit_push_ident`
+    /// — the captured name lives in the binder scope, not the args
+    /// stack. Used by multi-binder rules (PNew-style `^[xs]`) whose
+    /// terminal action expects `ActionArg::BinderScope`, not Ident.
+    /// Lambda Lam-style single-binder rules whose action expects
+    /// `ActionArg::Ident` continue to use `GuardedConsumeIdentAndReplace`.
+    GuardedConsumeBinderIdentAndReplace {
+        start_scope: bool,
     },
 }
 
@@ -4160,6 +4183,55 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
+                        ForkActionKind::GuardedConsumeBinderIdentAndReplace { start_scope } => {
+                            // B8 / Issue 3 fix (2026-05-10): consume Ident
+                            // token, either open scope with [text] OR
+                            // extend innermost scope's names with text;
+                            // replace top of GSS; advance pos. NO
+                            // emit_push_ident — name lives in the
+                            // BinderHandle.names list, not on the args
+                            // stack. For multi-binder rules whose action
+                            // expects BinderScope arg, not Ident.
+                            if !matches!(
+                                tokens.peek_kind(pos_after),
+                                Some(crate::automata::TokenKind::Ident)
+                            ) {
+                                continue;
+                            }
+                            let mut child = BranchCursor::fork_child(
+                                cursor,
+                                pos_after,
+                                cursor.weight.times(&branch.weight),
+                                branch.new_state.clone(),
+                                child_source_priority,
+                            );
+                            let text = tokens
+                                .peek_text(child.pos)
+                                .unwrap_or("")
+                                .to_string();
+                            if start_scope {
+                                self.emit_start_binder_scope(
+                                    &mut child,
+                                    vec![text.clone()],
+                                );
+                            } else {
+                                self.emit_extend_binder_scope(&mut child, text.clone());
+                            }
+                            let pos_now = child.pos;
+                            let _ = self.cursor_gss_replace_top(
+                                &mut child,
+                                branch.symbol,
+                                pos_now,
+                                branch.weight.clone(),
+                            );
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        }
+
                         ForkActionKind::GuardedConsumeAndPopWithEffect {
                             expected_text,
                             effect,
@@ -4180,8 +4252,22 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             );
                             child.consistency_memo.set(None);
                             child.pending_builder_ops.push(effect);
+                            // B8 / Issue 1 fix (2026-05-10): mirror
+                            // apply_pop_body_to_cursor's cursor.collection_stack
+                            // pop semantics — when the popped symbol is a
+                            // CollectionMarker, sync cursor.collection_stack
+                            // so adopt_collection_stack at commit_winner
+                            // doesn't double-allocate the slot (which is
+                            // already allocated via the StartCollection
+                            // delta logged at emit_start_collection time).
+                            let popped_kind = self.gss
+                                .node(child.node)
+                                .map(|n| n.symbol.kind);
                             // Pop top-of-GSS.
                             let _ = self.cursor_gss_pop_via_edge(&mut child);
+                            if popped_kind == Some(SymbolKind::CollectionMarker) {
+                                let _ = child.collection_stack.pop();
+                            }
                             child.pos += 1;
                             if self.cursor_mode == CursorMode::Lazy {
                                 self.pos = child.pos;
@@ -5661,16 +5747,20 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     self.emit_start_binder_scope(cursor, Vec::new());
                 }
             }
-            SymbolKind::OptionalGroupAt(1) => {
-                // B8 / Issue C followup (2026-05-09): only open an
-                // optional scope when the OptionalGroupAt belongs to
-                // a genuine OptionalGroup (`*opt(...)`) — Class 3
-                // BinderListLoop inner-walk markers reuse the same
-                // SymbolKind but should NOT open an optional scope
-                // (would leave optional_stack non-empty at parse end).
+            SymbolKind::OptionalGroupAt(sub_pos) if sub_pos == 1 => {
+                // B8 / Issue C followup (2026-05-09); refined under
+                // Issue 2 (2026-05-10): only open an optional scope
+                // when the OptionalGroupAt(1) belongs to a genuine
+                // OptionalGroup (`*opt(...)`). Class 3 BinderListLoop
+                // inner-walk markers reuse the same SymbolKind but
+                // must NOT open an optional scope. The per-(src, rule,
+                // sub_pos) predicate disambiguates rules that have BOTH
+                // a Class 3 BinderListLoop AND a real *opt(...) in
+                // same rule.
                 if !self.engine.is_class3_inner_marker(
                     symbol.category_src_idx,
                     symbol.rule_index_in_category,
+                    sub_pos,
                 ) {
                     self.emit_start_optional_scope(cursor);
                 }

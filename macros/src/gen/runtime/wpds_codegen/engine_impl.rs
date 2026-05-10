@@ -96,8 +96,15 @@ pub(crate) fn emit_engine_impl_full(
     // CollectionMarker pushes that should also open a BinderScope.
     let is_class3_collection_lookup =
         super::binder::emit_is_class3_collection(per_cat);
+    // B8 / Issue 2 (2026-05-10): per-(src, rule, sub_pos) lookup
+    // distinguishing Class 3 inner-walk OptionalGroupAt from genuine
+    // *opt(...) OptionalGroup. Replaces the prior alias to
+    // emit_is_class3_collection (per-rule only) — alias was correct
+    // for shipped grammars but incorrect for the supported feature
+    // combination of Class 3 BinderListLoop + real *opt(...) in same
+    // rule.
     let is_class3_inner_marker_lookup =
-        super::binder::emit_is_class3_collection(per_cat);
+        super::binder::emit_is_class3_inner_marker_per_subpos(per_cat);
     // B8 / Issue C (2026-05-09): per-(rule, sub_pos) splice lookup
     // for Class 3 inner walk Name-parse return points.
     let binderlist_inner_post_splice_lookup =
@@ -1123,11 +1130,12 @@ pub(crate) fn emit_engine_impl_full(
                 &self,
                 src_idx: u16,
                 rule_idx: u16,
+                sub_pos: u8,
             ) -> bool {
-                // B8 / Issue C followup: OptionalGroupAt symbols
-                // belonging to Class 3 binder rules' inner walks
-                // share the same (src, rule) pair as their
-                // CollectionMarkers — predicate is identical.
+                // B8 / Issue 2 (2026-05-10): per-(src, rule, sub_pos)
+                // lookup. Returns true ONLY when the OptionalGroupAt
+                // belongs to a Class 3 inner walk (not a genuine
+                // *opt(...) OptionalGroup).
                 #is_class3_inner_marker_lookup
             }
         }
