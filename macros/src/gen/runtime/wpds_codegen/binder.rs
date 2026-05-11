@@ -207,6 +207,15 @@ pub struct CollectionSepInfo {
     pub close: String,
     pub coll_kind: CollectionType,
     pub elem_cat: String,
+    /// Phase 4 #5 (2026-05-11): inter-pair separator for HashMap
+    /// collections (e.g., `":"` for `k: v`). `None` for Vec/HashBag/
+    /// HashSet. The walker's `CollectionLoop` dispatch is NOT yet
+    /// extended to consume `:` between key and value — Phase 4 #5b
+    /// will add a 4th Fork branch in `emit_collection_loop_arm`. For
+    /// now, the field is populated but unused at runtime (empty-only
+    /// HashMap pilot — drain length 0 satisfies the
+    /// `[k0, v0, k1, v1, ...]` invariant trivially).
+    pub key_val_separator: Option<String>,
 }
 
 /// What kind of arg the action body extracts at each position (in push order).
@@ -354,12 +363,16 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     }
                     // B9 / Class 2 (2026-05-08): SimpleCollection. The
                     // pilot supports Vec / HashBag / HashSet over a Base
-                    // element type; HashMap and nested collections are
-                    // out of pilot scope.
+                    // element type. Phase 4 #5 (2026-05-11): HashMap is
+                    // now accepted in empty-only pilot mode (key_val
+                    // separator parsing in the walker is deferred to
+                    // Phase 4 #5b). Same-element-cat for both key and
+                    // value mirrors Class-5's existing assumption.
                     TypeExpr::Collection { coll_type, element } => match (coll_type, element.as_ref()) {
                         (CollectionType::Vec, TypeExpr::Base(elem))
                         | (CollectionType::HashBag, TypeExpr::Base(elem))
-                        | (CollectionType::HashSet, TypeExpr::Base(elem)) => {
+                        | (CollectionType::HashSet, TypeExpr::Base(elem))
+                        | (CollectionType::HashMap, TypeExpr::Base(elem)) => {
                             let elem_cat = elem.to_string();
                             param_cats.push(elem_cat.clone());
                             param_map.insert(
@@ -563,6 +576,16 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                             Some(SyntaxExpr::Literal(text)) => text.clone(),
                             _ => return None,
                         };
+                        // Phase 4 #5 (2026-05-11): populate
+                        // key_val_separator only for HashMap; None for
+                        // Vec/HashBag/HashSet. Pilot-hardcode `":"`
+                        // (the default per ast/src/language.rs::map_defaults);
+                        // a follow-up will thread language to look up
+                        // user-overridden separators.
+                        let key_val_separator = match coll_kind {
+                            CollectionType::HashMap => Some(":".to_string()),
+                            _ => None,
+                        };
                         positions.push(BinderPosition::ParamParse {
                             cat: elem_cat.clone(),
                             collection: Some(CollectionSepInfo {
@@ -570,6 +593,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                 close,
                                 coll_kind: coll_kind.clone(),
                                 elem_cat: elem_cat.clone(),
+                                key_val_separator,
                             }),
                         });
                         action_args.push(ActionArgKind::CollectionDrain {
@@ -648,6 +672,11 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                         close: close.clone(),
                                         coll_kind: CollectionType::Vec,
                                         elem_cat: collection_elem_cat.clone(),
+                                        // Phase 4 #5 (2026-05-11):
+                                        // Class-3 ZIP-MAP-SEP names
+                                        // accumulator is always Vec
+                                        // — no key/value separator.
+                                        key_val_separator: None,
                                     }),
                                 });
                                 inner_action_args.push(ActionArgKind::Term(
@@ -2556,10 +2585,33 @@ pub(crate) fn emit_binder_action_entry(
                         );
                     },
                     CollectionType::HashMap => quote! {
-                        // HashMap collection in Class-2 binder rules is out
-                        // of pilot scope (rejected at classify_binder).
-                        // Defensive: emit a panic if reached.
-                        let #var = panic!("B9 pilot: HashMap collection in Class-2 binder rule unsupported");
+                        // Phase 4 #5 (2026-05-11): empty-only pilot for
+                        // HashMap in Class-2/3 binder rules. Drain
+                        // order is `[k0, v0, k1, v1, ...]` (codegen
+                        // invariant established by the walker's
+                        // CollectionLoop dispatch; for the empty-only
+                        // pilot the drain length is 0). Materialize an
+                        // empty HashMapLit; walker `:` parsing support
+                        // (Phase 4 #5b) will populate non-empty maps.
+                        // Mirrors Class-5's finalize at
+                        // semantic_actions.rs:503-535.
+                        let mut iter_drained = drained.into_iter();
+                        let mut container = mettail_runtime::HashMapLit::<
+                            #elem_id, #elem_id,
+                        >::default();
+                        while let Some(k_arg) = iter_drained.next() {
+                            let v_arg = match iter_drained.next() {
+                                Some(v) => v,
+                                None => break,
+                            };
+                            if let (Some(k), Some(v)) = (
+                                k_arg.into_term::<#elem_id>(),
+                                v_arg.into_term::<#elem_id>(),
+                            ) {
+                                container.insert(k, v);
+                            }
+                        }
+                        let #var = container;
                     },
                 };
                 extracts.push(quote! {
