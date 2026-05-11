@@ -731,6 +731,23 @@ pub enum ForkActionKind {
     GuardedConsumeBinderIdentAndReplace {
         start_scope: bool,
     },
+
+    /// Phase 3.B.2 (2026-05-11): single-binder collapse variant.
+    /// Same as `GuardedConsumeBinderIdentAndReplace` (peek_kind=Ident
+    /// gate, open-or-extend binder scope, GSS top replacement, pos++)
+    /// but ALSO logs `effect` (typically `BuilderDelta::EndBinderScope`)
+    /// onto pending_builder_ops between the scope mutation and the GSS
+    /// replace. Used for single-binder collapse where the lone ident
+    /// closes the scope immediately — atomically captures the ident
+    /// AND closes the scope in one Fork branch. AST surface unchanged:
+    /// `emit_binder_action_entry` unwraps `BinderScope.names[0]` to a
+    /// scalar `Binder<String>` for the single-binder collapsed case,
+    /// preserving Lambda Lam<Binder<String>, ...>, ambient PNew, and
+    /// guardedRho PGuardedInput AST signatures.
+    GuardedConsumeBinderIdentAndReplaceWithEffect {
+        start_scope: bool,
+        effect: BuilderDelta,
+    },
 }
 
 impl<W: Semiring> std::fmt::Debug for ForkBranch<W>
@@ -4240,6 +4257,66 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             } else {
                                 self.emit_extend_binder_scope(&mut child, text.clone());
                             }
+                            let pos_now = child.pos;
+                            let _ = self.cursor_gss_replace_top(
+                                &mut child,
+                                branch.symbol,
+                                pos_now,
+                                branch.weight.clone(),
+                            );
+                            child.pos += 1;
+                            if self.cursor_mode == CursorMode::Lazy {
+                                self.pos = child.pos;
+                            }
+                            children.push(child);
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        }
+
+                        ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
+                            start_scope,
+                            effect,
+                        } => {
+                            // Phase 3.B.2 (2026-05-11): single-binder
+                            // collapse variant. Same body as
+                            // GuardedConsumeBinderIdentAndReplace
+                            // (ident gate, open/extend scope, replace
+                            // top of GSS, pos++) but logs `effect`
+                            // (typically BuilderDelta::EndBinderScope)
+                            // onto pending_builder_ops between scope
+                            // mutation and the GSS replace. Atomic
+                            // capture+close so single-binder rules
+                            // (Lambda Lam, ambient PNew single-binder,
+                            // guardedRho PGuardedInput) keep AST
+                            // surface unchanged: action_entry unwraps
+                            // BinderScope.names[0] to a scalar
+                            // Binder<String>.
+                            if !matches!(
+                                tokens.peek_kind(pos_after),
+                                Some(crate::automata::TokenKind::Ident)
+                            ) {
+                                continue;
+                            }
+                            let mut child = BranchCursor::fork_child(
+                                cursor,
+                                pos_after,
+                                cursor.weight.times(&branch.weight),
+                                branch.new_state.clone(),
+                                child_source_priority,
+                            );
+                            let text = tokens
+                                .peek_text(child.pos)
+                                .unwrap_or("")
+                                .to_string();
+                            if start_scope {
+                                self.emit_start_binder_scope(
+                                    &mut child,
+                                    vec![text.clone()],
+                                );
+                            } else {
+                                self.emit_extend_binder_scope(&mut child, text.clone());
+                            }
+                            child.consistency_memo.set(None);
+                            child.pending_builder_ops.push(effect);
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
                                 &mut child,
