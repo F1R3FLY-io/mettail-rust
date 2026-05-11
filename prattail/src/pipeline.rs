@@ -338,15 +338,27 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         .iter()
         .filter(|r| !r.is_infix && !r.is_var && !r.is_literal)
         .map(|rule| {
+            // Compute the operand binding power applied to the rule's first
+            // NonTerminal sub-parse in its generated standalone function.
+            //
+            // - Same-category unary prefix (`[Terminal, NT(same_cat)]`):
+            //   honour explicit `prefix(N)` or default to `max_infix_bp+2`.
+            //   This path also enters the `UnaryPrefix_*` frame dispatch.
+            // - Cross-category prefix or any other shape that carries an
+            //   explicit `prefix(N)` annotation: honour the annotation and
+            //   thread it through the standalone fn only — dispatch still
+            //   goes through the regular RD-handler / NFA path.
             let prefix_bp = if rule.is_unary_prefix {
-                if let Some(explicit_bp) = rule.prefix_precedence {
-                    Some(explicit_bp)
-                } else {
+                rule.prefix_precedence.or_else(|| {
                     let cat_max = max_infix_bp.get(&rule.category).copied().unwrap_or(0);
                     Some(cat_max + 2)
-                }
+                })
             } else {
-                None
+                // Cross-category (or otherwise non-classical) prefix rule
+                // with an explicit BP annotation: limit the inner-operand
+                // parse without entering the unary-prefix dispatch path
+                // (which assumes same-category operand/result).
+                rule.prefix_precedence
             };
 
             RDRuleInfo {
@@ -359,6 +371,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
                 collection_type: rule.collection_type,
                 separator: rule.separator.clone(),
                 prefix_bp,
+                is_unary_prefix: rule.is_unary_prefix,
                 eval_mode: rule.eval_mode.clone(),
             }
         })

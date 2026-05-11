@@ -256,7 +256,7 @@ generalises both `NQuote` (`@(P)`) and `NQuoteNil` (`@Nil`):
 NQuoteShort . p:Proc
 |- "@" p : Name ![{
     Name::NQuote(Box::new(p.clone()))
-}] fold;
+}] fold prefix(220);
 ```
 
 Declared *after* `NQuote` and `NQuoteNil` so that the NFA dispatcher tries
@@ -266,9 +266,26 @@ and `@Nil` still parses through `NQuoteNil`. Only when both fail does the
 parser fall through to `NQuoteShort`, which then drives the Proc parser at
 the position after `@`.
 
+The `prefix(220)` annotation is a *cross-category* prefix binding-power
+declaration. The framework (`prattail/src/pipeline.rs`,
+`prattail/src/trampoline.rs`) honours `prefix(N)` for *any* prefix-shaped
+rule, not just same-category unary prefixes (`is_unary_prefix == true`).
+For cross-category rules like `@P : Name` (operand in `Proc`, result in
+`Name`), the BP is propagated only to the rule's generated standalone
+parser function: the inner `parse_Proc` call is invoked with `min_bp = 220`
+rather than `0`. Same-category unary prefix rules continue to enter the
+dedicated `UnaryPrefix_*` frame dispatch via the `is_unary_prefix` flag —
+the two concepts are now orthogonal (see §4.3 for the framework split).
+
+With `min_bp = 220` (well above all Proc-level infix BPs), `@P` consumes
+only a high-precedence Proc subterm: `*@1 + 0` parses as `(*@1) + 0`, and
+`@1 | 0` is a Name-followed-by-Proc-infix sequence that surfaces as a
+parse error at the outer level rather than silently absorbing the `| 0`.
+
 To make literal-typed quoted channels write the way Rholang does on the
 send side (`@1!(q)`, `@"k"!!(q)`), we likewise add generalised send sugars
-parallel to `POutputNil` / `PPersistOutputNil`:
+parallel to `POutputNil` / `PPersistOutputNil`, with the same `prefix(220)`
+cap on the inner `p:Proc`:
 
 ```rust
 POutputShort . p:Proc, q:Proc
@@ -277,7 +294,7 @@ POutputShort . p:Proc, q:Proc
         Box::new(Name::NQuote(Box::new(p.clone()))),
         Box::new(q.clone()),
     )
-}] fold;
+}] fold prefix(220);
 
 PPersistOutputShort . p:Proc, q:Proc
 |- "@" p "!!" "(" q ")" : Proc ![{
@@ -285,7 +302,7 @@ PPersistOutputShort . p:Proc, q:Proc
         Box::new(Name::NQuote(Box::new(p.clone()))),
         Box::new(q.clone()),
     )
-}] fold;
+}] fold prefix(220);
 ```
 
 These are needed because `POutputQuoted`'s `@ <Name>` slot rejects anything
@@ -296,18 +313,6 @@ rules now share the `@` opener (`POutputNil`, `PPersistOutputNil`,
 `@Nil!(0)` matches both `POutputNil` and `POutputShort`), the fold actions
 collapse to the same canonical `POutput(NQuote(PZero), 0)` AST, so the
 choice is semantically transparent.
-
-**Caveat — precedence:** Cross-category prefix rules in the current
-framework cannot carry an explicit operand binding power (the
-`prefix(N)` annotation is only honoured for *same-category* unary
-prefix rules where `is_unary_prefix == true`). As a result, `NQuoteShort`
-calls the inner Proc parser with `min_bp = 0` and consumes any Proc-level
-infix that follows. Concretely, `*@1 + 0` parses as `*(@(1 + 0))`, not
-`(*@1) + 0` — users who want the latter must parenthesise: `(*@1) + 0` or
-fall back to the parens form `*(@1) + 0`. This matches the documented
-behaviour of `POutputShort` / `PPersistOutputShort` as well: `@1+2!(0)`
-parses as `(@(1+2))!(0)`. Adding an explicit cross-category prefix BP is
-tracked as a future framework extension; see "out of scope" below.
 
 ---
 
@@ -346,6 +351,45 @@ binding-power tracking. The first parser that succeeds (declaration order)
 wins; if none succeed, the first error is reported. The legacy single-frame
 fast path is retained for the common case of exactly one frame-pushing rule
 per token.
+
+### 4.3 Decoupling unary-prefix dispatch from `prefix_bp`
+
+Previously, `prattail` conflated two distinct properties:
+
+1. *Operand binding power*: the `min_bp` passed to the rule's inner
+   `parse_<cat>` call.  Set via the DSL annotation `prefix(N)` or a
+   default of `max_infix_bp + 2`.
+2. *Same-category unary-prefix dispatch*: rules of shape
+   `[Terminal, NonTerminal(same_category)]` participate in a dedicated
+   `UnaryPrefix_*` frame whose unwind handler builds
+   `{cat}::{label}(Box::new(lhs))` — i.e. it assumes the operand has the
+   *result* type.
+
+Both were keyed off `prefix_bp.is_some()`, which meant that adding an
+explicit `prefix(N)` to a *cross-category* prefix rule (e.g. `@P : Name`
+with `P : Proc`) would incorrectly route it through the same-category
+dispatch and emit ill-typed code (a `Name::NQuoteShort(Box::new(lhs))`
+where `lhs` is a `Proc`).
+
+We split the two concepts:
+
+- `RDRuleInfo.is_unary_prefix: bool` — true only for the same-category
+  unary-prefix shape (already classified upstream by `classify.rs`).
+  Drives the `UnaryPrefix_*` frame creation, dispatch, and unwind paths.
+- `RDRuleInfo.prefix_bp: Option<u8>` — the operand BP. Used only in
+  `recursive.rs`'s standalone-fn generator (where the first `NonTerminal`
+  sub-parse threads it into `parse_<cat>(tokens, pos, prefix_bp)`).
+
+All `prefix_bp.is_some() / is_none()` filters in `trampoline.rs` and
+`prediction.rs` that gated the unary-prefix dispatch were retargeted to
+`is_unary_prefix`. As a result, the DSL annotation `prefix(N)` is now
+honoured uniformly on both same-category and cross-category prefix rules
+without affecting their dispatch path.
+
+`pipeline.rs` / `ebnf.rs` (both `RDRuleInfo` constructors) preserve the
+existing same-category default (`max_infix_bp + 2`) and start honouring
+explicit `prefix(N)` annotations on cross-category prefixes too — for
+which there is no sensible default, so an annotation is required.
 
 ---
 
@@ -401,7 +445,12 @@ corresponding prefix-form calls.
   (`m.size()`, `m.keys()`, `m.values()`) compile inline without a frame
   push; `write_nfa_merged_prefix_arm` extended to NFA-try multiple
   frame-pushing rules sharing a dispatch token via their generated
-  `parse_<label>` standalone functions.
+  `parse_<label>` standalone functions; `RDRuleInfo.is_unary_prefix`
+  field added and `pipeline.rs` / `ebnf.rs` / `trampoline.rs` /
+  `prediction.rs` retargeted from `prefix_bp.is_some()` to
+  `is_unary_prefix`, so the DSL `prefix(N)` annotation is now honoured on
+  cross-category prefix rules without entering the same-category
+  unary-prefix dispatch (see §4.3).
 - [x] `docs/design/made/native-types/map-type-design.md` — note rhocalc
   override and method-call sugar layer.
 - [x] `docs/manual/language/features/collections/00-overview.md` — refresh
@@ -420,13 +469,6 @@ corresponding prefix-form calls.
 - Map / List pattern matching beyond literal swap (e.g., `{k: x, ..}` /
   `[a, ..rest]` partial patterns).
 - Rholang `contract` keyword.
-- Explicit binding power for cross-category prefix rules (`@P`,
-  `POutputShort`, …): currently the framework's `prefix(N)` annotation
-  only fires for *same-category* unary prefixes (`is_unary_prefix == true`),
-  so `@P` consumes any trailing Proc infix greedily. Extending
-  `prefix_bp` propagation to cross-category prefix rules and threading it
-  into the unary-prefix dispatch would let `*@1 + 0` parse as
-  `(*@1) + 0` without explicit parentheses.
 
 ---
 

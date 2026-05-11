@@ -1430,15 +1430,18 @@ mod tests {
             .iter()
             .filter(|r| !r.is_infix && !r.is_var && !r.is_literal)
             .map(|rule| {
+                // See `pipeline.rs` for the mirroring construction and
+                // detailed rationale: same-category unary prefix → default
+                // `max_infix_bp+2`; cross-category prefix with explicit
+                // `prefix(N)` → honour annotation but skip unary-prefix
+                // dispatch.
                 let prefix_bp = if rule.is_unary_prefix {
-                    if let Some(explicit_bp) = rule.prefix_precedence {
-                        Some(explicit_bp)
-                    } else {
+                    rule.prefix_precedence.or_else(|| {
                         let cat_max = max_infix_bp.get(&rule.category).copied().unwrap_or(0);
                         Some(cat_max + 2)
-                    }
+                    })
                 } else {
-                    None
+                    rule.prefix_precedence
                 };
 
                 RDRuleInfo {
@@ -1451,6 +1454,7 @@ mod tests {
                     collection_type: rule.collection_type,
                     separator: rule.separator.clone(),
                     prefix_bp,
+                    is_unary_prefix: rule.is_unary_prefix,
                     eval_mode: rule.eval_mode.clone(),
                 }
             })

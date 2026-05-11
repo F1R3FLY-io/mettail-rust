@@ -368,12 +368,18 @@ pub fn write_frame_enum(
     });
 
     // ── Per-unary-prefix variants ──
+    //
+    // Only *same-category* unary prefix rules participate in the
+    // `UnaryPrefix_*` frame dispatch: that unwind handler assumes the
+    // operand on `lhs` has the same type as the result (it builds
+    // `{cat}::{label}(Box::new(lhs))`).  Cross-category prefix rules with
+    // a `prefix_bp` annotation (e.g. `@P : Name` with `P : Proc`) still
+    // carry `prefix_bp` to bound their inner-operand parse but route
+    // through the regular RD-handler / NFA path instead.
     for rd_rule in rd_rules {
-        if rd_rule.category != *cat || rd_rule.prefix_bp.is_none() {
+        if rd_rule.category != *cat || !rd_rule.is_unary_prefix {
             continue;
         }
-        // Unary prefix: pattern is [Terminal, NonTerminal(same_category)]
-        // The terminal is consumed inline, the nonterminal triggers a frame push
         variants.push(FrameVariant {
             name: format!("UnaryPrefix_{}", rd_rule.label),
             fields: vec![FrameField {
@@ -388,9 +394,12 @@ pub fn write_frame_enum(
         if rd_rule.category != *cat {
             continue;
         }
-        // Skip unary prefix (handled above), collection rules (handled separately),
-        // and rules dispatched to standalone functions (ZipMapSep, multi-binder)
-        if rd_rule.prefix_bp.is_some()
+        // Skip same-category unary prefix (handled above), collection
+        // rules (handled separately), and rules dispatched to standalone
+        // functions (ZipMapSep, multi-binder).  Cross-category prefix
+        // rules carrying a `prefix_bp` are NOT skipped here — they keep
+        // their regular segment-frame variants.
+        if rd_rule.is_unary_prefix
             || is_simple_collection(rd_rule)
             || should_use_standalone_fn(rd_rule)
         {
@@ -923,7 +932,7 @@ fn write_prefix_match_arms(
     let nonterminal_fallback_fns: Vec<String> = rd_rules
         .iter()
         .filter(|r| r.category == *cat)
-        .filter(|r| !is_simple_collection(r) && r.prefix_bp.is_none())
+        .filter(|r| !is_simple_collection(r) && !r.is_unary_prefix)
         .filter(|r| {
             matches!(
                 r.items.first(),
@@ -1043,11 +1052,14 @@ fn write_prefix_match_arms(
     }
 
     // ── Unary prefix operators ──
+    //
+    // Same-category unary prefix only.  Cross-category prefix rules with
+    // a `prefix_bp` route through the regular RD-handler / NFA path
+    // (which honours `prefix_bp` for the inner-operand sub-parse).
     for rd_rule in rd_rules {
-        if rd_rule.category != *cat || rd_rule.prefix_bp.is_none() {
+        if rd_rule.category != *cat || !rd_rule.is_unary_prefix {
             continue;
         }
-        // Pattern: [Terminal, NonTerminal(same_category)]
         if let Some(RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
             let variant = terminal_to_variant_name(t);
             let bp = rd_rule.prefix_bp.unwrap_or(0);
@@ -1278,7 +1290,7 @@ fn write_prefix_match_arms(
         let rd_fallback: Vec<(String, String)> = rd_rules
             .iter()
             .filter(|r| r.category == *cat)
-            .filter(|r| !is_simple_collection(r) && r.prefix_bp.is_none())
+            .filter(|r| !is_simple_collection(r) && !r.is_unary_prefix)
             .filter_map(|r| {
                 let first_nt = matches!(
                     r.items.first(),
@@ -1630,7 +1642,7 @@ fn group_rd_by_dispatch_token<'a>(
         if rd_rule.category != *cat {
             continue;
         }
-        if is_simple_collection(rd_rule) || rd_rule.prefix_bp.is_some() {
+        if is_simple_collection(rd_rule) || rd_rule.is_unary_prefix {
             continue;
         }
 
@@ -2727,8 +2739,13 @@ fn write_unwind_handlers(
     .unwrap();
 
     // ── UnaryPrefix variants ──
+    //
+    // Only same-category unary prefix rules emit this unwind handler — it
+    // builds `{cat}::{label}(Box::new(lhs))` which requires the operand
+    // (now sitting on `lhs`) to be of type `{cat}`.  Cross-category prefix
+    // rules don't go through this path.
     for rd_rule in rd_rules {
-        if rd_rule.category != *cat || rd_rule.prefix_bp.is_none() {
+        if rd_rule.category != *cat || !rd_rule.is_unary_prefix {
             continue;
         }
         write!(
@@ -2747,7 +2764,7 @@ fn write_unwind_handlers(
     for rd_rule in rd_rules {
         if rd_rule.category != *cat
             || is_simple_collection(rd_rule)
-            || rd_rule.prefix_bp.is_some()
+            || rd_rule.is_unary_prefix
             || should_use_standalone_fn(rd_rule)
         {
             continue;

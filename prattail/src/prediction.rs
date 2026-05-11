@@ -1198,9 +1198,12 @@ pub fn build_dispatch_action_tables(
             if rd_rule.category != *cat {
                 continue;
             }
-            // Skip infix-like, collection-first, and nonterminal-first rules
-            if rd_rule.prefix_bp.is_some() {
-                // Unary prefix — still Direct, just with a different parse_fn
+            // Skip infix-like, collection-first, and nonterminal-first rules.
+            // Same-category unary prefix → Direct dispatch with its own
+            // `parse_<label>` fn (which handles the prefix BP).  Cross-cat
+            // prefix rules carrying a `prefix_bp` fall through to the
+            // normal terminal-dispatch path below.
+            if rd_rule.is_unary_prefix {
                 if let Some(crate::recursive::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
                     let variant = terminal_to_variant_name(t);
                     entries

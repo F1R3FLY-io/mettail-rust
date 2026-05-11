@@ -944,15 +944,49 @@ mod exec {
     }
 
     #[test]
+    fn quote_short_persistent_send_reduces() {
+        // Persistent send `@1!!(99)` paired with a non-persistent receive
+        // `for(x <- @1){x}` must fire COMM once: the receive consumes a
+        // copy of the payload (yielding `99`) while the persistent send
+        // stays alive.  Some normal form in the search must therefore
+        // contain the payload `99` (the multiset ordering of the surviving
+        // PPar is unspecified, hence the substring check).
+        let (results, _) = run_with_initial("for(x <- @1){x} | @1!!(99)");
+        let nfs: Vec<String> = results
+            .normal_forms()
+            .iter()
+            .map(|nf| nf.display.clone())
+            .collect();
+        let any_with_99 = nfs.iter().any(|nf| nf.contains("99"));
+        assert!(
+            any_with_99,
+            "expected some normal form containing 99 (the comm payload); got {:?}",
+            nfs
+        );
+    }
+
+    #[test]
     fn quote_short_paren_required_for_compound_proc() {
-        // Documented precedence caveat: `*@1 + 0` parses greedily as
-        // `*(@(1 + 0))` (= `*(@1)` because PDrop only sees the quoted
-        // process), so the Add folds inside the quote.  Users wanting
-        // the outer `+` must wrap: `(*@1) + 0`.
-        //
-        // Here we assert the greedy form: `*@(1+0)` evaluates to `1` via
-        // Exec then the constant-fold of `1+0`.
+        // With `prefix(220)` on `NQuoteShort`, `@P`'s inner Proc parser is
+        // capped well above all Proc-level infix BPs.  `*@1 + 0` therefore
+        // parses as `(*@1) + 0`:
+        //   * Proc parser sees `*` → PDrop, inner Name = NQuoteShort(1).
+        //   * NQuoteShort folds to NQuote(1); Exec rewrites `*@1` to `1`.
+        //   * Outer `+ 0` adds zero, constant-folds back to `1`.
+        // Bare-form `*@(1+0)` (parens-form, no BP cap) still works of course.
+        assert_reduces_to("*@1 + 0", "1");
         assert_reduces_to("*@(1 + 0)", "1");
+    }
+
+    #[test]
+    fn quote_short_high_precedence_does_not_eat_par() {
+        // `*@1 | 0` must parse as `(*@1) | 0` (a PPar of `*@1` and `0`),
+        // not `*@(1 | 0)`.  Without the prefix BP cap the inner Proc would
+        // greedily consume `| 0` into the quote.
+        //
+        // After fold: `*@1 → 1`, so the PPar reduces to `1 | 0` (which is
+        // its own normal form modulo PPar multiset ordering).
+        assert_reduces_to("*@1 | 0", "1 | 0");
     }
 }
 

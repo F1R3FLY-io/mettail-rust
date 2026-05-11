@@ -365,13 +365,15 @@ tries each in declaration order (more specific rules — `POutputNil`,
 collapse to the same canonical `POutput(NQuote(P), q)` AST, so the choice
 is semantically transparent.
 
-**Precedence caveat:** Cross-category prefix rules in the current
-framework cannot carry an explicit operand binding power (the
-`prefix(N)` annotation is only honoured for same-category unary
-prefixes). `NQuoteShort` therefore calls the inner Proc parser with
-`min_bp = 0`, consuming any trailing infix greedily — `*@1 + 0` parses
-as `*(@(1 + 0))`, not `(*@1) + 0`. Parenthesise to disambiguate:
-`(*@1) + 0` or `*(@1) + 0`.
+**Precedence:** All three short-form rules carry `prefix(220)`, a
+cross-category prefix binding-power annotation. The framework now honours
+`prefix(N)` for any prefix-shaped rule, threading the BP into the rule's
+generated standalone parser without entering the same-category
+unary-prefix dispatch. With `min_bp = 220` (well above all Proc-level
+infix BPs), `@P` consumes only a high-precedence Proc subterm: `*@1 + 0`
+parses as `(*@1) + 0`, and `@1+2!(0)` is a parse error rather than the
+ambiguous `(@(1+2))!(0)`. Users wanting to quote a compound expression
+still write `@(1+2)` explicitly.
 
 ## 4. `equations { ... }` — Structural Equivalences
 

@@ -166,20 +166,27 @@ language! {
         // the more specific Name-shape rule first crack at `@<Name>!(q)`,
         // preserving its existing fold semantics; only when that path
         // fails (e.g. inner is a literal) do we fall through to this rule.
+        //
+        // `prefix(220)` bounds the inner Proc parser's binding power so
+        // that `+`, `*`, `|`, etc. between `@` and `!` are NOT consumed
+        // into the quoted process — `@a + b!(0)` parses as
+        // `(@a) + (b!(0))` (a type error at the Proc level, surfaced
+        // explicitly), not `(@(a+b))!(0)`.  Same rationale as
+        // `NQuoteShort` below.
         POutputShort . p:Proc, q:Proc
         |- "@" p "!" "(" q ")" : Proc ![{
             Proc::POutput(
                 Box::new(Name::NQuote(Box::new(p.clone()))),
                 Box::new(q.clone()),
             )
-        }] fold;
+        }] fold prefix(220);
         PPersistOutputShort . p:Proc, q:Proc
         |- "@" p "!!" "(" q ")" : Proc ![{
             Proc::PPersistOutput(
                 Box::new(Name::NQuote(Box::new(p.clone()))),
                 Box::new(q.clone()),
             )
-        }] fold;
+        }] fold prefix(220);
 
         // Internal guard gate used by where-clause gating.
         GuardThen . cond:Proc, body:Proc
@@ -344,16 +351,17 @@ language! {
         // keeps the first success, so more-specific rules above continue to
         // win where applicable.
         //
-        // Caveat (precedence): without an explicit cross-category prefix
-        // binding-power in the framework, the inner Proc parser is called with
-        // `min_bp = 0` and will consume any Proc-level infix that follows.
-        // E.g. `*@1 + 0` parses as `*(@(1 + 0))`, not `(*@1) + 0`. Users who
-        // want the latter must write `(*@1) + 0` (or `*(@1)+0` — the
-        // existing `NQuote` parens-form is unambiguous).
+        // `prefix(220)` is a cross-category prefix binding-power annotation
+        // (honoured by `prattail` for cross-cat rules — see
+        // `prattail/src/pipeline.rs`).  It caps the inner Proc parser's
+        // `min_bp` at 220, well above any Proc-level infix BP, so `@P` only
+        // consumes a high-precedence Proc subterm.  Without it `*@1 + 0`
+        // would parse as `*(@(1+0))`; with it, the `+ 0` belongs to the
+        // outer expression and `*@1 + 0` parses as `(*@1) + 0`.
         NQuoteShort . p:Proc
         |- "@" p : Name ![{
             Name::NQuote(Box::new(p.clone()))
-        }] fold;
+        }] fold prefix(220);
 
         // Parenthesized Name grouping used by `*(x)` compatibility.
         NParen . n:Name
