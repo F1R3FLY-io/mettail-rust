@@ -29,6 +29,32 @@ fn ledtest_metadata_populated() {
 }
 
 #[test]
+fn unit_ledtest_pred_eqnum() {
+    mettail_runtime::clear_var_cache();
+    let term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for EqNum");
+    if let Ok(parsed) = Pred::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for EqNum: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
+fn unit_ledtest_pred_nenum() {
+    mettail_runtime::clear_var_cache();
+    let term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for NeNum");
+    if let Ok(parsed) = Pred::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(displayed, re_displayed,
+            "Roundtrip failed for NeNum: {} != {}", displayed, re_displayed);
+    }
+}
+
+#[test]
 fn unit_ledtest_num_addnum() {
     mettail_runtime::clear_var_cache();
     let term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
@@ -77,32 +103,6 @@ fn unit_ledtest_num_factnum() {
         let re_displayed = format!("{}", parsed);
         assert_eq!(displayed, re_displayed,
             "Roundtrip failed for FactNum: {} != {}", displayed, re_displayed);
-    }
-}
-
-#[test]
-fn unit_ledtest_pred_eqnum() {
-    mettail_runtime::clear_var_cache();
-    let term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for EqNum");
-    if let Ok(parsed) = Pred::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for EqNum: {} != {}", displayed, re_displayed);
-    }
-}
-
-#[test]
-fn unit_ledtest_pred_nenum() {
-    mettail_runtime::clear_var_cache();
-    let term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for NeNum");
-    if let Ok(parsed) = Pred::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NeNum: {} != {}", displayed, re_displayed);
     }
 }
 

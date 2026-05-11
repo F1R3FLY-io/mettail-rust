@@ -642,7 +642,7 @@ fn sim_ledtest_normal_form_reachability() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["1 + 1", "1 * 1", "- 1", "1 !", "1 == 1", "1 != 1", "true and true", "1", "true"];
+    let test_inputs: Vec<&str> = vec!["1 == 1", "1 != 1", "1 + 1", "1 * 1", "- 1", "1 !", "true and true", "1", "true"];
 
     let mut tested = 0usize;
     let mut reached_nf = 0usize;
@@ -694,7 +694,7 @@ fn sim_ledtest_roundtrip_under_rewrite() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     // Test a set of concrete expressions for rewrite roundtrip.
-    let test_inputs: Vec<&str> = vec!["1 + 1", "1 * 1", "- 1", "1 !", "1 == 1", "1 != 1", "true and true", "1", "true"];
+    let test_inputs: Vec<&str> = vec!["1 == 1", "1 != 1", "1 + 1", "1 * 1", "- 1", "1 !", "true and true", "1", "true"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -756,7 +756,7 @@ fn sim_ledtest_morphology_bounded() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["1 + 1", "1 * 1", "- 1", "1 !", "1 == 1", "1 != 1", "true and true", "1", "true"];
+    let test_inputs: Vec<&str> = vec!["1 == 1", "1 != 1", "1 + 1", "1 * 1", "- 1", "1 !", "true and true", "1", "true"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -791,7 +791,7 @@ fn sim_ledtest_eval_determinism() {
     let lang = LedTestLanguage;
     let lang_ref: &dyn mettail_runtime::Language = &lang;
 
-    let test_inputs: Vec<&str> = vec!["1 + 1", "1 * 1", "- 1", "1 !", "1 == 1", "1 != 1", "true and true", "1", "true"];
+    let test_inputs: Vec<&str> = vec!["1 == 1", "1 != 1", "1 + 1", "1 * 1", "- 1", "1 !", "true and true", "1", "true"];
 
     for input in &test_inputs {
         let config1 = SimulationConfig {

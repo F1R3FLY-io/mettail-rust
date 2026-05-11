@@ -5,6 +5,50 @@
 import * as Blockly from "blockly/core";
 
 const definitions = [
+	// Eq Num: ... ...
+	{
+		type: "pred_eq_num",
+		tooltip: "Eq Num: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Num",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Num",
+			},
+		],
+		inputsInline: true,
+		output: "Pred",
+		colour: "51e08a",
+	},
+
+	// Ne Num: ... ...
+	{
+		type: "pred_ne_num",
+		tooltip: "Ne Num: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Num",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Num",
+			},
+		],
+		inputsInline: true,
+		output: "Pred",
+		colour: "51e08a",
+	},
+
 	// Add Num: ... ...
 	{
 		type: "num_add_num",
@@ -81,50 +125,6 @@ const definitions = [
 		inputsInline: true,
 		output: "Num",
 		colour: "6be051",
-	},
-
-	// Eq Num: ... ...
-	{
-		type: "pred_eq_num",
-		tooltip: "Eq Num: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Num",
-			},
-			{
-				type: "input_value",
-				name: "ARG2",
-				check: "Num",
-			},
-		],
-		inputsInline: true,
-		output: "Pred",
-		colour: "51e08a",
-	},
-
-	// Ne Num: ... ...
-	{
-		type: "pred_ne_num",
-		tooltip: "Ne Num: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Num",
-			},
-			{
-				type: "input_value",
-				name: "ARG2",
-				check: "Num",
-			},
-		],
-		inputsInline: true,
-		output: "Pred",
-		colour: "51e08a",
 	},
 
 	// And Pred: ... ...

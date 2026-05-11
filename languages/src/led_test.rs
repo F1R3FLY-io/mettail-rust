@@ -27,15 +27,25 @@ language! {
     },
 
     terms {
+        // BP-by-declaration-order convention (per `analyze_binding_powers`):
+        // operators declared earlier in the same operand-category get LOWER
+        // BPs. For cross-category operators (Num × Num → Pred) to bind LOOSER
+        // than same-category operators (Num → Num), they MUST be declared
+        // BEFORE the same-cat operators. Mirrors Calculator's ordering
+        // (EqInt declared before AddInt). Reordered 2026-05-11 to fix
+        // `1 + 2 == 3` parsing as `EqNum(AddNum(1,2), 3)` instead of trying
+        // to parse `AddNum(1, EqNum(2, 3))` (which fails because EqNum
+        // returns Pred, not Num).
+
+        // ── Cross-category: Num × Num → Pred ──
+        EqNum . a:Num, b:Num |- a "==" b : Pred ![a == b] step;
+        NeNum . a:Num, b:Num |- a "!=" b : Pred ![a != b] step;
+
         // ── Num (constituent) operators ──
         AddNum . a:Num, b:Num |- a "+" b : Num ![a + b] step;
         MulNum . a:Num, b:Num |- a "*" b : Num ![a * b] step;
         NegNum . a:Num |- "-" a : Num ![(-a)] step;
         FactNum . a:Num |- a "!" : Num ![{ (1..=a.max(0)).product::<i32>() }] step;
-
-        // ── Cross-category: Num × Num → Pred ──
-        EqNum . a:Num, b:Num |- a "==" b : Pred ![a == b] step;
-        NeNum . a:Num, b:Num |- a "!=" b : Pred ![a != b] step;
 
         // ── Pred (result) operators ──
         AndPred . a:Pred, b:Pred |- a "and" b : Pred ![a && b] step;

@@ -1252,12 +1252,19 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 let source_src_idx = *source_src_idx;
                 quote! {
                     #pat if #guard => {
+                        // Plan C Fix 1.4 (led_test cluster, 2026-05-11):
+                        // `cur_bp: 0` (not `*cur_bp`). Anonymous cross-cat-LHS
+                        // delegation should start the sub-parser at its own
+                        // minimum BP. The outer cur_bp is preserved on the
+                        // GSS via the wrapping context (Return symbol on a
+                        // pending RuleAt or the original CategoryEntry), so
+                        // it restores correctly when this sub-parse unwinds.
                         return WpdsStepAction::Push {
                             symbol: StackSymbolV2::category_entry(#source_src_idx),
                             weight: LexicographicWeight::one(),
                             new_state: WpdsState::PrefixDispatch {
                                 pos: *pos,
-                                cur_bp: *cur_bp,
+                                cur_bp: 0,
                             },
                         };
                     }
@@ -1307,9 +1314,12 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                 mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
                                 #category_src_idx, #src_idx,
                             ),
+                            // Plan C Fix 1.4 (led_test cluster, 2026-05-11):
+                            // `cur_bp: 0` for the same reason as the singleton
+                            // CrossCatLhs arm above.
                             new_state: WpdsState::PrefixDispatch {
                                 pos: *pos,
-                                cur_bp: *cur_bp,
+                                cur_bp: 0,
                             },
                             action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
                         }

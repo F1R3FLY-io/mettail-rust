@@ -360,15 +360,53 @@ pub(crate) fn emit_engine_impl_full(
                                     }
                                 }
                                 mettail_prattail::wpds_runtime::SymbolKind::CategoryEntry => {
-                                    // Phase 5 fix: pop CategoryEntry, but stay
-                                    // in Unwinding so we continue unwinding into
+                                    // Plan C Fix 1.3 (led_test cluster, 2026-05-11):
+                                    // detect the cross-cat anonymous-delegation
+                                    // return path by peeking the GSS predecessor.
+                                    // If the predecessor is ALSO a CategoryEntry,
+                                    // we are returning from an inner-category
+                                    // sub-parse to its outer category — re-enter
+                                    // InfixLoop so the outer category's infix
+                                    // operators (e.g., Pred's `and` after EqNum
+                                    // produced a Pred on the builder) can match.
+                                    //
+                                    // The `cur_bp: 0` is correct because
+                                    // predecessor-is-CategoryEntry implies no
+                                    // infix recursion was active at the outer
+                                    // level when the delegation started (any
+                                    // active recursion would have placed a Return
+                                    // symbol between the CEs).
+                                    //
+                                    // Narrower than F1 Cluster A (which keyed on
+                                    // pred=GroupingMarker and fired too eagerly,
+                                    // reverted). CE-over-CE only occurs in the
+                                    // anonymous CrossCatLhs path emitted by
+                                    // `prefix.rs::emit_prefix_arms_for_category`
+                                    // bucket-then-Fork path. Other grouping /
+                                    // binder / collection paths interpose
+                                    // Return/GroupingMarker/CollectionMarker
+                                    // symbols between consecutive CEs.
+                                    let pred_kind = _gss
+                                        .lookup_id(node)
+                                        .and_then(|id| _gss.edges_from(id).first().map(|e| e.target))
+                                        .and_then(|pid| _gss.node(pid))
+                                        .map(|pn| pn.symbol.kind);
+                                    let new_state = match pred_kind {
+                                        Some(mettail_prattail::wpds_runtime::SymbolKind::CategoryEntry) => {
+                                            WpdsState::InfixLoop { cur_bp: 0 }
+                                        }
+                                        _ => WpdsState::Unwinding,
+                                    };
+                                    // Phase 5 fix: when no special transition
+                                    // applies, pop CategoryEntry but stay in
+                                    // Unwinding so we continue unwinding into
                                     // any enclosing markers (binder rule_at,
                                     // collection marker). When the GSS is fully
                                     // unwound, frontier_top is None and the
                                     // outer Unwinding arm emits Accept.
                                     WpdsStepAction::Pop {
                                         weight: LexicographicWeight::one(),
-                                        new_state: WpdsState::Unwinding,
+                                        new_state,
                                     }
                                 }
                                 mettail_prattail::wpds_runtime::SymbolKind::CollectionMarker => {
@@ -1092,7 +1130,7 @@ pub(crate) fn emit_engine_impl_full(
                     }
                     WpdsState::CrossCatDelegate {
                         source_src_idx,
-                        outer_bp,
+                        outer_bp: _outer_bp,
                     } => {
                         // Stage 1.1: cross-cat projection delegation.
                         // Push a CategoryEntry for the source category;
@@ -1103,12 +1141,23 @@ pub(crate) fn emit_engine_impl_full(
                         // stack below the source CategoryEntry) becomes
                         // top → its wrap-action fires, wrapping the
                         // source Term as `Cat::Wrapper(Box::new(t))`.
+                        //
+                        // Plan C Fix 1.2 (led_test cluster, 2026-05-11):
+                        // `cur_bp: 0` (not `*outer_bp`). BPs are per-category
+                        // Pratt scales; cross-cat sub-parser should start at
+                        // its own minimum BP so all of its own operators are
+                        // visible. The outer_bp is preserved on the wrapping
+                        // `Return(outer_cat, CastRule, bp=Some(outer_bp))`
+                        // symbol below this CategoryEntry — when that Return
+                        // is later popped, the standard Return-pop path at
+                        // `Unwinding-Return` correctly restores
+                        // `InfixLoop { cur_bp: outer_bp }`.
                         WpdsStepAction::Push {
                             symbol: StackSymbolV2::category_entry(*source_src_idx),
                             weight: LexicographicWeight::one(),
                             new_state: WpdsState::PrefixDispatch {
                                 pos: _pos,
-                                cur_bp: *outer_bp,
+                                cur_bp: 0,
                             },
                         }
                     }
