@@ -30,10 +30,18 @@ pub(crate) fn build_bp_table(language: &LanguageDef) -> BindingPowerTable {
 /// Extract `InfixRuleInfo` entries from the language's rules. Covers
 /// binary infix (old + judgement-style), unary-postfix, and mixfix.
 /// Unary prefix rules are classified separately in `prefix.rs`.
+///
+/// Plan 3 (ambient cluster, 2026-05-10): clones each rule and runs
+/// `convert_items_to_term_context` on the clone before classification
+/// so BNF-style rules (e.g., ambient.rs's `PAmb . Proc ::= Name "[" Proc "]"`)
+/// get classified as judgement-style. The conversion is a no-op for rules
+/// that already have `term_context` + `syntax_pattern` set.
 pub(crate) fn extract_infix_rules(language: &LanguageDef) -> Vec<InfixRuleInfo> {
     let mut rules = Vec::new();
     for rule in &language.terms {
-        if let Some(info) = classify_rule(rule) {
+        let mut normalized = rule.clone();
+        mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+        if let Some(info) = classify_rule(&normalized) {
             rules.push(info);
         }
     }
@@ -50,8 +58,14 @@ fn classify_rule(rule: &GrammarRule) -> Option<InfixRuleInfo> {
 }
 
 /// Public re-export of `classify_rule` for use in `semantic_actions.rs`.
+///
+/// Plan 3 (ambient cluster, 2026-05-10): clones the rule and runs
+/// `convert_items_to_term_context` so BNF-style rules are normalized
+/// before classification. No-op for judgement-style rules.
 pub(crate) fn classify_rule_public(rule: &GrammarRule) -> Option<InfixRuleInfo> {
-    classify_rule(rule)
+    let mut normalized = rule.clone();
+    mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+    classify_rule(&normalized)
 }
 
 fn classify_judgement(

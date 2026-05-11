@@ -51,6 +51,22 @@ pub(crate) fn build_per_category_rules(
         }
     }
 
+    // 1b. Plan 3 (ambient cluster, 2026-05-10): normalize old-BNF rules to
+    // judgement-style by synthesizing `term_context` + `syntax_pattern`
+    // from `items`. The user-written .rs syntax stays exactly as written;
+    // this conversion is internal macro plumbing so downstream classifiers
+    // (`classify_binder`, `classify_postfix_mixfix`, `classify_collection`)
+    // — which only read the judgement-form fields — can dispatch these
+    // rules. `convert_items_to_term_context` is a no-op for judgement-form
+    // rules (early-returns) and for atomic/literal/Var rules (those use
+    // the existing classify_atomic / VarRule paths). See its docstring in
+    // `ast/src/grammar.rs` for the conversion rules.
+    for cat_rules in per_cat.iter_mut() {
+        for rule in cat_rules.iter_mut() {
+            mettail_ast::grammar::convert_items_to_term_context(rule);
+        }
+    }
+
     // 2. Synthetic literal-patterned rules.
     //
     // Two cases give a category an implicit atomic-literal variant:
