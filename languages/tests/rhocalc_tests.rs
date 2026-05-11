@@ -854,6 +854,37 @@ mod exec {
             "QuoteDrop equation should be discoverable"
         );
     }
+
+    #[test]
+    fn quote_nil_shorthand_parses() {
+        // `@Nil` is Rholang shorthand for `@(Nil)`. At parse time the surface
+        // forms differ (`Name::NQuoteNil` vs `Name::NQuote(PZero)`) — the
+        // fold-equivalence is realized via the Ascent fold rule. We assert that
+        // both inputs reduce to the same normal form via `Exec` (`*X → X`).
+        assert_reduces_to("*@Nil", "Nil");
+        assert_reduces_to("*(@(Nil))", "Nil");
+    }
+
+    #[test]
+    fn quote_nil_exec_reduces_to_nil() {
+        // `*@Nil` (= `PDrop(NQuote(PZero))`) reduces via Exec to `PZero` (`Nil`).
+        assert_reduces_to("*@Nil", "Nil");
+    }
+
+    #[test]
+    fn quote_nil_send_reduces_via_comm() {
+        // Quoted-name channel using the shorthand: `for(x <- @Nil){x} | @Nil!(0)`
+        // routes the send through the `@Nil`-named channel just like `@(Nil)` does.
+        assert_reduces_to("for(x <- @Nil){x} | @Nil!(0)", "0");
+    }
+
+    #[test]
+    fn quote_nil_persistent_send_parses() {
+        // Persistent send shorthand must also accept `@Nil`.
+        fresh();
+        let parsed = Proc::parse("@Nil!!(0)");
+        assert!(parsed.is_ok(), "expected `@Nil!!(0)` to parse, got {:?}", parsed);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -1251,6 +1282,100 @@ mod native_ops {
                 "a!(#{1|2|2}#) | c!(2) | for(b <- a & e <- c){count(*(b), *(e))}",
                 "2",
             );
+        }
+
+        // ── Rholang-style method-call sugars on Bag literals.
+        //
+        // Bag has no Rholang counterpart, so the literal stays `#{a|b|…}#`,
+        // but the method surface mirrors Map/List for a uniform feel.
+
+        #[test]
+        fn bag_size_extends_len() {
+            // Underlying `Len` is extended to dispatch over `CastBag`
+            // (size = sum of element multiplicities, normalised).
+            assert_reduces_to("len(#{1|2|2}#)", "3");
+        }
+
+        #[test]
+        fn bag_size_method() {
+            assert_reduces_to("#{1|2|2}#.size()", "3");
+        }
+
+        #[test]
+        fn bag_count_method() {
+            assert_reduces_to("#{1|2|2}#.count(2)", "2");
+            assert_reduces_to("#{1|2|2}#.count(7)", "0");
+        }
+
+        #[test]
+        fn bag_diff_method() {
+            // Folds to `DiffBag`; same display normalisation as the prefix form.
+            assert_reduces_to("#{1|2|2}#.diff(#{2}#)", "#{1|2}#");
+        }
+
+        #[test]
+        fn bag_remove_method() {
+            assert_reduces_to("#{1|2|2}#.remove(2)", "#{1|2}#");
+        }
+
+        #[test]
+        fn bag_union_method_polymorphic_to_unionbag() {
+            // `.union(other)` dispatches by receiver: for a `CastBag` we lower
+            // to `UnionBag`. Result has six elements: `{1,2,2} ∪ {2,3,3} = {1,2,2,2,3,3}`.
+            assert_reduces_to("#{1|2|2}#.union(#{2|3|3}#).size()", "6");
+        }
+    }
+
+    mod list {
+        use super::*;
+
+        // Smoke test for the existing prefix forms (kept as the canonical AST
+        // builtins that the method sugars below fold to).
+
+        #[test]
+        fn list_len_prefix() {
+            assert_reduces_to("len([1, 2, 3])", "3");
+        }
+
+        #[test]
+        fn list_at_prefix() {
+            assert_reduces_to("at([10, 20, 30], 1)", "20");
+        }
+
+        #[test]
+        fn list_concat_prefix() {
+            assert_reduces_to("concat([1, 2], [3, 4])", "[1, 2, 3, 4]");
+        }
+
+        // ── Rholang-style method-call sugars.
+
+        #[test]
+        fn list_length_method() {
+            assert_reduces_to("[1, 2, 3].length()", "3");
+            assert_reduces_to("[].length()", "0");
+        }
+
+        #[test]
+        fn list_nth_method() {
+            assert_reduces_to("[10, 20, 30].nth(0)", "10");
+            assert_reduces_to("[10, 20, 30].nth(2)", "30");
+        }
+
+        #[test]
+        fn list_concat_method() {
+            assert_reduces_to("[1, 2].concat([3, 4])", "[1, 2, 3, 4]");
+        }
+
+        #[test]
+        fn list_concat_chain_length() {
+            // Chained method calls round-trip: the receiver of the second `.length()`
+            // is the result of `[1,2].concat([3,4])`, which fully folds to `[1,2,3,4]`.
+            assert_reduces_to("[1, 2].concat([3, 4]).length()", "4");
+        }
+
+        #[test]
+        fn list_nth_after_concat() {
+            assert_reduces_to("[1, 2].concat([3, 4]).nth(2)", "3");
         }
     }
 

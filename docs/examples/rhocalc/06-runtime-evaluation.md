@@ -92,7 +92,7 @@ Proc::Add(
 )
 ```
 
-### Example: `@(Nil) ! (Nil) | *(@(Nil))`
+### Example: `@Nil!(Nil) | *@Nil`
 
 ```
 Proc::PPar(HashBag {
@@ -106,8 +106,11 @@ Proc::PPar(HashBag {
 })
 ```
 
-Note: `@(Nil)` is `Name::NQuote(Box::new(Proc::PZero))` — the zero process is
-spelled `Nil` in surface syntax. `{}` is now the empty `Map` literal (see
+Note: `@Nil` is the Rholang-style shorthand for
+`Name::NQuote(Box::new(Proc::PZero))` — the zero process is spelled `Nil` in
+surface syntax. The send-side spelling is `@Nil!(Nil)` (Proc-category sugar
+`POutputNil`); the drop-side spelling is `*@Nil` (Name-category fold rule
+`NQuoteNil`). `{}` is now the empty `Map` literal (see
 [exploring/rhocalc-rholang-style-syntax.md](../../design/exploring/rhocalc-rholang-style-syntax.md)).
 
 ## Stage 3: Normalization
@@ -188,13 +191,13 @@ Step-term propagation:
 No new facts derived → FIXPOINT REACHED
 ```
 
-For the communication rule `@(Nil) ! (Nil) | *(@(Nil))`:
+For the communication rule `@Nil!(Nil) | *@Nil`:
 
 **Iteration 1:**
 ```
 Category exploration decomposes PPar → discovers POutput, PDrop, NQuote, PZero
-QuoteDrop equation fires: eq_name(@(*(@(Nil))), @(Nil))
-Exec rule fires: rw_proc(*(@(Nil)), Nil)      [= PDrop(NQuote(PZero)) ~> PZero]
+QuoteDrop equation fires: eq_name(@(*@Nil), @Nil)
+Exec rule fires: rw_proc(*@Nil, Nil)          [= PDrop(NQuote(PZero)) ~> PZero]
 ```
 
 **Iteration 2:**
@@ -338,28 +341,31 @@ The REPL (`repl/src/repl.rs`) displays results depending on the command:
 └────────────────────────────────────────────────────────────────┘
 ```
 
-## Full Trace: `{ @({}) ! ({}) | *(@({})) }`
+## Full Trace: `@Nil!(Nil) | *@Nil`
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│ REPL input: exec { @({}) ! ({}) | *(@({})) }                   │
+│ REPL input: exec @Nil!(Nil) | *@Nil                            │
 └──────────────────────────────┬─────────────────────────────────┘
                                │
                                ▼
 ┌────────────────────────────────────────────────────────────────┐
 │ Stage 1 — Lex                                                  │
-│   → [At, LParen, Nil, RParen, Bang, LParen, Nil, RParen,       │
-│      Pipe, Star, LParen, At, LParen, Nil, RParen, RParen, Eof] │
+│   → [At, KwNil, Bang, LParen, KwNil, RParen,                   │
+│      Pipe, Star, At, KwNil, Eof]                               │
 └──────────────────────────────┬─────────────────────────────────┘
                                │
                                ▼
 ┌────────────────────────────────────────────────────────────────┐
 │ Stage 2 — Parse                                                │
 │   → PParInfix(                                                 │
-│       POutput(NQuote(PZero), PZero),  // @(Nil) ! (Nil)        │
-│       PDrop(NQuote(PZero))            // *(@(Nil))             │
+│       POutputNil(PZero),              // @Nil!(Nil)            │
+│       PDrop(NQuoteNil)                // *@Nil                 │
 │     )                                                          │
-│   (folds to PPar({…}) in the ascent stage)                     │
+│   fold lowers `POutputNil(PZero)` →                            │
+│       POutput(NQuote(PZero), PZero)                            │
+│   and `NQuoteNil` → NQuote(PZero); the PPar then folds to      │
+│   PPar({…}) in the ascent stage.                               │
 └──────────────────────────────┬─────────────────────────────────┘
                                │
                                ▼
@@ -379,14 +385,15 @@ The REPL (`repl/src/repl.rs`) displays results depending on the command:
 │ Stage 5 — Ascent Fixpoint                                      │
 │                                                                │
 │ Seed:                                                          │
-│   proc(PParInfix(POutput(@(Nil),Nil), *(@(Nil))))              │
-│   fold_proc → proc(PPar({POutput(@(Nil),Nil), *(@(Nil))}))     │
+│   proc(PParInfix(POutputNil(Nil), PDrop(NQuoteNil)))           │
+│   fold_proc / fold_name lift @Nil sugars to canonical form     │
+│     → proc(PPar({POutput(@Nil,Nil), *@Nil}))                   │
 │                                                                │
 │ Iteration 1:                                                   │
 │   Category exploration → proc(POutput(...)), proc(PDrop(...)), │
 │     name(NQuote(PZero)), proc(PZero)                           │
 │   Exec fires: rw_proc(PDrop(NQuote(PZero)), PZero)             │
-│     ≡ *(@(Nil)) ~> Nil                                         │
+│     ≡ *@Nil ~> Nil                                             │
 │   QuoteDrop: eq_name(NQuote(PDrop(NQuote(PZero))),             │
 │                      NQuote(PZero))                            │
 │                                                                │
@@ -395,7 +402,7 @@ The REPL (`repl/src/repl.rs`) displays results depending on the command:
 │   Further reductions until fixpoint                            │
 │                                                                │
 │ Result:                                                        │
-│   rw_proc(PPar({POutput(@(Nil),Nil), *(@(Nil))}), ...)         │
+│   rw_proc(PPar({POutput(@Nil,Nil), *@Nil}), ...)               │
 │   Normal forms identified                                      │
 └──────────────────────────────┬─────────────────────────────────┘
                                │

@@ -1757,17 +1757,38 @@ fn write_nfa_merged_prefix_arm(
         }
     }
 
-    // If there are frame-pushing rules that can't be NFA-merged, try them last
-    // by falling through to the first one if no inlineable succeeded.
-    // In practice, this case is rare — most duplicate-token situations are all-inlineable.
-    // Note: frame-pushing rules that can't be NFA-merged are tried in the 0 => branch
+    // Try each frame-pushing rule via its standalone parser function (the macro
+    // emits `parse_<label>` for every RD rule). Standalone fns call into
+    // `parse_<cat>` recursively for inner sub-parses, which re-enters the
+    // trampoline — so we get correct semantics without trying to push frames
+    // from inside an NFA-trial closure.  If exactly one frame-pushing rule
+    // exists *and* no inlineable rules need to share the dispatch, we fall
+    // through to the original frame-push (preserving the legacy fast path).
+    let use_standalone_for_frame_pushing =
+        !frame_pushing.is_empty() && (frame_pushing.len() > 1 || !inlineable.is_empty());
+
+    if use_standalone_for_frame_pushing {
+        for rd_rule in frame_pushing {
+            let fn_name = format!("parse_{}", rd_rule.label.to_lowercase());
+            buf.push_str("*pos = nfa_saved;");
+            write!(
+                buf,
+                "match {}(tokens, pos) {{ \
+                    Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); }}, \
+                    Err(e) => {{ if nfa_first_err.is_none() {{ nfa_first_err = Some(e); }} }}, \
+                }}",
+                fn_name,
+            )
+            .unwrap();
+        }
+    }
 
     // Result selection
     buf.push_str("match nfa_results.len() {");
 
-    // No successes — either fall through to frame-pushing or return error
-    if !frame_pushing.is_empty() {
-        // Fall through to first frame-pushing rule
+    if !frame_pushing.is_empty() && !use_standalone_for_frame_pushing {
+        // Legacy fast path: a single frame-pushing rule with no inlineable
+        // competition.  Fall through and push its frame.
         let rd_rule = frame_pushing[0];
         let segments = split_rd_handler(rd_rule);
         buf.push_str("0 => {");

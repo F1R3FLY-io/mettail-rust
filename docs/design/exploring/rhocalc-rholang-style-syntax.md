@@ -1,4 +1,4 @@
-# RhoCalc Rholang-Style Surface Syntax (Phase 1: Map)
+# RhoCalc Rholang-Style Surface Syntax (Phases 1–2: Map, List, Bag)
 
 **Status:** Implemented
 **Date:** May 2026
@@ -16,14 +16,20 @@ Cross-links:
 
 Align the rhocalc surface syntax with [Rholang](https://rholang.io)'s syntax for
 process/data terms so that programs written for either language read
-identically at the source level. Phase 1 covers **`Map`** only; `List`, `Bag`,
-and `Set` are deferred to a follow-up. The full eight-method Map surface
-(including unary `m.size()`, `m.keys()`, `m.values()`) is now in scope.
+identically at the source level.
+
+- **Phase 1:** `Map` (full eight-method surface, including unary `m.size()`,
+  `m.keys()`, `m.values()`).
+- **Phase 2:** `List` (`[…]` literals; `.length()`, `.nth(i)`, `.concat(l)`
+  method-call sugar) and `Bag` (kept as `#{…}#` — no Rholang counterpart —
+  with `.size()`, `.count(e)`, `.diff(b)`, `.remove(e)`, `.union(b)` method
+  sugar). `Set` is deferred.
 
 The change is purely surface-level: AST, semantics, equations, congruence, and
 rewrite rules are unchanged. The new surface forms are syntactic sugar that
-`fold` to the existing builtins (`GetMap`, `PutMap`, `HasMap`, `KeysMap`,
-`ValuesMap`, `DeleteMap`, `MergeMap`, `Len`).
+`fold` to the existing prefix builtins (`GetMap`, `PutMap`, `HasMap`,
+`KeysMap`, `ValuesMap`, `DeleteMap`, `MergeMap`, `Len`, `ElemList`,
+`ConcatList`, `UnionBag`, `DiffBag`, `RemoveBag`, `CountBag`).
 
 ---
 
@@ -142,9 +148,109 @@ for(@{1:x, 3:4} <- c) { x }
 
 instead of the old `for(@map(1:x, 3:4) <- c)`.
 
+### 3.6 List & Bag method-call sugar
+
+`List` already uses the Rholang-style `[a, b, c]` literal (via the
+collection-delimiter override `![Vec<Proc>] as List ["[", "]", ","]`); no
+literal change is needed in Phase 2. `Bag` keeps its rhocalc-only `#{a|b|…}#`
+spelling — Rholang has no bag type — but gains a method-call surface for
+consistency with `Map`/`List`.
+
+| Method form | Lowering | Receiver |
+|-------------|----------|----------|
+| `l.length()` | `Len(l)` | List |
+| `l.nth(i)` | `ElemList(l, i)` | List |
+| `l.concat(r)` | `ConcatList(l, r)` | List |
+| `b.size()` | `Len(b)` (extended below) | Bag (& Map via `MSize`) |
+| `b.count(e)` | `CastInt(Int::CountBag(b, e))` | Bag |
+| `b.diff(c)` | `DiffBag(b, c)` | Bag |
+| `b.remove(e)` | `RemoveBag(b, e)` | Bag |
+| `b.union(c)` | `UnionBag(b, c)` *or* `MergeMap(a, b)` | Bag *or* Map (see below) |
+
+Each rule is a zero/one/two-operand-after-trigger mixfix that reuses the same
+prattail `leading_terminals` dispatch as the Map method sugars (§3.4). Unary
+methods (`.length()`, `.size()`) compile inline via the extended mixfix
+detector (1 NT + ≥3 terminals).
+
+`Len`'s native body is extended to a fourth arm handling `Proc::CastBag(_)`:
+the result is the bag's total element count (sum of all multiplicities,
+computed after `normalize_bag_elements` to give canonical-form bags a stable
+size irrespective of surface spelling).
+
+**Polymorphic dispatch for `.union` and `.size`:**  Both `Map` and `Bag`
+expose a `union` method, and a single grammar rule cannot dispatch by
+receiver category at parse time. We therefore make `MUnion`'s `fold` action
+inspect the (already-folded) receiver and lower to either `MergeMap` or
+`UnionBag`:
+
+```rust
+MUnion . a:Proc, b:Proc
+|- a "." "union" "(" b ")" : Proc ![{
+    match &a {
+        Proc::CastMap(_) => Proc::MergeMap(Box::new(a.clone()), Box::new(b.clone())),
+        Proc::CastBag(_) => Proc::UnionBag(Box::new(a.clone()), Box::new(b.clone())),
+        _ => Proc::Err,
+    }
+}] fold;
+```
+
+`MSize` follows the same pattern (`CastMap` → constant-fold to a `CastInt` of
+the entry count; `CastBag` → defer to `Len`, which handles bag-size
+normalization). Since `fold` rules in this codebase fire on terms that are
+already in canonical-literal form, the static match is sufficient — any other
+shape returns `Proc::Err`, matching the existing prefix-builtin behaviour
+when receivers are mistyped.
+
+### 3.7 `@Nil` shorthand
+
+Rholang spells `Name::NQuote(Proc::PZero)` as `@Nil` (rather than `@(Nil)`).
+We add the same shorthand by introducing a Name-category fold rule that lowers
+to the canonical `NQuote(PZero)` AST:
+
+```rust
+NQuoteNil .
+|- "@" "Nil" : Name ![{
+    Name::NQuote(Box::new(Proc::PZero))
+}] fold;
+```
+
+Because `Nil` is the keyword spelling of `PZero` (§3.1), it is not in `Name`'s
+FIRST set; therefore `NQuoteNil` cannot appear inside `POutputQuoted`'s
+`@ <Name> ! ( q )` shape (where the `@` is consumed at the Proc level and the
+inner Name parser sees `Nil` as a bare keyword it does not accept). To make
+`@Nil!(q)` and `@Nil!!(q)` write the way Rholang does, we add two dedicated
+send-sugar rules in `Proc`:
+
+```rust
+POutputNil . q:Proc
+|- "@" "Nil" "!" "(" q ")" : Proc ![{
+    Proc::POutput(
+        Box::new(Name::NQuote(Box::new(Proc::PZero))),
+        Box::new(q.clone()),
+    )
+}] fold;
+
+PPersistOutputNil . q:Proc
+|- "@" "Nil" "!!" "(" q ")" : Proc ![{
+    Proc::PPersistOutput(
+        Box::new(Name::NQuote(Box::new(Proc::PZero))),
+        Box::new(q.clone()),
+    )
+}] fold;
+```
+
+They fold to the same `POutput` / `PPersistOutput` AST shape that
+`POutputQuoted` would produce if its inner Name slot accepted `Nil`. Three
+`Proc`-category rules now share the `@` first token (`POutputNil`,
+`PPersistOutputNil`, `POutputQuoted`); the prattail dispatcher tries each
+through its generated `parse_<label>` standalone function in declaration order
+(NFA-style — first success wins). See §4.2 for the dispatcher change.
+
 ---
 
-## 4. Disambiguation: `{` opener
+## 4. Disambiguation
+
+### 4.1 `{` opener
 
 After removing braced `PPar`, the only top-level rule that opens with `{` at
 an expression position is the `Map` literal. Disambiguation is therefore not
@@ -158,6 +264,25 @@ A single-process body group (`{ P }` at expression position, e.g. inside a
 function-call argument like `int({1 + 2}, 8)`) is no longer supported; the
 expression must be written bare: `int(1 + 2, 8)`. Inside a `for`/`new` body
 this never bit, since the keyword-prefixed rule already opens its own braces.
+
+### 4.2 `@` opener with multiple frame-pushing rules
+
+`POutputQuoted`, `POutputNil`, and `PPersistOutputNil` all dispatch from
+`Token::At` in `Proc`. Prior to this change, prattail's
+`write_nfa_merged_prefix_arm` (in `prattail/src/trampoline.rs`) only emitted a
+fast-path frame-push for `frame_pushing[0]`, silently dropping all other
+frame-pushing alternatives — only the first declared rule could fire for a
+shared FIRST token.
+
+The fix promotes any token group containing more than one frame-pushing rule
+(or any frame-pushing rule alongside an inlineable rule) to a true NFA dispatch
+that calls the generated standalone `parse_<label>` function for each
+candidate. Each `parse_<label>` recurses through the regular `parse_<cat>`
+entry, so inner sub-parses still run through the trampoline with correct
+binding-power tracking. The first parser that succeeds (declaration order)
+wins; if none succeed, the first error is reported. The legacy single-frame
+fast path is retained for the common case of exactly one frame-pushing rule
+per token.
 
 ---
 
@@ -183,12 +308,20 @@ corresponding prefix-form calls.
 ## 6. Migration Checklist
 
 - [x] `languages/src/rhocalc.rs` — `PZero`, `Map` delimiter override, `Map()`
-  alias, removed braced `PPar`, internal `__ppar` rule, six method-call sugar
-  rules.
+  alias, removed braced `PPar`, internal `__ppar` rule, eight Map method-call
+  sugars, three List method sugars (`LLength`, `LNth`, `LConcat`), three
+  bag-specific Bag method sugars (`BCount`, `BDiff`, `BRemove`),
+  polymorphic `MUnion` / `MSize` (Map ∪ Bag), `Len` extended to `CastBag`,
+  `NQuoteNil` Name shorthand, `POutputNil` / `PPersistOutputNil` send
+  sugars.
 - [x] `languages/tests/rhocalc_tests.rs` — strip outer `{…}` wraps in test
   inputs, switch `map(…)` literals to `{…}` form, switch `mod map` to method
   syntax + brace literals, refit `assert_never_reaches` helper for the new
-  display.
+  display, regression tests for `@Nil` (`*@Nil → Nil`,
+  `for(x <- @Nil){x} | @Nil!(0) → 0`, `@Nil!!(0)` parses), new `mod list`
+  + `mod bag` sub-modules covering `.length()`, `.nth(i)`, `.concat(r)`,
+  `.size()` (via extended `Len`), `.count(e)`, `.diff(b)`, `.remove(e)`, and
+  polymorphic `.union`.
 - [x] `repl/src/examples/rhocalc.rs` — strip outer braces from process
   examples; `{}` empty processes become `Nil`.
 - [x] `repl/src/examples/rhocalc-patterns.txt`,
@@ -198,12 +331,14 @@ corresponding prefix-form calls.
   grouping by trigger to support method-call dispatch; mixfix detection
   extended to 1-NT/3+T shape so zero-operand-after-trigger rules
   (`m.size()`, `m.keys()`, `m.values()`) compile inline without a frame
-  push.
-- [ ] `docs/design/made/native-types/map-type-design.md` — note rhocalc
+  push; `write_nfa_merged_prefix_arm` extended to NFA-try multiple
+  frame-pushing rules sharing a dispatch token via their generated
+  `parse_<label>` standalone functions.
+- [x] `docs/design/made/native-types/map-type-design.md` — note rhocalc
   override and method-call sugar layer.
-- [ ] `docs/manual/language/features/collections/00-overview.md` — refresh
+- [x] `docs/manual/language/features/collections/00-overview.md` — refresh
   Map subsection.
-- [ ] `docs/examples/rhocalc/01-language-spec.md`,
+- [x] `docs/examples/rhocalc/01-language-spec.md`,
   `docs/examples/rhocalc/06-runtime-evaluation.md` — refresh surface
   examples.
 
@@ -211,12 +346,14 @@ corresponding prefix-form calls.
 
 ## 7. Out of Scope (Followups)
 
-- Rholang-style `List` (`[…]`), `Bag` (no Rholang counterpart; keep `#{…}#`),
-  `Set` (`Set(…)`).
-- `@Nil` shorthand for `Name::NQuote(Proc::PZero)`.
-- Map pattern matching beyond literal swap (e.g., `{k: x, ..}` partial
-  patterns).
+- Rholang-style `Set` (`Set(…)`).
+- Rholang `++` infix concat for `List` / `Str` (currently only the
+  method-call form `l.concat(r)` is sugared).
+- Map / List pattern matching beyond literal swap (e.g., `{k: x, ..}` /
+  `[a, ..rest]` partial patterns).
 - Rholang `contract` keyword.
+- Generalised `@P` shorthand for arbitrary `P:Proc` (current scope is the
+  `@Nil` keyword form only; other quoted names still require `@(P)`).
 
 ---
 

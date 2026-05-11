@@ -29,6 +29,19 @@ bag_union_comm = a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ union
 bag_count_comm = a!(#{ 1 | 2 | 2 }#) | c!( 2 ) | for(b <- a & e <- c){ count(*(b), *(e)) }
 bag_remove_comm = a!(#{ 1 | 2 | 2 }#) | c!( 2 ) | for(b <- a & e <- c){ remove(*(b), *(e)) }
 
+// List literal + method-call sugar (Rholang style)
+list_length  = [1, 2, 3].length()
+list_nth     = [10, 20, 30].nth(1)
+list_concat  = [1, 2].concat([3, 4])
+list_chain   = [1, 2].concat([3, 4]).length()
+
+// Bag literal + method-call sugar (rhocalc-only — no Rholang counterpart)
+bag_size     = #{1 | 2 | 2}#.size()
+bag_count    = #{1 | 2 | 2}#.count(2)
+bag_diff     = #{1 | 2 | 2}#.diff(#{2}#)
+bag_remove   = #{1 | 2 | 2}#.remove(2)
+bag_union    = #{1 | 2}#.union(#{2 | 3}#)
+
 // Map literal + method-call sugar (Rholang style)
 map_get      = {1: 10, 2: 20}.get(1)
 map_set      = Map().set(1, 10).set(2, 20)

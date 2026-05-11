@@ -138,21 +138,37 @@ MapEmpty . |- "Map" "(" ")" : Proc ![{
 
 Method-call sugar (`fold` into the existing prefix-form builtins):
 
-| Method form | Lowering |
-|-------------|----------|
-| `m.get(k)` | `GetMap(m, k)` |
-| `m.set(k, v)` | `PutMap(m, k, v)` |
-| `m.contains(k)` | `HasMap(m, k)` |
-| `m.delete(k)` | `DeleteMap(m, k)` |
-| `m.union(n)` | `MergeMap(m, n)` |
-| `m.size()` | `CastInt(NumLit(entries.len()))` (constant fold) |
-| `m.keys()` | `KeysMap(m)` |
-| `m.values()` | `ValuesMap(m)` |
+| Method form | Lowering | Receiver |
+|-------------|----------|----------|
+| `m.get(k)` | `GetMap(m, k)` | Map |
+| `m.set(k, v)` | `PutMap(m, k, v)` | Map |
+| `m.contains(k)` | `HasMap(m, k)` | Map |
+| `m.delete(k)` | `DeleteMap(m, k)` | Map |
+| `m.keys()` | `KeysMap(m)` | Map |
+| `m.values()` | `ValuesMap(m)` | Map |
+| `l.length()` | `Len(l)` | List |
+| `l.nth(i)` | `ElemList(l, i)` | List |
+| `l.concat(r)` | `ConcatList(l, r)` | List |
+| `b.count(e)` | `CastInt(Int::CountBag(b, e))` | Bag |
+| `b.diff(c)` | `DiffBag(b, c)` | Bag |
+| `b.remove(e)` | `RemoveBag(b, e)` | Bag |
+| `x.size()` | `CastInt(NumLit(entries.len()))` for Map; `Len(x)` for Bag | Map / Bag |
+| `x.union(y)` | `MergeMap(x, y)` for Map; `UnionBag(x, y)` for Bag | Map / Bag |
 
-The unary forms (`m.size()`, `m.keys()`, `m.values()`) use prattail's
-zero-operand-after-trigger mixfix shape (1 NT with 3+ terminals), dispatched
-inline without a frame push. The prefix forms `len(m)`, `keys(m)`,
-`values(m)` remain available and produce identical AST nodes.
+The unary forms (`m.size()`, `m.keys()`, `m.values()`, `l.length()`,
+`b.size()`) use prattail's zero-operand-after-trigger mixfix shape (1 NT
+with 3+ terminals), dispatched inline without a frame push. The prefix
+forms (`len(x)`, `keys(m)`, `values(m)`, `at(l, i)`, `concat(a, b)`,
+`union(a, b)`, `count(b, e)`, `diff(a, b)`, `remove(b, e)`) remain
+available and produce identical AST nodes.
+
+The shared-name methods `.union` and `.size` use a single grammar rule each
+(`MUnion`, `MSize`) whose `fold` action inspects the (already-folded)
+receiver and lowers to the appropriate prefix builtin — `MergeMap` /
+`UnionBag` for `.union(n)`, and the constant-folded entry count /
+`Len` for `.size()`. The `Len` builtin is extended with a `CastBag` arm
+that uses `HashBag::len()` (sum of all element multiplicities, after
+`normalize_bag_elements`).
 
 ### 3.4 Binder Terms (Lambda / Multi-Lambda)
 
@@ -262,6 +278,51 @@ The parameter `p` is `Proc` but the result category is `Name`.  This is a
 *cross-category* rule: it appears in the `Name` category's parser but parses a
 `Proc` sub-expression.  Classification: `is_cross_category = true,
 cross_source_category = Some("Proc")`.
+
+#### `@Nil` shorthand
+
+Rholang spells `Name::NQuote(Proc::PZero)` as `@Nil`. We add the same
+shorthand by a Name-category fold rule that lowers to the canonical
+`NQuote(PZero)` AST node:
+
+```rust
+NQuoteNil .
+|- "@" "Nil" : Name ![{
+    Name::NQuote(Box::new(Proc::PZero))
+}] fold;
+```
+
+`Nil` is the surface keyword for `PZero` and is therefore not in `Name`'s
+FIRST set; `NQuoteNil` instead enters via the shared `@` token, with prattail
+disambiguating between `@(P)` (`NQuote`) and `@Nil` (`NQuoteNil`) by the
+second-token NFA branch (`LParen` vs `KwNil`).
+
+For send positions where `POutputQuoted`'s `@ <Name> ! ( q )` shape would
+otherwise reject `Nil` (the inner Name parser does not accept the keyword), two
+Proc-category sugars complete the surface:
+
+```rust
+POutputNil . q:Proc
+|- "@" "Nil" "!" "(" q ")" : Proc ![{
+    Proc::POutput(
+        Box::new(Name::NQuote(Box::new(Proc::PZero))),
+        Box::new(q.clone()),
+    )
+}] fold;
+
+PPersistOutputNil . q:Proc
+|- "@" "Nil" "!!" "(" q ")" : Proc ![{
+    Proc::PPersistOutput(
+        Box::new(Name::NQuote(Box::new(Proc::PZero))),
+        Box::new(q.clone()),
+    )
+}] fold;
+```
+
+All three Proc rules dispatch from `Token::At`; prattail's
+`write_nfa_merged_prefix_arm` NFA-tries each via its generated
+`parse_<label>` standalone function, taking the first declaration-order
+success.
 
 ## 4. `equations { ... }` — Structural Equivalences
 
