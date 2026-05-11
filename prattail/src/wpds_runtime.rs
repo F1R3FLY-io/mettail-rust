@@ -540,6 +540,26 @@ pub enum WpdsState {
     Saturating { delta_size: usize },
     /// Popping continuation frames after a value was produced.
     Unwinding,
+    /// F1 follow-up Cluster A (paren+postfix+cross-cat infix, 2026-05-10):
+    /// after a cross-cat-grouping inner CategoryEntry has been popped, the
+    /// next step demands `)` and ConsumeAndReplaces the GroupingMarker on
+    /// top with a CategoryEntry of the inner cat. This preserves the
+    /// cross-cat dispatch context after `)` so subsequent infix dispatch
+    /// (e.g., `==` for `Bool::parse("(3!) == 6")`) finds the operator in
+    /// the inner cat's table. The GroupingMarker's `bp` field carries
+    /// outer_bp (saved cur_bp at the open paren); we restore that BP for
+    /// the post-`)` InfixLoop.
+    ///
+    /// State transition: `Unwinding-CategoryEntry` (when pred=GroupingMarker)
+    /// → here (CategoryEntry popped) → `InfixLoop { cur_bp: outer_bp }`
+    /// (after `)` is consumed and CategoryEntry(inner_cat) replaces the
+    /// GroupingMarker on the GSS).
+    GroupingClosePreservingInner {
+        /// The inner category whose CategoryEntry was just popped. Re-pushed
+        /// as the new GSS top so subsequent infix dispatch sees the inner
+        /// cat (typically the cross-cat infix's LHS source category).
+        inner_cat_src_idx: u16,
+    },
     /// Parse complete; result available via the walker's accept hook.
     Accepted,
     /// Parse failed; recovery may repair via the walker's recovery hook.

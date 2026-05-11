@@ -476,6 +476,19 @@ impl<W: Semiring> WpdsGss<W> {
         self.edges.get(&id).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
+    /// F1 follow-up Cluster A (2026-05-10): look up the GSS node id by its
+    /// `(pos, symbol)` fingerprint via the internal `node_index`. Used by
+    /// the engine's Unwinding-CategoryEntry arm to detect cross-cat
+    /// grouping (where the predecessor of the just-popping CategoryEntry
+    /// is a GroupingMarker), enabling the engine to preserve the inner-cat
+    /// dispatch context across `)`.
+    ///
+    /// Returns `None` if `node` was never registered (e.g., constructed
+    /// but never pushed via `get_or_create_node`).
+    pub fn lookup_id(&self, node: &WpdsGssNode) -> Option<GssNodeId> {
+        self.node_index.get(node).copied()
+    }
+
     /// Whether the GSS is empty.
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()

@@ -661,14 +661,45 @@ pub(crate) fn emit_engine_impl_full(
                     }
                     WpdsState::InfixLoop { cur_bp } => {
                         // Phase 4/5/B7: if frontier_top is a marker symbol
-                        // (CollectionMarker / RuleAt / MixfixMarker), skip
-                        // infix dispatch and fall through to Unwinding. Each
-                        // marker has its own Unwinding handler.
+                        // for a mid-rule context, skip infix dispatch and
+                        // fall through to Unwinding. Each marker has its
+                        // own Unwinding handler.
+                        //
+                        // F5 fix (2026-05-10): `CollectionMarker` REMOVED
+                        // from this skip list. After a cross-cat sub-parse
+                        // returns to a CollectionMarker top, the next
+                        // tokens may be Pratt infix/postfix/mixfix operators
+                        // extending the current element (e.g., `+ 2` after
+                        // `1` inside `{1 + 2 + 3}`). The infix dispatch
+                        // below uses state_cat_src_idx =
+                        // CollectionMarker.category_src_idx = the
+                        // collection's RESULT category (e.g., Proc for
+                        // PPar) — exactly the category whose operators
+                        // (Add, Mul, ==, etc.) should fire. If no operator
+                        // matches, the standard 0-cands fallthrough below
+                        // advances to Unwinding-CollectionMarker → routes
+                        // to CollectionLoop for close/sep/bare dispatch —
+                        // preserving the close-on-`}` and sep-on-`|`
+                        // semantics. The marker-skip remains for RuleAt /
+                        // MixfixMarker / OptionalGroupAt because those
+                        // indicate mid-rule contexts where the next tokens
+                        // are rule-internal literals.
+                        //
+                        // F1 follow-up Cluster B (2026-05-10): `MixfixMarker`
+                        // REMOVED from this skip list. Mixfix inner operands
+                        // must allow infix/postfix extension (e.g.,
+                        // `1 ? 3! : 0` requires `!` to bind to `3` BEFORE
+                        // the mixfix advances to consume `:`). The InfixLoop
+                        // dispatch reads state_cat_src_idx from the marker
+                        // (= result_src_idx of the mixfix rule, which is the
+                        // operand's category for traditional mixfix shapes).
+                        // If no candidate matches, cands is empty and we
+                        // fall through to Unwinding-MixfixMarker, which
+                        // routes to MixfixLiteralRun for the next
+                        // separator/operand transition.
                         if let Some(node) = frontier_top {
                             match node.symbol.kind {
-                                mettail_prattail::wpds_runtime::SymbolKind::CollectionMarker
-                                | mettail_prattail::wpds_runtime::SymbolKind::RuleAt(_)
-                                | mettail_prattail::wpds_runtime::SymbolKind::MixfixMarker
+                                mettail_prattail::wpds_runtime::SymbolKind::RuleAt(_)
                                 | mettail_prattail::wpds_runtime::SymbolKind::OptionalGroupAt(_) => {
                                     // Opt-Group: an OptionalGroupAt marker
                                     // indicates we're mid-group; defer to
@@ -737,6 +768,16 @@ pub(crate) fn emit_engine_impl_full(
                         }
 
                         // Postfix tier (BP_TIER_POSTFIX = 0.10).
+                        // F1 fix (2026-05-10): new_state must be Unwinding, not InfixLoop.
+                        // Postfix has no RHS to parse, so the Return symbol it pushes must
+                        // be popped immediately to fire the action. Going to InfixLoop
+                        // instead leaves the Return on the GSS while subsequent operator
+                        // dispatches push more symbols on top — the action then fires in
+                        // the wrong order (after the surrounding operator's action), with
+                        // wrong types and wrong values on the builder stack. Unwinding
+                        // pops the Return → fires the action → transitions to
+                        // InfixLoop { cur_bp: outer_bp } via the standard Return-pop path
+                        // at engine_impl.rs:357-360.
                         if let Some((l_bp, result_src, rule_idx)) =
                             #postfix_dispatch
                         {
@@ -751,9 +792,7 @@ pub(crate) fn emit_engine_impl_full(
                                             mettail_prattail::automata::lex_weight::BP_TIER_POSTFIX,
                                             result_src, rule_idx,
                                         ),
-                                        new_state: WpdsState::InfixLoop {
-                                            cur_bp: *cur_bp,
-                                        },
+                                        new_state: WpdsState::Unwinding,
                                         action_kind:
                                             mettail_prattail::wpds_walker::ForkActionKind::Push,
                                     },
@@ -1096,6 +1135,14 @@ pub(crate) fn emit_engine_impl_full(
                         // these compile to nothing in optimized builds.
                         let _ = (result_src_idx, rule_idx, group_idx, sub_pos, outer_bp);
                         #optional_group_body
+                    }
+                    WpdsState::GroupingClosePreservingInner { .. } => {
+                        // F1 follow-up Cluster A (2026-05-10): REVERTED — the design
+                        // detected the wrong moment (every CategoryEntry pop, not
+                        // just at end-of-inner-parse). State variant retained for
+                        // ABI stability; treated as no-op Idle. Future redesign
+                        // pending.
+                        WpdsStepAction::Idle
                     }
                     WpdsState::Saturating { .. } => WpdsStepAction::Idle,
                     WpdsState::Accepted | WpdsState::Error { .. } => WpdsStepAction::Idle,
