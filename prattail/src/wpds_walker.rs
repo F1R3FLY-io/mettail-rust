@@ -4157,6 +4157,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             // Class 3 multi-binder iterations where the
                             // scope is opened once at bootstrap and each
                             // iteration's BinderIdent extends names.
+                            //
+                            // Phase 2 / Redesign C (2026-05-11): delegate
+                            // the pop side to `apply_pop_body_to_cursor`
+                            // so the splice gate and action firing fire
+                            // uniformly. For Class 3 BinderIdent popping
+                            // the splice won't fire (popped kind isn't
+                            // CategoryEntry/RuleAt and post-pop token
+                            // isn't close/sep) — behavior preserved.
                             if !matches!(
                                 tokens.peek_kind(pos_after),
                                 Some(crate::automata::TokenKind::Ident)
@@ -4175,12 +4183,25 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 .unwrap_or("")
                                 .to_string();
                             self.emit_extend_binder_scope(&mut child, text);
-                            // Pop top-of-GSS.
-                            let _ = self.cursor_gss_pop_via_edge(&mut child);
+                            // Capture popped_symbol before pop.
+                            let popped_symbol = self.gss
+                                .node(child.node)
+                                .map(|n| n.symbol);
+                            let pred_id = self
+                                .cursor_gss_pop_via_edge(&mut child)
+                                .unwrap_or(crate::gss::GSS_NODE_NONE);
                             child.pos += 1;
                             if self.cursor_mode == CursorMode::Lazy {
                                 self.pos = child.pos;
                             }
+                            self.apply_pop_body_to_cursor(
+                                &mut child,
+                                pred_id,
+                                popped_symbol,
+                                &branch.weight,
+                                branch.new_state.clone(),
+                                tokens,
+                            );
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -4241,6 +4262,15 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             // B8 / Issue C followup (2026-05-09): peek_text
                             // equality guard wrapping ConsumeAndPop with one
                             // builder delta effect logged.
+                            //
+                            // Phase 2 / Redesign C (2026-05-11): delegate the
+                            // pop side to `apply_pop_body_to_cursor` instead
+                            // of hand-rolling. apply_pop_body_to_cursor
+                            // handles cursor.collection_stack pop, splice
+                            // gate (Plan B Phase 3), and action firing for
+                            // Return symbols uniformly. The prior hand-rolled
+                            // version was the Issue 1 origin — fixing it
+                            // ad-hoc per-variant misses the splice cases.
                             let peek = tokens.peek_text(pos_after).unwrap_or("");
                             if peek != expected_text.as_str() {
                                 continue;
@@ -4254,26 +4284,25 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             );
                             child.consistency_memo.set(None);
                             child.pending_builder_ops.push(effect);
-                            // B8 / Issue 1 fix (2026-05-10): mirror
-                            // apply_pop_body_to_cursor's cursor.collection_stack
-                            // pop semantics — when the popped symbol is a
-                            // CollectionMarker, sync cursor.collection_stack
-                            // so adopt_collection_stack at commit_winner
-                            // doesn't double-allocate the slot (which is
-                            // already allocated via the StartCollection
-                            // delta logged at emit_start_collection time).
-                            let popped_kind = self.gss
+                            // Capture popped_symbol before pop.
+                            let popped_symbol = self.gss
                                 .node(child.node)
-                                .map(|n| n.symbol.kind);
-                            // Pop top-of-GSS.
-                            let _ = self.cursor_gss_pop_via_edge(&mut child);
-                            if popped_kind == Some(SymbolKind::CollectionMarker) {
-                                let _ = child.collection_stack.pop();
-                            }
+                                .map(|n| n.symbol);
+                            let pred_id = self
+                                .cursor_gss_pop_via_edge(&mut child)
+                                .unwrap_or(crate::gss::GSS_NODE_NONE);
                             child.pos += 1;
                             if self.cursor_mode == CursorMode::Lazy {
                                 self.pos = child.pos;
                             }
+                            self.apply_pop_body_to_cursor(
+                                &mut child,
+                                pred_id,
+                                popped_symbol,
+                                &branch.weight,
+                                branch.new_state.clone(),
+                                tokens,
+                            );
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -6034,11 +6063,26 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             // Capture pred metadata (Copy types) under the immutable
             // borrow, then release the borrow so the engine.step query
             // and the mutable splice call can both run.
-            let pred_info = self.gss.node(pred_id).map(|n| {
-                (n.symbol.kind, n.symbol.bp.unwrap_or(0))
-            });
-            if let Some((pred_kind, acc_id)) = pred_info {
-                if pred_kind == SymbolKind::CollectionMarker {
+            let pred_info = self.gss.node(pred_id).map(|n| n.symbol);
+            if let Some(pred_sym) = pred_info {
+                let pred_kind = pred_sym.kind;
+                let acc_id = pred_sym.bp.unwrap_or(0);
+                // Phase 2 / Redesign C follow-up (2026-05-11): skip
+                // splice when pred is a Class 3 binder-internal
+                // CollectionMarker. Class 3 has its own dedicated
+                // AdvanceWithEffect-based splice path emitted by the
+                // BinderListLoop Unwinding-OptionalGroupAt arm in
+                // engine_impl.rs (Issue C splice handling); the generic
+                // splice gate here would mis-target the splice for
+                // BinderIdent pops (popped OptionalGroupAt + next token
+                // is sep/close → engine.step returns Advance(Unwinding)
+                // → spurious splice). Defer to the dedicated path.
+                let skip_for_class3 = pred_kind == SymbolKind::CollectionMarker
+                    && self.engine.is_class3_collection(
+                        pred_sym.category_src_idx,
+                        pred_sym.rule_index_in_category,
+                    );
+                if pred_kind == SymbolKind::CollectionMarker && !skip_for_class3 {
                     let should_splice = match popped_symbol.map(|s| s.kind) {
                         Some(SymbolKind::CategoryEntry)
                         | Some(SymbolKind::RuleAt(_)) => true,

@@ -573,11 +573,26 @@ pub(crate) fn emit_is_binder_internal_collection_lookup(
             let Some(shape) = classify_binder(rule) else {
                 continue;
             };
+            // Phase 2 / Redesign C follow-up (2026-05-11): extend the
+            // discriminator to ALSO recognize Class 3 binder-internal
+            // collections (BinderListLoop with `collection_param_cat`
+            // set). Same conceptual role as Class 2's ParamParse
+            // collection slot — the binder rule's terminal action
+            // drains the CollectionId at outer RuleAt pop, so the
+            // CollectionMarker pop must NOT fire its own action.
+            // Prior to this extension, Class 3 rules (rhocalc PInputs)
+            // were missing from the suppression table, causing spurious
+            // PInputs action fire when `apply_pop_body_to_cursor`
+            // popped the Class 3 CollectionMarker.
             let has_collection_slot = shape.positions.iter().any(|p| {
                 matches!(
                     p,
                     BinderPosition::ParamParse {
                         collection: Some(_),
+                        ..
+                    }
+                    | BinderPosition::BinderListLoop {
+                        collection_param_cat: Some(_),
                         ..
                     }
                 )
