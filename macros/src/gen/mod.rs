@@ -396,6 +396,11 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 /// `parse_<Cat>_via_wpds`. Identical to `Cat::parse_structured`
                 /// — kept as a stable internal name during the migration.
                 pub fn parse_via_wpds(input: &str) -> Result<#cat, ParseError> {
+                    // T4 SIGUSR1 hang-dump (2026-05-11): one-time install
+                    // of the hang-dump handler + watcher daemon. Idempotent
+                    // (Once-guarded). No-op when `PRATTAIL_HANG_DUMP` env
+                    // var is unset (zero-cost on the happy path).
+                    mettail_prattail::hang_dump::install_hang_dump_handler();
                     let tokens = lex(input)?;
                     let kinds: Vec<mettail_prattail::automata::TokenKind> =
                         tokens.iter().map(|(t, _)| token_to_kind(t)).collect();
@@ -471,6 +476,11 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             // in literal / collection / Var rules where the user grammar
             // doesn't supply explicit ones). No runtime stubs.
             let parse_structured_body = quote! {
+                // T4 SIGUSR1 hang-dump (2026-05-11): one-time install of
+                // the hang-dump handler + watcher daemon. Idempotent
+                // (Once-guarded). No-op when `PRATTAIL_HANG_DUMP` env var
+                // is unset (zero-cost on the happy path).
+                mettail_prattail::hang_dump::install_hang_dump_handler();
                 let tokens = lex(input)?;
                 let kinds: Vec<mettail_prattail::automata::TokenKind> =
                     tokens.iter().map(|(t, _)| token_to_kind(t)).collect();
