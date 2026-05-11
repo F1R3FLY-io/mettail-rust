@@ -132,6 +132,24 @@ pub enum BinderPosition {
         /// For Class 3 rules: the element category of the synthesized
         /// names accumulator. None for PNew-style rules.
         collection_param_cat: Option<String>,
+        /// Phase 3 Redesign B (2026-05-11): whether empty-binder-list is
+        /// permitted at parse time. `true` for multi-binder PNew-style
+        /// rules (`^[xs].body` — zero or more idents are valid) and
+        /// Class 3 (the collection itself may be empty). `false` for
+        /// single-binder collapsed shapes (`^x.body` — exactly one
+        /// ident required).
+        ///
+        /// Default for existing construction sites: `true` (preserves
+        /// pre-Phase-3 behavior). Single-binder collapse (sub-commit
+        /// 3.B.3) will construct with `false`.
+        allow_empty: bool,
+        /// Phase 3 Redesign B (2026-05-11): whether more-than-one ident
+        /// is permitted. `true` for multi-binder and Class 3. `false`
+        /// for single-binder collapsed shapes (exactly one ident).
+        ///
+        /// Default: `true`. Single-binder collapse will construct with
+        /// `false`.
+        allow_multi: bool,
     },
     /// `Param(name)` — sub-parse the param's category. After the parse
     /// returns, the marker advances to the next position. When the marker
@@ -494,6 +512,12 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                             inner_action_args: vec![ActionArgKind::BinderName],
                             binder_param_idx: 0,
                             collection_param_cat: None,
+                            // Phase 3 Redesign B sub-commit 3.B.1
+                            // (2026-05-11): multi-binder PNew-style — both
+                            // empty (zero binders) and multi (more than
+                            // one) are permitted.
+                            allow_empty: true,
+                            allow_multi: true,
                         });
                         action_args.push(ActionArgKind::BinderList);
                         // Skip the close Literal at i+1 — it's already
@@ -627,6 +651,11 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     inner_action_args,
                     binder_param_idx,
                     collection_param_cat: Some(collection_elem_cat.clone()),
+                    // Phase 3 Redesign B sub-commit 3.B.1 (2026-05-11):
+                    // Class 3 — both empty (zero iterations) and multi
+                    // (more than one) are permitted.
+                    allow_empty: true,
+                    allow_multi: true,
                 });
                 // Class 3 emits TWO action args: the synthesized Names
                 // accumulator drain + the binder list. Order: names first,
@@ -1661,6 +1690,8 @@ pub(crate) fn emit_binder_list_loop_body(
                     inner_action_args: _,
                     binder_param_idx: _,
                     collection_param_cat,
+                    allow_empty: _,
+                    allow_multi: _,
                 } = position {
                     let pos = (idx + 1) as u8;
                     let next_pos = pos + 1;
