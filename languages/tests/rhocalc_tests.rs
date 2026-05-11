@@ -107,6 +107,8 @@ fn assert_reduces_to(input: &str, expected: &str) {
             || nf_no_ws == expected_singleton_par_no_ws
             || multiset_eq(nf, &expected_display)
             || multiset_eq(nf, &expected_singleton_par)
+            || bag_multiset_eq(nf, &expected_display)
+            || bag_multiset_eq(nf, &expected_singleton_par)
     });
 
     assert!(
@@ -178,6 +180,29 @@ fn multiset_eq(a: &str, b: &str) -> bool {
         Some(elems)
     }
     to_sorted_elements(a) == to_sorted_elements(b)
+}
+
+/// Compare bag literal displays as multisets (handles HashBag ordering), including singleton-par wrappers.
+fn bag_multiset_eq(a: &str, b: &str) -> bool {
+    fn unwrap_singleton_par(s: &str) -> &str {
+        let t = s.trim();
+        if t.starts_with('{') && t.ends_with('}') {
+            &t[1..t.len() - 1]
+        } else {
+            t
+        }
+    }
+    fn to_sorted_bag_elements(s: &str) -> Option<Vec<String>> {
+        let t = unwrap_singleton_par(s).trim();
+        if !t.starts_with("#{") || !t.ends_with("}#") {
+            return None;
+        }
+        let inner = &t[2..t.len() - 2];
+        let mut elems: Vec<String> = inner.split('|').map(|e| e.trim().to_string()).collect();
+        elems.sort();
+        Some(elems)
+    }
+    to_sorted_bag_elements(a) == to_sorted_bag_elements(b)
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -274,6 +299,237 @@ mod comm {
             "expected join to consume ephemeral send and keep persistent one, got {:?}",
             nfs
         );
+    }
+
+    #[test]
+    fn comm_with_persistent_receive_keeps_receive() {
+        let (results, initial_id) = run_with_initial("{for(x <= c){*x} | c!(p)}");
+        let rewrites_from_initial: Vec<String> = results
+            .rewrites_from(initial_id)
+            .iter()
+            .filter_map(|rw| {
+                results
+                    .all_terms
+                    .iter()
+                    .find(|t| t.term_id == rw.to_id)
+                    .map(|t| t.display.clone())
+            })
+            .collect();
+        assert!(
+            !results.rewrites_from(initial_id).is_empty(),
+            "expected at least one rewrite from initial term; rewrites={:?}",
+            rewrites_from_initial
+        );
+        assert!(
+            rewrites_from_initial
+                .iter()
+                .any(|d| d.contains("for(x <= c){") && d.contains("*@(p)")),
+            "expected persistent receive + substituted body after one comm, rewrites={:?}",
+            rewrites_from_initial
+        );
+    }
+
+    #[test]
+    fn two_sends_can_fire_against_same_persistent_receive() {
+        let results = run("{for(x <= c){*x} | c!(p) | c!(q)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("for(x <= c){") && d.contains("p") && d.contains("q")),
+            "expected both sends consumed and persistent receive remains, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn persistent_receive_with_persistent_send_keeps_both() {
+        fresh();
+        let input = parse("{for(x <= c){*x} | c!!(p)}");
+        let one_step = input
+            .try_comm_once()
+            .expect("expected one COMM step for persistent receive + persistent send");
+        let out = one_step.to_string();
+        assert!(
+            out.contains("for(x <= c){*x}"),
+            "expected persistent receive to remain after one COMM step, got {}",
+            out
+        );
+        assert!(
+            out.contains("c!!([p])") || out.contains("c!!(p)"),
+            "expected persistent send to remain after one COMM step, got {}",
+            out
+        );
+        assert!(
+            out.contains("*@(p)"),
+            "expected one-step continuation payload to be produced, got {}",
+            out
+        );
+    }
+
+    #[test]
+    fn join_persistent_receive_keeps_receive_after_fire() {
+        let results = run("{for(x <= c1 & y <- c2){*x} | c1!(p) | c2!(q)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("for(x <= c1") && d.contains("y <- c2") && d.contains("p")),
+            "expected persistent join receive to remain after comm, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn persistent_receive_where_true_fires_and_keeps_listener() {
+        let results = run("{for(x <= c where x > 1){*x} | c!(2)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("for(x <= c where x > 1){*x}") && d.contains("*@(2)")),
+            "expected guarded persistent receive to fire and remain, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn persistent_receive_where_false_blocks() {
+        let results = run("{for(x <= c where x > 10){*x} | c!(2)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("for(x <= c where x > 10){*x}") && d.contains("c!(2)")),
+            "expected guarded persistent receive to block mismatch, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn empty_persistent_receive_consumes_payload_and_stays() {
+        let results = run("{for(<= c){ok} | c!(payload)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("ok") && d.contains("for(<=c){ok}")),
+            "expected empty persistent receive to fire and stay, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn persistent_join_where_true_fires() {
+        let results = run("{for(x <= c1 & y <- c2 where y > 1){*x} | c1!(p) | c2!(2)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("*@(p)") && d.contains("for(x <= c1&y <- c2where y > 1){*x}")),
+            "expected persistent join with true guard to fire, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn persistent_join_where_false_blocks() {
+        let results = run("{for(x <= c1 & y <- c2 where y > 10){*x} | c1!(p) | c2!(2)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays.iter().any(|d| {
+                d.contains("for(x <= c1&y <- c2where y > 10){*x}")
+                    && d.contains("c1!(p)")
+                    && d.contains("c2!(2)")
+            }),
+            "expected persistent join with false guard to block, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn semicolon_rows_with_persistent_first_row() {
+        let results = run("{for(x <= c1; y <- c2){*x} | c1!(p) | c2!(q)}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("*@(p)") && d.contains("for(y <- c2){*@(p)}")),
+            "expected first persistent row to fire then continue with second row, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn polyadic_receive_binds_list_payload_from_polyadic_send() {
+        assert_reduces_to("{x!(1,2,3) | for(a, b, c <- x){[a,b,c]}}", "[1,2,3]");
+    }
+
+    #[test]
+    fn persistent_polyadic_receive_keeps_listener() {
+        let results = run("{x!(1,2,3) | for(a, b, c <= x){[a,b,c]}}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays.iter().any(|d| d.contains("[1,2,3]")
+                && d.contains("for(a,b")
+                && d.contains("c<=x){[a,b,c]}")),
+            "expected polyadic persistent receive to fire and remain, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn polyadic_receive_arity_mismatch_blocks() {
+        assert_reduces_to(
+            "{x!(1,2) | for(a, b, c <- x){[a,b,c]}}",
+            "{x!([1,2]) | for(a,b , c<-x){[a,b,c]}}",
+        );
+    }
+
+    #[test]
+    fn polyadic_receive_in_join_row_works() {
+        assert_reduces_to("{x!(1,2) | z!(ok) | for(a, b <- x & y <- z){[a,b,y]}}", "[1,2,ok]");
+    }
+
+    #[test]
+    fn polyadic_receive_where_guard_works() {
+        assert_reduces_to("{x!(1,2,3) | for(a, b, c <- x where c > 2){[a,b,c]}}", "[1,2,3]");
     }
 
     #[test]
@@ -1143,6 +1399,27 @@ mod parsing {
     }
 
     #[test]
+    fn send_empty_is_list_sugar() {
+        fresh();
+        let empty = parse("x!()").normalize();
+        let list = parse("x!([])").normalize();
+        assert!(
+            empty.term_eq(&list),
+            "expected empty send sugar to match empty list payload: empty=`{}` list=`{}`",
+            empty,
+            list
+        );
+    }
+
+    #[test]
+    fn send_unary_is_list_sugar() {
+        fresh();
+        let unary = parse("x!(0)").normalize();
+        let list = parse("x!([0])").normalize();
+        assert!(unary.term_eq(&list), "expected unary send to canonicalize to singleton list");
+    }
+
+    #[test]
     fn send_polyadic_two_args_is_list_sugar() {
         fresh();
         let poly = parse("x!(1, 2)").normalize();
@@ -1158,6 +1435,30 @@ mod parsing {
         assert!(
             poly.term_eq(&list),
             "expected persistent polyadic send sugar to match list payload"
+        );
+    }
+
+    #[test]
+    fn persistent_send_empty_is_list_sugar() {
+        fresh();
+        let empty = parse("x!!()").normalize();
+        let list = parse("x!!([])").normalize();
+        assert!(
+            empty.term_eq(&list),
+            "expected persistent empty send sugar to match empty list payload: empty=`{}` list=`{}`",
+            empty,
+            list
+        );
+    }
+
+    #[test]
+    fn persistent_send_unary_is_list_sugar() {
+        fresh();
+        let unary = parse("x!!(0)").normalize();
+        let list = parse("x!!([0])").normalize();
+        assert!(
+            unary.term_eq(&list),
+            "expected persistent unary send to canonicalize to singleton list"
         );
     }
 
@@ -1496,6 +1797,101 @@ mod parsing {
     fn receive() {
         let _ = run("for(y <- x){y!(0)}");
     }
+
+    #[test]
+    fn persistent_receive_parses() {
+        let _ = run("for(y <= x){y!(0)}");
+    }
+
+    #[test]
+    fn persistent_receive_empty_parses() {
+        let _ = run("for(<= x){ok}");
+    }
+
+    #[test]
+    fn persistent_receive_where_parses() {
+        let _ = run("for(y <= x where y == ok){y!(0)}");
+    }
+
+    #[test]
+    fn persistent_receive_join_parses() {
+        let _ = run("for(y <= x & z <- c){z}");
+    }
+
+    #[test]
+    fn persistent_receive_join_where_parses() {
+        let _ = run("for(y <= x & z <- c where z == ok){z}");
+    }
+
+    #[test]
+    fn polyadic_receive_parses() {
+        let _ = run("for(a, b, c <- x){[a,b,c]}");
+    }
+
+    #[test]
+    fn persistent_polyadic_receive_parses() {
+        let _ = run("for(a, b, c <= x){[a,b,c]}");
+    }
+
+    #[test]
+    fn bare_parallel_equivalent_to_braced_par() {
+        fresh();
+        let braced = parse("{x!!(1,2,3) | for(a, b, c <- x){[a,b,c]}}");
+        let bare = parse("x!!(1,2,3) | for(a, b, c <- x){[a,b,c]}");
+        assert!(
+            braced.term_eq(&bare),
+            "expected bare top-level `|` to match braced PPar, braced={} bare={}",
+            braced,
+            bare
+        );
+    }
+
+    #[test]
+    fn polyadic_persistent_send_and_receive_without_outer_braces_reduces() {
+        let (results, initial_id) = run_with_initial("x!!(1,2,3) | for(a, b, c <- x){[a,b,c]}");
+        let nfs = reachable_normal_form_displays(&results, initial_id);
+        assert!(
+            nfs.iter()
+                .any(|nf| nf.contains("x!!([1,2,3])") && nf.contains("[1,2,3]")),
+            "expected persistent send to remain and produce payload, got {:?}",
+            nfs
+        );
+    }
+
+    #[test]
+    fn polyadic_send_and_receive_without_outer_braces_reduces() {
+        assert_reduces_to("x!(1,2,3) | for(a, b, c <- x){[a,b,c]}", "[1,2,3]");
+    }
+
+    #[test]
+    fn polyadic_send_and_persistent_receive_without_outer_braces_reduces() {
+        let (results, initial_id) = run_with_initial("x!(1,2,3) | for(a, b, c <= x){[a,b,c]}");
+        let nfs = reachable_normal_form_displays(&results, initial_id);
+        assert!(
+            nfs.iter().any(|nf| nf.contains("[1,2,3]")
+                && nf.contains("for(a,b")
+                && nf.contains("c<=x){[a,b,c]}")),
+            "expected persistent receive to remain and produce payload, got {:?}",
+            nfs
+        );
+    }
+
+    #[test]
+    fn polyadic_persistent_send_and_persistent_receive_without_outer_braces_reduces() {
+        let (results, initial_id) = run_with_initial("x!!(1,2,3) | for(a, b, c <= x){[a,b,c]}");
+        let nfs = reachable_normal_form_displays(&results, initial_id);
+        assert!(
+            nfs.iter().any(|nf| {
+                nf.contains("[1,2,3]")
+                    && nf.contains("x!!([1,2,3])")
+                    && nf.contains("for(a,b")
+                    && nf.contains("c<=x){[a,b,c]}")
+            }),
+            "expected both persistent endpoints to remain and produce payload, got {:?}",
+            nfs
+        );
+    }
+
     #[test]
     fn multi_input() {
         let _ = run("{for(x <- c1 & y <- c2){*(x)} | c1!(p) | c2!(q)}");
@@ -1530,6 +1926,52 @@ mod parsing {
     #[test]
     fn empty_receiver_plain_runtime_with_list_payload() {
         assert_reduces_to("{for(<- x){ok} | x!([1,2,3])}", "ok");
+    }
+
+    #[test]
+    fn empty_receiver_with_bool_payload_and_string_body_reduces() {
+        assert_reduces_to("x!(true) | for(<- x){\"ok\"}", "\"ok\"");
+    }
+
+    #[test]
+    fn empty_receiver_with_empty_payload_does_not_reduce_without_braces() {
+        assert_reduces_to("x!() | for(<- x){\"ok\"}", "x!() | for(<- x){\"ok\"}");
+    }
+
+    #[test]
+    fn unary_send_and_persistent_receive_reduces() {
+        let results = run("x!(1) | for(name <= x){\"ok\"}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|d| d.contains("\"ok\"") && d.contains("for(name <= x){\"ok\"}")),
+            "expected persistent receive to remain and emit body, got {:?}",
+            displays
+        );
+    }
+
+    #[test]
+    fn unary_persistent_send_and_persistent_receive_cycle_shape() {
+        let results = run("x!!(1) | for(name <= x){\"ok\"}");
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
+        assert!(
+            displays.iter().any(|d| {
+                d.contains("\"ok\"")
+                    && (d.contains("x!!([1])") || d.contains("x!!(1)"))
+                    && d.contains("for(name <= x){\"ok\"}")
+            }),
+            "expected persistent send/receive cycle shape, got {:?}",
+            displays
+        );
     }
 
     #[test]

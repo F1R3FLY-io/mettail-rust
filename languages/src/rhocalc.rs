@@ -9,6 +9,7 @@ use num_traits::Zero;
 use std::ops::Neg;
 
 pub(crate) mod receive;
+pub(crate) mod runtime;
 mod type_inference;
 
 language! {
@@ -79,17 +80,23 @@ language! {
         |- n "!" "(" q ")" : Proc ;
         PPersistOutput . n:Name, q:Proc
         |- n "!!" "(" q ")" : Proc ;
-        // Empty send sugar: `x!()` sends empty process payload.
+        // Empty send sugar: `x!()` parses as `x!([])`.
         POutputEmpty . n:Name
         |- n "!" "(" ")" : Proc ![{
-            Proc::POutput(Box::new(n.clone()), Box::new(Proc::PZero))
+            Proc::POutput(
+                Box::new(n.clone()),
+                Box::new(crate::rhocalc::runtime::mk_proc_list(vec![])),
+            )
         }] fold;
-        // Empty persistent send sugar: `x!!()` sends empty process payload.
+        // Empty persistent send sugar: `x!!()` parses as `x!!([])`.
         PPersistOutputEmpty . n:Name
         |- n "!!" "(" ")" : Proc ![{
-            Proc::PPersistOutput(Box::new(n.clone()), Box::new(Proc::PZero))
+            Proc::PPersistOutput(
+                Box::new(n.clone()),
+                Box::new(crate::rhocalc::runtime::mk_proc_list(vec![])),
+            )
         }] fold;
-        // Sugar for polyadic send: `x!(a, b, c)` is parsed as `x!([a, b, c])`.
+        // Sugar for polyadic send: `x!(a, b, c)` parses as `x!([a, b, c])`.
         //
         // Placing this rule after unary keeps existing unary send parsing stable.
         POutput2Plus . n:Name, a:Proc, bs:Vec(Proc)
@@ -99,10 +106,10 @@ language! {
             items.extend(bs.clone());
             Proc::POutput(
                 Box::new(n.clone()),
-                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
             )
         }] fold;
-        // Sugar for polyadic persistent send: `x!!(a, b, c)` is parsed as `x!!([a, b, c])`.
+        // Sugar for polyadic persistent send: `x!!(a, b, c)` parses as `x!!([a, b, c])`.
         PPersistOutput2Plus . n:Name, a:Proc, bs:Vec(Proc)
         |- n "!!" "(" a "," bs.*sep(",") ")" : Proc ![{
             let mut items = Vec::with_capacity(1 + bs.len());
@@ -110,7 +117,7 @@ language! {
             items.extend(bs.clone());
             Proc::PPersistOutput(
                 Box::new(n.clone()),
-                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
             )
         }] fold;
         POutputQuoted . n:Name, q:Proc
@@ -168,9 +175,43 @@ language! {
                 Box::new(n.clone()),
             )
         }] fold;
+        InputBindPolyadic . lhs:Name, lhss:Vec(Name), n:Name
+        |- lhs "," lhss.*sep(",") "<-" n : InputBind ![{
+            let mut items = Vec::with_capacity(1 + lhss.len());
+            items.push(crate::rhocalc::receive::name_pattern_to_proc(&lhs));
+            items.extend(lhss.iter().map(crate::rhocalc::receive::name_pattern_to_proc));
+            InputBind::InputBindQuoted(
+                Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
+                Box::new(n.clone()),
+            )
+        }] fold;
+        InputBindPersistentPolyadic . lhs:Name, lhss:Vec(Name), n:Name
+        |- lhs "," lhss.*sep(",") "<=" n : InputBind ![{
+            let mut items = Vec::with_capacity(1 + lhss.len());
+            items.push(crate::rhocalc::receive::name_pattern_to_proc(&lhs));
+            items.extend(lhss.iter().map(crate::rhocalc::receive::name_pattern_to_proc));
+            InputBind::InputBindQuotedPersistent(
+                Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
+                Box::new(n.clone()),
+            )
+        }] fold;
+        InputBindQuotedPersistent . pat:Proc, n:Name
+        |- "@" pat "<" "=" n : InputBind ![{
+            InputBind::InputBindQuotedPersistent(
+                Box::new(pat.clone()),
+                Box::new(n.clone()),
+            )
+        }] fold;
         InputBind . lhs:Name, n:Name
         |- lhs "<-" n : InputBind ![{
             InputBind::InputBind(
+                Box::new(lhs.clone()),
+                Box::new(n.clone()),
+            )
+        }] fold;
+        InputBindPersistent . lhs:Name, n:Name
+        |- lhs "<" "=" n : InputBind ![{
+            InputBind::InputBindPersistent(
                 Box::new(lhs.clone()),
                 Box::new(n.clone()),
             )
@@ -179,9 +220,31 @@ language! {
         |- "<-" n : InputBind ![{
             InputBind::InputBindEmpty(Box::new(n.clone()))
         }] fold;
+        InputBindEmptyPersistent . n:Name
+        |- "<" "=" n : InputBind ![{
+            InputBind::InputBindEmptyPersistent(Box::new(n.clone()))
+        }] fold;
 
         // A ForRow is one row of a multi-row for: one or more & binds with an optional where guard.
         // More-specific variants (with & or where) come first so the parser tries them before the fallback.
+        ForRowPersistentWhere . lhs:Name, n:Name, bs:Vec(InputBind), cond:Proc
+        |- lhs "<=" n "&" bs.*sep("&") "where" cond : ForRow;
+
+        ForRowPersistentNoWhere . lhs:Name, n:Name, bs:Vec(InputBind)
+        |- lhs "<=" n "&" bs.*sep("&") : ForRow;
+
+        ForRowSinglePersistentWhere . lhs:Name, n:Name, cond:Proc
+        |- lhs "<=" n "where" cond : ForRow;
+
+        ForRowSinglePersistentNoWhere . lhs:Name, n:Name
+        |- lhs "<=" n : ForRow;
+
+        ForRowSingleEmptyPersistentWhere . n:Name, cond:Proc
+        |- "<=" n "where" cond : ForRow;
+
+        ForRowSingleEmptyPersistentNoWhere . n:Name
+        |- "<=" n : ForRow;
+
         ForRowWhere . b:InputBind, bs:Vec(InputBind), cond:Proc
         |- b "&" bs.*sep("&") "where" cond : ForRow;
 
@@ -273,6 +336,12 @@ language! {
             }}
         ] fold;
 
+        // Process parallel composition without outer braces (same multiset semantics as `{ P | Q }`).
+        // Declared looser than boolean/arithmetic ops so sends/receives compose as expected.
+        PParInfix . a:Proc, b:Proc |- a "|" b : Proc ![{
+            crate::rhocalc::runtime::merge_pp_parallel(a.clone(), b.clone())
+        }] fold;
+
         // Infix precedence (declaration order = loosest → tightest for PraTTaIL):
         // or/and, then comparisons, then arithmetic — so `a/b == c/d` and `x==y and z==w` parse correctly.
         Or . a:Proc, b:Proc |- a "or" b : Proc ![
@@ -296,7 +365,7 @@ language! {
         ] fold;
 
         // Bitwise (looser precedence than arithmetic)
-        // Use `bitor` (not `|`) so `{ P | Q }` stays parallel composition (PPar separator).
+        // Use `bitor` (not `|`) so `{ P | Q }` and bare `P | Q` stay process parallel composition.
         BitOr . a:Proc, b:Proc |- a "bitor" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
@@ -755,7 +824,7 @@ language! {
         ConcatList . a:Proc, b:Proc |- "concat" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
                 (Proc::CastList(la), Proc::CastList(lb)) => match (la.as_ref(), lb.as_ref()) {
-                    (List::ListLit(va), List::ListLit(vb)) => { let mut o = va.clone(); o.extend(vb.iter().cloned()); Proc::CastList(Box::new(List::ListLit(o))) },
+                    (List::ListLit(va), List::ListLit(vb)) => { let mut o = va.clone(); o.extend(vb.iter().cloned()); crate::rhocalc::runtime::mk_proc_list(o) },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -770,7 +839,7 @@ language! {
         DeleteList . a:Proc, i:Proc |- "delete" "(" a "," i ")" : Proc ![
             { match (&a, &i) {
                 (Proc::CastList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) {
-                    (List::ListLit(v), Int::NumLit(n)) => { let idx = *n as usize; let mut vec = v.clone(); if idx >= vec.len() { panic!("delete: index out of bounds"); } vec.remove(idx); Proc::CastList(Box::new(List::ListLit(vec))) },
+                    (List::ListLit(v), Int::NumLit(n)) => { let idx = *n as usize; let mut vec = v.clone(); if idx >= vec.len() { panic!("delete: index out of bounds"); } vec.remove(idx); crate::rhocalc::runtime::mk_proc_list(vec) },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -789,7 +858,24 @@ language! {
         ] fold;
         RemoveBag . a:Proc, e:Proc |- "remove" "(" a "," e ")" : Proc ![
             { match &a {
-                Proc::CastBag(b) => match b.as_ref() { Bag::BagLit(h) => Proc::CastBag(Box::new(Bag::BagLit(h.remove_one(&e)))), _ => Proc::Err },
+                Proc::CastBag(b) => match b.as_ref() {
+                    Bag::BagLit(h) => {
+                        let normalized = crate::rhocalc::runtime::normalize_bag_elements(h);
+                        let elem = match &e {
+                            Proc::PDrop(n) => match n.as_ref() {
+                                Name::NQuote(p) => p.as_ref().clone(),
+                                Name::NParen(inner) => match inner.as_ref() {
+                                    Name::NQuote(p) => p.as_ref().clone(),
+                                    _ => e.clone(),
+                                },
+                                _ => e.clone(),
+                            },
+                            _ => e.clone(),
+                        };
+                        Proc::CastBag(Box::new(Bag::BagLit(normalized.remove_one(&elem))))
+                    }
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }}
         ] fold;
@@ -804,7 +890,25 @@ language! {
         ] fold;
         CountBag . b:Proc, e:Proc |- "count" "(" b "," e ")" : Int ![
             { match &b {
-                Proc::CastBag(bag) => match bag.as_ref() { Bag::BagLit(h) => mettail_runtime::HashBag::count(h, &e) as i64, _ => panic!("count: expected bag literal") }, _ => panic!("count: expected CastBag")
+                Proc::CastBag(bag) => match bag.as_ref() {
+                    Bag::BagLit(h) => {
+                        let normalized = crate::rhocalc::runtime::normalize_bag_elements(h);
+                        let elem = match &e {
+                            Proc::PDrop(n) => match n.as_ref() {
+                                Name::NQuote(p) => p.as_ref().clone(),
+                                Name::NParen(inner) => match inner.as_ref() {
+                                    Name::NQuote(p) => p.as_ref().clone(),
+                                    _ => e.clone(),
+                                },
+                                _ => e.clone(),
+                            },
+                            _ => e.clone(),
+                        };
+                        mettail_runtime::HashBag::count(&normalized, &elem) as i64
+                    }
+                    _ => panic!("count: expected bag literal"),
+                },
+                _ => panic!("count: expected CastBag")
             }}
         ] fold;
 
@@ -869,7 +973,7 @@ language! {
         KeysMap . m:Proc |- "keys" "(" m ")" : Proc ![
             { match &m {
                 Proc::CastMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => Proc::CastList(Box::new(List::ListLit(payload.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()))),
+                    Map::MapLit(ref payload) => crate::rhocalc::runtime::mk_proc_list(payload.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -878,7 +982,7 @@ language! {
         ValuesMap . m:Proc |- "values" "(" m ")" : Proc ![
             { match &m {
                 Proc::CastMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => Proc::CastList(Box::new(List::ListLit(payload.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()))),
+                    Map::MapLit(ref payload) => crate::rhocalc::runtime::mk_proc_list(payload.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -1101,7 +1205,7 @@ language! {
                 items.extend(bs.iter().cloned());
                 Proc::POutput(
                     Box::new(n.as_ref().clone()),
-                    Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                    Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
                 )
             };
         // Normalize polyadic persistent send sugar `x!!(a, b, ...)` similarly.
@@ -1114,7 +1218,7 @@ language! {
                 items.extend(bs.iter().cloned());
                 Proc::PPersistOutput(
                     Box::new(n.as_ref().clone()),
-                    Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
+                    Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
                 )
             };
 
@@ -1124,6 +1228,12 @@ language! {
             if let Proc::PDrop(ref n) = s,
             if let Name::NQuote(ref p) = n.as_ref(),
             let res = p.as_ref().clone();
+
+        // Ensure bare infix parallel reaches canonical PPar during execution so COMM can fire.
+        fold_proc(s.clone(), res) <--
+            proc(s),
+            if let Proc::PParInfix(ref a, ref b) = s,
+            let res = crate::rhocalc::runtime::merge_pp_parallel(a.as_ref().clone(), b.as_ref().clone());
 
         // Evaluate guarded communication helper introduced by CommPatternWhere.
         // This bridges rewrite-time construction (`CommWhere ...`) to runtime semantics:
@@ -1151,7 +1261,8 @@ language! {
         rw_proc(s0.clone(), res) <--
             eq_proc(s0, s),
             if let Some(rewritten) = crate::rhocalc::receive::try_comm_rw_proc(&s),
-            if rewritten != *s,
+            if !rewritten.term_eq(&s),
+            if !rewritten.term_eq(&s0),
             let res = rewritten;
 
         // many-step to a result
@@ -1216,66 +1327,4 @@ language! {
         //     proc(p),name(n),
         //     !(proc(k), trans(p,k,q), can_comm(q,n));
     },
-}
-
-fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {
-    match p {
-        Proc::POutput2Plus(n, a, bs) => {
-            let a_norm = normalize_query_send_sugar_proc(a.as_ref());
-            let bs_norm: Vec<Proc> = bs.iter().map(normalize_query_send_sugar_proc).collect();
-            let mut items = Vec::with_capacity(1 + bs_norm.len());
-            items.push(a_norm);
-            items.extend(bs_norm);
-            Proc::POutput(
-                Box::new(n.as_ref().clone()),
-                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
-            )
-        },
-        Proc::PPersistOutput2Plus(n, a, bs) => {
-            let a_norm = normalize_query_send_sugar_proc(a.as_ref());
-            let bs_norm: Vec<Proc> = bs.iter().map(normalize_query_send_sugar_proc).collect();
-            let mut items = Vec::with_capacity(1 + bs_norm.len());
-            items.push(a_norm);
-            items.extend(bs_norm);
-            Proc::PPersistOutput(
-                Box::new(n.as_ref().clone()),
-                Box::new(Proc::CastList(Box::new(List::ListLit(items)))),
-            )
-        },
-        Proc::PForUser(rows, body) => {
-            let body_norm = normalize_query_send_sugar_proc(body.as_ref());
-            if crate::rhocalc::receive::pfor_user_still_has_query_rows(rows) {
-                normalize_query_send_sugar_proc(&crate::rhocalc::receive::desugar_for_rows(
-                    rows.clone(),
-                    &body_norm,
-                ))
-            } else {
-                Proc::PForUser(rows.clone(), Box::new(body_norm))
-            }
-        },
-        Proc::PPar(ps) => {
-            let mut out = mettail_runtime::HashBag::new();
-            for (elem, count) in ps.iter() {
-                let norm_elem = normalize_query_send_sugar_proc(elem);
-                for _ in 0..count {
-                    out.insert(norm_elem.clone());
-                }
-            }
-            Proc::PPar(out)
-        },
-        Proc::PNew(scope) => {
-            let (binders, body) = scope.clone().unbind();
-            let norm_body = normalize_query_send_sugar_proc(&body);
-            Proc::PNew(mettail_runtime::Scope::new(binders, Box::new(norm_body)))
-        },
-        _ => p.clone(),
-    }
-}
-
-impl Proc {
-    pub fn term_eq(&self, other: &Self) -> bool {
-        let lhs = normalize_query_send_sugar_proc(self);
-        let rhs = normalize_query_send_sugar_proc(other);
-        mettail_runtime::BoundTerm::term_eq(&lhs, &rhs)
-    }
 }
