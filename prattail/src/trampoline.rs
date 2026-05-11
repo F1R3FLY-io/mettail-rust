@@ -2514,6 +2514,33 @@ fn write_infix_loop(
 }
 
 /// Write the mixfix led handler in the infix loop.
+/// Emit the post-trigger / post-leading-terminals body for a single mixfix
+/// operator: either push the first `Mixfix_{label}_0` frame to drive into the
+/// first operand, or — for zero-operand-after-trigger rules like `m.size()`
+/// (1 NT + N≥3 T) — build the AST node inline without descending.
+fn write_mixfix_dispatch_body(
+    buf: &mut String,
+    op: &crate::binding_power::InfixOperator,
+    cat: &str,
+    frame_info: &FrameInfo,
+) {
+    if op.mixfix_parts.is_empty() {
+        // No remaining operands — construct the term from `lhs` alone, leave
+        // `cur_bp` untouched so the outer infix loop keeps scanning.
+        write!(buf, "lhs = {cat}::{label}(Box::new(lhs));", cat = cat, label = op.label,).unwrap();
+    } else {
+        write!(
+            buf,
+            "stack.push({enum_name}::Mixfix_{label}_0 {{ lhs, saved_bp: cur_bp }}); \
+            cur_bp = 0; \
+            continue 'drive;",
+            enum_name = frame_info.enum_name,
+            label = op.label,
+        )
+        .unwrap();
+    }
+}
+
 fn write_mixfix_led(
     buf: &mut String,
     config: &TrampolineConfig,
@@ -2531,11 +2558,24 @@ fn write_mixfix_led(
     )
     .unwrap();
 
-    // Dispatch to the first mixfix operand based on operator
+    // Dispatch to the first mixfix operand based on operator.
+    //
+    // Each mixfix operator may have `leading_terminals` that appear between
+    // the trigger and the first operand (e.g. `.` is the trigger and
+    // `["get", "("]` are the leading terminals for `m.get(k)`). These are
+    // consumed *after* the trigger but *before* parsing the first operand.
+    //
+    // Multiple mixfix rules may share the same trigger terminal (e.g. both
+    // `.get(` and `.set(` use `.`). For each such group we peek the token
+    // that follows the trigger to decide which rule's frame to push;
+    // operators with an empty `leading_terminals` are taken when nothing
+    // else matched (catch-all).
     let mixfix_ops = bp_table.mixfix_operators_for_category(cat);
-    if mixfix_ops.len() == 1 {
+    if mixfix_ops.len() == 1 && mixfix_ops[0].leading_terminals.is_empty() {
         let op = &mixfix_ops[0];
-        // Single mixfix operator — no match needed
+        // Single ternary-style mixfix — no dispatch, no leading terminals.
+        // (Zero-parts case is impossible here: with no leading terminals and
+        // no parts the rule would not have been classified as mixfix.)
         write!(
             buf,
             "stack.push({enum_name}::Mixfix_{label}_0 {{ lhs, saved_bp: cur_bp }}); \
@@ -2546,22 +2586,81 @@ fn write_mixfix_led(
         )
         .unwrap();
     } else {
-        // Multiple mixfix operators — match on token
-        buf.push_str("match &_op_token {");
+        // Group operators by trigger terminal.
+        let mut groups: std::collections::BTreeMap<
+            String,
+            Vec<&crate::binding_power::InfixOperator>,
+        > = std::collections::BTreeMap::new();
         for op in &mixfix_ops {
-            let variant = terminal_to_variant_name(&op.terminal);
-            write!(
-                buf,
-                "Token::{} => {{ \
-                    stack.push({enum_name}::Mixfix_{label}_0 {{ lhs, saved_bp: cur_bp }}); \
-                    cur_bp = 0; \
-                    continue 'drive; \
-                }},",
-                variant,
-                enum_name = frame_info.enum_name,
-                label = op.label,
-            )
-            .unwrap();
+            groups.entry(op.terminal.clone()).or_default().push(op);
+        }
+
+        buf.push_str("match &_op_token {");
+        for (trigger, ops_in_group) in &groups {
+            let trigger_variant = terminal_to_variant_name(trigger);
+            write!(buf, "Token::{} => {{", trigger_variant).unwrap();
+
+            // Partition into ops with a leading terminal (peek-dispatched) and
+            // a fallback op whose `leading_terminals` is empty (immediate operand).
+            let mut keyed: Vec<&&crate::binding_power::InfixOperator> = ops_in_group
+                .iter()
+                .filter(|op| !op.leading_terminals.is_empty())
+                .collect();
+            let fallback: Option<&&crate::binding_power::InfixOperator> = ops_in_group
+                .iter()
+                .find(|op| op.leading_terminals.is_empty());
+
+            // Sort keyed ops by their leading terminal for deterministic output.
+            keyed.sort_by(|a, b| a.leading_terminals[0].cmp(&b.leading_terminals[0]));
+
+            if keyed.is_empty() {
+                // No leading terminals on any op in the group — preserve the
+                // original "first op wins" semantics with a warning emitted by
+                // earlier grammar analysis.
+                let op = ops_in_group[0];
+                write_mixfix_dispatch_body(buf, op, cat, frame_info);
+            } else {
+                // Peek the next token after the trigger and dispatch.
+                buf.push_str("match tokens.get(*pos).map(|(t, _)| t) {");
+                for op in &keyed {
+                    let head_terminal = &op.leading_terminals[0];
+                    let head_variant = terminal_to_variant_name(head_terminal);
+                    write!(buf, "Some(Token::{}) => {{", head_variant).unwrap();
+                    // Consume each leading terminal in order.
+                    for lt in &op.leading_terminals {
+                        let lt_variant = terminal_to_variant_name(lt);
+                        write!(
+                            buf,
+                            "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
+                            lt_variant, lt,
+                        )
+                        .unwrap();
+                    }
+                    write_mixfix_dispatch_body(buf, op, cat, frame_info);
+                    buf.push_str("},");
+                }
+                if let Some(op) = fallback {
+                    buf.push_str("_ => {");
+                    write_mixfix_dispatch_body(buf, op, cat, frame_info);
+                    buf.push_str("},");
+                } else {
+                    // No fallback — emit a parse error pointing at the trigger
+                    // so the user sees which token failed disambiguation.
+                    write!(
+                        buf,
+                        "_ => {{ return Err(ParseError::UnexpectedToken {{ \
+                            expected: \"method-name keyword after `{trigger_lit}`\", \
+                            found: format!(\"{{:?}}\", tokens.get(*pos).map(|(t, _)| t)), \
+                            range: tokens.get(*pos).map(|(_, r)| *r).unwrap_or(Range::zero()), \
+                        }}); }},",
+                        trigger_lit = trigger,
+                    )
+                    .unwrap();
+                }
+                buf.push('}');
+            }
+            buf.push('}');
+            buf.push(',');
         }
         buf.push_str("_ => unreachable!(\"mixfix_bp returned Some for non-mixfix token\"),");
         buf.push('}');

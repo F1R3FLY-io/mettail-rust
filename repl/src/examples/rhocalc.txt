@@ -1,13 +1,13 @@
 // examples
-add = { a!(2) | b!(3) | for(x <- a & y <- b){ *(x) + *(y) } }
-comm = { a!(0) | for(x <- a){*(x)}}
-multi_comm = {a!(p) | b!(q) | c!(r) | for(x <- a & y <- b & z <- c){{*(x) | *(y) | *(z)}}}
+add = a!(2) | b!(3) | for(x <- a & y <- b){ *(x) + *(y) }
+comm = a!(0) | for(x <- a){*(x)}
+multi_comm = a!(p) | b!(q) | c!(r) | for(x <- a & y <- b & z <- c){*(x) | *(y) | *(z)}
 
-new_test = {a!(0) | new (x) in { for(z <- a){*(z)}} }
+new_test = a!(0) | new (x) in { for(z <- a){*(z)} }
 
 // duplication and replication
-dup = ^l.{for(x <- l){{*(x)|l!(*(x))}}}
-rep = ^n.{^a.{^cont.{{$name(dup,n)|n!(for(y <- a){{$name(cont,y)|$name(dup,n)}})}}}}
+dup = ^l.{for(x <- l){*(x)|l!(*(x))}}
+rep = ^n.{^a.{^cont.{$name(dup,n)|n!(for(y <- a){$name(cont,y)|$name(dup,n)})}}}
 
 rep_serv = $proc($name($name(rep, loc), serv), id)
 
@@ -18,13 +18,23 @@ const = ^val.{^n.{for(x <- n){*(val)}}}
 
 // a data structure
 cell = ^loc.{^init.{loc!(init)}}
-read = ^loc.{^ret.{for(x <- loc){{loc!(*(x)) | ret!(*(x))}}}}
+read = ^loc.{^ret.{for(x <- loc){loc!(*(x)) | ret!(*(x))}}}
 write = ^loc.{^val.{for(x <- loc){loc!(val)}}}
 
-// List and Bag (communication then operation, like add)
-list_concat_comm = { a!( [ 1, 2 ] ) | b!( [ 3, 4 ] ) | for(x <- a & y <- b){ concat(*(x), *(y)) } }
-list_len_comm = { a!( [ 1, 2, 3 ] ) | for(x <- a){ len(*(x)) } }
-list_at_comm = { a!( [ 1, 2, 3 ] ) | b!( 1 ) | for(lst <- a & i <- b){ at(*(lst), *(i)) } }
-bag_union_comm = { a!( #{ 1 | 2 }# ) | b!( #{ 2 | 3 }# ) | for(x <- a & y <- b){ union(*(x), *(y)) } }
-bag_count_comm = { a!( #{ 1 | 2 | 2 }# ) | c!( 2 ) | for(b <- a & e <- c){ count(*(b), *(e)) } }
-bag_remove_comm = { a!( #{ 1 | 2 | 2 }# ) | c!( 2 ) | for(b <- a & e <- c){ remove(*(b), *(e)) } }
+// List, Bag, and Map (communication then operation, like add)
+list_concat_comm = a!([ 1, 2 ]) | b!([ 3, 4 ]) | for(x <- a & y <- b){ concat(*(x), *(y)) }
+list_len_comm = a!([ 1, 2, 3 ]) | for(x <- a){ len(*(x)) }
+list_at_comm = a!([ 1, 2, 3 ]) | b!( 1 ) | for(lst <- a & i <- b){ at(*(lst), *(i)) }
+bag_union_comm = a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ union(*(x), *(y)) }
+bag_count_comm = a!(#{ 1 | 2 | 2 }#) | c!( 2 ) | for(b <- a & e <- c){ count(*(b), *(e)) }
+bag_remove_comm = a!(#{ 1 | 2 | 2 }#) | c!( 2 ) | for(b <- a & e <- c){ remove(*(b), *(e)) }
+
+// Map literal + method-call sugar (Rholang style)
+map_get      = {1: 10, 2: 20}.get(1)
+map_set      = Map().set(1, 10).set(2, 20)
+map_size     = {1: 10, 2: 20}.size()
+map_contains = {1: 10}.contains(1)
+map_keys     = {1: 10, 2: 20}.keys()
+map_values   = {1: 10, 2: 20}.values()
+map_delete   = {1: 10, 2: 20}.delete(1)
+map_union    = {1: 10}.union({2: 20})

@@ -245,7 +245,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         .iter()
         .filter(|r| r.is_infix)
         .map(|r| {
-            let (is_mixfix, mixfix_parts) = extract_mixfix_parts(&r.syntax);
+            let (is_mixfix, leading_terminals, mixfix_parts) = extract_mixfix_parts(&r.syntax);
             InfixRuleInfo {
                 label: r.label.clone(),
                 terminal: r
@@ -265,6 +265,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
                 is_cross_category: r.is_cross_category,
                 is_postfix: r.is_postfix,
                 is_mixfix,
+                leading_terminals,
                 mixfix_parts,
             }
         })
@@ -942,18 +943,24 @@ fn collect_terminals_recursive(items: &[SyntaxItemSpec]) -> Vec<String> {
 
 /// Detect whether an infix rule is mixfix and extract its parts.
 ///
-/// A rule is mixfix if its syntax pattern has 3+ operands (NonTerminal items)
+/// A rule is mixfix if its syntax pattern has 2+ operands (NonTerminal items)
 /// with 2+ interleaved terminals. The first operand is the left operand
 /// (handled by the Pratt loop), and subsequent operand-terminal pairs
 /// become `MixfixPart`s.
 ///
-/// Returns `(is_mixfix, parts)` where `parts` is empty for non-mixfix rules.
+/// Returns `(is_mixfix, leading_terminals, parts)`. `leading_terminals` is the
+/// run of terminals between the trigger and the first operand (empty for
+/// ternary-style rules); `parts` is empty for non-mixfix rules.
 ///
-/// Example: `cond "?" then ":" else` → parts = [
-///   MixfixPart { category: "Int", param: "then", following: Some(":") },
-///   MixfixPart { category: "Int", param: "else", following: None },
-/// ]
-fn extract_mixfix_parts(syntax: &[SyntaxItemSpec]) -> (bool, Vec<MixfixPart>) {
+/// Examples:
+/// - `cond "?" then ":" else` (3 NT, 2 T) →
+///   leading = [], parts = [{then, ":"}, {else, None}].
+/// - `m "." "get" "(" k ")"` (2 NT, 4 T) →
+///   leading = ["get", "("], parts = [{k, ")"}]. The leading terminals are
+///   consumed by the mixfix unwind handler before parsing the first operand
+///   and also serve as the disambiguator between rules sharing the trigger
+///   `.` (e.g. `m.get(k)` vs `m.set(k, v)`).
+fn extract_mixfix_parts(syntax: &[SyntaxItemSpec]) -> (bool, Vec<String>, Vec<MixfixPart>) {
     // Count operands (NonTerminal) and terminals
     let operand_count = syntax
         .iter()
@@ -964,17 +971,27 @@ fn extract_mixfix_parts(syntax: &[SyntaxItemSpec]) -> (bool, Vec<MixfixPart>) {
         .filter(|item| matches!(item, SyntaxItemSpec::Terminal(_)))
         .count();
 
-    // Mixfix: 3+ operands, 2+ terminals
-    // (Regular infix: 2 operands, 1 terminal. Postfix: 1 operand, 1 terminal.)
-    if operand_count < 3 || terminal_count < 2 {
-        return (false, Vec::new());
+    // Mixfix: 2+ operands with 2+ terminals **or** 1 operand with 3+
+    // terminals (zero-operand-after-trigger method call, e.g.
+    // `m "." "size" "(" ")"` — 1 NT, 4 T).
+    //
+    // (Regular infix has 1 terminal; postfix has 1 operand + 1 terminal.)
+    let multi_operand = operand_count >= 2 && terminal_count >= 2;
+    let unary_after_trigger = operand_count == 1 && terminal_count >= 3;
+    if !(multi_operand || unary_after_trigger) {
+        return (false, Vec::new(), Vec::new());
     }
 
     // Extract parts: skip the first operand (left) and first terminal (trigger).
-    // Remaining items alternate: NonTerminal, Terminal, NonTerminal, Terminal, ..., NonTerminal
-    let mut parts = Vec::with_capacity(operand_count - 1);
+    // Then any run of terminals before the next NonTerminal forms
+    // `leading_terminals`. Beyond that, items alternate
+    // NonTerminal, Terminal, NonTerminal, ..., where terminals after the first
+    // operand become the `following_terminal` of the preceding part.
+    let mut leading_terminals: Vec<String> = Vec::new();
+    let mut parts = Vec::with_capacity(operand_count.saturating_sub(1));
     let mut after_trigger = false;
     let mut skip_count = 0;
+    let mut seen_first_part = false;
 
     for item in syntax {
         match item {
@@ -987,6 +1004,7 @@ fn extract_mixfix_parts(syntax: &[SyntaxItemSpec]) -> (bool, Vec<MixfixPart>) {
                 after_trigger = true;
             },
             SyntaxItemSpec::NonTerminal { category, param_name } if after_trigger => {
+                seen_first_part = true;
                 parts.push(MixfixPart {
                     operand_category: category.clone(),
                     param_name: param_name.clone(),
@@ -994,8 +1012,11 @@ fn extract_mixfix_parts(syntax: &[SyntaxItemSpec]) -> (bool, Vec<MixfixPart>) {
                 });
             },
             SyntaxItemSpec::Terminal(t) if after_trigger => {
-                // This terminal follows the previous part
-                if let Some(last_part) = parts.last_mut() {
+                if !seen_first_part {
+                    // Terminals between the trigger and the first operand.
+                    leading_terminals.push(t.clone());
+                } else if let Some(last_part) = parts.last_mut() {
+                    // Otherwise this terminal follows the previous part.
                     last_part.following_terminal = Some(t.clone());
                 }
             },
@@ -1003,7 +1024,7 @@ fn extract_mixfix_parts(syntax: &[SyntaxItemSpec]) -> (bool, Vec<MixfixPart>) {
         }
     }
 
-    (true, parts)
+    (true, leading_terminals, parts)
 }
 
 /// Convert a `SyntaxItemSpec` to an `RDSyntaxItem`.

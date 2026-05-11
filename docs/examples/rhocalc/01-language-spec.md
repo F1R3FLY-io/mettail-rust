@@ -74,12 +74,15 @@ separates parameters from concrete syntax.  The `:` gives the result category.
 
 ```rust
 PZero .
-|- "{}" : Proc;
+|- "Nil" : Proc;
 ```
 
-No parameters.  The syntax is a single literal terminal `"{}"`.  This generates
-`Proc::PZero` with no fields and a prefix parse handler matching `Token::Braces`
-(or the comb-compressed equivalent).
+No parameters.  The syntax is the keyword terminal `"Nil"` — the
+[Rholang](https://rholang.io)-style spelling of the zero process.  This
+generates `Proc::PZero` with no fields and a prefix parse handler matching
+`Token::Nil`.  (Historically the rule was `"{}"`, but `{}` is now reserved for
+the empty `Map` literal; see
+[exploring/rhocalc-rholang-style-syntax.md](../../design/exploring/rhocalc-rholang-style-syntax.md).)
 
 ### 3.2 Prefix Terms
 
@@ -95,16 +98,61 @@ terminal tokens, not a nonterminal.
 ### 3.3 Collection Terms
 
 ```rust
-PPar . ps:HashBag(Proc)
-|- "{" ps.*sep("|") "}" : Proc;
+PParInfix . a:Proc, b:Proc |- a "|" b : Proc ![{
+    crate::rhocalc::runtime::merge_pp_parallel(a.clone(), b.clone())
+}] fold;
+
+// Internal AST constructor — matched by equations / rewrites, never input by
+// users. The `__ppar(…)` form is the round-trip surface for the AST.
+PPar . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc;
 ```
 
-The parameter `ps` has type `HashBag(Proc)` — a multiset of `Proc` values.
-The syntax `ps.*sep("|")` means "parse zero or more `Proc` values separated by
-`|`" and collect them into a `HashBag`.  Generates `Proc::PPar(HashBag<Proc>)`.
+Parallel composition uses Rholang-style bare infix `a | b` (`PParInfix`),
+which `fold`s to the multiset `Proc::PPar(HashBag<Proc>)` via
+`merge_pp_parallel`. The `__ppar(…)` keyword rule keeps the `Proc::PPar`
+variant available for equation/rewrite matching but is reserved for internal
+use (never appears in user input). The earlier braced surface
+`{ a | b | c }` was retired so that `{` `}` could be repurposed for the
+Rholang-style empty `Map` literal — see
+[exploring/rhocalc-rholang-style-syntax.md](../../design/exploring/rhocalc-rholang-style-syntax.md).
 
 The `*sep(delim)` operator is a collection operation.  Available collection
 types are `Vec(T)`, `HashBag(T)`, and `HashSet(T)`.
+
+### 3.3.1 Map Literals and Method-Call Sugar
+
+`Map` overrides the default `map(k:v)` delimiters to Rholang-style braces:
+
+```rust
+![HashMap<Proc, Proc>] as Map [ "{", "}", ",", ":" ]
+```
+
+producing `{}`, `{k: v}`, `{k₁: v₁, k₂: v₂, …}`. An explicit `Map()` alias
+is provided for chained method calls:
+
+```rust
+MapEmpty . |- "Map" "(" ")" : Proc ![{
+    Proc::CastMap(Box::new(Map::MapLit(Default::default())))
+}] fold;
+```
+
+Method-call sugar (`fold` into the existing prefix-form builtins):
+
+| Method form | Lowering |
+|-------------|----------|
+| `m.get(k)` | `GetMap(m, k)` |
+| `m.set(k, v)` | `PutMap(m, k, v)` |
+| `m.contains(k)` | `HasMap(m, k)` |
+| `m.delete(k)` | `DeleteMap(m, k)` |
+| `m.union(n)` | `MergeMap(m, n)` |
+| `m.size()` | `CastInt(NumLit(entries.len()))` (constant fold) |
+| `m.keys()` | `KeysMap(m)` |
+| `m.values()` | `ValuesMap(m)` |
+
+The unary forms (`m.size()`, `m.keys()`, `m.values()`) use prattail's
+zero-operand-after-trigger mixfix shape (1 NT with 3+ terminals), dispatched
+inline without a frame push. The prefix forms `len(m)`, `keys(m)`,
+`values(m)` remain available and produce identical AST nodes.
 
 ### 3.4 Binder Terms (Lambda / Multi-Lambda)
 

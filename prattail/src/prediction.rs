@@ -1077,8 +1077,10 @@ fn detect_left_recursion(
                 // Postfix pattern: exactly 1 NT + 1 terminal
                 let is_postfix_pattern = nt_count == 1 && terminal_count == 1 && syntax.len() == 2;
 
-                // Mixfix: 3+ NTs with terminals — also handled by Pratt
-                let is_mixfix_pattern = nt_count >= 3 && terminal_count >= 2;
+                // Mixfix: 2+ NTs with 2+ terminals OR 1 NT with 3+ terminals
+                // (zero-operand-after-trigger method call like `m.size()`).
+                let is_mixfix_pattern = (nt_count >= 2 && terminal_count >= 2)
+                    || (nt_count == 1 && terminal_count >= 3);
 
                 if !is_infix_pattern && !is_postfix_pattern && !is_mixfix_pattern {
                     warnings.push(GrammarWarning::LeftRecursion {

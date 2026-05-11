@@ -30,7 +30,7 @@ language! {
         ![str] as Str
         ![Vec<Proc>] as List ["[", "]", ","]
         ![mettail_runtime::HashBag<Proc>] as Bag [ "#{", "}#", "|" ]
-        ![HashMap<Proc, Proc>] as Map
+        ![HashMap<Proc, Proc>] as Map [ "{", "}", ",", ":" ]
     },
 
     literals {
@@ -70,11 +70,22 @@ language! {
 
     terms {
         PZero .
-        |- "{}" : Proc;
+        |- "Nil" : Proc;
 
         PDrop . n:Name  |- "*" n : Proc ;
 
-        PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
+        // AST-level constructor for parallel composition (multiset of procs).
+        // Equations / rewrites match on `(PPar {…})`; the user-facing surface
+        // syntax is `PParInfix` (`P | Q`), which folds into this constructor via
+        // `merge_pp_parallel`. The `__ppar(…)` keyword exposes the constructor
+        // for internal use and round-trip parsing of normalized AST.
+        //
+        // Note: there is no top-level `{ P }` body-grouping rule. In Rholang
+        // braces are always part of an enclosing form (the body of `new`,
+        // `for`, contract, etc.) and the top-level meaning of `{ … }` is
+        // reserved for Map literals (see the `Map` type declaration above).
+        // `{ P | Q }` is therefore written as `P | Q`.
+        PPar . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc;
 
         POutput . n:Name, q:Proc
         |- n "!" "(" q ")" : Proc ;
@@ -988,6 +999,68 @@ language! {
                 _ => Proc::Err,
             }}
         ] fold;
+
+        // Rholang-style Map sugar.
+        //
+        // `Map()` is an alias for the empty brace literal `{}`.
+        // Method-call forms (`m.get(k)`, `m.size()`, …) fold to the
+        // corresponding prefix-call builtins (`GetMap`, `Len`, …) and
+        // therefore do not change semantics. They are implemented as zero / one
+        // / two-operand-after-trigger mixfix rules; the parser's mixfix
+        // dispatcher disambiguates by peeking the method-name keyword after
+        // the `.` trigger.
+        MapEmpty .
+        |- "Map" "(" ")" : Proc ![{
+            Proc::CastMap(Box::new(Map::MapLit(Default::default())))
+        }] fold;
+
+        MGet . m:Proc, k:Proc
+        |- m "." "get" "(" k ")" : Proc ![{
+            Proc::GetMap(Box::new(m.clone()), Box::new(k.clone()))
+        }] fold;
+
+        MSet . m:Proc, k:Proc, v:Proc
+        |- m "." "set" "(" k "," v ")" : Proc ![{
+            Proc::PutMap(Box::new(m.clone()), Box::new(k.clone()), Box::new(v.clone()))
+        }] fold;
+
+        MContains . m:Proc, k:Proc
+        |- m "." "contains" "(" k ")" : Proc ![{
+            Proc::HasMap(Box::new(m.clone()), Box::new(k.clone()))
+        }] fold;
+
+        MDelete . m:Proc, k:Proc
+        |- m "." "delete" "(" k ")" : Proc ![{
+            Proc::DeleteMap(Box::new(m.clone()), Box::new(k.clone()))
+        }] fold;
+
+        MUnion . m:Proc, n:Proc
+        |- m "." "union" "(" n ")" : Proc ![{
+            Proc::MergeMap(Box::new(m.clone()), Box::new(n.clone()))
+        }] fold;
+
+        MSize . m:Proc
+        |- m "." "size" "(" ")" : Proc ![{
+            match &m {
+                Proc::CastMap(payload) => match payload.as_ref() {
+                    Map::MapLit(ref entries) => {
+                        Proc::CastInt(Box::new(Int::NumLit(entries.len() as i64)))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
+        }] fold;
+
+        MKeys . m:Proc
+        |- m "." "keys" "(" ")" : Proc ![{
+            Proc::KeysMap(Box::new(m.clone()))
+        }] fold;
+
+        MValues . m:Proc
+        |- m "." "values" "(" ")" : Proc ![{
+            Proc::ValuesMap(Box::new(m.clone()))
+        }] fold;
 
         Not . a:Proc |- "not" a : Proc ![
             { match &a {

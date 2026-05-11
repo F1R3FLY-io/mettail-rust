@@ -141,11 +141,30 @@ fn assert_no_rewrites(input: &str) {
     );
 }
 
-/// Assert that a term display is never produced among discovered terms.
-fn assert_never_produces(input: &str, forbidden: &str) {
-    let results = run(input);
-    let found = results.all_terms.iter().any(|t| t.display == forbidden);
-    assert!(!found, "`{}` unexpectedly produced `{}`", input, forbidden);
+/// Assert that no rewrite chain starting from the initial term reaches a term
+/// whose display is `forbidden`. Subterms that appear in `all_terms` purely as
+/// exploration side-effects (e.g. HOL/native bottom-up scans) are ignored —
+/// only terms reachable via the rewrite graph from the initial parse count.
+fn assert_never_reaches(input: &str, forbidden: &str) {
+    let (results, initial_id) = run_with_initial(input);
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::from([initial_id]);
+    visited.insert(initial_id);
+    while let Some(id) = queue.pop_front() {
+        if let Some(term) = results.all_terms.iter().find(|t| t.term_id == id) {
+            assert!(
+                term.display != forbidden,
+                "`{}` unexpectedly reached `{}` via rewrites",
+                input,
+                forbidden
+            );
+        }
+        for rw in results.rewrites.iter().filter(|rw| rw.from_id == id) {
+            if visited.insert(rw.to_id) {
+                queue.push_back(rw.to_id);
+            }
+        }
+    }
 }
 
 /// Assert that `input` has a rewrite from the initial term (not stuck).
@@ -215,57 +234,57 @@ mod comm {
     /// Reproduces REPL load_env parse error: PPar with a!(n) must not reduce "a" to variable.
     #[test]
     fn par_with_output_literal() {
-        let _ = parse("{ a!(2) | b!(3) }");
+        let _ = parse(" a!(2) | b!(3) ");
     }
 
     #[test]
     fn single_channel() {
-        assert_reduces_to("{for(x <- c){*(x)} | c!(p)}", "p");
+        assert_reduces_to("for(x <- c){*(x)} | c!(p)", "p");
     }
 
     #[test]
     fn comm_with_body_using_channel() {
-        assert_reduces_to("{for(x <- c){x!(0)} | c!(p)}", "@(p)!(0)");
+        assert_reduces_to("for(x <- c){x!(0)} | c!(p)", "@(p)!(0)");
     }
 
     #[test]
     fn comm_substitutes_quoted_value() {
         // Comm: for(x <- c){*(x)} | c!(0) → *(@ (0)) → 0
-        assert_reduces_to("{for(x <- c){*(x)} | c!(0)}", "0");
+        assert_reduces_to("for(x <- c){*(x)} | c!(0)", "0");
     }
 
     #[test]
     fn multi_input_two_channels() {
-        assert_reduces_to("{for(x <- c1 & y <- c2){*(x)} | c1!(p) | c2!(q)}", "p");
+        assert_reduces_to("for(x <- c1 & y <- c2){*(x)} | c1!(p) | c2!(q)", "p");
     }
 
     #[test]
     fn multi_input_uses_both_vars() {
-        assert_reduces_to("{for(x <- c1 & y <- c2){{*(x) | *(y)}} | c1!(p) | c2!(q)}", "{p | q}");
+        assert_reduces_to("for(x <- c1 & y <- c2){*(x) | *(y)} | c1!(p) | c2!(q)", "p | q");
     }
 
     #[test]
     fn multi_input_three_channels() {
         assert_reduces_to(
-            "{for(x <- a & y <- b & z <- c){{*(x) | *(y) | *(z)}} | a!(p) | b!(q) | c!(r)}",
-            "{p | q | r}",
+            "for(x <- a & y <- b & z <- c){*(x) | *(y) | *(z)} | a!(p) | b!(q) | c!(r)",
+            "p | q | r",
         );
     }
 
     #[test]
     fn join_pattern_same_channel() {
-        assert_reduces_to("{for(x <- c & y <- c){{*(x) | *(y)}} | c!(a) | c!(b)}", "{a | b}");
+        assert_reduces_to("for(x <- c & y <- c){*(x) | *(y)} | c!(a) | c!(b)", "a | b");
     }
 
     #[test]
     fn comm_with_remaining_parallel() {
         // {for(x <- c){*(x)} | c!(p) | q} → {p | q}
-        assert_reduces_to("{for(x <- c){*(x)} | c!(p) | q}", "{p | q}");
+        assert_reduces_to("for(x <- c){*(x)} | c!(p) | q", "p | q");
     }
 
     #[test]
     fn comm_with_persistent_send_keeps_send() {
-        let (results, initial_id) = run_with_initial("{for(x <- c){*x} | c!!(p)}");
+        let (results, initial_id) = run_with_initial("for(x <- c){*x} | c!!(p)");
         let nfs = reachable_normal_form_displays(&results, initial_id);
         assert!(
             nfs.iter()
@@ -277,8 +296,7 @@ mod comm {
 
     #[test]
     fn two_receives_can_fire_against_same_persistent_send() {
-        let (results, initial_id) =
-            run_with_initial("{for(x <- c){*x} | for(y <- c){*y} | c!!(p)}");
+        let (results, initial_id) = run_with_initial("for(x <- c){*x} | for(y <- c){*y} | c!!(p)");
         let nfs = reachable_normal_form_displays(&results, initial_id);
         assert!(
             nfs.iter()
@@ -291,7 +309,7 @@ mod comm {
     #[test]
     fn join_with_persistent_and_ephemeral_send() {
         let (results, initial_id) =
-            run_with_initial("{for(x <- c1 & y <- c2){*x} | c1!!(p) | c2!(q)}");
+            run_with_initial("for(x <- c1 & y <- c2){*x} | c1!!(p) | c2!(q)");
         let nfs = reachable_normal_form_displays(&results, initial_id);
         assert!(
             nfs.iter()
@@ -303,35 +321,32 @@ mod comm {
 
     #[test]
     fn comm_with_persistent_receive_keeps_receive() {
-        let (results, initial_id) = run_with_initial("{for(x <= c){*x} | c!(p)}");
-        let rewrites_from_initial: Vec<String> = results
-            .rewrites_from(initial_id)
-            .iter()
-            .filter_map(|rw| {
-                results
-                    .all_terms
-                    .iter()
-                    .find(|t| t.term_id == rw.to_id)
-                    .map(|t| t.display.clone())
-            })
-            .collect();
+        // Bare infix `|` parses as `PParInfix` and folds to `PPar` in one
+        // ascent step before COMM fires, so the substituted body shows up
+        // among reachable terms (not necessarily as a direct rewrite of the
+        // initial `PParInfix` node).
+        let (results, initial_id) = run_with_initial("for(x <= c){*x} | c!(p)");
         assert!(
             !results.rewrites_from(initial_id).is_empty(),
-            "expected at least one rewrite from initial term; rewrites={:?}",
-            rewrites_from_initial
+            "expected at least one rewrite from initial term"
         );
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.clone())
+            .collect();
         assert!(
-            rewrites_from_initial
+            displays
                 .iter()
                 .any(|d| d.contains("for(x <= c){") && d.contains("*@(p)")),
-            "expected persistent receive + substituted body after one comm, rewrites={:?}",
-            rewrites_from_initial
+            "expected persistent receive + substituted body after one comm, terms={:?}",
+            displays
         );
     }
 
     #[test]
     fn two_sends_can_fire_against_same_persistent_receive() {
-        let results = run("{for(x <= c){*x} | c!(p) | c!(q)}");
+        let results = run("for(x <= c){*x} | c!(p) | c!(q)");
         let displays: Vec<String> = results
             .all_terms
             .iter()
@@ -349,7 +364,7 @@ mod comm {
     #[test]
     fn persistent_receive_with_persistent_send_keeps_both() {
         fresh();
-        let input = parse("{for(x <= c){*x} | c!!(p)}");
+        let input = parse("for(x <= c){*x} | c!!(p)");
         let one_step = input
             .try_comm_once()
             .expect("expected one COMM step for persistent receive + persistent send");
@@ -373,7 +388,7 @@ mod comm {
 
     #[test]
     fn join_persistent_receive_keeps_receive_after_fire() {
-        let results = run("{for(x <= c1 & y <- c2){*x} | c1!(p) | c2!(q)}");
+        let results = run("for(x <= c1 & y <- c2){*x} | c1!(p) | c2!(q)");
         let displays: Vec<String> = results
             .all_terms
             .iter()
@@ -390,7 +405,7 @@ mod comm {
 
     #[test]
     fn persistent_receive_where_true_fires_and_keeps_listener() {
-        let results = run("{for(x <= c where x > 1){*x} | c!(2)}");
+        let results = run("for(x <= c where x > 1){*x} | c!(2)");
         let displays: Vec<String> = results
             .all_terms
             .iter()
@@ -407,7 +422,7 @@ mod comm {
 
     #[test]
     fn persistent_receive_where_false_blocks() {
-        let results = run("{for(x <= c where x > 10){*x} | c!(2)}");
+        let results = run("for(x <= c where x > 10){*x} | c!(2)");
         let displays: Vec<String> = results
             .all_terms
             .iter()
@@ -424,7 +439,7 @@ mod comm {
 
     #[test]
     fn empty_persistent_receive_consumes_payload_and_stays() {
-        let results = run("{for(<= c){ok} | c!(payload)}");
+        let results = run("for(<= c){ok} | c!(payload)");
         let displays: Vec<String> = results
             .all_terms
             .iter()
@@ -441,7 +456,7 @@ mod comm {
 
     #[test]
     fn persistent_join_where_true_fires() {
-        let results = run("{for(x <= c1 & y <- c2 where y > 1){*x} | c1!(p) | c2!(2)}");
+        let results = run("for(x <= c1 & y <- c2 where y > 1){*x} | c1!(p) | c2!(2)");
         let displays: Vec<String> = results
             .all_terms
             .iter()
@@ -458,7 +473,7 @@ mod comm {
 
     #[test]
     fn persistent_join_where_false_blocks() {
-        let results = run("{for(x <= c1 & y <- c2 where y > 10){*x} | c1!(p) | c2!(2)}");
+        let results = run("for(x <= c1 & y <- c2 where y > 10){*x} | c1!(p) | c2!(2)");
         let displays: Vec<String> = results
             .all_terms
             .iter()
@@ -477,7 +492,7 @@ mod comm {
 
     #[test]
     fn semicolon_rows_with_persistent_first_row() {
-        let results = run("{for(x <= c1; y <- c2){*x} | c1!(p) | c2!(q)}");
+        let results = run("for(x <= c1; y <- c2){*x} | c1!(p) | c2!(q)");
         let displays: Vec<String> = results
             .all_terms
             .iter()
@@ -494,12 +509,12 @@ mod comm {
 
     #[test]
     fn polyadic_receive_binds_list_payload_from_polyadic_send() {
-        assert_reduces_to("{x!(1,2,3) | for(a, b, c <- x){[a,b,c]}}", "[1,2,3]");
+        assert_reduces_to("x!(1,2,3) | for(a, b, c <- x){[a,b,c]}", "[1,2,3]");
     }
 
     #[test]
     fn persistent_polyadic_receive_keeps_listener() {
-        let results = run("{x!(1,2,3) | for(a, b, c <= x){[a,b,c]}}");
+        let results = run("x!(1,2,3) | for(a, b, c <= x){[a,b,c]}");
         let displays: Vec<String> = results
             .all_terms
             .iter()
@@ -517,132 +532,132 @@ mod comm {
     #[test]
     fn polyadic_receive_arity_mismatch_blocks() {
         assert_reduces_to(
-            "{x!(1,2) | for(a, b, c <- x){[a,b,c]}}",
-            "{x!([1,2]) | for(a,b , c<-x){[a,b,c]}}",
+            "x!(1,2) | for(a, b, c <- x){[a,b,c]}",
+            "x!([1,2]) | for(a,b , c<-x){[a,b,c]}",
         );
     }
 
     #[test]
     fn polyadic_receive_in_join_row_works() {
-        assert_reduces_to("{x!(1,2) | z!(ok) | for(a, b <- x & y <- z){[a,b,y]}}", "[1,2,ok]");
+        assert_reduces_to("x!(1,2) | z!(ok) | for(a, b <- x & y <- z){[a,b,y]}", "[1,2,ok]");
     }
 
     #[test]
     fn polyadic_receive_where_guard_works() {
-        assert_reduces_to("{x!(1,2,3) | for(a, b, c <- x where c > 2){[a,b,c]}}", "[1,2,3]");
+        assert_reduces_to("x!(1,2,3) | for(a, b, c <- x where c > 2){[a,b,c]}", "[1,2,3]");
     }
 
     #[test]
     fn pattern_comm_var_matches_payload() {
-        assert_reduces_to("{for(x <- c){*x} | c!(p)}", "p");
+        assert_reduces_to("for(x <- c){*x} | c!(p)", "p");
     }
 
     #[test]
     fn compact_for_row_with_ampersand_desugars_to_join() {
-        assert_reduces_to("{for(x <- c1 & y <- c2){*x} | c1!(p) | c2!(q)}", "p");
+        assert_reduces_to("for(x <- c1 & y <- c2){*x} | c1!(p) | c2!(q)", "p");
     }
 
     #[test]
     fn quoted_name_binder_form_is_equivalent() {
-        assert_reduces_to("{for(@x <- c1 & @y <- c2){x} | c1!(p) | c2!(q)}", "p");
+        assert_reduces_to("for(@x <- c1 & @y <- c2){x} | c1!(p) | c2!(q)", "p");
     }
 
     #[test]
     fn compact_for_rows_with_semicolon_are_nested() {
-        assert_reduces_to("{for(x <- c1; y <- c2){*x} | c1!(p) | c2!(q)}", "p");
+        assert_reduces_to("for(x <- c1; y <- c2){*x} | c1!(p) | c2!(q)", "p");
     }
 
     #[test]
     fn compact_for_row_where_guard_blocks_when_false() {
-        assert_never_produces("{for(x <- c1 & y <- c2 where false){*x} | c1!(p) | c2!(q)}", "{p}");
+        assert_never_reaches("for(x <- c1 & y <- c2 where false){*x} | c1!(p) | c2!(q)", "p");
     }
 
     #[test]
     fn where_guard_false_is_noop_for_receive_pair() {
-        assert_never_produces("{for(x <- c where false){*x} | c!(p)}", "{p}");
+        assert_never_reaches("for(x <- c where false){*x} | c!(p)", "p");
     }
 
     #[test]
     fn where_guard_expression_false_is_noop_for_receive_pair() {
-        assert_never_produces("{for(x <- c where x > 3){*x} | c!(2)}", "{2}");
+        assert_never_reaches("for(x <- c where x > 3){*x} | c!(2)", "2");
     }
 
     #[test]
     fn join_pattern_mismatch_is_noop_for_receive_group() {
         assert_reduces_to(
-            "{for(@[1,2,4] <- c){7} | c!([1,2,3])}",
-            "{for(@[1,2,4] <- c){7} | c!([1,2,3])}",
+            "for(@[1,2,4] <- c){7} | c!([1,2,3])",
+            "for(@[1,2,4] <- c){7} | c!([1,2,3])",
         );
-        assert_never_produces("{for(@[1,2,4] <- c){7} | c!([1,2,3])}", "{7}");
+        assert_never_reaches("for(@[1,2,4] <- c){7} | c!([1,2,3])", "7");
     }
 
     #[test]
     fn pattern_comm_ground_pattern_matches_equal_payload() {
-        assert_reduces_to("{for(@0 <- c){1} | c!(0)}", "1");
+        assert_reduces_to("for(@0 <- c){1} | c!(0)", "1");
     }
 
     #[test]
     fn pattern_comm_exact_constructor_pattern_matches() {
-        assert_reduces_to("{for(@*(@(0)) <- c){1} | c!(*(@(0)))}", "1");
+        assert_reduces_to("for(@*(@(0)) <- c){1} | c!(*(@(0)))", "1");
     }
 
     #[test]
     fn pattern_comm_ground_pattern_blocks_mismatch() {
-        // Pattern 0 does not match payload p, so COMM must not produce {0}.
-        // (Other non-COMM rewrites may exist due HOL/native rules.)
-        assert_never_produces("{for(@0 <- c){0} | c!(p)}", "{0}");
+        // Pattern 0 does not match payload p, so COMM must not produce a
+        // reachable normal form whose only proc is the body `0`.
+        assert_never_reaches("for(@0 <- c){0} | c!(p)", "0");
     }
 
     #[test]
     fn pattern_comm_list_literal_pattern_matches() {
-        assert_reduces_to("{for(@[0, 1] <- c){42} | c!([0, 1])}", "42");
+        assert_reduces_to("for(@[0, 1] <- c){42} | c!([0, 1])", "42");
     }
 
     #[test]
     fn pattern_comm_list_literal_pattern_blocks_mismatch() {
-        assert_never_produces("{for(@[0, 1] <- c){42} | c!([0, 1, 2])}", "{42}");
+        assert_never_reaches("for(@[0, 1] <- c){42} | c!([0, 1, 2])", "42");
     }
 
     #[test]
     fn pattern_comm_bag_literal_pattern_matches() {
-        assert_reduces_to("{for(@#{1|2}# <- c){7} | c!(#{2|1}#)}", "7");
+        assert_reduces_to("for(@#{1|2}# <- c){7} | c!(#{2|1}#)", "7");
     }
 
     #[test]
     fn pattern_comm_bag_literal_pattern_blocks_mismatch() {
-        assert_never_produces("{for(@#{1|2}# <- c){7} | c!(#{1|1}#)}", "{7}");
+        assert_never_reaches("for(@#{1|2}# <- c){7} | c!(#{1|1}#)", "7");
     }
 
     #[test]
     fn pattern_comm_map_literal_pattern_matches() {
-        assert_reduces_to("{for(@map(1:2, 3:4) <- c){9} | c!(map(3:4, 1:2))}", "9");
+        assert_reduces_to("for(@{1:2, 3:4} <- c){9} | c!({3:4, 1:2})", "9");
     }
 
     #[test]
     fn pattern_comm_map_literal_pattern_blocks_mismatch() {
-        assert_never_produces("{for(@map(1:2, 3:4) <- c){9} | c!(map(1:2, 3:5))}", "{9}");
+        assert_never_reaches("for(@{1:2, 3:4} <- c){9} | c!({1:2, 3:5})", "9");
     }
 
     #[test]
     fn complex_join_map_and_list_literal_pattern_matches() {
         assert_reduces_to(
-            "{for(@map(1:x, 3:4) <- c & @[1,2,3] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "for(@{1:x, 3:4} <- c & @[1,2,3] <- c2 where x>1){x} | c!({3:4, 1:2}) | c2!([1,2,3])",
             "2",
         );
     }
 
     #[test]
     fn complex_join_map_and_list_literal_pattern_blocks_mismatch() {
-        assert_never_produces(
-            "{for(@map(1:x, 3:4) <- c & @[1,2,4] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
-            "{2}",
+        assert_never_reaches(
+            "for(@{1:x, 3:4} <- c & @[1,2,4] <- c2 where x>1){x} | c!({3:4, 1:2}) | c2!([1,2,3])",
+            "2",
         );
     }
 
     #[test]
     fn complex_join_map_and_list_var_pattern_matches() {
         assert_reduces_to(
-            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "for(@{1:x, 3:4} <- c & @[1,2,y] <- c2 where x>1){x} | c!({3:4, 1:2}) | c2!([1,2,3])",
             "2",
         );
     }
@@ -650,47 +665,47 @@ mod comm {
     #[test]
     fn complex_join_map_and_list_var_pattern_with_guard_matches() {
         assert_reduces_to(
-            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1 and y>1){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
+            "for(@{1:x, 3:4} <- c & @[1,2,y] <- c2 where x>1 and y>1){x} | c!({3:4, 1:2}) | c2!([1,2,3])",
             "2",
         );
     }
 
     #[test]
     fn complex_join_map_and_list_var_pattern_with_guard_blocks() {
-        assert_never_produces(
-            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1 and y>3){x} | c!(map(3:4, 1:2)) | c2!([1,2,3])}",
-            "{2}",
+        assert_never_reaches(
+            "for(@{1:x, 3:4} <- c & @[1,2,y] <- c2 where x>1 and y>3){x} | c!({3:4, 1:2}) | c2!([1,2,3])",
+            "2",
         );
     }
 
     #[test]
     fn complex_multi_row_join_and_followup_row_matches() {
         assert_reduces_to(
-            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1 and y>1; z <- c3 ){[x,z]} | c!(map(3:4, 1:2)) | c2!([1,2,3]) | c3!(11111111)}",
+            "for(@{1:x, 3:4} <- c & @[1,2,y] <- c2 where x>1 and y>1; z <- c3 ){[x,z]} | c!({3:4, 1:2}) | c2!([1,2,3]) | c3!(11111111)",
             "[2, 11111111]",
         );
     }
 
     #[test]
     fn complex_multi_row_join_and_followup_row_guard_blocks() {
-        assert_never_produces(
-            "{for(@map(1:x, 3:4) <- c & @[1,2,y] <- c2 where x>1 and y>1; z <- c3 where z > 1111111111111111 ){[x,z]} | c!(map(3:4, 1:2)) | c2!([1,2,3]) | c3!(11111111)}",
-            "{[2, 11111111]}",
+        assert_never_reaches(
+            "for(@{1:x, 3:4} <- c & @[1,2,y] <- c2 where x>1 and y>1; z <- c3 where z > 1111111111111111 ){[x,z]} | c!({3:4, 1:2}) | c2!([1,2,3]) | c3!(11111111)",
+            "[2, 11111111]",
         );
     }
 
     #[test]
     fn join_where_guard_string_eq_matches() {
         assert_reduces_to(
-            r#"{for(qty <- stock & item <- shop where (qty > 1) and (item == "lemon")){[item, qty]} | stock!(2) | shop!("lemon")}"#,
+            r#"for(qty <- stock & item <- shop where (qty > 1) and (item == "lemon")){[item, qty]} | stock!(2) | shop!("lemon")"#,
             r#"["lemon", 2]"#,
         );
     }
 
     #[test]
     fn join_where_guard_string_eq_blocks() {
-        assert_never_produces(
-            r#"{for(qty <- stock & item <- shop where (qty > 1) and (item == "lemon")){[item, qty]} | stock!(2) | shop!("lime")}"#,
+        assert_never_reaches(
+            r#"for(qty <- stock & item <- shop where (qty > 1) and (item == "lemon")){[item, qty]} | stock!(2) | shop!("lime")"#,
             r#"["lime", 2]"#,
         );
     }
@@ -704,8 +719,8 @@ mod comm {
 
     #[test]
     fn proc_pattern_matches_map_is_strict() {
-        let pat = parse("map(1:2, 3:4)");
-        let val = parse("map(1:2, 3:5)");
+        let pat = parse("{1:2, 3:4}");
+        let val = parse("{1:2, 3:5}");
         assert!(!pat.pattern_matches(&val));
     }
 }
@@ -724,7 +739,7 @@ mod new_and_extrusion {
 
     #[test]
     fn new_multi_binder_parses() {
-        let _p = parse("new(x, y) in { {x!(0) | y!(1)} }");
+        let _p = parse("new(x, y) in {x!(0) | y!(1)}");
     }
 
     #[test]
@@ -734,35 +749,35 @@ mod new_and_extrusion {
 
     #[test]
     fn new_congruence_propagates_body_rewrite() {
-        // new(x) in { {for(z <- a){*(z)} | a!(0)} } → new(x) in { {*(@(0))} } → ...
-        assert_min_rewrites("new(x) in { {for(z <- a){*(z)} | a!(0)} }", 1);
+        // new(x) in {for(z <- a){*(z)} | a!(0)} → new(x) in {*(@(0))} → ...
+        assert_min_rewrites("new(x) in {for(z <- a){*(z)} | a!(0)}", 1);
     }
 
     #[test]
     fn new_congruence_reaches_normal_form() {
-        assert_reduces_to("new(x) in { {for(z <- a){*(z)} | a!(0)} }", "new(x) in { 0 }");
+        assert_reduces_to("new(x) in {for(z <- a){*(z)} | a!(0)}", "new(x) in { 0 }");
     }
 
     #[test]
     fn extrusion_forward() {
-        // {new(x) in {p} | a!(0)} = new(x) in {{p | a!(0)}}
+        // {new(x) in {p} | a!(0)} = new(x) in {p | a!(0)}
         // The initial PPar should connect to a rewrite (via equation + congruence).
-        assert_initial_rewrites("{new(x) in { for(z <- a){*(z)} } | a!(0)}");
+        assert_initial_rewrites("new(x) in { for(z <- a){*(z)} } | a!(0)");
     }
 
     #[test]
     fn extrusion_reaches_result() {
         // {new(x) in {for(z <- a){*(z)}} | a!(0)}
         //  =extrude= new(x) in {{for(z <- a){*(z)} | a!(0)}}
-        //  →comm→ new(x) in {{*(@(0))}} →exec→ new(x) in {0}
-        assert_reduces_to("{new(x) in { for(z <- a){*(z)} } | a!(0)}", "new(x) in { 0 }");
+        //  →comm→ new(x) in {*(@(0))} →exec→ new(x) in {0}
+        assert_reduces_to("new(x) in { for(z <- a){*(z)} } | a!(0)", "new(x) in { 0 }");
     }
 
     #[test]
     fn extrusion_blocked_when_not_fresh() {
         // {new(a) in {for(z <- a){*(z)}} | a!(0)} — x=a is NOT fresh in a!(0),
         // so extrusion should not apply. The term is stuck.
-        let results = run("{new(a) in { for(z <- a){*(z)} } | a!(0)}");
+        let results = run("new(a) in { for(z <- a){*(z)} } | a!(0)");
         let nfs = normal_form_displays(&results);
         // Should be a normal form as-is (no extrusion possible)
         assert!(!nfs.is_empty(), "blocked extrusion should still have normal forms");
@@ -779,18 +794,18 @@ mod congruence {
     #[test]
     fn par_cong_exec() {
         // {*(@(0)) | q} → {0 | q}
-        assert_reduces_to("{*(@(0)) | q}", "{0 | q}");
+        assert_reduces_to("*(@(0)) | q", "0 | q");
     }
 
     #[test]
     fn par_cong_reaches_deep_normal() {
-        assert_reduces_to("{*(@(0))}", "0");
+        assert_reduces_to("*(@(0))", "0");
     }
 
     #[test]
     fn nested_par() {
         // Exec under nested par: {{*(@(p))}} → {{p}}
-        assert_min_rewrites("{{*(@(p))}}", 1);
+        assert_min_rewrites("*(@(p))", 1);
     }
 
     #[test]
@@ -802,13 +817,13 @@ mod congruence {
     #[test]
     fn add_cong() {
         // Congruence through Add: *(@(1)) + 2 → 1 + 2 → 3
-        assert_reduces_to("{*(@(1)) + 2}", "3");
+        assert_reduces_to("*(@(1)) + 2", "3");
     }
 
     #[test]
     fn comparison_cong() {
         // *(@(1)) == 1 → 1 == 1 → true
-        assert_reduces_to("{*(@(1)) == 1}", "true");
+        assert_reduces_to("*(@(1)) == 1", "true");
     }
 }
 
@@ -821,12 +836,12 @@ mod exec {
 
     #[test]
     fn exec_basic() {
-        assert_reduces_to("{*(@(0))}", "0");
+        assert_reduces_to("*(@(0))", "0");
     }
 
     #[test]
     fn exec_with_process() {
-        assert_reduces_to("{*(@(a!(0)))}", "a!(0)");
+        assert_reduces_to("*(@(a!(0)))", "a!(0)");
     }
 
     #[test]
@@ -853,24 +868,24 @@ mod native_ops {
 
         #[test]
         fn int_add() {
-            assert_reduces_to("{1 + 2}", "3");
+            assert_reduces_to("1 + 2", "3");
         }
         #[test]
         fn int_sub() {
-            assert_reduces_to("{5 - 3}", "2");
+            assert_reduces_to("5 - 3", "2");
         }
         #[test]
         fn int_mul() {
-            assert_reduces_to("{3 * 4}", "12");
+            assert_reduces_to("3 * 4", "12");
         }
         #[test]
         fn int_div() {
-            assert_reduces_to("{10 / 2}", "5");
+            assert_reduces_to("10 / 2", "5");
         }
 
         #[test]
         fn float_add() {
-            let results = run("{1.5 + 2.5}");
+            let results = run("1.5 + 2.5");
             let nfs = normal_form_displays(&results);
             assert!(
                 nfs.iter().any(|nf| nf.contains("4")),
@@ -881,7 +896,7 @@ mod native_ops {
 
         #[test]
         fn float_literal_f64_suffix_tokens() {
-            let results = run("{1.0f64 + 0.5f64}");
+            let results = run("1.0f64 + 0.5f64");
             let nfs = normal_form_displays(&results);
             assert!(
                 nfs.iter().any(|nf| nf.contains("1.5")),
@@ -892,52 +907,52 @@ mod native_ops {
 
         #[test]
         fn fixed_div_and_mod() {
-            assert_reduces_to("{10p1 / 3p1}", "3.3p1");
-            assert_reduces_to("{10p1 % 3p1}", "0.1p1");
+            assert_reduces_to("10p1 / 3p1", "3.3p1");
+            assert_reduces_to("10p1 % 3p1", "0.1p1");
         }
 
         #[test]
         fn fixed_bitand() {
-            assert_reduces_to("{5p0 bitand 3p0}", "1p0");
+            assert_reduces_to("5p0 bitand 3p0", "1p0");
         }
 
         #[test]
         fn fixed_bitor() {
-            assert_reduces_to("{5p0 bitor 3p0}", "7p0");
+            assert_reduces_to("5p0 bitor 3p0", "7p0");
         }
 
         #[test]
         fn fixed_comparisons() {
-            assert_reduces_to("{10p1 == 10.0p1}", "true");
-            assert_reduces_to("{1p0 == 1.0p1}", "true");
-            assert_reduces_to("{10p1 != 9p1}", "true");
-            assert_reduces_to("{10p1 < 11p1}", "true");
-            assert_reduces_to("{10p1 > 9p1}", "true");
-            assert_reduces_to("{10p1 <= 10.0p1}", "true");
-            assert_reduces_to("{10p1 >= 10.0p1}", "true");
+            assert_reduces_to("10p1 == 10.0p1", "true");
+            assert_reduces_to("1p0 == 1.0p1", "true");
+            assert_reduces_to("10p1 != 9p1", "true");
+            assert_reduces_to("10p1 < 11p1", "true");
+            assert_reduces_to("10p1 > 9p1", "true");
+            assert_reduces_to("10p1 <= 10.0p1", "true");
+            assert_reduces_to("10p1 >= 10.0p1", "true");
         }
 
         #[test]
         fn fixed_arithmetic_add_sub_mul() {
-            assert_reduces_to("{1p0 + 0.5p1}", "1.5p1");
-            assert_reduces_to("{2.0p1 - 0.5p1}", "1.5p1");
-            assert_reduces_to("{3p0 * 2p0}", "6p0");
-            assert_reduces_to("{-10p1}", "-10.0p1");
+            assert_reduces_to("1p0 + 0.5p1", "1.5p1");
+            assert_reduces_to("2.0p1 - 0.5p1", "1.5p1");
+            assert_reduces_to("3p0 * 2p0", "6p0");
+            assert_reduces_to("-10p1", "-10.0p1");
         }
 
         #[test]
         fn fixed_div_by_zero_is_error() {
-            assert_reduces_to("{10p1 / 0p0}", "{10.0p1 / 0p0}");
+            assert_reduces_to("10p1 / 0p0", "10.0p1 / 0p0");
         }
 
         #[test]
         fn fixed_mod_by_zero_is_error() {
-            assert_reduces_to("{10p1 % 0p0}", "{10.0p1 % 0p0}");
+            assert_reduces_to("10p1 % 0p0", "10.0p1 % 0p0");
         }
 
         #[test]
         fn float_more_f64_suffix() {
-            let results = run("{1e2f64 + 1.0f64}");
+            let results = run("1e2f64 + 1.0f64");
             let nfs = normal_form_displays(&results);
             assert!(
                 nfs.iter().any(|nf| nf.contains("101")),
@@ -948,22 +963,22 @@ mod native_ops {
 
         #[test]
         fn cast_to_int_float_bool_str_from_fixed() {
-            assert_reduces_to("{int(10p1, 64)}", "10");
-            assert_reduces_to("{float(10p1, 64)}", "10.0");
-            assert_reduces_to("{bool(0p0)}", "false");
-            assert_reduces_to("{bool(1p0)}", "true");
-            assert_reduces_to(r#"{str(1.5p1)}"#, r#""1.5p1""#);
+            assert_reduces_to("int(10p1, 64)", "10");
+            assert_reduces_to("float(10p1, 64)", "10.0");
+            assert_reduces_to("bool(0p0)", "false");
+            assert_reduces_to("bool(1p0)", "true");
+            assert_reduces_to(r#"str(1.5p1)"#, r#""1.5p1""#);
         }
 
         #[test]
         fn chained_add() {
             // fold evaluates full expression trees
-            assert_reduces_to("{1 + 2 + 3}", "6");
+            assert_reduces_to("1 + 2 + 3", "6");
         }
 
         #[test]
         fn negative_result() {
-            let results = run("{3 - 5}");
+            let results = run("3 - 5");
             let nfs = normal_form_displays(&results);
             assert!(
                 nfs.iter().any(|nf| nf.contains("-2")),
@@ -974,34 +989,34 @@ mod native_ops {
 
         #[test]
         fn bigint_add() {
-            assert_reduces_to("{1n + 2n}", "3n");
+            assert_reduces_to("1n + 2n", "3n");
         }
 
         #[test]
         fn u32_add() {
-            assert_reduces_to("{1u32 + 2u32}", "3u32");
+            assert_reduces_to("1u32 + 2u32", "3u32");
         }
 
         /// C analogy: `unsigned x = 0; x = x - 1` → `UINT_MAX`. Rust `u32` wraps in release; debug may panic.
         #[cfg(not(debug_assertions))]
         #[test]
         fn u32_sub_underflow_wraps_to_uint_max_in_release() {
-            assert_reduces_to("{0u32 - 1u32}", "4294967295u32");
+            assert_reduces_to("0u32 - 1u32", "4294967295u32");
         }
 
         #[test]
         fn bigrat_add_normalized() {
-            assert_reduces_to("{3r/4r + 1r/4r}", "1r");
+            assert_reduces_to("3r/4r + 1r/4r", "1r");
         }
 
         #[test]
         fn int_literal_optional_i64_suffix() {
-            assert_reduces_to("{7i64 + 1}", "8");
+            assert_reduces_to("7i64 + 1", "8");
         }
 
         #[test]
         fn fraction_builds_rational() {
-            assert_reduces_to("{fraction(1n, 2n) + 1r/2r}", "1r");
+            assert_reduces_to("fraction(1n, 2n) + 1r/2r", "1r");
         }
 
         /// Regression: `fraction` must use `fold` on Proc (not `step`), or Ascent never emits rw_proc.
@@ -1013,7 +1028,7 @@ mod native_ops {
 
         #[test]
         fn bigint_div_by_zero_is_error() {
-            assert_reduces_to("{1n / 0n}", "{1 / 0}");
+            assert_reduces_to("1n / 0n", "1 / 0");
         }
     }
 
@@ -1022,9 +1037,9 @@ mod native_ops {
 
         #[test]
         fn int_and_or_not() {
-            assert_reduces_to("{5 bitand 3}", "1");
-            assert_reduces_to("{5 bitor 3}", "7");
-            let results = run("{bitnot 0}");
+            assert_reduces_to("5 bitand 3", "1");
+            assert_reduces_to("5 bitor 3", "7");
+            let results = run("bitnot 0");
             let nfs = normal_form_displays(&results);
             assert!(
                 nfs.iter().any(|nf| nf == "-1"),
@@ -1035,16 +1050,16 @@ mod native_ops {
 
         #[test]
         fn u32_and_or_not() {
-            assert_reduces_to("{5u32 bitand 3u32}", "1u32");
-            assert_reduces_to("{5u32 bitor 3u32}", "7u32");
-            assert_reduces_to("{bitnot 0u32}", "4294967295u32");
+            assert_reduces_to("5u32 bitand 3u32", "1u32");
+            assert_reduces_to("5u32 bitor 3u32", "7u32");
+            assert_reduces_to("bitnot 0u32", "4294967295u32");
         }
 
         #[test]
         fn bigint_and_or_not() {
-            assert_reduces_to("{3n bitand 1n}", "1n");
-            assert_reduces_to("{3n bitor 1n}", "3n");
-            let results = run("{bitnot 0n}");
+            assert_reduces_to("3n bitand 1n", "1n");
+            assert_reduces_to("3n bitor 1n", "3n");
+            let results = run("bitnot 0n");
             let nfs = normal_form_displays(&results);
             assert!(
                 nfs.iter().any(|nf| nf == "-1n" || nf == "-1"),
@@ -1055,9 +1070,9 @@ mod native_ops {
 
         #[test]
         fn bigrat_and_or_not() {
-            assert_reduces_to("{3r/4r bitand 1r/4r}", "{1/4}");
-            assert_reduces_to("{1r/2r bitand 1r/3r}", "{1/3}");
-            let results = run("{bitnot 0r}");
+            assert_reduces_to("3r/4r bitand 1r/4r", "1/4");
+            assert_reduces_to("1r/2r bitand 1r/3r", "1/3");
+            let results = run("bitnot 0r");
             let nfs = normal_form_displays(&results);
             assert!(
                 nfs.iter().any(|nf| nf == "-1r" || nf == "-1"),
@@ -1068,24 +1083,24 @@ mod native_ops {
 
         #[test]
         fn fixed_and_or_not() {
-            assert_reduces_to("{bitnot 0p0}", "-1p0");
-            assert_reduces_to("{15p0 bitand 14p1}", "13.2p1");
+            assert_reduces_to("bitnot 0p0", "-1p0");
+            assert_reduces_to("15p0 bitand 14p1", "13.2p1");
         }
 
         #[test]
         fn type_mismatch_bitand_is_error() {
-            assert_reduces_to("{1 bitand 1.0}", "{1 bitand 1.0}");
-            assert_reduces_to("{1 bitand true}", "{1 bitand true}");
+            assert_reduces_to("1 bitand 1.0", "1 bitand 1.0");
+            assert_reduces_to("1 bitand true", "1 bitand true");
         }
 
         #[test]
         fn type_mismatch_bitnot_is_error() {
-            assert_reduces_to("{bitnot true}", "{bitnot true}");
+            assert_reduces_to("bitnot true", "bitnot true");
         }
 
         #[test]
         fn bitnot_under_congruence_smoke() {
-            let results = run("{bitnot *(@(0))}");
+            let results = run("bitnot *(@(0))");
             let nfs = normal_form_displays(&results);
             assert!(
                 nfs.iter().any(|nf| nf == "-1"),
@@ -1100,77 +1115,77 @@ mod native_ops {
 
         #[test]
         fn eq_true() {
-            assert_reduces_to("{1 == 1}", "true");
+            assert_reduces_to("1 == 1", "true");
         }
 
         #[test]
         fn eq_rational_slash_binds_tighter_than_eq() {
             // Regression: `==` must not bind tighter than `/` (would parse as `15/(6==30)/12`).
-            assert_reduces_to("{15r/6r == 30r/12r}", "true");
+            assert_reduces_to("15r/6r == 30r/12r", "true");
         }
         #[test]
         fn eq_false() {
-            assert_reduces_to("{1 == 2}", "false");
+            assert_reduces_to("1 == 2", "false");
         }
         #[test]
         fn ne() {
-            assert_reduces_to("{1 != 2}", "true");
+            assert_reduces_to("1 != 2", "true");
         }
         #[test]
         fn gt() {
-            assert_reduces_to("{3 > 2}", "true");
+            assert_reduces_to("3 > 2", "true");
         }
         #[test]
         fn lt() {
-            assert_reduces_to("{2 < 3}", "true");
+            assert_reduces_to("2 < 3", "true");
         }
         #[test]
         fn gte() {
-            assert_reduces_to("{3 >= 3}", "true");
+            assert_reduces_to("3 >= 3", "true");
         }
         #[test]
         fn lte() {
-            assert_reduces_to("{2 <= 3}", "true");
+            assert_reduces_to("2 <= 3", "true");
         }
 
         #[test]
         fn bigint_gt() {
-            assert_reduces_to("{2n > 1n}", "true");
+            assert_reduces_to("2n > 1n", "true");
         }
 
         #[test]
         fn u32_eq() {
-            assert_reduces_to("{3u32 == 3u32}", "true");
+            assert_reduces_to("3u32 == 3u32", "true");
         }
 
         #[test]
         fn str_eq() {
-            assert_reduces_to(r#"{"abc" == "abc"}"#, "true");
+            assert_reduces_to(r#""abc" == "abc""#, "true");
         }
 
         #[test]
         fn str_ne() {
-            assert_reduces_to(r#"{"abc" != "abd"}"#, "true");
+            assert_reduces_to(r#""abc" != "abd""#, "true");
         }
 
         #[test]
         fn str_gt_lexicographic() {
-            assert_reduces_to(r#"{"b" > "a"}"#, "true");
+            assert_reduces_to(r#""b" > "a""#, "true");
         }
 
         #[test]
         fn str_lt_lexicographic() {
-            assert_reduces_to(r#"{"apple" < "banana"}"#, "true");
+            assert_reduces_to(r#""apple" < "banana""#, "true");
         }
 
         #[test]
         fn str_gte() {
-            assert_reduces_to(r#"{"abc" >= "abc"}"#, "true");
+            assert_reduces_to(r#""abc" >= "abc""#, "true");
         }
 
         #[test]
         fn str_lte() {
-            assert_reduces_to(r#"{"abc" <= "abc"}"#, "true");
+            assert_reduces_to(r#""abc" <= "abc""#, "true");
         }
     }
 
@@ -1179,27 +1194,27 @@ mod native_ops {
 
         #[test]
         fn not_true() {
-            assert_reduces_to("{not true}", "false");
+            assert_reduces_to("not true", "false");
         }
         #[test]
         fn not_false() {
-            assert_reduces_to("{not false}", "true");
+            assert_reduces_to("not false", "true");
         }
         #[test]
         fn and_tt() {
-            assert_reduces_to("{true and true}", "true");
+            assert_reduces_to("true and true", "true");
         }
         #[test]
         fn and_tf() {
-            assert_reduces_to("{true and false}", "false");
+            assert_reduces_to("true and false", "false");
         }
         #[test]
         fn or_ff() {
-            assert_reduces_to("{false or false}", "false");
+            assert_reduces_to("false or false", "false");
         }
         #[test]
         fn or_tf() {
-            assert_reduces_to("{true or false}", "true");
+            assert_reduces_to("true or false", "true");
         }
     }
 
@@ -1208,12 +1223,12 @@ mod native_ops {
 
         #[test]
         fn concat() {
-            assert_reduces_to(r#"{concat("hello", "world")}"#, r#"{concat("hello" , "world")}"#);
+            assert_reduces_to(r#"concat("hello", "world")"#, r#"concat("hello" , "world")"#);
         }
 
         #[test]
         fn len() {
-            assert_reduces_to(r#"{len("hello")}"#, "5");
+            assert_reduces_to(r#"len("hello")"#, "5");
         }
     }
 
@@ -1224,7 +1239,7 @@ mod native_ops {
         #[test]
         fn remove_comm() {
             assert_reduces_to(
-                "{a!(#{1|2|2}#) | c!(2) | for(b <- a & e <- c){remove(*(b), *(e))}}",
+                "a!(#{1|2|2}#) | c!(2) | for(b <- a & e <- c){remove(*(b), *(e))}",
                 "#{1|2}#",
             );
         }
@@ -1233,7 +1248,7 @@ mod native_ops {
         #[test]
         fn count_comm() {
             assert_reduces_to(
-                "{a!(#{1|2|2}#) | c!(2) | for(b <- a & e <- c){count(*(b), *(e))}}",
+                "a!(#{1|2|2}#) | c!(2) | for(b <- a & e <- c){count(*(b), *(e))}",
                 "2",
             );
         }
@@ -1242,51 +1257,82 @@ mod native_ops {
     mod map {
         use super::*;
 
+        // Prefix-form smoke tests confirm the underlying builtins still work
+        // (`Map()` is the empty-map alias for the brace literal `{}`).
+        // Method-call sugars below fold to these same constructors.
+
         #[test]
         fn map_len_empty() {
-            assert_reduces_to("{len(map())}", "0");
+            assert_reduces_to("len(Map())", "0");
         }
 
         #[test]
         fn map_len_one() {
-            assert_reduces_to("{len(map(1:2))}", "1");
+            assert_reduces_to("len({1:2})", "1");
         }
 
         #[test]
-        fn map_get() {
-            assert_reduces_to("{get(map(1:10), 1)}", "10");
+        fn map_get_prefix() {
+            assert_reduces_to("get({1:10}, 1)", "10");
         }
 
         #[test]
-        fn map_put() {
-            assert_reduces_to("{get(put(map(), 1, 10), 1)}", "10");
+        fn map_get_method() {
+            assert_reduces_to("{1:10}.get(1)", "10");
         }
 
         #[test]
-        fn map_merge() {
-            assert_reduces_to("{get(merge(map(1:10), map(2:20)), 2)}", "20");
+        fn map_set_method_chained() {
+            assert_reduces_to("Map().set(1, 10).get(1)", "10");
         }
 
         #[test]
-        fn map_has() {
-            assert_reduces_to("{has(map(1:2), 1)}", "true");
-            assert_reduces_to("{has(map(1:2), 3)}", "false");
+        fn map_union_method() {
+            assert_reduces_to("{1:10}.union({2:20}).get(2)", "20");
         }
 
         #[test]
-        fn map_keys() {
-            assert_reduces_to("{len(keys(map(1:10, 2:20)))}", "2");
+        fn map_contains_method() {
+            assert_reduces_to("{1:2}.contains(1)", "true");
+            assert_reduces_to("{1:2}.contains(3)", "false");
         }
 
         #[test]
-        fn map_values() {
-            assert_reduces_to("{at([10, 20], 1)}", "20");
+        fn map_keys_prefix() {
+            assert_reduces_to("len(keys({1:10, 2:20}))", "2");
         }
 
         #[test]
-        fn map_mapdelete() {
-            assert_reduces_to("{len(mapdelete(map(1:10, 2:20), 1))}", "1");
-            assert_reduces_to("{get(mapdelete(map(1:10, 2:20), 1), 2)}", "20");
+        fn map_values_prefix() {
+            assert_reduces_to("at(values({1:10, 2:20}), 0)", "10");
+        }
+
+        #[test]
+        fn map_delete_method() {
+            assert_reduces_to("len({1:10, 2:20}.delete(1))", "1");
+            assert_reduces_to("{1:10, 2:20}.delete(1).get(2)", "20");
+        }
+
+        #[test]
+        fn map_size_method() {
+            assert_reduces_to("Map().size()", "0");
+            assert_reduces_to("{1:10}.size()", "1");
+            assert_reduces_to("{1:10, 2:20}.size()", "2");
+        }
+
+        #[test]
+        fn map_size_method_chained() {
+            assert_reduces_to("Map().set(1, 10).set(2, 20).size()", "2");
+        }
+
+        #[test]
+        fn map_keys_method() {
+            assert_reduces_to("len({1:10, 2:20}.keys())", "2");
+        }
+
+        #[test]
+        fn map_values_method() {
+            assert_reduces_to("at({1:10, 2:20}.values(), 0)", "10");
         }
     }
 
@@ -1295,29 +1341,29 @@ mod native_ops {
 
         #[test]
         fn int_to_float() {
-            assert_reduces_to("{float(3, 64)}", "3.0");
+            assert_reduces_to("float(3, 64)", "3.0");
         }
         #[test]
         fn bool_to_int_true() {
-            assert_reduces_to("{int(true, 64)}", "1");
+            assert_reduces_to("int(true, 64)", "1");
         }
         #[test]
         fn bool_to_int_false() {
-            assert_reduces_to("{int(false, 64)}", "0");
+            assert_reduces_to("int(false, 64)", "0");
         }
         #[test]
         fn int_to_str() {
-            assert_reduces_to(r#"{str(42)}"#, r#""42""#);
+            assert_reduces_to(r#"str(42)"#, r#""42""#);
         }
 
         #[test]
         fn int_from_bigint_fits_i64() {
-            assert_reduces_to("{int(99n, 64)}", "99");
+            assert_reduces_to("int(99n, 64)", "99");
         }
 
         #[test]
         fn str_from_bigint() {
-            assert_reduces_to(r#"{str(10n)}"#, r#""10""#);
+            assert_reduces_to(r#"str(10n)"#, r#""10""#);
         }
     }
 }
@@ -1338,7 +1384,7 @@ mod parsing {
 
     #[test]
     fn fraction_zero_denominator_is_error() {
-        assert_reduces_to("{fraction(1n, 0n)}", "{fraction(1, 0)}");
+        assert_reduces_to("fraction(1n, 0n)", "fraction(1, 0)");
     }
 
     #[test]
@@ -1347,6 +1393,10 @@ mod parsing {
     }
     #[test]
     fn empty_par() {
+        // After the Rholang-style syntax adjustment `{}` is an empty Map literal,
+        // not the nil process. The zero process is now spelled `Nil`.
+        let _ = run("Nil");
+        // The empty brace literal still parses (as an empty Map cast to Proc).
         let _ = run("{}");
     }
     #[test]
@@ -1355,7 +1405,7 @@ mod parsing {
     }
     #[test]
     fn quote_bare_name() {
-        let _ = run("{@x!(0) | x!(1)}");
+        let _ = run("@x!(0) | x!(1)");
     }
     #[test]
     fn drop() {
@@ -1387,7 +1437,7 @@ mod parsing {
 
     #[test]
     fn send_empty_payload_quoted_bind_emits_empty_proc() {
-        assert_reduces_to("{for(@y <- x){y} | x!()}", "{for(@y <- x){y} | x!()}");
+        assert_reduces_to("for(@y <- x){y} | x!()", "for(@y <- x){y} | x!()");
     }
 
     #[test]
@@ -1477,7 +1527,7 @@ mod parsing {
     fn query_receive_sugar_single() {
         assert_query_desugars(
             "for(p <- x!?(a, b)){p}",
-            "new(r) in { { x!(*r, a, b) | for(p <- r){p} } }",
+            "new(r) in { x!(*r, a, b) | for(p <- r){p} }",
             "expected `!?` to desugar to `new` + send + receive",
         );
     }
@@ -1486,7 +1536,7 @@ mod parsing {
     fn query_receive_sugar_zero_args() {
         assert_query_desugars(
             "for(p <- x!?()){p}",
-            "new(r) in { { x!(*r) | for(p <- r){p} } }",
+            "new(r) in { x!(*r) | for(p <- r){p} }",
             "expected zero-arg `!?` to pass only return channel",
         );
     }
@@ -1495,7 +1545,7 @@ mod parsing {
     fn query_receive_sugar_empty_receiver() {
         assert_query_desugars(
             "for(<- x!?(a, b)){p}",
-            "new(r) in { { x!(*r, a, b) | for(<- r){p} } }",
+            "new(r) in { x!(*r, a, b) | for(<- r){p} }",
             "expected empty receiver query bind to desugar via private return channel",
         );
     }
@@ -1504,7 +1554,7 @@ mod parsing {
     fn query_receive_sugar_single_with_where() {
         assert_query_desugars(
             "for(p <- x!?(a, b) where p == ok){p}",
-            "new(r) in { { x!(*r, a, b) | for(p <- r where p == ok){p} } }",
+            "new(r) in { x!(*r, a, b) | for(p <- r where p == ok){p} }",
             "expected `!?` bind with where-guard to desugar through private return channel",
         );
     }
@@ -1513,7 +1563,7 @@ mod parsing {
     fn query_receive_sugar_multiple_joins() {
         assert_query_desugars(
             "for(p <- x1!?(a1) & q <- x2!?(a2) & z <- c){z}",
-            "new(r1, r2) in { { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 & z <- c){z} } }",
+            "new(r1, r2) in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 & z <- c){z} }",
             "expected multiple `!?` binds to desugar to multiple return channels",
         );
     }
@@ -1522,7 +1572,7 @@ mod parsing {
     fn query_receive_sugar_mixed_join_with_plain_bind() {
         assert_query_desugars(
             "for(p <- x!?(a) & q <- c){q}",
-            "new(r) in { { x!(*r, a) | for(p <- r & q <- c){q} } }",
+            "new(r) in { x!(*r, a) | for(p <- r & q <- c){q} }",
             "expected `!?` bind to compose with plain join binds",
         );
     }
@@ -1531,7 +1581,7 @@ mod parsing {
     fn query_receive_sugar_mixed_rows_with_plain_bind() {
         assert_query_desugars(
             "for(p <- x!?(a); q <- c){q}",
-            "new(r) in { { x!(*r, a) | for(p <- r; q <- c){q} } }",
+            "new(r) in { x!(*r, a) | for(p <- r; q <- c){q} }",
             "expected `!?` bind to compose with semicolon-separated rows",
         );
     }
@@ -1540,7 +1590,7 @@ mod parsing {
     fn query_receive_sugar_one_arg() {
         assert_query_desugars(
             "for(p <- x!?(a)){p}",
-            "new(r) in { { x!(*r, a) | for(p <- r){p} } }",
+            "new(r) in { x!(*r, a) | for(p <- r){p} }",
             "expected one-arg `!?` to include return channel then arg",
         );
     }
@@ -1549,7 +1599,7 @@ mod parsing {
     fn query_receive_sugar_three_args() {
         assert_query_desugars(
             "for(p <- x!?(a, b, c)){p}",
-            "new(r) in { { x!(*r, a, b, c) | for(p <- r){p} } }",
+            "new(r) in { x!(*r, a, b, c) | for(p <- r){p} }",
             "expected three-arg `!?` to preserve argument order",
         );
     }
@@ -1573,7 +1623,7 @@ mod parsing {
     fn query_receive_sugar_quoted_name_lhs() {
         assert_query_desugars(
             "for(p <- x!?(a)){*(@(p))}",
-            "new(r) in { { x!(*r, a) | for(p <- r){*(@(p))} } }",
+            "new(r) in { x!(*r, a) | for(p <- r){*(@(p))} }",
             "expected quoted name use in body to survive query desugaring",
         );
     }
@@ -1582,7 +1632,7 @@ mod parsing {
     fn query_receive_sugar_two_queries_and_plain_join() {
         assert_query_desugars(
             "for(p <- x1!?(a1) & q <- x2!?(a2) & z <- c){z}",
-            "new(r1, r2) in { { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 & z <- c){z} } }",
+            "new(r1, r2) in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 & z <- c){z} }",
             "expected multiple query binds to coexist with plain joins",
         );
     }
@@ -1591,7 +1641,7 @@ mod parsing {
     fn query_receive_sugar_two_queries_with_where() {
         assert_query_desugars(
             "for(p <- x1!?(a1) & q <- x2!?(a2) where p == q){p}",
-            "new(r1, r2) in { { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 where p == q){p} } }",
+            "new(r1, r2) in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 where p == q){p} }",
             "expected where guard to remain attached after query desugaring",
         );
     }
@@ -1600,7 +1650,7 @@ mod parsing {
     fn query_receive_sugar_three_queries_join() {
         assert_query_desugars(
             "for(p <- x1!?(a1) & q <- x2!?(a2) & t <- x3!?(a3)){t}",
-            "new(r1, r2, r3) in { { x1!(*r1, a1) | x2!(*r2, a2) | x3!(*r3, a3) | for(p <- r1 & q <- r2 & t <- r3){t} } }",
+            "new(r1, r2, r3) in { x1!(*r1, a1) | x2!(*r2, a2) | x3!(*r3, a3) | for(p <- r1 & q <- r2 & t <- r3){t} }",
             "expected three query binds to produce three private return channels",
         );
     }
@@ -1609,7 +1659,7 @@ mod parsing {
     fn query_receive_sugar_join_row_then_plain_row() {
         assert_query_desugars(
             "for(p <- x1!?(a1) & q <- x2!?(a2); z <- c){z}",
-            "new(r1, r2) in { { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2; z <- c){z} } }",
+            "new(r1, r2) in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2; z <- c){z} }",
             "expected semicolon rows to remain in order after query desugaring",
         );
     }
@@ -1618,7 +1668,7 @@ mod parsing {
     fn query_receive_sugar_plain_row_then_join_row() {
         assert_query_desugars(
             "for(z <- c; p <- x1!?(a1) & q <- x2!?(a2)){z}",
-            "new(r1, r2) in { { x1!(*r1, a1) | x2!(*r2, a2) | for(z <- c; p <- r1 & q <- r2){z} } }",
+            "new(r1, r2) in { x1!(*r1, a1) | x2!(*r2, a2) | for(z <- c; p <- r1 & q <- r2){z} }",
             "expected query desugaring in later row to preserve earlier plain row",
         );
     }
@@ -1627,7 +1677,7 @@ mod parsing {
     fn query_receive_sugar_two_query_rows() {
         assert_query_desugars(
             "for(p <- x1!?(a1); q <- x2!?(a2)){q}",
-            "new(r1, r2) in { { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1; q <- r2){q} } }",
+            "new(r1, r2) in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1; q <- r2){q} }",
             "expected query binds across rows to allocate independent return channels",
         );
     }
@@ -1636,7 +1686,7 @@ mod parsing {
     fn query_receive_sugar_zero_args_in_join() {
         assert_query_desugars(
             "for(p <- x!?() & q <- c){q}",
-            "new(r) in { { x!(*r) | for(p <- r & q <- c){q} } }",
+            "new(r) in { x!(*r) | for(p <- r & q <- c){q} }",
             "expected zero-arg query bind to compose with join rows",
         );
     }
@@ -1645,7 +1695,7 @@ mod parsing {
     fn query_receive_sugar_two_zero_arg_queries() {
         assert_query_desugars(
             "for(p <- x1!?() & q <- x2!?()){p}",
-            "new(r1, r2) in { { x1!(*r1) | x2!(*r2) | for(p <- r1 & q <- r2){p} } }",
+            "new(r1, r2) in { x1!(*r1) | x2!(*r2) | for(p <- r1 & q <- r2){p} }",
             "expected each zero-arg query bind to allocate return channel",
         );
     }
@@ -1654,7 +1704,7 @@ mod parsing {
     fn query_receive_sugar_zero_args_with_where() {
         assert_query_desugars(
             "for(p <- x!?() where p == ok){p}",
-            "new(r) in { { x!(*r) | for(p <- r where p == ok){p} } }",
+            "new(r) in { x!(*r) | for(p <- r where p == ok){p} }",
             "expected where guard to work with zero-arg query bind",
         );
     }
@@ -1663,7 +1713,7 @@ mod parsing {
     fn query_receive_sugar_with_arithmetic_guard() {
         assert_query_desugars(
             "for(p <- x!?(a) where p + 1 > 0){p}",
-            "new(r) in { { x!(*r, a) | for(p <- r where p + 1 > 0){p} } }",
+            "new(r) in { x!(*r, a) | for(p <- r where p + 1 > 0){p} }",
             "expected arithmetic guard to be preserved after desugaring",
         );
     }
@@ -1672,7 +1722,7 @@ mod parsing {
     fn query_receive_sugar_with_boolean_guard() {
         assert_query_desugars(
             "for(p <- x!?(a) where p == ok and true){p}",
-            "new(r) in { { x!(*r, a) | for(p <- r where p == ok and true){p} } }",
+            "new(r) in { x!(*r, a) | for(p <- r where p == ok and true){p} }",
             "expected boolean guard structure to be preserved",
         );
     }
@@ -1681,7 +1731,7 @@ mod parsing {
     fn query_receive_sugar_with_string_guard() {
         assert_query_desugars(
             "for(p <- x!?(a) where p == \"ok\"){p}",
-            "new(r) in { { x!(*r, a) | for(p <- r where p == \"ok\"){p} } }",
+            "new(r) in { x!(*r, a) | for(p <- r where p == \"ok\"){p} }",
             "expected string equality guard to survive desugaring",
         );
     }
@@ -1690,7 +1740,7 @@ mod parsing {
     fn query_receive_sugar_with_list_arg() {
         assert_query_desugars(
             "for(p <- x!?([1,2,3])){p}",
-            "new(r) in { { x!(*r, [1,2,3]) | for(p <- r){p} } }",
+            "new(r) in { x!(*r, [1,2,3]) | for(p <- r){p} }",
             "expected list argument to remain unchanged in query send",
         );
     }
@@ -1698,8 +1748,8 @@ mod parsing {
     #[test]
     fn query_receive_sugar_with_map_arg() {
         assert_query_desugars(
-            "for(p <- x!?(map(1:2, 3:4))){p}",
-            "new(r) in { { x!(*r, map(1:2, 3:4)) | for(p <- r){p} } }",
+            "for(p <- x!?({1:2, 3:4})){p}",
+            "new(r) in { x!(*r, {1:2, 3:4}) | for(p <- r){p} }",
             "expected map argument to remain unchanged in query send",
         );
     }
@@ -1708,7 +1758,7 @@ mod parsing {
     fn query_receive_sugar_with_bag_arg() {
         assert_query_desugars(
             "for(p <- x!?(#{1|2}#)){p}",
-            "new(r) in { { x!(*r, #{1|2}#) | for(p <- r){p} } }",
+            "new(r) in { x!(*r, #{1|2}#) | for(p <- r){p} }",
             "expected bag argument to remain unchanged in query send",
         );
     }
@@ -1717,7 +1767,7 @@ mod parsing {
     fn query_receive_sugar_body_uses_bound_name() {
         assert_query_desugars(
             "for(p <- x!?(a)){*p}",
-            "new(r) in { { x!(*r, a) | for(p <- r){*p} } }",
+            "new(r) in { x!(*r, a) | for(p <- r){*p} }",
             "expected body to keep bound name usage after desugaring",
         );
     }
@@ -1725,8 +1775,8 @@ mod parsing {
     #[test]
     fn query_receive_sugar_body_parallel_structure() {
         assert_query_desugars(
-            "for(p <- x!?(a)){{*p | ok}}",
-            "new(r) in { { x!(*r, a) | for(p <- r){{*p | ok}} } }",
+            "for(p <- x!?(a)){*p | ok}",
+            "new(r) in { x!(*r, a) | for(p <- r){*p | ok} }",
             "expected body parallel structure to be preserved",
         );
     }
@@ -1735,7 +1785,7 @@ mod parsing {
     fn query_receive_sugar_with_new_in_body() {
         assert_query_desugars(
             "for(p <- x!?(a)){new(k) in {k!(0)}}",
-            "new(r) in { { x!(*r, a) | for(p <- r){new(k) in {k!(0)}} } }",
+            "new(r) in { x!(*r, a) | for(p <- r){new(k) in {k!(0)}} }",
             "expected nested new in body to be preserved",
         );
     }
@@ -1744,7 +1794,7 @@ mod parsing {
     fn query_receive_sugar_rows_with_where_and_plain_followup() {
         assert_query_desugars(
             "for(p <- x!?(a) & q <- y!?(b) where p == q; z <- c){z}",
-            "new(r1, r2) in { { x!(*r1, a) | y!(*r2, b) | for(p <- r1 & q <- r2 where p == q; z <- c){z} } }",
+            "new(r1, r2) in { x!(*r1, a) | y!(*r2, b) | for(p <- r1 & q <- r2 where p == q; z <- c){z} }",
             "expected mixed where+row composition to survive desugaring",
         );
     }
@@ -1753,7 +1803,7 @@ mod parsing {
     fn query_receive_sugar_plain_then_query_with_where() {
         assert_query_desugars(
             "for(z <- c; p <- x!?(a) where p == ok){z}",
-            "new(r) in { { x!(*r, a) | for(z <- c; p <- r where p == ok){z} } }",
+            "new(r) in { x!(*r, a) | for(z <- c; p <- r where p == ok){z} }",
             "expected where guard in later query row to be preserved",
         );
     }
@@ -1762,7 +1812,7 @@ mod parsing {
     fn query_receive_sugar_three_rows_two_queries_one_plain() {
         assert_query_desugars(
             "for(p <- x!?(a); q <- c; r <- y!?(b)){q}",
-            "new(r1, r2) in { { x!(*r1, a) | y!(*r2, b) | for(p <- r1; q <- c; r <- r2){q} } }",
+            "new(r1, r2) in { x!(*r1, a) | y!(*r2, b) | for(p <- r1; q <- c; r <- r2){q} }",
             "expected multi-row ordering with two queries to be preserved",
         );
     }
@@ -1771,7 +1821,7 @@ mod parsing {
     fn query_receive_sugar_empty_receiver_in_join() {
         assert_query_desugars(
             "for(<- x!?(a) & q <- c){q}",
-            "new(r) in { { x!(*r, a) | for(<- r & q <- c){q} } }",
+            "new(r) in { x!(*r, a) | for(<- r & q <- c){q} }",
             "expected empty receiver query bind to compose with join binds",
         );
     }
@@ -1780,7 +1830,7 @@ mod parsing {
     fn query_receive_sugar_empty_receiver_later_row() {
         assert_query_desugars(
             "for(z <- c; <- x!?()){z}",
-            "new(r) in { { x!(*r) | for(z <- c; <- r){z} } }",
+            "new(r) in { x!(*r) | for(z <- c; <- r){z} }",
             "expected empty receiver query bind in later row to preserve row order",
         );
     }
@@ -1789,7 +1839,7 @@ mod parsing {
     fn query_receive_sugar_empty_receiver_where_uses_other_bind() {
         assert_query_desugars(
             "for(<- x!?(a) & q <- c where q == ok){q}",
-            "new(r) in { { x!(*r, a) | for(<- r & q <- c where q == ok){q} } }",
+            "new(r) in { x!(*r, a) | for(<- r & q <- c where q == ok){q} }",
             "expected where guard with other bind to remain after empty receiver desugar",
         );
     }
@@ -1834,14 +1884,16 @@ mod parsing {
     }
 
     #[test]
-    fn bare_parallel_equivalent_to_braced_par() {
+    fn bare_parallel_no_longer_braced() {
+        // After the Rholang-style syntax change, parallel composition uses
+        // bare infix `|` (no surrounding braces). Top-level `{ … }` is
+        // reserved for Map literals.  Bare `P | Q` parses via `PParInfix` and
+        // folds to the `PPar` multiset under `run_ascent`/normalize.
         fresh();
-        let braced = parse("{x!!(1,2,3) | for(a, b, c <- x){[a,b,c]}}");
         let bare = parse("x!!(1,2,3) | for(a, b, c <- x){[a,b,c]}");
         assert!(
-            braced.term_eq(&bare),
-            "expected bare top-level `|` to match braced PPar, braced={} bare={}",
-            braced,
+            matches!(bare, Proc::PParInfix(_, _)),
+            "expected PParInfix at parse time, got: {:?}",
             bare
         );
     }
@@ -1894,27 +1946,27 @@ mod parsing {
 
     #[test]
     fn multi_input() {
-        let _ = run("{for(x <- c1 & y <- c2){*(x)} | c1!(p) | c2!(q)}");
+        let _ = run("for(x <- c1 & y <- c2){*(x)} | c1!(p) | c2!(q)");
     }
 
     #[test]
     fn empty_receiver_plain_runtime_ignores_payload() {
-        assert_reduces_to("{for(<- c){ok} | c!(any)}", "ok");
+        assert_reduces_to("for(<- c){ok} | c!(any)", "ok");
     }
 
     #[test]
     fn empty_receiver_plain_runtime_with_int_payload() {
-        assert_reduces_to("{for(<- x){ok} | x!(1)}", "ok");
+        assert_reduces_to("for(<- x){ok} | x!(1)", "ok");
     }
 
     #[test]
     fn empty_receiver_plain_runtime_with_empty_payload() {
-        assert_reduces_to("{for(<- x){ok} | x!()}", "{for(<- x){ok} | x!()}");
+        assert_reduces_to("for(<- x){ok} | x!()", "for(<- x){ok} | x!()");
     }
 
     #[test]
     fn empty_receiver_plain_runtime_with_empty_payload_does_not_reach_ok() {
-        let (results, initial_id) = run_with_initial("{for(<- x){ok} | x!()}");
+        let (results, initial_id) = run_with_initial("for(<- x){ok} | x!()");
         let reachable_nfs = reachable_normal_form_displays(&results, initial_id);
         assert!(
             !reachable_nfs.iter().any(|nf| nf == "ok"),
@@ -1925,7 +1977,7 @@ mod parsing {
 
     #[test]
     fn empty_receiver_plain_runtime_with_list_payload() {
-        assert_reduces_to("{for(<- x){ok} | x!([1,2,3])}", "ok");
+        assert_reduces_to("for(<- x){ok} | x!([1,2,3])", "ok");
     }
 
     #[test]
@@ -1976,16 +2028,16 @@ mod parsing {
 
     #[test]
     fn empty_receiver_plain_join_with_bound_var() {
-        assert_reduces_to("{for(<- x & q <- c){q} | x!(ignored) | c!(ok)}", "ok");
+        assert_reduces_to("for(<- x & q <- c){q} | x!(ignored) | c!(ok)", "ok");
     }
 
     #[test]
     fn empty_receiver_plain_where_on_other_bind_true() {
         let (results, initial_id) =
-            run_with_initial("{for(<- x & q <- c where q == ok){q} | x!(ignored) | c!(ok)}");
+            run_with_initial("for(<- x & q <- c where q == ok){q} | x!(ignored) | c!(ok)");
         let reachable_nfs = reachable_normal_form_displays(&results, initial_id);
         assert!(
-            !reachable_nfs.iter().any(|nf| nf == "ok" || nf == "{ok}"),
+            !reachable_nfs.iter().any(|nf| nf == "ok" || nf == "ok"),
             "reachable normal forms unexpectedly contain `ok`: {:?}",
             reachable_nfs
         );
@@ -1993,15 +2045,12 @@ mod parsing {
 
     #[test]
     fn empty_receiver_plain_where_on_other_bind_false_blocks() {
-        assert_never_produces(
-            "{for(<- x & q <- c where q == ok){q} | x!(ignored) | c!(bad)}",
-            "{bad}",
-        );
+        assert_never_reaches("for(<- x & q <- c where q == ok){q} | x!(ignored) | c!(bad)", "bad");
     }
 
     #[test]
     fn empty_receiver_plain_later_row_preserves_order() {
-        assert_reduces_to("{for(z <- c; <- x){z} | c!(ok) | x!(ignored)}", "ok");
+        assert_reduces_to("for(z <- c; <- x){z} | c!(ok) | x!(ignored)", "ok");
     }
 
     #[test]
@@ -2022,7 +2071,7 @@ mod parsing {
     }
     #[test]
     fn new_multi() {
-        let _ = run("new(x, y) in { {x!(0) | y!(1)} }");
+        let _ = run("new(x, y) in {x!(0) | y!(1)}");
     }
 
     #[test]
@@ -2053,9 +2102,9 @@ mod beta {
     #[test]
     fn dollar_proc_reduces() {
         fresh();
-        let term = parse("$proc(^f.{f}, {})");
+        let term = parse("$proc(^f.{f}, Nil)");
         let normalized = term.normalize();
-        assert_eq!(format!("{}", normalized), "{}");
+        assert_eq!(format!("{}", normalized), "Nil");
     }
 
     #[test]
@@ -2076,7 +2125,7 @@ mod beta {
 
 #[test]
 fn rhocalc_cast_int_float_floor() {
-    let results = run("{int(-3.5, 8)}");
+    let results = run("int(-3.5, 8)");
     let nfs = normal_form_displays(&results);
     assert!(
         nfs.iter().any(|nf| nf == "-4" || nf.contains("-4")),
@@ -2087,7 +2136,7 @@ fn rhocalc_cast_int_float_floor() {
 
 #[test]
 fn rhocalc_cast_int_invalid_width_error() {
-    let results = run("{int(1, 7)}");
+    let results = run("int(1, 7)");
     let nfs = normal_form_displays(&results);
     assert!(
         nfs.iter().any(|d| d == "error" || d.contains("error")),
@@ -2098,7 +2147,7 @@ fn rhocalc_cast_int_invalid_width_error() {
 
 #[test]
 fn rhocalc_cast_int_nonfinite_float_is_error() {
-    let results = run("{int(0.0 / 0.0, 8)}");
+    let results = run("int(0.0 / 0.0, 8)");
     let nfs = normal_form_displays(&results);
     assert!(
         nfs.iter().any(|d| d == "error" || d.contains("error")),
@@ -2109,7 +2158,7 @@ fn rhocalc_cast_int_nonfinite_float_is_error() {
 
 #[test]
 fn rhocalc_cast_uint_float_clamp() {
-    let results = run("{uint(-3.5, 8)}");
+    let results = run("uint(-3.5, 8)");
     let nfs = normal_form_displays(&results);
     assert!(
         nfs.iter().any(|nf| nf == "0u32" || nf == "0"),
@@ -2120,7 +2169,7 @@ fn rhocalc_cast_uint_float_clamp() {
 
 #[test]
 fn rhocalc_cast_uint_modular_u32_literal() {
-    let results = run("{uint(257u32, 8)}");
+    let results = run("uint(257u32, 8)");
     let nfs = normal_form_displays(&results);
     assert!(
         nfs.iter().any(|nf| nf == "1u32" || nf == "1"),
@@ -2131,7 +2180,7 @@ fn rhocalc_cast_uint_modular_u32_literal() {
 
 #[test]
 fn rhocalc_cast_float_overflow_to_inf() {
-    let results = run("{float(1e50, 32)}");
+    let results = run("float(1e50, 32)");
     let nfs = normal_form_displays(&results);
     assert!(
         nfs.iter().any(|nf| nf.to_ascii_lowercase().contains("inf")),
@@ -2142,48 +2191,48 @@ fn rhocalc_cast_float_overflow_to_inf() {
 
 #[test]
 fn rhocalc_cast_float_from_rational_string() {
-    let results = run(r#"{float("1r/2r", 32)}"#);
+    let results = run(r#"float("1r/2r", 32)"#);
     let nfs = normal_form_displays(&results);
     assert!(nfs.iter().any(|nf| nf == "0.5"), "expected 0.5 in a normal form, got {:?}", nfs);
 }
 
 #[test]
 fn rhocalc_cast_float_from_bigint_n_string() {
-    assert_reduces_to(r#"{float("1000n", 64)}"#, "1000.0");
+    assert_reduces_to(r#"float("1000n", 64)"#, "1000.0");
 }
 
 #[test]
 fn rhocalc_cast_float_from_fixed_p_string() {
-    assert_reduces_to(r#"{float("1000.1p1", 64)}"#, "1000.1");
+    assert_reduces_to(r#"float("1000.1p1", 64)"#, "1000.1");
 }
 
 #[test]
 fn rhocalc_casts_from_numeric_strings() {
-    assert_reduces_to(r#"{int("2r/3r", 32)}"#, "0");
-    assert_reduces_to(r#"{int("123n", 64)}"#, "123");
-    assert_reduces_to(r#"{int("123i64", 64)}"#, "123");
-    assert_reduces_to(r#"{int("10i32", 32)}"#, "10");
-    assert_reduces_to(r#"{int("false", 32)}"#, "0");
-    assert_reduces_to(r#"{int("true", 32)}"#, "1");
-    assert_reduces_to(r#"{bigint("123n")}"#, "123");
-    assert_reduces_to(r#"{bigrat("1r/2r")}"#, "1/2");
+    assert_reduces_to(r#"int("2r/3r", 32)"#, "0");
+    assert_reduces_to(r#"int("123n", 64)"#, "123");
+    assert_reduces_to(r#"int("123i64", 64)"#, "123");
+    assert_reduces_to(r#"int("10i32", 32)"#, "10");
+    assert_reduces_to(r#"int("false", 32)"#, "0");
+    assert_reduces_to(r#"int("true", 32)"#, "1");
+    assert_reduces_to(r#"bigint("123n")"#, "123");
+    assert_reduces_to(r#"bigrat("1r/2r")"#, "1/2");
 }
 
 #[test]
 fn rhocalc_str_from_rational_literal() {
-    assert_reduces_to(r#"{str(23r)}"#, r#""23""#);
+    assert_reduces_to(r#"str(23r)"#, r#""23""#);
 }
 
 #[test]
 fn rhocalc_bigint_unary_from_float() {
-    let results = run("{bigint(-3.5)}");
+    let results = run("bigint(-3.5)");
     let nfs = normal_form_displays(&results);
     assert!(nfs.iter().any(|nf| nf.contains("-4")), "expected -4n or similar, got {:?}", nfs);
 }
 
 #[test]
 fn rhocalc_cast_fixed_floor() {
-    let results = run("{fixed(3.49p2, 1)}");
+    let results = run("fixed(3.49p2, 1)");
     let nfs = normal_form_displays(&results);
     assert!(
         nfs.iter()
@@ -2195,19 +2244,19 @@ fn rhocalc_cast_fixed_floor() {
 
 #[test]
 fn rhocalc_cast_int_congruence_through_add() {
-    assert_reduces_to("{int({1 + 2}, 8)}", "error");
+    assert_reduces_to("int(1 + 2, 8)", "error");
 }
 
 #[test]
 fn rhocalc_cast_uint_signed_int_twos_complement() {
     // `bitnot 0` → −1 (`CastInt`). Nesting `bitnot` inside an inner `{…}` PPar can block cast folds;
     // use it directly as the first operand of `uint`.
-    assert_reduces_to("{uint(bitnot 0, 8)}", "255");
+    assert_reduces_to("uint(bitnot 0, 8)", "255");
 }
 
 #[test]
 fn rhocalc_cast_under_send_reduces_via_comm() {
-    let results = run("{for(x <- c){*(x)} | c!({int(-3.5, 8)})}");
+    let results = run("for(x <- c){*(x)} | c!(int(-3.5, 8))");
     let nfs = normal_form_displays(&results);
     assert!(
         nfs.iter().any(|nf| nf == "-4" || nf.contains("-4")),
