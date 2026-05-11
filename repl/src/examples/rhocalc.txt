@@ -51,3 +51,12 @@ map_keys     = {1: 10, 2: 20}.keys()
 map_values   = {1: 10, 2: 20}.values()
 map_delete   = {1: 10, 2: 20}.delete(1)
 map_union    = {1: 10}.union({2: 20})
+
+// Generalised `@P` quote shorthand for arbitrary `P:Proc` (Rholang style).
+// `@P` parses as `Name::NQuote(P)`, generalising `@(P)` and `@Nil`.
+// Works in Name positions (receive channels, drops) and send sugars.
+quote_int_drop   = *@1
+quote_str_drop   = *@"hello"
+quote_comm_int   = for(x <- @1){x} | @1!(42)
+quote_comm_str   = for(x <- @"k"){x} | @"k"!(7)
+quote_persistent = for(x <- @1){x} | @1!!(99)

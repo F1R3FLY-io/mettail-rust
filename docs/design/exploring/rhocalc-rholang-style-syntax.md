@@ -246,6 +246,69 @@ They fold to the same `POutput` / `PPersistOutput` AST shape that
 through its generated `parse_<label>` standalone function in declaration order
 (NFA-style — first success wins). See §4.2 for the dispatcher change.
 
+### 3.8 Generalised `@P` shorthand for arbitrary `P:Proc`
+
+Rholang lets `@` quote *any* process, not just `Nil` — `@1`, `@"k"`, `@*x`,
+`@(P|Q)`, etc. are all valid Names. We add a single fold rule that
+generalises both `NQuote` (`@(P)`) and `NQuoteNil` (`@Nil`):
+
+```rust
+NQuoteShort . p:Proc
+|- "@" p : Name ![{
+    Name::NQuote(Box::new(p.clone()))
+}] fold;
+```
+
+Declared *after* `NQuote` and `NQuoteNil` so that the NFA dispatcher tries
+the specific forms first; `@(P)` still parses through `NQuote` (which
+explicitly resets binding power at the `(` so `@(a|b)` works as expected),
+and `@Nil` still parses through `NQuoteNil`. Only when both fail does the
+parser fall through to `NQuoteShort`, which then drives the Proc parser at
+the position after `@`.
+
+To make literal-typed quoted channels write the way Rholang does on the
+send side (`@1!(q)`, `@"k"!!(q)`), we likewise add generalised send sugars
+parallel to `POutputNil` / `PPersistOutputNil`:
+
+```rust
+POutputShort . p:Proc, q:Proc
+|- "@" p "!" "(" q ")" : Proc ![{
+    Proc::POutput(
+        Box::new(Name::NQuote(Box::new(p.clone()))),
+        Box::new(q.clone()),
+    )
+}] fold;
+
+PPersistOutputShort . p:Proc, q:Proc
+|- "@" p "!!" "(" q ")" : Proc ![{
+    Proc::PPersistOutput(
+        Box::new(Name::NQuote(Box::new(p.clone()))),
+        Box::new(q.clone()),
+    )
+}] fold;
+```
+
+These are needed because `POutputQuoted`'s `@ <Name>` slot rejects anything
+not in Name FIRST (e.g. integer/string literals after `@`). Five Proc-level
+rules now share the `@` opener (`POutputNil`, `PPersistOutputNil`,
+`POutputQuoted`, `POutputShort`, `PPersistOutputShort`); the NFA dispatch
+(§4.2) handles all of them. For inputs where multiple rules succeed (e.g.
+`@Nil!(0)` matches both `POutputNil` and `POutputShort`), the fold actions
+collapse to the same canonical `POutput(NQuote(PZero), 0)` AST, so the
+choice is semantically transparent.
+
+**Caveat — precedence:** Cross-category prefix rules in the current
+framework cannot carry an explicit operand binding power (the
+`prefix(N)` annotation is only honoured for *same-category* unary
+prefix rules where `is_unary_prefix == true`). As a result, `NQuoteShort`
+calls the inner Proc parser with `min_bp = 0` and consumes any Proc-level
+infix that follows. Concretely, `*@1 + 0` parses as `*(@(1 + 0))`, not
+`(*@1) + 0` — users who want the latter must parenthesise: `(*@1) + 0` or
+fall back to the parens form `*(@1) + 0`. This matches the documented
+behaviour of `POutputShort` / `PPersistOutputShort` as well: `@1+2!(0)`
+parses as `(@(1+2))!(0)`. Adding an explicit cross-category prefix BP is
+tracked as a future framework extension; see "out of scope" below.
+
 ---
 
 ## 4. Disambiguation
@@ -313,14 +376,19 @@ corresponding prefix-form calls.
   bag-specific Bag method sugars (`BCount`, `BDiff`, `BRemove`),
   polymorphic `MUnion` / `MSize` (Map ∪ Bag), `Len` extended to `CastBag`,
   `NQuoteNil` Name shorthand, `POutputNil` / `PPersistOutputNil` send
-  sugars.
+  sugars, generalised `NQuoteShort` Name shorthand and
+  `POutputShort` / `PPersistOutputShort` send sugars for arbitrary
+  `P:Proc`.
 - [x] `languages/tests/rhocalc_tests.rs` — strip outer `{…}` wraps in test
   inputs, switch `map(…)` literals to `{…}` form, switch `mod map` to method
   syntax + brace literals, refit `assert_never_reaches` helper for the new
   display, regression tests for `@Nil` (`*@Nil → Nil`,
-  `for(x <- @Nil){x} | @Nil!(0) → 0`, `@Nil!!(0)` parses), new `mod list`
-  + `mod bag` sub-modules covering `.length()`, `.nth(i)`, `.concat(r)`,
-  `.size()` (via extended `Len`), `.count(e)`, `.diff(b)`, `.remove(e)`, and
+  `for(x <- @Nil){x} | @Nil!(0) → 0`, `@Nil!!(0)` parses), regression tests
+  for `@P` (`*@1 → 1`, `*@"hello" → "hello"`, `*@true → true`,
+  `for(x <- @1){x} | @1!(42) → 42`, `*@*y → *y` via `QuoteDrop`, plus the
+  documented greedy-precedence cases), new `mod list` + `mod bag`
+  sub-modules covering `.length()`, `.nth(i)`, `.concat(r)`, `.size()`
+  (via extended `Len`), `.count(e)`, `.diff(b)`, `.remove(e)`, and
   polymorphic `.union`.
 - [x] `repl/src/examples/rhocalc.rs` — strip outer braces from process
   examples; `{}` empty processes become `Nil`.
@@ -352,8 +420,13 @@ corresponding prefix-form calls.
 - Map / List pattern matching beyond literal swap (e.g., `{k: x, ..}` /
   `[a, ..rest]` partial patterns).
 - Rholang `contract` keyword.
-- Generalised `@P` shorthand for arbitrary `P:Proc` (current scope is the
-  `@Nil` keyword form only; other quoted names still require `@(P)`).
+- Explicit binding power for cross-category prefix rules (`@P`,
+  `POutputShort`, …): currently the framework's `prefix(N)` annotation
+  only fires for *same-category* unary prefixes (`is_unary_prefix == true`),
+  so `@P` consumes any trailing Proc infix greedily. Extending
+  `prefix_bp` propagation to cross-category prefix rules and threading it
+  into the unary-prefix dispatch would let `*@1 + 0` parse as
+  `(*@1) + 0` without explicit parentheses.
 
 ---
 

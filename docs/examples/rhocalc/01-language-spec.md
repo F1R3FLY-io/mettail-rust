@@ -324,6 +324,55 @@ All three Proc rules dispatch from `Token::At`; prattail's
 `parse_<label>` standalone function, taking the first declaration-order
 success.
 
+#### Generalised `@P` shorthand for arbitrary `P:Proc`
+
+Rholang lets `@` quote *any* process, not just `Nil` — `@1`, `@"k"`, `@*x`
+are all valid Names. A single fold rule generalises both `NQuote` (`@(P)`)
+and `NQuoteNil` (`@Nil`):
+
+```rust
+NQuoteShort . p:Proc
+|- "@" p : Name ![{
+    Name::NQuote(Box::new(p.clone()))
+}] fold;
+```
+
+For send positions where neither `POutputQuoted` nor `POutputNil` matches
+(e.g. the inner is a literal like `@1!(q)` or `@"k"!(q)`), we likewise
+add generalised sugars:
+
+```rust
+POutputShort . p:Proc, q:Proc
+|- "@" p "!" "(" q ")" : Proc ![{
+    Proc::POutput(
+        Box::new(Name::NQuote(Box::new(p.clone()))),
+        Box::new(q.clone()),
+    )
+}] fold;
+
+PPersistOutputShort . p:Proc, q:Proc
+|- "@" p "!!" "(" q ")" : Proc ![{
+    Proc::PPersistOutput(
+        Box::new(Name::NQuote(Box::new(p.clone()))),
+        Box::new(q.clone()),
+    )
+}] fold;
+```
+
+Five Proc-level rules now share the `@` opener; the NFA dispatcher above
+tries each in declaration order (more specific rules — `POutputNil`,
+`POutputQuoted` — declared first). For overlapping inputs the fold actions
+collapse to the same canonical `POutput(NQuote(P), q)` AST, so the choice
+is semantically transparent.
+
+**Precedence caveat:** Cross-category prefix rules in the current
+framework cannot carry an explicit operand binding power (the
+`prefix(N)` annotation is only honoured for same-category unary
+prefixes). `NQuoteShort` therefore calls the inner Proc parser with
+`min_bp = 0`, consuming any trailing infix greedily — `*@1 + 0` parses
+as `*(@(1 + 0))`, not `(*@1) + 0`. Parenthesise to disambiguate:
+`(*@1) + 0` or `*(@1) + 0`.
+
 ## 4. `equations { ... }` — Structural Equivalences
 
 ```rust

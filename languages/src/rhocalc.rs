@@ -154,6 +154,33 @@ language! {
             Proc::POutput(Box::new(Name::NQuote(Box::new(crate::rhocalc::receive::name_pattern_to_proc(&n)))), Box::new(q.clone()))
         }] fold;
 
+        // Generalised `@P!(q)` and `@P!!(q)` send sugars (Rholang style).
+        //
+        // `POutputQuoted` only accepts shapes where the inner sub-expression
+        // parses as a `Name` (e.g. bare identifiers `@c` or NParen-wrapped
+        // forms), which excludes literal-typed quoted channels like `@1` or
+        // `@"k"`.  `POutputShort` / `PPersistOutputShort` accept any
+        // `p:Proc`, mirroring the `NQuoteShort` name shorthand below.
+        //
+        // Declared *after* `POutputQuoted` so that the NFA dispatcher gives
+        // the more specific Name-shape rule first crack at `@<Name>!(q)`,
+        // preserving its existing fold semantics; only when that path
+        // fails (e.g. inner is a literal) do we fall through to this rule.
+        POutputShort . p:Proc, q:Proc
+        |- "@" p "!" "(" q ")" : Proc ![{
+            Proc::POutput(
+                Box::new(Name::NQuote(Box::new(p.clone()))),
+                Box::new(q.clone()),
+            )
+        }] fold;
+        PPersistOutputShort . p:Proc, q:Proc
+        |- "@" p "!!" "(" q ")" : Proc ![{
+            Proc::PPersistOutput(
+                Box::new(Name::NQuote(Box::new(p.clone()))),
+                Box::new(q.clone()),
+            )
+        }] fold;
+
         // Internal guard gate used by where-clause gating.
         GuardThen . cond:Proc, body:Proc
         |- "__guard_then" "(" cond "," body ")" : Proc ![{
@@ -308,6 +335,24 @@ language! {
         NQuoteNil .
         |- "@" "Nil" : Name ![{
             Name::NQuote(Box::new(Proc::PZero))
+        }] fold;
+
+        // Rholang generalised `@P` shorthand: `@P` parses as `Name::NQuote(P)`
+        // for any `P:Proc`.  This generalises both `NQuote` (`@(P)`) and
+        // `NQuoteNil` (`@Nil`), and `POutputQuoted`'s `@<Name>` shape — the
+        // NFA dispatcher tries each `@`-starting rule in declaration order and
+        // keeps the first success, so more-specific rules above continue to
+        // win where applicable.
+        //
+        // Caveat (precedence): without an explicit cross-category prefix
+        // binding-power in the framework, the inner Proc parser is called with
+        // `min_bp = 0` and will consume any Proc-level infix that follows.
+        // E.g. `*@1 + 0` parses as `*(@(1 + 0))`, not `(*@1) + 0`. Users who
+        // want the latter must write `(*@1) + 0` (or `*(@1)+0` — the
+        // existing `NQuote` parens-form is unambiguous).
+        NQuoteShort . p:Proc
+        |- "@" p : Name ![{
+            Name::NQuote(Box::new(p.clone()))
         }] fold;
 
         // Parenthesized Name grouping used by `*(x)` compatibility.

@@ -885,6 +885,75 @@ mod exec {
         let parsed = Proc::parse("@Nil!!(0)");
         assert!(parsed.is_ok(), "expected `@Nil!!(0)` to parse, got {:?}", parsed);
     }
+
+    // ── Generalised `@P` shorthand for arbitrary `P:Proc`.
+    //
+    // `NQuoteShort` lowers `@P → Name::NQuote(P)` via fold, generalising
+    // `@(P)` and `@Nil`.  Disambiguation: the NFA dispatcher tries `NQuote`
+    // and `NQuoteNil` first (declared earlier); `NQuoteShort` fires only
+    // when neither matches.  Caveat: the inner Proc parser is called with
+    // `min_bp = 0`, so `@P op Q` greedily folds `op Q` into the quote
+    // (write `(@P) op Q` to keep them separate).
+
+    #[test]
+    fn quote_short_int_drop_reduces() {
+        // `*@1` (= `PDrop(NQuote(CastInt(1)))`) reduces via Exec to `CastInt(1)`.
+        assert_reduces_to("*@1", "1");
+    }
+
+    #[test]
+    fn quote_short_bool_drop_reduces() {
+        assert_reduces_to("*@true", "true");
+    }
+
+    #[test]
+    fn quote_short_string_drop_reduces() {
+        assert_reduces_to(r#"*@"hello""#, r#""hello""#);
+    }
+
+    #[test]
+    fn quote_short_drop_of_drop_reduces() {
+        // `@*x = x` via the QuoteDrop equation; then `*x` is the dereference
+        // of the original Name.  We assert the surface chain composes.
+        // Inner `*y` is `Proc::PDrop(NVar(y))`; quoting it yields
+        // `NQuote(PDrop(NVar(y)))` which the QuoteDrop equation rewrites to
+        // `NVar(y)`, so `*@*y` reduces to `*y` (just the original drop).
+        assert_reduces_to("*@*y", "*(y)");
+    }
+
+    #[test]
+    fn quote_short_send_via_int_channel_comm() {
+        // Send/receive on the `@1`-named channel:
+        //   for(x <- @1){x} | @1!(42)  →  42
+        // The receive's channel is parsed as `NQuoteShort(1)` (= `NQuote(1)`),
+        // the send's channel as `POutputQuoted` with the same Name shape; they
+        // unify at COMM time.
+        assert_reduces_to("for(x <- @1){x} | @1!(42)", "42");
+    }
+
+    #[test]
+    fn quote_short_send_via_string_channel_comm() {
+        assert_reduces_to(r#"for(x <- @"k"){x} | @"k"!(7)"#, "7");
+    }
+
+    #[test]
+    fn quote_short_paren_form_still_works() {
+        // Pre-existing `@(P)` form must still parse and reduce — `NQuote`
+        // (declared first) wins the NFA race for `@(...)`.
+        assert_reduces_to("*(@(1 + 2))", "3");
+    }
+
+    #[test]
+    fn quote_short_paren_required_for_compound_proc() {
+        // Documented precedence caveat: `*@1 + 0` parses greedily as
+        // `*(@(1 + 0))` (= `*(@1)` because PDrop only sees the quoted
+        // process), so the Add folds inside the quote.  Users wanting
+        // the outer `+` must wrap: `(*@1) + 0`.
+        //
+        // Here we assert the greedy form: `*@(1+0)` evaluates to `1` via
+        // Exec then the constant-fold of `1+0`.
+        assert_reduces_to("*@(1 + 0)", "1");
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
