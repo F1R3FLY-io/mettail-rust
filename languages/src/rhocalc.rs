@@ -129,8 +129,8 @@ language! {
         // `fold` (not `step`): `step` HOL rules are skipped for non-native categories like Proc.
         FractionProc . a:Proc, b:Proc |- "fraction" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(na), BigInt::NumLit(nb)) => {
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(na), Some(nb)) => {
                         match mettail_runtime::CanonicalBigRat::try_from_nd(na.get().clone(), nb.get().clone()) {
                             Some(r) => Proc::CastBigRat(Box::new(BigRat::RatLit(r))),
                             None => Proc::Err,
@@ -168,24 +168,24 @@ language! {
         // Use `bitor` (not `|`) so `{ P | Q }` stays parallel composition (PPar separator).
         BitOr . a:Proc, b:Proc |- a "bitor" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x | *y))),
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(x | y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
-                    (Int::NumLit(x), Int::NumLit(y)) => Proc::CastInt(Box::new(Int::NumLit(x | y))),
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastInt(Box::new(Int::NumLit(x | y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x | y))),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x | y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() | y.get())))),
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() | y.get())))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
-                    (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(x.bitor_aligned(*y)))),
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(x.bitor_aligned(y)))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -194,24 +194,24 @@ language! {
 
         BitAnd . a:Proc, b:Proc |- a "bitand" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x & *y))),
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(x & y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
-                    (Int::NumLit(x), Int::NumLit(y)) => Proc::CastInt(Box::new(Int::NumLit(x & y))),
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastInt(Box::new(Int::NumLit(x & y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x & y))),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x & y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() & y.get())))),
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() & y.get())))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
-                    (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(x.bitand_aligned(*y)))),
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(x.bitand_aligned(y)))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -220,24 +220,24 @@ language! {
 
         BitNot . a:Proc |- "bitnot" a : Proc ![
             { match &a {
-                Proc::CastInt(x) => match &**x {
-                    Int::NumLit(v) => Proc::CastInt(Box::new(Int::NumLit(!v))),
+                Proc::CastInt(x) => match x.as_ref().try_eval() {
+                    Some(v) => Proc::CastInt(Box::new(Int::NumLit(!v))),
                     _ => Proc::Err,
                 },
-                Proc::CastUInt32(x) => match &**x {
-                    UInt32::NumLit(v) => Proc::CastUInt32(Box::new(UInt32::NumLit(!v))),
+                Proc::CastUInt32(x) => match x.as_ref().try_eval() {
+                    Some(v) => Proc::CastUInt32(Box::new(UInt32::NumLit(!v))),
                     _ => Proc::Err,
                 },
-                Proc::CastBigInt(x) => match &**x {
-                    BigInt::NumLit(n) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(!n.get())))),
+                Proc::CastBigInt(x) => match x.as_ref().try_eval() {
+                    Some(n) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(!n.get())))),
                     _ => Proc::Err,
                 },
-                Proc::CastBigRat(x) => match &**x {
-                    BigRat::RatLit(r) => Proc::CastBigRat(Box::new(BigRat::RatLit(r.bitnot()))),
+                Proc::CastBigRat(x) => match x.as_ref().try_eval() {
+                    Some(r) => Proc::CastBigRat(Box::new(BigRat::RatLit(r.bitnot()))),
                     _ => Proc::Err,
                 },
-                Proc::CastFixed(x) => match &**x {
-                    Fixed::FixedLit(fp) => Proc::CastFixed(Box::new(Fixed::FixedLit(
+                Proc::CastFixed(x) => match x.as_ref().try_eval() {
+                    Some(fp) => Proc::CastFixed(Box::new(Fixed::FixedLit(
                         mettail_runtime::CanonicalFixedPoint::new(!fp.unscaled().clone(), fp.places()),
                     ))),
                     _ => Proc::Err,
@@ -248,28 +248,28 @@ language! {
 
         Eq . a:Proc, b:Proc |- a "==" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
-                    (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))),
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(i), UInt32::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))),
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
-                    (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))),
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x == y))),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x == y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x == y))),
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x == y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -278,28 +278,28 @@ language! {
 
         Ne . a:Proc, b:Proc |- a "!=" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
-                    (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))),
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(i), UInt32::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))),
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
-                    (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))),
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))),
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -308,28 +308,28 @@ language! {
 
         Gt . a:Proc, b:Proc |- a ">" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
-                    (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))),
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(i), UInt32::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))),
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
-                    (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))),
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x > y))),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x > y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x > y))),
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x > y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -338,28 +338,28 @@ language! {
 
         Lt . a:Proc, b:Proc |- a "<" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
-                    (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))),
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(i), UInt32::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))),
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
-                    (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))),
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x < y))),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x < y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x < y))),
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x < y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -368,28 +368,28 @@ language! {
 
         GtEq . a:Proc, b:Proc |- a ">=" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
-                    (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))),
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(i), UInt32::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))),
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
-                    (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))),
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x >= y))),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x >= y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x >= y))),
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x >= y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -398,28 +398,28 @@ language! {
 
         LtEq . a:Proc, b:Proc |- a "<=" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
-                    (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))),
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(i), UInt32::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(i), BigInt::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))),
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
-                    (BigRat::RatLit(i), BigRat::RatLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))),
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(i), Some(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x <= y))),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x <= y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x <= y))),
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x <= y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -430,25 +430,25 @@ language! {
         Add . a:Proc, b:Proc |- a "+" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() + *b.clone())),
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x + y))),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x + y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() + y.get())))),
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() + y.get())))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
-                    (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(*x + *y))),
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(x + y))),
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() + *b.clone())),
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x + *y))),
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(x + y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
-                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y)))),
+                (Proc::CastStr(a), Proc::CastStr(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y)))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -458,21 +458,21 @@ language! {
         Sub . a:Proc, b:Proc |- a "-" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() - *b.clone())),
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x - y))),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x - y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() - y.get())))),
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() - y.get())))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
-                    (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(*x - *y))),
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(x - y))),
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() - *b.clone())),
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x - *y))),
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(x - y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -482,21 +482,21 @@ language! {
         Mul . a:Proc, b:Proc |- a "*" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() * *b.clone())),
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x * y))),
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastUInt32(Box::new(UInt32::NumLit(x * y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(x), BigInt::NumLit(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() * y.get())))),
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() * y.get())))),
                     _ => Proc::Err,
                 },
-                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
-                    (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(*x * *y))),
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastBigRat(Box::new(BigRat::RatLit(x * y))),
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() * *b.clone())),
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(*x * *y))),
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => Proc::CastFixed(Box::new(Fixed::FixedLit(x * y))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -506,28 +506,28 @@ language! {
         Div . a:Proc, b:Proc |- a "/" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() / *b.clone())),
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(x), UInt32::NumLit(y)) => {
-                        if *y == 0 { Proc::Err } else { Proc::CastUInt32(Box::new(UInt32::NumLit(x / y))) }
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => {
+                        if y == 0 { Proc::Err } else { Proc::CastUInt32(Box::new(UInt32::NumLit(x / y))) }
                     }
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(x), BigInt::NumLit(y)) => {
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => {
                         if y.get().is_zero() { Proc::Err } else { Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() / y.get())))) }
                     }
                     _ => Proc::Err,
                 },
-                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
-                    (BigRat::RatLit(x), BigRat::RatLit(y)) => {
-                        if y.get().is_zero() { Proc::Err } else { Proc::CastBigRat(Box::new(BigRat::RatLit(*x / *y))) }
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => {
+                        if y.get().is_zero() { Proc::Err } else { Proc::CastBigRat(Box::new(BigRat::RatLit(x / y))) }
                     }
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() / *b.clone())),
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => {
-                        match x.checked_div(*y) {
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => {
+                        match x.checked_div(y) {
                             Some(q) => Proc::CastFixed(Box::new(Fixed::FixedLit(q))),
                             None => Proc::Err,
                         }
@@ -541,21 +541,21 @@ language! {
         Mod . a:Proc, b:Proc |- a "%" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() % *b.clone())),
-                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(x), UInt32::NumLit(y)) => {
-                        if *y == 0 { Proc::Err } else { Proc::CastUInt32(Box::new(UInt32::NumLit(x % y))) }
+                (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => {
+                        if y == 0 { Proc::Err } else { Proc::CastUInt32(Box::new(UInt32::NumLit(x % y))) }
                     }
                     _ => Proc::Err,
                 },
-                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
-                    (BigInt::NumLit(x), BigInt::NumLit(y)) => {
+                (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => {
                         if y.get().is_zero() { Proc::Err } else { Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(x.get() % y.get())))) }
                     }
                     _ => Proc::Err,
                 },
-                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
-                    (Fixed::FixedLit(x), Fixed::FixedLit(y)) => {
-                        match x.checked_rem(*y) {
+                (Proc::CastFixed(a), Proc::CastFixed(b)) => match (a.as_ref().try_eval(), b.as_ref().try_eval()) {
+                    (Some(x), Some(y)) => {
+                        match x.checked_rem(y) {
                             Some(r) => Proc::CastFixed(Box::new(Fixed::FixedLit(r))),
                             None => Proc::Err,
                         }
@@ -568,28 +568,28 @@ language! {
 
         NegProc . a:Proc |- "-" a : Proc ![
             { match &a {
-                Proc::CastInt(x) => match &**x {
-                    Int::NumLit(n) => Proc::CastInt(Box::new(Int::NumLit(-n))),
+                Proc::CastInt(x) => match x.as_ref().try_eval() {
+                    Some(n) => Proc::CastInt(Box::new(Int::NumLit(-n))),
                     _ => Proc::Err,
                 },
-                Proc::CastUInt32(x) => match &**x {
-                    UInt32::NumLit(u) => Proc::CastInt(Box::new(Int::NumLit(-(*u as i64)))),
+                Proc::CastUInt32(x) => match x.as_ref().try_eval() {
+                    Some(u) => Proc::CastInt(Box::new(Int::NumLit(-(u as i64)))),
                     _ => Proc::Err,
                 },
-                Proc::CastBigInt(x) => match &**x {
-                    BigInt::NumLit(n) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(-n.get())))),
+                Proc::CastBigInt(x) => match x.as_ref().try_eval() {
+                    Some(n) => Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(-n.get())))),
                     _ => Proc::Err,
                 },
-                Proc::CastBigRat(x) => match &**x {
-                    BigRat::RatLit(r) => Proc::CastBigRat(Box::new(BigRat::RatLit(r.clone().neg()))),
+                Proc::CastBigRat(x) => match x.as_ref().try_eval() {
+                    Some(r) => Proc::CastBigRat(Box::new(BigRat::RatLit(r.neg()))),
                     _ => Proc::Err,
                 },
-                Proc::CastFloat(x) => match &**x {
-                    Float::FloatLit(f) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(-f.get())))),
+                Proc::CastFloat(x) => match x.as_ref().try_eval() {
+                    Some(f) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(-f.get())))),
                     _ => Proc::Err,
                 },
-                Proc::CastFixed(x) => match &**x {
-                    Fixed::FixedLit(fp) => Proc::CastFixed(Box::new(Fixed::FixedLit(fp.clone().neg()))),
+                Proc::CastFixed(x) => match x.as_ref().try_eval() {
+                    Some(fp) => Proc::CastFixed(Box::new(Fixed::FixedLit(fp.neg()))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -732,8 +732,8 @@ language! {
 
         Not . a:Proc |- "not" a : Proc ![
             { match &a {
-                Proc::CastBool(b) => match &**b {
-                    Bool::BoolLit(v) => Proc::CastBool(Box::new(Bool::BoolLit(!v))),
+                Proc::CastBool(b) => match b.as_ref().try_eval() {
+                    Some(v) => Proc::CastBool(Box::new(Bool::BoolLit(!v))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -742,16 +742,16 @@ language! {
 
         Len . p:Proc |- "len" "(" p ")" : Proc ![
             { match &p {
-                Proc::CastStr(inner) => match &**inner {
-                    Str::StringLit(x) => Proc::CastInt(Box::new(Int::NumLit(x.len() as i64))),
+                Proc::CastStr(inner) => match inner.as_ref().try_eval() {
+                    Some(x) => Proc::CastInt(Box::new(Int::NumLit(x.len() as i64))),
                     _ => Proc::Err,
                 },
-                Proc::CastList(l) => match l.as_ref() {
-                    List::ListLit(v) => Proc::CastInt(Box::new(Int::NumLit(v.len() as i64))),
+                Proc::CastList(l) => match l.as_ref().try_eval() {
+                    Some(v) => Proc::CastInt(Box::new(Int::NumLit(v.len() as i64))),
                     _ => Proc::Err,
                 },
-                Proc::CastMap(m) => match m.as_ref() {
-                    Map::MapLit(ref payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))),
+                Proc::CastMap(m) => match m.as_ref().try_eval() {
+                    Some(payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -761,32 +761,32 @@ language! {
         ToBool . p:Proc |- "bool" "(" p ")" : Proc ![
             { match &p {
                 Proc::CastBool(x) => Proc::CastBool(x.clone()),
-                Proc::CastInt(x) => match &**x {
-                    Int::NumLit(i) => Proc::CastBool(Box::new(Bool::BoolLit(*i != 0))),
+                Proc::CastInt(x) => match x.as_ref().try_eval() {
+                    Some(i) => Proc::CastBool(Box::new(Bool::BoolLit(i != 0))),
                     _ => Proc::Err,
                 },
-                Proc::CastUInt32(x) => match &**x {
-                    UInt32::NumLit(u) => Proc::CastBool(Box::new(Bool::BoolLit(*u != 0))),
+                Proc::CastUInt32(x) => match x.as_ref().try_eval() {
+                    Some(u) => Proc::CastBool(Box::new(Bool::BoolLit(u != 0))),
                     _ => Proc::Err,
                 },
-                Proc::CastBigInt(x) => match &**x {
-                    BigInt::NumLit(n) => Proc::CastBool(Box::new(Bool::BoolLit(!n.get().is_zero()))),
+                Proc::CastBigInt(x) => match x.as_ref().try_eval() {
+                    Some(n) => Proc::CastBool(Box::new(Bool::BoolLit(!n.get().is_zero()))),
                     _ => Proc::Err,
                 },
-                Proc::CastBigRat(x) => match &**x {
-                    BigRat::RatLit(r) => Proc::CastBool(Box::new(Bool::BoolLit(!r.get().is_zero()))),
+                Proc::CastBigRat(x) => match x.as_ref().try_eval() {
+                    Some(r) => Proc::CastBool(Box::new(Bool::BoolLit(!r.get().is_zero()))),
                     _ => Proc::Err,
                 },
-                Proc::CastFloat(x) => match &**x {
-                    Float::FloatLit(f) => Proc::CastBool(Box::new(Bool::BoolLit(f.get() != 0.0))),
+                Proc::CastFloat(x) => match x.as_ref().try_eval() {
+                    Some(f) => Proc::CastBool(Box::new(Bool::BoolLit(f.get() != 0.0))),
                     _ => Proc::Err,
                 },
-                Proc::CastFixed(x) => match &**x {
-                    Fixed::FixedLit(fp) => Proc::CastBool(Box::new(Bool::BoolLit(!Zero::is_zero(fp.unscaled())))),
+                Proc::CastFixed(x) => match x.as_ref().try_eval() {
+                    Some(fp) => Proc::CastBool(Box::new(Bool::BoolLit(!Zero::is_zero(fp.unscaled())))),
                     _ => Proc::Err,
                 },
-                Proc::CastStr(x) => match &**x {
-                    Str::StringLit(s) => Proc::CastBool(Box::new(Bool::BoolLit(s.parse::<bool>().unwrap_or(false)))),
+                Proc::CastStr(x) => match x.as_ref().try_eval() {
+                    Some(s) => Proc::CastBool(Box::new(Bool::BoolLit(s.parse::<bool>().unwrap_or(false)))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
