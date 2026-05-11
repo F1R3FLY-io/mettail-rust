@@ -1,7 +1,8 @@
 //! PathMapLit — path-keyed map wrapper for Rhocalc `Pathmap` literals.
 //!
-//! Backed by [`HashMapLit`] (deterministic `Hash`/`Ord`). Keys are conventionally
-//! list-shaped `Proc` terms; no trie structure in this minimal implementation.
+//! Stored as [`HashMapLit`] so Ascent relations keep deterministic `Hash` / `Ord` / `BoundTerm`.
+//! Language-level path operations also use the `pathmap` crate trie via
+//! [`crate::pathmap_bridge`] (encode keys to bytes, then `PathMap` lookup / update).
 
 use std::cmp::Ordering;
 use std::fmt;

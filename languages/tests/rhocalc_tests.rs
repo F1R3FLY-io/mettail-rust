@@ -1077,6 +1077,30 @@ mod native_ops {
             assert_reduces_to("{pathHas(pathmap([1,2]:10), [1,2])}", "true");
             assert_reduces_to("{pathHas(pathmap([1,2]:10), [1,3])}", "false");
         }
+
+        /// Trie distinguishes full path from strict prefix (no value at prefix alone).
+        #[test]
+        fn pathmap_prefix_path_not_confused_with_longer_path() {
+            assert_reduces_to("{pathHas(pathmap([1,2]:99), [1])}", "false");
+            assert_reduces_to("{pathHas(pathmap([1,2]:99), [1,2])}", "true");
+            assert_reduces_to("{pathGet(pathmap([1,2]:99), [1,2])}", "99");
+        }
+
+        #[test]
+        fn pattern_comm_pathmap_literal_matches() {
+            assert_reduces_to(
+                r#"{for(@pathmap(["k"]: y) <- c){*(y)} | c!(pathmap(["k"]: 42))}"#,
+                "42",
+            );
+        }
+
+        #[test]
+        fn pattern_comm_pathmap_literal_blocks_key_mismatch() {
+            assert_never_produces(
+                r#"{for(@pathmap(["k"]: y) <- c){999} | c!(pathmap(["j"]: 42))}"#,
+                "999",
+            );
+        }
     }
 
     mod type_conversion {
