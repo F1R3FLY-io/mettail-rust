@@ -1087,6 +1087,42 @@ mod native_ops {
         }
 
         #[test]
+        fn pathmap_restrict() {
+            assert_reduces_to(
+                "{pathHas(pathRestrict(pathmap([1,2]:99, [3,4]:5), pathmap([3,4]:0)), [3,4])}",
+                "true",
+            );
+            assert_reduces_to(
+                "{pathHas(pathRestrict(pathmap([1,2]:99, [3,4]:5), pathmap([3,4]:0)), [1,2])}",
+                "false",
+            );
+        }
+
+        #[test]
+        fn pathmap_subtract() {
+            assert_reduces_to(
+                "{pathHas(pathSubtract(pathmap([1,2]:99, [3,4]:5), pathmap([3,4]:0)), [3,4])}",
+                "false",
+            );
+            assert_reduces_to(
+                "{pathHas(pathSubtract(pathmap([1,2]:99, [3,4]:5), pathmap([3,4]:0)), [1,2])}",
+                "true",
+            );
+        }
+
+        #[test]
+        fn pathmap_meet_uses_right_value_on_overlap() {
+            assert_reduces_to(
+                "{pathGet(pathMeet(pathmap([1,2]:10, [3,4]:20), pathmap([3,4]:200, [5,6]:1)), [3,4])}",
+                "200",
+            );
+            assert_reduces_to(
+                "{pathHas(pathMeet(pathmap([1,2]:10, [3,4]:20), pathmap([3,4]:200, [5,6]:1)), [1,2])}",
+                "false",
+            );
+        }
+
+        #[test]
         fn pattern_comm_pathmap_literal_matches() {
             assert_reduces_to(
                 r#"{for(@pathmap(["k"]: y) <- c){*(y)} | c!(pathmap(["k"]: 42))}"#,

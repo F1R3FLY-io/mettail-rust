@@ -944,6 +944,48 @@ language! {
                 _ => Proc::Err,
             }}
         ] fold;
+        PathRestrict . a:Proc, b:Proc |- "pathRestrict" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+                    (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
+                        match crate::rhocalc::pathmap_restrict(pa, pb) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PathSubtract . a:Proc, b:Proc |- "pathSubtract" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+                    (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
+                        match crate::rhocalc::pathmap_subtract(pa, pb) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PathMeet . a:Proc, b:Proc |- "pathMeet" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+                    (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
+                        match crate::rhocalc::pathmap_meet(pa, pb) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
 
         Not . a:Proc |- "not" a : Proc ![
             { match &a {
@@ -1141,6 +1183,12 @@ language! {
         PathMergeCongR . | S ~> T |- (PathMerge X S) ~> (PathMerge X T);
         PathHasCongL . | S ~> T |- (PathHas S X) ~> (PathHas T X);
         PathHasCongR . | S ~> T |- (PathHas X S) ~> (PathHas X T);
+        PathRestrictCongL . | S ~> T |- (PathRestrict S X) ~> (PathRestrict T X);
+        PathRestrictCongR . | S ~> T |- (PathRestrict X S) ~> (PathRestrict X T);
+        PathSubtractCongL . | S ~> T |- (PathSubtract S X) ~> (PathSubtract T X);
+        PathSubtractCongR . | S ~> T |- (PathSubtract X S) ~> (PathSubtract X T);
+        PathMeetCongL . | S ~> T |- (PathMeet S X) ~> (PathMeet T X);
+        PathMeetCongR . | S ~> T |- (PathMeet X S) ~> (PathMeet X T);
 
         CastMapCong . | S ~> T |- (CastMap S) ~> (CastMap T);
         CastPathmapCong . | S ~> T |- (CastPathmap S) ~> (CastPathmap T);
@@ -1415,4 +1463,25 @@ fn pathmap_merge(
         mettail_runtime::trie_and_key_index_from_lit(left, encode_proc_path_entry)?;
     mettail_runtime::trie_merge_lit(&mut trie, &mut key_index, right, encode_proc_path_entry)?;
     Ok(mettail_runtime::pathmap_lit_from_trie_and_keys(&trie, key_index))
+}
+
+fn pathmap_restrict(
+    base: &mettail_runtime::PathMapLit<Proc, Proc>,
+    mask: &mettail_runtime::PathMapLit<Proc, Proc>,
+) -> Result<mettail_runtime::PathMapLit<Proc, Proc>, ()> {
+    mettail_runtime::trie_restrict_lit(base, mask, encode_proc_path_entry)
+}
+
+fn pathmap_subtract(
+    left: &mettail_runtime::PathMapLit<Proc, Proc>,
+    right: &mettail_runtime::PathMapLit<Proc, Proc>,
+) -> Result<mettail_runtime::PathMapLit<Proc, Proc>, ()> {
+    mettail_runtime::trie_subtract_lit(left, right, encode_proc_path_entry)
+}
+
+fn pathmap_meet(
+    left: &mettail_runtime::PathMapLit<Proc, Proc>,
+    right: &mettail_runtime::PathMapLit<Proc, Proc>,
+) -> Result<mettail_runtime::PathMapLit<Proc, Proc>, ()> {
+    mettail_runtime::trie_meet_lit(left, right, encode_proc_path_entry)
 }

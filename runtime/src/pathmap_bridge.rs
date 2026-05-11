@@ -104,6 +104,68 @@ where
     Ok(())
 }
 
+/// Keep entries from `base` whose encoded paths also exist in `mask`.
+pub fn trie_restrict_lit<K, V, F, E>(
+    base: &PathMapLit<K, V>,
+    mask: &PathMapLit<K, V>,
+    encode: F,
+) -> Result<PathMapLit<K, V>, E>
+where
+    K: Clone + Eq + Hash,
+    V: Clone + Send + Sync + Unpin,
+    F: FnMut(&K) -> Result<Vec<u8>, E> + Copy,
+{
+    let (base_trie, base_keys) = trie_and_key_index_from_lit(base, encode)?;
+    let mask_trie = trie_from_lit(mask, encode)?;
+    let kept_keys = base_keys
+        .into_iter()
+        .filter(|(enc, _)| mask_trie.get_val_at(enc).is_some())
+        .collect::<HashMap<_, _>>();
+    Ok(pathmap_lit_from_trie_and_keys(&base_trie, kept_keys))
+}
+
+/// Keep entries from `left` whose encoded paths do not exist in `right`.
+pub fn trie_subtract_lit<K, V, F, E>(
+    left: &PathMapLit<K, V>,
+    right: &PathMapLit<K, V>,
+    encode: F,
+) -> Result<PathMapLit<K, V>, E>
+where
+    K: Clone + Eq + Hash,
+    V: Clone + Send + Sync + Unpin,
+    F: FnMut(&K) -> Result<Vec<u8>, E> + Copy,
+{
+    let (left_trie, left_keys) = trie_and_key_index_from_lit(left, encode)?;
+    let right_trie = trie_from_lit(right, encode)?;
+    let kept_keys = left_keys
+        .into_iter()
+        .filter(|(enc, _)| right_trie.get_val_at(enc).is_none())
+        .collect::<HashMap<_, _>>();
+    Ok(pathmap_lit_from_trie_and_keys(&left_trie, kept_keys))
+}
+
+/// Intersection by encoded path; values are taken from `right`.
+pub fn trie_meet_lit<K, V, F, E>(
+    left: &PathMapLit<K, V>,
+    right: &PathMapLit<K, V>,
+    encode: F,
+) -> Result<PathMapLit<K, V>, E>
+where
+    K: Clone + Eq + Hash,
+    V: Clone + Send + Sync + Unpin,
+    F: FnMut(&K) -> Result<Vec<u8>, E> + Copy,
+{
+    let (_left_trie, left_keys) = trie_and_key_index_from_lit(left, encode)?;
+    let right_trie = trie_from_lit(right, encode)?;
+    let mut out = PathMapLit::new();
+    for (enc, key) in left_keys {
+        if let Some(v) = right_trie.get_val_at(&enc) {
+            out.insert(key, v.clone());
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,6 +189,57 @@ mod tests {
         lit.insert(1, ());
         let r: Result<_, ()> =
             trie_from_lit(&lit, |&k| if k == 1 { Err(()) } else { Ok(vec![k as u8]) });
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn trie_restrict_keeps_overlap() {
+        let mut base = PathMapLit::<String, i32>::new();
+        base.insert("a".into(), 1);
+        base.insert("b".into(), 2);
+        let mut mask = PathMapLit::<String, i32>::new();
+        mask.insert("b".into(), 99);
+        let out =
+            trie_restrict_lit(&base, &mask, |k| Ok::<Vec<u8>, ()>(k.as_bytes().to_vec())).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(&"b".to_string()), Some(&2));
+    }
+
+    #[test]
+    fn trie_subtract_removes_overlap() {
+        let mut left = PathMapLit::<String, i32>::new();
+        left.insert("a".into(), 1);
+        left.insert("b".into(), 2);
+        let mut right = PathMapLit::<String, i32>::new();
+        right.insert("b".into(), 9);
+        let out =
+            trie_subtract_lit(&left, &right, |k| Ok::<Vec<u8>, ()>(k.as_bytes().to_vec())).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(&"a".to_string()), Some(&1));
+    }
+
+    #[test]
+    fn trie_meet_intersects_with_right_values() {
+        let mut left = PathMapLit::<String, i32>::new();
+        left.insert("a".into(), 1);
+        left.insert("b".into(), 2);
+        let mut right = PathMapLit::<String, i32>::new();
+        right.insert("b".into(), 20);
+        let out =
+            trie_meet_lit(&left, &right, |k| Ok::<Vec<u8>, ()>(k.as_bytes().to_vec())).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(&"b".to_string()), Some(&20));
+    }
+
+    #[test]
+    fn trie_set_ops_reject_bad_key() {
+        let mut left = PathMapLit::<i32, i32>::new();
+        left.insert(0, 0);
+        left.insert(1, 1);
+        let mut right = PathMapLit::<i32, i32>::new();
+        right.insert(0, 9);
+        let enc = |&k: &i32| if k == 1 { Err(()) } else { Ok(vec![k as u8]) };
+        let r: Result<_, ()> = trie_restrict_lit(&left, &right, enc);
         assert!(r.is_err());
     }
 }
