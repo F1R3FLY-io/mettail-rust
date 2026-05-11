@@ -2130,17 +2130,48 @@ mod parsing {
     }
 
     #[test]
-    fn bare_parallel_no_longer_braced() {
-        // After the Rholang-style syntax change, parallel composition uses
-        // bare infix `|` (no surrounding braces). Top-level `{ … }` is
-        // reserved for Map literals.  Bare `P | Q` parses via `PParInfix` and
-        // folds to the `PPar` multiset under `run_ascent`/normalize.
+    fn bare_parallel_infix_parses_as_pparinfix() {
+        // Bare `P | Q` parses via `PParInfix` and folds to the `PPar` multiset
+        // under `run_ascent`/normalize.
         fresh();
         let bare = parse("x!!(1,2,3) | for(a, b, c <- x){[a,b,c]}");
         assert!(
             matches!(bare, Proc::PParInfix(_, _)),
             "expected PParInfix at parse time, got: {:?}",
             bare
+        );
+    }
+
+    #[test]
+    fn braced_parallel_parses_as_ppar() {
+        fresh();
+        let braced = parse("{x!!(1,2,3) | for(a, b, c <- x){[a,b,c]}}");
+        assert!(
+            matches!(braced, Proc::PPar(_)),
+            "expected PPar at parse time, got: {:?}",
+            braced
+        );
+    }
+
+    #[test]
+    fn braced_parallel_reduces_like_bare_infix() {
+        assert_reduces_to("{x!(1,2,3) | for(a, b, c <- x){[a,b,c]}}", "[1,2,3]");
+    }
+
+    #[test]
+    fn braced_parallel_disambiguated_from_map_literals() {
+        fresh();
+        let map = parse("{1: 10}");
+        assert!(
+            matches!(map, Proc::CastMap(_)),
+            "expected CastMap for map literal, got: {:?}",
+            map
+        );
+        let par = parse("{1 | 2}");
+        assert!(
+            matches!(par, Proc::PPar(_)),
+            "expected PPar for braced parallel, got: {:?}",
+            par
         );
     }
 

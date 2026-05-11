@@ -75,17 +75,17 @@ language! {
         PDrop . n:Name  |- "*" n : Proc ;
 
         // AST-level constructor for parallel composition (multiset of procs).
-        // Equations / rewrites match on `(PPar {…})`; the user-facing surface
-        // syntax is `PParInfix` (`P | Q`), which folds into this constructor via
-        // `merge_pp_parallel`. The `__ppar(…)` keyword exposes the constructor
-        // for internal use and round-trip parsing of normalized AST.
+        // Equations / rewrites match on `(PPar {…})`. User-facing surface
+        // syntax is either braced `{ P | Q }` or bare infix `P | Q` (`PParInfix`,
+        // folded via `merge_pp_parallel`). The `__ppar(…)` keyword exposes the
+        // constructor for internal use and round-trip parsing of normalized AST.
         //
-        // Note: there is no top-level `{ P }` body-grouping rule. In Rholang
-        // braces are always part of an enclosing form (the body of `new`,
-        // `for`, contract, etc.) and the top-level meaning of `{ … }` is
-        // reserved for Map literals (see the `Map` type declaration above).
-        // `{ P | Q }` is therefore written as `P | Q`.
-        PPar . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc;
+        // Top-level `{ … }` is also used for Map literals (`{ k: v }`); the
+        // parser disambiguates on `:` vs `|`. Empty `{}` is an empty Map.
+        PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
+        PParInternal . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc ![{
+            Proc::PPar(ps.clone())
+        }] fold;
 
         POutput . n:Name, q:Proc
         |- n "!" "(" q ")" : Proc ;
@@ -1301,6 +1301,7 @@ language! {
         // `receive::try_comm_rw_proc` plus a custom `rw_proc` rule in the logic block below.
 
         Exec . |- (PDrop (NQuote P)) ~> P;
+        ExecQuoteShort . |- (PDrop (NQuoteShort P)) ~> P;
         ExecParenQuote . |- (PDrop (NParen (NQuote P))) ~> P;
 
         ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});

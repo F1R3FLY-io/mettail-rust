@@ -23,7 +23,7 @@
 //! - `fn parse_Cat(tokens, pos, min_bp) -> Result<Cat, ParseError>` — trampolined parser
 //! - `fn parse_Cat_recovering(tokens, pos, min_bp, errors) -> Option<Cat>` — recovery variant
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use crate::automata::codegen::terminal_to_variant_name;
@@ -929,6 +929,20 @@ fn write_prefix_match_arms(
     expected_escaped: &str,
 ) {
     let cat = &config.category;
+    let mut casts_by_token: HashMap<String, Vec<&CastRule>> = HashMap::new();
+    for cast_rule in &config.cast_rules {
+        if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
+            for token in &source_first.tokens {
+                let v = casts_by_token.entry(token.clone()).or_default();
+                if !v.iter().any(|r| {
+                    r.label == cast_rule.label && r.source_category == cast_rule.source_category
+                }) {
+                    v.push(cast_rule);
+                }
+            }
+        }
+    }
+    let mut cast_collection_merged_tokens: HashSet<String> = HashSet::new();
     let nonterminal_fallback_fns: Vec<String> = rd_rules
         .iter()
         .filter(|r| r.category == *cat)
@@ -1163,34 +1177,46 @@ fn write_prefix_match_arms(
                 CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
             };
             let needs_elem_parse = elem_cat != *cat;
+            let elem_parse_push = if needs_elem_parse {
+                format!(
+                    "stack.push({}::ElemParse_{}_{} {{}}); ",
+                    frame_info.enum_name, rd_rule.label, elem_cat
+                )
+            } else {
+                String::new()
+            };
+            let collection_body = format!(
+                "*pos += 1; \
+                stack.push({}::CollectionElem_{} {{ \
+                    elements: {}, \
+                    saved_pos: *pos, \
+                    saved_bp: cur_bp, \
+                }}); \
+                {} \
+                cur_bp = 0; \
+                continue 'drive;",
+                frame_info.enum_name, rd_rule.label, init_str, elem_parse_push,
+            );
 
-            write!(
-                buf,
-                "Token::{} => {{ \
-                    *pos += 1; \
-                    stack.push({}::CollectionElem_{} {{ \
-                        elements: {}, \
-                        saved_pos: *pos, \
-                        saved_bp: cur_bp, \
-                    }}); \
-                    {} \
-                    cur_bp = 0; \
-                    continue 'drive; \
-                }},",
-                variant,
-                frame_info.enum_name,
-                rd_rule.label,
-                init_str,
-                if needs_elem_parse {
-                    format!(
-                        "stack.push({}::ElemParse_{}_{} {{}}); ",
-                        frame_info.enum_name, rd_rule.label, elem_cat
+            if let Some(cast_rules) = casts_by_token.get(&variant) {
+                cast_collection_merged_tokens.insert(variant.clone());
+                write!(buf, "Token::{} => {{ let __merge_saved = *pos;", variant).unwrap();
+                for cast_rule in cast_rules {
+                    write!(
+                        buf,
+                        "*pos = __merge_saved; \
+                        if let Ok(val) = parse_{}(tokens, pos, 0) {{ \
+                            break 'prefix {}::{}(Box::new(val)); \
+                        }}",
+                        cast_rule.source_category, cat, cast_rule.label,
                     )
-                } else {
-                    String::new()
-                },
-            )
-            .unwrap();
+                    .unwrap();
+                }
+                write!(buf, "*pos = __merge_saved; {}", collection_body).unwrap();
+                buf.push_str("},");
+            } else {
+                write!(buf, "Token::{} => {{ {} }},", variant, collection_body).unwrap();
+            }
         }
     }
 
@@ -1413,22 +1439,12 @@ fn write_prefix_match_arms(
     // Multiple casts may share one token (e.g. Int, UInt32, BigInt all use Integer). Emit a
     // single match arm that tries parse_* in `cast_rules` declaration order so Rust does not
     // see duplicate `Token::Integer(_)` patterns.
-    let mut casts_by_token: HashMap<String, Vec<&CastRule>> = HashMap::new();
-    for cast_rule in &config.cast_rules {
-        if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
-            for token in &source_first.tokens {
-                let v = casts_by_token.entry(token.clone()).or_default();
-                if !v.iter().any(|r| {
-                    r.label == cast_rule.label && r.source_category == cast_rule.source_category
-                }) {
-                    v.push(cast_rule);
-                }
-            }
-        }
-    }
     let mut token_keys: Vec<String> = casts_by_token.keys().cloned().collect();
     token_keys.sort();
     for token in token_keys {
+        if cast_collection_merged_tokens.contains(&token) {
+            continue;
+        }
         let rules = casts_by_token.get(&token).expect("key from iter");
         if rules.len() == 1 {
             let cast_rule = rules[0];

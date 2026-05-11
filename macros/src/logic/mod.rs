@@ -1207,7 +1207,7 @@ fn generate_fold_big_step_rules(
                             .map(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Base(t), .. } if *t == "Name"))
                             .unwrap_or(false);
                     if is_pdrop_with_name {
-                        quote! { #category::#label(ref n) => !matches!(n.as_ref(), Name::NQuote(_)), }
+                        quote! { #category::#label(ref n) => !matches!(n.as_ref(), Name::NQuote(_) | Name::NQuoteShort(_)), }
                     } else if n == 0 {
                         quote! { #category::#label => true, }
                     } else {
