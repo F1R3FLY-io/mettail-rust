@@ -1282,6 +1282,15 @@ mod native_ops {
         }
 
         #[test]
+        fn map_get_method_on_method_chain() {
+            // Regression: `Map().set(1, 10).get(1)` previously appeared to pass
+            // because `10` is a literal sub-term that happens to be a reachable
+            // normal form. Now the chain genuinely reduces:
+            // `Map().set(1, 10).get(1) → get(put({}, 1, 10), 1) → 10`.
+            assert_reduces_to("Map().set(1, 10).get(1)", "10");
+        }
+
+        #[test]
         fn map_set_method_chained() {
             assert_reduces_to("Map().set(1, 10).get(1)", "10");
         }
@@ -1318,6 +1327,15 @@ mod native_ops {
             assert_reduces_to("Map().size()", "0");
             assert_reduces_to("{1:10}.size()", "1");
             assert_reduces_to("{1:10, 2:20}.size()", "2");
+        }
+
+        #[test]
+        fn map_set_chain_reduces_to_literal() {
+            // Regression: chained `.set` must fold all the way to a Map literal
+            // (was previously stuck as the unfolded method-call chain because
+            // the macro skipped fold rule generation for zero-arg constructors
+            // like `MapEmpty`).
+            assert_reduces_to("Map().set(1, 10).set(2, 20)", "{1: 10, 2: 20}");
         }
 
         #[test]

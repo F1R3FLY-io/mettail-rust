@@ -1011,7 +1011,9 @@ language! {
         // the `.` trigger.
         MapEmpty .
         |- "Map" "(" ")" : Proc ![{
-            Proc::CastMap(Box::new(Map::MapLit(Default::default())))
+            Proc::CastMap(Box::new(Map::MapLit(
+                mettail_runtime::HashMapLit::<Proc, Proc>::new(),
+            )))
         }] fold;
 
         MGet . m:Proc, k:Proc
