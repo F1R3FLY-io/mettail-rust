@@ -139,6 +139,11 @@ pub(crate) fn emit_engine_impl_full(
     let infix_loop_dispatch = emit_infix_loop_dispatch(categories);
     let postfix_dispatch = emit_postfix_dispatch(categories);
     let mixfix_dispatch = emit_mixfix_dispatch(categories);
+    // Plan A (paren+postfix redesign, 2026-05-11): per-category
+    // recognize-token lookup for the Unwinding-CategoryEntry's
+    // lookahead-conditional GroupingClosePreservingInner branch.
+    let category_recognizes_token_dispatch =
+        emit_category_recognizes_token_dispatch(categories);
 
     quote! {
         impl mettail_prattail::wpds_walker::WpdsStepEngine<
@@ -361,31 +366,16 @@ pub(crate) fn emit_engine_impl_full(
                                 }
                                 mettail_prattail::wpds_runtime::SymbolKind::CategoryEntry => {
                                     // Plan C Fix 1.3 (led_test cluster, 2026-05-11):
-                                    // detect the cross-cat anonymous-delegation
-                                    // return path by peeking the GSS predecessor.
-                                    // If the predecessor is ALSO a CategoryEntry,
-                                    // we are returning from an inner-category
-                                    // sub-parse to its outer category — re-enter
-                                    // InfixLoop so the outer category's infix
-                                    // operators (e.g., Pred's `and` after EqNum
-                                    // produced a Pred on the builder) can match.
+                                    // CE-over-CE detection for cross-cat
+                                    // anonymous-delegation return path.
                                     //
-                                    // The `cur_bp: 0` is correct because
-                                    // predecessor-is-CategoryEntry implies no
-                                    // infix recursion was active at the outer
-                                    // level when the delegation started (any
-                                    // active recursion would have placed a Return
-                                    // symbol between the CEs).
-                                    //
-                                    // Narrower than F1 Cluster A (which keyed on
-                                    // pred=GroupingMarker and fired too eagerly,
-                                    // reverted). CE-over-CE only occurs in the
-                                    // anonymous CrossCatLhs path emitted by
-                                    // `prefix.rs::emit_prefix_arms_for_category`
-                                    // bucket-then-Fork path. Other grouping /
-                                    // binder / collection paths interpose
-                                    // Return/GroupingMarker/CollectionMarker
-                                    // symbols between consecutive CEs.
+                                    // Plan A (paren+postfix redesign, 2026-05-11):
+                                    // CE-over-GroupingMarker detection for
+                                    // cross-cat-LHS inside parens, with lookahead
+                                    // gating to fire only when needed (the F1
+                                    // Cluster A initial design fired too eagerly,
+                                    // reverted).
+                                    let inner_cat = node.symbol.category_src_idx;
                                     let pred_kind = _gss
                                         .lookup_id(node)
                                         .and_then(|id| _gss.edges_from(id).first().map(|e| e.target))
@@ -393,7 +383,38 @@ pub(crate) fn emit_engine_impl_full(
                                         .map(|pn| pn.symbol.kind);
                                     let new_state = match pred_kind {
                                         Some(mettail_prattail::wpds_runtime::SymbolKind::CategoryEntry) => {
+                                            // Plan C 1.3: returning from inner-cat
+                                            // sub-parse to outer cat. Re-enter
+                                            // InfixLoop so the outer cat's infix
+                                            // operators can match. cur_bp: 0
+                                            // because predecessor-is-CE implies
+                                            // no infix recursion was active at
+                                            // the outer level.
                                             WpdsState::InfixLoop { cur_bp: 0 }
+                                        }
+                                        Some(mettail_prattail::wpds_runtime::SymbolKind::GroupingMarker)
+                                            if tokens.peek_text(_pos) == Some(")") => {
+                                            // Plan A: cross-cat-LHS sub-parse
+                                            // inside parens is about to close.
+                                            // Check if the token AFTER `)` is
+                                            // recognized by the inner cat. If
+                                            // so, preserve the inner-cat dispatch
+                                            // context across `)` by transitioning
+                                            // to GroupingClosePreservingInner.
+                                            // Otherwise (outer cat handles post-`)`
+                                            // or no post-`)` operator), fall
+                                            // through to default Unwinding so
+                                            // the existing Unwinding-GroupingMarker
+                                            // arm consumes `)` cleanly.
+                                            let next_tok = tokens.peek_text(_pos + 1).unwrap_or("");
+                                            let inner_matches: bool = #category_recognizes_token_dispatch;
+                                            if inner_matches {
+                                                WpdsState::GroupingClosePreservingInner {
+                                                    inner_cat_src_idx: inner_cat,
+                                                }
+                                            } else {
+                                                WpdsState::Unwinding
+                                            }
                                         }
                                         _ => WpdsState::Unwinding,
                                     };
@@ -1185,13 +1206,45 @@ pub(crate) fn emit_engine_impl_full(
                         let _ = (result_src_idx, rule_idx, group_idx, sub_pos, outer_bp);
                         #optional_group_body
                     }
-                    WpdsState::GroupingClosePreservingInner { .. } => {
-                        // F1 follow-up Cluster A (2026-05-10): REVERTED — the design
-                        // detected the wrong moment (every CategoryEntry pop, not
-                        // just at end-of-inner-parse). State variant retained for
-                        // ABI stability; treated as no-op Idle. Future redesign
-                        // pending.
-                        WpdsStepAction::Idle
+                    WpdsState::GroupingClosePreservingInner { inner_cat_src_idx } => {
+                        // Plan A (paren+postfix redesign, 2026-05-11):
+                        // top is now the GroupingMarker (the inner CategoryEntry
+                        // was just popped via the Unwinding-CategoryEntry
+                        // lookahead-conditional branch). Demand `)`,
+                        // ConsumeAndReplace the GroupingMarker on top with
+                        // a CategoryEntry of the inner cat so subsequent
+                        // InfixLoop dispatch uses the inner-cat tables.
+                        //
+                        // The GroupingMarker's `bp` field carries outer_bp
+                        // (saved cur_bp at the open paren — established by
+                        // the codegen invariant in StackSymbolV2::grouping_marker).
+                        // Restore that BP for the post-`)` InfixLoop.
+                        if let Some(node) = frontier_top {
+                            if node.symbol.kind == mettail_prattail::wpds_runtime::SymbolKind::GroupingMarker {
+                                let outer_bp = node.symbol.bp.expect(
+                                    "GroupingMarker invariant: bp must be Some(outer_bp) — \
+                                     saved cur_bp at the open paren"
+                                );
+                                return match tokens.peek_text(_pos) {
+                                    Some(")") => WpdsStepAction::ConsumeAndReplace {
+                                        symbol: StackSymbolV2::category_entry(*inner_cat_src_idx),
+                                        weight: LexicographicWeight::one(),
+                                        new_state: WpdsState::InfixLoop { cur_bp: outer_bp },
+                                    },
+                                    other => WpdsStepAction::Error(format!(
+                                        "GroupingClosePreservingInner: expected `)` to close \
+                                         grouping (preserving inner cat={}) at pos {}, found {:?}",
+                                        inner_cat_src_idx, _pos, other,
+                                    )),
+                                };
+                            }
+                        }
+                        WpdsStepAction::Error(format!(
+                            "GroupingClosePreservingInner: expected GroupingMarker on top at \
+                             pos {}, found {:?}",
+                            _pos,
+                            frontier_top.map(|n| n.symbol.kind),
+                        ))
                     }
                     WpdsState::Saturating { .. } => WpdsStepAction::Idle,
                     WpdsState::Accepted | WpdsState::Error { .. } => WpdsStepAction::Idle,
@@ -1253,6 +1306,39 @@ fn emit_infix_loop_dispatch(categories: &[String]) -> TokenStream {
             match state_cat_src_idx {
                 #(#arms)*
                 _ => None,
+            }
+        }
+    }
+}
+
+/// Plan A (paren+postfix redesign, 2026-05-11): emit a per-category lookup
+/// that answers "does this category recognize this token as an operator
+/// (infix/postfix/mixfix)?". Used by the `Unwinding-CategoryEntry` arm's
+/// lookahead-conditional GroupingClosePreservingInner branch to decide
+/// whether to preserve the inner-cat dispatch context across a closing `)`.
+///
+/// Evaluates to `bool`. Reads three free vars from the surrounding scope:
+/// - `inner_cat: u16` — the category whose tables to check.
+/// - `next_tok: &str` — the token to check (typically `peek_text(_pos+1)`).
+fn emit_category_recognizes_token_dispatch(categories: &[String]) -> TokenStream {
+    let arms = categories.iter().enumerate().map(|(i, cat)| {
+        let i_u16 = i as u16;
+        let infix_fn = quote::format_ident!("infix_bp_{}", cat.to_lowercase());
+        let postfix_fn = quote::format_ident!("postfix_bp_{}", cat.to_lowercase());
+        let mixfix_fn = quote::format_ident!("mixfix_bp_{}", cat.to_lowercase());
+        quote! {
+            #i_u16 => {
+                #infix_fn(next_tok).is_some()
+                    || #postfix_fn(next_tok).is_some()
+                    || #mixfix_fn(next_tok).is_some()
+            }
+        }
+    });
+    quote! {
+        {
+            match inner_cat {
+                #(#arms,)*
+                _ => false,
             }
         }
     }
