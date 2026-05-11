@@ -3154,7 +3154,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 let pred_id =
                     self.cursor_gss_pop_via_edge(cursor).unwrap_or(crate::gss::GSS_NODE_NONE);
                 self.apply_pop_body_to_cursor(
-                    cursor, pred_id, popped_symbol, &weight, new_state,
+                    cursor, pred_id, popped_symbol, &weight, new_state, tokens,
                 );
                 self.cursor_resolution_check(cursor)
             }
@@ -3203,7 +3203,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     self.cursor_gss_pop_via_edge(cursor).unwrap_or(crate::gss::GSS_NODE_NONE);
                 self.advance_cursor_pos(cursor, 1);
                 self.apply_pop_body_to_cursor(
-                    cursor, pred_id, popped_symbol, &weight, new_state,
+                    cursor, pred_id, popped_symbol, &weight, new_state, tokens,
                 );
                 self.cursor_resolution_check(cursor)
             }
@@ -3791,6 +3791,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 popped_symbol,
                                 &branch.weight,
                                 branch.new_state.clone(),
+                                tokens,
                             );
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
@@ -3835,6 +3836,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 popped_symbol,
                                 &branch.weight,
                                 branch.new_state.clone(),
+                                tokens,
                             );
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
@@ -5908,6 +5910,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         popped_symbol: Option<StackSymbolV2>,
         weight: &W,
         new_state: WpdsState,
+        tokens: &dyn crate::wpds_runtime::WpdsTokenSource,
     ) {
         // Set cursor's GSS top to the predecessor (or sentinel).
         cursor.node = pred_id;
@@ -5988,11 +5991,84 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // Per-child collection splice (keyed on predecessor symbol —
         // differs across children when fan-out lands on different
         // calling contexts).
+        //
+        // F5 follow-up Plan B Phase 3 refined gate (2026-05-11):
+        // two-case element-close predicate.
+        //
+        // (1) DIRECT element-close — popped is CategoryEntry (Bag/List
+        //     redirect path's pushed `CategoryEntry(element_src)`
+        //     directly above CollectionMarker) or RuleAt (an atomic
+        //     prefix rule pops directly above CollectionMarker).
+        //     By construction these only top a CollectionMarker at
+        //     element completion; splice unconditionally.
+        //
+        // (2) PRATT element-close — popped is anything else
+        //     (Return / GroupingMarker / MixfixMarker / nested
+        //     CollectionMarker / OptionalGroupAt). Post-F5 (commit
+        //     `f1a5bc1`) the InfixLoop allows in-collection infix
+        //     dispatch, so any of these frames can sit directly above
+        //     CollectionMarker AND the element may continue with
+        //     another infix operator. The element is complete iff the
+        //     InfixLoop's existing close/sep filter (added in commit
+        //     `ebf7b14`) would fire on the next engine step — i.e.,
+        //     the next token is the collection's close or separator,
+        //     OR no Pratt operator matches the next token at cur_bp=0.
+        //
+        //     We delegate the close/sep recognition to the engine by
+        //     simulating one step with state `InfixLoop{cur_bp: 0}`
+        //     and frontier = pred CollectionMarker. If the engine
+        //     returns `Advance(Unwinding)`, the close/sep filter
+        //     matched OR no infix candidate matched at cur_bp=0 —
+        //     both interpretations mean "no further Pratt continuation
+        //     at this element level," which is the element-complete
+        //     signal.
+        //
+        //     `cur_bp: 0` is the canonical outermost-Pratt-level value.
+        //     The InfixLoop close/sep filter does NOT depend on
+        //     `cur_bp` (it only checks token text), so `cur_bp: 0` is
+        //     a correct probe value. Intermediate Pratt frames
+        //     (`cur_bp > 0`) never have CollectionMarker as their
+        //     pred — they have Return/MixfixMarker pred — so this
+        //     branch only runs at the outermost element-parse level.
         if pred_id != crate::gss::GSS_NODE_NONE {
-            if let Some(pred_node) = self.gss.node(pred_id) {
-                if pred_node.symbol.kind == SymbolKind::CollectionMarker {
-                    let acc_id = pred_node.symbol.bp.unwrap_or(0);
-                    self.emit_splice_into_collection(cursor, acc_id);
+            // Capture pred metadata (Copy types) under the immutable
+            // borrow, then release the borrow so the engine.step query
+            // and the mutable splice call can both run.
+            let pred_info = self.gss.node(pred_id).map(|n| {
+                (n.symbol.kind, n.symbol.bp.unwrap_or(0))
+            });
+            if let Some((pred_kind, acc_id)) = pred_info {
+                if pred_kind == SymbolKind::CollectionMarker {
+                    let should_splice = match popped_symbol.map(|s| s.kind) {
+                        Some(SymbolKind::CategoryEntry)
+                        | Some(SymbolKind::RuleAt(_)) => true,
+                        Some(_) => {
+                            // Pratt element-close: simulate one
+                            // InfixLoop{cur_bp:0} step. Splice iff
+                            // the engine would advance to Unwinding
+                            // (close/sep matched, or 0 cands).
+                            //
+                            // Snapshot the frontier symbol so the
+                            // borrow on `self.gss` is short-lived.
+                            let frontier_snap =
+                                self.gss.node(cursor.node).cloned();
+                            let test_action = self.engine.step(
+                                &WpdsState::InfixLoop { cur_bp: 0 },
+                                &self.gss,
+                                frontier_snap.as_ref(),
+                                cursor.pos,
+                                tokens,
+                            );
+                            matches!(
+                                test_action,
+                                WpdsStepAction::Advance(WpdsState::Unwinding),
+                            )
+                        }
+                        None => false,
+                    };
+                    if should_splice {
+                        self.emit_splice_into_collection(cursor, acc_id);
+                    }
                 }
             }
         }
