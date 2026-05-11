@@ -975,21 +975,39 @@ fn detect_ambiguous_prefix(
 ) {
     use std::collections::BTreeMap;
 
-    // (category, label) -> terminal skeleton
+    // (category, label) -> structural skeleton.
+    //
+    // The skeleton records both terminals (verbatim) and the *category* of
+    // each NonTerminal/Collection slot.  Two rules whose skeletons differ
+    // on a slot category can be disambiguated at parse time by lookahead
+    // into that slot's FIRST set (or, when FIRSTs overlap, by the NFA
+    // dispatcher in `trampoline.rs` which tries each candidate rule via
+    // its standalone `parse_<label>` function — first success wins).
+    // Skeletons matching *exactly* indicate a true grammar ambiguity that
+    // even the NFA dispatcher cannot resolve without semantic information.
     let terminal_skeletons: BTreeMap<(String, String), Vec<String>> = all_syntax
         .iter()
         .map(|(label, category, syntax)| {
-            let terminals = syntax
+            let skeleton = syntax
                 .iter()
-                .filter_map(|item| {
-                    if let crate::SyntaxItemSpec::Terminal(t) = item {
-                        Some(t.clone())
-                    } else {
-                        None
-                    }
+                .map(|item| match item {
+                    crate::SyntaxItemSpec::Terminal(t) => format!("T:{}", t),
+                    crate::SyntaxItemSpec::NonTerminal { category: cat, .. } => {
+                        format!("NT:{}", cat)
+                    },
+                    crate::SyntaxItemSpec::IdentCapture { .. } => "ID".to_string(),
+                    crate::SyntaxItemSpec::Binder { category: cat, .. } => format!("B:{}", cat),
+                    crate::SyntaxItemSpec::Collection { element_category, .. } => {
+                        format!("C:{}", element_category)
+                    },
+                    crate::SyntaxItemSpec::BinderCollection { .. } => "BC".to_string(),
+                    crate::SyntaxItemSpec::ZipMapSep { left_category, right_category, .. } => {
+                        format!("Z:{}:{}", left_category, right_category)
+                    },
+                    crate::SyntaxItemSpec::Optional { .. } => "OPT".to_string(),
                 })
                 .collect::<Vec<_>>();
-            ((category.clone(), label.clone()), terminals)
+            ((category.clone(), label.clone()), skeleton)
         })
         .collect();
 
