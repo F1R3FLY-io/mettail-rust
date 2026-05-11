@@ -459,7 +459,31 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                 let kind = param_map.get(&n)?;
                 match kind {
                     ParamKind::Binder => {
-                        positions.push(BinderPosition::BinderIdent);
+                        // Phase 3.B.3 (2026-05-11): unify single-binder
+                        // into the BinderListLoop dispatch with
+                        // allow_empty=false, allow_multi=false. The
+                        // collapsed shape captures exactly ONE ident
+                        // and closes the scope atomically via the
+                        // GuardedConsumeBinderIdentAndReplaceWithEffect
+                        // dispatch (`emit_binder_rule_body` checks the
+                        // flags and emits a 1-branch Fork). `close`
+                        // and `separator` are unused by the
+                        // collapsed dispatch (no close-branch, no
+                        // sep-branch); set to empty strings as
+                        // sentinels. NO skip_next — the next outer
+                        // position (which may be a Literal close
+                        // delim or any other position) is processed
+                        // normally.
+                        positions.push(BinderPosition::BinderListLoop {
+                            separator: String::new(),
+                            close: String::new(),
+                            inner_positions: vec![BinderPosition::BinderIdent],
+                            inner_action_args: vec![ActionArgKind::BinderName],
+                            binder_param_idx: 0,
+                            collection_param_cat: None,
+                            allow_empty: false,
+                            allow_multi: false,
+                        });
                         action_args.push(ActionArgKind::BinderName);
                     }
                     ParamKind::Body { cat } | ParamKind::Simple { cat } => {
@@ -1033,37 +1057,27 @@ pub(crate) fn emit_binder_rule_body(
                         }
                     },
                     BinderPosition::BinderIdent => quote! {
-                        (#result_src_idx, #rule_idx, #pos) => {
-                            // Stage 3.20 / L12 Commit F (2026-05-06):
-                            // Cluster 1 hack #6 closure. Single-branch
-                            // GuardedConsumeIdentAndReplace Fork —
-                            // peek_kind == Ident guard runs inside the
-                            // walker.
-                            return WpdsStepAction::Fork {
-                                branches: vec![mettail_prattail::wpds_walker::ForkBranch {
-                                    symbol: StackSymbolV2::rule_at(
-                                        #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                    ),
-                                    weight: LexicographicWeight::one(),
-                                    new_state: WpdsState::BinderRule {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        body_src_idx: *_body_src_idx,
-                                        outer_bp: *outer_bp,
-                                    },
-                                    action_kind:
-                                        mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
-                                            start_scope: true,
-                                        },
-                                }],
-                                consume_trigger: false,
-                            };
-                        }
+                        // Phase 3.B.3 (2026-05-11): top-level
+                        // BinderIdent is unreachable in
+                        // `shape.positions` post-unification —
+                        // `classify_binder` now converts
+                        // `ParamKind::Binder` to
+                        // `BinderPosition::BinderListLoop {
+                        // allow_empty: false, allow_multi: false }`
+                        // (single-binder collapse). This match arm
+                        // is retained for enum exhaustiveness and
+                        // emits no dispatch arm; if a future change
+                        // re-introduces a top-level BinderIdent, the
+                        // walker will surface it via the catch-all
+                        // `_ => WpdsStepAction::Idle` and the parse
+                        // will stall, which is loud enough to debug.
                     },
                     BinderPosition::BinderListLoop {
                         separator: _,
                         close,
                         collection_param_cat,
+                        allow_empty,
+                        allow_multi,
                         ..
                     } => {
                         // Phase 5b: enter BinderListLoop sub-state. The
@@ -1082,7 +1096,48 @@ pub(crate) fn emit_binder_rule_body(
                         // the first BinderIdent capture inside the inner
                         // walk via start_scope=true (or, in the empty-list
                         // path, via the BRANCH 1 effect).
-                        if collection_param_cat.is_some() {
+                        //
+                        // Phase 3.B.3 (2026-05-11): single-binder collapse
+                        // — when allow_empty=false AND allow_multi=false
+                        // AND collection_param_cat=None, emit a 1-branch
+                        // Fork that captures the lone Ident, closes the
+                        // scope atomically via EndBinderScope effect, and
+                        // transitions to BinderRule {next_pos}. No
+                        // BinderListLoop sub-state is entered. The action
+                        // entry sees ActionArg::BinderScope with exactly
+                        // one name in its names list, which the
+                        // single-binder construction unwraps to a scalar
+                        // Binder<String>.
+                        if !*allow_empty && !*allow_multi && collection_param_cat.is_none() {
+                            quote! {
+                                (#result_src_idx, #rule_idx, #pos) => {
+                                    return WpdsStepAction::Fork {
+                                        branches: vec![
+                                            mettail_prattail::wpds_walker::ForkBranch {
+                                                symbol: StackSymbolV2::rule_at(
+                                                    #result_src_idx, #rule_idx,
+                                                    #next_pos, Some(*outer_bp),
+                                                ),
+                                                weight: LexicographicWeight::one(),
+                                                new_state: WpdsState::BinderRule {
+                                                    result_src_idx: #result_src_idx,
+                                                    rule_idx: #rule_idx,
+                                                    body_src_idx: *_body_src_idx,
+                                                    outer_bp: *outer_bp,
+                                                },
+                                                action_kind:
+                                                    mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
+                                                        start_scope: true,
+                                                        effect:
+                                                            mettail_prattail::wpds_walker::BuilderDelta::EndBinderScope,
+                                                    },
+                                            },
+                                        ],
+                                        consume_trigger: false,
+                                    };
+                                }
+                            }
+                        } else if collection_param_cat.is_some() {
                             quote! {
                                 (#result_src_idx, #rule_idx, #pos) => {
                                     let _ = tokens.peek_text(_pos);
@@ -2410,9 +2465,24 @@ pub(crate) fn emit_binder_action_entry(
         let var = format_ident!("arg_{}", i);
         match kind {
             ActionArgKind::BinderName => {
+                // Phase 3.B.3 (2026-05-11): post-unification, top-level
+                // BinderName always extracts from ActionArg::BinderScope
+                // (the runtime's BinderListLoop dispatch closes the scope
+                // via EndBinderScope effect on the lone-ident branch, so
+                // the args stack carries a BinderScope handle with
+                // exactly one name). Unwrap names.into_iter().next() to
+                // a scalar String for the existing single-binder
+                // construction at `b.push_term::<Cat>(Cat::Label(...,
+                // Scope::new(Binder(get_or_create_var(#binder_name)),
+                // Box::new(body))))`.
                 extracts.push(quote! {
                     let #var = match iter.next() {
-                        Some(mettail_prattail::wpds_runtime::ActionArg::Ident { name, .. }) => name,
+                        Some(mettail_prattail::wpds_runtime::ActionArg::BinderScope(h)) => {
+                            match h.names.into_iter().next() {
+                                Some(name) => name,
+                                None => return,
+                            }
+                        },
                         _ => return,
                     };
                 });
@@ -2618,12 +2688,16 @@ pub(crate) fn emit_binder_action_entry(
         }
     } else if shape.has_binder {
         // Single-binder: Scope<Binder, Box<Body>>.
+        // Phase 3.B.3 (2026-05-11): the scope is closed atomically by
+        // the BinderListLoop dispatch's GuardedConsumeBinderIdent-
+        // AndReplaceWithEffect EndBinderScope effect — no
+        // pop_binder_scope_silent() needed; the names were already
+        // extracted via ActionArg::BinderScope into #binder_name.
         let binder_name = binder_name_holders
             .first()
             .expect("single-binder shape must have one binder name");
         let body = body_holder.expect("single-binder shape must have body");
         quote! {
-            b.pop_binder_scope_silent();
             let scope = mettail_runtime::Scope::new(
                 mettail_runtime::Binder(mettail_runtime::get_or_create_var(#binder_name)),
                 Box::new(#body),
@@ -2801,8 +2875,16 @@ mod tests {
         let prefix_bp_map = std::collections::HashMap::new();
         let ts = emit_binder_rule_body(&categories, &per_cat, &prefix_bp_map);
         let s = ts.to_string();
-        assert!(s.contains("ConsumeIdentAndReplace"));
-        assert!(s.contains("ConsumeAndReplace"));
+        // Phase 3.B.3 (2026-05-11): single-binder rules are unified
+        // into the BinderListLoop dispatch with allow_empty=false,
+        // allow_multi=false. The emitted code uses
+        // GuardedConsumeBinderIdentAndReplaceWithEffect to atomically
+        // capture the lone Ident, open + close the binder scope, and
+        // replace the GSS top. The "." Literal arm still uses
+        // GuardedConsumeAndReplace.
+        assert!(s.contains("GuardedConsumeBinderIdentAndReplaceWithEffect"));
+        assert!(s.contains("EndBinderScope"));
+        assert!(s.contains("GuardedConsumeAndReplace"));
         assert!(s.contains("\".\""));
     }
 
