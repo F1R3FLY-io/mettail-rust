@@ -172,10 +172,27 @@ pub fn emit_auto_injection_rules(language: &LanguageDef) -> AutoInjectionOutput 
         }
     }
 
+    // Fix B (F5 canonicalization, 2026-05-11): collect absorber-category
+    // map for cast canonicalization. Map: result_cat → [source_native_cat]
+    // where the user declared `Cast<source> . v:source |- v : result_cat`.
+    // For each lossless edge (source_a → source_b) where both are sources
+    // of casts into the SAME absorber result_cat, we'll emit a
+    // canonicalization rewrite lifting Cast<source_a> to Cast<source_b>
+    // (via the auto-injected source_a-to-source_b cast inside).
+    let mut absorbers: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for (src, tgt) in &user_injections {
+        absorbers
+            .entry(tgt.clone())
+            .or_default()
+            .push(src.clone());
+    }
+
     // Step 3: enumerate lossless edges, emit synthetic rules.
     let mut synth_terms: Vec<GrammarRule> = Vec::new();
     let mut synth_rewrites: Vec<RewriteRule> = Vec::new();
     let mut emitted_pairs: HashSet<(String, String)> = HashSet::new();
+    let mut emitted_cast_canon: HashSet<(String, String, String)> = HashSet::new();
 
     // Sort kinds for deterministic emission order across runs.
     let mut sorted_kinds: Vec<NativeKind> = kind_to_cats.keys().copied().collect();
@@ -215,6 +232,40 @@ pub fn emit_auto_injection_rules(language: &LanguageDef) -> AutoInjectionOutput 
                         synth_rewrites.push(make_injection_cong_rule(source_cat, target_cat));
                     }
                     emitted_pairs.insert(pair);
+
+                    // Fix B (F5 canonicalization, 2026-05-11): for each
+                    // absorber category that has BOTH Cast<source_cat>
+                    // AND Cast<target_cat>, emit a canonicalization
+                    // rewrite lifting Cast<source_cat> wraps to
+                    // Cast<target_cat>. This normalizes mixed cast
+                    // operands of binary ops to a uniform variant so
+                    // fold rules' same-variant arms can match.
+                    for (result_cat, sources) in &absorbers {
+                        if sources.iter().any(|s| s == source_cat)
+                            && sources.iter().any(|s| s == target_cat)
+                        {
+                            let canon_key = (
+                                result_cat.clone(),
+                                source_cat.clone(),
+                                target_cat.clone(),
+                            );
+                            if emitted_cast_canon.contains(&canon_key) {
+                                continue;
+                            }
+                            let canon_label =
+                                format!("NormCast{}To{}In{}", source_cat, target_cat, result_cat);
+                            // Skip if the user defined a rewrite with the
+                            // same label name (defensive against future
+                            // user-hand-written canonicalizations).
+                            if user_cong_labels.contains(&canon_label) {
+                                continue;
+                            }
+                            synth_rewrites.push(make_cast_canonicalization_rule(
+                                result_cat, source_cat, target_cat,
+                            ));
+                            emitted_cast_canon.insert(canon_key);
+                        }
+                    }
                 }
             }
         }
@@ -245,6 +296,60 @@ pub fn emit_auto_injection_rules(language: &LanguageDef) -> AutoInjectionOutput 
 /// `is_auto_injected: true` mirrors `GrammarRule.is_auto_injected`
 /// (Stage 3.13b precedent), letting future W05-rewrite-analog lints
 /// distinguish synthetic vs user-authored cong rules.
+/// Fix B (F5 canonicalization, 2026-05-11): emit a canonicalization
+/// rewrite that lifts `Cast<Source>` wrappers in an absorber category
+/// to `Cast<Target>` via the auto-injected `Source-To-Target` cast.
+///
+/// Shape:
+///   `NormCast<Source>To<Target>In<ResultCat> . |- (Cast<Source> v) ~> (Cast<Target> (<Source>To<Target> v))`
+///
+/// Used to canonicalize mixed-cast operands of binary ops (e.g.,
+/// `Add(CastBigInt(_), CastUInt32(_))`) to a uniform cast variant
+/// (e.g., `Add(CastBigInt(_), CastBigInt(UInt32ToBigInt(_)))`), then
+/// further to `Add(CastBigRat(...), CastBigRat(...))`. The transitive
+/// closure of these rewrites reaches the terminal node of the lossless
+/// lattice (BigRat for numeric types). The Add fold's
+/// `(CastBigRat, CastBigRat)` arm then matches and folds.
+///
+/// `is_auto_injected: true` marks the rule synthetic for lint filtering.
+fn make_cast_canonicalization_rule(
+    result_cat: &str,
+    source_cat: &str,
+    target_cat: &str,
+) -> RewriteRule {
+    let label_str = format!("NormCast{}To{}In{}", source_cat, target_cat, result_cat);
+    let name = Ident::new(&label_str, Span::call_site());
+    let v = Ident::new("v", Span::call_site());
+    let cast_source = Ident::new(&format!("Cast{}", source_cat), Span::call_site());
+    let cast_target = Ident::new(&format!("Cast{}", target_cat), Span::call_site());
+    let source_to_target =
+        Ident::new(&format!("{}To{}", source_cat, target_cat), Span::call_site());
+
+    // LHS: (CastSource v)
+    let lhs = Pattern::Term(PatternTerm::Apply {
+        constructor: cast_source,
+        args: vec![Pattern::Term(PatternTerm::Var(v.clone()))],
+    });
+    // RHS: (CastTarget (SourceToTarget v))
+    let inner = Pattern::Term(PatternTerm::Apply {
+        constructor: source_to_target,
+        args: vec![Pattern::Term(PatternTerm::Var(v))],
+    });
+    let rhs = Pattern::Term(PatternTerm::Apply {
+        constructor: cast_target,
+        args: vec![inner],
+    });
+
+    RewriteRule {
+        name,
+        type_context: Vec::new(),
+        premises: Vec::new(),
+        left: lhs,
+        right: rhs,
+        is_auto_injected: true,
+    }
+}
+
 fn make_injection_cong_rule(source_cat: &str, target_cat: &str) -> RewriteRule {
     let label_str = format!("{}To{}Cong", source_cat, target_cat);
     let name = Ident::new(&label_str, Span::call_site());

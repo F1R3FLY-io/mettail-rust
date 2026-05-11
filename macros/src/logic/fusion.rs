@@ -750,8 +750,17 @@ fn generate_fused_rule(
             let #lhs_var = #field_var.as_ref().clone()
         };
 
+        // Fix B (F5 canonicalization fusion bug, 2026-05-11): head emits
+        // `rw_rewrite_rel(#lhs_var.clone(), #rhs_var)` — the decomposed
+        // subterm being rewritten — NOT `#s_orig.clone()` (the parent's
+        // eq-key). The prior emission was both type-unsafe (when
+        // parent_cat != rewrite_cat, e.g., `eq_name(s_orig)` joined to
+        // `rw_proc(s_orig, ...)`) AND semantically wrong (the rewrite
+        // edge claimed `parent → result` rather than `subterm → result`).
+        // Latent until canonicalization rules added in `auto_inject.rs`
+        // satisfied the fusion-eligibility criteria for the first time.
         let rule = quote! {
-            #rw_rewrite_rel(#s_orig.clone(), #rhs_var) <--
+            #rw_rewrite_rel(#lhs_var.clone(), #rhs_var) <--
                 #eq_parent_rel(#s_orig_eq, #parent_var_eq),
                 let #s_orig = #s_orig_eq.clone(),
                 let #parent_var = #parent_var_eq.clone(),

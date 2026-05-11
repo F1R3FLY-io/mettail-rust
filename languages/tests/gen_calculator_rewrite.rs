@@ -1684,12 +1684,48 @@ fn rewrite_calculator_booltouint32cong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+#[test]
+fn rewrite_calculator_normcastbooltouint32inproc() {
+    let _lang = CalculatorLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastBoolToUInt32InProc (index 209) exists in metadata
+    assert!(
+        rewrites.len() > 209,
+        "Expected at least 210 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[209];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastBoolToUInt32InProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastBoolToUInt32InProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastBoolToUInt32InProc RHS should be non-empty");
+}
+
 // Rewrite test for BoolToBigIntCong skipped: congruence rule (needs triggering context)
 #[test]
 fn rewrite_calculator_booltobigintcong() {
     let _lang = CalculatorLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+#[test]
+fn rewrite_calculator_normcastbooltobigintinproc() {
+    let _lang = CalculatorLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastBoolToBigIntInProc (index 211) exists in metadata
+    assert!(
+        rewrites.len() > 211,
+        "Expected at least 212 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[211];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastBoolToBigIntInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastBoolToBigIntInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastBoolToBigIntInProc RHS should be non-empty");
 }
 
 // Rewrite test for BoolToBigRatCong skipped: congruence rule (needs triggering context)
@@ -1700,12 +1736,48 @@ fn rewrite_calculator_booltobigratcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+#[test]
+fn rewrite_calculator_normcastbooltobigratinproc() {
+    let _lang = CalculatorLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastBoolToBigRatInProc (index 213) exists in metadata
+    assert!(
+        rewrites.len() > 213,
+        "Expected at least 214 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[213];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastBoolToBigRatInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastBoolToBigRatInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastBoolToBigRatInProc RHS should be non-empty");
+}
+
 // Rewrite test for UInt32ToBigIntCong skipped: congruence rule (needs triggering context)
 #[test]
 fn rewrite_calculator_uint32tobigintcong() {
     let _lang = CalculatorLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+#[test]
+fn rewrite_calculator_normcastuint32tobigintinproc() {
+    let _lang = CalculatorLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastUInt32ToBigIntInProc (index 215) exists in metadata
+    assert!(
+        rewrites.len() > 215,
+        "Expected at least 216 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[215];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastUInt32ToBigIntInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastUInt32ToBigIntInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastUInt32ToBigIntInProc RHS should be non-empty");
 }
 
 // Rewrite test for UInt32ToBigRatCong skipped: congruence rule (needs triggering context)
@@ -1716,12 +1788,48 @@ fn rewrite_calculator_uint32tobigratcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+#[test]
+fn rewrite_calculator_normcastuint32tobigratinproc() {
+    let _lang = CalculatorLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastUInt32ToBigRatInProc (index 217) exists in metadata
+    assert!(
+        rewrites.len() > 217,
+        "Expected at least 218 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[217];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastUInt32ToBigRatInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastUInt32ToBigRatInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastUInt32ToBigRatInProc RHS should be non-empty");
+}
+
 // Rewrite test for FloatToBigRatCong skipped: congruence rule (needs triggering context)
 #[test]
 fn rewrite_calculator_floattobigratcong() {
     let _lang = CalculatorLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+#[test]
+fn rewrite_calculator_normcastfloattobigratinproc() {
+    let _lang = CalculatorLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastFloatToBigRatInProc (index 219) exists in metadata
+    assert!(
+        rewrites.len() > 219,
+        "Expected at least 220 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[219];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastFloatToBigRatInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastFloatToBigRatInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastFloatToBigRatInProc RHS should be non-empty");
 }
 
 // Rewrite test for BigIntToBigRatCong skipped: congruence rule (needs triggering context)
@@ -1732,11 +1840,47 @@ fn rewrite_calculator_biginttobigratcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+#[test]
+fn rewrite_calculator_normcastbiginttobigratinproc() {
+    let _lang = CalculatorLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastBigIntToBigRatInProc (index 221) exists in metadata
+    assert!(
+        rewrites.len() > 221,
+        "Expected at least 222 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[221];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastBigIntToBigRatInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastBigIntToBigRatInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastBigIntToBigRatInProc RHS should be non-empty");
+}
+
 // Rewrite test for FixedToBigRatCong skipped: congruence rule (needs triggering context)
 #[test]
 fn rewrite_calculator_fixedtobigratcong() {
     let _lang = CalculatorLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+#[test]
+fn rewrite_calculator_normcastfixedtobigratinproc() {
+    let _lang = CalculatorLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastFixedToBigRatInProc (index 223) exists in metadata
+    assert!(
+        rewrites.len() > 223,
+        "Expected at least 224 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[223];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastFixedToBigRatInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastFixedToBigRatInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastFixedToBigRatInProc RHS should be non-empty");
 }
 

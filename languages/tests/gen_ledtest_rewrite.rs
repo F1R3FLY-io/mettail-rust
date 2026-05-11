@@ -156,3 +156,49 @@ fn rewrite_ledtest_predtonumcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+#[test]
+fn rewrite_ledtest_normcastpredtonuminexpr() {
+    let _lang = LedTestLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastPredToNumInExpr (index 18) exists in metadata
+    assert!(
+        rewrites.len() > 18,
+        "Expected at least 19 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[18];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastPredToNumInExpr"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastPredToNumInExpr LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastPredToNumInExpr RHS should be non-empty");
+}
+
+// Concrete execution test: run "true" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastPredToNumInExpr).
+#[test]
+fn rewrite_ledtest_normcastpredtonuminexpr_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = LedTestLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("true")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastPredToNumInExpr: input 'true' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
+}
+

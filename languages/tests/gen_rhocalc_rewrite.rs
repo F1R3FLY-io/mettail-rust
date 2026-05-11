@@ -800,12 +800,104 @@ fn rewrite_rhocalc_booltointcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+#[test]
+fn rewrite_rhocalc_normcastbooltointinproc() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastBoolToIntInProc (index 87) exists in metadata
+    assert!(
+        rewrites.len() > 87,
+        "Expected at least 88 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[87];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastBoolToIntInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastBoolToIntInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastBoolToIntInProc RHS should be non-empty");
+}
+
+// Concrete execution test: run "true" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastBoolToIntInProc).
+#[test]
+fn rewrite_rhocalc_normcastbooltointinproc_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("true")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastBoolToIntInProc: input 'true' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
+}
+
 // Rewrite test for BoolToUInt32Cong skipped: congruence rule (needs triggering context)
 #[test]
 fn rewrite_rhocalc_booltouint32cong() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+#[test]
+fn rewrite_rhocalc_normcastbooltouint32inproc() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastBoolToUInt32InProc (index 89) exists in metadata
+    assert!(
+        rewrites.len() > 89,
+        "Expected at least 90 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[89];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastBoolToUInt32InProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastBoolToUInt32InProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastBoolToUInt32InProc RHS should be non-empty");
+}
+
+// Concrete execution test: run "true" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastBoolToUInt32InProc).
+#[test]
+fn rewrite_rhocalc_normcastbooltouint32inproc_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("true")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastBoolToUInt32InProc: input 'true' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
 }
 
 // Rewrite test for BoolToBigIntCong skipped: congruence rule (needs triggering context)
@@ -816,12 +908,104 @@ fn rewrite_rhocalc_booltobigintcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+#[test]
+fn rewrite_rhocalc_normcastbooltobigintinproc() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastBoolToBigIntInProc (index 91) exists in metadata
+    assert!(
+        rewrites.len() > 91,
+        "Expected at least 92 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[91];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastBoolToBigIntInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastBoolToBigIntInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastBoolToBigIntInProc RHS should be non-empty");
+}
+
+// Concrete execution test: run "true" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastBoolToBigIntInProc).
+#[test]
+fn rewrite_rhocalc_normcastbooltobigintinproc_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("true")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastBoolToBigIntInProc: input 'true' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
+}
+
 // Rewrite test for BoolToBigRatCong skipped: congruence rule (needs triggering context)
 #[test]
 fn rewrite_rhocalc_booltobigratcong() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+#[test]
+fn rewrite_rhocalc_normcastbooltobigratinproc() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastBoolToBigRatInProc (index 93) exists in metadata
+    assert!(
+        rewrites.len() > 93,
+        "Expected at least 94 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[93];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastBoolToBigRatInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastBoolToBigRatInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastBoolToBigRatInProc RHS should be non-empty");
+}
+
+// Concrete execution test: run "true" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastBoolToBigRatInProc).
+#[test]
+fn rewrite_rhocalc_normcastbooltobigratinproc_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("true")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastBoolToBigRatInProc: input 'true' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
 }
 
 // Rewrite test for IntToBigIntCong skipped: congruence rule (needs triggering context)
@@ -832,12 +1016,104 @@ fn rewrite_rhocalc_inttobigintcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+#[test]
+fn rewrite_rhocalc_normcastinttobigintinproc() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastIntToBigIntInProc (index 95) exists in metadata
+    assert!(
+        rewrites.len() > 95,
+        "Expected at least 96 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[95];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastIntToBigIntInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastIntToBigIntInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastIntToBigIntInProc RHS should be non-empty");
+}
+
+// Concrete execution test: run "1" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastIntToBigIntInProc).
+#[test]
+fn rewrite_rhocalc_normcastinttobigintinproc_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("1")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastIntToBigIntInProc: input '1' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
+}
+
 // Rewrite test for IntToBigRatCong skipped: congruence rule (needs triggering context)
 #[test]
 fn rewrite_rhocalc_inttobigratcong() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+#[test]
+fn rewrite_rhocalc_normcastinttobigratinproc() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastIntToBigRatInProc (index 97) exists in metadata
+    assert!(
+        rewrites.len() > 97,
+        "Expected at least 98 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[97];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastIntToBigRatInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastIntToBigRatInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastIntToBigRatInProc RHS should be non-empty");
+}
+
+// Concrete execution test: run "1" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastIntToBigRatInProc).
+#[test]
+fn rewrite_rhocalc_normcastinttobigratinproc_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("1")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastIntToBigRatInProc: input '1' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
 }
 
 // Rewrite test for UInt32ToIntCong skipped: congruence rule (needs triggering context)
@@ -848,12 +1124,104 @@ fn rewrite_rhocalc_uint32tointcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+#[test]
+fn rewrite_rhocalc_normcastuint32tointinproc() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastUInt32ToIntInProc (index 99) exists in metadata
+    assert!(
+        rewrites.len() > 99,
+        "Expected at least 100 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[99];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastUInt32ToIntInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastUInt32ToIntInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastUInt32ToIntInProc RHS should be non-empty");
+}
+
+// Concrete execution test: run "1" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastUInt32ToIntInProc).
+#[test]
+fn rewrite_rhocalc_normcastuint32tointinproc_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("1")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastUInt32ToIntInProc: input '1' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
+}
+
 // Rewrite test for UInt32ToBigIntCong skipped: congruence rule (needs triggering context)
 #[test]
 fn rewrite_rhocalc_uint32tobigintcong() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+#[test]
+fn rewrite_rhocalc_normcastuint32tobigintinproc() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastUInt32ToBigIntInProc (index 101) exists in metadata
+    assert!(
+        rewrites.len() > 101,
+        "Expected at least 102 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[101];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastUInt32ToBigIntInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastUInt32ToBigIntInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastUInt32ToBigIntInProc RHS should be non-empty");
+}
+
+// Concrete execution test: run "1" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastUInt32ToBigIntInProc).
+#[test]
+fn rewrite_rhocalc_normcastuint32tobigintinproc_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("1")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastUInt32ToBigIntInProc: input '1' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
 }
 
 // Rewrite test for UInt32ToBigRatCong skipped: congruence rule (needs triggering context)
@@ -864,12 +1232,104 @@ fn rewrite_rhocalc_uint32tobigratcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+#[test]
+fn rewrite_rhocalc_normcastuint32tobigratinproc() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastUInt32ToBigRatInProc (index 103) exists in metadata
+    assert!(
+        rewrites.len() > 103,
+        "Expected at least 104 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[103];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastUInt32ToBigRatInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastUInt32ToBigRatInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastUInt32ToBigRatInProc RHS should be non-empty");
+}
+
+// Concrete execution test: run "1" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastUInt32ToBigRatInProc).
+#[test]
+fn rewrite_rhocalc_normcastuint32tobigratinproc_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("1")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastUInt32ToBigRatInProc: input '1' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
+}
+
 // Rewrite test for FloatToBigRatCong skipped: congruence rule (needs triggering context)
 #[test]
 fn rewrite_rhocalc_floattobigratcong() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+#[test]
+fn rewrite_rhocalc_normcastfloattobigratinproc() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastFloatToBigRatInProc (index 105) exists in metadata
+    assert!(
+        rewrites.len() > 105,
+        "Expected at least 106 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[105];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastFloatToBigRatInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastFloatToBigRatInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastFloatToBigRatInProc RHS should be non-empty");
+}
+
+// Concrete execution test: run "1.0" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastFloatToBigRatInProc).
+#[test]
+fn rewrite_rhocalc_normcastfloattobigratinproc_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("1.0")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastFloatToBigRatInProc: input '1.0' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
 }
 
 // Rewrite test for BigIntToBigRatCong skipped: congruence rule (needs triggering context)
@@ -880,11 +1340,103 @@ fn rewrite_rhocalc_biginttobigratcong() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
+#[test]
+fn rewrite_rhocalc_normcastbiginttobigratinproc() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastBigIntToBigRatInProc (index 107) exists in metadata
+    assert!(
+        rewrites.len() > 107,
+        "Expected at least 108 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[107];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastBigIntToBigRatInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastBigIntToBigRatInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastBigIntToBigRatInProc RHS should be non-empty");
+}
+
+// Concrete execution test: run "0" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastBigIntToBigRatInProc).
+#[test]
+fn rewrite_rhocalc_normcastbiginttobigratinproc_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("0")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastBigIntToBigRatInProc: input '0' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
+}
+
 // Rewrite test for FixedToBigRatCong skipped: congruence rule (needs triggering context)
 #[test]
 fn rewrite_rhocalc_fixedtobigratcong() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+#[test]
+fn rewrite_rhocalc_normcastfixedtobigratinproc() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite NormCastFixedToBigRatInProc (index 109) exists in metadata
+    assert!(
+        rewrites.len() > 109,
+        "Expected at least 110 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[109];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("NormCastFixedToBigRatInProc"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite NormCastFixedToBigRatInProc LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite NormCastFixedToBigRatInProc RHS should be non-empty");
+}
+
+// Concrete execution test: run "0" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule NormCastFixedToBigRatInProc).
+#[test]
+fn rewrite_rhocalc_normcastfixedtobigratinproc_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.run_to_normal_form("0")
+    }));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule NormCastFixedToBigRatInProc: input '0' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
 }
 

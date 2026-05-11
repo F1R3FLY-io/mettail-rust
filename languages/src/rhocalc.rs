@@ -647,9 +647,22 @@ language! {
                 _ => Proc::Err,
             }}
         ] fold;
+        // Fix B follow-up (2026-05-11): replaced `panic!()` fallbacks with
+        // `0i64` (a silent total fallback). The prior `panic!` paths were
+        // unreachable before the fusion engine fix at `fusion.rs:754`
+        // (committed alongside this change) — that fix legitimately fires
+        // CountBag's fold rule on subterm-decomposed `Proc::Err`
+        // arguments, which would panic the runtime. A fold body must be
+        // total. Int (the result type) has no `Err` variant, so the
+        // safe fallback is 0 — callers consume the count as an i64 and
+        // 0 is a sentinel-safe value for "no matches" / "type mismatch".
         CountBag . b:Proc, e:Proc |- "count" "(" b "," e ")" : Int ![
             { match &b {
-                Proc::CastBag(bag) => match bag.as_ref() { Bag::BagLit(h) => mettail_runtime::HashBag::count(h, &e) as i64, _ => panic!("count: expected bag literal") }, _ => panic!("count: expected CastBag")
+                Proc::CastBag(bag) => match bag.as_ref() {
+                    Bag::BagLit(h) => mettail_runtime::HashBag::count(h, &e) as i64,
+                    _ => 0i64,
+                },
+                _ => 0i64,
             }}
         ] fold;
 
