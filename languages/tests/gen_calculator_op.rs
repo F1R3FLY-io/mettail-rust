@@ -186,26 +186,26 @@ use mettail_runtime::BehavioralPred;
 //   - UInt32ToBigInt
 //   - UInt32ToBigRat
 // Constructor weights (lower = more frequent):
-//   HasMap               weight: 0.0000
-//   IntToBool            weight: 0.0000
-//   BigratCast           weight: 0.0000
-//   StrLit               weight: 0.0000
-//   CastErrFloat         weight: 0.0000
-//   DeleteMap            weight: 0.0000
-//   Err                  weight: 0.0000
-//   CastErrBigInt        weight: 0.0000
-//   EqFloat              weight: 0.0000
-//   NegFixed             weight: 0.0000
-//   BigRatLit            weight: 0.0000
-//   CountBag             weight: 0.0000
-//   FloatToInt           weight: 0.0000
-//   FloatLit             weight: 0.0000
-//   CastErrInt           weight: 0.0000
+//   BitNotUInt32         weight: 0.0000
+//   MapLit               weight: 0.0000
+//   SinFloat             weight: 0.0000
 //   LenMap               weight: 0.0000
-//   ListLit              weight: 0.0000
+//   BigIntLit            weight: 0.0000
+//   NegBigInt            weight: 0.0000
+//   BoolLit              weight: 0.0000
+//   Neg                  weight: 0.0000
+//   RemoveBag            weight: 0.0000
+//   MergeMap             weight: 0.0000
 //   BitNotBigInt         weight: 0.0000
+//   CosFloat             weight: 0.0000
+//   DeleteMap            weight: 0.0000
+//   KeysMap              weight: 0.0000
+//   ValuesMap            weight: 0.0000
+//   StrLit               weight: 0.0000
+//   ExpFloat             weight: 0.0000
 //   Len                  weight: 0.0000
-//   EqFixed              weight: 0.0000
+//   UInt32Lit            weight: 0.0000
+//   GetMap               weight: 0.0000
 //   ... and 221 more
 // Category weights:
 //   Bool                 weight: 0.0179
@@ -215,11 +215,11 @@ use mettail_runtime::BehavioralPred;
 //   Fixed                weight: 0.2857
 //   List                 weight: 0.2857
 //   BigInt               weight: 0.3125
-//   UInt32               weight: 0.3333
 //   Bag                  weight: 0.3333
+//   UInt32               weight: 0.3333
 //   Map                  weight: 0.3333
-//   Str                  weight: 0.5000
 //   Proc                 weight: 0.5000
+//   Str                  weight: 0.5000
 //
 
 // ─────────────────────────────────────────────────────────
@@ -15447,6 +15447,214 @@ fn wfst_calculator_dispatch_ltfixed_eval() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
+fn prec_calculator_divfloat_mulfloat_tighter_than_1_0___2_0___3_0() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: DivFloat binds tighter than MulFloat
+    let input_str = "1.0 * 2.0 / 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0.6666666666666666"),
+        "{} should evaluate to 0.6666666666666666, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_mulfloat_divfloat__1_0___2_0____3_0() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (MulFloat) DivFloat
+    let input_str = "(1.0 * 2.0) / 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0.6666666666666666"),
+        "{} should evaluate to 0.6666666666666666, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_divfloat_subfloat_tighter_than_1_0___2_0___3_0() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: DivFloat binds tighter than SubFloat
+    let input_str = "1.0 - 2.0 / 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0.33333333333333337"),
+        "{} should evaluate to 0.33333333333333337, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_subfloat_divfloat__1_0___2_0____3_0() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (SubFloat) DivFloat
+    let input_str = "(1.0 - 2.0) / 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-0.3333333333333333"),
+        "{} should evaluate to -0.3333333333333333, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_mulfloat_subfloat_tighter_than_1_0___2_0___3_0() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: MulFloat binds tighter than SubFloat
+    let input_str = "1.0 - 2.0 * 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-5.0"),
+        "{} should evaluate to -5.0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_subfloat_mulfloat__1_0___2_0____3_0() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (SubFloat) MulFloat
+    let input_str = "(1.0 - 2.0) * 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-3.0"),
+        "{} should evaluate to -3.0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_divfloat_addfloat_tighter_than_1_0___2_0___3_0() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: DivFloat binds tighter than AddFloat
+    let input_str = "1.0 + 2.0 / 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1.6666666666666665"),
+        "{} should evaluate to 1.6666666666666665, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_addfloat_divfloat__1_0___2_0____3_0() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (AddFloat) DivFloat
+    let input_str = "(1.0 + 2.0) / 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "1.0"),
+        "{} should evaluate to 1.0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_mulfloat_addfloat_tighter_than_1_0___2_0___3_0() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: MulFloat binds tighter than AddFloat
+    let input_str = "1.0 + 2.0 * 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "7.0"),
+        "{} should evaluate to 7.0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_addfloat_mulfloat__1_0___2_0____3_0() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (AddFloat) MulFloat
+    let input_str = "(1.0 + 2.0) * 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "9.0"),
+        "{} should evaluate to 9.0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_subfloat_addfloat_tighter_than_1_0___2_0___3_0() {
+    mettail_runtime::clear_var_cache();
+    { // Precedence test: SubFloat binds tighter than AddFloat
+    let input_str = "1.0 + 2.0 - 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0.0"),
+        "{} should evaluate to 0.0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn prec_calculator_paren_override_addfloat_subfloat__1_0___2_0____3_0() {
+    mettail_runtime::clear_var_cache();
+    { // Parenthesization override: (AddFloat) SubFloat
+    let input_str = "(1.0 + 2.0) - 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0.0"),
+        "{} should evaluate to 0.0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn assoc_calculator_addfloat_left() {
+    mettail_runtime::clear_var_cache();
+    { // Associativity test: AddFloat is left-associative
+    let input_str = "1.0 + 2.0 + 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "6.0"),
+        "{} (left-assoc) should evaluate to 6.0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn assoc_calculator_subfloat_left() {
+    mettail_runtime::clear_var_cache();
+    { // Associativity test: SubFloat is left-associative
+    let input_str = "1.0 - 2.0 - 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "-4.0"),
+        "{} (left-assoc) should evaluate to -4.0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn assoc_calculator_mulfloat_left() {
+    mettail_runtime::clear_var_cache();
+    { // Associativity test: MulFloat is left-associative
+    let input_str = "1.0 * 2.0 * 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "6.0"),
+        "{} (left-assoc) should evaluate to 6.0, got {:?}", input_str, nfs);}
+}
+
+#[test]
+fn assoc_calculator_divfloat_left() {
+    mettail_runtime::clear_var_cache();
+    { // Associativity test: DivFloat is left-associative
+    let input_str = "1.0 / 2.0 / 3.0";
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "0.16666666666666666"),
+        "{} (left-assoc) should evaluate to 0.16666666666666666, got {:?}", input_str, nfs);}
+}
+
+#[test]
 fn prec_calculator_bitoruint32_bitanduint32_tighter_than_1_bitand_2_bitor_3() {
     mettail_runtime::clear_var_cache();
     { // Precedence test: BitOrUInt32 binds tighter than BitAndUInt32
@@ -15769,214 +15977,6 @@ fn prec_calculator_paren_override_divint_bitorint__1___2__bitor_3() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "3"),
         "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_bitandint_divint_tighter_than_1___2_bitand_3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: BitAndInt binds tighter than DivInt
-    let input_str = "1 / 2 bitand 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_divint_bitandint__1___2__bitand_3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (DivInt) BitAndInt
-    let input_str = "(1 / 2) bitand 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_modint_divint_tighter_than_1___2___3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: ModInt binds tighter than DivInt
-    let input_str = "1 / 2 % 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_divint_modint__1___2____3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (DivInt) ModInt
-    let input_str = "(1 / 2) % 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_customop_mulint_tighter_than_1___2___3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: CustomOp binds tighter than MulInt
-    let input_str = "1 * 2 ~ 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "13"),
-        "{} should evaluate to 13, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_mulint_customop__1___2____3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (MulInt) CustomOp
-    let input_str = "(1 * 2) ~ 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "13"),
-        "{} should evaluate to 13, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_bitorint_mulint_tighter_than_1___2_bitor_3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: BitOrInt binds tighter than MulInt
-    let input_str = "1 * 2 bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_mulint_bitorint__1___2__bitor_3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (MulInt) BitOrInt
-    let input_str = "(1 * 2) bitor 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_bitandint_mulint_tighter_than_1___2_bitand_3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: BitAndInt binds tighter than MulInt
-    let input_str = "1 * 2 bitand 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_mulint_bitandint__1___2__bitand_3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (MulInt) BitAndInt
-    let input_str = "(1 * 2) bitand 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_modint_mulint_tighter_than_1___2___3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: ModInt binds tighter than MulInt
-    let input_str = "1 * 2 % 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_mulint_modint__1___2____3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (MulInt) ModInt
-    let input_str = "(1 * 2) % 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_divint_mulint_tighter_than_1___2___3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: DivInt binds tighter than MulInt
-    let input_str = "1 * 2 / 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_mulint_divint__1___2____3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (MulInt) DivInt
-    let input_str = "(1 * 2) / 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_customop_subint_tighter_than_1___2___3() {
-    mettail_runtime::clear_var_cache();
-    { // Precedence test: CustomOp binds tighter than SubInt
-    let input_str = "1 - 2 ~ 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-12"),
-        "{} should evaluate to -12, got {:?}", input_str, nfs);}
-}
-
-#[test]
-fn prec_calculator_paren_override_subint_customop__1___2____3() {
-    mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (SubInt) CustomOp
-    let input_str = "(1 - 2) ~ 3";
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "7"),
-        "{} should evaluate to 7, got {:?}", input_str, nfs);}
 }
 
 // ═══════════════════════════════════════════════════════════

@@ -491,6 +491,63 @@ pub(crate) fn emit_collection_close_lookup(
     }
 }
 
+/// Plan B (F5 close/sep filter, 2026-05-11): per-language lookup that maps
+/// `(result_src_idx, rule_idx)` of a CollectionMarker to BOTH the close
+/// delimiter and the separator. Used by `WpdsState::InfixLoop` (in
+/// `engine_impl.rs`) to skip infix dispatch when frontier_top is
+/// CollectionMarker AND the next token is the collection's close or
+/// separator — avoiding spurious Fork branches that diverge on
+/// collection_stack depth.
+///
+/// Evaluates to `Option<(&'static str, &'static str)>` — `(close, sep)`.
+pub(crate) fn emit_collection_close_sep_lookup(
+    language: &mettail_ast::language::LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> TokenStream {
+    let mut arms = Vec::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        for (rule_i, rule) in rules.iter().enumerate() {
+            let Some(shape) = classify_collection(rule, language) else {
+                // Mirror the Class-2 binder rule path in emit_collection_close_lookup.
+                if let Some(shape) = classify_binder(rule) {
+                    if let Some(BinderPosition::ParamParse {
+                        collection: Some(info),
+                        ..
+                    }) = shape.positions.iter().find(|p| matches!(
+                        p,
+                        BinderPosition::ParamParse { collection: Some(_), .. }
+                    )) {
+                        let result_src_idx = cat_i as u16;
+                        let rule_idx = rule_i as u16;
+                        let close = &info.close;
+                        let sep = &info.separator;
+                        arms.push(quote! {
+                            (#result_src_idx, #rule_idx) => Some((#close, #sep)),
+                        });
+                    }
+                }
+                continue;
+            };
+            let result_src_idx = cat_i as u16;
+            let rule_idx = rule_i as u16;
+            let close = &shape.close;
+            let sep = &shape.separator;
+            arms.push(quote! {
+                (#result_src_idx, #rule_idx) => Some((#close, #sep)),
+            });
+        }
+    }
+    if arms.is_empty() {
+        return quote! { None::<(&'static str, &'static str)> };
+    }
+    quote! {
+        match (result_src_idx, rule_idx) {
+            #(#arms)*
+            _ => None,
+        }
+    }
+}
+
 fn lookup_element_src_idx(element_cat: &str, categories: &[String]) -> Option<u16> {
     categories
         .iter()

@@ -64,6 +64,10 @@ pub(crate) fn emit_engine_impl_full(
         super::collection::emit_collection_loop_arm(language, categories, per_cat);
     let collection_close_lookup =
         super::collection::emit_collection_close_lookup(language, per_cat);
+    // Plan B (F5 close/sep filter, 2026-05-11): per-rule (close, sep)
+    // lookup used by InfixLoop's CollectionMarker filter.
+    let collection_close_sep_lookup =
+        super::collection::emit_collection_close_sep_lookup(language, per_cat);
     let collection_element_src_lookup =
         super::collection::emit_collection_element_src_lookup(language, categories, per_cat);
     // B9 / Class 2 (2026-05-08): per-rule lookup for Class-2 binder rules'
@@ -765,6 +769,41 @@ pub(crate) fn emit_engine_impl_full(
                                     // Unwinding so the OptionalGroup state
                                     // resumes at the recorded sub_pos.
                                     return WpdsStepAction::Advance(WpdsState::Unwinding);
+                                }
+                                mettail_prattail::wpds_runtime::SymbolKind::CollectionMarker => {
+                                    // Plan B (F5 close/sep filter, 2026-05-11):
+                                    // when frontier_top is CollectionMarker, only
+                                    // proceed with infix/postfix/mixfix dispatch
+                                    // if the next token is actually an operator
+                                    // candidate. If the next token is the
+                                    // collection's close or separator, skip
+                                    // infix dispatch immediately — falling
+                                    // through to Unwinding-CollectionMarker
+                                    // routes to CollectionLoop which handles
+                                    // close/sep/bare correctly.
+                                    //
+                                    // Without this gating, the F5 fix's removal
+                                    // of CollectionMarker from the skip list
+                                    // causes Fork branches that diverge on
+                                    // collection_stack depth, leading to
+                                    // "builder result was empty" failures and
+                                    // degenerate AST (e.g., `{1+2+3}` → ["3"]).
+                                    let result_src_idx = node.symbol.category_src_idx;
+                                    let rule_idx = node.symbol.rule_index_in_category;
+                                    let close_sep: Option<(&'static str, &'static str)> = {
+                                        let result_src_idx = result_src_idx;
+                                        let rule_idx = rule_idx;
+                                        #collection_close_sep_lookup
+                                    };
+                                    if let Some((close, sep)) = close_sep {
+                                        let token_text = tokens.peek_text(_pos).unwrap_or("");
+                                        if token_text == close || token_text == sep {
+                                            return WpdsStepAction::Advance(WpdsState::Unwinding);
+                                        }
+                                    }
+                                    // Otherwise fall through to infix dispatch
+                                    // below — the F5 fix behavior for genuine
+                                    // operator extension of the current element.
                                 }
                                 _ => {}
                             }
