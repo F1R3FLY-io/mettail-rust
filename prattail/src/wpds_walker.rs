@@ -408,7 +408,17 @@ pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
     /// winner at EOI commit. Mode is set Lazy on construction/`reset()`,
     /// promoted to Strict on first `WpdsStepAction::Fork`, and stays
     /// Strict until `reset()` (L3 invariant: no reverse).
-    cursor_mode: CursorMode,
+    // Phase 5.6-tail-F (2026-05-12): replaces the CursorMode enum with a
+    // monotone bool. Initialized `true` at construction (no Fork has
+    // happened); set to `false` at the first `Fork` action and never
+    // reset. The 4 mode-agnostic helpers (advance_cursor_pos,
+    // multiply_cursor_weight, set_cursor_inner_state, cursor_gss_push,
+    // cursor_gss_pop_via_edge, apply_pop_body_to_cursor's top-node
+    // mirror) consult this flag to decide whether to mirror cursor.* to
+    // self.*. Same semantics as pre-tail `cursor_mode == CursorMode::Lazy`
+    // (a one-way Lazy → Strict promotion at the first Fork), without the
+    // misleading enum names.
+    unforked: bool,
     /// Stage 7+ Fork plan, step 2: per-branch micro-state during
     /// `WpdsState::AmbiguityFanout`. Each entry is a `BranchCursor` that
     /// pairs a GSS-tip node id with the branch's own `pos`, accumulated
@@ -455,24 +465,11 @@ pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
 /// Stage 3.9 / ι Phase 4 (2026-05-01): always-cursor walker mode.
 ///
 /// `Lazy` is the unambiguous-parse fast-path: the walker maintains a
-/// singleton cursor (`branch_cursors[0]`) whose `recovery_deltas` is
-/// always empty; live-builder mutations happen directly. `Strict` is
-/// the post-Fork mode: cursors accumulate `recovery_deltas` deltas
-/// that replay onto the live builder only when the lex-min winner
-/// commits at EOI.
-///
-/// Invariants:
-/// - **L1** (Lazy admission): `mode == Lazy → cursors.len() == 1 && cursors[0].recovery_deltas.is_empty()` at `apply_action` entry.
-/// - **L2** (Lazy → Strict transition): first `WpdsStepAction::Fork` sets `mode = Strict`.
-/// - **L3** (no reverse): once Strict, stays Strict for the parse.
-/// - **L4** (reset between parses): `WpdsWalker::reset` re-allocates a fresh singleton cursor and sets `mode = Lazy`.
-/// - **L5** (terminal mode-irrelevant): Error/Accepted ignore mode at all times.
-/// - **L6** (Lazy + EOI Accept): Lazy admission requires the engine to emit `Accept` only at `pos == tokens.len()`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CursorMode {
-    Lazy,
-    Strict,
-}
+// Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The
+// pre-tail `Lazy`/`Strict` names inverted standard CS terminology and
+// conflated "per-cursor mutation tracking strategy" with "WPDS
+// evaluation strategy". The actual signal — "no Fork has happened yet"
+// — is now a monotone bool `WpdsWalker.unforked`.
 
 /// Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard for Strict-mode
 /// cursors. If any cursor's `recovery_deltas` exceeds this length,
@@ -1683,7 +1680,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             top_node: None,
             beam_size: None,
             builder: SemanticBuilder::new(),
-            cursor_mode: CursorMode::Lazy,
+            unforked: true,
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -1735,7 +1732,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             top_node: Some(top_id),
             beam_size: None,
             builder: SemanticBuilder::new(),
-            cursor_mode: CursorMode::Lazy,
+            unforked: true,
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -1782,7 +1779,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             top_node,
             beam_size: None,
             builder: SemanticBuilder::new(),
-            cursor_mode: CursorMode::Lazy,
+            unforked: true,
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -1804,7 +1801,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         self.weight = W::one();
         self.top_node = None;
         self.builder = SemanticBuilder::new();
-        self.cursor_mode = CursorMode::Lazy;
+        self.unforked = true;
         // Stage 3.10 / ι Phase 5 (2026-05-01): seed via `seed_from_live`.
         self.branch_cursors = vec![BranchCursor::seed_from_live(
             0,
@@ -1823,9 +1820,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         self.mutable_token_source = None;
     }
 
-    /// Read-only access to the cursor mode (Lazy/Strict).
-    pub fn cursor_mode(&self) -> CursorMode {
-        self.cursor_mode
+    /// Phase 5.6-tail-F (2026-05-12): read-only access to the unforked
+    /// flag. Replaces the pre-tail `cursor_mode()` accessor that returned
+    /// a CursorMode enum. Returns `true` if no Fork has happened yet
+    /// (the walker is still in single-cursor mode); `false` once any
+    /// Fork promoted the walker to multi-cursor mode (monotone — never
+    /// resets within a parse).
+    pub fn unforked(&self) -> bool {
+        self.unforked
     }
 
     /// Stage 3.20 / L12 (Commit 4, 2026-05-06): read-only access to the
@@ -2413,7 +2415,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // wrapper's post-resolution `pos < tokens.len()` check (in
         // codegen-emitted parse_<Cat>_via_wpds) handles TrailingTokens
         // correctly.
-        if self.cursor_mode == CursorMode::Lazy {
+        if self.unforked {
             // Install singleton cursor's builder.
             if let Some(cursor) = self.branch_cursors.first() {
                 self.builder = (*cursor.builder).clone();
@@ -2782,7 +2784,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // Lazy mode (cursor_mode == Lazy): in Strict mode (post-
                 // first-Fork) all cursors go through step_fanout, not
                 // apply_action, and commit_winner handles install.
-                if self.cursor_mode == CursorMode::Lazy {
+                if self.unforked {
                     self.builder = (*cursor.builder).clone();
                 }
                 self.branch_cursors.push(cursor);
@@ -3031,7 +3033,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         // because new_pos is absolute, not a delta. Mirror to
                         // self.pos in Lazy mode.
                         cursor.pos = new_pos;
-                        if self.cursor_mode == CursorMode::Lazy {
+                        if self.unforked {
                             self.pos = new_pos;
                         }
                     }
@@ -3061,7 +3063,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // L2: cursor_mode promotion to Strict is KEPT until Step F deletes
                 // the enum entirely. It still gates the 4 mode-agnostic helpers'
                 // mirror-to-live behavior in Lazy steady state.
-                self.cursor_mode = CursorMode::Strict;
+                self.unforked = false;
                 // Bounded recovery (Stage 3.20 / L12, 2026-05-06): detect
                 // whether this Fork is a recovery dispatch (any branch
                 // carries a recovery-typed BuilderDelta effect:
@@ -4317,7 +4319,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         symbol: StackSymbolV2::category_entry(0),
                     });
                     cursor.node = sentinel;
-                    if self.cursor_mode == CursorMode::Lazy {
+                    if self.unforked {
                         self.top_node = Some(sentinel);
                     }
                 }
@@ -4355,7 +4357,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         symbol: StackSymbolV2::category_entry(0),
                     });
                     cursor.node = sentinel;
-                    if self.cursor_mode == CursorMode::Lazy {
+                    if self.unforked {
                         self.top_node = Some(sentinel);
                     }
                 }
@@ -5606,7 +5608,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     #[inline(always)]
     fn advance_cursor_pos(&mut self, cursor: &mut BranchCursor<W>, n: usize) {
         cursor.pos += n;
-        if self.cursor_mode == CursorMode::Lazy {
+        if self.unforked {
             self.pos = cursor.pos;
         }
     }
@@ -5614,7 +5616,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     #[inline(always)]
     fn multiply_cursor_weight(&mut self, cursor: &mut BranchCursor<W>, w: &W) {
         cursor.weight = cursor.weight.times(w);
-        if self.cursor_mode == CursorMode::Lazy {
+        if self.unforked {
             self.weight = self.weight.times(w);
         }
     }
@@ -5695,7 +5697,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             _ => state.clone(),
         };
         cursor.inner_state = patched_state.clone();
-        if self.cursor_mode == CursorMode::Lazy {
+        if self.unforked {
             self.state = patched_state;
         }
     }
@@ -5724,7 +5726,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 symbol: StackSymbolV2::category_entry(0),
             });
             cursor.node = root;
-            if self.cursor_mode == CursorMode::Lazy {
+            if self.unforked {
                 self.top_node = Some(root);
             }
             root
@@ -5739,7 +5741,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // follow this exact edge — preserving its calling context even
         // when GSS dedup makes the new node share with sibling cursors.
         cursor.incoming_edge_stack.push(edge_id);
-        if self.cursor_mode == CursorMode::Lazy {
+        if self.unforked {
             self.top_node = Some(new_id);
         }
         new_id
@@ -5766,7 +5768,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // returns None → engine takes the `frontier_top.is_none() ⇒ Accept`
         // branch, restoring pre-Stage-3.12 behavior in Strict mode.
         cursor.node = result.unwrap_or(crate::gss::GSS_NODE_NONE);
-        if self.cursor_mode == CursorMode::Lazy {
+        if self.unforked {
             self.top_node = result;
         }
         result
@@ -5791,7 +5793,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     ) {
         // Set cursor's GSS top to the predecessor (or sentinel).
         cursor.node = pred_id;
-        if self.cursor_mode == CursorMode::Lazy {
+        if self.unforked {
             self.top_node = if pred_id == crate::gss::GSS_NODE_NONE {
                 None
             } else {
@@ -6050,7 +6052,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         let edge_id = cursor.incoming_edge_stack.pop();
         let target = edge_id.and_then(|e| self.gss.edge_target(e));
         cursor.node = target.unwrap_or(crate::gss::GSS_NODE_NONE);
-        if self.cursor_mode == CursorMode::Lazy {
+        if self.unforked {
             self.top_node = target;
         }
         target
@@ -6112,7 +6114,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 symbol: StackSymbolV2::category_entry(0),
             });
             cursor.node = root;
-            if self.cursor_mode == CursorMode::Lazy {
+            if self.unforked {
                 self.top_node = Some(root);
             }
             root
@@ -6134,7 +6136,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             cursor.incoming_edge_stack.pop();
         }
         cursor.incoming_edge_stack.push(edge_id);
-        if self.cursor_mode == CursorMode::Lazy {
+        if self.unforked {
             self.top_node = Some(new_id);
         }
         new_id
@@ -8256,24 +8258,32 @@ mod tests {
     // ══════════════════════════════════════════════════════════════════════
     // Stage 3.9 / ι Phase 4 (2026-05-01): always-cursor walker invariant tests
     //
-    // Verify L1-L6 invariants + Lazy/Strict equivalence + helper correctness.
+    // Phase 5.6-tail-F (2026-05-12): CursorMode enum deleted in favor of
+    // a monotone `unforked: bool` flag. The L1-L6 invariants from the
+    // pre-tail enum-based scheme either collapse (L1/L5/L6) or simplify
+    // (L2/L3/L4) under the bool. Tests reshaped accordingly:
+    // - phase4_lazy_admission_holds_after_construction → singleton+empty check
+    // - phase4_lazy_to_strict_on_first_fork → unforked-flips-on-Fork check
+    // - phase4_strict_persists_through_resolution → unforked-stays-false check
+    // - phase4_reset_returns_to_lazy → unforked-reset-to-true check
+    // - phase4_lazy_terminal_state_is_mode_irrelevant → terminal-absorbs check
+    // - phase4_lazy_eoi_accept_no_replay_needed → recovery_deltas-empty check
     // ══════════════════════════════════════════════════════════════════════
 
-    /// L1: Lazy admission. After construction, mode = Lazy, cursors == 1,
-    /// recovery_deltas empty.
+    /// Initial state: unforked, singleton cursor, no recovery deltas.
     #[test]
     fn phase4_lazy_admission_holds_after_construction() {
         let w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
-        assert_eq!(w.cursor_mode(), CursorMode::Lazy);
+        assert!(w.unforked(), "starts unforked");
         let cursors = w.branch_cursors_for_test();
-        assert_eq!(cursors.len(), 1, "L1: singleton cursor in Lazy");
+        assert_eq!(cursors.len(), 1, "singleton cursor at construction");
         assert!(
             cursors[0].recovery_deltas.is_empty(),
-            "L1: recovery_deltas empty in Lazy"
+            "recovery_deltas empty at construction"
         );
     }
 
-    /// L2: Lazy → Strict on first Fork.
+    /// First Fork flips unforked from true to false.
     #[test]
     fn phase4_lazy_to_strict_on_first_fork() {
         let engine = ScriptedEngine::new(vec![
@@ -8301,18 +8311,14 @@ mod tests {
             },
         ]);
         let mut w = WpdsWalker::new(engine, 0);
-        assert_eq!(w.cursor_mode(), CursorMode::Lazy, "starts Lazy");
+        assert!(w.unforked(), "starts unforked");
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
-        assert_eq!(w.cursor_mode(), CursorMode::Lazy, "still Lazy after non-Fork");
+        assert!(w.unforked(), "still unforked after non-Fork");
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
-        assert_eq!(
-            w.cursor_mode(),
-            CursorMode::Strict,
-            "L2: promoted to Strict on first Fork"
-        );
+        assert!(!w.unforked(), "flipped to forked on first Fork");
     }
 
-    /// L3: Strict persists through fanout resolution.
+    /// Once forked, the flag stays forked through resolution.
     #[test]
     fn phase4_strict_persists_through_resolution() {
         let engine = ScriptedEngine::new(vec![
@@ -8338,20 +8344,16 @@ mod tests {
         ]);
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork → Strict
-        assert_eq!(w.cursor_mode(), CursorMode::Strict);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        assert!(!w.unforked());
         // Drive cursors to resolution.
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps");
         let _ = w.resolve_at_end_of_input(&empty_tokens());
-        assert_eq!(
-            w.cursor_mode(),
-            CursorMode::Strict,
-            "L3: stays Strict post-resolution"
-        );
+        assert!(!w.unforked(), "stays forked post-resolution (monotone)");
     }
 
-    /// L4: reset returns to Lazy with a fresh singleton.
+    /// reset() returns unforked=true with a fresh singleton.
     #[test]
     fn phase4_reset_returns_to_lazy() {
         let engine = ScriptedEngine::new(vec![
@@ -8372,44 +8374,39 @@ mod tests {
         ]);
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork → Strict
-        assert_eq!(w.cursor_mode(), CursorMode::Strict);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        assert!(!w.unforked());
         w.reset(0);
-        assert_eq!(w.cursor_mode(), CursorMode::Lazy, "L4: reset → Lazy");
+        assert!(w.unforked(), "reset() flips back to unforked");
         assert_eq!(*w.state(), WpdsState::Ready { min_bp: 0 });
         let cursors = w.branch_cursors_for_test();
-        assert_eq!(cursors.len(), 1, "L4: singleton after reset");
+        assert_eq!(cursors.len(), 1, "singleton after reset");
         assert!(cursors[0].recovery_deltas.is_empty());
     }
 
-    /// L5: terminal state absorbs further actions regardless of mode.
+    /// Terminal state absorbs further actions regardless of forked flag.
     #[test]
     fn phase4_lazy_terminal_state_is_mode_irrelevant() {
         let engine = ScriptedEngine::new(vec![WpdsStepAction::Accept]);
         let mut w = WpdsWalker::new(engine, 0);
-        // Force terminal state directly.
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Accept
         assert_eq!(*w.state(), WpdsState::Accepted);
-        // Subsequent Step should be a no-op (L5 + apply_action terminal early-return).
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
-        assert_eq!(*w.state(), WpdsState::Accepted, "L5: terminal absorbs");
+        assert_eq!(*w.state(), WpdsState::Accepted, "terminal absorbs");
     }
 
-    /// L6: Lazy admission requires engine to emit Accept only at EOI.
-    /// Verified by: an unambiguous parse in Lazy mode reaches Accepted
-    /// with no replay needed (live builder already holds the result).
+    /// Unambiguous parse reaches Accepted with no recovery_deltas to replay.
     #[test]
     fn phase4_lazy_eoi_accept_no_replay_needed() {
         let engine = ScriptedEngine::new(vec![WpdsStepAction::Accept]);
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
-        // L6: Lazy mode at Accept; recovery_deltas empty (no replay).
-        assert_eq!(w.cursor_mode(), CursorMode::Lazy);
+        assert!(w.unforked(), "no Fork → still unforked");
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
         assert!(
             cursors[0].recovery_deltas.is_empty(),
-            "L6: no deltas to replay"
+            "no deltas to replay"
         );
         assert_eq!(*w.state(), WpdsState::Accepted);
     }
@@ -8429,15 +8426,15 @@ mod tests {
             new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
         }]);
         let mut w = WpdsWalker::new(engine, 0);
-        assert_eq!(w.cursor_mode(), CursorMode::Lazy);
+        assert!(w.unforked());
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
-        // L1: still Lazy (no Fork). Live builder must have an open
+        // Still unforked (no Fork). Live builder must have an open
         // optional scope so subsequent inner pushes land in the inner Vec.
-        assert_eq!(w.cursor_mode(), CursorMode::Lazy);
+        assert!(w.unforked());
         assert_eq!(
             w.builder().optional_stack_depth(),
             1,
-            "Push of OptionalGroupAt(1) must open optional scope in Lazy mode",
+            "Push of OptionalGroupAt(1) must open optional scope in unforked mode",
         );
     }
 
@@ -8469,8 +8466,8 @@ mod tests {
             },
         ]);
         let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork → Strict
-        assert_eq!(w.cursor_mode(), CursorMode::Strict);
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork → forked
+        assert!(!w.unforked());
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push (under fanout)
         // The cursor's builder must show an open optional scope.
         let cursors = w.branch_cursors_for_test();
