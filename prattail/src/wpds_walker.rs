@@ -1409,55 +1409,6 @@ pub enum BuilderDelta {
     /// "post-pop splice" call site.
     PushToCollection { id: u8 },
 
-    /// Stage 3.12.8 (2026-05-03): grammatical-close-time finalize of
-    /// collection accumulator slot `id`. Strict mode emits this at
-    /// CollectionMarker pop (logical close), draining the cursor's
-    /// `collection_stack[id]` slot AT THAT MOMENT (LIFO-correct since
-    /// grammar guarantees innermost-closes-first). Replay re-pushes the
-    /// drained slot back onto `builder.collection_stack` at the same
-    /// `id` so the subsequent `FireAction` for the collection's
-    /// finalize rule can call `b.drain_collection(id)` LIFO-correctly.
-    ///
-    /// Pre-Stage-3.12.8 the `cursor.collection_stack` accumulated all
-    /// open slots until `commit_winner` donated en bloc; sibling
-    /// collections then violated the LIFO invariant during replay's
-    /// FireAction sequence. This delta restores grammatical-close-time
-    /// drain semantics matching `FinalizeOptionalScopePresent`.
-    FinalizeCollection { id: u8, drained: Vec<ActionArg> },
-
-    /// L12 follow-up B5 (2026-05-07): seed the live builder's
-    /// `collection_stack` with the slot list captured at a Lazy→Strict
-    /// transition. Logged at the Fork-arm prologue when the live builder
-    /// has pre-fork open collection slots. Replay pushes each slot back
-    /// onto live's `collection_stack` BEFORE any subsequent
-    /// `SpliceIntoCollection` / `PushToCollection` / `FinalizeCollection`
-    /// deltas execute, so those deltas' LIFO-id invariants hold against
-    /// a properly-seeded live state.
-    ///
-    /// Pre-B5: Stage 3.16's Fork prologue at Lazy→Strict transition
-    /// transferred live's pre-fork slots to the parent cursor's
-    /// `collection_stack` (children clone). At commit_winner time, the
-    /// winner's collection_stack was donated back to live via
-    /// `adopt_collection_stack` — but ONLY if the cursor had NOT
-    /// finalized those collections during its Strict-mode parse.
-    /// Cursors that closed pre-fork-allocated collections emitted
-    /// `FinalizeCollection { id: N>0 }` with drained content; at
-    /// replay, live started empty (winner.collection_stack empty after
-    /// all closes), so `FinalizeCollection { id: 1 }` panicked the
-    /// `live.len() == id` assert.
-    ///
-    /// Post-B5: SeedLive logs pre-fork slots at fork time; replay
-    /// re-seeds live before any cursor-emitted Strict-mode collection
-    /// deltas; the LIFO invariant holds for both pre-fork-allocated
-    /// and Strict-mode-allocated slots uniformly.
-    ///
-    /// Generalized over N≥0 nested collections at fork time. The
-    /// delta is omitted entirely (no log entry) when the live builder's
-    /// pre-fork `collection_stack` is empty — preserving byte-identity
-    /// of the codegen output for grammars without collection-inside-fork
-    /// patterns.
-    SeedLiveCollectionStack { slots: Vec<Vec<ActionArg>> },
-
     /// Stage 3.20 prep: cursor logs a recovery event. Replay invokes
     /// `walker.recovery_events.push(RecoveryEvent { action, pos, cost })`.
     /// `RecoveryActionKind` is the enum-encoded action variant; the
@@ -1570,15 +1521,6 @@ impl std::fmt::Debug for BuilderDelta {
             BuilderDelta::PushToCollection { id } => f
                 .debug_struct("PushToCollection")
                 .field("id", id)
-                .finish(),
-            BuilderDelta::SeedLiveCollectionStack { slots } => f
-                .debug_struct("SeedLiveCollectionStack")
-                .field("slot_count", &slots.len())
-                .finish(),
-            BuilderDelta::FinalizeCollection { id, drained } => f
-                .debug_struct("FinalizeCollection")
-                .field("id", id)
-                .field("drained_len", &drained.len())
                 .finish(),
             BuilderDelta::RecoveryEvent {
                 action_kind,
@@ -5537,20 +5479,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 BuilderDelta::PushToCollection { id } => {
                     let _ = id;
                 }
-                BuilderDelta::SeedLiveCollectionStack { slots } => {
-                    // Phase 5.4: emission deleted; this arm is dead
-                    // (kept for exhaustiveness until Phase 5.6 variant
-                    // deletion).
-                    let _ = slots;
-                }
-                BuilderDelta::FinalizeCollection { id, drained } => {
-                    // L12 hotfix B5 (commit ba6f24f): emission deleted as
-                    // part of the SeedLive + StartCollection generalization
-                    // (the slot's content lives on live throughout, so
-                    // re-pushing at FireAction time is unnecessary). The
-                    // replay arm is vestigial; deletion pending Phase 5.6.
-                    let _ = (id, drained);
-                }
                 BuilderDelta::RecoveryEvent {
                     action_kind,
                     pos,
@@ -5906,9 +5834,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             BuilderDelta::PushOptionalAbsent => {
                 builder.push_optional_absent();
             }
-            BuilderDelta::SeedLiveCollectionStack { .. }
-            | BuilderDelta::FinalizeCollection { .. }
-            | BuilderDelta::FireAction { .. }
+            BuilderDelta::FireAction { .. }
             | BuilderDelta::RecoveryEvent { .. }
             | BuilderDelta::SubstituteToken { .. }
             | BuilderDelta::InsertToken { .. }
