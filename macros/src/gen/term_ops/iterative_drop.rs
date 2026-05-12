@@ -512,6 +512,34 @@ fn generate_binder_push_arm(
         let task_variant = format_ident!("Drop{}", field.category);
         let dummy_fn = format_ident!("dummy_{}", field.category.to_string().to_lowercase());
 
+        // Phase 4 #4 (2026-05-12): Optional-Collection — `take()` extracts
+        // the inner container (Vec/HashBag/HashSet/HashMapLit). If Some,
+        // iterate and push DropTask per element.
+        if field.is_optional && field.is_collection {
+            let _ = dummy_fn.clone();
+            match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+                CollectionType::Vec | CollectionType::HashSet => {
+                    push_stmts.push(quote! {
+                        if let Some(__c) = #name.take() {
+                            for elem in __c {
+                                stack.push(DropTask::#task_variant(elem));
+                            }
+                        }
+                    });
+                }
+                CollectionType::HashBag | CollectionType::HashMap => {
+                    push_stmts.push(quote! {
+                        if let Some(__c) = #name.take() {
+                            for (elem, _count) in __c.into_iter() {
+                                stack.push(DropTask::#task_variant(elem));
+                            }
+                        }
+                    });
+                }
+            }
+            continue;
+        }
+
         if field.is_collection {
             match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
                 CollectionType::Vec => {
@@ -597,6 +625,33 @@ fn generate_multi_binder_push_arm(
         }
         let task_variant = format_ident!("Drop{}", field.category);
         let dummy_fn = format_ident!("dummy_{}", field.category.to_string().to_lowercase());
+
+        // Phase 4 #4 (2026-05-12): Optional-Collection — `take()` extracts
+        // the inner container; iterate and push DropTask per element.
+        if field.is_optional && field.is_collection {
+            let _ = dummy_fn.clone();
+            match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+                CollectionType::Vec | CollectionType::HashSet => {
+                    push_stmts.push(quote! {
+                        if let Some(__c) = #name.take() {
+                            for elem in __c {
+                                stack.push(DropTask::#task_variant(elem));
+                            }
+                        }
+                    });
+                }
+                CollectionType::HashBag | CollectionType::HashMap => {
+                    push_stmts.push(quote! {
+                        if let Some(__c) = #name.take() {
+                            for (elem, _count) in __c.into_iter() {
+                                stack.push(DropTask::#task_variant(elem));
+                            }
+                        }
+                    });
+                }
+            }
+            continue;
+        }
 
         if field.is_collection {
             match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {

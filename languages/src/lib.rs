@@ -15,6 +15,7 @@ pub mod class2multi;
 pub mod class2optsmoke;
 pub mod class2smoke;
 pub mod class3multi;
+pub mod class3opt;
 pub mod guarded_rho;
 pub mod lambda;
 pub mod led_test;

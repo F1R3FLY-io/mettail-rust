@@ -14,24 +14,24 @@ use mettail_runtime::BehavioralPred;
 // Dead rules (skipped):
 //   - PredToNum
 // Constructor weights (lower = more frequent):
-//   ExprToNum            weight: 0.0000
 //   EqNum                weight: 0.0000
 //   NumLit               weight: 0.0000
+//   NegNum               weight: 0.0000
+//   ExprToNum            weight: 0.0000
 //   Grouping             weight: 0.0000
 //   PredLit              weight: 0.0000
-//   NegNum               weight: 0.0000
-//   CastNum              weight: 0.5000
 //   CastPred             weight: 0.5000
-//   VarExpr              weight: 2.0000
+//   CastNum              weight: 0.5000
 //   VarNum               weight: 2.0000
-//   Num::FactNum         weight: inf
-//   Num::MulNum          weight: inf
-//   Pred::AndPred        weight: inf
+//   VarExpr              weight: 2.0000
 //   Num::AddNum          weight: inf
-//   Pred::NeNum          weight: inf
-//   Expr::EPar           weight: inf
-//   Num::ExprToNum       weight: inf
+//   Num::MulNum          weight: inf
+//   Expr::CastNum        weight: inf
 //   Num::NegNum          weight: inf
+//   Num::FactNum         weight: inf
+//   Num::ExprToNum       weight: inf
+//   Pred::EqNum          weight: inf
+//   Expr::EPar           weight: inf
 //   Expr::CastPred       weight: inf
 //   Num::PredToNum       weight: inf
 //   ... and 2 more

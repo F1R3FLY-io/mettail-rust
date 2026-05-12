@@ -642,6 +642,18 @@ fn generate_binder_match_arm_inline(
                     }
                 };
             }
+            // Phase 4 #4 (2026-05-12): Optional-Collection — structural
+            // equality on the whole Option<Container>. Element-level
+            // variable patterns inside an optional collection are NOT
+            // supported (would require multiset matching with carrier
+            // for an Option-tag too). Treat as opaque comparison.
+            if field.is_optional && field.is_collection {
+                return quote! {
+                    if #gname != #pname {
+                        return None;
+                    }
+                };
+            }
             if field.is_collection {
                 quote! {
                     if (**#gname).len() != (**#pname).len() {
@@ -705,6 +717,15 @@ fn generate_multi_binder_match_arm_inline(
             let pname = &p_fields[i];
             // Phase 3A: predicate slots compare via structural equality.
             if field.is_predicate {
+                return quote! {
+                    if #gname != #pname {
+                        return None;
+                    }
+                };
+            }
+            // Phase 4 #4 (2026-05-12): Optional-Collection — structural
+            // equality on the whole Option<Container>.
+            if field.is_optional && field.is_collection {
                 return quote! {
                     if #gname != #pname {
                         return None;

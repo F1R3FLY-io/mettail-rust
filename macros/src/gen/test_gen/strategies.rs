@@ -1154,6 +1154,54 @@ fn generate_binder_direct_build(
         let field_cat_lower = field_cat.to_lowercase();
         let is_known = language.types.iter().any(|t| t.name == field.category);
 
+        // Phase 4 #4 (2026-05-12): Optional-Collection pre-scope field — visit
+        // both None and Some(Container) arms based on a tape byte. AST shape
+        // is `Option<Container>` (bare, no Box). Mirrors the Regular path in
+        // `generate_constructor_match_arms`.
+        if field.is_optional && field.is_collection {
+            let coll_type = field.coll_type.as_ref()
+                .unwrap_or_else(|| panic!("collection field of category `{}` missing coll_type in language! spec", field.category));
+            match coll_type {
+                mettail_ast::types::CollectionType::HashBag | mettail_ast::types::CollectionType::HashMap => {
+                    code.push_str(&format!(
+                        "            let pre_{i} = if reader.next_byte() & 1 == 0 {{ None }} else {{\n\
+                                         let num_elems = (reader.next_byte() % 4) as usize;\n\
+                                         let mut bag = mettail_runtime::HashBag::new();\n\
+                                         for _ in 0..num_elems {{ bag.insert(build_{fc}_from_tape(reader, child_depth)); }}\n\
+                                         Some(bag)\n\
+                                     }};\n",
+                        i = i,
+                        fc = field_cat_lower,
+                    ));
+                }
+                mettail_ast::types::CollectionType::HashSet => {
+                    code.push_str(&format!(
+                        "            let pre_{i} = if reader.next_byte() & 1 == 0 {{ None }} else {{\n\
+                                         let num_elems = (reader.next_byte() % 4) as usize;\n\
+                                         let mut s = std::collections::HashSet::new();\n\
+                                         for _ in 0..num_elems {{ s.insert(build_{fc}_from_tape(reader, child_depth)); }}\n\
+                                         Some(s)\n\
+                                     }};\n",
+                        i = i,
+                        fc = field_cat_lower,
+                    ));
+                }
+                mettail_ast::types::CollectionType::Vec => {
+                    code.push_str(&format!(
+                        "            let pre_{i} = if reader.next_byte() & 1 == 0 {{ None }} else {{\n\
+                                         let num_elems = (reader.next_byte() % 4) as usize;\n\
+                                         let v: Vec<_> = (0..num_elems).map(|_| build_{fc}_from_tape(reader, child_depth)).collect();\n\
+                                         Some(v)\n\
+                                     }};\n",
+                        i = i,
+                        fc = field_cat_lower,
+                    ));
+                }
+            }
+            pre_scope_exprs.push(format!("pre_{}", i));
+            continue;
+        }
+
         if is_known && !field.is_collection {
             code.push_str(&format!(
                 "            let pre_{i} = Box::new(build_{fc}_from_tape(reader, child_depth));\n",

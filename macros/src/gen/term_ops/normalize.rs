@@ -502,6 +502,14 @@ fn emit_pre_field_decl_list(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> 
                 let pred_name = format_ident!("pf{}_pred", i);
                 return quote! { #pred_name: mettail_runtime::BehavioralPred };
             }
+            // Phase 4 #4 (2026-05-12): Optional-Collection — cloned carrier
+            // (Option<Container>) stored directly in the assemble variant,
+            // bypassing slot/start/count machinery (mirrors regular path).
+            if field.is_optional && field.is_collection {
+                let cloned = format_ident!("pf{}_cloned", i);
+                let ty = optional_collection_field_type(field);
+                return quote! { #cloned: #ty };
+            }
             if field.is_collection {
                 let start_name = format_ident!("pf{}_start", i);
                 let count_name = format_ident!("pf{}_count", i);
@@ -1121,6 +1129,18 @@ fn emit_pre_field_visit_alloc(
                 let #pred_name = #name.clone();
             });
             assemble_refs.push(quote! { #pred_name });
+            continue;
+        }
+
+        // Phase 4 #4 (2026-05-12): Optional-Collection — bypass slot/visit-task
+        // machinery. Clone derives on Option<Container>; store the cloned
+        // value directly into the assemble carrier (same as regular path).
+        if field.is_optional && field.is_collection {
+            let cloned = format_ident!("pf{}_cloned", i);
+            alloc_stmts.push(quote! {
+                let #cloned = #name.clone();
+            });
+            assemble_refs.push(quote! { #cloned });
             continue;
         }
 
@@ -1808,6 +1828,11 @@ fn emit_pre_field_slot_pattern(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStrea
                 let pred_name = format_ident!("pf{}_pred", i);
                 return quote! { #pred_name };
             }
+            // Phase 4 #4 (2026-05-12): Optional-Collection — cloned carrier name.
+            if field.is_optional && field.is_collection {
+                let cloned = format_ident!("pf{}_cloned", i);
+                return quote! { #cloned };
+            }
             if field.is_collection {
                 let start_name = format_ident!("pf{}_start", i);
                 let count_name = format_ident!("pf{}_count", i);
@@ -1833,6 +1858,16 @@ fn emit_pre_field_extracts(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> {
         .map(|(i, field)| {
             if field.is_predicate {
                 return quote! {};
+            }
+            // Phase 4 #4 (2026-05-12): Optional-Collection — the cloned carrier
+            // is already bound by name in the assemble arm; rebind it to
+            // pre_field_<i> for the construct step.
+            if field.is_optional && field.is_collection {
+                let cloned = format_ident!("pf{}_cloned", i);
+                let result_ident = format_ident!("pre_field_{}", i);
+                return quote! {
+                    let #result_ident = #cloned;
+                };
             }
             let wrap = format_ident!("Wrap{}", field.category);
             let result_ident = format_ident!("pre_field_{}", i);
@@ -1907,6 +1942,11 @@ fn emit_pre_field_constructs(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream>
                 return quote! { #pred_name, };
             }
             let result_ident = format_ident!("pre_field_{}", i);
+            // Phase 4 #4 (2026-05-12): Optional-Collection — already
+            // Option<Container>, pass through without Box wrapping.
+            if field.is_optional && field.is_collection {
+                return quote! { #result_ident, };
+            }
             if field.is_collection {
                 quote! { #result_ident, }
             } else {
