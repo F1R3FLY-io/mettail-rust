@@ -352,6 +352,15 @@ pub enum WpdsState {
         /// Index into `SemanticBuilder.collection_stack` identifying this
         /// in-flight accumulator.
         accumulator_id: u8,
+        /// Phase 4 #1.B (2026-05-11): codegen-stamped slot identifier
+        /// within the rule. For Class-5 single-slot rules and Phase-4-
+        /// #1 multi-slot rules without outer collection nesting,
+        /// `slot_idx == accumulator_id`. The CollectionMarker's `bp`
+        /// field carries this value at push time. Used by the
+        /// 3-tuple-keyed `(close, sep)` lookup in
+        /// `emit_collection_loop_arm` to disambiguate sibling slots
+        /// within the same rule.
+        slot_idx: u8,
     },
     /// B7 (2-token open delimiter): after the prefix arm consumed the
     /// open keyword (e.g. `"list"`) and pushed the `CollectionMarker`,

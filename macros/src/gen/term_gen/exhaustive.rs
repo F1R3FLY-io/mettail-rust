@@ -915,6 +915,22 @@ fn generate_collection_constructor_case(
 ) -> TokenStream {
     let label = &rule.label;
 
+    // Phase 4 #1 (2026-05-11): exhaustive term-gen for multi-
+    // collection-slot rules is out of scope; the existing logic
+    // only handles a single Collection item. Generating
+    // `Cat::Label(bag1, bag2, ...)` with N args requires a separate
+    // codegen pathway. Skip rules with more than one Collection
+    // item; multi-slot grammars can still be exercised by hand-
+    // written property tests using the WPDS parser entry points.
+    let collection_count = rule
+        .items
+        .iter()
+        .filter(|item| matches!(item, GrammarItem::Collection { .. }))
+        .count();
+    if collection_count > 1 {
+        return quote! {};
+    }
+
     // Find the collection field
     let (collection_idx, element_cat) = rule
         .items

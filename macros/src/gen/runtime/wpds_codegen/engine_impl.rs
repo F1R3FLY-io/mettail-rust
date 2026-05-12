@@ -209,12 +209,24 @@ pub(crate) fn emit_engine_impl_full(
                             {
                                 let result_src_idx = node.symbol.category_src_idx;
                                 let rule_idx = node.symbol.rule_index_in_category;
+                                // Phase 4 #1.B (2026-05-11): the
+                                // CollectionMarker's `bp` field carries
+                                // the slot identifier. For Class-5
+                                // collection rules and Phase-4-#1's
+                                // top-level Class-2 multi-slot rules
+                                // (no outer collection nesting), the
+                                // walker's emit_push_side_effects sets
+                                // bp = accumulator_id which equals
+                                // slot_idx, so the 3-tuple lookups
+                                // resolve correctly.
+                                let slot_idx = node.symbol.bp.unwrap_or(0u8);
                                 let close_lookup: Option<&'static str> = #collection_close_lookup;
                                 let token_text = tokens.peek_text(*pos).unwrap_or("");
                                 let token_is_close = Some(token_text) == close_lookup;
                                 let element_src_lookup: Option<u16> = {
                                     let result_src_idx = result_src_idx;
                                     let rule_idx = rule_idx;
+                                    let slot_idx = slot_idx;
                                     #collection_element_src_lookup
                                 };
                                 let needs_redirect = element_src_lookup
@@ -467,9 +479,19 @@ pub(crate) fn emit_engine_impl_full(
                                         "CollectionMarker invariant: bp must be \
                                          Some(accumulator_id) set at construction"
                                     );
+                                    // Phase 4 #1.B (2026-05-11): in the
+                                    // supported subset (no outer collection
+                                    // nesting), slot_idx == accumulator_id.
+                                    // Walker's emit_push_side_effects
+                                    // overwrites symbol.bp with the
+                                    // allocator-assigned accumulator_id,
+                                    // and in the non-nested case this
+                                    // equals the codegen-stamped slot_idx.
+                                    let slot_idx = accumulator_id;
                                     let element_src_lookup: Option<u16> = {
                                         let result_src_idx = result_src_idx;
                                         let rule_idx = rule_idx;
+                                        let slot_idx = slot_idx;
                                         #collection_element_src_lookup
                                     };
                                     let element_src_idx = element_src_lookup.unwrap_or(result_src_idx);
@@ -479,6 +501,7 @@ pub(crate) fn emit_engine_impl_full(
                                         element_src_idx,
                                         outer_bp: 0,
                                         accumulator_id,
+                                        slot_idx,
                                     })
                                 }
                                 mettail_prattail::wpds_runtime::SymbolKind::RuleAt(position) => {
@@ -790,9 +813,11 @@ pub(crate) fn emit_engine_impl_full(
                                     // degenerate AST (e.g., `{1+2+3}` → ["3"]).
                                     let result_src_idx = node.symbol.category_src_idx;
                                     let rule_idx = node.symbol.rule_index_in_category;
+                                    let slot_idx = node.symbol.bp.unwrap_or(0u8);
                                     let close_sep: Option<(&'static str, &'static str)> = {
                                         let result_src_idx = result_src_idx;
                                         let rule_idx = rule_idx;
+                                        let slot_idx = slot_idx;
                                         #collection_close_sep_lookup
                                     };
                                     if let Some((close, sep)) = close_sep {
@@ -960,8 +985,12 @@ pub(crate) fn emit_engine_impl_full(
                         element_src_idx: _element_src_idx,
                         outer_bp: _outer_bp,
                         accumulator_id: _accumulator_id,
+                        slot_idx,
                     } => {
                         // Phase 4: dispatch on close / sep / element.
+                        // Phase 4 #1.B (2026-05-11): slot_idx in scope
+                        // for 3-tuple-keyed (close, sep) lookup in
+                        // `emit_collection_loop_arm`.
                         #collection_loop_body
                     }
                     WpdsState::MixfixContinuation {

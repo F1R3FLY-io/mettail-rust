@@ -11,6 +11,7 @@
 
 pub mod ambient;
 pub mod calculator;
+pub mod class2multi;
 pub mod class2smoke;
 pub mod guarded_rho;
 pub mod lambda;

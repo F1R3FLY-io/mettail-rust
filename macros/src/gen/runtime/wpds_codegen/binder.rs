@@ -855,20 +855,21 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
         return None;
     }
 
-    // B9 / Class 2 (2026-05-08) pilot constraint: at most ONE SimpleCollection
-    // slot per rule. The static `(result_src, rule_idx)` keying for the
-    // emit_collection_close_lookup / emit_collection_loop_arm tables doesn't
-    // accommodate two slots in the same rule. Multi-collection-slot Class 2
-    // is a future extension; reject silently here so multi-slot rules fall
-    // through to other classifiers (currently no other classifier handles
-    // them, so they'll surface as rule-not-classified errors).
-    let collection_slot_count = positions
-        .iter()
-        .filter(|p| matches!(p, BinderPosition::ParamParse { collection: Some(_), .. }))
-        .count();
-    if collection_slot_count > 1 {
-        return None;
-    }
+    // Phase 4 #1 (2026-05-11): multi-collection-slot Class 2 unlocked.
+    // The 4 lookup-emit functions in collection.rs are now 3-tuple keyed
+    // (result_src_idx, rule_idx, slot_idx) and emit one arm per slot for
+    // each rule. classify_binder tracks `collection_slots_so_far` and
+    // stamps `CollectionSepInfo.slot_idx` per slot. The
+    // CollectionMarker pushed at each slot's dispatch carries slot_idx
+    // in its `bp` field; the walker's emit_push_side_effects overwrites
+    // `bp` with the allocator-assigned accumulator_id (equal to
+    // slot_idx in the no-outer-collection-nesting supported subset).
+    //
+    // Limitation: nested multi-slot rules (a Class-2 multi-slot rule
+    // whose result_cat is the element_cat of another collection rule)
+    // would break the slot_idx/accumulator_id correspondence. Such
+    // rules are currently undetected; if they arise in future
+    // grammars, a static-rejection guard should be added here.
 
     let action_arity: u8 = action_args.len() as u8;
 
@@ -2528,6 +2529,19 @@ pub(crate) fn emit_binder_action_entry(
     let mut binder_name_holders: Vec<Ident> = Vec::new();
     let mut body_holder: Option<Ident> = None;
     let mut binder_list_holder: Option<Ident> = None;
+    // Phase 4 #1 (2026-05-11): track CollectionDrain sites so we can
+    // emit drains in REVERSE source order after the main extract loop.
+    // The runtime's `collection_stack` enforces LIFO drain (top first),
+    // but the action body's `field_names` is in source order. Phase 1
+    // (this loop) extracts CollectionId args into `arg_i_id`; Phase 2
+    // (post-loop) drains in reverse; Phase 3 (also post-loop)
+    // materializes each `arg_i` from its drained Vec<ActionArg>.
+    struct CollectionDrainSite {
+        arg_idx: usize,
+        elem_id: Ident,
+        coll_kind: CollectionType,
+    }
+    let mut collection_drain_sites: Vec<CollectionDrainSite> = Vec::new();
 
     for (i, kind) in shape.action_args.iter().enumerate() {
         let var = format_ident!("arg_{}", i);
@@ -2600,66 +2614,37 @@ pub(crate) fn emit_binder_action_entry(
                 // emit the bare value (no Box::new wrapping — the AST
                 // variant takes a bare container per language!-macro
                 // codegen convention).
+                //
+                // Phase 4 #1 (2026-05-11): for multi-collection-slot rules,
+                // the args stack carries multiple CollectionIds in source
+                // order (e.g., [CollectionId(0), CollectionId(1)] for a
+                // 2-slot rule). The runtime's collection_stack requires
+                // LIFO drain (drain top first), but the action body wants
+                // source-order materialization for the AST variant
+                // construction (e.g., Cat::Pair(xs, ys) needs xs first).
+                //
+                // Resolution: Phase 1 of the action body extracts ALL
+                // CollectionIds without draining (saved as `arg_i_id`),
+                // then Phase 2 (emitted after the main extracts loop)
+                // drains in REVERSE source order so each drain matches
+                // the top of the stack. Phase 3 materializes each drain
+                // into the source-order `arg_i`. The materialized
+                // containers are referenced in source order by
+                // `field_names`.
                 let elem_id = format_ident!("{}", elem_cat);
-                let materialize_body = match coll_kind {
-                    CollectionType::Vec => quote! {
-                        let elems: std::vec::Vec<#elem_id> = drained
-                            .into_iter()
-                            .filter_map(|a| a.into_term::<#elem_id>())
-                            .collect();
-                        let #var = elems;
-                    },
-                    CollectionType::HashBag => quote! {
-                        let #var = mettail_runtime::HashBag::<#elem_id>::from_iter(
-                            drained
-                                .into_iter()
-                                .filter_map(|a| a.into_term::<#elem_id>())
-                        );
-                    },
-                    CollectionType::HashSet => quote! {
-                        let #var = std::collections::HashSet::<#elem_id>::from_iter(
-                            drained
-                                .into_iter()
-                                .filter_map(|a| a.into_term::<#elem_id>())
-                        );
-                    },
-                    CollectionType::HashMap => quote! {
-                        // Phase 4 #5 (2026-05-11): empty-only pilot for
-                        // HashMap in Class-2/3 binder rules. Drain
-                        // order is `[k0, v0, k1, v1, ...]` (codegen
-                        // invariant established by the walker's
-                        // CollectionLoop dispatch; for the empty-only
-                        // pilot the drain length is 0). Materialize an
-                        // empty HashMapLit; walker `:` parsing support
-                        // (Phase 4 #5b) will populate non-empty maps.
-                        // Mirrors Class-5's finalize at
-                        // semantic_actions.rs:503-535.
-                        let mut iter_drained = drained.into_iter();
-                        let mut container = mettail_runtime::HashMapLit::<
-                            #elem_id, #elem_id,
-                        >::default();
-                        while let Some(k_arg) = iter_drained.next() {
-                            let v_arg = match iter_drained.next() {
-                                Some(v) => v,
-                                None => break,
-                            };
-                            if let (Some(k), Some(v)) = (
-                                k_arg.into_term::<#elem_id>(),
-                                v_arg.into_term::<#elem_id>(),
-                            ) {
-                                container.insert(k, v);
-                            }
-                        }
-                        let #var = container;
-                    },
-                };
+                let id_var = format_ident!("arg_{}_id", i);
                 extracts.push(quote! {
-                    let id = match iter.next().and_then(|a| a.as_collection_id()) {
+                    let #id_var: u8 = match iter.next().and_then(|a| a.as_collection_id()) {
                         Some(i) => i,
                         None => return,
                     };
-                    let drained = b.drain_collection(id);
-                    #materialize_body
+                });
+                // Defer the drain + materialize to Phase 2/3. Track the
+                // metadata for the post-loop reverse-drain emission.
+                collection_drain_sites.push(CollectionDrainSite {
+                    arg_idx: i,
+                    elem_id,
+                    coll_kind: coll_kind.clone(),
                 });
                 // Bare value — no Box::new wrapping (the AST variant takes
                 // bare Vec<T> / HashBag<T> / HashSet<T> per language! macro
@@ -2755,6 +2740,64 @@ pub(crate) fn emit_binder_action_entry(
                 }
             }
         }
+    }
+
+    // Phase 4 #1 (2026-05-11): emit Phase-2 (reverse-drain) and Phase-3
+    // (per-slot materialize) for CollectionDrain sites. The runtime's
+    // collection_stack is LIFO, so drains must fire in REVERSE source
+    // order (top-of-stack first). The materialization then assigns the
+    // drained Vec<ActionArg> to the source-order `arg_i` local, which
+    // `field_names` references for the AST construction.
+    for site in collection_drain_sites.iter().rev() {
+        let arg_idx = site.arg_idx;
+        let elem_id = &site.elem_id;
+        let var = format_ident!("arg_{}", arg_idx);
+        let id_var = format_ident!("arg_{}_id", arg_idx);
+        let materialize = match site.coll_kind {
+            CollectionType::Vec => quote! {
+                let #var: std::vec::Vec<#elem_id> = drained
+                    .into_iter()
+                    .filter_map(|a| a.into_term::<#elem_id>())
+                    .collect();
+            },
+            CollectionType::HashBag => quote! {
+                let #var = mettail_runtime::HashBag::<#elem_id>::from_iter(
+                    drained
+                        .into_iter()
+                        .filter_map(|a| a.into_term::<#elem_id>())
+                );
+            },
+            CollectionType::HashSet => quote! {
+                let #var = std::collections::HashSet::<#elem_id>::from_iter(
+                    drained
+                        .into_iter()
+                        .filter_map(|a| a.into_term::<#elem_id>())
+                );
+            },
+            CollectionType::HashMap => quote! {
+                let mut iter_drained = drained.into_iter();
+                let mut container = mettail_runtime::HashMapLit::<
+                    #elem_id, #elem_id,
+                >::default();
+                while let Some(k_arg) = iter_drained.next() {
+                    let v_arg = match iter_drained.next() {
+                        Some(v) => v,
+                        None => break,
+                    };
+                    if let (Some(k), Some(v)) = (
+                        k_arg.into_term::<#elem_id>(),
+                        v_arg.into_term::<#elem_id>(),
+                    ) {
+                        container.insert(k, v);
+                    }
+                }
+                let #var = container;
+            },
+        };
+        extracts.push(quote! {
+            let drained = b.drain_collection(#id_var);
+            #materialize
+        });
     }
 
     // Build the action body's construction expression based on rule shape.

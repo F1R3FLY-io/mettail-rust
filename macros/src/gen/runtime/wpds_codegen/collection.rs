@@ -246,41 +246,41 @@ pub(crate) fn emit_collection_loop_arm(
     _categories: &[String],
     per_cat: &[Vec<GrammarRule>],
 ) -> TokenStream {
-    // Per-rule lookup arms: (result_src_idx, rule_idx) → (close, sep).
+    // Per-rule lookup arms: (result_src_idx, rule_idx, slot_idx) → (close, sep).
+    // Phase 4 #1.B (2026-05-11): 3-tuple keying so multi-slot rules can
+    // disambiguate sibling slots within the same rule.
     let mut lookup_arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
             let Some(shape) = classify_collection(rule, language) else {
-                // B9 / Class 2 (2026-05-08): if this rule is a Class-2
-                // binder rule with a SimpleCollection slot, register its
-                // (close, sep) here too so the CollectionMarker pushed
-                // by the binder rule's ParamParse{collection: Some(...)}
-                // dispatch routes to the same CollectionLoop apparatus.
+                // B9 / Class 2 (2026-05-08): iterate ALL Class-2 binder
+                // rule SimpleCollection slots; emit per-slot arm.
                 if let Some(shape) = classify_binder(rule) {
-                    if let Some(BinderPosition::ParamParse {
-                        collection: Some(info),
-                        ..
-                    }) = shape.positions.iter().find(|p| matches!(
-                        p,
-                        BinderPosition::ParamParse { collection: Some(_), .. }
-                    )) {
-                        let result_src_idx = cat_i as u16;
-                        let rule_idx = rule_i as u16;
-                        let close = &info.close;
-                        let sep = &info.separator;
-                        lookup_arms.push(quote! {
-                            (#result_src_idx, #rule_idx) => Some((#close, #sep)),
-                        });
+                    for position in shape.positions.iter() {
+                        if let BinderPosition::ParamParse {
+                            collection: Some(info),
+                            ..
+                        } = position {
+                            let result_src_idx = cat_i as u16;
+                            let rule_idx = rule_i as u16;
+                            let close = &info.close;
+                            let sep = &info.separator;
+                            let slot_idx = info.slot_idx;
+                            lookup_arms.push(quote! {
+                                (#result_src_idx, #rule_idx, #slot_idx) => Some((#close, #sep)),
+                            });
+                        }
                     }
                 }
                 continue;
             };
+            // Class-5 collection rules: single slot at slot_idx=0.
             let result_src_idx = cat_i as u16;
             let rule_idx = rule_i as u16;
             let close = &shape.close;
             let sep = &shape.separator;
             lookup_arms.push(quote! {
-                (#result_src_idx, #rule_idx) => Some((#close, #sep)),
+                (#result_src_idx, #rule_idx, 0u8) => Some((#close, #sep)),
             });
         }
     }
@@ -289,8 +289,8 @@ pub(crate) fn emit_collection_loop_arm(
     }
     quote! {
         {
-            // Lookup (close, sep) for this marker's rule.
-            let lookup: Option<(&'static str, &'static str)> = match (*result_src_idx, *rule_idx) {
+            // Lookup (close, sep) for this marker's rule + slot.
+            let lookup: Option<(&'static str, &'static str)> = match (*result_src_idx, *rule_idx, *slot_idx) {
                 #(#lookup_arms)*
                 _ => None,
             };
@@ -390,27 +390,27 @@ pub(crate) fn emit_collection_element_src_lookup(
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
             let Some(shape) = classify_collection(rule, language) else {
-                // B9 / Class 2 (2026-05-08): also register Class-2 binder
-                // rules' collection slot element category. The element
-                // category is `info.elem_cat` — which the cursor's
-                // CollectionLoop transition uses to drive ParamParse for
-                // each element.
+                // Phase 4 #1.B (2026-05-11): iterate ALL collection
+                // slots; emit one arm per slot keyed on 3-tuple
+                // (src, rule, slot_idx). The element_src may differ
+                // between sibling slots (e.g., one slot of Vec(Proc)
+                // and another of Vec(Name)).
                 if let Some(shape) = classify_binder(rule) {
-                    if let Some(BinderPosition::ParamParse {
-                        collection: Some(info),
-                        ..
-                    }) = shape.positions.iter().find(|p| matches!(
-                        p,
-                        BinderPosition::ParamParse { collection: Some(_), .. }
-                    )) {
-                        if let Some(element_src_idx) =
-                            lookup_element_src_idx(&info.elem_cat, categories)
-                        {
-                            let result_src_idx = cat_i as u16;
-                            let rule_idx = rule_i as u16;
-                            arms.push(quote! {
-                                (#result_src_idx, #rule_idx) => Some(#element_src_idx),
-                            });
+                    for position in shape.positions.iter() {
+                        if let BinderPosition::ParamParse {
+                            collection: Some(info),
+                            ..
+                        } = position {
+                            if let Some(element_src_idx) =
+                                lookup_element_src_idx(&info.elem_cat, categories)
+                            {
+                                let result_src_idx = cat_i as u16;
+                                let rule_idx = rule_i as u16;
+                                let slot_idx = info.slot_idx;
+                                arms.push(quote! {
+                                    (#result_src_idx, #rule_idx, #slot_idx) => Some(#element_src_idx),
+                                });
+                            }
                         }
                     }
                 }
@@ -423,7 +423,7 @@ pub(crate) fn emit_collection_element_src_lookup(
             let result_src_idx = cat_i as u16;
             let rule_idx = rule_i as u16;
             arms.push(quote! {
-                (#result_src_idx, #rule_idx) => Some(#element_src_idx),
+                (#result_src_idx, #rule_idx, 0u8) => Some(#element_src_idx),
             });
         }
     }
@@ -431,7 +431,7 @@ pub(crate) fn emit_collection_element_src_lookup(
         return quote! { None::<u16> };
     }
     quote! {
-        match (result_src_idx, rule_idx) {
+        match (result_src_idx, rule_idx, slot_idx) {
             #(#arms)*
             _ => None,
         }
@@ -454,29 +454,38 @@ pub(crate) fn emit_collection_close_lookup(
                 // B9 / Class 2 (2026-05-08): also register Class-2 binder
                 // rules' collection slot close delim. Used by the empty-
                 // collection bootstrap path in PrefixDispatch.
+                //
+                // Phase 4 #1.B (2026-05-11): iterate ALL collection slots
+                // (not just `find`) and emit one arm per slot keyed on
+                // 3-tuple `(src, rule, slot_idx)`. The walker passes
+                // `slot_idx` from `node.symbol.bp` at lookup time. In
+                // the supported subset (no outer collection nesting),
+                // accumulator_id == slot_idx, so the codegen-stamped
+                // value matches the walker's post-overwrite `bp`.
                 if let Some(shape) = classify_binder(rule) {
-                    if let Some(BinderPosition::ParamParse {
-                        collection: Some(info),
-                        ..
-                    }) = shape.positions.iter().find(|p| matches!(
-                        p,
-                        BinderPosition::ParamParse { collection: Some(_), .. }
-                    )) {
-                        let result_src_idx = cat_i as u16;
-                        let rule_idx = rule_i as u16;
-                        let close = &info.close;
-                        arms.push(quote! {
-                            (#result_src_idx, #rule_idx) => Some(#close),
-                        });
+                    for position in shape.positions.iter() {
+                        if let BinderPosition::ParamParse {
+                            collection: Some(info),
+                            ..
+                        } = position {
+                            let result_src_idx = cat_i as u16;
+                            let rule_idx = rule_i as u16;
+                            let close = &info.close;
+                            let slot_idx = info.slot_idx;
+                            arms.push(quote! {
+                                (#result_src_idx, #rule_idx, #slot_idx) => Some(#close),
+                            });
+                        }
                     }
                 }
                 continue;
             };
+            // Class-5 collection rules have a single slot at slot_idx=0.
             let result_src_idx = cat_i as u16;
             let rule_idx = rule_i as u16;
             let close = &shape.close;
             arms.push(quote! {
-                (#result_src_idx, #rule_idx) => Some(#close),
+                (#result_src_idx, #rule_idx, 0u8) => Some(#close),
             });
         }
     }
@@ -484,7 +493,7 @@ pub(crate) fn emit_collection_close_lookup(
         return quote! { None::<&'static str> };
     }
     quote! {
-        match (result_src_idx, rule_idx) {
+        match (result_src_idx, rule_idx, slot_idx) {
             #(#arms)*
             _ => None,
         }
@@ -508,22 +517,25 @@ pub(crate) fn emit_collection_close_sep_lookup(
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
             let Some(shape) = classify_collection(rule, language) else {
-                // Mirror the Class-2 binder rule path in emit_collection_close_lookup.
+                // Phase 4 #1.B (2026-05-11): iterate ALL collection
+                // slots; emit one arm per slot keyed on 3-tuple
+                // (src, rule, slot_idx). Mirrors
+                // emit_collection_close_lookup's slot extension.
                 if let Some(shape) = classify_binder(rule) {
-                    if let Some(BinderPosition::ParamParse {
-                        collection: Some(info),
-                        ..
-                    }) = shape.positions.iter().find(|p| matches!(
-                        p,
-                        BinderPosition::ParamParse { collection: Some(_), .. }
-                    )) {
-                        let result_src_idx = cat_i as u16;
-                        let rule_idx = rule_i as u16;
-                        let close = &info.close;
-                        let sep = &info.separator;
-                        arms.push(quote! {
-                            (#result_src_idx, #rule_idx) => Some((#close, #sep)),
-                        });
+                    for position in shape.positions.iter() {
+                        if let BinderPosition::ParamParse {
+                            collection: Some(info),
+                            ..
+                        } = position {
+                            let result_src_idx = cat_i as u16;
+                            let rule_idx = rule_i as u16;
+                            let close = &info.close;
+                            let sep = &info.separator;
+                            let slot_idx = info.slot_idx;
+                            arms.push(quote! {
+                                (#result_src_idx, #rule_idx, #slot_idx) => Some((#close, #sep)),
+                            });
+                        }
                     }
                 }
                 continue;
@@ -533,7 +545,7 @@ pub(crate) fn emit_collection_close_sep_lookup(
             let close = &shape.close;
             let sep = &shape.separator;
             arms.push(quote! {
-                (#result_src_idx, #rule_idx) => Some((#close, #sep)),
+                (#result_src_idx, #rule_idx, 0u8) => Some((#close, #sep)),
             });
         }
     }
@@ -541,7 +553,7 @@ pub(crate) fn emit_collection_close_sep_lookup(
         return quote! { None::<(&'static str, &'static str)> };
     }
     quote! {
-        match (result_src_idx, rule_idx) {
+        match (result_src_idx, rule_idx, slot_idx) {
             #(#arms)*
             _ => None,
         }

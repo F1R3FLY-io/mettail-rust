@@ -806,6 +806,16 @@ pub struct BranchCursor<W: Semiring> {
     /// that downstream `MaybeSpliceCollection` and `FireAction` deltas
     /// find populated slots.
     pub collection_stack: Vec<Vec<ActionArg>>,
+    /// Phase 4 #1 (2026-05-11): monotonic counter of collection slots
+    /// allocated by this cursor (never decremented). Used by
+    /// `emit_start_collection` in Strict mode as the id source — NOT
+    /// `cursor.collection_stack.len()` — so multi-collection-slot
+    /// Class 2 rules allocate distinct ids per slot even when prior
+    /// slots' mirrors popped on marker pop. Match-replays cleanly
+    /// against `live.start_collection()` which always returns its
+    /// own monotonic len. Initialized 0; bumped on every Strict-mode
+    /// emit_start_collection.
+    pub collection_slots_allocated: u8,
     /// Stage 3.12 Fix 2(ii) (2026-05-02): Fork-source-order tiebreak
     /// priority. Set to `branch_idx as u32` when the cursor is allocated
     /// in a Fork's children loop (TAKE=0, SKIP=1 for Opt-Group);
@@ -934,6 +944,7 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
             inner_state: self.inner_state.clone(),
             pending_builder_ops: self.pending_builder_ops.clone(),
             collection_stack: self.collection_stack.clone(),
+            collection_slots_allocated: self.collection_slots_allocated,
             source_priority: self.source_priority,
             incoming_edge_stack: self.incoming_edge_stack.clone(),
             recovery_depth: self.recovery_depth,
@@ -989,6 +1000,7 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             collection_stack: (0..live_collection_stack_depth)
                 .map(|_| Vec::new())
                 .collect(),
+            collection_slots_allocated: live_collection_stack_depth as u8,
             // Stage 3.12 Fix 2(ii) (2026-05-02): default 0 for non-Fork-
             // allocated cursors. Fork arm overwrites per-branch.
             source_priority: 0,
@@ -1036,6 +1048,7 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             inner_state: new_state,
             pending_builder_ops: parent.pending_builder_ops.clone(),
             collection_stack: parent.collection_stack.clone(),
+            collection_slots_allocated: parent.collection_slots_allocated,
             source_priority,
             incoming_edge_stack: parent.incoming_edge_stack.clone(),
             recovery_depth: parent.recovery_depth,
@@ -2152,6 +2165,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     inner_state: new_state.clone(),
                     pending_builder_ops: Vec::new(),
                     collection_stack: Vec::new(),
+                    collection_slots_allocated: 0,
                     // Stage 3.12 Fix 2(ii) (2026-05-02): post-resolved
                     // singleton inherits priority 0 (no further Fork
                     // tiebreaks expected post-resolution).
@@ -3039,6 +3053,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     inner_state: self.state.clone(),
                     pending_builder_ops: Vec::new(),
                     collection_stack: Vec::new(),
+                    collection_slots_allocated: 0,
                     // Stage 3.12 Fix 2(ii) (2026-05-02): restored singleton
                     // post-Drop has no Fork ancestor, so priority 0.
                     source_priority: 0,
@@ -3342,6 +3357,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             },
                         );
                     }
+                    // Phase 4 #1 (2026-05-11): also sync the monotonic
+                    // slot counter to match the pre-fork allocation
+                    // count, so subsequent Strict-mode
+                    // emit_start_collection allocates ids that
+                    // dovetail with live's view.
+                    cursor.collection_slots_allocated = pre_fork_slots.len() as u8;
                     cursor.collection_stack = pre_fork_slots;
                 }
                 // Stage 3.9 / ι Phase 4 (2026-05-01) — L2: promote to Strict.
@@ -3533,6 +3554,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 inner_state: branch.new_state.clone(),
                                 pending_builder_ops: cursor.pending_builder_ops.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
+                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 // Stage 3.12.6 (2026-05-02): inherit parent's
                                 // stack-suffix history; the push below appends
@@ -3583,6 +3605,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 inner_state: branch.new_state.clone(),
                                 pending_builder_ops: cursor.pending_builder_ops.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
+                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 // Stage 3.12.6 (2026-05-02): inherit parent's
                                 // stack-suffix history.
@@ -3645,6 +3668,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 inner_state: branch.new_state.clone(),
                                 pending_builder_ops: cursor.pending_builder_ops.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
+                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3684,6 +3708,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 inner_state: branch.new_state.clone(),
                                 pending_builder_ops: cursor.pending_builder_ops.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
+                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3716,6 +3741,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 inner_state: branch.new_state.clone(),
                                 pending_builder_ops: cursor.pending_builder_ops.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
+                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3781,6 +3807,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 inner_state: branch.new_state.clone(),
                                 pending_builder_ops: cursor.pending_builder_ops.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
+                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3822,6 +3849,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 inner_state: branch.new_state.clone(),
                                 pending_builder_ops: cursor.pending_builder_ops.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
+                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3867,6 +3895,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 inner_state: branch.new_state.clone(),
                                 pending_builder_ops: cursor.pending_builder_ops.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
+                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3910,6 +3939,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 inner_state: branch.new_state.clone(),
                                 pending_builder_ops: cursor.pending_builder_ops.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
+                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3968,6 +3998,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 inner_state: branch.new_state.clone(),
                                 pending_builder_ops: cursor.pending_builder_ops.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
+                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -5171,15 +5202,32 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     fn commit_winner(&mut self, winner_idx: usize) {
         let mut winner = self.branch_cursors.swap_remove(winner_idx);
         self.branch_cursors.clear();
-        // Option A (2026-04-28): donate cursor-local collection
-        // accumulators to the live builder en bloc, BEFORE delta replay.
-        // Subsequent `MaybeSpliceCollection` (calls
-        // `push_to_collection(id)`) and `FireAction` (whose action calls
-        // `drain_collection(id)`) deltas need populated slots in the live
-        // builder. The cursor's mirror is moved here; the cursor's
-        // collection_stack is left empty.
+        // Phase 4 #1 (2026-05-11): adoption skipped ONLY when the
+        // cursor's pending_builder_ops contains at least as many
+        // StartCollection deltas as the cursor.collection_stack has
+        // slots. For multi-collection-slot Class 2 rules where slots
+        // stay open in the cursor's mirror (binder-internal pop
+        // suppressed), every slot has a corresponding StartCollection
+        // delta that will re-allocate at replay — adopt+replay would
+        // duplicate. For pre-fork-seeded slots (Lazy→Strict via Hack
+        // #7), the SeedLive delta covers them and the cursor's
+        // mirror also contains them; SeedLive itself asserts live
+        // empty at replay time, so adoption MUST be skipped in this
+        // case too.
+        //
+        // For Class-5 standalone collection parses (no fork, no
+        // binder-internal), the cursor's mirror is empty at commit
+        // (popped on FireAction); adoption is a no-op anyway.
         let donated = std::mem::take(&mut winner.collection_stack);
-        if !donated.is_empty() {
+        let strict_alloc_count = winner.pending_builder_ops.iter()
+            .filter(|d| matches!(d, BuilderDelta::StartCollection))
+            .count();
+        let has_seed_live = winner.pending_builder_ops.iter()
+            .any(|d| matches!(d, BuilderDelta::SeedLiveCollectionStack { .. }));
+        let donate = !donated.is_empty()
+            && !has_seed_live
+            && strict_alloc_count < donated.len();
+        if donate {
             self.builder.adopt_collection_stack(donated);
         }
         for delta in winner.pending_builder_ops {
@@ -5237,13 +5285,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     self.builder.push_optional_absent();
                 }
                 BuilderDelta::StartCollection => {
-                    // The cursor-allocated id is already aligned with the
-                    // live builder via `adopt_collection_stack` above; this
-                    // arm exists for symmetry / future Phase 4 paths that
-                    // emit collection allocation independently of the GSS-
-                    // symbol-driven `PushCollectionId`. Re-allocate keeps
-                    // the live builder's `collection_stack` length in sync
-                    // with cursor-side expectations.
+                    // Phase 4 #1 (2026-05-11): unconditional re-allocate.
+                    // Adoption is no longer performed at commit_winner
+                    // start, so this delta is the canonical source for
+                    // live-side slot allocation in Strict-mode-allocated
+                    // collections.
                     let _ = self.builder.start_collection();
                 }
                 BuilderDelta::PushToCollection { id } => {
@@ -5487,6 +5533,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             inner_state: winner.inner_state,
             pending_builder_ops: Vec::new(),
             collection_stack: Vec::new(),
+            collection_slots_allocated: 0,
             // Stage 3.12 Fix 2(ii) (2026-05-02): preserve winner's
             // priority. Subsequent Forks build on this priority chain.
             source_priority: winner.source_priority,
@@ -5839,7 +5886,20 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         match symbol.kind {
             SymbolKind::CollectionMarker => {
                 let id = self.emit_start_collection(cursor);
-                symbol.bp = Some(id);
+                // Phase 4 #1 (2026-05-11): preserve the codegen-stamped
+                // `slot_idx` in `symbol.bp` (set by emit_binder_rule_body
+                // /emit_collection_action_entry). The runtime
+                // accumulator_id (live.collection_stack.len at push) is
+                // NOT stored in bp anymore — it flows via the
+                // `ActionArg::CollectionId(id)` pushed below. Lookups
+                // (close/sep/element_src) key on slot_idx (per-rule
+                // identifier, 0 for Class-5 single-slot rules); drains
+                // key on the args-stack-supplied accumulator_id. The
+                // old `symbol.bp = Some(id)` overwrote slot_idx with
+                // accumulator_id, conflating the two — that broke
+                // 3-tuple keyed lookups for nested Class-5 (e.g.
+                // ambient `{... | n[{0}]}` where inner PPar's
+                // accumulator_id=1 but slot_idx=0).
                 self.emit_push_collection_id(cursor, id);
                 // B8 / Issue D (2026-05-09): when this CollectionMarker
                 // belongs to a Class 3 binder rule's BinderListLoop slot,
@@ -6042,29 +6102,32 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // L12 follow-up B5 (2026-05-07): pop the cursor's
                 // collection_stack mirror to keep id allocation in
                 // sync with subsequent Strict-mode emit_start_collection
-                // calls, but DO NOT log FinalizeCollection. The slot's
-                // content lives on live (seeded via
-                // SeedLiveCollectionStack for pre-fork-allocated slots
-                // OR allocated via StartCollection delta + populated
-                // via SpliceIntoCollection / PushToCollection deltas
-                // for Strict-mode-allocated slots). The subsequent
-                // FireAction(CollectionMarker) replay calls
-                // action_fn → drain_collection(id) which LIFO-pops
-                // live's top slot.
+                // calls.
                 //
-                // Pre-B5 the FinalizeCollection delta re-pushed the
-                // cursor's drained content onto live; this re-push
-                // assumed live started empty at replay. With pre-fork
-                // collections seeded via SeedLive and Strict-allocated
-                // collections allocated via StartCollection deltas,
-                // live now has the right slots already — re-pushing
-                // would create duplicates and panic the LIFO assert.
+                // Phase 4 #1 (2026-05-11): EXCEPT for binder-internal
+                // collections (Class 2/3 ParamParse{collection:Some}
+                // slots inside multi-position binder rules). For those,
+                // the slot's accumulator is drained later by the binder
+                // rule's terminal action, NOT at marker-pop time —
+                // popping the cursor's mirror here would desync future
+                // emit_start_collection calls (id=cursor.len) from
+                // live's view (which still has the slot). Multi-slot
+                // Class 2 rules (Pair . xs:Vec(Proc), ys:Vec(Proc) ...)
+                // exposed this: slot 0's marker pop reset cursor.len=0,
+                // so slot 1's start_collection allocated id=0 again.
                 //
-                // B9 / Class 2 (2026-05-08): invalidate the consistency
-                // memo since collection_stack mutation can affect dry-run
-                // arity.
-                cursor.consistency_memo.set(None);
-                let _ = cursor.collection_stack.pop();
+                // For Class-5 collection rules, FireAction fires here
+                // (NOT suppressed by is_binder_internal), the action
+                // drains the slot from LIVE (live.len--), and we MUST
+                // pop the cursor's mirror to stay in sync with live.
+                let is_binder_internal = self.engine.is_binder_internal_collection(
+                    symbol.category_src_idx,
+                    symbol.rule_index_in_category,
+                );
+                if !is_binder_internal {
+                    cursor.consistency_memo.set(None);
+                    let _ = cursor.collection_stack.pop();
+                }
             }
         }
         // Per-child FireAction (keyed on popped_symbol — same across all
@@ -6143,7 +6206,20 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             let pred_info = self.gss.node(pred_id).map(|n| n.symbol);
             if let Some(pred_sym) = pred_info {
                 let pred_kind = pred_sym.kind;
-                let acc_id = pred_sym.bp.unwrap_or(0);
+                // Phase 4 #1 (2026-05-11): `pred_sym.bp` now carries the
+                // codegen-stamped slot_idx, NOT the runtime accumulator_id.
+                // For splice we need the accumulator_id (live.collection_
+                // stack index). Recover it from the cursor's/builder's
+                // collection_stack top (LIFO: the marker on top is the
+                // innermost active slot).
+                let acc_id = match self.cursor_mode {
+                    CursorMode::Lazy => {
+                        self.builder.collection_stack_len().saturating_sub(1) as u8
+                    }
+                    CursorMode::Strict => {
+                        cursor.collection_stack.len().saturating_sub(1) as u8
+                    }
+                };
                 // Phase 2 / Redesign C follow-up (2026-05-11): skip
                 // splice when pred is a Class 3 binder-internal
                 // CollectionMarker. Class 3 has its own dedicated
@@ -8314,6 +8390,7 @@ mod tests {
                 Arc::new(BehavioralPred::Top) as Arc<dyn std::any::Any + Send + Sync>,
             )],
             collection_stack: Vec::new(),
+            collection_slots_allocated: 0,
             source_priority: 0,
             incoming_edge_stack: Vec::new(),
             recovery_depth: 0,
