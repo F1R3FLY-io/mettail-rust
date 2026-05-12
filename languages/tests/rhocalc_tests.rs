@@ -1138,11 +1138,372 @@ mod native_ops {
             );
         }
 
+        mod pathmap_algebra {
+            use super::*;
+
+            // tut-pathmap-all-methods.rho: intersection / meet
+            #[test]
+            fn pathmap_meet_keeps_overlap_with_right_values() {
+                assert_reduces_to(
+                    "{pathGet(pathMeet(pathmap([1,2]:10, [3,4]:20), pathmap([1,2]:200, [5,6]:1)), [1,2])}",
+                    "200",
+                );
+                assert_reduces_to(
+                    "{pathHas(pathMeet(pathmap([1,2]:10, [3,4]:20), pathmap([1,2]:200, [5,6]:1)), [3,4])}",
+                    "false",
+                );
+                assert_reduces_to(
+                    "{pathHas(pathMeet(pathmap([1,2]:10, [3,4]:20), pathmap([1,2]:200, [5,6]:1)), [5,6])}",
+                    "false",
+                );
+            }
+
+            // tut-pathmap-all-methods.rho: diff / subtract
+            #[test]
+            fn pathmap_subtract_removes_masked_branch() {
+                assert_reduces_to(
+                    "{pathHas(pathSubtract(pathmap([1,2]:1, [1,3]:2, [4,5]:3), pathmap([1,2]:0)), [1,2])}",
+                    "false",
+                );
+                assert_reduces_to(
+                    "{pathHas(pathSubtract(pathmap([1,2]:1, [1,3]:2, [4,5]:3), pathmap([1,2]:0)), [1,3])}",
+                    "true",
+                );
+            }
+
+            // tut-pathmap-all-methods.rho: restriction
+            #[test]
+            fn pathmap_restrict_keeps_only_masked_paths() {
+                assert_reduces_to(
+                    concat!(
+                        "{pathHas(pathRestrict(",
+                        "pathmap([1,2]:10, [1,3]:11, [4,5]:12), ",
+                        "pathmap([1,2]:0, [1,3]:0)), [1,2])}",
+                    ),
+                    "true",
+                );
+                assert_reduces_to(
+                    concat!(
+                        "{pathHas(pathRestrict(",
+                        "pathmap([1,2]:10, [1,3]:11, [4,5]:12), ",
+                        "pathmap([1,2]:0, [1,3]:0)), [4,5])}",
+                    ),
+                    "false",
+                );
+            }
+        }
+
         mod zipper {
             use super::*;
 
             fn task_db() -> &'static str {
                 concat!("pathmap(", "[1,2,3]:10, ", "[1,2,4]:11, ", "[2,1]:20", ")")
+            }
+
+            fn users_age_db() -> &'static str {
+                concat!("pathmap(", "[1,1,1,1]:30, ", "[1,2,1,1]:25, ", "[1,3,1,1]:35", ")")
+            }
+
+            fn books_fiction_db() -> &'static str {
+                concat!(
+                    "pathmap(",
+                    r#"["books","fiction","gatsby"]:1, "#,
+                    r#"["books","fiction","moby"]:2, "#,
+                    r#"["books","nonfiction","history"]:3"#,
+                    ")"
+                )
+            }
+
+            fn nested_root_db() -> &'static str {
+                concat!("pathmap(", "[1,1,1]:10, ", "[1,1,2]:11, ", "[1,2,1]:12", ")")
+            }
+
+            fn normal_forms_contain(input: &str, fragment: &str) {
+                let (results, initial_id) = run_with_initial(input);
+                let nfs = reachable_normal_form_displays(&results, initial_id);
+                assert!(
+                    nfs.iter().any(|nf| nf.contains(fragment)),
+                    "expected normal form containing `{fragment}` for `{input}`\n  nfs: {nfs:?}"
+                );
+            }
+
+            // pathmap-demo.rho: query backend tasks via subtrie
+            #[test]
+            fn pathmap_demo_queries_backend_subtrie() {
+                let db = task_db();
+                assert_reduces_to(
+                    &format!("{{pathGet(pathGetSubtrieAt({}, [1]), [2,3])}}", db),
+                    "10",
+                );
+                assert_reduces_to(
+                    &format!("{{pathGet(zipperGetSubtrie(readZipperAt({}, [1])), [2,4])}}", db),
+                    "11",
+                );
+            }
+
+            // pathmap-demo.rho: complete a deep leaf via writeZipperSetLeaf
+            #[test]
+            fn pathmap_demo_set_leaf_on_deep_path() {
+                let db = task_db();
+                assert_reduces_to(
+                    &format!(
+                        "{{pathGet(writeZipperSetLeaf(writeZipperAt({}, [2,1]), [2,1], 99), [2,1])}}",
+                        db
+                    ),
+                    "99",
+                );
+            }
+
+            // pathmap-demo.rho: replace subtree at prefix
+            #[test]
+            fn pathmap_demo_replace_subtrie_at_prefix() {
+                let db = task_db();
+                assert_reduces_to(
+                    &format!(
+                        "{{pathHas(writeZipperSetSubtrie(writeZipperAt({}, [1]), pathmap([9]:77, [8]:88)), [1,9])}}",
+                        db
+                    ),
+                    "true",
+                );
+                assert_reduces_to(
+                    &format!(
+                        "{{pathHas(writeZipperSetSubtrie(writeZipperAt({}, [1]), pathmap([9]:77, [8]:88)), [1,2,3])}}",
+                        db
+                    ),
+                    "false",
+                );
+            }
+
+            // pathmap-demo.rho: graft external read zipper at root
+            #[test]
+            fn pathmap_demo_graft_at_root() {
+                assert_reduces_to(
+                    concat!(
+                        "{pathGet(writeZipperGraft(",
+                        "writeZipper(pathmap([1]:1)), ",
+                        "readZipper(pathmap([2,3]:42, [4]:43))), [4])}",
+                    ),
+                    "43",
+                );
+            }
+
+            // tut-pathmap-zippers.rho: read/write zipper constructors
+            #[test]
+            fn tut_zipper_constructors_fold_to_tokens() {
+                let db = task_db();
+                normal_forms_contain(&format!("{{readZipper({})}}", db), "readZipper@");
+                normal_forms_contain(&format!("{{writeZipper({})}}", db), "writeZipper@");
+                normal_forms_contain(&format!("{{readZipperAt({}, [1])}}", db), "readZipper@");
+            }
+
+            // tut-pathmap-zippers.rho: descendTo then getLeaf
+            #[test]
+            fn tut_zipper_descend_to_leaf() {
+                let db = books_fiction_db();
+                assert_reduces_to(
+                    &format!(
+                        "{{zipperGetLeaf(zipperDescendTo(readZipper({}), [\"books\",\"fiction\",\"gatsby\"]))}}",
+                        db
+                    ),
+                    "1",
+                );
+            }
+
+            // tut-pathmap-zippers.rho: root getLeaf on map without root value
+            #[test]
+            fn tut_zipper_root_get_leaf_stays_stuck() {
+                let db = task_db();
+                normal_forms_contain(
+                    &format!("{{zipperGetLeaf(readZipper({}))}}", db),
+                    "zipperGetLeaf",
+                );
+            }
+
+            // tut-pathmap-zippers.rho: pathGetSubtrie at root and prefix
+            #[test]
+            fn tut_path_get_subtrie_root_and_prefix() {
+                let db = books_fiction_db();
+                assert_reduces_to(
+                    &format!(
+                        "{{pathHas(pathGetSubtrie({}), [\"books\",\"fiction\",\"gatsby\"])}}",
+                        db
+                    ),
+                    "true",
+                );
+                assert_reduces_to(
+                    &format!(
+                        "{{pathHas(pathGetSubtrieAt({}, [\"books\",\"fiction\"]), [\"moby\"])}}",
+                        db
+                    ),
+                    "true",
+                );
+            }
+
+            // tut-pathmap-zippers.rho: writeZipper on empty map
+            #[test]
+            fn tut_write_zipper_set_leaf_on_empty_map() {
+                assert_reduces_to(
+                    "{pathGet(writeZipperSetLeaf(writeZipper(pathmap()), [1,2], 42), [1,2])}",
+                    "42",
+                );
+            }
+
+            // tut-pathmap-zippers.rho: setSubtrie at root replaces entire map
+            #[test]
+            fn tut_write_zipper_set_subtrie_at_root() {
+                assert_reduces_to(
+                    "{pathGet(writeZipperSetSubtrie(writeZipper(pathmap([1]:1, [2]:2)), pathmap([9]:99, [8]:88)), [9])}",
+                    "99",
+                );
+                assert_reduces_to(
+                    "{pathHas(writeZipperSetSubtrie(writeZipper(pathmap([1]:1, [2]:2)), pathmap([9]:99, [8]:88)), [1])}",
+                    "false",
+                );
+            }
+
+            // tut-pathmap-zippers.rho: empty relative subtrie clears focused branch
+            #[test]
+            fn tut_write_zipper_set_empty_subtrie_clears_branch() {
+                let db = nested_root_db();
+                assert_reduces_to(
+                    &format!(
+                        "{{pathHas(writeZipperSetSubtrie(writeZipperAt({}, [1,1]), pathmap()), [1,1,1])}}",
+                        db
+                    ),
+                    "false",
+                );
+                assert_reduces_to(
+                    &format!(
+                        "{{pathHas(writeZipperSetSubtrie(writeZipperAt({}, [1,1]), pathmap()), [1,2,1])}}",
+                        db
+                    ),
+                    "true",
+                );
+            }
+
+            // tut-pathmap-zippers.rho: graft at focused prefix
+            #[test]
+            fn tut_write_zipper_graft_at_prefix() {
+                assert_reduces_to(
+                    concat!(
+                        "{pathGet(writeZipperGraft(",
+                        "writeZipperAt(pathmap([1]:1), [1]), ",
+                        "readZipper(pathmap([2]:42, [3]:43))), [1,3])}",
+                    ),
+                    "43",
+                );
+            }
+
+            // pathmap-immutability-test.rho: setSubtrie leaves original unchanged
+            #[test]
+            fn immutability_set_subtrie_preserves_original() {
+                let original = nested_root_db();
+                assert_reduces_to(
+                    &format!(
+                        "{{pathGet(writeZipperSetSubtrie(writeZipperAt({}, [1,1]), pathmap([9]:77)), [1,1,9])}}",
+                        original
+                    ),
+                    "77",
+                );
+                assert_reduces_to(&format!("{{pathGet({}, [1,1,1])}}", original), "10");
+            }
+
+            // pathmap-immutability-test.rho: removeLeaf leaves original unchanged
+            #[test]
+            fn immutability_remove_leaf_preserves_original() {
+                let original = concat!("pathmap(", "[1,1]:10, ", "[1,2]:11, ", "[2]:12", ")");
+                assert_reduces_to(
+                    &format!(
+                        "{{pathHas(writeZipperRemoveLeaf(writeZipperAt({}, [1,1])), [1,1])}}",
+                        original
+                    ),
+                    "false",
+                );
+                assert_reduces_to(&format!("{{pathGet({}, [1,1])}}", original), "10");
+            }
+
+            // pathmap-immutability-test.rho: removeBranches leaves original unchanged
+            #[test]
+            fn immutability_remove_branches_preserves_original() {
+                let original = nested_root_db();
+                assert_reduces_to(
+                    &format!(
+                        "{{pathHas(writeZipperRemoveBranches(writeZipperAt({}, [1])), [1,1,1])}}",
+                        original
+                    ),
+                    "false",
+                );
+                assert_reduces_to(&format!("{{pathGet({}, [1,1,1])}}", original), "10");
+            }
+
+            // pathmap-immutability-test.rho: graft leaves original unchanged
+            #[test]
+            fn immutability_graft_preserves_original() {
+                let original = "pathmap([1]:1)";
+                let source = "pathmap([2,1]:42)";
+                assert_reduces_to(
+                    &format!(
+                        "{{pathGet(writeZipperGraft(writeZipper({}), readZipper({})), [2,1])}}",
+                        original, source
+                    ),
+                    "42",
+                );
+                assert_reduces_to(&format!("{{pathGet({}, [1])}}", original), "1");
+                assert_reduces_to(&format!("{{pathGet({}, [2,1])}}", source), "42");
+            }
+
+            // pathmap-immutability-test.rho: joinInto leaves original unchanged
+            #[test]
+            fn immutability_join_into_preserves_original() {
+                let original = "pathmap([1,2]:10)";
+                assert_reduces_to(
+                    &format!(
+                        "{{pathGet(writeZipperJoinInto(writeZipper({}), readZipper(pathmap([1,2]:20, [3]:30))), [3])}}",
+                        original
+                    ),
+                    "30",
+                );
+                assert_reduces_to(&format!("{{pathGet({}, [1,2])}}", original), "10");
+            }
+
+            // zipper-navigation-demo.rho: descendFirst from users prefix
+            #[test]
+            fn navigation_descend_first_from_users_prefix() {
+                let db = users_age_db();
+                normal_forms_contain(
+                    &format!("{{zipperDescendFirst(readZipperAt({}, [1]))}}", db),
+                    "readZipper@",
+                );
+            }
+
+            // zipper-navigation-demo.rho: indexed branch under users
+            #[test]
+            fn navigation_descend_indexed_branch_from_users() {
+                let db = users_age_db();
+                normal_forms_contain(
+                    &format!("{{zipperDescendIndexedBranch(readZipperAt({}, [1]), 1)}}", db),
+                    "readZipper@",
+                );
+            }
+
+            // zipper-navigation-demo.rho: ascend from deep path
+            #[test]
+            fn navigation_ascend_from_deep_path() {
+                let db = users_age_db();
+                normal_forms_contain(
+                    &format!("{{zipperAscend(readZipperAt({}, [1,2,1,1]), 2)}}", db),
+                    "readZipper@",
+                );
+            }
+
+            // zipper-navigation-demo.rho: invalid sibling navigation stays stuck
+            #[test]
+            fn navigation_invalid_sibling_stays_stuck() {
+                let db = users_age_db();
+                normal_forms_contain(
+                    &format!("{{zipperToNextSibling(readZipperAt({}, [1,1,1,1]))}}", db),
+                    "zipperToNextSibling",
+                );
             }
 
             #[test]
