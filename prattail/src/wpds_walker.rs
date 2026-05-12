@@ -2459,28 +2459,29 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     where
         W: 'static,
     {
-        // Stage 3.9 / ι Phase 4 (2026-05-01): live mode is now keyed off
-        // `cursor_mode == Lazy`, not `branch_cursors.is_empty()` — under
-        // Phase 4 the cursors vector is always non-empty (singleton in
-        // Lazy, multi in Strict). The pre-Phase-4 empty-cursors path is
-        // gone; instead, Lazy resolution reads the live builder
-        // directly (the singleton cursor's `pending_builder_ops` is
-        // empty per L1, so there's nothing to replay).
+        // Phase 5.6-tail-B (2026-05-12): the pre-tail Lazy fast-path
+        // returned directly using `self.builder.take_dyn_result()`. Under
+        // always-eager Arc::make_mut (Phase 5.3+), all mutations land on
+        // `cursor.builder`; `self.builder` is stale until installed.
+        // Install cursor[0].builder over self.builder before reading, then
+        // return as before.
+        //
+        // B13c / Candidate H (2026-05-08): the Lazy-mode positional
+        // invariant was implemented here but proved to break
+        // recovery_integration_tests' test_calc_recovery_trailing_*
+        // family — those tests rely on the walker accepting at sub-EOI
+        // and the wrapper handling trailing tokens via recovery. The
+        // positional gate is left unimplemented at this site; the
+        // wrapper's post-resolution `pos < tokens.len()` check (in
+        // codegen-emitted parse_<Cat>_via_wpds) handles TrailingTokens
+        // correctly.
         if self.cursor_mode == CursorMode::Lazy {
+            // Install singleton cursor's builder.
+            if let Some(cursor) = self.branch_cursors.first() {
+                self.builder = (*cursor.builder).clone();
+            }
             return match self.state.clone() {
                 WpdsState::Accepted => {
-                    // B13c / Candidate H (2026-05-08): the Lazy-mode
-                    // positional invariant was implemented here but
-                    // proved to break recovery_integration_tests'
-                    // test_calc_recovery_trailing_integer / _missing_operator
-                    // / test_float_recovery_trailing / test_str_recovery_trailing
-                    // — those tests rely on the walker accepting at
-                    // sub-EOI and the wrapper handling trailing tokens
-                    // via recovery. The positional gate is left
-                    // unimplemented at this site; the wrapper's
-                    // post-resolution `pos < tokens.len()` check (in
-                    // codegen-emitted parse_<Cat>_via_wpds) handles
-                    // TrailingTokens correctly.
                     let term = self.builder.take_dyn_result();
                     let weight = self.weight.clone();
                     match term {
@@ -2776,8 +2777,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// - `ForkInto`:  replace branch_cursors with children, set state to
     ///                AmbiguityFanout. Mode is already Strict per L2.
     fn apply_action(&mut self, action: WpdsStepAction<W>, tokens: &dyn WpdsTokenSource) {
-        // L1: assert Lazy admission invariant.
-        self.debug_flush_lazy_invariant();
+        // Phase 5.6-tail-B (2026-05-12): pre-tail this called
+        // `debug_flush_lazy_invariant()` to assert L1 (Lazy mode implies
+        // singleton cursor with empty pending_builder_ops). Deleted with
+        // the CursorMode enum — invariant is moot.
         // L5: terminal state is mode-irrelevant.
         if self.state.is_terminal() {
             return;
@@ -2830,6 +2833,20 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
+                // Phase 5.6-tail-B (2026-05-12): install the cursor's
+                // builder over self.builder before re-pushing. Under
+                // always-eager Arc::make_mut, all mutations land on
+                // cursor.builder during this step's helpers; external
+                // accessors (`walker.builder()`, take_dyn_result, hang-
+                // dump snapshot) need self.builder to reflect the cursor's
+                // post-step state. SemanticBuilder::clone is O(log N) via
+                // im::Vector HAMT sharing — cheap per step. Only fires in
+                // Lazy mode (cursor_mode == Lazy): in Strict mode (post-
+                // first-Fork) all cursors go through step_fanout, not
+                // apply_action, and commit_winner handles install.
+                if self.cursor_mode == CursorMode::Lazy {
+                    self.builder = (*cursor.builder).clone();
+                }
                 self.branch_cursors.push(cursor);
             }
             CursorOutcome::ForkInto(children) => {
@@ -5013,13 +5030,16 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // there's still another holder, fall back to deep clone via
         // SemanticBuilder: Clone (Phase 5.3). The clone is structurally
         // shared via `im::Vector` HAMTs — O(log N) per field root.
-        if self.cursor_mode == CursorMode::Strict {
-            self.builder = Arc::try_unwrap(std::mem::replace(
-                &mut winner.builder,
-                Arc::new(SemanticBuilder::new()),
-            ))
-            .unwrap_or_else(|arc| (*arc).clone());
-        }
+        // Phase 5.6-tail-B (2026-05-12): always install the winner's
+        // builder over self.builder. Pre-tail this was Strict-only; under
+        // always-eager Arc::make_mut, the winner.builder is the
+        // authoritative live state for BOTH formerly-Lazy (singleton at
+        // commit_winner_at_eoi) and formerly-Strict (fanout-winner) paths.
+        self.builder = Arc::try_unwrap(std::mem::replace(
+            &mut winner.builder,
+            Arc::new(SemanticBuilder::new()),
+        ))
+        .unwrap_or_else(|arc| (*arc).clone());
         for delta in winner.pending_builder_ops {
             match delta {
                 // Phase 5.5: non-recovery deltas are NO-OPs at replay
@@ -5505,26 +5525,21 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     // the Lazy case dominates.
     // ══════════════════════════════════════════════════════════════════════
 
-    /// Debug-only L1 invariant check: `cursor_mode == Lazy` implies a
-    /// singleton cursor with empty `pending_builder_ops`. Called at
-    /// `apply_action` entry.
-    #[inline(always)]
-    fn debug_flush_lazy_invariant(&self) {
-        debug_assert!(
-            self.cursor_mode != CursorMode::Lazy
-                || (self.branch_cursors.len() == 1
-                    && self.branch_cursors[0].pending_builder_ops.is_empty()),
-            "L1 invariant violation: Lazy mode requires singleton cursor with \
-             empty pending_builder_ops; got len={}, ops_len={}",
-            self.branch_cursors.len(),
-            self.branch_cursors
-                .first()
-                .map(|c| c.pending_builder_ops.len())
-                .unwrap_or(0),
-        );
-    }
+    // Phase 5.6-tail-B (2026-05-12): debug_flush_lazy_invariant deleted —
+    // the L1 invariant (Lazy mode implies singleton cursor with empty
+    // pending_builder_ops) is moot now that CursorMode and Lazy/Strict
+    // dispatch are gone (Step F finishes the enum removal).
 
     // ─── 11 mutation helpers ─────────────────────────────────────────────
+    //
+    // Phase 5.6-tail-B (2026-05-12): all 14 helpers below collapse to a
+    // single eager `Arc::make_mut(&mut cursor.builder).<method>(...)` call.
+    // The pre-tail `match self.cursor_mode { Lazy => self.builder.<m>(...),
+    // Strict => cursor.pending_builder_ops.push(BuilderDelta::...) }`
+    // dispatch is deleted: the cursor.builder IS the authoritative state
+    // (Phase 5.3+), and self.builder is brought up-to-date via
+    // `install_singleton_cursor_builder` at resolve time (and at any
+    // post-step boundary where downstream consumers read self.builder).
 
     #[inline(always)]
     fn emit_push_token(
@@ -5534,36 +5549,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         text: String,
         pos: usize,
     ) {
-        // Phase 5.3 (2026-05-12): eagerly apply the mutation to
-        // `cursor.builder` via `Arc::make_mut` (clone-on-write per cursor).
-        // Journal logging below remains UNTOUCHED — Phase 5.6 will remove it
-        // and `commit_winner` will swap `cursor.builder` directly. Today
-        // (5.3) the cursor.builder is write-only — no engine code reads it
-        // yet — so this is semantically idempotent.
-        Arc::make_mut(&mut cursor.builder).push_token(kind.clone(), text.clone(), pos);
-        match self.cursor_mode {
-            CursorMode::Lazy => self.builder.push_token(kind, text, pos),
-            CursorMode::Strict => {
-                // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::PushToken { kind, text, pos });
-            }
-        }
+        Arc::make_mut(&mut cursor.builder).push_token(kind, text, pos);
     }
 
     #[inline(always)]
     fn emit_push_ident(&mut self, cursor: &mut BranchCursor<W>, name: String, pos: usize) {
-        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
-        Arc::make_mut(&mut cursor.builder).push_ident(name.clone(), pos);
-        match self.cursor_mode {
-            CursorMode::Lazy => self.builder.push_ident(name, pos),
-            CursorMode::Strict => {
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::PushIdent { name, pos });
-            }
-        }
+        Arc::make_mut(&mut cursor.builder).push_ident(name, pos);
     }
 
     #[inline(always)]
@@ -5572,103 +5563,55 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         cursor: &mut BranchCursor<W>,
         pred: Arc<dyn Any + Send + Sync>,
     ) {
-        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
-        // `pred` is already an Arc — Arc::clone is O(1).
-        Arc::make_mut(&mut cursor.builder).push_predicate_arc(Arc::clone(&pred));
-        match self.cursor_mode {
-            CursorMode::Lazy => self.builder.push_predicate_arc(pred),
-            CursorMode::Strict => {
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::PushPredicate(pred));
-            }
-        }
+        Arc::make_mut(&mut cursor.builder).push_predicate_arc(pred);
     }
 
     #[inline(always)]
     fn emit_start_binder_scope(&mut self, cursor: &mut BranchCursor<W>, names: Vec<String>) {
-        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
-        Arc::make_mut(&mut cursor.builder).start_binder_scope(names.clone());
-        match self.cursor_mode {
-            CursorMode::Lazy => self.builder.start_binder_scope(names),
-            CursorMode::Strict => {
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::StartBinderScope { names });
-            }
-        }
+        Arc::make_mut(&mut cursor.builder).start_binder_scope(names);
     }
 
     #[inline(always)]
     fn emit_extend_binder_scope(&mut self, cursor: &mut BranchCursor<W>, name: String) {
-        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
-        Arc::make_mut(&mut cursor.builder).extend_binder_scope(name.clone());
-        match self.cursor_mode {
-            CursorMode::Lazy => self.builder.extend_binder_scope(name),
-            CursorMode::Strict => {
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::ExtendBinderScope { name });
-            }
-        }
+        Arc::make_mut(&mut cursor.builder).extend_binder_scope(name);
     }
 
     #[inline(always)]
     fn emit_fire_action(&mut self, cursor: &mut BranchCursor<W>, symbol: StackSymbolV2) {
-        // Phase 5.5 (2026-05-12): mode-split fire_action behavior.
+        // Phase 5.6-tail-B (2026-05-12): always-eager fire on cursor.builder.
+        // Pre-tail this matched cursor_mode (Lazy fired on self.builder via
+        // `fire_action_for`; Strict fired on cursor.builder via Arc::make_mut).
+        // Both paths produced the same observable state through commit_winner;
+        // the unified path drops the mode split.
         //
-        // In LAZY mode (single cursor, no Fork): fire only on
-        // `self.builder` (as pre-5.5). cursor.builder is "best-effort"
-        // tracked via Phase 5.3 eager emits for upstream non-FireAction
-        // mutations, but the action_fn's push_term effects don't
-        // mirror — that's fine because commit_winner SKIPS install
-        // in Lazy mode (self.builder is authoritative).
+        // Required-for-correctness invariant: subsequent SpliceIntoCollection
+        // emits move cursor.builder.stack tops into collection slots, so the
+        // slot must receive the action's CONVERTED term (e.g. Proc::CastInt(0)),
+        // NOT the raw arg (e.g. the Int "0" literal token). Eager firing here
+        // satisfies that invariant.
         //
-        // In STRICT mode (post-Fork, multiple cursors): eagerly fire
-        // on cursor.builder via Arc::make_mut. This is REQUIRED for
-        // correctness: subsequent SpliceIntoCollection emits move
-        // cursor.builder.stack tops into collection slots. The slot
-        // must receive the action's CONVERTED term (e.g. Proc::CastInt(0)),
-        // NOT the raw arg (e.g. the Int "0" literal token). Without
-        // eager firing here, cursor.builder.collection_stack would
-        // hold raw arg tokens, breaking the outer rule's drain at
-        // action time.
-        //
-        // The Strict-mode FireAction journal entry is kept (commit_winner
-        // SKIPS its replay arm — the action is already applied to
-        // cursor.builder which becomes self.builder at install). Phase
-        // 5.6 will delete the journal entry entirely.
-        match self.cursor_mode {
-            CursorMode::Lazy => self.fire_action_for(symbol),
-            CursorMode::Strict => {
-                let builder_mut = Arc::make_mut(&mut cursor.builder);
-                if let Some(message) =
-                    Self::fire_action_for_on_builder(&self.engine, builder_mut, symbol)
-                {
-                    // Phase 5.5 (2026-05-12): on arity underflow during
-                    // eager fire, set BOTH cursor.inner_state AND walker
-                    // state to Error so the cursor aborts cleanly. Pre-5.5
-                    // the Error was set in commit_winner's bail-out path;
-                    // post-5.5 the underflow happens mid-parse so cursor
-                    // state propagation is needed.
-                    let err = WpdsState::Error { message };
-                    cursor.inner_state = err.clone();
-                    self.state = err;
-                    return;
-                }
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::FireAction { symbol });
-            }
+        // On arity underflow during the eager fire, set BOTH cursor.inner_state
+        // AND walker state to Error so the cursor aborts cleanly via
+        // cursor_resolution_check :: Drop on the next step.
+        let builder_mut = Arc::make_mut(&mut cursor.builder);
+        if let Some(message) =
+            Self::fire_action_for_on_builder(&self.engine, builder_mut, symbol)
+        {
+            let err = WpdsState::Error { message };
+            cursor.inner_state = err.clone();
+            self.state = err;
         }
     }
 
-    /// Allocate a fresh collection accumulator. In Lazy mode the live
-    /// builder allocates (and the id reflects its `collection_stack`
-    /// length). In Strict mode the cursor allocates locally — no delta
-    /// is logged because `commit_winner` donates `cursor.collection_stack`
-    /// to the live builder via `adopt_collection_stack` BEFORE delta
-    /// replay.
+    /// Allocate a fresh collection accumulator on the cursor's builder.
+    /// Returns the slot id (8-bit) for embedding in the corresponding
+    /// `CollectionMarker` symbol's payload.
+    ///
+    /// Phase 5.6-tail-B (2026-05-12): unified path. The `cursor.collection_stack`
+    /// mirror push is preserved (still consumed by Step G's eventual deletion);
+    /// the journal push of `BuilderDelta::StartCollection` is dropped (the
+    /// codegen-side Fork-arm `WithMultipleEffects` paths still carry the
+    /// variant as a payload — apply_effect_to_builder handles those).
     #[inline(always)]
     fn emit_start_collection(&mut self, cursor: &mut BranchCursor<W>) -> u8 {
         // Phase 5.5 (2026-05-12): authoritative id is now cursor.builder's
@@ -5685,76 +5628,26 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // cursor.builder's actual second slot is at id=1. emit_push_collection_id
         // would then push CollectionId(0) twice, breaking the action's
         // LIFO drain.
-        //
-        // Fix: use Arc::make_mut(&mut cursor.builder).start_collection()'s
-        // returned id as the authoritative source. Maintain cursor.collection_stack
-        // mirror for legacy state-tracking purposes (it's still consulted
-        // by some splice gates), but it's no longer the id source.
         let cursor_local_id =
             Arc::make_mut(&mut cursor.builder).start_collection();
-        match self.cursor_mode {
-            CursorMode::Lazy => {
-                let _live_id = self.builder.start_collection();
-                cursor_local_id
-            }
-            CursorMode::Strict => {
-                cursor.collection_stack.push(Vec::new());
-                // L12 follow-up B5 (2026-05-07): log StartCollection so
-                // commit_winner replay allocates a matching slot on
-                // live's collection_stack. Without this, Strict-mode
-                // SpliceIntoCollection / PushToCollection / FinalizeCollection
-                // deltas operate on indices live doesn't have.
-                // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::StartCollection);
-                cursor_local_id
-            }
-        }
+        cursor.collection_stack.push(Vec::new());
+        cursor_local_id
     }
 
     #[inline(always)]
     fn emit_push_collection_id(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
-        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
         Arc::make_mut(&mut cursor.builder).push_collection_id(id);
-        match self.cursor_mode {
-            CursorMode::Lazy => self.builder.push_collection_id(id),
-            CursorMode::Strict => {
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::PushCollectionId { id });
-            }
-        }
     }
 
     #[inline(always)]
     fn emit_splice_into_collection(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
-        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
-        // push_to_collection silently no-ops on out-of-bounds id — safe
-        // since cursor.builder is write-only in 5.3.
+        // push_to_collection silently no-ops on out-of-bounds id.
         Arc::make_mut(&mut cursor.builder).push_to_collection(id);
-        match self.cursor_mode {
-            CursorMode::Lazy => self.builder.push_to_collection(id),
-            CursorMode::Strict => {
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::SpliceIntoCollection { id });
-            }
-        }
     }
 
     #[inline(always)]
     fn emit_start_optional_scope(&mut self, cursor: &mut BranchCursor<W>) {
-        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
         Arc::make_mut(&mut cursor.builder).start_optional_scope();
-        match self.cursor_mode {
-            CursorMode::Lazy => self.builder.start_optional_scope(),
-            CursorMode::Strict => {
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::StartOptionalScope);
-            }
-        }
     }
 
     /// Stage 3.9 / ι Phase 4 (2026-05-01): centralized Push-time symbol-
@@ -5857,33 +5750,24 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn emit_finalize_optional_scope_present(&mut self, cursor: &mut BranchCursor<W>) {
-        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
         Arc::make_mut(&mut cursor.builder).finalize_optional_scope_present();
-        match self.cursor_mode {
-            CursorMode::Lazy => self.builder.finalize_optional_scope_present(),
-            CursorMode::Strict => {
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::FinalizeOptionalScopePresent);
-            }
-        }
     }
 
     #[inline(always)]
     fn emit_push_optional_absent(&mut self, cursor: &mut BranchCursor<W>) {
-        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
         Arc::make_mut(&mut cursor.builder).push_optional_absent();
-        match self.cursor_mode {
-            CursorMode::Lazy => self.builder.push_optional_absent(),
-            CursorMode::Strict => {
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::PushOptionalAbsent);
-            }
-        }
     }
 
     // ─── 4 mode-agnostic helpers (mirror to live walker fields in Lazy) ──
+    //
+    // Phase 5.6-tail-B (2026-05-12): the `cursor_mode == Lazy` guards
+    // below are PRESERVED through 5.6-tail-B. Pre-tail Lazy mode was a
+    // ONE-WAY street: set to Lazy at init, promoted to Strict at the
+    // first Fork, and NEVER reset. So `cursor_mode == Lazy` correctly
+    // identifies "no Fork has ever happened" — which is a stronger
+    // signal than `branch_cursors.len() == 1` (singleton post-resolve
+    // would also be len==1 but cursor_mode would be Strict). Step F
+    // deletes the enum entirely along with these guards.
 
     #[inline(always)]
     fn advance_cursor_pos(&mut self, cursor: &mut BranchCursor<W>, n: usize) {
@@ -5950,19 +5834,16 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 {
                     Some(_) => {
                         // HashMap slot: pick phase from parity.
+                        //
+                        // Phase 5.6-tail-B (2026-05-12): under always-eager
+                        // Arc::make_mut, `cursor.builder.collection_slot_len`
+                        // is the authoritative source — `cursor.collection_stack`
+                        // is a mirror that Step G will delete. Route to
+                        // cursor.builder directly.
                         let acc_id_usize = *accumulator_id as usize;
-                        let slot_len = match self.cursor_mode {
-                            CursorMode::Lazy => {
-                                // In Lazy mode the live builder is the
-                                // source of truth.
-                                self.builder.collection_slot_len(acc_id_usize)
-                            }
-                            CursorMode::Strict => cursor
-                                .collection_stack
-                                .get(acc_id_usize)
-                                .map(|s| s.len())
-                                .unwrap_or(0),
-                        };
+                        let slot_len = cursor
+                            .builder
+                            .collection_slot_len(acc_id_usize);
                         let new_kv_phase: u8 = if slot_len % 2 == 1 { 1 } else { 0 };
                         WpdsState::CollectionLoop {
                             result_src_idx: *result_src_idx,
@@ -6091,10 +5972,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // the slot so FireAction's `drain_collection(id)` succeeds. In
         // Lazy mode the live builder's `collection_stack` is mutated
         // directly by the action_fn at FireAction time — no delta needed.
+        // Phase 5.6-tail-B (2026-05-12): pre-tail this was Strict-only.
+        // Under always-eager, emit_start_collection ALWAYS pushes
+        // cursor.collection_stack (no more Lazy/Strict split), so we must
+        // ALWAYS pop on CollectionMarker pop to keep the mirror in sync
+        // with cursor.builder.collection_stack. The mirror itself is
+        // deleted in Step G.
         if let Some(symbol) = popped_symbol {
-            if symbol.kind == SymbolKind::CollectionMarker
-                && self.cursor_mode == CursorMode::Strict
-            {
+            if symbol.kind == SymbolKind::CollectionMarker {
                 // L12 follow-up B5 (2026-05-07): pop the cursor's
                 // collection_stack mirror to keep id allocation in
                 // sync with subsequent Strict-mode emit_start_collection
@@ -6232,14 +6117,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // cursor.builder.collection_stack retains slots until
                 // action drain, causing acc_id mismatch in multi-slot
                 // contexts.
-                let acc_id = match self.cursor_mode {
-                    CursorMode::Lazy => {
-                        self.builder.collection_stack_len().saturating_sub(1) as u8
-                    }
-                    CursorMode::Strict => {
-                        cursor.builder.collection_stack_len().saturating_sub(1) as u8
-                    }
-                };
+                // Phase 5.6-tail-B (2026-05-12): always route through
+                // cursor.builder. Pre-tail the Lazy arm read self.builder,
+                // but under always-eager Arc::make_mut the cursor's
+                // builder IS the authoritative live state and self.builder
+                // is stale.
+                let acc_id = cursor.builder.collection_stack_len().saturating_sub(1) as u8;
                 // Phase 2 / Redesign C follow-up (2026-05-11); Phase 4 #2
                 // (2026-05-12): skip splice when pred is a Class-3
                 // binder-internal CollectionMarker (the names accumulator
@@ -8750,9 +8633,14 @@ mod tests {
         );
     }
 
-    /// Stage 3.9 / ι Phase 4 regression-fix test (2026-05-01): same as
-    /// above but for Strict mode — verify the cursor logs a
-    /// `BuilderDelta::StartOptionalScope` delta.
+    /// Stage 3.9 / ι Phase 4 regression-fix test (2026-05-01); reshaped
+    /// in Phase 5.6-tail-B (2026-05-12): pre-tail this checked the
+    /// cursor's `pending_builder_ops` for a `BuilderDelta::StartOptionalScope`
+    /// entry. Under always-eager Arc::make_mut (Phase 5.3+) and emit-helper
+    /// unification (5.6-tail-B), emit_start_optional_scope no longer
+    /// journals — it mutates `cursor.builder.optional_stack` directly via
+    /// Arc::make_mut. The reshaped assertion observes the optional scope
+    /// directly on cursor.builder.
     #[test]
     fn push_optional_group_at_one_logs_delta_in_strict_mode() {
         let engine = ScriptedEngine::new(vec![
@@ -8776,15 +8664,14 @@ mod tests {
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork → Strict
         assert_eq!(w.cursor_mode(), CursorMode::Strict);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push (under fanout)
-        // The cursor's pending_builder_ops must contain a StartOptionalScope.
+        // The cursor's builder must show an open optional scope.
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
-        assert!(
-            cursors[0].pending_builder_ops.iter().any(|d| {
-                matches!(d, BuilderDelta::StartOptionalScope)
-            }),
-            "Push of OptionalGroupAt(1) in Strict must log StartOptionalScope delta; got {:?}",
-            cursors[0].pending_builder_ops,
+        assert_eq!(
+            cursors[0].builder.optional_stack_depth(),
+            1,
+            "Push of OptionalGroupAt(1) in Strict must open an optional scope \
+             on cursor.builder via emit_start_optional_scope's eager Arc::make_mut",
         );
     }
 
