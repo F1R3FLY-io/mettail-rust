@@ -53,6 +53,12 @@
 
 use std::any::Any;
 use std::collections::BTreeSet;
+// Phase 5.7 (2026-05-12): persistent OrdSet for cursor visited sets.
+// Replaces BTreeSet for `visited_recovery` and `visited_dispatch` —
+// these sets are cloned at every Fork (and at seed/Drop reset). The
+// im::OrdSet's Arc-based structural sharing makes clone O(1) instead
+// of O(N), aligning with Phase 5's persistent-builder cursor model.
+use im::OrdSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -911,7 +917,7 @@ pub struct BranchCursor<W: Semiring> {
     /// Delete at pos=5 → Insert at pos=5 → ...). Bounded in size by
     /// `recovery_depth` (each insert here corresponds to a depth
     /// increment).
-    pub visited_recovery: BTreeSet<(usize, u16, u8)>,
+    pub visited_recovery: OrdSet<(usize, u16, u8)>,
     /// B12 / Candidate E (2026-05-07): per-cursor configurations at
     /// which a CROSS-CAT-PROJECTION Fork has already fired on this
     /// cursor's path. Each entry is `(pos, state_cat_src_idx, cur_bp)`
@@ -928,7 +934,7 @@ pub struct BranchCursor<W: Semiring> {
     /// 2010). Mirrors `visited_recovery` propagation: cloned to each
     /// child on Fork, inserted with the parent's dispatch config
     /// after a projection Fork emission.
-    pub visited_dispatch: BTreeSet<(usize, u16, u8)>,
+    pub visited_dispatch: OrdSet<(usize, u16, u8)>,
     /// B13d-R Step 2 (2026-05-08): per-cursor memoization of
     /// `cursor_committed_ops_consistent`. The outer `Option` is
     /// uncomputed/computed; the inner `Option<bool>` is the tristate
@@ -1082,10 +1088,10 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // has not experienced any recovery, so depth 0 + empty
             // visited set.
             recovery_depth: 0,
-            visited_recovery: BTreeSet::new(),
+            visited_recovery: OrdSet::new(),
             // B12 / Candidate E (2026-05-07): seed cursor has not
             // dispatched any projection Fork yet — empty visited set.
-            visited_dispatch: BTreeSet::new(),
+            visited_dispatch: OrdSet::new(),
             // B13d-R Step 2 (2026-05-08): empty pending = Consistent.
             consistency_memo: std::cell::Cell::new(Some(Some(true))),
             // Phase 5.2 (2026-05-12): fresh empty Arc<SemanticBuilder>.
@@ -2224,11 +2230,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // book-keeping — the resolved parse path doesn't
                     // carry its ancestors' recovery history.
                     recovery_depth: 0,
-                    visited_recovery: BTreeSet::new(),
+                    visited_recovery: OrdSet::new(),
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-resolution singleton resets projection
                     // visited set.
-                    visited_dispatch: BTreeSet::new(),
+                    visited_dispatch: OrdSet::new(),
                     // B13d-R Step 2 (2026-05-08): post-resolution
                     // singleton has empty pending → Consistent memo.
                     consistency_memo: std::cell::Cell::new(Some(Some(true))),
@@ -3115,10 +3121,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
                     // post-Drop reset resets recovery book-keeping.
                     recovery_depth: 0,
-                    visited_recovery: BTreeSet::new(),
+                    visited_recovery: OrdSet::new(),
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-Drop reset clears projection visited set.
-                    visited_dispatch: BTreeSet::new(),
+                    visited_dispatch: OrdSet::new(),
                     // B13d-R Step 2 (2026-05-08): post-Drop reset has
                     // empty pending → Consistent memo.
                     consistency_memo: std::cell::Cell::new(Some(Some(true))),
@@ -8845,8 +8851,8 @@ mod tests {
             source_priority: 0,
             incoming_edge_stack: Vec::new(),
             recovery_depth: 0,
-            visited_recovery: BTreeSet::new(),
-            visited_dispatch: BTreeSet::new(),
+            visited_recovery: OrdSet::new(),
+            visited_dispatch: OrdSet::new(),
             consistency_memo: std::cell::Cell::new(None),
             // Phase 5.2 (2026-05-12): fresh empty Arc for the unit-test
             // cursor. The test exercises the `Clone` path on a cursor
