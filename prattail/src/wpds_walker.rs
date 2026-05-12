@@ -206,7 +206,7 @@ pub enum WpdsStepAction<W: Semiring> {
     /// Move the FSM into a new state without touching the GSS.
     Advance(WpdsState),
     /// B8 / Issue C (2026-05-09): Same as Advance, but logs a single
-    /// BuilderDelta effect to the cursor's pending_builder_ops before
+    /// BuilderDelta effect to the cursor's recovery_deltas before
     /// the state transition. Used by the Unwinding-OptionalGroupAt arm
     /// to splice a parsed Name into the Class 3 Names accumulator
     /// after a `ParamParse{collection: Some(_)}` inner step returns.
@@ -404,7 +404,7 @@ pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
     /// `Lazy` (default) means cursor[0] is the singleton canonical
     /// cursor and live builder mutations happen directly. `Strict`
     /// (after first Fork) means builder mutations route through
-    /// `pending_builder_ops` deltas and replay only on the lex-min
+    /// `recovery_deltas` deltas and replay only on the lex-min
     /// winner at EOI commit. Mode is set Lazy on construction/`reset()`,
     /// promoted to Strict on first `WpdsStepAction::Fork`, and stays
     /// Strict until `reset()` (L3 invariant: no reverse).
@@ -455,14 +455,14 @@ pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
 /// Stage 3.9 / ι Phase 4 (2026-05-01): always-cursor walker mode.
 ///
 /// `Lazy` is the unambiguous-parse fast-path: the walker maintains a
-/// singleton cursor (`branch_cursors[0]`) whose `pending_builder_ops` is
+/// singleton cursor (`branch_cursors[0]`) whose `recovery_deltas` is
 /// always empty; live-builder mutations happen directly. `Strict` is
-/// the post-Fork mode: cursors accumulate `pending_builder_ops` deltas
+/// the post-Fork mode: cursors accumulate `recovery_deltas` deltas
 /// that replay onto the live builder only when the lex-min winner
 /// commits at EOI.
 ///
 /// Invariants:
-/// - **L1** (Lazy admission): `mode == Lazy → cursors.len() == 1 && cursors[0].pending_builder_ops.is_empty()` at `apply_action` entry.
+/// - **L1** (Lazy admission): `mode == Lazy → cursors.len() == 1 && cursors[0].recovery_deltas.is_empty()` at `apply_action` entry.
 /// - **L2** (Lazy → Strict transition): first `WpdsStepAction::Fork` sets `mode = Strict`.
 /// - **L3** (no reverse): once Strict, stays Strict for the parse.
 /// - **L4** (reset between parses): `WpdsWalker::reset` re-allocates a fresh singleton cursor and sets `mode = Lazy`.
@@ -475,7 +475,7 @@ pub enum CursorMode {
 }
 
 /// Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard for Strict-mode
-/// cursors. If any cursor's `pending_builder_ops` exceeds this length,
+/// cursors. If any cursor's `recovery_deltas` exceeds this length,
 /// the walker transitions to `WpdsState::Error` instead of continuing
 /// to accumulate. Prevents pathological grammars from consuming
 /// unbounded memory in delta logs.
@@ -624,7 +624,7 @@ pub enum ForkActionKind {
     /// Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ, 2026-05-05) — atomic
     /// literal multi-arm Fork branch. Mirrors `WpdsStepAction::ConsumeAndPush
     /// { capture_token: true }`: emit_push_token captures the literal text
-    /// onto the cursor's pending_builder_ops/live builder, then push the
+    /// onto the cursor's recovery_deltas/live builder, then push the
     /// `branch.symbol` (the rule's Return marker) onto the GSS, then advance
     /// pos by 1. Used when codegen buckets atomic prefix arms by (pat, guard)
     /// and a bucket has ≥2 rules — the Fork emits one branch per rule with
@@ -672,7 +672,7 @@ pub enum ForkActionKind {
     /// `BuilderDelta` effect (typically
     /// `BuilderDelta::StartBinderScope { names: vec![] }`), gated on
     /// `peek_text == expected_text`. Pass → log effect to
-    /// pending_builder_ops, replace top of GSS, advance pos. Fail →
+    /// recovery_deltas, replace top of GSS, advance pos. Fail →
     /// no child allocated. Used by BinderListLoop's 2-branch bootstrap
     /// (empty-list + first-ident) so the empty-list branch only fires
     /// when the close delimiter is the next token.
@@ -748,7 +748,7 @@ pub enum ForkActionKind {
     /// Same as `GuardedConsumeBinderIdentAndReplace` (peek_kind=Ident
     /// gate, open-or-extend binder scope, GSS top replacement, pos++)
     /// but ALSO logs `effect` (typically `BuilderDelta::EndBinderScope`)
-    /// onto pending_builder_ops between the scope mutation and the GSS
+    /// onto recovery_deltas between the scope mutation and the GSS
     /// replace. Used for single-binder collapse where the lone ident
     /// closes the scope immediately — atomically captures the ident
     /// AND closes the scope in one Fork branch. AST surface unchanged:
@@ -781,7 +781,7 @@ where
 /// carries the branch's GSS tip, current input position, accumulated
 /// weight, the per-branch target state, and a pending-builder-op log.
 ///
-/// Step 3 (Fork plan F4): `pending_builder_ops` queues
+/// Step 3 (Fork plan F4): `recovery_deltas` queues
 /// [`BuilderDelta`]s representing walker-driven mutations to the live
 /// `SemanticBuilder` that must be deferred until a winning branch is
 /// chosen. Each cursor's deltas are replayed during `commit_winner`.
@@ -806,7 +806,7 @@ pub struct BranchCursor<W: Semiring> {
     /// of mutating the live `SemanticBuilder`. On `commit_winner` the
     /// surviving branch's deltas are replayed against the live builder in
     /// insertion order.
-    pub pending_builder_ops: Vec<BuilderDelta>,
+    pub recovery_deltas: Vec<BuilderDelta>,
     /// Option A (2026-04-28): cursor-local mirror of
     /// `SemanticBuilder.collection_stack`. Each `ConsumeAndPush(CollectionMarker)`
     /// or `Push(CollectionMarker)` allocates an id by appending an empty
@@ -911,12 +911,12 @@ pub struct BranchCursor<W: Semiring> {
     // `cursor_resolution_check`).
     /// Phase 5.2 (2026-05-12): per-cursor `Arc`-shared `SemanticBuilder`.
     /// Future anchor for the persistent-builder redesign — the runtime
-    /// still routes walker-driven mutations through `pending_builder_ops`
+    /// still routes walker-driven mutations through `recovery_deltas`
     /// (journal model). Phase 5.3 migrates emitter helpers to mutate
     /// `cursor.builder` directly via `Arc::make_mut`; Phase 5.4 drops the
     /// Hack #7 Fork prologue (`pre_fork_slots` donation) in favor of an
     /// O(1) `Arc::clone` per child; Phase 5.6 deletes
-    /// `pending_builder_ops` entirely.
+    /// `recovery_deltas` entirely.
     ///
     /// Today (Phase 5.2): the field is structurally present but NOT read
     /// or written by the engine. `BranchCursor::clone` bumps the Arc
@@ -928,7 +928,7 @@ pub struct BranchCursor<W: Semiring> {
     /// NOT part of `ConfigKey` — this is operational per-cursor state,
     /// not a merge-equivalence key. Merge tiebreak preserves the
     /// surviving cursor's builder by Vec-write semantics in
-    /// `merge_equivalent_cursors`, identical to how `pending_builder_ops`
+    /// `merge_equivalent_cursors`, identical to how `recovery_deltas`
     /// + `collection_stack` are kept today.
     pub builder: Arc<SemanticBuilder>,
 }
@@ -943,7 +943,7 @@ where
             .field("pos", &self.pos)
             .field("weight", &self.weight)
             .field("inner_state", &self.inner_state)
-            .field("pending_builder_ops_len", &self.pending_builder_ops.len())
+            .field("recovery_deltas_len", &self.recovery_deltas.len())
             // Phase 5.2 (2026-05-12): Arc strong count is the most useful
             // diagnostic — shows how many cursors share this builder
             // before the next mutation triggers copy-on-write.
@@ -956,7 +956,7 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
     fn clone(&self) -> Self {
         // Stage 3.6 / ι Phase 1 (2026-05-01): BranchCursor::clone is now
         // TOTAL across all field shapes:
-        // - `pending_builder_ops`: BuilderDelta is Clone (from Cleanup-4).
+        // - `recovery_deltas`: BuilderDelta is Clone (from Cleanup-4).
         // - `collection_stack: Vec<Vec<ActionArg>>`: ActionArg is Clone
         //   (from Stage 3.6 — `Term`/`Collection`/`Predicate` payloads
         //   are now `Arc<dyn Any + Send + Sync>`, structurally clonable).
@@ -974,7 +974,7 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
             pos: self.pos,
             weight: self.weight.clone(),
             inner_state: self.inner_state.clone(),
-            pending_builder_ops: self.pending_builder_ops.clone(),
+            recovery_deltas: self.recovery_deltas.clone(),
             collection_stack: self.collection_stack.clone(),
             collection_slots_allocated: self.collection_slots_allocated,
             source_priority: self.source_priority,
@@ -1028,7 +1028,7 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             pos,
             weight,
             inner_state,
-            pending_builder_ops: Vec::new(),
+            recovery_deltas: Vec::new(),
             collection_stack: (0..live_collection_stack_depth)
                 .map(|_| Vec::new())
                 .collect(),
@@ -1061,7 +1061,7 @@ impl<W: Semiring + Clone> BranchCursor<W> {
     }
 
     /// Allocate a Fork-child cursor inheriting the parent's
-    /// pending_builder_ops, collection_stack, incoming_edge_stack,
+    /// recovery_deltas, collection_stack, incoming_edge_stack,
     /// recovery_depth, and visited_recovery. The caller overrides
     /// `pos`, `weight`, `inner_state`, and `source_priority` from the
     /// branch's data.
@@ -1085,7 +1085,7 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             pos,
             weight,
             inner_state: new_state,
-            pending_builder_ops: parent.pending_builder_ops.clone(),
+            recovery_deltas: parent.recovery_deltas.clone(),
             collection_stack: parent.collection_stack.clone(),
             collection_slots_allocated: parent.collection_slots_allocated,
             source_priority,
@@ -1097,7 +1097,7 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // current dispatch config when this fork IS a projection Fork.
             visited_dispatch: parent.visited_dispatch.clone(),
             // B13d-R Step 2 (2026-05-08): inherit parent's memo (the child
-            // shares parent's pending_builder_ops at construction time;
+            // shares parent's recovery_deltas at construction time;
             // any subsequent push invalidates the child's memo).
             // Phase 5.2 (2026-05-12): O(1) Arc bump — the child shares
             // the parent's `SemanticBuilder` until a Phase 5.3+ mutator
@@ -1118,13 +1118,13 @@ impl<W: Semiring + Clone> BranchCursor<W> {
 /// `merge_equivalent_cursors` runs after `step_fanout` per step,
 /// collapsing cursors with the same `(state, gss_node, pos)` into a single
 /// cursor whose weight is the `Semiring::plus` of the inputs. The lex-min
-/// winner's `pending_builder_ops` and `collection_stack` are kept (deltas
+/// winner's `recovery_deltas` and `collection_stack` are kept (deltas
 /// are non-commutative; only the winning path's mutations execute on
 /// commit).
 ///
 /// **Verified (2026-05-01):** no hidden differentiators on BranchCursor.
 /// `selected_lex_alts` doesn't exist as a field (lex_alt_idx lives in
-/// `weight`'s 4-tuple). `pending_builder_ops` and `collection_stack` are
+/// `weight`'s 4-tuple). `recovery_deltas` and `collection_stack` are
 /// operational state — kept from the lex-min winner, not part of the key.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ConfigKey {
@@ -1177,7 +1177,7 @@ struct ConfigKey {
 /// pushes, binder-scope opens, action firings) directly to the live
 /// builder — doing so would corrupt the builder state for losing
 /// branches. Instead, each cursor logs deltas into its own
-/// `pending_builder_ops` queue. When the winning branch is chosen via
+/// `recovery_deltas` queue. When the winning branch is chosen via
 /// lex-min, `commit_winner` replays its deltas against the live builder.
 ///
 /// The six variants cover every walker-driven builder mutation:
@@ -1419,7 +1419,7 @@ pub enum BuilderDelta {
     /// application would leave the token stream in an inconsistent state.
     ///
     /// `actions` is `Arc<[RepairAction]>` for cheap clone on Fork-branch
-    /// allocation (each cursor's pending_builder_ops gets its own clone
+    /// allocation (each cursor's recovery_deltas gets its own clone
     /// of the Arc, sharing the slice contents).
     ///
     /// `base_pos` is the token position at which the first action applies;
@@ -1936,7 +1936,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Stage 6 G6+ (2026-05-02): build a flat per-cursor census of the
     /// current walker state for tracing/dump consumers.
     ///
-    /// Excludes heavy fields (`pending_builder_ops` contents,
+    /// Excludes heavy fields (`recovery_deltas` contents,
     /// `collection_stack` contents) — only their lengths. Cheap to call
     /// (~1 µs for typical cursor counts); only the cursor `Vec` clone is
     /// non-trivial. Does NOT mutate the walker.
@@ -1955,7 +1955,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 gss_node_id: c.node,
                 weight: c.weight.clone(),
                 source_priority: c.source_priority,
-                pending_ops_len: c.pending_builder_ops.len(),
+                pending_ops_len: c.recovery_deltas.len(),
                 collection_depth: c.collection_stack.len(),
             })
             .collect();
@@ -2168,7 +2168,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     pos: self.pos,
                     weight: self.weight.clone(),
                     inner_state: new_state.clone(),
-                    pending_builder_ops: Vec::new(),
+                    recovery_deltas: Vec::new(),
                     collection_stack: Vec::new(),
                     collection_slots_allocated: 0,
                     // Stage 3.12 Fix 2(ii) (2026-05-02): post-resolved
@@ -2353,7 +2353,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // states/weights. Only when none of those happens AND
                 // we're at EOI do we have a fixed-point parked frontier.
                 let prev_count = self.branch_cursors.len();
-                // Stage 3.12 Fix 3a (2026-05-02): include weight + pending_builder_ops
+                // Stage 3.12 Fix 3a (2026-05-02): include weight + recovery_deltas
                 // length in the fingerprint. Pre-3.12 a stable cursor whose
                 // weight or delta-log size was still changing wouldn't trigger
                 // progress_made, but the parse continued for max_steps. Now
@@ -2368,7 +2368,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 c.pos,
                                 c.inner_state.clone(),
                                 c.weight.clone(),
-                                c.pending_builder_ops.len(),
+                                c.recovery_deltas.len(),
                             )
                         })
                         .collect();
@@ -2383,7 +2383,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 || c.pos != *p
                                 || c.inner_state != *s
                                 || c.weight != *w
-                                || c.pending_builder_ops.len() != *ops_len
+                                || c.recovery_deltas.len() != *ops_len
                         });
                 if !progress_made {
                     // True fixed point — every cursor's engine.step
@@ -2618,7 +2618,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// is reached when the engine pops Returns up to the bottom.
     fn is_accepting_config(&self, cursor: &BranchCursor<W>) -> bool {
         // Phase 5.6-tail-A (2026-05-12): replaces the pre-tail
-        // `cursor_will_produce_term` dry-run over `pending_builder_ops`
+        // `cursor_will_produce_term` dry-run over `recovery_deltas`
         // with a direct shape check on `cursor.builder`. Under always-
         // eager Arc::make_mut (Phase 5.3+), the live builder IS the
         // authoritative state — broken FireActions transition the cursor
@@ -2670,7 +2670,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Stage 3.5b (2026-05-01): EOI-time variant of `commit_winner`.
     ///
     /// Identical to `commit_winner` semantically (replays winner's
-    /// pending_builder_ops, donates collection_stack, splices winner's
+    /// recovery_deltas, donates collection_stack, splices winner's
     /// `(node, pos, weight, inner_state)` into the live walker), but
     /// invoked exclusively from `resolve_at_end_of_input` rather than
     /// mid-stream from `step_fanout`. The implementation delegates to
@@ -2766,7 +2766,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// `apply_action_to_cursor` against `branch_cursors[0]` (the singleton
     /// in Lazy mode). Per-variant `emit_*` helpers branch on `cursor_mode`
     /// to direct-mutate the live builder (Lazy) or log to
-    /// `pending_builder_ops` (Strict). Single mutation surface; Class C
+    /// `recovery_deltas` (Strict). Single mutation surface; Class C
     /// structurally eliminated.
     ///
     /// Outcome handling:
@@ -2779,7 +2779,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     fn apply_action(&mut self, action: WpdsStepAction<W>, tokens: &dyn WpdsTokenSource) {
         // Phase 5.6-tail-B (2026-05-12): pre-tail this called
         // `debug_flush_lazy_invariant()` to assert L1 (Lazy mode implies
-        // singleton cursor with empty pending_builder_ops). Deleted with
+        // singleton cursor with empty recovery_deltas). Deleted with
         // the CursorMode enum — invariant is moot.
         // L5: terminal state is mode-irrelevant.
         if self.state.is_terminal() {
@@ -2806,7 +2806,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     pos: self.pos,
                     weight: W::one(),
                     inner_state: self.state.clone(),
-                    pending_builder_ops: Vec::new(),
+                    recovery_deltas: Vec::new(),
                     collection_stack: Vec::new(),
                     collection_slots_allocated: 0,
                     // Stage 3.12 Fix 2(ii) (2026-05-02): restored singleton
@@ -2876,7 +2876,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     /// Step 3 (Fork plan F5): per-cursor analog of `apply_action`. Mutates
     /// `cursor.{node,pos,weight,inner_state}` in place and logs walker-driven
-    /// builder mutations into `cursor.pending_builder_ops` instead of
+    /// builder mutations into `cursor.recovery_deltas` instead of
     /// touching the live `SemanticBuilder`.
     ///
     /// Returns a [`CursorOutcome`] describing whether the cursor is dead,
@@ -2907,7 +2907,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     Arc::make_mut(&mut cursor.builder),
                     &effect,
                 );
-                cursor.pending_builder_ops.push(effect);
+                // Phase 5.6-tail-D (2026-05-12): only recovery deltas
+                // land in the journal — non-recovery effects are already
+                // applied to cursor.builder above.
+                if Self::is_recovery_delta(&effect) {
+                    cursor.recovery_deltas.push(effect);
+                }
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
@@ -3293,18 +3298,18 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             // that landed in Strict mode.
                             //
                             // We allocate a child cursor first (with empty
-                            // pending_builder_ops + collection_stack
+                            // recovery_deltas + collection_stack
                             // mirror), THEN run side effects against the
                             // CHILD's cursor view. The child's mode is
                             // Strict (just promoted), so side effects log
-                            // deltas onto the child's pending_builder_ops.
+                            // deltas onto the child's recovery_deltas.
                             let mut symbol = branch.symbol;
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
-                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                recovery_deltas: cursor.recovery_deltas.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
                                 collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
@@ -3359,7 +3364,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos: pos_after,
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
-                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                recovery_deltas: cursor.recovery_deltas.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
                                 collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
@@ -3426,7 +3431,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos: pos_after,
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
-                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                recovery_deltas: cursor.recovery_deltas.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
                                 collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
@@ -3467,7 +3472,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos: pos_after,
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
-                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                recovery_deltas: cursor.recovery_deltas.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
                                 collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
@@ -3501,7 +3506,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos: pos_after,
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
-                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                recovery_deltas: cursor.recovery_deltas.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
                                 collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
@@ -3568,7 +3573,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos: pos_after,
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
-                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                recovery_deltas: cursor.recovery_deltas.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
                                 collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
@@ -3614,7 +3619,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos: pos_after,
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
-                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                recovery_deltas: cursor.recovery_deltas.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
                                 collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
@@ -3661,7 +3666,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos: pos_after,
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
-                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                recovery_deltas: cursor.recovery_deltas.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
                                 collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
@@ -3692,7 +3697,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 Arc::make_mut(&mut child.builder),
                                 &effect,
                             );
-                            child.pending_builder_ops.push(effect);
+                            // Phase 5.6-tail-D: recovery-only journal.
+                            if Self::is_recovery_delta(&effect) {
+                                child.recovery_deltas.push(effect);
+                            }
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
                                 &mut child,
@@ -3712,7 +3720,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos: pos_after,
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
-                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                recovery_deltas: cursor.recovery_deltas.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
                                 collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
@@ -3736,7 +3744,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 builder: Arc::clone(&cursor.builder),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
-                            child.pending_builder_ops.push(
+                            child.recovery_deltas.push(
                                 BuilderDelta::CommitLexAlternative {
                                     pos: child.pos,
                                     alt_idx,
@@ -3774,7 +3782,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos: pos_after,
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
-                                pending_builder_ops: cursor.pending_builder_ops.clone(),
+                                recovery_deltas: cursor.recovery_deltas.clone(),
                                 collection_stack: cursor.collection_stack.clone(),
                                 collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
@@ -3929,7 +3937,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         } => {
                             // L12 follow-up B2 (2026-05-07): peek_text
                             // equality guard wrapping ConsumeAndReplaceWithEffect.
-                            // Pass → log effect to pending_builder_ops,
+                            // Pass → log effect to recovery_deltas,
                             // replace top of GSS, advance pos. Fail →
                             // skip child allocation. Used by BinderListLoop's
                             // bootstrap empty-list branch (effect:
@@ -3957,7 +3965,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 Arc::make_mut(&mut child.builder),
                                 &effect,
                             );
-                            child.pending_builder_ops.push(effect);
+                            // Phase 5.6-tail-D: recovery-only journal.
+                            if Self::is_recovery_delta(&effect) {
+                                child.recovery_deltas.push(effect);
+                            }
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
                                 &mut child,
@@ -4080,7 +4091,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             // (ident gate, open/extend scope, replace
                             // top of GSS, pos++) but logs `effect`
                             // (typically BuilderDelta::EndBinderScope)
-                            // onto pending_builder_ops between scope
+                            // onto recovery_deltas between scope
                             // mutation and the GSS replace. Atomic
                             // capture+close so single-binder rules
                             // (Lambda Lam, ambient PNew single-binder,
@@ -4117,7 +4128,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 Arc::make_mut(&mut child.builder),
                                 &effect,
                             );
-                            child.pending_builder_ops.push(effect);
+                            // Phase 5.6-tail-D: recovery-only journal.
+                            if Self::is_recovery_delta(&effect) {
+                                child.recovery_deltas.push(effect);
+                            }
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
                                 &mut child,
@@ -4161,7 +4175,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 Arc::make_mut(&mut child.builder),
                                 &effect,
                             );
-                            child.pending_builder_ops.push(effect);
+                            // Phase 5.6-tail-D: recovery-only journal.
+                            if Self::is_recovery_delta(&effect) {
+                                child.recovery_deltas.push(effect);
+                            }
                             // Capture popped_symbol before pop.
                             let popped_symbol = self.gss
                                 .node(child.node)
@@ -4240,7 +4257,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                     Arc::make_mut(&mut child.builder),
                                     &effect,
                                 );
-                                child.pending_builder_ops.push(effect);
+                                if Self::is_recovery_delta(&effect) {
+                                    child.recovery_deltas.push(effect);
+                                }
                             }
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -4466,7 +4485,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// "Branch is done" states (per Plan agent F5 §4): `InfixLoop`,
     /// `Accepted`, `Unwinding`. These are the states where a forked branch
     /// has rejoined the main parse trunk — safe to commit the winning
-    /// branch's accumulated pending_builder_ops and resume there.
+    /// branch's accumulated recovery_deltas and resume there.
     fn cursor_resolution_check(&self, cursor: &BranchCursor<W>) -> CursorOutcome<W> {
         // Phase 5.5 (2026-05-12): cursors that hit Error state mid-step
         // (e.g., emit_fire_action's eager fire underflow) are Dropped so
@@ -4495,7 +4514,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// - **Case 1: all dropped** → walker enters `Error("all branches dropped")`.
     /// - **Case 2 / 3: at least one Resolved (and no still-Alive cursors)**
     ///   → pick lex-min winner via `Semiring::plus`-fold across resolved
-    ///   cursors, replay its `pending_builder_ops` against the live builder,
+    ///   cursors, replay its `recovery_deltas` against the live builder,
     ///   commit its `(node, pos, weight, inner_state)` to the walker.
     /// - **Case 4: still-Alive cursors remain** → keep iterating in the
     ///   `branch_cursors` vec; walker stays in `AmbiguityFanout`.
@@ -4519,16 +4538,16 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             let mut cursor = cursor;
             let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
             // Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard. Any
-            // cursor whose pending_builder_ops exceeds the limit is
+            // cursor whose recovery_deltas exceeds the limit is
             // marked Error and returned immediately. The fanout bails
             // out, preserving the offending cursor so resolve_at_end_of_input
             // returns ParseError with a diagnostic.
-            if cursor.pending_builder_ops.len() > STRICT_PENDING_OPS_LIMIT {
+            if cursor.recovery_deltas.len() > STRICT_PENDING_OPS_LIMIT {
                 self.state = WpdsState::Error {
                     message: format!(
-                        "ι Phase 6 runaway guard: cursor pending_builder_ops \
+                        "ι Phase 6 runaway guard: cursor recovery_deltas \
                          exceeded STRICT_PENDING_OPS_LIMIT ({} > {})",
-                        cursor.pending_builder_ops.len(),
+                        cursor.recovery_deltas.len(),
                         STRICT_PENDING_OPS_LIMIT,
                     ),
                 };
@@ -4570,7 +4589,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // Stage 3.5b (2026-05-01): WPDS configuration ⊕-merging. Two
         // cursors reaching the same `(state, gss_node, pos)` collapse
         // via `Semiring::plus`. The lex-min winner's operational state
-        // (`pending_builder_ops`, `collection_stack`) is kept (deltas
+        // (`recovery_deltas`, `collection_stack`) is kept (deltas
         // are non-commutative). Caps polynomial fanout in ambiguous
         // grammars vs the prior exponential branch count.
         self.merge_equivalent_cursors();
@@ -4622,7 +4641,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     ///
     /// Collapses cursors with the same `ConfigKey` (`state`, `gss_node`,
     /// `pos`) into a single cursor whose weight is the `Semiring::plus`
-    /// of the inputs. The operational state (`pending_builder_ops`,
+    /// of the inputs. The operational state (`recovery_deltas`,
     /// `collection_stack`) of the lex-min winner is kept; the loser's
     /// is discarded because deltas are non-commutative (e.g.,
     /// `PushIdent("x"); PushIdent("y")` cannot be merged with the reverse
@@ -4687,7 +4706,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // Phase 5.6-tail-A (2026-05-12): pre-tail this match
                     // also had a B13d-R/Resolution-R consistency override
                     // (`cursor_committed_ops_consistent` dry-run on the
-                    // cursor's pending_builder_ops). Under always-eager
+                    // cursor's recovery_deltas). Under always-eager
                     // Arc::make_mut (Phase 5.3+), broken cursors transition
                     // to `WpdsState::Error` at eager-fire time and are
                     // filtered by `cursor_resolution_check :: Drop`. By the
@@ -4810,7 +4829,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             // Phase 5.6-tail-A (2026-05-12): pre-tail this block had a
             // B13d-R/Resolution-R consistency promotion+override loop
             // (`cursor_committed_ops_consistent` dry-run on cursor.
-            // pending_builder_ops). Under always-eager Arc::make_mut
+            // recovery_deltas). Under always-eager Arc::make_mut
             // (Phase 5.3+), broken cursors transition to
             // `WpdsState::Error` at eager-fire time and are filtered by
             // `cursor_resolution_check :: Drop` BEFORE subsumption. By
@@ -4883,13 +4902,13 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     /// Step 3 (Fork plan F6): commit the winning branch.
     ///
-    /// Replays the winner's `pending_builder_ops` against the live
+    /// Replays the winner's `recovery_deltas` against the live
     /// `SemanticBuilder` in insertion order, then splices the winner's
     /// `(node, pos, weight, inner_state)` into the walker's live state.
     ///
     /// Stage 3.9 / ι Phase 4 (2026-05-01): preserves the always-non-empty
     /// `branch_cursors` invariant by writing the post-commit singleton
-    /// back to `branch_cursors[0]` (with cleared `pending_builder_ops`
+    /// back to `branch_cursors[0]` (with cleared `recovery_deltas`
     /// and `collection_stack` since those have already replayed onto the
     /// live builder). Pre-Phase-4 this method called `clear()`; that
     /// would now violate L4.
@@ -4954,7 +4973,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             Arc::new(SemanticBuilder::new()),
         ))
         .unwrap_or_else(|arc| (*arc).clone());
-        for delta in winner.pending_builder_ops {
+        for delta in winner.recovery_deltas {
             match delta {
                 // Phase 5.5: non-recovery deltas are NO-OPs at replay
                 // (already applied to cursor.builder which is now
@@ -5200,7 +5219,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             pos: winner.pos,
             weight: self.weight.clone(),
             inner_state: winner.inner_state,
-            pending_builder_ops: Vec::new(),
+            recovery_deltas: Vec::new(),
             collection_stack: Vec::new(),
             collection_slots_allocated: 0,
             // Stage 3.12 Fix 2(ii) (2026-05-02): preserve winner's
@@ -5220,7 +5239,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             visited_dispatch: winner.visited_dispatch,
             // B13d-R Step 2 (2026-05-08): post-commit singleton has
             // empty pending → Consistent memo (the winner's deltas
-            // were drained at replay; pending_builder_ops is now Vec::new()).
+            // were drained at replay; recovery_deltas is now Vec::new()).
             // Phase 5.2 (2026-05-12): preserve winner's Arc. The 5.2
             // engine doesn't read this field — but preserving it here
             // (vs reseting to fresh Arc) prepares for Phase 5.5 where
@@ -5308,6 +5327,27 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         if let Some(message) = outcome {
             self.state = WpdsState::Error { message };
         }
+    }
+
+    /// Phase 5.6-tail-D (2026-05-12): predicate for the recovery
+    /// subset of `BuilderDelta`. Recovery deltas mutate the walker's
+    /// `recovery_events` / `mutable_token_source` adapters — state OUTSIDE
+    /// cursor.builder — so their replay at commit_winner is mandatory.
+    /// Non-recovery deltas mutate the builder; under always-eager
+    /// `Arc::make_mut` (Phase 5.3+), they're applied to cursor.builder
+    /// at emit time and the journal entry is redundant. This predicate
+    /// gates the Fork-arm "effect" journal pushes: only recovery deltas
+    /// land in `cursor.recovery_deltas`.
+    #[inline(always)]
+    fn is_recovery_delta(delta: &BuilderDelta) -> bool {
+        matches!(
+            delta,
+            BuilderDelta::RecoveryEvent { .. }
+                | BuilderDelta::SubstituteToken { .. }
+                | BuilderDelta::InsertToken { .. }
+                | BuilderDelta::CommitLexAlternative { .. }
+                | BuilderDelta::ApplyRecoverySequence { .. }
+        )
     }
 
     /// Phase 5.5 (2026-05-12): apply a non-recovery BuilderDelta to the
@@ -5424,8 +5464,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     //
     // Each `emit_*` helper branches on `cursor_mode`:
     //   - Lazy:  mutate the live `SemanticBuilder` directly. The cursor's
-    //            `pending_builder_ops` stays empty (L1 invariant).
-    //   - Strict: log a `BuilderDelta` to `cursor.pending_builder_ops`.
+    //            `recovery_deltas` stays empty (L1 invariant).
+    //   - Strict: log a `BuilderDelta` to `cursor.recovery_deltas`.
     //             The live builder is untouched until commit_winner replays.
     //
     // Mode-agnostic helpers (`advance_cursor_pos`/`multiply_cursor_weight`/
@@ -5441,7 +5481,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     // Phase 5.6-tail-B (2026-05-12): debug_flush_lazy_invariant deleted —
     // the L1 invariant (Lazy mode implies singleton cursor with empty
-    // pending_builder_ops) is moot now that CursorMode and Lazy/Strict
+    // recovery_deltas) is moot now that CursorMode and Lazy/Strict
     // dispatch are gone (Step F finishes the enum removal).
 
     // ─── 11 mutation helpers ─────────────────────────────────────────────
@@ -5449,7 +5489,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     // Phase 5.6-tail-B (2026-05-12): all 14 helpers below collapse to a
     // single eager `Arc::make_mut(&mut cursor.builder).<method>(...)` call.
     // The pre-tail `match self.cursor_mode { Lazy => self.builder.<m>(...),
-    // Strict => cursor.pending_builder_ops.push(BuilderDelta::...) }`
+    // Strict => cursor.recovery_deltas.push(BuilderDelta::...) }`
     // dispatch is deleted: the cursor.builder IS the authoritative state
     // (Phase 5.3+), and self.builder is brought up-to-date via
     // `install_singleton_cursor_builder` at resolve time (and at any
@@ -6347,14 +6387,14 @@ pub enum CursorDropReason {
     IdleAtEoi,
     /// Cursor stuck in `Idle` mid-stream (no progress possible).
     IdleMidStream,
-    /// `pending_builder_ops` exceeded `STRICT_PENDING_OPS_LIMIT`.
+    /// `recovery_deltas` exceeded `STRICT_PENDING_OPS_LIMIT`.
     RunawayPendingOps,
     /// Beam pruning by `maybe_prune_frontier` discarded this cursor.
     BeamPruned,
 }
 
 /// A flat per-cursor snapshot for tracing/dump. Excludes heavy fields
-/// (pending_builder_ops contents, collection_stack contents) — only
+/// (recovery_deltas contents, collection_stack contents) — only
 /// their lengths. ~80 bytes flat (depends on W size + WpdsState).
 #[derive(Debug, Clone)]
 pub struct CursorSnapshot<W: Semiring> {
@@ -8097,7 +8137,7 @@ mod tests {
     }
 
     /// Cleanup 4 (Stage 3.5b 2026-05-01 update): a losing branch's
-    /// pending_builder_ops must NOT replay against the live builder.
+    /// recovery_deltas must NOT replay against the live builder.
     /// Two branches each `ConsumeAndPush` with `capture_token: true` +
     /// `Pop`. Lex-min picks rule_idx=0; commit_winner_at_eoi replays only
     /// the winner's PushToken delta. The losing cursor's PushToken
@@ -8177,11 +8217,11 @@ mod tests {
         // InfixLoop after their Pop.
         w.run_to_end_of_input(100, &token_src).expect("max_steps");
         // Resolve fires commit_winner_at_eoi(0) on the lex-min winner.
-        // The winner's pending_builder_ops replays exactly once; the
+        // The winner's recovery_deltas replays exactly once; the
         // loser's deltas are discarded with its cursor.
         let _ = w.resolve_at_end_of_input(&token_src);
         // Post-B13d-R (Candidate H, 2026-05-08): cursors whose
-        // pending_builder_ops produce only an untyped Token (no
+        // recovery_deltas produce only an untyped Token (no
         // FireAction to convert to a typed Term) are filtered from
         // the accepting set. The ScriptedEngine used here registers
         // no actions, so both cursors are rejected — resolve_at_end_of_input
@@ -8205,7 +8245,7 @@ mod tests {
     }
 
     /// Cleanup 4: `BranchCursor::clone()` must succeed when
-    /// `pending_builder_ops` contains a `PushPredicate(Arc<dyn Any>)`.
+    /// `recovery_deltas` contains a `PushPredicate(Arc<dyn Any>)`.
     /// This is a mechanical check — pre-cleanup the clone would panic
     /// via `clone_non_predicate`'s explicit panic on PushPredicate.
     #[test]
@@ -8216,7 +8256,7 @@ mod tests {
             pos: 0,
             weight: lex(1.0, 0, 0),
             inner_state: WpdsState::InfixLoop { cur_bp: 0 },
-            pending_builder_ops: vec![BuilderDelta::PushPredicate(
+            recovery_deltas: vec![BuilderDelta::PushPredicate(
                 Arc::new(BehavioralPred::Top) as Arc<dyn std::any::Any + Send + Sync>,
             )],
             collection_stack: Vec::new(),
@@ -8233,9 +8273,9 @@ mod tests {
             builder: Arc::new(SemanticBuilder::new()),
         };
         let cloned = cursor.clone();
-        assert_eq!(cloned.pending_builder_ops.len(), 1);
+        assert_eq!(cloned.recovery_deltas.len(), 1);
         assert!(
-            matches!(&cloned.pending_builder_ops[0], BuilderDelta::PushPredicate(_)),
+            matches!(&cloned.recovery_deltas[0], BuilderDelta::PushPredicate(_)),
             "cloned cursor must carry PushPredicate variant",
         );
     }
@@ -8366,7 +8406,7 @@ mod tests {
     // ══════════════════════════════════════════════════════════════════════
 
     /// L1: Lazy admission. After construction, mode = Lazy, cursors == 1,
-    /// pending_builder_ops empty.
+    /// recovery_deltas empty.
     #[test]
     fn phase4_lazy_admission_holds_after_construction() {
         let w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
@@ -8374,8 +8414,8 @@ mod tests {
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1, "L1: singleton cursor in Lazy");
         assert!(
-            cursors[0].pending_builder_ops.is_empty(),
-            "L1: pending_builder_ops empty in Lazy"
+            cursors[0].recovery_deltas.is_empty(),
+            "L1: recovery_deltas empty in Lazy"
         );
     }
 
@@ -8485,7 +8525,7 @@ mod tests {
         assert_eq!(*w.state(), WpdsState::Ready { min_bp: 0 });
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1, "L4: singleton after reset");
-        assert!(cursors[0].pending_builder_ops.is_empty());
+        assert!(cursors[0].recovery_deltas.is_empty());
     }
 
     /// L5: terminal state absorbs further actions regardless of mode.
@@ -8509,12 +8549,12 @@ mod tests {
         let engine = ScriptedEngine::new(vec![WpdsStepAction::Accept]);
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
-        // L6: Lazy mode at Accept; pending_builder_ops empty (no replay).
+        // L6: Lazy mode at Accept; recovery_deltas empty (no replay).
         assert_eq!(w.cursor_mode(), CursorMode::Lazy);
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
         assert!(
-            cursors[0].pending_builder_ops.is_empty(),
+            cursors[0].recovery_deltas.is_empty(),
             "L6: no deltas to replay"
         );
         assert_eq!(*w.state(), WpdsState::Accepted);
@@ -8549,7 +8589,7 @@ mod tests {
 
     /// Stage 3.9 / ι Phase 4 regression-fix test (2026-05-01); reshaped
     /// in Phase 5.6-tail-B (2026-05-12): pre-tail this checked the
-    /// cursor's `pending_builder_ops` for a `BuilderDelta::StartOptionalScope`
+    /// cursor's `recovery_deltas` for a `BuilderDelta::StartOptionalScope`
     /// entry. Under always-eager Arc::make_mut (Phase 5.3+) and emit-helper
     /// unification (5.6-tail-B), emit_start_optional_scope no longer
     /// journals — it mutates `cursor.builder.optional_stack` directly via
@@ -8611,7 +8651,7 @@ mod tests {
     }
 
     /// Helper inlining: a single Push in Lazy mode mutates the live GSS
-    /// without populating cursor.pending_builder_ops.
+    /// without populating cursor.recovery_deltas.
     #[test]
     fn phase4_helper_inlining_does_not_double_emit() {
         // Push a distinct symbol (rule_at) so GSS dedup doesn't collapse
@@ -8629,7 +8669,7 @@ mod tests {
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
         assert!(
-            cursors[0].pending_builder_ops.is_empty(),
+            cursors[0].recovery_deltas.is_empty(),
             "Lazy: live mutation, no delta"
         );
     }
@@ -8788,10 +8828,16 @@ mod tests {
         );
     }
 
-    /// Mechanism γ — `ConsumeAndReplaceWithEffect` logs the embedded delta
-    /// onto the child's pending_builder_ops before replacing top-of-GSS.
-    /// Used by Hack #3 BinderListLoop empty bootstrap to log
-    /// `BuilderDelta::StartBinderScope { names: vec![] }` on the empty branch.
+    /// Mechanism γ — `ConsumeAndReplaceWithEffect` applies the embedded
+    /// non-recovery delta to the child's `cursor.builder` (via
+    /// `apply_effect_to_builder`) before replacing top-of-GSS.
+    ///
+    /// Phase 5.6-tail-D (2026-05-12) reshape: pre-tail this checked the
+    /// child's `recovery_deltas` for a `BuilderDelta::StartBinderScope`
+    /// entry. Under recovery-only journaling, non-recovery effects are
+    /// applied to cursor.builder via Arc::make_mut directly — the journal
+    /// receives only recovery deltas. The reshaped assertion observes the
+    /// resulting binder-scope state on cursor.builder directly.
     #[test]
     fn fork_action_consume_and_replace_with_effect_logs_delta() {
         let effect = BuilderDelta::StartBinderScope { names: Vec::new() };
@@ -8819,13 +8865,21 @@ mod tests {
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
-        // Effect logged BEFORE replace — first delta in pending_builder_ops.
+        // ConsumeAndReplaceWithEffect's effect applied to cursor.builder
+        // via apply_effect_to_builder. StartBinderScope with empty names
+        // opens a binder scope at depth=0.
+        assert!(
+            cursors[0].builder.current_binder_scope().is_some(),
+            "ConsumeAndReplaceWithEffect with StartBinderScope effect must \
+             open a binder scope on cursor.builder",
+        );
         assert!(
             cursors[0]
-                .pending_builder_ops
-                .iter()
-                .any(|d| matches!(d, BuilderDelta::StartBinderScope { names } if names.is_empty())),
-            "ConsumeAndReplaceWithEffect must log the effect delta",
+                .builder
+                .current_binder_scope()
+                .map(|h| h.names.is_empty())
+                .unwrap_or(false),
+            "Opened scope must have the empty names from the StartBinderScope effect",
         );
     }
 
@@ -9463,7 +9517,7 @@ mod tests {
         w.set_mutable_token_source(&mut mutable_src);
         // Drive to end-of-input (sets up parked frontier in AmbiguityFanout),
         // then resolve to fire commit_winner_at_eoi which replays the winner's
-        // pending_builder_ops onto walker.recovery_events.
+        // recovery_deltas onto walker.recovery_events.
         let _ = w.run_to_end_of_input(50, &read_src);
         let _ = w.resolve_at_end_of_input(&read_src);
         w.clear_mutable_token_source();

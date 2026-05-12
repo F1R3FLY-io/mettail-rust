@@ -1462,7 +1462,7 @@ pub type SemanticActionFn = fn(&mut SemanticBuilder, args: Vec<ActionArg>);
 /// B13c / Candidate H (2026-05-08): extended with per-arg expected-input
 /// category indices and the action's output category. Used by
 /// `cursor_will_produce_term` (in `wpds_walker.rs`) to dry-run the
-/// FireAction sequence on a cursor's `pending_builder_ops` and decide
+/// FireAction sequence on a cursor's `recovery_deltas` and decide
 /// whether the cursor would produce a valid Term term at EOI commit.
 /// Cursors whose dry-run lands on empty/underflow/type-mismatched
 /// state are filtered from the accepting set BEFORE lex-min runs,
@@ -1677,7 +1677,7 @@ impl SemanticBuilder {
     /// Used by `WpdsWalker::is_accepting_config` to filter cursors whose
     /// live state would not yield a single Term at `take_dyn_result`.
     /// Replaces the pre-5.6-tail `cursor_will_produce_term` dry-run that
-    /// simulated the same property against `pending_builder_ops`; under
+    /// simulated the same property against `recovery_deltas`; under
     /// always-eager (Phase 5.3+), the live builder IS the authoritative
     /// state. The empty-stack arm mirrors the pre-tail "empty pending =
     /// Lazy short-circuit" branch — a cursor with no recorded activity
