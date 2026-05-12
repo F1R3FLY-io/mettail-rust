@@ -150,6 +150,21 @@ pub enum BinderPosition {
         /// Default: `true`. Single-binder collapse will construct with
         /// `false`.
         allow_multi: bool,
+        /// Phase 4 #2 (2026-05-12): rule-global collection-slot index
+        /// for the synthesized names accumulator (Class-3 ZIP-MAP-SEP
+        /// only — `collection_param_cat: Some(_)`). Encoded at the
+        /// CollectionMarker symbol's `bp` field at push time so the
+        /// walker's per-(src, rule, slot_idx) lookup
+        /// `is_class3_collection_per_slot` correctly distinguishes the
+        /// Class-3 slot from sibling Class-2 slots in the same rule
+        /// (e.g. PInputsTagged: ns:Vec(Name) — slot 0 (Class-3) +
+        /// tags:Vec(Proc) — slot 1 (Class-2)).
+        ///
+        /// For non-Class-3 BinderListLoop variants (PNew-style and
+        /// single-binder collapse): `slot_idx == 0` and the field is
+        /// informational only — no names accumulator is allocated, no
+        /// CollectionMarker carries this slot_idx.
+        slot_idx: u8,
     },
     /// `Param(name)` — sub-parse the param's category. After the parse
     /// returns, the marker advances to the next position. When the marker
@@ -513,6 +528,9 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                             collection_param_cat: None,
                             allow_empty: false,
                             allow_multi: false,
+                            // Phase 4 #2: collapsed single-binder has no
+                            // names accumulator; slot_idx is informational.
+                            slot_idx: 0,
                         });
                         action_args.push(ActionArgKind::BinderName);
                     }
@@ -572,6 +590,9 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                             // one) are permitted.
                             allow_empty: true,
                             allow_multi: true,
+                            // Phase 4 #2: PNew-style has no names accumulator;
+                            // slot_idx is informational.
+                            slot_idx: 0,
                         });
                         action_args.push(ActionArgKind::BinderList);
                         // Skip the close Literal at i+1 — it's already
@@ -732,6 +753,14 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     }
                 }
                 let binder_param_idx = binder_param_idx_opt?;
+                // Phase 4 #2 (2026-05-12): Class-3 ZIP-MAP-SEP allocates a
+                // synthesized names accumulator — it occupies a collection
+                // slot in the rule. Stamp `collection_slots_so_far` as the
+                // BinderListLoop's `slot_idx`, then increment so the next
+                // SimpleCollection (or another BinderListLoop) gets the
+                // correct successor slot_idx.
+                let slot_idx_here = collection_slots_so_far;
+                collection_slots_so_far += 1;
                 positions.push(BinderPosition::BinderListLoop {
                     separator: separator.clone(),
                     close,
@@ -744,6 +773,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     // (more than one) are permitted.
                     allow_empty: true,
                     allow_multi: true,
+                    slot_idx: slot_idx_here,
                 });
                 // Class 3 emits TWO action args: the synthesized Names
                 // accumulator drain + the binder list. Order: names first,
@@ -1143,6 +1173,7 @@ pub(crate) fn emit_binder_rule_body(
                         collection_param_cat,
                         allow_empty,
                         allow_multi,
+                        slot_idx,
                         ..
                     } => {
                         // Phase 5b: enter BinderListLoop sub-state. The
@@ -1256,10 +1287,19 @@ pub(crate) fn emit_binder_rule_body(
                                             // for the Names accumulator;
                                             // emit_push_side_effects allocates +
                                             // pushes CollectionId arg + opens
-                                            // BinderScope (is_class3_collection).
+                                            // BinderScope (is_class3_collection_per_slot).
+                                            //
+                                            // Phase 4 #2 (2026-05-12): use the
+                                            // BinderListLoop's `slot_idx` (not
+                                            // hardcoded 0) so that in multi-slot
+                                            // rules (Class-3 + Class-2 siblings),
+                                            // the per-slot predicate
+                                            // `is_class3_collection_per_slot`
+                                            // distinguishes this Class-3 slot
+                                            // from Class-2 sibling slots.
                                             mettail_prattail::wpds_walker::ForkBranch {
                                                 symbol: StackSymbolV2::collection_marker(
-                                                    #result_src_idx, #rule_idx, 0,
+                                                    #result_src_idx, #rule_idx, #slot_idx,
                                                 ),
                                                 weight: LexicographicWeight::from_cost(
                                                     mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
@@ -1816,6 +1856,7 @@ pub(crate) fn emit_binder_list_loop_body(
                     collection_param_cat,
                     allow_empty: _,
                     allow_multi: _,
+                    slot_idx: _,
                 } = position {
                     let pos = (idx + 1) as u8;
                     let next_pos = pos + 1;
