@@ -1666,6 +1666,35 @@ impl SemanticBuilder {
         self.active_arg_stack().is_empty()
     }
 
+    /// Phase 5.6-tail-A (2026-05-12): EOI-gate accessor. Returns `true`
+    /// iff the builder is in a terminal accepting shape: either (a) no
+    /// open optional scopes AND the main stack is empty (vacuously
+    /// viable — e.g. synthetic-engine recovery cursors that journal
+    /// effects but never push args), or (b) exactly one
+    /// `ActionArg::Term` on the main stack with no open optional scopes
+    /// (the normal Accepted shape).
+    ///
+    /// Used by `WpdsWalker::is_accepting_config` to filter cursors whose
+    /// live state would not yield a single Term at `take_dyn_result`.
+    /// Replaces the pre-5.6-tail `cursor_will_produce_term` dry-run that
+    /// simulated the same property against `pending_builder_ops`; under
+    /// always-eager (Phase 5.3+), the live builder IS the authoritative
+    /// state. The empty-stack arm mirrors the pre-tail "empty pending =
+    /// Lazy short-circuit" branch — a cursor with no recorded activity
+    /// has no falsifying evidence and is conservatively viable.
+    pub fn is_accepting_terminal(&self) -> bool {
+        if !self.optional_stack.is_empty() {
+            return false;
+        }
+        if self.stack.is_empty() {
+            return true;
+        }
+        if self.stack.len() != 1 {
+            return false;
+        }
+        matches!(self.stack.back(), Some(ActionArg::Term { .. }))
+    }
+
     /// Push a raw token onto the stack.
     pub fn push_token(&mut self, kind: TokenKind, text: String, pos: usize) {
         self.push_arg_internal(ActionArg::Token { kind, text, pos });

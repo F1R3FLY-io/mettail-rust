@@ -521,46 +521,15 @@ pub struct ForkBranch<W: Semiring> {
     pub action_kind: ForkActionKind,
 }
 
-/// B13d-R / Resolution R (2026-05-08): tristate result of the dry-run
-/// simulation over a cursor's `pending_builder_ops`. The simulation
-/// faithfully mirrors `commit_winner`'s replay against the runtime arg
-/// stack (main_stack + optional_stack of SemanticBuilder).
-///
-/// - `Consistent` → all FireActions encountered would succeed.
-///   `final_main_stack` and `final_optional_depth` describe the resulting
-///   active-stack state; `cursor_will_produce_term` checks for
-///   `final_main_stack.len() == 1 && final_optional_depth == 0`.
-/// - `DefinitelyBroken` → a logged FireAction would arity-underflow OR
-///   type-mismatch at runtime (action body's `into_term::<T>()` returns
-///   None and the action returns early without `push_term`). Monotone-
-///   stable: subsequent appends to pending_builder_ops cannot recover.
-/// - `Indeterminate` → simulation hit a delta whose semantic effect
-///   depends on payload values not available at the delta log alone
-///   (e.g., `PushToCollection` on an empty active stack — runtime is
-///   silent on this; we don't classify it as broken).
-#[derive(Debug)]
-enum DryRunState {
-    Consistent {
-        final_main_stack: Vec<Option<u16>>,
-        final_optional_depth: usize,
-    },
-    DefinitelyBroken {
-        kind: DryRunBrokenKind,
-    },
-    Indeterminate {
-        reason: &'static str,
-    },
-}
-
-#[derive(Debug)]
-enum DryRunBrokenKind {
-    /// FireAction's `pop_args(arity)` would underflow at runtime.
-    ArityUnderflow,
-    /// FireAction's `into_term::<Cat>()` would return None on at least
-    /// one arg slot whose `expected_input_cats[i]` is a non-ANY_CAT
-    /// category that doesn't match the popped tag.
-    TypeMismatch,
-}
+// Phase 5.6-tail-A (2026-05-12): DryRunState + DryRunBrokenKind +
+// cursor_dry_run_state + cursor_will_produce_term +
+// cursor_committed_ops_consistent + the B13d-R consistency-override
+// blocks in merge_equivalent_cursors / subsume_lex_dominated_cursors are
+// all deleted. Under Phase 5.3+'s always-eager Arc::make_mut path, the
+// cursor's live `builder` IS the authoritative state — there is no
+// pending-delta journal to dry-run. EOI gate goes via
+// `SemanticBuilder::is_accepting_terminal()`; broken-cursor filtering
+// happens at `cursor_resolution_check :: Drop` on `WpdsState::Error`.
 
 impl<W: Semiring> ForkBranch<W> {
     /// Stage 3.12 / Class A.i (2026-05-01): default constructor for
@@ -934,23 +903,12 @@ pub struct BranchCursor<W: Semiring> {
     /// child on Fork, inserted with the parent's dispatch config
     /// after a projection Fork emission.
     pub visited_dispatch: OrdSet<(usize, u16, u8)>,
-    /// B13d-R Step 2 (2026-05-08): per-cursor memoization of
-    /// `cursor_committed_ops_consistent`. The outer `Option` is
-    /// uncomputed/computed; the inner `Option<bool>` is the tristate
-    /// (Some(true) consistent / Some(false) definitely-broken / None
-    /// indeterminate).
-    ///
-    /// Per Claim 1 (append-only contract for pending_builder_ops,
-    /// verified by exhaustive grep), the dry-run is monotone:
-    /// `Some(false)` is sticky for the lifetime of the cursor; for
-    /// `Some(true)` and `None`, an append CAN flip them. Invalidate
-    /// (`set(None)`) at every `pending_builder_ops.push(...)` site.
-    ///
-    /// Initialized to `Some(Some(true))` (Consistent) at construction
-    /// because empty pending = consistent dry-run by definition.
-    /// `Cell` (not `RefCell`) because the value is `Copy`; no borrow
-    /// tracking needed.
-    pub consistency_memo: std::cell::Cell<Option<Option<bool>>>,
+    // Phase 5.6-tail-A (2026-05-12): `consistency_memo` field deleted.
+    // It memoized `cursor_committed_ops_consistent`, which is also
+    // deleted — the B13d-R/Resolution-R consistency override is
+    // unreachable under always-eager Arc::make_mut (broken cursors
+    // surface as `WpdsState::Error` and are dropped by
+    // `cursor_resolution_check`).
     /// Phase 5.2 (2026-05-12): per-cursor `Arc`-shared `SemanticBuilder`.
     /// Future anchor for the persistent-builder redesign — the runtime
     /// still routes walker-driven mutations through `pending_builder_ops`
@@ -1024,7 +982,6 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
             recovery_depth: self.recovery_depth,
             visited_recovery: self.visited_recovery.clone(),
             visited_dispatch: self.visited_dispatch.clone(),
-            consistency_memo: std::cell::Cell::new(self.consistency_memo.get()),
             builder: Arc::clone(&self.builder),
         }
     }
@@ -1092,7 +1049,6 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // dispatched any projection Fork yet — empty visited set.
             visited_dispatch: OrdSet::new(),
             // B13d-R Step 2 (2026-05-08): empty pending = Consistent.
-            consistency_memo: std::cell::Cell::new(Some(Some(true))),
             // Phase 5.2 (2026-05-12): fresh empty Arc<SemanticBuilder>.
             // The seed cursor's builder is independent of the walker's
             // live builder (the field is unused in 5.2 — see field
@@ -1143,7 +1099,6 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // B13d-R Step 2 (2026-05-08): inherit parent's memo (the child
             // shares parent's pending_builder_ops at construction time;
             // any subsequent push invalidates the child's memo).
-            consistency_memo: std::cell::Cell::new(parent.consistency_memo.get()),
             // Phase 5.2 (2026-05-12): O(1) Arc bump — the child shares
             // the parent's `SemanticBuilder` until a Phase 5.3+ mutator
             // forces copy-on-write via `Arc::make_mut`. This is the
@@ -2236,8 +2191,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     visited_dispatch: OrdSet::new(),
                     // B13d-R Step 2 (2026-05-08): post-resolution
                     // singleton has empty pending → Consistent memo.
-                    consistency_memo: std::cell::Cell::new(Some(Some(true))),
-                    // Phase 5.2 (2026-05-12): fresh empty Arc — the
+                            // Phase 5.2 (2026-05-12): fresh empty Arc — the
                     // BranchResolved write-back resets cursor state to
                     // a canonical post-resolution singleton; the
                     // walker.builder (live mutation surface in 5.2)
@@ -2662,16 +2616,16 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Idle parking branch satisfy the first two conditions; the third
     /// is reached when the engine pops Returns up to the bottom.
     fn is_accepting_config(&self, cursor: &BranchCursor<W>) -> bool {
-        // B13c / Candidate H (2026-05-08), activated by B13d-R
-        // (2026-05-08): builder-shape invariant. The C2-faithful
-        // `cursor_dry_run_state` correctly models Optional /
-        // PushToCollection scope semantics, so the previous false-
-        // positive concern (productive cross-cat-LHS cursors falsely
-        // classified as broken) is resolved. Cursors whose dry-run
-        // lands on Definitely_broken are filtered from the accepting
-        // set BEFORE lex-min. Indeterminate cases pass through (return
-        // true).
-        if !self.cursor_will_produce_term(cursor) {
+        // Phase 5.6-tail-A (2026-05-12): replaces the pre-tail
+        // `cursor_will_produce_term` dry-run over `pending_builder_ops`
+        // with a direct shape check on `cursor.builder`. Under always-
+        // eager Arc::make_mut (Phase 5.3+), the live builder IS the
+        // authoritative state — broken FireActions transition the cursor
+        // to `WpdsState::Error` at eager-fire time and are filtered by
+        // `cursor_resolution_check :: Drop`. The remaining condition is
+        // simply "does cursor.builder hold exactly one Term arg?" — the
+        // EOI gate that `take_dyn_result` would consult at commit.
+        if !cursor.builder.is_accepting_terminal() {
             return false;
         }
         match &cursor.inner_state {
@@ -2692,265 +2646,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             }
             _ => false,
         }
-    }
-
-    /// B13c / Candidate H (2026-05-08), refined as B13d-R Resolution R
-    /// (2026-05-08): dry-run the cursor's `pending_builder_ops` to
-    /// predict whether commit_winner's replay will produce a single
-    /// Term arg, returning a TRISTATE result via `cursor_dry_run_state`.
-    ///
-    /// `cursor_will_produce_term` is the EOI-gate variant: returns
-    /// `true` if the cursor would produce exactly one Term arg of any
-    /// category, `false` if a logged FireAction is provably broken
-    /// (arity-underflow / type-mismatch). Indeterminate cases return
-    /// `true` (conservative: don't filter on uncertainty at the EOI
-    /// gate).
-    ///
-    /// `cursor_committed_ops_consistent` is the merge/subsume override
-    /// variant: returns `Some(true)` for a viable cursor, `Some(false)`
-    /// for a Definitely_broken cursor, `None` for Indeterminate.
-    /// Override fires only on `Some(false)`; `None` falls through to
-    /// existing weight comparison.
-    ///
-    /// Both are derived from `cursor_dry_run_state`, the C2-faithful
-    /// virtual-stack simulation that mirrors `commit_winner`'s replay
-    /// over `pending_builder_ops`. Models:
-    /// - main_stack + optional_stack (mirrors SemanticBuilder's two-
-    ///   level active arg stack — Optional scopes route subsequent
-    ///   pushes to a separate inner Vec).
-    /// - PushToken/PushIdent/PushPredicate/PushCollectionId/
-    ///   PushOptionalAbsent → push `None` onto active stack.
-    /// - FireAction → pop arity entries from active stack, type-check
-    ///   each against `expected_input_cats[i]` (ANY_CAT skips check),
-    ///   push `Some(output_cat)` on success.
-    /// - SpliceIntoCollection / PushToCollection → pop 1 from active
-    ///   stack (target a collection accumulator outside the arg stack).
-    /// - StartOptionalScope → optional_stack.push(Vec::new()) — opens
-    ///   a separate active arg cursor.
-    /// - FinalizeOptionalScopePresent → optional_stack.pop() — captures
-    ///   the entire inner buffer; pushes ONE Optional arg (None tag)
-    ///   onto the next-outer active stack.
-    /// - All other deltas (StartBinderScope, FinalizeCollection,
-    ///   SeedLiveCollectionStack, RecoveryEvent, SubstituteToken,
-    ///   InsertToken, CommitLexAlternative, ApplyRecoverySequence,
-    ///   StartCollection) → no effect on active arg stack.
-    fn cursor_dry_run_state(&self, cursor: &BranchCursor<W>) -> DryRunState {
-        if cursor.pending_builder_ops.is_empty() {
-            // Lazy-mode short-circuit: live builder is canonical.
-            return DryRunState::Consistent {
-                final_main_stack: Vec::new(),
-                final_optional_depth: 0,
-            };
-        }
-        // Two parallel virtual stacks mirror the runtime:
-        //   - main_stack: SemanticBuilder.stack (Option<u16> tags)
-        //   - optional_stack: SemanticBuilder.optional_stack (each entry is a Vec<Option<u16>>)
-        let mut main_stack: Vec<Option<u16>> = Vec::with_capacity(8);
-        let mut optional_stack: Vec<Vec<Option<u16>>> = Vec::new();
-        for delta in cursor.pending_builder_ops.iter() {
-            match delta {
-                BuilderDelta::PushToken { .. }
-                | BuilderDelta::PushIdent { .. }
-                | BuilderDelta::PushPredicate(_)
-                | BuilderDelta::PushCollectionId { .. }
-                | BuilderDelta::PushOptionalAbsent => {
-                    let active = if let Some(top) = optional_stack.last_mut() {
-                        top
-                    } else {
-                        &mut main_stack
-                    };
-                    active.push(None);
-                }
-                BuilderDelta::FireAction { symbol } => {
-                    let action = match self.engine.action_for(
-                        symbol.category_src_idx,
-                        symbol.rule_index_in_category,
-                    ) {
-                        Some(a) => a,
-                        // Unknown action — be conservative and skip.
-                        None => continue,
-                    };
-                    let arity = action.arity as usize;
-                    let active_len = if let Some(top) = optional_stack.last() {
-                        top.len()
-                    } else {
-                        main_stack.len()
-                    };
-                    if active_len < arity {
-                        // B13d-R correction (2026-05-08): underflow is
-                        // INDETERMINATE, not DefinitelyBroken. The
-                        // cursor's pending_builder_ops doesn't include
-                        // args pushed to the live builder BEFORE a
-                        // Lazy→Strict transition; my virt may be shorter
-                        // than the runtime active stack. At commit time,
-                        // the live's pre-fork stack provides the missing
-                        // args and the FireAction may succeed.
-                        // TypeMismatch (below) IS DefinitelyBroken
-                        // because it fires only when virt.top is `Some(_)`
-                        // — a known type from THIS cursor's prior
-                        // FireAction, not invisible live state.
-                        return DryRunState::Indeterminate {
-                            reason: "FireAction arity exceeds dry-run virt length \
-                                     — pre-fork live state may fill the gap",
-                        };
-                    }
-                    let active = if let Some(top) = optional_stack.last_mut() {
-                        top
-                    } else {
-                        &mut main_stack
-                    };
-                    let popped_start = active.len() - arity;
-                    // Type-check each arg against expected_input_cats.
-                    // arg[i] in expected_input_cats matches the i-th
-                    // popped arg in argument order (action body iterates
-                    // args.into_iter() so arg0 was pushed FIRST → it's
-                    // at popped_start, arg1 at popped_start+1, etc.).
-                    let mut mismatch = false;
-                    for i in 0..arity {
-                        let popped = active[popped_start + i];
-                        let expected = action
-                            .expected_input_cats
-                            .get(i)
-                            .copied()
-                            .unwrap_or(crate::wpds_runtime::ANY_CAT);
-                        if expected == crate::wpds_runtime::ANY_CAT {
-                            continue;
-                        }
-                        match popped {
-                            Some(actual) if actual == expected => continue,
-                            _ => {
-                                mismatch = true;
-                                break;
-                            }
-                        }
-                    }
-                    if mismatch {
-                        return DryRunState::DefinitelyBroken {
-                            kind: DryRunBrokenKind::TypeMismatch,
-                        };
-                    }
-                    active.truncate(popped_start);
-                    active.push(Some(action.output_cat));
-                }
-                BuilderDelta::SpliceIntoCollection { .. }
-                | BuilderDelta::PushToCollection { .. } => {
-                    // Runtime: active.pop() and append to collection_stack[id].
-                    // (Resolution R defect-fix #1: PushToCollection now
-                    // also pops; was a no-op pre-R.)
-                    let active = if let Some(top) = optional_stack.last_mut() {
-                        top
-                    } else {
-                        &mut main_stack
-                    };
-                    if active.is_empty() {
-                        // Runtime push_to_collection silently no-ops on
-                        // empty active; we cannot tell from the log alone
-                        // whether this was a logic error or a benign
-                        // edge case. Indeterminate.
-                        return DryRunState::Indeterminate {
-                            reason: "PushToCollection/SpliceIntoCollection pop on empty active stack",
-                        };
-                    }
-                    active.pop();
-                }
-                BuilderDelta::StartOptionalScope => {
-                    // Runtime: optional_stack.push(Vec::new()).
-                    // (Resolution R defect-fix #2: was no-op pre-R.)
-                    optional_stack.push(Vec::new());
-                }
-                BuilderDelta::FinalizeOptionalScopePresent => {
-                    // Runtime: pop entire inner Vec, wrap as Optional(Some(inner)),
-                    // push ONE Optional arg onto next-outer active stack.
-                    // (Resolution R defect-fix #3: was virt.pop() pre-R.)
-                    if optional_stack.pop().is_none() {
-                        return DryRunState::Indeterminate {
-                            reason: "FinalizeOptionalScopePresent without matching StartOptionalScope",
-                        };
-                    }
-                    let active = if let Some(top) = optional_stack.last_mut() {
-                        top
-                    } else {
-                        &mut main_stack
-                    };
-                    active.push(None);
-                }
-                // Recovery events, lex alternatives, SeedLiveCollectionStack,
-                // FinalizeCollection (drains accumulator outside the arg stack),
-                // StartBinderScope (separate binder_scopes substrate),
-                // StartCollection (separate collection_stack substrate),
-                // ApplyRecoverySequence, SubstituteToken, InsertToken,
-                // CommitLexAlternative, RecoveryEvent — no effect on
-                // active arg stack.
-                _ => {}
-            }
-        }
-        DryRunState::Consistent {
-            final_main_stack: main_stack,
-            final_optional_depth: optional_stack.len(),
-        }
-    }
-
-    /// EOI-gate variant of `cursor_dry_run_state`: returns `true` if the
-    /// cursor's pending_builder_ops would replay cleanly AND end with
-    /// exactly one Term tag in the main stack (no leftover optional
-    /// scope). Indeterminate returns `true` (conservative; don't filter
-    /// on uncertainty).
-    fn cursor_will_produce_term(&self, cursor: &BranchCursor<W>) -> bool {
-        match self.cursor_dry_run_state(cursor) {
-            DryRunState::Consistent {
-                final_main_stack,
-                final_optional_depth,
-            } => {
-                // Empty pending = Lazy mode; live builder canonical.
-                if final_main_stack.is_empty() && final_optional_depth == 0 {
-                    return true;
-                }
-                final_optional_depth == 0
-                    && final_main_stack.len() == 1
-                    && final_main_stack[0].is_some()
-            }
-            DryRunState::DefinitelyBroken { .. } => false,
-            DryRunState::Indeterminate { .. } => true,
-        }
-    }
-
-    /// B13d-R / Resolution R (2026-05-08): tristate consistency oracle
-    /// for the merge/subsume override.
-    ///
-    /// Returns:
-    /// - `Some(true)`  → cursor's pending_builder_ops will replay cleanly
-    ///   at commit_winner (no arity underflow, no type mismatch). Whether
-    ///   it produces a valid Term is a separate question handled by
-    ///   `cursor_will_produce_term` at the EOI gate.
-    /// - `Some(false)` → at least one logged FireAction will hit
-    ///   `pop_args` underflow OR `into_term` early-return at runtime.
-    ///   By monotonicity (`pending_builder_ops` is append-only), this
-    ///   judgment is stable for all subsequent appends.
-    /// - `None` → simulation hit an indeterminate delta; caller MUST
-    ///   fall back to weight comparison.
-    ///
-    /// The override at `merge_equivalent_cursors` /
-    /// `subsume_lex_dominated_cursors` fires ONLY when EXACTLY ONE
-    /// cursor returns `Some(false)`. `Some(true)` and `None` are both
-    /// treated as "viable" — we never override against weight on
-    /// Indeterminate.
-    fn cursor_committed_ops_consistent(&self, cursor: &BranchCursor<W>) -> Option<bool> {
-        // B13d-R Step 2 (2026-05-08): per-cursor memoization.
-        // `pending_builder_ops` is append-only (verified by exhaustive
-        // grep); the dry-run is therefore monotone: `Some(false)` is
-        // sticky for the lifetime of the cursor; `Some(true)` and
-        // `None` can flip on push, so the memo is invalidated at every
-        // push site (`set(None)`).
-        if let Some(cached) = cursor.consistency_memo.get() {
-            return cached;
-        }
-        let result = match self.cursor_dry_run_state(cursor) {
-            DryRunState::Consistent { .. } => Some(true),
-            DryRunState::DefinitelyBroken { .. } => Some(false),
-            DryRunState::Indeterminate { .. } => None,
-        };
-        cursor.consistency_memo.set(Some(result));
-        result
     }
 
     /// Stage 3.12 fix (2026-05-02): "logical EOI" — true when the
@@ -3126,8 +2821,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     visited_dispatch: OrdSet::new(),
                     // B13d-R Step 2 (2026-05-08): post-Drop reset has
                     // empty pending → Consistent memo.
-                    consistency_memo: std::cell::Cell::new(Some(Some(true))),
-                    // Phase 5.2 (2026-05-12): fresh empty Arc — the
+                            // Phase 5.2 (2026-05-12): fresh empty Arc — the
                     // post-Drop fresh singleton has no Fork-ancestor
                     // builder to inherit. Live mutations continue to
                     // flow through `self.builder` (Lazy mode); the
@@ -3185,7 +2879,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             WpdsStepAction::AdvanceWithEffect { new_state, effect } => {
                 // B8 / Issue C (2026-05-09): log effect to pending ops,
                 // invalidate consistency memo, then advance state.
-                cursor.consistency_memo.set(None);
                 // Phase 5.5 (2026-05-12): eagerly apply effect to
                 // cursor.builder so post-install state reflects the
                 // mutation. Without this, the journaled effect would
@@ -3427,8 +3120,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // (which are already in cursor.builder).
                 if self.cursor_mode == CursorMode::Lazy {
                     let pre_fork_len = self.builder.collection_stack_len();
-                    cursor.consistency_memo.set(None);
-                    cursor.collection_slots_allocated = pre_fork_len as u8;
+                        cursor.collection_slots_allocated = pre_fork_len as u8;
                     cursor.collection_stack = (0..pre_fork_len)
                         .map(|_| Vec::new())
                         .collect();
@@ -3656,7 +3348,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
-                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -3711,7 +3402,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
-                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -3777,7 +3467,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
-                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -3822,7 +3511,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
-                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -3860,7 +3548,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
-                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -3931,7 +3618,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
-                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -3978,7 +3664,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
-                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -4029,7 +3714,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
-                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -4037,7 +3721,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 builder: Arc::clone(&cursor.builder),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
-                            child.consistency_memo.set(None);
                             // Phase 5.5 (2026-05-12): eagerly apply effect
                             // to child.builder via Arc::make_mut so the
                             // post-install state has these mutations.
@@ -4085,7 +3768,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
-                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -4093,7 +3775,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 builder: Arc::clone(&cursor.builder),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
-                            child.consistency_memo.set(None);
                             child.pending_builder_ops.push(
                                 BuilderDelta::CommitLexAlternative {
                                     pos: child.pos,
@@ -4149,7 +3830,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
-                                consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -4321,7 +4001,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 child_source_priority,
                             );
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
-                            child.consistency_memo.set(None);
                             // Phase 5.5 (2026-05-12): eagerly apply effect
                             // to child.builder via Arc::make_mut so the
                             // post-install state has these mutations.
@@ -4494,7 +4173,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             } else {
                                 self.emit_extend_binder_scope(&mut child, text.clone());
                             }
-                            child.consistency_memo.set(None);
                             Self::apply_effect_to_builder(
                                 Arc::make_mut(&mut child.builder),
                                 &effect,
@@ -4542,7 +4220,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
-                            child.consistency_memo.set(None);
                             Self::apply_effect_to_builder(
                                 Arc::make_mut(&mut child.builder),
                                 &effect,
@@ -4624,7 +4301,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
-                            child.consistency_memo.set(None);
                             for effect in effects {
                                 Self::apply_effect_to_builder(
                                     Arc::make_mut(&mut child.builder),
@@ -5039,10 +4715,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             std::collections::HashMap::with_capacity(self.branch_cursors.len());
         let mut merged: Vec<BranchCursor<W>> =
             Vec::with_capacity(self.branch_cursors.len());
-        // B13d-R (2026-05-08): drain into a local Vec FIRST so subsequent
-        // `self.cursor_committed_ops_consistent(...)` calls (which take
-        // `&self`) don't conflict with the mutable borrow of
-        // `self.branch_cursors`.
         let drained: Vec<BranchCursor<W>> = self.branch_cursors.drain(..).collect();
         for cursor in drained {
             let key = ConfigKey {
@@ -5081,53 +4753,20 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // semantics of `LexicographicWeight::plus` were
                     // order-dependent on insertion timing.
                     //
-                    // B13d-R / Resolution R (2026-05-08): consistency
-                    // override. If EXACTLY ONE cursor is provably broken
-                    // at commit_winner replay (Definitely_broken via
-                    // cursor_committed_ops_consistent), the other wins
-                    // regardless of weight. Two consistent or two
-                    // Indeterminate / mixed cases fall through to the
-                    // weight + source_priority chain. This preserves
-                    // genuine ambiguity (two consistent cursors compete
-                    // by lex-min) while preventing silent loss of a
-                    // productive cursor against a dead-on-arrival
-                    // sibling.
-                    let existing_consistent =
-                        self.cursor_committed_ops_consistent(&merged[idx]);
-                    let cursor_consistent =
-                        self.cursor_committed_ops_consistent(&cursor);
-                    // B13d-R Step 3 (2026-05-08): shape-gate the override.
-                    // Pre-B13d-R, the weight gate paired only shape-
-                    // compatible cursors at the same ConfigKey (by GSS
-                    // push/pop invariants — `incoming_edge` in the strict
-                    // key implies congruent collection-stack history).
-                    // The B13d-R override now must explicitly reinstate
-                    // that pairing: when shapes diverge, fall through to
-                    // the pre-B13d-R weight + source_priority chain.
-                    // The `debug_assert_eq!` at line 4319 documents the
-                    // invariant; the shape guard reinstates it for the
-                    // override path. Without this guard, a consistency-
-                    // promoted cursor with mismatched collection_stack
-                    // depth corrupts commit_winner replay.
-                    let consistency_override: Option<bool> =
-                        if merged[idx].collection_stack.len()
-                            != cursor.collection_stack.len()
-                        {
-                            None
-                        } else {
-                            match (existing_consistent, cursor_consistent) {
-                                (Some(false), Some(false)) => None,
-                                (Some(false), Some(true)) | (Some(false), None) => Some(true),
-                                (Some(true), Some(false)) | (None, Some(false)) => Some(false),
-                                _ => None,
-                            }
-                        };
-                    let cursor_wins = match consistency_override {
-                        Some(verdict) => verdict,
-                        None => weight_strict_win
-                            || (weight_tied
-                                && cursor.source_priority < merged[idx].source_priority),
-                    };
+                    // Phase 5.6-tail-A (2026-05-12): pre-tail this match
+                    // also had a B13d-R/Resolution-R consistency override
+                    // (`cursor_committed_ops_consistent` dry-run on the
+                    // cursor's pending_builder_ops). Under always-eager
+                    // Arc::make_mut (Phase 5.3+), broken cursors transition
+                    // to `WpdsState::Error` at eager-fire time and are
+                    // filtered by `cursor_resolution_check :: Drop`. By the
+                    // time a cursor reaches `merge_equivalent_cursors`, it
+                    // is by construction "consistent" (its cursor.builder
+                    // is a valid live state). The weight + source_priority
+                    // chain is the sole tiebreak.
+                    let cursor_wins = weight_strict_win
+                        || (weight_tied
+                            && cursor.source_priority < merged[idx].source_priority);
                     if cursor_wins {
                         debug_assert_eq!(
                             merged[idx].collection_stack.len(),
@@ -5237,51 +4876,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     best_idx = idx;
                 }
             }
-            // B13d-R / Resolution R (2026-05-08): if best_idx is
-            // Definitely_broken at commit-replay AND any sibling is
-            // Definitely_consistent, promote a consistent sibling to
-            // best_idx and mark the broken best for drop. This handles
-            // the case where lex-min weight picks a broken cursor over
-            // a consistent one — the consistent cursor's productive
-            // pending_builder_ops must survive.
-            let best_consistent_initial =
-                self.cursor_committed_ops_consistent(&self.branch_cursors[best_idx]);
-            if matches!(best_consistent_initial, Some(false)) {
-                let mut promoted: Option<usize> = None;
-                for &idx in idxs {
-                    if idx == best_idx {
-                        continue;
-                    }
-                    if matches!(
-                        self.cursor_committed_ops_consistent(&self.branch_cursors[idx]),
-                        Some(true),
-                    ) {
-                        promoted = Some(idx);
-                        break;
-                    }
-                }
-                if let Some(new_best) = promoted {
-                    drop_set.insert(best_idx);
-                    best_idx = new_best;
-                }
-            }
+            // Phase 5.6-tail-A (2026-05-12): pre-tail this block had a
+            // B13d-R/Resolution-R consistency promotion+override loop
+            // (`cursor_committed_ops_consistent` dry-run on cursor.
+            // pending_builder_ops). Under always-eager Arc::make_mut
+            // (Phase 5.3+), broken cursors transition to
+            // `WpdsState::Error` at eager-fire time and are filtered by
+            // `cursor_resolution_check :: Drop` BEFORE subsumption. By
+            // construction, all cursors here are "consistent" — the
+            // promotion and broken-sibling drop are unreachable.
             let best_w = self.branch_cursors[best_idx].weight;
             let best_p = self.branch_cursors[best_idx].source_priority;
-            // B13d-R Step 1 (2026-05-08): hoist `best_consistent` out
-            // of the per-sibling loop. `best_idx` is finalized by the
-            // promotion-scan above; computing `best_consistent` once
-            // is algebraically identical to recomputing it per sibling
-            // (the dry-run is a deterministic function of pending_
-            // builder_ops, and best_idx's pending_builder_ops is
-            // unchanged within the per-sibling loop).
-            //
-            // Pre-Step-1 the inner loop made 2 cursor_committed_ops_
-            // consistent calls per sibling × O(M) per call (M =
-            // pending_builder_ops.len(), capped only at 1M). Per
-            // group of k cursors this was O(k×M) redundant work.
-            // Post-Step-1 it's O(M) once + O(M) per sibling.
-            let best_consistent =
-                self.cursor_committed_ops_consistent(&self.branch_cursors[best_idx]);
             for &idx in idxs {
                 if idx == best_idx {
                     continue;
@@ -5290,20 +4895,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     continue;
                 }
                 let c = &self.branch_cursors[idx];
-                // B13d-R / Resolution R (2026-05-08): consistency
-                // override at subsumption. If best is consistent and
-                // c is broken, drop c regardless of weight. Mixed
-                // (Indeterminate / Some(true) / Some(false)) cases
-                // fall through to existing strict-domination check.
-                let c_consistent = self.cursor_committed_ops_consistent(c);
-                let drop_by_consistency = matches!(
-                    (best_consistent, c_consistent),
-                    (Some(true), Some(false)) | (None, Some(false))
-                );
-                if drop_by_consistency {
-                    drop_set.insert(idx);
-                    continue;
-                }
                 // Strict domination: `best.plus(c) == best` AND `best != c`.
                 // The first clause is "best is at-or-better than c"; the
                 // second clause excludes ties (handled by merge_equivalent_
@@ -5696,7 +5287,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             // B13d-R Step 2 (2026-05-08): post-commit singleton has
             // empty pending → Consistent memo (the winner's deltas
             // were drained at replay; pending_builder_ops is now Vec::new()).
-            consistency_memo: std::cell::Cell::new(Some(Some(true))),
             // Phase 5.2 (2026-05-12): preserve winner's Arc. The 5.2
             // engine doesn't read this field — but preserving it here
             // (vs reseting to fresh Arc) prepares for Phase 5.5 where
@@ -5955,7 +5545,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             CursorMode::Lazy => self.builder.push_token(kind, text, pos),
             CursorMode::Strict => {
                 // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
-                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::PushToken { kind, text, pos });
@@ -5970,7 +5559,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_ident(name, pos),
             CursorMode::Strict => {
-                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::PushIdent { name, pos });
@@ -5990,7 +5578,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_predicate_arc(pred),
             CursorMode::Strict => {
-                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::PushPredicate(pred));
@@ -6005,7 +5592,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.start_binder_scope(names),
             CursorMode::Strict => {
-                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::StartBinderScope { names });
@@ -6020,7 +5606,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.extend_binder_scope(name),
             CursorMode::Strict => {
-                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::ExtendBinderScope { name });
@@ -6071,7 +5656,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     self.state = err;
                     return;
                 }
-                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::FireAction { symbol });
@@ -6121,7 +5705,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // SpliceIntoCollection / PushToCollection / FinalizeCollection
                 // deltas operate on indices live doesn't have.
                 // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
-                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::StartCollection);
@@ -6137,7 +5720,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_collection_id(id),
             CursorMode::Strict => {
-                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::PushCollectionId { id });
@@ -6154,7 +5736,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_to_collection(id),
             CursorMode::Strict => {
-                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::SpliceIntoCollection { id });
@@ -6169,7 +5750,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.start_optional_scope(),
             CursorMode::Strict => {
-                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::StartOptionalScope);
@@ -6282,7 +5862,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.finalize_optional_scope_present(),
             CursorMode::Strict => {
-                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::FinalizeOptionalScopePresent);
@@ -6297,7 +5876,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_optional_absent(),
             CursorMode::Strict => {
-                cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::PushOptionalAbsent);
@@ -6561,7 +6139,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     symbol.category_src_idx,
                     symbol.rule_index_in_category,
                 );
-                cursor.consistency_memo.set(None);
                 let _ = cursor.collection_stack.pop();
             }
         }
@@ -8852,7 +8429,6 @@ mod tests {
             recovery_depth: 0,
             visited_recovery: OrdSet::new(),
             visited_dispatch: OrdSet::new(),
-            consistency_memo: std::cell::Cell::new(None),
             // Phase 5.2 (2026-05-12): fresh empty Arc for the unit-test
             // cursor. The test exercises the `Clone` path on a cursor
             // carrying a PushPredicate delta — orthogonal to the
