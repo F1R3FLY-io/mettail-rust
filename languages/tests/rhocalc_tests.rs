@@ -1137,6 +1137,171 @@ mod native_ops {
                 "999",
             );
         }
+
+        mod zipper {
+            use super::*;
+
+            fn task_db() -> &'static str {
+                concat!("pathmap(", "[1,2,3]:10, ", "[1,2,4]:11, ", "[2,1]:20", ")")
+            }
+
+            #[test]
+            fn path_get_subtrie_at_prefix() {
+                assert_reduces_to(
+                    &format!("{{pathHas(pathGetSubtrieAt({}, [1]), [2,3])}}", task_db()),
+                    "true",
+                );
+                assert_reduces_to(
+                    &format!("{{pathHas(pathGetSubtrieAt({}, [1]), [2,4])}}", task_db()),
+                    "true",
+                );
+                assert_reduces_to(
+                    &format!("{{pathHas(pathGetSubtrieAt({}, [1]), [2])}}", task_db()),
+                    "false",
+                );
+            }
+
+            #[test]
+            fn read_zipper_get_subtrie_at_prefix() {
+                assert_reduces_to(
+                    &format!(
+                        "{{pathGet(zipperGetSubtrie(readZipperAt({}, [1])), [2,3])}}",
+                        task_db()
+                    ),
+                    "10",
+                );
+            }
+
+            #[test]
+            fn write_zipper_set_leaf_updates_full_path() {
+                assert_reduces_to(
+                    &format!(
+                        "{{pathGet(writeZipperSetLeaf(writeZipperAt({}, [1,2]), [1,2,3], 99), [1,2,3])}}",
+                        task_db()
+                    ),
+                    "99",
+                );
+            }
+
+            #[test]
+            fn write_zipper_set_subtrie_at_focus() {
+                assert_reduces_to(
+                    &format!(
+                        "{{pathGet(writeZipperSetSubtrie(writeZipperAt({}, [1]), pathmap([9]:77, [8]:88)), [1,9])}}",
+                        task_db()
+                    ),
+                    "77",
+                );
+            }
+
+            #[test]
+            fn write_zipper_join_into_right_biased_overlap() {
+                assert_reduces_to(
+                    concat!(
+                        "{pathGet(writeZipperJoinInto(",
+                        "writeZipper(pathmap([1,2]:10)), ",
+                        "readZipper(pathmap([1,2]:20, [3]:30))), [1,2])}",
+                    ),
+                    "20",
+                );
+                assert_reduces_to(
+                    concat!(
+                        "{pathGet(writeZipperJoinInto(",
+                        "writeZipper(pathmap([1,2]:10)), ",
+                        "readZipper(pathmap([1,2]:20, [3]:30))), [3])}",
+                    ),
+                    "30",
+                );
+            }
+
+            #[test]
+            fn write_zipper_remove_leaf_and_branches() {
+                assert_reduces_to(
+                    &format!(
+                        "{{pathHas(writeZipperRemoveLeaf(writeZipperAt({}, [1,2,3])), [1,2,3])}}",
+                        task_db()
+                    ),
+                    "false",
+                );
+                assert_reduces_to(
+                    &format!(
+                        "{{pathHas(writeZipperRemoveBranches(writeZipperAt({}, [1])), [1,2,3])}}",
+                        task_db()
+                    ),
+                    "false",
+                );
+            }
+
+            #[test]
+            fn write_zipper_graft_merges_source_subtrie() {
+                assert_reduces_to(
+                    concat!(
+                        "{pathGet(writeZipperGraft(",
+                        "writeZipper(pathmap([1]:1)), ",
+                        "readZipper(pathmap([2,3]:42))), [2,3])}",
+                    ),
+                    "42",
+                );
+            }
+
+            #[test]
+            fn write_zipper_ops_leave_original_pathmap_unchanged() {
+                let original = task_db();
+                assert_reduces_to(
+                    &format!(
+                        "{{pathGet(writeZipperSetLeaf(writeZipperAt({}, [1,2]), [1,2,3], 99), [1,2,3])}}",
+                        original
+                    ),
+                    "99",
+                );
+                assert_reduces_to(&format!("{{pathGet({}, [1,2,3])}}", original), "10");
+            }
+
+            #[test]
+            fn zipper_navigation_child_count_and_moves() {
+                let db = concat!("pathmap(", "[1,1,1]:30, ", "[1,1,2]:25, ", "[1,2,1]:35", ")");
+                assert_reduces_to(&format!("{{zipperChildCount(readZipperAt({}, [1]))}}", db), "2");
+                assert_reduces_to(
+                    &format!(
+                        "{{zipperGetLeaf(zipperDescendTo(readZipperAt({}, [1]), [1,1]))}}",
+                        db
+                    ),
+                    "30",
+                );
+            }
+
+            #[test]
+            fn zipper_navigation_stays_stuck_on_failed_moves() {
+                let nfs = reachable_normal_form_displays(
+                    &run_with_initial("{zipperDescendFirst(readZipperAt(pathmap([1]:10), [1]))}").0,
+                    run_with_initial("{zipperDescendFirst(readZipperAt(pathmap([1]:10), [1]))}").1,
+                );
+                assert!(
+                    nfs.iter().any(|nf| nf.contains("zipperDescendFirst")),
+                    "failed navigation should not rewrite to error: {nfs:?}"
+                );
+            }
+
+            #[test]
+            fn pathmap_encoding_rejects_empty_list_path_in_native_ops() {
+                let nfs = reachable_normal_form_displays(
+                    &run_with_initial("{pathPut(pathmap(), [], 1)}").0,
+                    run_with_initial("{pathPut(pathmap(), [], 1)}").1,
+                );
+                assert!(
+                    nfs.iter().any(|nf| nf.contains("pathPut")),
+                    "invalid path encoding should not silently produce a pathmap: {nfs:?}"
+                );
+            }
+
+            #[test]
+            fn map_and_pathmap_literals_stay_distinct() {
+                assert_reduces_to("{get(map(1:10), 1)}", "10");
+                assert_reduces_to("{pathGet(pathmap(1:10), 1)}", "10");
+                assert_reduces_to("{has(map(1:2), 1)}", "true");
+                assert_reduces_to("{pathHas(pathmap(1:2), 1)}", "true");
+            }
+        }
     }
 
     mod type_conversion {

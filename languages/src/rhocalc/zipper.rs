@@ -107,7 +107,9 @@ fn proc_key_from_path_bytes(bytes: &[u8]) -> Result<Proc, ()> {
     Ok(Proc::CastList(Box::new(List::ListLit(items))))
 }
 
-pub(crate) fn pathmap_lit_from_pathmap(pm: &PathMap<Proc, GlobalAlloc>) -> Result<PathMapLit<Proc, Proc>, ()> {
+pub(crate) fn pathmap_lit_from_pathmap(
+    pm: &PathMap<Proc, GlobalAlloc>,
+) -> Result<PathMapLit<Proc, Proc>, ()> {
     let mut lit = PathMapLit::new();
     for (kb, v) in pm.iter() {
         let k = proc_key_from_path_bytes(&kb)?;
@@ -128,7 +130,10 @@ pub(crate) fn read_zipper_root(lit: &PathMapLit<Proc, Proc>) -> Result<ReadZippe
     Ok(ReadZipperLit(lit.clone(), Vec::new()))
 }
 
-pub(crate) fn read_zipper_at(lit: &PathMapLit<Proc, Proc>, path: &Proc) -> Result<ReadZipperLit, ()> {
+pub(crate) fn read_zipper_at(
+    lit: &PathMapLit<Proc, Proc>,
+    path: &Proc,
+) -> Result<ReadZipperLit, ()> {
     let _ = pathmap_from_lit(lit)?;
     let enc = encode_proc_path_entry(path)?;
     Ok(ReadZipperLit(lit.clone(), enc))
@@ -139,7 +144,10 @@ pub(crate) fn write_zipper_root(lit: &PathMapLit<Proc, Proc>) -> Result<WriteZip
     Ok(WriteZipperLit(lit.clone(), Vec::new()))
 }
 
-pub(crate) fn write_zipper_at(lit: &PathMapLit<Proc, Proc>, path: &Proc) -> Result<WriteZipperLit, ()> {
+pub(crate) fn write_zipper_at(
+    lit: &PathMapLit<Proc, Proc>,
+    path: &Proc,
+) -> Result<WriteZipperLit, ()> {
     let _ = pathmap_from_lit(lit)?;
     let enc = encode_proc_path_entry(path)?;
     Ok(WriteZipperLit(lit.clone(), enc))
@@ -149,7 +157,10 @@ pub(crate) fn path_get_subtrie(lit: &PathMapLit<Proc, Proc>) -> Result<PathMapLi
     path_get_subtrie_at_bytes(lit, &[])
 }
 
-fn path_get_subtrie_at_bytes(lit: &PathMapLit<Proc, Proc>, focus: &[u8]) -> Result<PathMapLit<Proc, Proc>, ()> {
+fn path_get_subtrie_at_bytes(
+    lit: &PathMapLit<Proc, Proc>,
+    focus: &[u8],
+) -> Result<PathMapLit<Proc, Proc>, ()> {
     let pm = pathmap_from_lit(lit)?;
     let z = pm.read_zipper_at_path(focus);
     match z.make_map() {
@@ -158,7 +169,10 @@ fn path_get_subtrie_at_bytes(lit: &PathMapLit<Proc, Proc>, focus: &[u8]) -> Resu
     }
 }
 
-pub(crate) fn path_get_subtrie_at(lit: &PathMapLit<Proc, Proc>, path: &Proc) -> Result<PathMapLit<Proc, Proc>, ()> {
+pub(crate) fn path_get_subtrie_at(
+    lit: &PathMapLit<Proc, Proc>,
+    path: &Proc,
+) -> Result<PathMapLit<Proc, Proc>, ()> {
     let enc = encode_proc_path_entry(path)?;
     path_get_subtrie_at_bytes(lit, &enc)
 }
@@ -214,7 +228,10 @@ pub(crate) fn zipper_to_prev_sibling(z: &ReadZipperLit) -> Result<ReadZipperLit,
     Ok(ReadZipperLit(z.0.clone(), rz.origin_path().to_vec()))
 }
 
-pub(crate) fn zipper_descend_indexed_branch(z: &ReadZipperLit, idx: i64) -> Result<ReadZipperLit, ()> {
+pub(crate) fn zipper_descend_indexed_branch(
+    z: &ReadZipperLit,
+    idx: i64,
+) -> Result<ReadZipperLit, ()> {
     if idx < 0 {
         return Err(());
     }
@@ -277,7 +294,9 @@ pub(crate) fn write_zipper_remove_leaf(w: &WriteZipperLit) -> Result<PathMapLit<
     pathmap_lit_from_pathmap(&pm)
 }
 
-pub(crate) fn write_zipper_remove_branches(w: &WriteZipperLit) -> Result<PathMapLit<Proc, Proc>, ()> {
+pub(crate) fn write_zipper_remove_branches(
+    w: &WriteZipperLit,
+) -> Result<PathMapLit<Proc, Proc>, ()> {
     let mut pm = pathmap_from_lit(&w.0)?;
     {
         let mut wz = pm.write_zipper_at_path(&w.1);
@@ -286,7 +305,10 @@ pub(crate) fn write_zipper_remove_branches(w: &WriteZipperLit) -> Result<PathMap
     pathmap_lit_from_pathmap(&pm)
 }
 
-pub(crate) fn write_zipper_graft(w: &WriteZipperLit, src: &ReadZipperLit) -> Result<PathMapLit<Proc, Proc>, ()> {
+pub(crate) fn write_zipper_graft(
+    w: &WriteZipperLit,
+    src: &ReadZipperLit,
+) -> Result<PathMapLit<Proc, Proc>, ()> {
     let mut dest = pathmap_from_lit(&w.0)?;
     let src_pm = pathmap_from_lit(&src.0)?;
     let src_rz = src_pm.read_zipper_at_path(&src.1);
@@ -298,7 +320,10 @@ pub(crate) fn write_zipper_graft(w: &WriteZipperLit, src: &ReadZipperLit) -> Res
 }
 
 /// Right-biased union of the source subtrie into the destination subtrie at `w`'s focus.
-pub(crate) fn write_zipper_join_into(w: &WriteZipperLit, src: &ReadZipperLit) -> Result<PathMapLit<Proc, Proc>, ()> {
+pub(crate) fn write_zipper_join_into(
+    w: &WriteZipperLit,
+    src: &ReadZipperLit,
+) -> Result<PathMapLit<Proc, Proc>, ()> {
     let mut dest = pathmap_from_lit(&w.0)?;
     let src_pm = pathmap_from_lit(&src.0)?;
     let rz = src_pm.read_zipper_at_path(&src.1);
@@ -351,5 +376,45 @@ mod tests {
         ))])));
         let sub = path_get_subtrie_at(&lit, &users).unwrap();
         assert_eq!(sub.len(), 2);
+    }
+
+    #[test]
+    fn zipper_navigation_child_count_and_failure() {
+        let mut lit = PathMapLit::new();
+        lit.insert(
+            Proc::CastList(Box::new(List::ListLit(vec![
+                Proc::CastInt(Box::new(Int::NumLit(1))),
+                Proc::CastInt(Box::new(Int::NumLit(1))),
+                Proc::CastInt(Box::new(Int::NumLit(1))),
+            ]))),
+            Proc::CastInt(Box::new(Int::NumLit(30))),
+        );
+        lit.insert(
+            Proc::CastList(Box::new(List::ListLit(vec![
+                Proc::CastInt(Box::new(Int::NumLit(1))),
+                Proc::CastInt(Box::new(Int::NumLit(2))),
+                Proc::CastInt(Box::new(Int::NumLit(1))),
+            ]))),
+            Proc::CastInt(Box::new(Int::NumLit(35))),
+        );
+        let root_branch =
+            Proc::CastList(Box::new(List::ListLit(vec![Proc::CastInt(Box::new(Int::NumLit(1)))])));
+        let rz = read_zipper_at(&lit, &root_branch).unwrap();
+        assert_eq!(zipper_child_count(&rz).unwrap(), 2);
+        let mut single = PathMapLit::new();
+        single.insert(
+            Proc::CastList(Box::new(List::ListLit(vec![Proc::CastInt(Box::new(Int::NumLit(1)))]))),
+            Proc::CastInt(Box::new(Int::NumLit(10))),
+        );
+        let leaf =
+            Proc::CastList(Box::new(List::ListLit(vec![Proc::CastInt(Box::new(Int::NumLit(1)))])));
+        let leaf_zipper = read_zipper_at(&single, &leaf).unwrap();
+        assert!(zipper_descend_first(&leaf_zipper).is_err());
+    }
+
+    #[test]
+    fn encode_proc_path_entry_rejects_empty_list() {
+        let empty = Proc::CastList(Box::new(List::ListLit(vec![])));
+        assert!(super::super::encode_proc_path_entry(&empty).is_err());
     }
 }
