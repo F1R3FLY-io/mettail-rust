@@ -4781,33 +4781,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         }
     }
 
-    /// Lex-min selection across the indices in `resolved_indices` against
-    /// `self.branch_cursors`. Uses `Semiring::plus` as the lex-min combiner
-    /// (LexicographicWeight::plus returns the smaller; tropical::plus returns
-    /// the min). On ties returns the earlier index — preserves source-order
-    /// for codegen-driven Fork branches.
-    fn pick_lex_min_resolved(&self, resolved_indices: &[usize]) -> usize {
-        debug_assert!(!resolved_indices.is_empty(), "no resolved cursors to pick from");
-        let mut best = resolved_indices[0];
-        for &idx in &resolved_indices[1..] {
-            // For lex-min: a wins iff a.plus(b) == a (i.e. a is the smaller
-            // of the two under the semiring's lex-min ordering).
-            let merged = self.branch_cursors[best]
-                .weight
-                .plus(&self.branch_cursors[idx].weight);
-            if merged != self.branch_cursors[best].weight {
-                best = idx;
-            } else if merged == self.branch_cursors[idx].weight
-                && self.branch_cursors[idx].source_priority
-                    < self.branch_cursors[best].source_priority
-            {
-                // Stage 3.12 Fix 2(ii) (2026-05-02): on true weight tie,
-                // the lower `source_priority` wins (Fork-source-order).
-                best = idx;
-            }
-        }
-        best
-    }
+    // Phase 5.6-tail follow-up (2026-05-12): `pick_lex_min_resolved`
+    // method DELETED. The pre-tail call site was the mid-stream
+    // commit_winner path that Stage 3.5b Bug 1 fix removed. EOI
+    // resolution at `resolve_at_end_of_input` does its own inline
+    // lex-min loop (see lines around 2542-2586). Subsumption in
+    // `subsume_lex_dominated_cursors` also does its own inline scan.
+    // The standalone helper became orphaned and was reported by the
+    // compiler as dead code throughout Phases 3-5.
 
     /// Step 3 (Fork plan F6): commit the winning branch.
     ///
@@ -5163,35 +5144,22 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         self.branch_cursors.truncate(beam);
     }
 
-    /// Phase 4: if the new GSS top after a Pop is a `CollectionMarker`,
-    /// splice the just-built top of the builder stack into the enclosing
-    /// collection accumulator. Called after element-rule `Return` pops
-    /// (where the action just pushed the constructed element) and after
-    /// nested-collection `CollectionMarker` pops (where the finalize action
-    /// just pushed the constructed container).
-    fn maybe_splice_into_enclosing_collection(&mut self) {
-        if let Some(new_top_id) = self.top_node {
-            if let Some(new_top) = self.gss.node(new_top_id) {
-                if new_top.symbol.kind == SymbolKind::CollectionMarker {
-                    let acc_id = new_top.symbol.bp.unwrap_or(0);
-                    self.builder.push_to_collection(acc_id);
-                }
-            }
-        }
-    }
-
-    /// Fire the semantic action attached to `(src_idx, rule_idx)` if the
-    /// engine has one registered. Consumes `entry.arity` args from the
-    /// top of the builder's stack. No-op if the engine returns `None`
-    /// (rule has no semantic action).
-    fn fire_action_for(&mut self, symbol: StackSymbolV2) {
-        let mut taken = std::mem::replace(&mut self.builder, SemanticBuilder::new());
-        let outcome = Self::fire_action_for_on_builder(&self.engine, &mut taken, symbol);
-        self.builder = taken;
-        if let Some(message) = outcome {
-            self.state = WpdsState::Error { message };
-        }
-    }
+    // Phase 5.6-tail follow-up (2026-05-12): two more orphaned methods
+    // DELETED here.
+    //
+    // 1. `maybe_splice_into_enclosing_collection` was the pre-Phase-5
+    //    splice-after-Pop helper that operated on `self.top_node` and
+    //    `self.builder` directly. Phase 5.3+'s always-eager
+    //    Arc::make_mut path routes splice through
+    //    `emit_splice_into_collection` on `cursor.builder`; the helper
+    //    became orphaned at the apply_action_to_cursor migration.
+    //
+    // 2. `fire_action_for` was the pre-Phase-5.5 fire-action helper that
+    //    mutated `self.builder` via `std::mem::replace`. Phase 5.6-tail-B
+    //    unified all fire_action calls to use
+    //    `Self::fire_action_for_on_builder(&self.engine, builder_mut, symbol)`
+    //    on `cursor.builder` via `Arc::make_mut`; the standalone
+    //    `self.builder`-targeting variant became orphaned.
 
     /// Phase 5.6-tail-D (2026-05-12): predicate for the recovery
     /// subset of `BuilderDelta`. Recovery deltas mutate the walker's
@@ -5707,32 +5675,13 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         new_id
     }
 
-    #[inline(always)]
-    fn cursor_gss_pop(
-        &mut self,
-        cursor: &mut BranchCursor<W>,
-    ) -> Option<crate::gss::GssNodeId> {
-        // Stage 3.12.5 (2026-05-02): legacy single-predecessor scalar.
-        // Retained for sites where the popped frame has SINGLE predecessor
-        // by construction (e.g., a frame pushed by the same cursor's prior
-        // step). For multi-predecessor pops (Tomita), use
-        // `cursor_gss_pop_all`. Picks the FIRST in-edge, which may be
-        // non-deterministic if multiple cursors deduplicated to the same
-        // GSS node — the canonical reason fork-on-pop was introduced.
-        let result = self.gss.pop_symbol(cursor.node);
-        // Stage 3.12 fix (2026-05-02): when popping past the entry frame,
-        // anchor at GSS_NODE_NONE rather than 0. The sentinel CategoryEntry
-        // root lives at id 0 and would otherwise cause engine.step's
-        // frontier_top to keep matching the CategoryEntry-on-Unwinding
-        // arm, looping indefinitely. With GSS_NODE_NONE, `gss.node()`
-        // returns None → engine takes the `frontier_top.is_none() ⇒ Accept`
-        // branch, restoring pre-Stage-3.12 behavior in nondeterministic mode.
-        cursor.node = result.unwrap_or(crate::gss::GSS_NODE_NONE);
-        if self.deterministic {
-            self.top_node = result;
-        }
-        result
-    }
+    // Phase 5.6-tail follow-up (2026-05-12): `cursor_gss_pop` DELETED.
+    // The legacy single-predecessor scalar pop was superseded by
+    // `cursor_gss_pop_via_edge` (Stage 3.12.6, 2026-05-02), which uses
+    // the cursor's recorded `incoming_edge_stack` to follow the exact
+    // edge the cursor pushed earlier — preserving calling context
+    // under GSS dedup. All call sites migrated to the via_edge variant;
+    // the standalone helper was orphaned.
 
     /// Stage 3.12.5 (2026-05-02): per-cursor post-pop body. Encapsulates
     /// the FireAction + collection-splice + weight + state mutation
@@ -6018,41 +5967,13 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         target
     }
 
-    /// Stage 3.12.5 (2026-05-02): Tomita-style multi-predecessor pop.
-    ///
-    /// Returns ALL in-edge predecessors of `cursor.node`. Caller is
-    /// responsible for fanning out into per-predecessor child cursors
-    /// when `len() > 1`. When `len() == 0` (popped past the entry
-    /// frame), returns a single-element vec containing
-    /// `GSS_NODE_NONE` so the caller can treat the terminal-pop case
-    /// uniformly with the multi-predecessor case.
-    ///
-    /// **Does NOT mutate `cursor.node`.** The caller decides whether to
-    /// reuse the cursor (in-place mutation) or clone it per predecessor.
-    /// Callers that always have a single predecessor (e.g., OptGroupFinalize
-    /// popping an OptionalGroupAt(N) just pushed by the same cursor —
-    /// when that's true) may opt into the legacy scalar `cursor_gss_pop`
-    /// instead.
-    ///
-    /// Sentinel semantics: when `len() == 0`, returns `vec![GSS_NODE_NONE]`.
-    /// The caller must subsequently set `cursor.node = GSS_NODE_NONE` (or
-    /// per-child equivalent) and, in deterministic mode, mirror `self.top_node = None`.
-    fn cursor_gss_pop_all(
-        &self,
-        cursor: &BranchCursor<W>,
-    ) -> Vec<crate::gss::GssNodeId> {
-        let preds: Vec<crate::gss::GssNodeId> = self
-            .gss
-            .pop_all_predecessors(cursor.node)
-            .into_iter()
-            .map(|(id, _w)| id)
-            .collect();
-        if preds.is_empty() {
-            vec![crate::gss::GSS_NODE_NONE]
-        } else {
-            preds
-        }
-    }
+    // Phase 5.6-tail follow-up (2026-05-12): `cursor_gss_pop_all`
+    // DELETED. The Tomita-style multi-predecessor pop was planned for
+    // fork-on-pop dispatching but never connected — all pop paths use
+    // `cursor_gss_pop_via_edge` (which follows the cursor's recorded
+    // `incoming_edge_stack` to a single predecessor). Multi-predecessor
+    // fan-out would require a new caller protocol that was never
+    // designed; the orphaned helper is removed.
 
     #[inline(always)]
     fn cursor_gss_replace_top(
