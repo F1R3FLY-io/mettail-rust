@@ -11,6 +11,7 @@ use std::ops::Neg;
 pub(crate) mod receive;
 pub(crate) mod runtime;
 mod type_inference;
+pub(crate) mod wire;
 
 language! {
     name: RhoCalc,
@@ -28,6 +29,7 @@ language! {
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
+        ![String] as Bytes
         ![Vec<Proc>] as List ["[", "]", ","]
         ![mettail_runtime::HashBag<Proc>] as Bag [ "#{", "}#", "|" ]
         ![HashMap<Proc, Proc>] as Map [ "{", "}", ",", ":" ]
@@ -386,6 +388,7 @@ language! {
         CastInt . k:Int |- k : Proc;
         CastBool . k:Bool |- k : Proc;
         CastStr . s:Str |- s : Proc;
+        CastBytes . b:Bytes |- b : Proc;
         CastList . l:List |- l : Proc;
         CastBag . b:Bag |- b : Proc;
         CastMap . m:Map |- m : Proc;
@@ -1235,6 +1238,17 @@ language! {
                         Proc::CastInt(Box::new(Int::NumLit(entries.len() as i64)))
                     },
                     _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
+        }] fold;
+
+        MToByteArray . m:Proc
+        |- m "." "toByteArray" "(" ")" : Proc ![{
+            match &m {
+                Proc::CastList(_) | Proc::CastMap(_) | Proc::CastSet(_) | Proc::CastBag(_) => {
+                    crate::rhocalc::wire::collection_to_byte_array_proc(m)
+                        .unwrap_or(Proc::Err)
                 },
                 _ => Proc::Err,
             }

@@ -11,7 +11,7 @@
 
 **Scope:** `![mettail_runtime::HashSetLit<Proc>] as Set` in `language! { types { … } }`. Default literal delimiters are `Set(`, `)`, `,` (`CollectionCategory::set_defaults()`). `Set()` is an explicit empty-set alias. Rhocalc **Bag** (`#{…}#`) remains the multiset / parallel-composition surface with no Rholang counterpart.
 
-**Non-goals:** `toByteArray`, partial collection patterns, changing Bag syntax to Rholang `Set`.
+**Non-goals:** partial collection patterns, changing Bag syntax to Rholang `Set`. Surface `.toByteArray()` is specified in [rhocalc-collection-wire.md](./rhocalc-collection-wire.md).
 
 ---
 

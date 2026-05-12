@@ -10,6 +10,7 @@ Cross-links:
 - [docs/examples/rhocalc/01-language-spec.md](../../examples/rhocalc/01-language-spec.md) — surface-syntax reference
 - [docs/manual/language/features/collections/00-overview.md](../../manual/language/features/collections/00-overview.md) — collection overview
 - [docs/design/made/rhocalc-collection-equality.md](../made/rhocalc-collection-equality.md) — `==` / `!=` on collection casts at fold and in `where` guards
+- [docs/design/made/rhocalc-collection-wire.md](../made/rhocalc-collection-wire.md) — `.toByteArray()` protobuf wire encoding for collection casts
 
 ---
 
