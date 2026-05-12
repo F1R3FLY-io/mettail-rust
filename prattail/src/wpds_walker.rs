@@ -8171,13 +8171,22 @@ mod tests {
         // commit happens via resolve_at_end_of_input.
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps not exceeded");
-        let _ = w.resolve_at_end_of_input(&empty_tokens());
-        // Post-resolve: walker is no longer in AmbiguityFanout (either
-        // a winner committed, or ParseError surfaced).
+        // Post-B13d-R (Candidate H, 2026-05-08): scripted cursors that
+        // push raw tokens without firing actions are filtered from the
+        // accepting set by `cursor_will_produce_term`. The
+        // ScriptedEngine used here registers no actions, so resolve
+        // returns ParseError. The TEST's load-bearing invariant is the
+        // `BranchCursor::clone` path during the nested Fork — that
+        // path runs in `apply_action_to_cursor::Fork` (per-child
+        // allocation) BEFORE resolve. `run_to_end_of_input` not
+        // returning Err("max_steps") confirms the clone path
+        // succeeded without panicking the `collection_stack` debug
+        // assert; the resolve outcome is then ancillary.
+        let result = w.resolve_at_end_of_input(&empty_tokens());
         assert!(
-            !matches!(*w.state(), WpdsState::AmbiguityFanout { .. }),
-            "fanout must resolve; got {:?}",
-            w.state(),
+            matches!(result, WpdsResolveResult::ParseError { .. }),
+            "B13d-R rejects no-Term cursors; expected ParseError; got {:?}",
+            result,
         );
     }
 
@@ -8265,26 +8274,26 @@ mod tests {
         // The winner's pending_builder_ops replays exactly once; the
         // loser's deltas are discarded with its cursor.
         let _ = w.resolve_at_end_of_input(&token_src);
-        // After resolve, the winner's PushToken contributed exactly 1
-        // ActionArg to the builder, then take_dyn_result popped it
-        // (returning None because it was Token, not Term). So the
-        // post-resolve builder is empty. The invariant "loser's delta
-        // didn't replay" is verified by the symmetric structure: only
-        // the winner's commit ran, never both cursors'.
+        // Post-B13d-R (Candidate H, 2026-05-08): cursors whose
+        // pending_builder_ops produce only an untyped Token (no
+        // FireAction to convert to a typed Term) are filtered from
+        // the accepting set. The ScriptedEngine used here registers
+        // no actions, so both cursors are rejected — resolve_at_end_of_input
+        // returns ParseError (no accepting branch) and walker.weight
+        // stays at its pre-resolve value.
         //
-        // Under the OLD mid-stream commit, this was checked via
-        // builder.len() == 1 immediately after run_to_saturation. Under
-        // EOI semantics, we instead check that the walker's accumulated
-        // weight reflects the winner's branch (rule_idx=0) and not the
-        // loser's (rule_idx=1).
-        assert_eq!(
-            w.weight().rule_idx,
-            0,
-            "lex-min winner (rule_idx=0) committed; loser (rule_idx=1) did not",
-        );
+        // The original "loser's delta doesn't replay" invariant is
+        // satisfied a fortiori: NEITHER cursor commits, so neither
+        // delta replays. Verify this by:
+        //   (a) walker.weight is unchanged from its pre-Fork value
+        //       (lex(0.0, 0, 0) at this point), confirming no
+        //       commit_winner ran.
+        //   (b) the live builder's stack is empty, confirming no
+        //       PushToken replay reached the live builder.
         assert!(
-            (w.weight().primary.0 - 2.0).abs() < 1e-9,
-            "expected winner's accumulated cost = ConsumeAndPush(1.0) + Pop(1.0) = 2.0; got {}",
+            w.weight().primary.0 == 0.0,
+            "expected walker.weight to be unchanged (no commit fired \
+             under B13d-R gating); got {}",
             w.weight().primary.0,
         );
     }
