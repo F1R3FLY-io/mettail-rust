@@ -5921,6 +5921,13 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         text: String,
         pos: usize,
     ) {
+        // Phase 5.3 (2026-05-12): eagerly apply the mutation to
+        // `cursor.builder` via `Arc::make_mut` (clone-on-write per cursor).
+        // Journal logging below remains UNTOUCHED — Phase 5.6 will remove it
+        // and `commit_winner` will swap `cursor.builder` directly. Today
+        // (5.3) the cursor.builder is write-only — no engine code reads it
+        // yet — so this is semantically idempotent.
+        Arc::make_mut(&mut cursor.builder).push_token(kind.clone(), text.clone(), pos);
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_token(kind, text, pos),
             CursorMode::Strict => {
@@ -5935,6 +5942,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn emit_push_ident(&mut self, cursor: &mut BranchCursor<W>, name: String, pos: usize) {
+        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
+        Arc::make_mut(&mut cursor.builder).push_ident(name.clone(), pos);
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_ident(name, pos),
             CursorMode::Strict => {
@@ -5952,6 +5961,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         cursor: &mut BranchCursor<W>,
         pred: Arc<dyn Any + Send + Sync>,
     ) {
+        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
+        // `pred` is already an Arc — Arc::clone is O(1).
+        Arc::make_mut(&mut cursor.builder).push_predicate_arc(Arc::clone(&pred));
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_predicate_arc(pred),
             CursorMode::Strict => {
@@ -5965,6 +5977,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn emit_start_binder_scope(&mut self, cursor: &mut BranchCursor<W>, names: Vec<String>) {
+        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
+        Arc::make_mut(&mut cursor.builder).start_binder_scope(names.clone());
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.start_binder_scope(names),
             CursorMode::Strict => {
@@ -5978,6 +5992,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn emit_extend_binder_scope(&mut self, cursor: &mut BranchCursor<W>, name: String) {
+        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
+        Arc::make_mut(&mut cursor.builder).extend_binder_scope(name.clone());
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.extend_binder_scope(name),
             CursorMode::Strict => {
@@ -5991,6 +6007,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn emit_fire_action(&mut self, cursor: &mut BranchCursor<W>, symbol: StackSymbolV2) {
+        // Phase 5.3 (2026-05-12): emit_fire_action does NOT eagerly apply on
+        // cursor.builder. Unlike the other emit_* helpers, the action_fn
+        // body READS from the builder it operates on (e.g. `drain_collection`).
+        // Since cursor.builder's `collection_stack` indices may diverge from
+        // the live builder's (cursor.builder starts EMPTY at fork init in
+        // 5.2; reconciliation lands in Phase 5.4), running the action_fn on
+        // cursor.builder can produce a LIFO violation. The action remains
+        // applied only on the live builder via the existing Lazy/Strict
+        // arms; Phase 5.5 will adopt cursor.builder as the source of truth
+        // ONCE Phase 5.4 has aligned its initialization with the live
+        // builder.
         match self.cursor_mode {
             CursorMode::Lazy => self.fire_action_for(symbol),
             CursorMode::Strict => {
@@ -6010,6 +6037,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// replay.
     #[inline(always)]
     fn emit_start_collection(&mut self, cursor: &mut BranchCursor<W>) -> u8 {
+        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
+        // Discard the returned id — the authoritative id (used downstream)
+        // is the live builder's id (Lazy) or the cursor.collection_stack
+        // index (Strict). The cursor.builder.collection_stack tracks
+        // independently; its slot indices may differ from the live
+        // builder's. Phase 5.4 will reconcile this by initializing
+        // cursor.builder at fork from the live builder's Arc.
+        let _cursor_local_id = Arc::make_mut(&mut cursor.builder).start_collection();
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.start_collection(),
             CursorMode::Strict => {
@@ -6035,6 +6070,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn emit_push_collection_id(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
+        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
+        Arc::make_mut(&mut cursor.builder).push_collection_id(id);
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_collection_id(id),
             CursorMode::Strict => {
@@ -6048,6 +6085,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn emit_splice_into_collection(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
+        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
+        // push_to_collection silently no-ops on out-of-bounds id — safe
+        // since cursor.builder is write-only in 5.3.
+        Arc::make_mut(&mut cursor.builder).push_to_collection(id);
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_to_collection(id),
             CursorMode::Strict => {
@@ -6061,6 +6102,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn emit_start_optional_scope(&mut self, cursor: &mut BranchCursor<W>) {
+        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
+        Arc::make_mut(&mut cursor.builder).start_optional_scope();
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.start_optional_scope(),
             CursorMode::Strict => {
@@ -6172,6 +6215,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn emit_finalize_optional_scope_present(&mut self, cursor: &mut BranchCursor<W>) {
+        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
+        Arc::make_mut(&mut cursor.builder).finalize_optional_scope_present();
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.finalize_optional_scope_present(),
             CursorMode::Strict => {
@@ -6185,6 +6230,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn emit_push_optional_absent(&mut self, cursor: &mut BranchCursor<W>) {
+        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
+        Arc::make_mut(&mut cursor.builder).push_optional_absent();
         match self.cursor_mode {
             CursorMode::Lazy => self.builder.push_optional_absent(),
             CursorMode::Strict => {

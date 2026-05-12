@@ -1512,6 +1512,13 @@ impl fmt::Debug for ActionEntry {
 /// At parse completion, the builder holds exactly one term on its stack —
 /// the root AST node for the parse. `take_result::<T>()` downcasts and
 /// returns it.
+///
+/// Phase 5.3 (2026-05-12): `Clone` enables `Arc::make_mut(&mut
+/// cursor.builder)` clone-on-write semantics — all four fields are
+/// `im::Vector`s (HAMT-backed; Clone is O(1) Arc-bump on the root).
+/// BinderHandle and ActionArg both derive Clone. Cloning is cheap and only
+/// occurs when a child cursor first mutates its parent-shared builder.
+#[derive(Clone)]
 pub struct SemanticBuilder {
     /// Phase 5.1 (2026-05-12): migrated from `Vec<ActionArg>` to
     /// `im::Vector<ActionArg>` (HAMT-backed persistent vector). O(log N)
