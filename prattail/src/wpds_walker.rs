@@ -66,7 +66,7 @@ use crate::automata::TokenKind;
 use crate::gss::{WpdsGss, WpdsGssNode};
 use crate::recovery::RecoveryConfig;
 use crate::wpds_runtime::{
-    ActionArg, ActionEntry, SemanticBuilder, StackSymbolV2,
+    ActionEntry, SemanticBuilder, StackSymbolV2,
     SymbolKind, WpdsConfiguration, WpdsControl, WpdsEvent, WpdsMaxStepsExceeded,
     WpdsMutableTokenSource, WpdsResolveResult, WpdsState, WpdsTokenSource, WpdsTraceEntry,
     WpdsTransition,
@@ -804,27 +804,18 @@ pub struct BranchCursor<W: Semiring> {
     /// surviving branch's deltas are replayed against the live builder in
     /// insertion order.
     pub recovery_deltas: Vec<BuilderDelta>,
-    /// Option A (2026-04-28): cursor-local mirror of
-    /// `SemanticBuilder.collection_stack`. Each `ConsumeAndPush(CollectionMarker)`
-    /// or `Push(CollectionMarker)` allocates an id by appending an empty
-    /// `Vec<ActionArg>` here. `MaybeSpliceCollection` deltas (logged
-    /// during element pops) splice values into the corresponding slot at
-    /// commit time. On `commit_winner`, the cursor's accumulators are
-    /// donated en bloc to the live builder via
-    /// `SemanticBuilder::adopt_collection_stack` BEFORE delta replay so
-    /// that downstream `MaybeSpliceCollection` and `FireAction` deltas
-    /// find populated slots.
-    pub collection_stack: Vec<Vec<ActionArg>>,
-    /// Phase 4 #1 (2026-05-11): monotonic counter of collection slots
-    /// allocated by this cursor (never decremented). Used by
-    /// `emit_start_collection` in Strict mode as the id source — NOT
-    /// `cursor.collection_stack.len()` — so multi-collection-slot
-    /// Class 2 rules allocate distinct ids per slot even when prior
-    /// slots' mirrors popped on marker pop. Match-replays cleanly
-    /// against `live.start_collection()` which always returns its
-    /// own monotonic len. Initialized 0; bumped on every Strict-mode
-    /// emit_start_collection.
-    pub collection_slots_allocated: u8,
+    // Phase 5.6-tail-G (2026-05-12): `collection_stack` and
+    // `collection_slots_allocated` fields DELETED. Pre-tail these were
+    // mirrors of the live builder's collection state, maintained for
+    // Strict-mode id allocation and for the merge_equivalent_cursors
+    // ConfigKey shape-discriminator. Under always-eager Arc::make_mut
+    // (Phase 5.3+), cursor.builder IS the authoritative state — its
+    // collection_stack reflects the slot history directly. All readers
+    // (ConfigKey.collection_depth, set_cursor_inner_state kv_phase,
+    // apply_pop_body_to_cursor acc_id) now route through
+    // `cursor.builder.collection_stack_len()` / `collection_slot_len()`.
+    // collection_slots_allocated was write-only post-Phase-5.5 (the
+    // counter was superseded by cursor.builder's authoritative len).
     /// Stage 3.12 Fix 2(ii) (2026-05-02): Fork-source-order tiebreak
     /// priority. Set to `branch_idx as u32` when the cursor is allocated
     /// in a Fork's children loop (TAKE=0, SKIP=1 for Opt-Group);
@@ -972,8 +963,6 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
             weight: self.weight.clone(),
             inner_state: self.inner_state.clone(),
             recovery_deltas: self.recovery_deltas.clone(),
-            collection_stack: self.collection_stack.clone(),
-            collection_slots_allocated: self.collection_slots_allocated,
             source_priority: self.source_priority,
             incoming_edge_stack: self.incoming_edge_stack.clone(),
             recovery_depth: self.recovery_depth,
@@ -1013,12 +1002,16 @@ impl<W: Semiring + Clone> BranchCursor<W> {
     ///
     /// Replaces three inlined constructions in `WpdsWalker::{new,
     /// new_for_category, seeded_from}` — single source of truth.
+    // Phase 5.6-tail-G (2026-05-12): `live_collection_stack_depth` parameter
+    // dropped. Pre-tail it was used to seed the deleted collection_stack
+    // mirror with placeholders; under always-eager Arc::make_mut, the
+    // cursor.builder.collection_stack is the authoritative state and is
+    // populated by emit_start_collection directly.
     pub fn seed_from_live(
         node: crate::gss::GssNodeId,
         pos: usize,
         weight: W,
         inner_state: WpdsState,
-        live_collection_stack_depth: usize,
     ) -> Self {
         BranchCursor {
             node,
@@ -1026,10 +1019,6 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             weight,
             inner_state,
             recovery_deltas: Vec::new(),
-            collection_stack: (0..live_collection_stack_depth)
-                .map(|_| Vec::new())
-                .collect(),
-            collection_slots_allocated: live_collection_stack_depth as u8,
             // Stage 3.12 Fix 2(ii) (2026-05-02): default 0 for non-Fork-
             // allocated cursors. Fork arm overwrites per-branch.
             source_priority: 0,
@@ -1083,8 +1072,6 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             weight,
             inner_state: new_state,
             recovery_deltas: parent.recovery_deltas.clone(),
-            collection_stack: parent.collection_stack.clone(),
-            collection_slots_allocated: parent.collection_slots_allocated,
             source_priority,
             incoming_edge_stack: parent.incoming_edge_stack.clone(),
             recovery_depth: parent.recovery_depth,
@@ -1669,7 +1656,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             0,
             W::one(),
             initial_state.clone(),
-            0,
         );
         WpdsWalker {
             state: initial_state,
@@ -1721,7 +1707,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             0,
             W::one(),
             initial_state.clone(),
-            0,
         );
         WpdsWalker {
             state: initial_state,
@@ -1768,7 +1753,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             config.pos,
             config.weight.clone(),
             config.state.clone(),
-            0,
         );
         WpdsWalker {
             state: config.state,
@@ -1808,7 +1792,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             0,
             W::one(),
             initial_state,
-            0,
         )];
         // Stage 6 G6+ (2026-05-02): reset trace step counter.
         self.step_counter = 0;
@@ -1896,7 +1879,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 weight: c.weight.clone(),
                 source_priority: c.source_priority,
                 pending_ops_len: c.recovery_deltas.len(),
-                collection_depth: c.collection_stack.len(),
+                collection_depth: c.builder.collection_stack_len(),
             })
             .collect();
         StepSnapshot {
@@ -2109,8 +2092,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     weight: self.weight.clone(),
                     inner_state: new_state.clone(),
                     recovery_deltas: Vec::new(),
-                    collection_stack: Vec::new(),
-                    collection_slots_allocated: 0,
                     // Stage 3.12 Fix 2(ii) (2026-05-02): post-resolved
                     // singleton inherits priority 0 (no further Fork
                     // tiebreaks expected post-resolution).
@@ -2747,8 +2728,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     weight: W::one(),
                     inner_state: self.state.clone(),
                     recovery_deltas: Vec::new(),
-                    collection_stack: Vec::new(),
-                    collection_slots_allocated: 0,
                     // Stage 3.12 Fix 2(ii) (2026-05-02): restored singleton
                     // post-Drop has no Fork ancestor, so priority 0.
                     source_priority: 0,
@@ -3250,8 +3229,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
-                                collection_stack: cursor.collection_stack.clone(),
-                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 // Stage 3.12.6 (2026-05-02): inherit parent's
                                 // stack-suffix history; the push below appends
@@ -3305,8 +3282,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
-                                collection_stack: cursor.collection_stack.clone(),
-                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 // Stage 3.12.6 (2026-05-02): inherit parent's
                                 // stack-suffix history.
@@ -3372,8 +3347,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
-                                collection_stack: cursor.collection_stack.clone(),
-                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3413,8 +3386,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
-                                collection_stack: cursor.collection_stack.clone(),
-                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3447,8 +3418,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
-                                collection_stack: cursor.collection_stack.clone(),
-                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3514,8 +3483,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
-                                collection_stack: cursor.collection_stack.clone(),
-                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3560,8 +3527,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
-                                collection_stack: cursor.collection_stack.clone(),
-                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3607,8 +3572,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
-                                collection_stack: cursor.collection_stack.clone(),
-                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3661,8 +3624,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
-                                collection_stack: cursor.collection_stack.clone(),
-                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -3723,8 +3684,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
-                                collection_stack: cursor.collection_stack.clone(),
-                                collection_slots_allocated: cursor.collection_slots_allocated,
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
                                 // Bounded recovery (Stage 3.20 / L12,
@@ -4621,7 +4580,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // (e.g. one mid-binder-internal-collection, the other
                 // post-pop) bucket separately and never trip the
                 // merge invariant.
-                collection_depth: cursor.collection_stack.len(),
+                collection_depth: cursor.builder.collection_stack_len(),
             };
             match by_key.entry(key) {
                 std::collections::hash_map::Entry::Vacant(v) => {
@@ -4659,8 +4618,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             && cursor.source_priority < merged[idx].source_priority);
                     if cursor_wins {
                         debug_assert_eq!(
-                            merged[idx].collection_stack.len(),
-                            cursor.collection_stack.len(),
+                            merged[idx].builder.collection_stack_len(),
+                            cursor.builder.collection_stack_len(),
                             "merge_equivalent_cursors: cursors at the same \
                              configuration must have matching collection-stack \
                              depths (operational state shape)"
@@ -4880,11 +4839,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         //   token source, NOT the builder. They must replay regardless
         //   of how the builder is installed.
         //
-        // The adoption gate (Phase 4 #1) is OBSOLETE: collection_stack
-        // donation is intrinsic to the Arc-installed builder. The
-        // winner.collection_stack mirror is now informational only.
-        // The Phase 5.6 type cleanup will delete the mirror entirely.
-        let _ = std::mem::take(&mut winner.collection_stack);
+        // Phase 5.6-tail-G (2026-05-12): winner.collection_stack mirror
+        // DELETED — the cursor.builder.collection_stack is the
+        // authoritative state, intrinsically donated to self.builder via
+        // the Arc-install below.
         // Phase 5.5 install: replace live with winner's builder, but
         // ONLY if a Fork happened (cursor_mode is Strict). In Lazy mode
         // (no Fork), `emit_fire_action` fires directly on
@@ -5129,8 +5087,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             weight: self.weight.clone(),
             inner_state: winner.inner_state,
             recovery_deltas: Vec::new(),
-            collection_stack: Vec::new(),
-            collection_slots_allocated: 0,
             // Stage 3.12 Fix 2(ii) (2026-05-02): preserve winner's
             // priority. Subsequent Forks build on this priority chain.
             source_priority: winner.source_priority,
@@ -5464,10 +5420,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // cursor.builder's actual second slot is at id=1. emit_push_collection_id
         // would then push CollectionId(0) twice, breaking the action's
         // LIFO drain.
-        let cursor_local_id =
-            Arc::make_mut(&mut cursor.builder).start_collection();
-        cursor.collection_stack.push(Vec::new());
-        cursor_local_id
+        // Phase 5.6-tail-G (2026-05-12): cursor.collection_stack mirror
+        // push deleted — cursor.builder.collection_stack carries the
+        // authoritative slot state.
+        Arc::make_mut(&mut cursor.builder).start_collection()
     }
 
     #[inline(always)]
@@ -5860,7 +5816,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     symbol.category_src_idx,
                     symbol.rule_index_in_category,
                 );
-                let _ = cursor.collection_stack.pop();
+                // Phase 5.6-tail-G (2026-05-12): cursor.collection_stack
+                // mirror pop deleted — cursor.builder.collection_stack is
+                // the authoritative state and pops via the action's
+                // drain_collection at FireAction time below.
             }
         }
         // Per-child FireAction (keyed on popped_symbol — same across all
