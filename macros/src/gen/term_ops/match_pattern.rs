@@ -447,6 +447,16 @@ fn generate_iterative_regular_arm(
         .map(|(field, (gname, pname))| {
             let task_variant = format_ident!("Match{}", field.category);
             if field.is_optional {
+                if field.is_collection {
+                    // Phase 4 #3 (2026-05-12): Optional-Collection — structural
+                    // equality on the whole Option<Container>. Element-level
+                    // variable patterns inside an optional collection are NOT
+                    // supported (would require multiset matching with carrier
+                    // for an Option-tag too). Treat as opaque comparison.
+                    return quote! {
+                        if #gname != #pname { return None; }
+                    };
+                }
                 // Opt-Group: matching on `Option<Box<Cat>>`. Same Some/None
                 // discriminant requirement; if both Some, push MatchTask
                 // recursively; if mismatched, return None.

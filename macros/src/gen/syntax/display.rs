@@ -1504,24 +1504,47 @@ fn generate_engine_pattern_op(
             // is `Option<Box<Cat>>`; rebind to `&Cat` via
             // `unwrap_or_unchecked`-style on `as_ref().unwrap()` (safe
             // because the gating ensures Some).
+            // Phase 4 #3 (2026-05-12): gating_ident now also considers
+            // Op(Sep) — its `collection` param is the gating signal
+            // (Option<Vec<T>> / Option<HashBag<T>> / etc.). The first
+            // inner Param OR Sep-collection-param wins.
             let gating_ident: Option<syn::Ident> = inner.iter().find_map(|expr| {
-                if let SyntaxExpr::Param(id) = expr {
-                    Some(syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site()))
-                } else {
-                    None
+                match expr {
+                    SyntaxExpr::Param(id) => Some(syn::Ident::new(
+                        &id.to_string(), proc_macro2::Span::call_site(),
+                    )),
+                    SyntaxExpr::Op(PatternOp::Sep { collection, source: None, .. }) => {
+                        Some(syn::Ident::new(
+                            &collection.to_string(), proc_macro2::Span::call_site(),
+                        ))
+                    }
+                    _ => None,
                 }
             });
             let inner_bindings: Vec<TokenStream> = inner.iter().filter_map(|expr| {
-                if let SyntaxExpr::Param(id) = expr {
-                    let id_ident = syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
-                    let inner_var = quote::format_ident!("__opt_{}", id);
-                    Some(quote! {
-                        let #inner_var: &_ = #id_ident.as_ref()
-                            .map(|__b| __b.as_ref())
-                            .expect("Opt-Group: inner display ran with None");
-                    })
-                } else {
-                    None
+                match expr {
+                    SyntaxExpr::Param(id) => {
+                        let id_ident = syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
+                        let inner_var = quote::format_ident!("__opt_{}", id);
+                        Some(quote! {
+                            let #inner_var: &_ = #id_ident.as_ref()
+                                .map(|__b| __b.as_ref())
+                                .expect("Opt-Group: inner display ran with None");
+                        })
+                    }
+                    // Phase 4 #3 (2026-05-12): bind the Sep collection param
+                    // to a reference of the inner Vec/HashBag/etc. The field
+                    // type is `Option<Container<T>>` (no Box), so as_ref()
+                    // gives &Container<T> directly.
+                    SyntaxExpr::Op(PatternOp::Sep { collection, source: None, .. }) => {
+                        let id_ident = syn::Ident::new(&collection.to_string(), proc_macro2::Span::call_site());
+                        let inner_var = quote::format_ident!("__opt_{}", collection);
+                        Some(quote! {
+                            let #inner_var = #id_ident.as_ref()
+                                .expect("Opt-Group: inner display ran with None");
+                        })
+                    }
+                    _ => None,
                 }
             }).collect();
             // Stage 3.3 (2026-04-30): mirror the outer SyntaxExpr::Literal
@@ -1598,26 +1621,74 @@ fn generate_engine_pattern_op(
                                 #trailing
                             }
                         },
+                        SyntaxExpr::Op(PatternOp::Sep {
+                            collection,
+                            separator,
+                            source: None,
+                        }) => {
+                            // Phase 4 #3 (2026-05-12): Sep inside *opt.
+                            // Iterate `__opt_<coll_name>` joining elements
+                            // with the separator. The container's coll_kind
+                            // determines iteration shape: Vec yields bare
+                            // elements; HashBag yields (item, count);
+                            // HashSet yields bare elements (and sorts);
+                            // HashMap yields (k, v) pair-wise.
+                            let inner_var = quote::format_ident!("__opt_{}", collection);
+                            let coll_name = collection.to_string();
+                            let sep_with_spaces = format!(" {} ", separator);
+                            let coll_kind = param_types.get(&coll_name).and_then(|ty| {
+                                if let TypeExpr::Collection { coll_type, .. } = ty {
+                                    Some(coll_type.clone())
+                                } else {
+                                    None
+                                }
+                            });
+                            let iter_body = match coll_kind {
+                                Some(mettail_ast::types::CollectionType::Vec) => quote! {
+                                    for item in #inner_var.iter() {
+                                        parts.push(item.to_string());
+                                    }
+                                },
+                                Some(mettail_ast::types::CollectionType::HashSet) => quote! {
+                                    for item in #inner_var.iter() {
+                                        parts.push(item.to_string());
+                                    }
+                                    parts.sort();
+                                },
+                                Some(mettail_ast::types::CollectionType::HashMap) => quote! {
+                                    for (k, v) in #inner_var.iter() {
+                                        parts.push(format!("{} : {}", k, v));
+                                    }
+                                    parts.sort();
+                                },
+                                Some(mettail_ast::types::CollectionType::HashBag) | None => quote! {
+                                    for (item, count) in #inner_var.iter() {
+                                        for _ in 0..count {
+                                            parts.push(item.to_string());
+                                        }
+                                    }
+                                    parts.sort();
+                                },
+                            };
+                            quote! {
+                                {
+                                    let mut parts: Vec<String> = Vec::new();
+                                    #iter_body
+                                    result.push_str(&parts.join(#sep_with_spaces));
+                                }
+                            }
+                        },
                         SyntaxExpr::Op(_inner_op) => {
-                            // Per binder.rs:347, the WPDS classifier returns
-                            // None for `SyntaxExpr::Op` inside another op's
-                            // inner pattern — the parser refuses such
-                            // grammars. Display generation must refuse them
-                            // too; silent emission would produce text the
-                            // parser cannot accept. Surface at macro
-                            // expansion so grammar authors get a clear
-                            // diagnostic instead of a runtime
-                            // Display→Parse roundtrip failure.
+                            // Other nested PatternOps (Zip, Map, Var, Opt) inside
+                            // *opt are out of pilot scope. The WPDS binder
+                            // classifier returns None for these.
                             quote! {
                                 compile_error!(
-                                    "nested PatternOp inside #opt(...) is not \
-                                     supported: the WPDS binder classifier (see \
-                                     macros/.../wpds_codegen/binder.rs:347) \
-                                     returns None for nested-op shapes, so the \
-                                     parser side cannot accept them. Rewrite the \
-                                     grammar to flatten the inner ops, or open an \
-                                     issue if your grammar genuinely needs nested \
-                                     optionality."
+                                    "nested non-Sep PatternOp inside #opt(...) is \
+                                     not supported. Rewrite the grammar to \
+                                     flatten the inner ops, or open an issue if \
+                                     your grammar genuinely needs nested \
+                                     optionality with Zip/Map/Var/Opt."
                                 );
                             }
                         },

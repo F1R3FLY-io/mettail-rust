@@ -523,6 +523,12 @@ fn generate_assemble_variant_decl(
                 .enumerate()
                 .map(|(i, field)| {
                     if field.is_optional {
+                        if field.is_collection {
+                            // Phase 4 #3 (2026-05-12): Optional-Collection — cloned carrier.
+                            let cloned = format_ident!("f{}_cloned", i);
+                            let ty = optional_collection_field_type_subst(field);
+                            return quote! { #cloned: #ty };
+                        }
                         let slot_name = format_ident!("f{}_slot", i);
                         let some_flag = format_ident!("f{}_some", i);
                         return quote! { #slot_name: usize, #some_flag: bool };
@@ -915,6 +921,21 @@ fn generate_regular_visit_arm(
         let visit_task = format_ident!("Visit{}", field.category);
 
         if field.is_optional {
+            if field.is_collection {
+                // Phase 4 #3 (2026-05-12): Optional-Collection — bypass
+                // slot machinery. Clone the whole Option<Container> into
+                // a carrier and pass it through to assemble. No element
+                // substitution; the optional collection slot is treated
+                // as a leaf for the purpose of the substitution PDA
+                // (free variables inside elements are NOT substituted —
+                // pending future support).
+                let cloned = format_ident!("f{}_cloned", i);
+                alloc_stmts.push(quote! {
+                    let #cloned = #name.clone();
+                });
+                assemble_fields.push(quote! { #cloned });
+                continue;
+            }
             // Opt-Group: Optional fields use slot+some_flag pattern. Push
             // VisitTask only if Some; assemble reconstructs Option<Box<T>>.
             let slot_name = format_ident!("f{}_slot", i);
@@ -1439,6 +1460,15 @@ fn generate_regular_assemble_arm(
     let mut call_flat: Vec<TokenStream> = Vec::new();
     for (i, field) in fields.iter().enumerate() {
         if field.is_optional {
+            if field.is_collection {
+                // Phase 4 #3 (2026-05-12): Optional-Collection — cloned carrier.
+                let cloned = format_ident!("f{}_cloned", i);
+                let ty = optional_collection_field_type_subst(field);
+                pat_flat.push(quote! { #cloned });
+                decl_flat.push(quote! { #cloned: #ty });
+                call_flat.push(quote! { #cloned });
+                continue;
+            }
             let slot_name = format_ident!("f{}_slot", i);
             let some_flag = format_ident!("f{}_some", i);
             pat_flat.push(quote! { #slot_name });
@@ -1487,7 +1517,7 @@ fn generate_regular_assemble_arm(
         .map(|(i, field)| {
             let result_ident = format_ident!("field_{}", i);
             if field.is_optional {
-                // Already Option<Box<T>> from extract; pass through.
+                // Already Option<Box<T>> or Option<Container> from extract; pass through.
                 quote! { #result_ident }
             } else if field.is_collection {
                 quote! { #result_ident }
@@ -1516,12 +1546,32 @@ fn generate_regular_assemble_arm(
     }
 }
 
+/// Phase 4 #3 (2026-05-12): Derive the runtime carrier type for an
+/// Optional-Collection field. Mirrors `enums.rs::one_optional_field`.
+fn optional_collection_field_type_subst(field: &FieldInfo) -> TokenStream {
+    let cat = &field.category;
+    match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+        CollectionType::Vec => quote! { Option<Vec<#cat>> },
+        CollectionType::HashBag => quote! { Option<mettail_runtime::HashBag<#cat>> },
+        CollectionType::HashSet => quote! { Option<std::collections::HashSet<#cat>> },
+        CollectionType::HashMap => quote! { Option<mettail_runtime::HashMapLit<#cat, #cat>> },
+    }
+}
+
 /// Extract the result for a single field from a slot (or slot range).
 fn emit_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
     let result_ident = format_ident!("field_{}", i);
     let wrap = format_ident!("Wrap{}", field.category);
 
     if field.is_optional {
+        if field.is_collection {
+            // Phase 4 #3 (2026-05-12): Optional-Collection — the cloned
+            // carrier is already in scope by name; rebind to field_<i>.
+            let cloned = format_ident!("f{}_cloned", i);
+            return quote! {
+                let #result_ident = #cloned;
+            };
+        }
         // Opt-Group: extract `Option<Box<Cat>>` from slot+some_flag.
         let slot_name = format_ident!("f{}_slot", i);
         let some_flag = format_ident!("f{}_some", i);

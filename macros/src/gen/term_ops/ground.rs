@@ -115,6 +115,16 @@ fn field_ground_check(field: &FieldInfo, name: &Ident) -> TokenStream {
     }
     let _ = name;
     if field.is_optional {
+        // Phase 4 #3 (2026-05-12): Optional-Collection — None is
+        // trivially ground; Some(c) is ground iff every element is.
+        if field.is_collection {
+            let coll_type = field
+                .coll_type
+                .as_ref()
+                .unwrap_or(&CollectionType::HashBag);
+            let inner = collection_all_ground(quote! { __c }, coll_type);
+            return quote! { #name.as_ref().map(|__c| #inner).unwrap_or(true) };
+        }
         // Opt-Group: None is trivially ground (no variables); Some(b)
         // is ground iff inner is ground.
         return quote! { #name.as_ref().map(|__b| __b.is_ground()).unwrap_or(true) };

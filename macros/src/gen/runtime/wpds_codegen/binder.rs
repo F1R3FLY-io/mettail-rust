@@ -803,8 +803,13 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
 
                 let mut inner_positions: Vec<BinderPosition> = Vec::new();
                 let mut inner_action_args: Vec<ActionArgKind> = Vec::new();
+                let mut inner_skip_next: bool = false;
 
-                for inner_item in inner {
+                for (inner_idx, inner_item) in inner.iter().enumerate() {
+                    if inner_skip_next {
+                        inner_skip_next = false;
+                        continue;
+                    }
                     match inner_item {
                         SyntaxExpr::Literal(text) => {
                             inner_positions.push(BinderPosition::Literal(text.clone()));
@@ -831,13 +836,60 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                 ParamKind::BinderList => {
                                     return None;
                                 }
-                                // B9 pilot: SimpleCollection inside Optional
-                                // is out of pilot scope. The optional-group
-                                // inner walker doesn't yet support nested
-                                // collection sub-parses.
+                                // Bare Param ref to SimpleCollection is
+                                // syntactically invalid (a collection
+                                // requires Sep syntax with separator +
+                                // close). The Sep-driven form is handled
+                                // below via SyntaxExpr::Op(PatternOp::Sep).
                                 ParamKind::SimpleCollection { .. } => {
                                     return None;
                                 }
+                            }
+                        }
+                        // Phase 4 #3 (2026-05-12): Class-2 SimpleCollection
+                        // inside `*opt(...)`. Mirrors the top-level Sep arm
+                        // at binder.rs:584-633 but operates over the
+                        // optional inner walk's positions list. The close
+                        // literal is at `inner[inner_idx + 1]`.
+                        SyntaxExpr::Op(PatternOp::Sep {
+                            collection,
+                            separator,
+                            source: None,
+                        }) => {
+                            let n = collection.to_string();
+                            let kind = param_map.get(&n)?;
+                            match kind {
+                                ParamKind::SimpleCollection { elem_cat, coll_kind } => {
+                                    let close = match inner.get(inner_idx + 1) {
+                                        Some(SyntaxExpr::Literal(text)) => text.clone(),
+                                        _ => return None,
+                                    };
+                                    let key_val_separator = match coll_kind {
+                                        CollectionType::HashMap => Some(":".to_string()),
+                                        _ => None,
+                                    };
+                                    let slot_idx_here = collection_slots_so_far;
+                                    collection_slots_so_far += 1;
+                                    inner_positions.push(BinderPosition::ParamParse {
+                                        cat: elem_cat.clone(),
+                                        collection: Some(CollectionSepInfo {
+                                            separator: separator.clone(),
+                                            close,
+                                            coll_kind: coll_kind.clone(),
+                                            elem_cat: elem_cat.clone(),
+                                            key_val_separator,
+                                            slot_idx: slot_idx_here,
+                                        }),
+                                    });
+                                    inner_action_args.push(ActionArgKind::CollectionDrain {
+                                        elem_cat: elem_cat.clone(),
+                                        coll_kind: coll_kind.clone(),
+                                    });
+                                    // Skip the close Literal — absorbed
+                                    // into CollectionLoop close-branch.
+                                    inner_skip_next = true;
+                                }
+                                _ => return None,
                             }
                         }
                         SyntaxExpr::Op(_) => {
@@ -2232,6 +2284,19 @@ pub(crate) fn emit_binder_list_loop_body(
                                     // replace it with OptionalGroupAt(rule,
                                     // next_sp) so on Unwinding we land at
                                     // sub_pos=next_sp.
+                                    //
+                                    // Note: this arm is in emit_binder_list_loop_body
+                                    // — used for Class-3 ZIP-MAP-SEP inner walks
+                                    // (e.g. the Name parse in `*zip(ns,xs).*map(
+                                    // |n,x| n "?" x).*sep(",")`). The inner Name
+                                    // ParamParse carries `collection: Some(...)`
+                                    // for SPLICING into the names accumulator
+                                    // (handled separately via the post-splice
+                                    // lookup), but the parse itself is a normal
+                                    // CategoryEntry sub-parse, not a
+                                    // CollectionMarker push. The Class-2-in-*opt
+                                    // CollectionMarker push case lives in
+                                    // `emit_optional_group_body`, not here.
                                     let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
                                     quote! {
                                         (#result_src_idx, #rule_idx, #cur_sp) => {
@@ -2433,32 +2498,63 @@ pub(crate) fn emit_optional_group_body(
                                 };
                             }
                         },
-                        BinderPosition::ParamParse { cat, collection: _ } => {
-                            // B9: SimpleCollection inside Optional is rejected
-                            // by classify_binder's optional-group walker, so
-                            // `collection` is always None at this site.
+                        BinderPosition::ParamParse { cat, collection } => {
                             let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
-                            quote! {
-                                (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
-                                    return WpdsStepAction::ReplaceAndPush {
-                                        replace_symbol: StackSymbolV2::optional_group_at(
-                                            #result_src_idx, #rule_idx, #next_sp, *outer_bp,
-                                        ),
-                                        push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
-                                        weight: LexicographicWeight::one(),
-                                        new_state: WpdsState::PrefixDispatch {
-                                            pos: _pos,
-                                            // Stage 3.27d (G-PREFIX-BP, 2026-04-30):
-                                            // opt-group inner ParamParse always uses
-                                            // cur_bp:0 because the outer rule's shape
-                                            // (`[Literal, Optional, ...]`) cannot match
-                                            // the unary-prefix predicate (which requires
-                                            // `[Literal, Param]` positions.len()==2).
-                                            // `prefix_bp_map` is plumbed through for
-                                            // symmetry; lookup will always miss here.
-                                            cur_bp: 0u8,
-                                        },
-                                    };
+                            match collection {
+                                None => quote! {
+                                    (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                                        return WpdsStepAction::ReplaceAndPush {
+                                            replace_symbol: StackSymbolV2::optional_group_at(
+                                                #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                            ),
+                                            push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
+                                            weight: LexicographicWeight::one(),
+                                            new_state: WpdsState::PrefixDispatch {
+                                                pos: _pos,
+                                                // Stage 3.27d (G-PREFIX-BP, 2026-04-30):
+                                                // opt-group inner ParamParse always uses
+                                                // cur_bp:0 because the outer rule's shape
+                                                // (`[Literal, Optional, ...]`) cannot match
+                                                // the unary-prefix predicate (which requires
+                                                // `[Literal, Param]` positions.len()==2).
+                                                // `prefix_bp_map` is plumbed through for
+                                                // symmetry; lookup will always miss here.
+                                                cur_bp: 0u8,
+                                            },
+                                        };
+                                    }
+                                },
+                                Some(info) => {
+                                    // Phase 4 #3 (2026-05-12): Class-2
+                                    // SimpleCollection inside *opt. Push
+                                    // CollectionMarker(rule, slot_idx) and
+                                    // replace OptionalGroupAt(cur_sp) with
+                                    // OptionalGroupAt(next_sp). The
+                                    // CollectionLoop apparatus parses
+                                    // elements until close; on
+                                    // CollectionMarker pop, binder-internal
+                                    // close fires (no FireAction), and the
+                                    // slot stays in live.collection_stack
+                                    // until the outer rule's terminal action
+                                    // drains via the Optional extractor.
+                                    let slot_idx = info.slot_idx;
+                                    quote! {
+                                        (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                                            return WpdsStepAction::ReplaceAndPush {
+                                                replace_symbol: StackSymbolV2::optional_group_at(
+                                                    #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                                ),
+                                                push_symbol: StackSymbolV2::collection_marker(
+                                                    #result_src_idx, #rule_idx, #slot_idx,
+                                                ),
+                                                weight: LexicographicWeight::one(),
+                                                new_state: WpdsState::PrefixDispatch {
+                                                    pos: _pos,
+                                                    cur_bp: 0u8,
+                                                },
+                                            };
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2789,12 +2885,111 @@ pub(crate) fn emit_binder_action_entry(
                             // unwrap.
                             let #inner_var: () = ();
                         },
-                        ActionArgKind::CollectionDrain { .. } => quote! {
-                            // B9 / Class 2 (2026-05-08): SimpleCollection
-                            // inside Optional is rejected by classify_binder
-                            // (out of pilot scope), so this arm is
-                            // unreachable. Defensive `()` placeholder.
-                            let #inner_var: () = ();
+                        ActionArgKind::CollectionDrain { elem_cat, coll_kind } => {
+                            // Phase 4 #3 (2026-05-12): Class-2 SimpleCollection
+                            // inside *opt. When the optional was TAKEN, the
+                            // inner_iter yields ActionArg::CollectionId(id);
+                            // drain the slot from live.collection_stack and
+                            // materialize into the container kind. When NOT
+                            // TAKEN, emit None.
+                            //
+                            // The drain order is locally LIFO-safe: the
+                            // optional collection slot is the innermost open
+                            // slot at the point this materialization fires
+                            // (the optional scope is the innermost scope,
+                            // and the collection inside it is its innermost
+                            // child).
+                            let elem_id = format_ident!("{}", elem_cat);
+                            match coll_kind {
+                                CollectionType::Vec => quote! {
+                                    let #inner_var: Option<std::vec::Vec<#elem_id>> =
+                                        match #opt_var.as_mut() {
+                                            Some(inner_iter) => match inner_iter.next() {
+                                                Some(arg) => match arg.as_collection_id() {
+                                                    Some(id) => {
+                                                        let drained = b.drain_collection(id);
+                                                        Some(
+                                                            drained.into_iter()
+                                                                .filter_map(|a| a.into_term::<#elem_id>())
+                                                                .collect()
+                                                        )
+                                                    },
+                                                    None => None,
+                                                },
+                                                None => None,
+                                            },
+                                            None => None,
+                                        };
+                                },
+                                CollectionType::HashBag => quote! {
+                                    let #inner_var: Option<mettail_runtime::HashBag<#elem_id>> =
+                                        match #opt_var.as_mut() {
+                                            Some(inner_iter) => match inner_iter.next() {
+                                                Some(arg) => match arg.as_collection_id() {
+                                                    Some(id) => {
+                                                        let drained = b.drain_collection(id);
+                                                        Some(mettail_runtime::HashBag::<#elem_id>::from_iter(
+                                                            drained.into_iter()
+                                                                .filter_map(|a| a.into_term::<#elem_id>())
+                                                        ))
+                                                    },
+                                                    None => None,
+                                                },
+                                                None => None,
+                                            },
+                                            None => None,
+                                        };
+                                },
+                                CollectionType::HashSet => quote! {
+                                    let #inner_var: Option<std::collections::HashSet<#elem_id>> =
+                                        match #opt_var.as_mut() {
+                                            Some(inner_iter) => match inner_iter.next() {
+                                                Some(arg) => match arg.as_collection_id() {
+                                                    Some(id) => {
+                                                        let drained = b.drain_collection(id);
+                                                        Some(std::collections::HashSet::<#elem_id>::from_iter(
+                                                            drained.into_iter()
+                                                                .filter_map(|a| a.into_term::<#elem_id>())
+                                                        ))
+                                                    },
+                                                    None => None,
+                                                },
+                                                None => None,
+                                            },
+                                            None => None,
+                                        };
+                                },
+                                CollectionType::HashMap => quote! {
+                                    let #inner_var: Option<mettail_runtime::HashMapLit<#elem_id, #elem_id>> =
+                                        match #opt_var.as_mut() {
+                                            Some(inner_iter) => match inner_iter.next() {
+                                                Some(arg) => match arg.as_collection_id() {
+                                                    Some(id) => {
+                                                        let drained = b.drain_collection(id);
+                                                        let mut iter_drained = drained.into_iter();
+                                                        let mut container = mettail_runtime::HashMapLit::<#elem_id, #elem_id>::default();
+                                                        while let Some(k_arg) = iter_drained.next() {
+                                                            let v_arg = match iter_drained.next() {
+                                                                Some(v) => v,
+                                                                None => break,
+                                                            };
+                                                            if let (Some(k), Some(v)) = (
+                                                                k_arg.into_term::<#elem_id>(),
+                                                                v_arg.into_term::<#elem_id>(),
+                                                            ) {
+                                                                container.insert(k, v);
+                                                            }
+                                                        }
+                                                        Some(container)
+                                                    },
+                                                    None => None,
+                                                },
+                                                None => None,
+                                            },
+                                            None => None,
+                                        };
+                                },
+                            }
                         },
                     };
                     inner_ext.push(extract_inner);

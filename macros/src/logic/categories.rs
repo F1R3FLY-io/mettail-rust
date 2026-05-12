@@ -382,6 +382,16 @@ fn generate_collection_projection_population(
             if simple_count > 1 {
                 continue;
             }
+            // Phase 4 #3 (2026-05-12): skip rules with an Optional param.
+            // Optional-Collection rules have wider arity than the single-
+            // field tuple the pattern assumes, and the collection slot
+            // is `Option<Vec<T>>` rather than the bare container.
+            let has_optional = ctx
+                .iter()
+                .any(|p| matches!(p, mettail_ast::grammar::TermParam::Optional { .. }));
+            if has_optional {
+                continue;
+            }
         }
 
         // Check if this constructor has a collection field
@@ -467,6 +477,16 @@ fn generate_projection_seeding_rules(category: &Ident, language: &LanguageDef) -
                 .filter(|p| matches!(p, mettail_ast::grammar::TermParam::Simple { .. }))
                 .count();
             if simple_count > 1 {
+                continue;
+            }
+            // Phase 4 #3 (2026-05-12): skip rules with an Optional param.
+            // Optional-Collection rules have wider arity than the single-
+            // field tuple the pattern assumes, and the collection slot
+            // is `Option<Vec<T>>` rather than the bare container.
+            let has_optional = ctx
+                .iter()
+                .any(|p| matches!(p, mettail_ast::grammar::TermParam::Optional { .. }));
+            if has_optional {
                 continue;
             }
         }

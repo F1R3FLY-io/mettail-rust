@@ -353,14 +353,22 @@ fn generate_random_depth_d(
             simple_count > 1
         });
 
-        if has_collections && !is_class2_binder {
+        // Phase 4 #3 (2026-05-12): rules with an Optional param (Class-2
+        // SimpleCollection inside `*opt(...)`) also have wider arity than
+        // the single-arg HashBag-typed tuple variant assumed by
+        // generate_random_collection_constructor. Skip them too.
+        let has_optional_param = rule.term_context.as_ref().is_some_and(|ctx| {
+            ctx.iter().any(|p| matches!(p, TermParam::Optional { .. }))
+        });
+
+        if has_collections && !is_class2_binder && !has_optional_param {
             // Handle collection constructors
             constructor_cases
                 .push(generate_random_collection_constructor(cat_name, rule, language));
             continue;
         }
-        if has_collections && is_class2_binder {
-            // Class-2 binder rule with collection slot: skip random gen.
+        if has_collections && (is_class2_binder || has_optional_param) {
+            // Class-2 binder or Optional-collection rule: skip random gen.
             continue;
         }
 

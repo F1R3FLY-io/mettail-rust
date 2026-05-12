@@ -358,6 +358,14 @@ fn generate_eq_regular_arm(
                 };
             }
             if field.is_optional {
+                if field.is_collection {
+                    // Phase 4 #3 (2026-05-12): Optional-Collection — delegate
+                    // to Option<Container>::PartialEq directly. Vec/HashBag/HashSet
+                    // all implement PartialEq elementwise.
+                    return quote! {
+                        if #lname != #rname { return false; }
+                    };
+                }
                 // Opt-Group: equality on `Option<Box<Cat>>`. Push CmpTask
                 // recursively if both Some; mismatched Some/None or
                 // mismatched values short-circuit to false.
@@ -900,6 +908,21 @@ fn generate_cmp_regular_arm(
             continue;
         }
         if field.is_optional {
+            if field.is_collection {
+                // Phase 4 #3 (2026-05-12): Optional-Collection — delegate to
+                // Option<Container>::cmp. Vec/HashSet impl Ord directly;
+                // HashBag impls Ord too (see mettail_runtime).
+                stmts.push(quote! {
+                    {
+                        let ord = #lname.cmp(#rname);
+                        if ord != std::cmp::Ordering::Equal {
+                            stack.clear();
+                            return ord;
+                        }
+                    }
+                });
+                continue;
+            }
             // Opt-Group: order Option<Box<Cat>>. None < Some(_); Some(a)
             // vs Some(b) compares inner via re-entrant trampolined cmp.
             stmts.push(quote! {
@@ -1004,6 +1027,21 @@ fn generate_cmp_regular_arm(
             continue;
         }
         if field.is_optional {
+            if field.is_collection {
+                // Phase 4 #3 (2026-05-12): Optional-Collection — delegate to
+                // Option<Container>::cmp (eager — same rationale as in the
+                // eager-loop branch).
+                stmts.push(quote! {
+                    {
+                        let ord = #lname.cmp(#rname);
+                        if ord != std::cmp::Ordering::Equal {
+                            stack.clear();
+                            return ord;
+                        }
+                    }
+                });
+                continue;
+            }
             // Opt-Group: same eager Optional-cmp as the eager-loop
             // branch (deferred-trailing semantics don't help here
             // because Some/None is a tag-discriminant compare).

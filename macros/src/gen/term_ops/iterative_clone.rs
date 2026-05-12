@@ -42,6 +42,18 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
+/// Phase 4 #3 (2026-05-12): Derive the runtime carrier type for an
+/// Optional-Collection field. Mirrors `enums.rs::one_optional_field`.
+fn optional_collection_field_type_clone(field: &FieldInfo) -> TokenStream {
+    let cat = &field.category;
+    match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+        CollectionType::Vec => quote! { Option<Vec<#cat>> },
+        CollectionType::HashBag => quote! { Option<mettail_runtime::HashBag<#cat>> },
+        CollectionType::HashSet => quote! { Option<std::collections::HashSet<#cat>> },
+        CollectionType::HashMap => quote! { Option<mettail_runtime::HashMapLit<#cat, #cat>> },
+    }
+}
+
 // =============================================================================
 // Main Entry Point
 // =============================================================================
@@ -171,6 +183,12 @@ fn generate_assemble_variant(
                 .enumerate()
                 .map(|(i, field)| {
                     if field.is_optional {
+                        if field.is_collection {
+                            // Phase 4 #3 (2026-05-12): Optional-Collection — cloned carrier.
+                            let cloned = format_ident!("f{}_cloned", i);
+                            let ty = optional_collection_field_type_clone(field);
+                            return quote! { #cloned: #ty };
+                        }
                         let slot_name = format_ident!("f{}_slot", i);
                         let some_flag = format_ident!("f{}_some", i);
                         return quote! { #slot_name: usize, #some_flag: bool };
@@ -467,6 +485,17 @@ fn generate_regular_clone_arm(
         let clone_task = format_ident!("Clone{}", field.category);
 
         if field.is_optional {
+            if field.is_collection {
+                // Phase 4 #3 (2026-05-12): Optional-Collection — bypass
+                // CloneTask machinery. Clone derives on Option<Container>;
+                // store the cloned value directly into the assemble carrier.
+                let cloned = format_ident!("f{}_cloned", i);
+                alloc_stmts.push(quote! {
+                    let #cloned = #name.clone();
+                });
+                assemble_fields.push(quote! { #cloned });
+                continue;
+            }
             // Opt-Group: Optional fields store `Option<Box<Cat>>`. Clone
             // sets `f{i}_some` to track whether the slot is populated;
             // the assemble arm reconstructs Some(Box::new(...)) or None.
@@ -972,6 +1001,15 @@ fn generate_regular_assemble_arm(
     let mut helper_arg_names: Vec<TokenStream> = Vec::new();
     for (i, field) in fields.iter().enumerate() {
         if field.is_optional {
+            if field.is_collection {
+                // Phase 4 #3 (2026-05-12): Optional-Collection — cloned carrier.
+                let cloned = format_ident!("f{}_cloned", i);
+                let ty = optional_collection_field_type_clone(field);
+                field_pat_names.push(quote! { #cloned });
+                helper_arg_decls.push(quote! { #cloned: #ty });
+                helper_arg_names.push(quote! { #cloned });
+                continue;
+            }
             let slot_name = format_ident!("f{}_slot", i);
             let some_flag = format_ident!("f{}_some", i);
             field_pat_names.push(quote! { #slot_name });
@@ -1014,6 +1052,14 @@ fn generate_regular_assemble_arm(
         .map(|(i, field)| {
             let wrap = format_ident!("Wrap{}", field.category);
             if field.is_optional {
+                if field.is_collection {
+                    // Phase 4 #3 (2026-05-12): Optional-Collection — rebind cloned carrier.
+                    let cloned = format_ident!("f{}_cloned", i);
+                    let result_ident = format_ident!("field_{}", i);
+                    return quote! {
+                        let #result_ident = #cloned;
+                    };
+                }
                 let slot_name = format_ident!("f{}_slot", i);
                 let some_flag = format_ident!("f{}_some", i);
                 let result_ident = format_ident!("field_{}", i);

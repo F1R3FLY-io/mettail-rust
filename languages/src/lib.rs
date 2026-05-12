@@ -12,6 +12,7 @@
 pub mod ambient;
 pub mod calculator;
 pub mod class2multi;
+pub mod class2optsmoke;
 pub mod class2smoke;
 pub mod class3multi;
 pub mod guarded_rho;

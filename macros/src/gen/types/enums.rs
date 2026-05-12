@@ -391,7 +391,19 @@ fn generate_variant_from_term_context(
                     match p {
                         TermParam::Simple { ty, .. } => {
                             let inner_ty = type_expr_to_rust_type(ty);
-                            vec![quote! { Option<Box<#inner_ty>> }]
+                            // Phase 4 #3 (2026-05-12): collections / maps
+                            // inside Optional emit `Option<Vec<T>>` /
+                            // `Option<HashBag<T>>` / `Option<HashSet<T>>` /
+                            // `Option<HashMapLit<K,V>>` — NOT boxed. Matches
+                            // the top-level Class-2 convention (bare
+                            // container, no Box). Container types are
+                            // already heap-allocated so Box is redundant.
+                            match ty {
+                                TypeExpr::Collection { .. } | TypeExpr::Map { .. } => {
+                                    vec![quote! { Option<#inner_ty> }]
+                                }
+                                _ => vec![quote! { Option<Box<#inner_ty>> }],
+                            }
                         },
                         TermParam::Abstraction { ty, .. } => {
                             if let TypeExpr::Arrow { codomain, .. } = ty {

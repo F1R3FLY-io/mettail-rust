@@ -266,6 +266,19 @@ fn generate_debug_regular_arm(
         }
 
         if field.is_optional {
+            if field.is_collection {
+                // Phase 4 #3 (2026-05-12): Optional-Collection — format
+                // the entire Option<Container> via Debug (containers derive
+                // or implement Debug; elements derive Debug).
+                push_stmts.push(quote! {
+                    if let Some(__c) = #fname.as_ref() {
+                        stack.push(DebugTask::WriteString(format!("Some({:?})", __c)));
+                    } else {
+                        stack.push(DebugTask::WriteStr("None"));
+                    }
+                });
+                continue;
+            }
             // Opt-Group: emit "Some(...)" with inner Debug-recursive, or
             // bare "None". Push order is reverse of output order (LIFO).
             let is_known_category = language.types.iter().any(|t| t.name == field.category);

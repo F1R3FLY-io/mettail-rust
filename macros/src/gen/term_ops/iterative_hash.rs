@@ -345,18 +345,33 @@ fn generate_hash_regular_arm(
     for (i, field) in fields.iter().enumerate().take(eager_end) {
         let name = &field_names[i];
         if field.is_optional {
-            // Opt-Group: hash a discriminant byte (0=None, 1=Some), then
-            // re-enter Hash on inner if Some. Re-entrant call is bounded
-            // because the inner Box runs through the trampoline engine.
-            final_stmts.push(quote! {
-                match #name.as_ref() {
-                    None => std::hash::Hash::hash(&0u8, state),
-                    Some(__b) => {
-                        std::hash::Hash::hash(&1u8, state);
-                        std::hash::Hash::hash(&**__b, state);
+            if field.is_collection {
+                // Phase 4 #3 (2026-05-12): Optional-Collection — discriminator
+                // byte + delegate to the collection's whole-value Hash impl
+                // (Vec/HashBag/HashSet all derive Hash).
+                final_stmts.push(quote! {
+                    match #name.as_ref() {
+                        None => std::hash::Hash::hash(&0u8, state),
+                        Some(__c) => {
+                            std::hash::Hash::hash(&1u8, state);
+                            std::hash::Hash::hash(__c, state);
+                        }
                     }
-                }
-            });
+                });
+            } else {
+                // Opt-Group: hash a discriminant byte (0=None, 1=Some), then
+                // re-enter Hash on inner if Some. Re-entrant call is bounded
+                // because the inner Box runs through the trampoline engine.
+                final_stmts.push(quote! {
+                    match #name.as_ref() {
+                        None => std::hash::Hash::hash(&0u8, state),
+                        Some(__b) => {
+                            std::hash::Hash::hash(&1u8, state);
+                            std::hash::Hash::hash(&**__b, state);
+                        }
+                    }
+                });
+            }
         } else if field.is_predicate {
             // Phase 3A-B4: predicate fields are bare BehavioralPred
             // values that derive `Hash`. Inline-hash them in field
@@ -386,6 +401,20 @@ fn generate_hash_regular_arm(
     for &(i, field) in deferred.iter().rev() {
         let name = &field_names[i];
         if field.is_optional {
+            if field.is_collection {
+                // Phase 4 #3 (2026-05-12): Optional-Collection — emit eagerly
+                // (deferred-trailing semantics don't apply to whole-value hashing).
+                final_stmts.push(quote! {
+                    match #name.as_ref() {
+                        None => std::hash::Hash::hash(&0u8, state),
+                        Some(__c) => {
+                            std::hash::Hash::hash(&1u8, state);
+                            std::hash::Hash::hash(__c, state);
+                        }
+                    }
+                });
+                continue;
+            }
             // Opt-Group: emit eagerly (deferred-trailing semantics don't
             // apply to Option-tag-discriminant hashing).
             final_stmts.push(quote! {

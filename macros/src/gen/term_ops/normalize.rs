@@ -94,6 +94,16 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
             if simple_count > 1 {
                 continue;
             }
+            // Phase 4 #3 (2026-05-12): skip flatten helper for rules with
+            // an Optional param. Optional-Collection rules have arity > 1
+            // (one slot per Optional, one per Collection), breaking the
+            // `Cat::Label(inner)` single-field assumption.
+            let has_optional = ctx
+                .iter()
+                .any(|p| matches!(p, TermParam::Optional { .. }));
+            if has_optional {
+                continue;
+            }
         }
 
         let has_collection = rule
@@ -423,6 +433,26 @@ fn generate_assemble_variant_decl(
     }
 }
 
+/// Phase 4 #3 (2026-05-12): For an Optional-Collection field, derive the
+/// runtime carrier type (e.g. `Option<Vec<Proc>>`,
+/// `Option<mettail_runtime::HashBag<Proc>>`, etc.) that matches what
+/// `enums.rs::one_optional_field` emitted for the AST. Used by the
+/// normalize PDA's cloned-carrier path.
+fn optional_collection_field_type(field: &FieldInfo) -> TokenStream {
+    let cat = &field.category;
+    match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+        CollectionType::Vec => quote! { Option<Vec<#cat>> },
+        CollectionType::HashBag => quote! { Option<mettail_runtime::HashBag<#cat>> },
+        CollectionType::HashSet => quote! { Option<std::collections::HashSet<#cat>> },
+        CollectionType::HashMap => {
+            // HashMap inside Optional uses HashMapLit<K,V>; treat the inner
+            // element category as the value category. Map-typed slots aren't
+            // exercised yet in the test grammar; emit a best-effort type.
+            quote! { Option<mettail_runtime::HashMapLit<#cat, #cat>> }
+        }
+    }
+}
+
 /// Regular-field slot declaration (single slot, or collection range tuple).
 ///
 /// **Cross-cat native fields** are stored as a cloned owned value in the
@@ -435,6 +465,12 @@ fn emit_reg_field_decl(i: usize, field: &FieldInfo) -> TokenStream {
         return quote! { #pred_name: mettail_runtime::BehavioralPred };
     }
     if field.is_optional {
+        if field.is_collection {
+            // Phase 4 #3 (2026-05-12): Optional-Collection — cloned carrier.
+            let cloned = format_ident!("f{}_cloned", i);
+            let ty = optional_collection_field_type(field);
+            return quote! { #cloned: #ty };
+        }
         let slot_name = format_ident!("f{}_slot", i);
         let some_flag = format_ident!("f{}_some", i);
         return quote! { #slot_name: usize, #some_flag: bool };
@@ -747,6 +783,22 @@ fn emit_reg_field_visit_alloc(
         }
 
         if field.is_optional {
+            // Phase 4 #3 (2026-05-12): Optional-Collection — bypass slot
+            // machinery. Elements of the inner collection don't get
+            // normalized via the PDA here (they're already normalized at
+            // construction time, since normalize is invoked top-down).
+            // For binder/literal slots inside, the PDA would re-normalize;
+            // for now, clone the whole Option<Container> and pass through.
+            // This matches the existing top-level non-collection Option's
+            // intent when nothing to do: pass through unchanged.
+            if field.is_collection {
+                let cloned = format_ident!("f{}_cloned", i);
+                alloc_stmts.push(quote! {
+                    let #cloned = #name.clone();
+                });
+                assemble_fields.push(quote! { #cloned });
+                continue;
+            }
             // Opt-Group: slot+some_flag pattern. Push VisitTask only if
             // Some; assemble reconstructs Option<Box<Cat>>.
             let field_cat = &field.category;
@@ -1344,6 +1396,15 @@ fn generate_regular_assemble_arm(
     let mut call_flat: Vec<TokenStream> = Vec::new();
     for (i, field) in fields.iter().enumerate() {
         if field.is_optional {
+            if field.is_collection {
+                // Phase 4 #3 (2026-05-12): Optional-Collection — cloned carrier.
+                let cloned = format_ident!("f{}_cloned", i);
+                let ty = optional_collection_field_type(field);
+                pat_flat.push(quote! { #cloned });
+                decl_flat.push(quote! { #cloned: #ty });
+                call_flat.push(quote! { #cloned });
+                continue;
+            }
             let slot_name = format_ident!("f{}_slot", i);
             let some_flag = format_ident!("f{}_some", i);
             pat_flat.push(quote! { #slot_name });
@@ -1427,6 +1488,11 @@ fn emit_reg_slot_pattern(i: usize, field: &FieldInfo) -> TokenStream {
         return quote! { #pred_name };
     }
     if field.is_optional {
+        if field.is_collection {
+            // Phase 4 #3 (2026-05-12): Optional-Collection — cloned carrier.
+            let cloned = format_ident!("f{}_cloned", i);
+            return quote! { #cloned };
+        }
         let slot_name = format_ident!("f{}_slot", i);
         let some_flag = format_ident!("f{}_some", i);
         return quote! { #slot_name, #some_flag };
@@ -1456,6 +1522,15 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
     let wrap = format_ident!("Wrap{}", field.category);
 
     if field.is_optional {
+        if field.is_collection {
+            // Phase 4 #3 (2026-05-12): Optional-Collection — the cloned
+            // carrier is already bound by name in scope; extract just
+            // rebinds it to field_<i>.
+            let cloned = format_ident!("f{}_cloned", i);
+            return quote! {
+                let #result_ident = #cloned;
+            };
+        }
         // Opt-Group: extract Option<Box<Cat>> from slot+some_flag.
         let slot_name = format_ident!("f{}_slot", i);
         let some_flag = format_ident!("f{}_some", i);

@@ -111,6 +111,17 @@ fn field_depth_expr(field: &FieldInfo, name: &Ident) -> TokenStream {
         return quote! { 0 };
     }
     if field.is_optional {
+        // Phase 4 #3 (2026-05-12): Optional-Collection (Option<Vec<T>>
+        // / Option<HashBag<T>> / Option<HashSet<T>>) — delegate to
+        // iter-max-depth on the inner collection when Some.
+        if field.is_collection {
+            let coll_type = field
+                .coll_type
+                .as_ref()
+                .unwrap_or(&CollectionType::HashBag);
+            let inner = collection_max_depth(quote! { __c }, coll_type);
+            return quote! { #name.as_ref().map(|__c| #inner).unwrap_or(0) };
+        }
         // Opt-Group: depth of `Option<Box<Cat>>` is 0 if None, else
         // 1 + inner depth (the Box adds one level of nesting).
         return quote! { #name.as_ref().map(|__b| __b.term_depth()).unwrap_or(0) };

@@ -354,6 +354,28 @@ fn generate_regular_push_arm(
             let dummy_fn = format_ident!("dummy_{}", field.category.to_string().to_lowercase());
 
             if field.is_optional {
+                if field.is_collection {
+                    // Phase 4 #3 (2026-05-12): Optional-Collection — `take()`
+                    // extracts the inner container (Vec/HashBag/HashSet), then
+                    // we iterate and push DropTask per element.
+                    let _ = dummy_fn.clone();
+                    return match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
+                        CollectionType::Vec | CollectionType::HashSet => quote! {
+                            if let Some(__c) = #name.take() {
+                                for elem in __c {
+                                    stack.push(DropTask::#task_variant(elem));
+                                }
+                            }
+                        },
+                        CollectionType::HashBag | CollectionType::HashMap => quote! {
+                            if let Some(__c) = #name.take() {
+                                for (elem, _count) in __c.into_iter() {
+                                    stack.push(DropTask::#task_variant(elem));
+                                }
+                            }
+                        },
+                    };
+                }
                 // Opt-Group: `Option<Box<Cat>>` field. `take()` extracts
                 // the Box (leaves None) without needing a dummy. Push
                 // the inner if Some.

@@ -236,22 +236,33 @@ fn field_walk(field: &FieldInfo, name: &Ident, home_cat: &Ident) -> Option<Token
     if field.is_predicate {
         return None;
     }
-    if field.is_collection {
-        if field.category != *home_cat {
-            return None;
-        }
-        let coll = field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag);
-        return Some(collection_walk(quote! { #name }, coll));
-    }
     if field.is_optional {
         if field.category != *home_cat {
             return None;
+        }
+        // Phase 4 #3 (2026-05-12): Optional-Collection — unwrap
+        // Option first, then dispatch by collection kind.
+        if field.is_collection {
+            let coll = field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag);
+            let inner_walk = collection_walk(quote! { __c }, coll);
+            return Some(quote! {
+                if let Some(__c) = #name.as_ref() {
+                    #inner_walk
+                }
+            });
         }
         return Some(quote! {
             if let Some(__b) = #name.as_ref() {
                 __b._collect_uniform_flags(has_auto_inj, has_native_lit);
             }
         });
+    }
+    if field.is_collection {
+        if field.category != *home_cat {
+            return None;
+        }
+        let coll = field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag);
+        return Some(collection_walk(quote! { #name }, coll));
     }
     // Plain Box<Cat> field. Only recurse if same-cat.
     if field.category != *home_cat {
