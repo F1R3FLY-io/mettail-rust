@@ -400,25 +400,20 @@ pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
     /// (tokens, identifiers, sub-terms). Semantic actions consume from
     /// and push back to this builder.
     builder: SemanticBuilder,
-    /// Stage 3.9 / ι Phase 4 (2026-05-01): Always-cursor walker mode.
-    /// `Lazy` (default) means cursor[0] is the singleton canonical
-    /// cursor and live builder mutations happen directly. `Strict`
-    /// (after first Fork) means builder mutations route through
-    /// `recovery_deltas` deltas and replay only on the lex-min
-    /// winner at EOI commit. Mode is set Lazy on construction/`reset()`,
-    /// promoted to Strict on first `WpdsStepAction::Fork`, and stays
-    /// Strict until `reset()` (L3 invariant: no reverse).
-    // Phase 5.6-tail-F (2026-05-12): replaces the CursorMode enum with a
-    // monotone bool. Initialized `true` at construction (no Fork has
-    // happened); set to `false` at the first `Fork` action and never
-    // reset. The 4 mode-agnostic helpers (advance_cursor_pos,
-    // multiply_cursor_weight, set_cursor_inner_state, cursor_gss_push,
-    // cursor_gss_pop_via_edge, apply_pop_body_to_cursor's top-node
-    // mirror) consult this flag to decide whether to mirror cursor.* to
-    // self.*. Same semantics as pre-tail `cursor_mode == CursorMode::Lazy`
-    // (a one-way Lazy → Strict promotion at the first Fork), without the
-    // misleading enum names.
-    unforked: bool,
+    /// "No Fork has happened yet" flag — `true` at construction; set
+    /// `false` at the first `WpdsStepAction::Fork`; never reset within
+    /// a parse (only `reset()` flips it back to `true`).
+    ///
+    /// The 4 mode-agnostic helpers (advance_cursor_pos,
+    /// multiply_cursor_weight, set_cursor_inner_state, cursor_gss_push,
+    /// cursor_gss_pop_via_edge, apply_pop_body_to_cursor's top-node
+    /// mirror) consult this flag to decide whether to mirror cursor.* to
+    /// self.*. Mirror fires only while deterministic (singleton cursor still
+    /// canonically tracked by the walker's live `self.builder` /
+    /// `self.pos` / etc.); once a Fork happens, the walker has multiple
+    /// cursors and self.* loses its singleton-meaning until
+    /// `commit_winner` installs a winner.
+    deterministic: bool,
     /// Stage 7+ Fork plan, step 2: per-branch micro-state during
     /// `WpdsState::AmbiguityFanout`. Each entry is a `BranchCursor` that
     /// pairs a GSS-tip node id with the branch's own `pos`, accumulated
@@ -426,8 +421,8 @@ pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
     /// branch).
     ///
     /// Stage 3.9 / ι Phase 4 (2026-05-01): post-Phase-4, this vector is
-    /// ALWAYS non-empty — singleton cursor in Lazy mode, multiple
-    /// cursors in Strict mode. The pre-Phase-4 "empty when not in
+    /// ALWAYS non-empty — singleton cursor in deterministic mode, multiple
+    /// cursors in nondeterministic mode. The pre-Phase-4 "empty when not in
     /// AmbiguityFanout" invariant is replaced by the always-non-empty
     /// invariant.
     branch_cursors: Vec<BranchCursor<W>>,
@@ -462,16 +457,18 @@ pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
     recovery_config: RecoveryConfig,
 }
 
-/// Stage 3.9 / ι Phase 4 (2026-05-01): always-cursor walker mode.
-///
-/// `Lazy` is the unambiguous-parse fast-path: the walker maintains a
-// Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The
-// pre-tail `Lazy`/`Strict` names inverted standard CS terminology and
-// conflated "per-cursor mutation tracking strategy" with "WPDS
-// evaluation strategy". The actual signal — "no Fork has happened yet"
-// — is now a monotone bool `WpdsWalker.unforked`.
+// Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
+// enum had two variants — `Lazy` (singleton, direct mutation of
+// self.builder) and `Strict` (multi-cursor, journaled mutation queued
+// in pending_builder_ops, replayed at commit_winner). The names
+// inverted standard CS terminology (lazy meant immediate; strict meant
+// deferred). The actual signal — "no Fork has happened yet" — is now
+// a monotone bool `WpdsWalker.deterministic` (true while no Fork has
+// happened — the walker is on a single parse path; false once a Fork
+// has transitioned it into nondeterministic mode where multiple cursors
+// explore grammar ambiguity in parallel, GLR/GLL-style).
 
-/// Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard for Strict-mode
+/// Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard for nondeterministic-mode
 /// cursors. If any cursor's `recovery_deltas` exceeds this length,
 /// the walker transitions to `WpdsState::Error` instead of continuing
 /// to accumulate. Prevents pathological grammars from consuming
@@ -807,7 +804,7 @@ pub struct BranchCursor<W: Semiring> {
     // Phase 5.6-tail-G (2026-05-12): `collection_stack` and
     // `collection_slots_allocated` fields DELETED. Pre-tail these were
     // mirrors of the live builder's collection state, maintained for
-    // Strict-mode id allocation and for the merge_equivalent_cursors
+    // nondeterministic-mode id allocation and for the merge_equivalent_cursors
     // ConfigKey shape-discriminator. Under always-eager Arc::make_mut
     // (Phase 5.3+), cursor.builder IS the authoritative state — its
     // collection_stack reflects the slot history directly. All readers
@@ -834,7 +831,7 @@ pub struct BranchCursor<W: Semiring> {
     /// right-associative behavior the codegen `vec![take, skip]` order
     /// expressed.
     ///
-    /// Singleton-Lazy default: 0. Default for non-Fork-allocated
+    /// Unforked-singleton default: 0. Default for non-Fork-allocated
     /// cursors (constructors, BranchResolved write-back, commit_winner
     /// write-back).
     pub source_priority: u32,
@@ -979,25 +976,27 @@ impl<W: Semiring + Clone> BranchCursor<W> {
     /// placeholders.
     ///
     /// **Class C closure**: pre-Phase-4, the walker maintained two parallel
-    /// mutation surfaces (live builder + cursor deltas). When a Lazy parse
-    /// transitioned to Strict (first Fork) with collections open in the
-    /// live builder, the children cursors had no awareness of those
+    /// mutation surfaces (live builder + cursor deltas). When a
+    /// deterministic parse transitioned to nondeterministic (first Fork)
+    /// with collections open in
+    /// the live builder, the children cursors had no awareness of those
     /// collections — subsequent splice deltas could underflow at replay
     /// (`pop_args` panic at `wpds_runtime.rs:1518`).
     ///
     /// Post-Phase-4, the dual-mutation surface is gone; the live builder
-    /// and cursor[0] stay in lockstep in Lazy mode via mode-aware helpers.
-    /// At Lazy→Strict transition, children inherit the parent cursor's
+    /// and cursor[0] stay in lockstep in deterministic mode via mode-aware helpers.
+    /// At deterministic→nondeterministic transition, children inherit the parent cursor's
     /// state, but the parent cursor's `collection_stack` may be empty
-    /// (Lazy mutates live builder directly, NOT cursor.collection_stack).
-    /// The Fork arm therefore needs to seed children's `collection_stack`
-    /// with empty placeholders matching the live builder's depth so
-    /// subsequent splice ids align.
+    /// (the pre-tail deterministic-mode singleton path mutated the live
+    /// builder directly, NOT cursor.collection_stack). The Fork arm
+    /// therefore needs to seed children's `collection_stack` with empty
+    /// placeholders matching the live builder's depth so subsequent
+    /// splice ids align.
     ///
     /// `seed_from_live` makes this explicit. Constructs a cursor with
     /// `K` empty `Vec<ActionArg>` placeholders in `collection_stack`,
     /// where `K = live_collection_stack_depth`. Used by WpdsWalker
-    /// constructors and the Lazy→Strict transition (Fork) to ensure
+    /// constructors and the deterministic→nondeterministic transition (Fork) to ensure
     /// the always-non-empty + always-aligned cursor invariant.
     ///
     /// Replaces three inlined constructions in `WpdsWalker::{new,
@@ -1643,7 +1642,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Construct a fresh walker in `Ready { min_bp }` state.
     ///
     /// Stage 3.9 / ι Phase 4 (2026-05-01): seeds the singleton cursor in
-    /// Lazy mode. Subsequent mutations route through `apply_action_to_cursor`
+    /// deterministic mode. Subsequent mutations route through `apply_action_to_cursor`
     /// against `branch_cursors[0]` via the always-cursor dispatcher.
     pub fn new(engine: E, initial_min_bp: u8) -> Self {
         let initial_state = WpdsState::Ready { min_bp: initial_min_bp };
@@ -1666,7 +1665,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             top_node: None,
             beam_size: None,
             builder: SemanticBuilder::new(),
-            unforked: true,
+            deterministic: true,
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -1717,7 +1716,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             top_node: Some(top_id),
             beam_size: None,
             builder: SemanticBuilder::new(),
-            unforked: true,
+            deterministic: true,
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -1763,7 +1762,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             top_node,
             beam_size: None,
             builder: SemanticBuilder::new(),
-            unforked: true,
+            deterministic: true,
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -1774,7 +1773,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     }
 
     /// Stage 3.9 / ι Phase 4 (2026-05-01): reset the walker between
-    /// parses. Returns to Lazy mode with a fresh singleton cursor.
+    /// parses. Returns to deterministic mode with a fresh singleton cursor.
     /// Preserves the engine and beam_size; everything else is
     /// reinitialized to construction defaults.
     pub fn reset(&mut self, initial_min_bp: u8) {
@@ -1785,7 +1784,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         self.weight = W::one();
         self.top_node = None;
         self.builder = SemanticBuilder::new();
-        self.unforked = true;
+        self.deterministic = true;
         // Stage 3.10 / ι Phase 5 (2026-05-01): seed via `seed_from_live`.
         self.branch_cursors = vec![BranchCursor::seed_from_live(
             0,
@@ -1803,14 +1802,21 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         self.mutable_token_source = None;
     }
 
-    /// Phase 5.6-tail-F (2026-05-12): read-only access to the unforked
-    /// flag. Replaces the pre-tail `cursor_mode()` accessor that returned
-    /// a CursorMode enum. Returns `true` if no Fork has happened yet
-    /// (the walker is still in single-cursor mode); `false` once any
-    /// Fork promoted the walker to multi-cursor mode (monotone — never
-    /// resets within a parse).
-    pub fn unforked(&self) -> bool {
-        self.unforked
+    /// Read-only access to the deterministic-parse flag. Returns `true`
+    /// when no `WpdsStepAction::Fork` has been processed yet (the walker
+    /// is operating on a single parse path); `false` once any Fork has
+    /// transitioned the walker into nondeterministic mode (multiple
+    /// parallel cursors exploring grammar ambiguity, in the GLR/GLL
+    /// sense). Monotone — set false at the first Fork and never reset
+    /// within a parse. `reset()` flips it back to `true` for the next
+    /// parse.
+    ///
+    /// Replaces the pre-Phase-5.6-tail `cursor_mode()` accessor that
+    /// returned a `CursorMode { Lazy, Strict }` enum (whose variant
+    /// names inverted standard CS terminology — see the
+    /// terminology-note comment near the `deterministic` field).
+    pub fn deterministic(&self) -> bool {
+        self.deterministic
     }
 
     /// Stage 3.20 / L12 (Commit 4, 2026-05-06): read-only access to the
@@ -2242,7 +2248,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     ///
     /// Drives `process_event(Step)` until one of:
     /// 1. all `branch_cursors` are dead (`branch_cursors.is_empty()`),
-    /// 2. the live state is terminal (Accepted in unforked mode, or
+    /// 2. the live state is terminal (Accepted in deterministic mode, or
     ///    Error from a non-fanout path),
     /// 3. `pos == tokens.len()` AND every cursor is "parked" at EOI (Idle
     ///    in a resolved-shape state, see `apply_action_to_cursor`'s Idle
@@ -2357,7 +2363,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Inspects the post-`run_to_end_of_input` configuration and produces
     /// a `WpdsResolveResult<W>`. The decision tree:
     ///
-    /// 1. **Live mode (unforked, no branch_cursors)**:
+    /// 1. **Live mode (deterministic, singleton branch_cursors)**:
     ///    - `state == Accepted`: the live builder already holds the result;
     ///      pop it and return `Accepted { weight, term }`.
     ///    - `state == Error { message }`: return `ParseError { message, position: self.pos }`.
@@ -2380,14 +2386,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     where
         W: 'static,
     {
-        // Phase 5.6-tail-B (2026-05-12): the pre-tail Lazy fast-path
+        // Phase 5.6-tail-B (2026-05-12): the pre-tail deterministic-mode fast-path
         // returned directly using `self.builder.take_dyn_result()`. Under
         // always-eager Arc::make_mut (Phase 5.3+), all mutations land on
         // `cursor.builder`; `self.builder` is stale until installed.
         // Install cursor[0].builder over self.builder before reading, then
         // return as before.
         //
-        // B13c / Candidate H (2026-05-08): the Lazy-mode positional
+        // B13c / Candidate H (2026-05-08): the deterministic-mode positional
         // invariant was implemented here but proved to break
         // recovery_integration_tests' test_calc_recovery_trailing_*
         // family — those tests rely on the walker accepting at sub-EOI
@@ -2396,7 +2402,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // wrapper's post-resolution `pos < tokens.len()` check (in
         // codegen-emitted parse_<Cat>_via_wpds) handles TrailingTokens
         // correctly.
-        if self.unforked {
+        if self.deterministic {
             // Install singleton cursor's builder.
             if let Some(cursor) = self.branch_cursors.first() {
                 self.builder = (*cursor.builder).clone();
@@ -2435,7 +2441,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // Stage 3.12 fix (2026-05-02): use `is_logical_eoi` so a
                 // cursor parked at trailing `Token::Eof` (the natural
                 // rule-end exit) accepts. The pre-3.12 `pos >= tokens.len()`
-                // was unreachable in Strict mode because the engine's
+                // was unreachable in nondeterministic mode because the engine's
                 // `Accept` arm doesn't advance past EOF.
                 self.is_logical_eoi(c.pos, tokens) && self.is_accepting_config(c)
             })
@@ -2576,11 +2582,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// past. The lexer appends `Token::Eof` (e.g., `parser.rs:692` in
     /// generated code), so `tokens.len()` is `content_len + 1` and
     /// natural rule-end positions are `content_len` (= `tokens.len() - 1`).
-    /// The pre-3.12 EOI check `pos >= tokens.len()` only worked in Lazy
-    /// mode (via the `cursor_mode == Lazy` short-circuit in
-    /// `resolve_at_end_of_input`). Strict mode now matches the same
-    /// "trailing EOF is OK" contract that `parse_<Cat>::parse_via_wpds`
-    /// uses on its outer `pos` check.
+    /// The pre-3.12 EOI check `pos >= tokens.len()` only worked in the
+    /// pre-tail deterministic-mode short-circuit in `resolve_at_end_of_input`.
+    /// Forked mode now matches the same "trailing EOF is OK" contract
+    /// that `parse_<Cat>::parse_via_wpds` uses on its outer `pos` check.
     #[inline]
     fn is_logical_eoi(&self, pos: usize, tokens: &dyn WpdsTokenSource) -> bool {
         pos >= tokens.len()
@@ -2679,15 +2684,16 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Stage 3.9 / ι Phase 4 (2026-05-01): thin dispatcher.
     ///
     /// Pre-Phase-4: ~370-line arm-by-arm body that mutated both the live
-    /// builder AND walker fields directly, with a parallel `apply_action_to_cursor`
-    /// for the Strict (post-Fork) path. The dual-mutation surface produced
-    /// the Class C bug class.
+    /// builder AND walker fields directly, with a parallel
+    /// `apply_action_to_cursor` for the post-Fork multi-cursor path. The
+    /// dual-mutation surface produced the Class C bug class.
     ///
-    /// Post-Phase-4: dispatcher routes EVERY action through
+    /// Post-Phase-4 + Phase 5.6-tail: dispatcher routes EVERY action through
     /// `apply_action_to_cursor` against `branch_cursors[0]` (the singleton
-    /// in Lazy mode). Per-variant `emit_*` helpers branch on `cursor_mode`
-    /// to direct-mutate the live builder (Lazy) or log to
-    /// `recovery_deltas` (Strict). Single mutation surface; Class C
+    /// in deterministic mode). Per-variant `emit_*` helpers eagerly mutate
+    /// `cursor.builder` via `Arc::make_mut`; `self.builder` is installed
+    /// from `cursor.builder` at end-of-step in deterministic mode (and at
+    /// commit_winner in nondeterministic mode). Single mutation surface; Class C
     /// structurally eliminated.
     ///
     /// Outcome handling:
@@ -2696,10 +2702,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// - `Alive`:     reinstate the cursor as branch_cursors[0].
     /// - `Resolved`:  reinstate (parked at EOI for resolve_at_end_of_input).
     /// - `ForkInto`:  replace branch_cursors with children, set state to
-    ///                AmbiguityFanout. Mode is already Strict per L2.
+    ///                AmbiguityFanout. `self.deterministic` flips to false.
     fn apply_action(&mut self, action: WpdsStepAction<W>, tokens: &dyn WpdsTokenSource) {
         // Phase 5.6-tail-B (2026-05-12): pre-tail this called
-        // `debug_flush_lazy_invariant()` to assert L1 (Lazy mode implies
+        // `debug_flush_lazy_invariant()` to assert L1 (deterministic mode implies
         // singleton cursor with empty recovery_deltas). Deleted with
         // the CursorMode enum — invariant is moot.
         // L5: terminal state is mode-irrelevant.
@@ -2710,14 +2716,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             self.branch_cursors.len(),
             1,
             "apply_action invariant: branch_cursors must be a singleton at \
-             entry (Lazy: always; Strict: never reached — step_fanout drives \
-             multi-cursor mode directly)",
+             entry (apply_action is the deterministic-mode entry; step_fanout \
+             drives the multi-cursor nondeterministic mode directly)",
         );
         let mut cursor = self.branch_cursors.swap_remove(0);
         let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
         match outcome {
             CursorOutcome::Drop => {
-                // Cursor died. In Lazy mode, helpers already mirrored the
+                // Cursor died. In deterministic mode, helpers already mirrored the
                 // terminal state (set_cursor_inner_state) to self.state,
                 // so the live walker reflects the failure. Restore a
                 // fresh singleton anchored at the current walker view to
@@ -2746,7 +2752,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             // Phase 5.2 (2026-05-12): fresh empty Arc — the
                     // post-Drop fresh singleton has no Fork-ancestor
                     // builder to inherit. Live mutations continue to
-                    // flow through `self.builder` (Lazy mode); the
+                    // flow through `self.builder` (deterministic mode); the
                     // cursor's Arc is a future anchor (5.3+).
                     builder: Arc::new(SemanticBuilder::new()),
                 });
@@ -2760,18 +2766,18 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // dump snapshot) need self.builder to reflect the cursor's
                 // post-step state. SemanticBuilder::clone is O(log N) via
                 // im::Vector HAMT sharing — cheap per step. Only fires in
-                // Lazy mode (cursor_mode == Lazy): in Strict mode (post-
-                // first-Fork) all cursors go through step_fanout, not
-                // apply_action, and commit_winner handles install.
-                if self.unforked {
+                // deterministic mode (self.deterministic == true): in nondeterministic mode
+                // (post-first-Fork) all cursors go through step_fanout,
+                // not apply_action, and commit_winner handles install.
+                if self.deterministic {
                     self.builder = (*cursor.builder).clone();
                 }
                 self.branch_cursors.push(cursor);
             }
             CursorOutcome::ForkInto(children) => {
-                // L2: cursor_mode was promoted to Strict inside the cursor-
-                // side Fork arm. Replace branch_cursors with children and
-                // set state = AmbiguityFanout.
+                // The cursor-side Fork arm already flipped `self.deterministic`
+                // to false. Replace branch_cursors with children and set
+                // state = AmbiguityFanout.
                 //
                 // Stage 3.9 / ι Phase 4 (2026-05-01): mirror the post-Fork
                 // walker position to the children's pos. The cursor-side
@@ -3010,9 +3016,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         self.emit_push_predicate(cursor, Arc::new(pred));
                         // Direct cursor.pos write (not via advance_cursor_pos)
                         // because new_pos is absolute, not a delta. Mirror to
-                        // self.pos in Lazy mode.
+                        // self.pos in deterministic mode.
                         cursor.pos = new_pos;
-                        if self.unforked {
+                        if self.deterministic {
                             self.pos = new_pos;
                         }
                     }
@@ -3029,7 +3035,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 //
                 // Pre-tail the prologue seeded `cursor.collection_slots_allocated`,
                 // `cursor.collection_stack`, and `cursor.builder` from `self.builder`'s
-                // live state to compensate for Lazy-mode emit_fire_action mutating
+                // live state to compensate for deterministic-mode emit_fire_action mutating
                 // self.builder directly (skipping cursor.builder). Under Phase
                 // 5.6-tail-B's emit-helper unification, ALL emit helpers (including
                 // emit_fire_action) eagerly mutate cursor.builder via Arc::make_mut.
@@ -3039,10 +3045,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // (emit_start_collection always pushes; CollectionMarker pop always
                 // drains).
                 //
-                // L2: cursor_mode promotion to Strict is KEPT until Step F deletes
-                // the enum entirely. It still gates the 4 mode-agnostic helpers'
-                // mirror-to-live behavior in Lazy steady state.
-                self.unforked = false;
+                // Flip `self.deterministic` to false (entering
+                // nondeterministic mode). This gates the 4 mode-agnostic
+                // helpers' mirror-to-live behavior — once nondeterministic,
+                // cursor.* updates no longer mirror to self.*
+                // (self.* loses singleton meaning until commit_winner).
+                self.deterministic = false;
                 // Bounded recovery (Stage 3.20 / L12, 2026-05-06): detect
                 // whether this Fork is a recovery dispatch (any branch
                 // carries a recovery-typed BuilderDelta effect:
@@ -3214,14 +3222,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             // this was missing — TAKE branches with
                             // OptionalGroupAt(1) silently skipped scope
                             // opening, breaking nested Opt-Group parses
-                            // that landed in Strict mode.
+                            // that landed in nondeterministic mode.
                             //
                             // We allocate a child cursor first (with empty
-                            // recovery_deltas + collection_stack
-                            // mirror), THEN run side effects against the
-                            // CHILD's cursor view. The child's mode is
-                            // Strict (just promoted), so side effects log
-                            // deltas onto the child's recovery_deltas.
+                            // recovery_deltas), THEN run side effects against
+                            // the CHILD's cursor view. Side effects mutate
+                            // the child's cursor.builder via Arc::make_mut;
+                            // recovery_deltas receives only recovery-typed
+                            // effects (gated by is_recovery_delta).
                             let mut symbol = branch.symbol;
                             let mut child = BranchCursor {
                                 node: cursor.node,
@@ -3304,7 +3312,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
                             };
-                            // Strict mode: emit_push_optional_absent logs the delta.
+                            // nondeterministic mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
                             // Stage 3.12.6 (2026-05-02): pop along the
                             // child's recorded edge (its own history),
@@ -4232,13 +4240,13 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // Stage 3.5b (2026-05-01): mirror live apply_action::Accept
                 // by transitioning cursor.inner_state to Accepted.
                 // Stage 3.9 / ι Phase 4 (2026-05-01): use helper so live
-                // walker self.state is mirrored to Accepted in Lazy mode.
+                // walker self.state is mirrored to Accepted in deterministic mode.
                 self.set_cursor_inner_state(cursor, WpdsState::Accepted);
                 CursorOutcome::Resolved
             }
             WpdsStepAction::Error(message) => {
                 // Stage 3.9 / ι Phase 4 (2026-05-01): mirror live state via
-                // helper so Lazy-mode self.state becomes Error too.
+                // helper so deterministic-mode self.state becomes Error too.
                 self.set_cursor_inner_state(
                     cursor,
                     WpdsState::Error { message },
@@ -4278,7 +4286,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         symbol: StackSymbolV2::category_entry(0),
                     });
                     cursor.node = sentinel;
-                    if self.unforked {
+                    if self.deterministic {
                         self.top_node = Some(sentinel);
                     }
                 }
@@ -4298,8 +4306,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 //
                 // Steps:
                 //   1. Pop the OptionalGroupAt marker on top.
-                //   2. Emit FinalizeOptionalScopePresent (Lazy direct,
-                //      Strict delta).
+                //   2. Emit FinalizeOptionalScopePresent (eager
+                //      `Arc::make_mut` on cursor.builder).
                 //   3. Pop the (now-on-top) outer RuleAt marker.
                 //   4. Push `replace_symbol` (advanced outer RuleAt).
                 // Stage 3.12.6 (2026-05-02): edge-id-guided pops.
@@ -4316,7 +4324,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         symbol: StackSymbolV2::category_entry(0),
                     });
                     cursor.node = sentinel;
-                    if self.unforked {
+                    if self.deterministic {
                         self.top_node = Some(sentinel);
                     }
                 }
@@ -4744,7 +4752,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     continue;
                 }
                 let c = &self.branch_cursors[idx];
-                // Strict domination: `best.plus(c) == best` AND `best != c`.
+                // Strict domination (lex-min, mathematical sense, unrelated to
+                // the deleted CursorMode::Strict enum name):
+                // `best.plus(c) == best` AND `best != c`.
                 // The first clause is "best is at-or-better than c"; the
                 // second clause excludes ties (handled by merge_equivalent_
                 // cursors when keys match exactly; for ties at the relaxed
@@ -4843,29 +4853,18 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // DELETED — the cursor.builder.collection_stack is the
         // authoritative state, intrinsically donated to self.builder via
         // the Arc-install below.
-        // Phase 5.5 install: replace live with winner's builder, but
-        // ONLY if a Fork happened (cursor_mode is Strict). In Lazy mode
-        // (no Fork), `emit_fire_action` fires directly on
-        // `self.builder` via `self.fire_action_for(symbol)` — those
-        // action_fn-pushed terms are NOT mirrored onto cursor.builder
-        // (emit_fire_action was deliberately skipped from the Phase 5.3
-        // eager Arc::make_mut migration because action_fn READS from
-        // its builder). So in Lazy mode, self.builder is the
-        // authoritative state; installing cursor.builder over it would
-        // lose those action_fn terms.
-        //
-        // `Arc::try_unwrap` keeps the underlying SemanticBuilder if the
-        // winner is the last Arc holder (the post-commit singleton at
-        // the bottom of this function REPLACES `branch_cursors` so
-        // sibling Arc refs in dead cursors are about to drop). If
-        // there's still another holder, fall back to deep clone via
-        // SemanticBuilder: Clone (Phase 5.3). The clone is structurally
-        // shared via `im::Vector` HAMTs — O(log N) per field root.
-        // Phase 5.6-tail-B (2026-05-12): always install the winner's
-        // builder over self.builder. Pre-tail this was Strict-only; under
-        // always-eager Arc::make_mut, the winner.builder is the
-        // authoritative live state for BOTH formerly-Lazy (singleton at
-        // commit_winner_at_eoi) and formerly-Strict (fanout-winner) paths.
+        // Always install the winner's builder over self.builder. Under
+        // Phase 5.6-tail-B's always-eager Arc::make_mut path,
+        // winner.builder is the authoritative live state for BOTH the
+        // deterministic singleton at commit_winner_at_eoi and the nondeterministic
+        // fanout-winner. `Arc::try_unwrap` keeps the underlying
+        // SemanticBuilder if the winner is the last Arc holder (the
+        // post-commit singleton at the bottom of this function REPLACES
+        // `branch_cursors` so sibling Arc refs in dead cursors are about
+        // to drop). If there's still another holder, fall back to deep
+        // clone via SemanticBuilder: Clone (Phase 5.3). The clone is
+        // structurally shared via `im::Vector` HAMTs — O(log N) per
+        // field root.
         self.builder = Arc::try_unwrap(std::mem::replace(
             &mut winner.builder,
             Arc::new(SemanticBuilder::new()),
@@ -5079,8 +5078,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         self.weight = self.weight.times(&winner.weight);
         self.state = winner.inner_state.clone();
         // Stage 3.9 / ι Phase 4 (2026-05-01): write singleton back per L4.
-        // Cleared deltas + collection_stack — already replayed onto live
-        // builder above. Mode stays Strict per L3.
+        // Cleared recovery_deltas — already replayed onto live builder above.
+        // `self.deterministic` stays false (monotone once flipped).
         self.branch_cursors = vec![BranchCursor {
             node: winner.node,
             pos: winner.pos,
@@ -5259,7 +5258,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Phase 5.5 (2026-05-12): fire a semantic action on a given
     /// SemanticBuilder reference (rather than `self.builder`). Used by
     /// `emit_fire_action` to eagerly apply on `cursor.builder` via
-    /// `Arc::make_mut`, so Strict-mode parsing has the action's
+    /// `Arc::make_mut`, so nondeterministic-mode parsing has the action's
     /// pushed term available BEFORE subsequent SpliceIntoCollection
     /// effects (which move stack elements into collection slots —
     /// they must move the action's converted term, not the raw arg).
@@ -5298,28 +5297,29 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // Stage 3.9 / ι Phase 4 (2026-05-01): per-variant Lazy/Strict helpers
+    // Per-variant mutation helpers
     //
-    // Each `emit_*` helper branches on `cursor_mode`:
-    //   - Lazy:  mutate the live `SemanticBuilder` directly. The cursor's
-    //            `recovery_deltas` stays empty (L1 invariant).
-    //   - Strict: log a `BuilderDelta` to `cursor.recovery_deltas`.
-    //             The live builder is untouched until commit_winner replays.
+    // Each `emit_*` helper eagerly mutates `cursor.builder` via
+    // `Arc::make_mut`. Pre-Phase-5.6-tail there was a Lazy/Strict
+    // dispatch (direct mutation of self.builder vs journaled mutation
+    // replayed at commit_winner); under always-eager Arc::make_mut, both
+    // paths collapse to a single eager call on cursor.builder.
     //
-    // Mode-agnostic helpers (`advance_cursor_pos`/`multiply_cursor_weight`/
-    // `set_cursor_inner_state`/`cursor_gss_*`) update the cursor's local
-    // state AND, in Lazy mode, mirror to the live walker fields
-    // (`self.pos`/`self.weight`/`self.state`/`self.top_node`) so external
-    // accessors (`walker.position()`, etc.) reflect the cursor's view.
+    // The 4 mode-agnostic helpers (`advance_cursor_pos`/
+    // `multiply_cursor_weight`/`set_cursor_inner_state`/`cursor_gss_*`)
+    // update the cursor's local state AND, in deterministic mode, mirror to
+    // the live walker fields (`self.pos`/`self.weight`/`self.state`/
+    // `self.top_node`) so external accessors (`walker.position()`, etc.)
+    // reflect the cursor's view. In nondeterministic mode the mirror is skipped —
+    // self.* loses singleton meaning and is rehydrated at commit_winner.
     //
     // All helpers are `#[inline(always)]` so the optimizer specializes
-    // them per call site and the mode-branch becomes free at runtime when
-    // the Lazy case dominates.
+    // them per call site.
     // ══════════════════════════════════════════════════════════════════════
 
     // Phase 5.6-tail-B (2026-05-12): debug_flush_lazy_invariant deleted —
-    // the L1 invariant (Lazy mode implies singleton cursor with empty
-    // recovery_deltas) is moot now that CursorMode and Lazy/Strict
+    // the L1 invariant (deterministic mode implies singleton cursor with empty
+    // recovery_deltas) is moot now that CursorMode and deterministic/nondeterministic
     // dispatch are gone (Step F finishes the enum removal).
 
     // ─── 11 mutation helpers ─────────────────────────────────────────────
@@ -5467,7 +5467,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// `apply_action::Push` arm directly mutated the builder for both
     /// clauses inline. The Step-4.4 helper rewrite preserved the
     /// `CollectionMarker` clause but dropped the `OptionalGroupAt(1)`
-    /// clause, breaking Lazy-mode IfElse-with-else parses (4 tests in
+    /// clause, breaking deterministic-mode IfElse-with-else parses (4 tests in
     /// `optional_group_smoke`). Centralizing both here makes the
     /// implicit-side-effect surface auditable in one place.
     #[inline(always)]
@@ -5550,21 +5550,25 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         Arc::make_mut(&mut cursor.builder).push_optional_absent();
     }
 
-    // ─── 4 mode-agnostic helpers (mirror to live walker fields in Lazy) ──
+    // ─── 4 mode-agnostic helpers (mirror to live walker fields when deterministic) ──
     //
-    // Phase 5.6-tail-B (2026-05-12): the `cursor_mode == Lazy` guards
-    // below are PRESERVED through 5.6-tail-B. Pre-tail Lazy mode was a
-    // ONE-WAY street: set to Lazy at init, promoted to Strict at the
-    // first Fork, and NEVER reset. So `cursor_mode == Lazy` correctly
-    // identifies "no Fork has ever happened" — which is a stronger
-    // signal than `branch_cursors.len() == 1` (singleton post-resolve
-    // would also be len==1 but cursor_mode would be Strict). Step F
-    // deletes the enum entirely along with these guards.
+    // Each helper updates the cursor's local state AND, when
+    // `self.deterministic` is true, mirrors to the live walker fields. The
+    // `self.deterministic` flag is monotone — true at construction, set
+    // false on the first Fork, never reset within a parse. Mirror
+    // therefore fires only while the walker is still in single-cursor
+    // pre-Fork mode; once nondeterministic, self.* is rehydrated at
+    // commit_winner from the winning cursor.
+    //
+    // NB: `self.branch_cursors.len() == 1` is NOT equivalent — after a
+    // Fork resolves to a single winner (commit_winner), len drops back
+    // to 1 but `self.deterministic` stays false. The monotone flag avoids
+    // accidentally re-mirroring post-commit state.
 
     #[inline(always)]
     fn advance_cursor_pos(&mut self, cursor: &mut BranchCursor<W>, n: usize) {
         cursor.pos += n;
-        if self.unforked {
+        if self.deterministic {
             self.pos = cursor.pos;
         }
     }
@@ -5572,7 +5576,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     #[inline(always)]
     fn multiply_cursor_weight(&mut self, cursor: &mut BranchCursor<W>, w: &W) {
         cursor.weight = cursor.weight.times(w);
-        if self.unforked {
+        if self.deterministic {
             self.weight = self.weight.times(w);
         }
     }
@@ -5653,7 +5657,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             _ => state.clone(),
         };
         cursor.inner_state = patched_state.clone();
-        if self.unforked {
+        if self.deterministic {
             self.state = patched_state;
         }
     }
@@ -5682,7 +5686,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 symbol: StackSymbolV2::category_entry(0),
             });
             cursor.node = root;
-            if self.unforked {
+            if self.deterministic {
                 self.top_node = Some(root);
             }
             root
@@ -5697,7 +5701,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // follow this exact edge — preserving its calling context even
         // when GSS dedup makes the new node share with sibling cursors.
         cursor.incoming_edge_stack.push(edge_id);
-        if self.unforked {
+        if self.deterministic {
             self.top_node = Some(new_id);
         }
         new_id
@@ -5722,9 +5726,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // frontier_top to keep matching the CategoryEntry-on-Unwinding
         // arm, looping indefinitely. With GSS_NODE_NONE, `gss.node()`
         // returns None → engine takes the `frontier_top.is_none() ⇒ Accept`
-        // branch, restoring pre-Stage-3.12 behavior in Strict mode.
+        // branch, restoring pre-Stage-3.12 behavior in nondeterministic mode.
         cursor.node = result.unwrap_or(crate::gss::GSS_NODE_NONE);
-        if self.unforked {
+        if self.deterministic {
             self.top_node = result;
         }
         result
@@ -5749,24 +5753,21 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     ) {
         // Set cursor's GSS top to the predecessor (or sentinel).
         cursor.node = pred_id;
-        if self.unforked {
+        if self.deterministic {
             self.top_node = if pred_id == crate::gss::GSS_NODE_NONE {
                 None
             } else {
                 Some(pred_id)
             };
         }
-        // Stage 3.12.8 (2026-05-03): for CollectionMarker pops in Strict
-        // mode, drain the cursor's `collection_stack[top]` slot and emit
-        // a `FinalizeCollection { id, drained }` delta BEFORE FireAction.
-        // The cursor's stack is LIFO-correct because grammars guarantee
-        // innermost-closes-first. At replay, FinalizeCollection re-pushes
-        // the slot so FireAction's `drain_collection(id)` succeeds. In
-        // Lazy mode the live builder's `collection_stack` is mutated
-        // directly by the action_fn at FireAction time — no delta needed.
-        // Phase 5.6-tail-B (2026-05-12): pre-tail this was Strict-only.
-        // Under always-eager, emit_start_collection ALWAYS pushes
-        // cursor.collection_stack (no more Lazy/Strict split), so we must
+        // Stage 3.12.8 (2026-05-03) — Phase 5.6-tail-B (2026-05-12):
+        // pre-tail the CollectionMarker-pop drain ran only in nondeterministic
+        // (journal-replay) mode, where it drained the cursor's
+        // collection_stack[top] slot and emitted a FinalizeCollection
+        // delta BEFORE FireAction; the deterministic path mutated the live
+        // builder directly at FireAction time, so no delta was needed.
+        // Phase 5.6-tail-B unified those: emit_start_collection always
+        // mutates cursor.builder + the mirror, so we must always
         // ALWAYS pop on CollectionMarker pop to keep the mirror in sync
         // with cursor.builder.collection_stack. The mirror itself is
         // deleted in Step G.
@@ -5774,7 +5775,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             if symbol.kind == SymbolKind::CollectionMarker {
                 // L12 follow-up B5 (2026-05-07): pop the cursor's
                 // collection_stack mirror to keep id allocation in
-                // sync with subsequent Strict-mode emit_start_collection
+                // sync with subsequent nondeterministic-mode emit_start_collection
                 // calls.
                 //
                 // Phase 4 #1 (2026-05-11): EXCEPT for binder-internal
@@ -5996,8 +5997,8 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Sentinel semantics: when `incoming_edge_stack` is empty (cursor
     /// has reached the entry frame) OR the recorded edge is invalid
     /// (defensive — should not happen under correct push/pop pairing),
-    /// the cursor's `node` is set to `GSS_NODE_NONE` and Lazy mirror
-    /// `top_node = None`. Returns the predecessor `GssNodeId` for
+    /// the cursor's `node` is set to `GSS_NODE_NONE` and the deterministic-mode
+    /// mirror sets `top_node = None`. Returns the predecessor `GssNodeId` for
     /// caller's use, or `None` if popped past the root.
     ///
     /// This replaces `cursor_gss_pop_all` for cursors that maintained
@@ -6011,7 +6012,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         let edge_id = cursor.incoming_edge_stack.pop();
         let target = edge_id.and_then(|e| self.gss.edge_target(e));
         cursor.node = target.unwrap_or(crate::gss::GSS_NODE_NONE);
-        if self.unforked {
+        if self.deterministic {
             self.top_node = target;
         }
         target
@@ -6035,7 +6036,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     ///
     /// Sentinel semantics: when `len() == 0`, returns `vec![GSS_NODE_NONE]`.
     /// The caller must subsequently set `cursor.node = GSS_NODE_NONE` (or
-    /// per-child equivalent) and Lazy-mirror `self.top_node = None`.
+    /// per-child equivalent) and, in deterministic mode, mirror `self.top_node = None`.
     fn cursor_gss_pop_all(
         &self,
         cursor: &BranchCursor<W>,
@@ -6073,7 +6074,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 symbol: StackSymbolV2::category_entry(0),
             });
             cursor.node = root;
-            if self.unforked {
+            if self.deterministic {
                 self.top_node = Some(root);
             }
             root
@@ -6095,7 +6096,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             cursor.incoming_edge_stack.pop();
         }
         cursor.incoming_edge_stack.push(edge_id);
-        if self.unforked {
+        if self.deterministic {
             self.top_node = Some(new_id);
         }
         new_id
@@ -8218,22 +8219,22 @@ mod tests {
     // Stage 3.9 / ι Phase 4 (2026-05-01): always-cursor walker invariant tests
     //
     // Phase 5.6-tail-F (2026-05-12): CursorMode enum deleted in favor of
-    // a monotone `unforked: bool` flag. The L1-L6 invariants from the
+    // a monotone `deterministic: bool` flag. The L1-L6 invariants from the
     // pre-tail enum-based scheme either collapse (L1/L5/L6) or simplify
     // (L2/L3/L4) under the bool. Tests reshaped accordingly:
     // - phase4_lazy_admission_holds_after_construction → singleton+empty check
-    // - phase4_lazy_to_strict_on_first_fork → unforked-flips-on-Fork check
-    // - phase4_strict_persists_through_resolution → unforked-stays-false check
-    // - phase4_reset_returns_to_lazy → unforked-reset-to-true check
+    // - phase4_lazy_to_strict_on_first_fork → deterministic-flips-on-Fork check
+    // - phase4_strict_persists_through_resolution → deterministic-stays-false check
+    // - phase4_reset_returns_to_lazy → deterministic-reset-to-true check
     // - phase4_lazy_terminal_state_is_mode_irrelevant → terminal-absorbs check
     // - phase4_lazy_eoi_accept_no_replay_needed → recovery_deltas-empty check
     // ══════════════════════════════════════════════════════════════════════
 
-    /// Initial state: unforked, singleton cursor, no recovery deltas.
+    /// Initial state: deterministic, singleton cursor, no recovery deltas.
     #[test]
-    fn phase4_lazy_admission_holds_after_construction() {
+    fn phase4_deterministic_admission_holds_after_construction() {
         let w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
-        assert!(w.unforked(), "starts unforked");
+        assert!(w.deterministic(), "starts deterministic");
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1, "singleton cursor at construction");
         assert!(
@@ -8242,9 +8243,9 @@ mod tests {
         );
     }
 
-    /// First Fork flips unforked from true to false.
+    /// First Fork flips deterministic from true to false.
     #[test]
-    fn phase4_lazy_to_strict_on_first_fork() {
+    fn phase4_first_fork_promotes_to_forked() {
         let engine = ScriptedEngine::new(vec![
             WpdsStepAction::Fork {
                 branches: vec![
@@ -8270,16 +8271,16 @@ mod tests {
             },
         ]);
         let mut w = WpdsWalker::new(engine, 0);
-        assert!(w.unforked(), "starts unforked");
+        assert!(w.deterministic(), "starts deterministic");
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
-        assert!(w.unforked(), "still unforked after non-Fork");
+        assert!(w.deterministic(), "still deterministic after non-Fork");
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
-        assert!(!w.unforked(), "flipped to forked on first Fork");
+        assert!(!w.deterministic(), "flipped to nondeterministic on first Fork");
     }
 
-    /// Once forked, the flag stays forked through resolution.
+    /// Once nondeterministic, the flag stays nondeterministic through resolution.
     #[test]
-    fn phase4_strict_persists_through_resolution() {
+    fn phase4_nondeterministic_persists_through_resolution() {
         let engine = ScriptedEngine::new(vec![
             WpdsStepAction::Accept,
             WpdsStepAction::Pop {
@@ -8304,17 +8305,17 @@ mod tests {
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
-        assert!(!w.unforked());
+        assert!(!w.deterministic());
         // Drive cursors to resolution.
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps");
         let _ = w.resolve_at_end_of_input(&empty_tokens());
-        assert!(!w.unforked(), "stays forked post-resolution (monotone)");
+        assert!(!w.deterministic(), "stays nondeterministic post-resolution (monotone)");
     }
 
-    /// reset() returns unforked=true with a fresh singleton.
+    /// reset() returns deterministic=true with a fresh singleton.
     #[test]
-    fn phase4_reset_returns_to_lazy() {
+    fn phase4_reset_returns_to_deterministic() {
         let engine = ScriptedEngine::new(vec![
             WpdsStepAction::Fork {
                 branches: vec![ForkBranch {
@@ -8334,18 +8335,18 @@ mod tests {
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
-        assert!(!w.unforked());
+        assert!(!w.deterministic());
         w.reset(0);
-        assert!(w.unforked(), "reset() flips back to unforked");
+        assert!(w.deterministic(), "reset() flips back to deterministic");
         assert_eq!(*w.state(), WpdsState::Ready { min_bp: 0 });
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1, "singleton after reset");
         assert!(cursors[0].recovery_deltas.is_empty());
     }
 
-    /// Terminal state absorbs further actions regardless of forked flag.
+    /// Terminal state absorbs further actions regardless of deterministic flag.
     #[test]
-    fn phase4_lazy_terminal_state_is_mode_irrelevant() {
+    fn phase4_terminal_state_is_fork_status_irrelevant() {
         let engine = ScriptedEngine::new(vec![WpdsStepAction::Accept]);
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Accept
@@ -8356,11 +8357,11 @@ mod tests {
 
     /// Unambiguous parse reaches Accepted with no recovery_deltas to replay.
     #[test]
-    fn phase4_lazy_eoi_accept_no_replay_needed() {
+    fn phase4_deterministic_eoi_accept_no_replay_needed() {
         let engine = ScriptedEngine::new(vec![WpdsStepAction::Accept]);
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
-        assert!(w.unforked(), "no Fork → still unforked");
+        assert!(w.deterministic(), "no Fork → still deterministic");
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
         assert!(
@@ -8371,29 +8372,29 @@ mod tests {
     }
 
     /// Stage 3.9 / ι Phase 4 regression-fix test (2026-05-01): a Push of
-    /// `OptionalGroupAt(1)` MUST open the optional scope in Lazy mode.
+    /// `OptionalGroupAt(1)` MUST open the optional scope in deterministic mode.
     /// Pre-fix: `apply_action_to_cursor::Push` lost the
     /// `OptionalGroupAt(1) → start_optional_scope()` clause during the
     /// Step-4.4 helper rewrite. Post-fix: `emit_push_side_effects`
     /// centralizes both `CollectionMarker` (id allocation) and
     /// `OptionalGroupAt(1)` (scope opening) implicit Push-time effects.
     #[test]
-    fn push_optional_group_at_one_opens_scope_in_lazy_mode() {
+    fn push_optional_group_at_one_opens_scope_in_deterministic_mode() {
         let engine = ScriptedEngine::new(vec![WpdsStepAction::Push {
             symbol: StackSymbolV2::optional_group_at(0, 0, 1, 0),
             weight: lex(0.0, 0, 0),
             new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
         }]);
         let mut w = WpdsWalker::new(engine, 0);
-        assert!(w.unforked());
+        assert!(w.deterministic());
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
-        // Still unforked (no Fork). Live builder must have an open
+        // Still deterministic (no Fork). Live builder must have an open
         // optional scope so subsequent inner pushes land in the inner Vec.
-        assert!(w.unforked());
+        assert!(w.deterministic());
         assert_eq!(
             w.builder().optional_stack_depth(),
             1,
-            "Push of OptionalGroupAt(1) must open optional scope in unforked mode",
+            "Push of OptionalGroupAt(1) must open optional scope in deterministic mode",
         );
     }
 
@@ -8406,14 +8407,14 @@ mod tests {
     /// Arc::make_mut. The reshaped assertion observes the optional scope
     /// directly on cursor.builder.
     #[test]
-    fn push_optional_group_at_one_logs_delta_in_strict_mode() {
+    fn push_optional_group_at_one_opens_scope_in_nondeterministic_mode() {
         let engine = ScriptedEngine::new(vec![
             WpdsStepAction::Push {
                 symbol: StackSymbolV2::optional_group_at(0, 0, 1, 0),
                 weight: lex(0.0, 0, 0),
                 new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
-            // Force Strict via a single-branch Fork BEFORE the OptionalGroupAt push.
+            // Force nondeterministic mode via a single-branch Fork BEFORE the OptionalGroupAt push.
             WpdsStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::category_entry(0),
@@ -8425,8 +8426,8 @@ mod tests {
             },
         ]);
         let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork → forked
-        assert!(!w.unforked());
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork → nondeterministic
+        assert!(!w.deterministic());
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push (under fanout)
         // The cursor's builder must show an open optional scope.
         let cursors = w.branch_cursors_for_test();
@@ -8434,7 +8435,7 @@ mod tests {
         assert_eq!(
             cursors[0].builder.optional_stack_depth(),
             1,
-            "Push of OptionalGroupAt(1) in Strict must open an optional scope \
+            "Push of OptionalGroupAt(1) in nondeterministic mode must open an optional scope \
              on cursor.builder via emit_start_optional_scope's eager Arc::make_mut",
         );
     }
@@ -8460,7 +8461,7 @@ mod tests {
         );
     }
 
-    /// Helper inlining: a single Push in Lazy mode mutates the live GSS
+    /// Helper inlining: a single Push in deterministic mode mutates the live GSS
     /// without populating cursor.recovery_deltas.
     #[test]
     fn phase4_helper_inlining_does_not_double_emit() {
@@ -8475,12 +8476,13 @@ mod tests {
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
         // Push grows GSS by ≥2 nodes (CategoryEntry root + pushed entry).
         assert!(w.gss().node_count() >= 2);
-        // Lazy: no deltas accumulated.
+        // Unforked: no recovery deltas accumulated (non-recovery
+        // mutations land on cursor.builder directly).
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
         assert!(
             cursors[0].recovery_deltas.is_empty(),
-            "Lazy: live mutation, no delta"
+            "deterministic: live mutation on cursor.builder, no recovery delta"
         );
     }
 

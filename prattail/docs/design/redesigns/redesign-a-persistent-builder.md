@@ -1,10 +1,40 @@
 # Redesign A — Persistent SemanticBuilder (Phase 5)
 
-**Status:** SHIPPED in commits `1d53336` (5.1), `c40c6f1` (5.2), `4bf25af` (5.3), `870fe25`/`ee3dbc6` (5.4), `dab07d7` (5.5), `d6db5b2` (5.6), `5abce4f` (5.7), and this commit (5.8 docs).
+**Status:** SHIPPED in commits `1d53336` (5.1), `c40c6f1` (5.2), `4bf25af` (5.3), `870fe25`/`ee3dbc6` (5.4), `dab07d7` (5.5), `d6db5b2` (5.6), `5abce4f` (5.7), `d38cf12` (5.8 docs), `d0d637f` (5.6-tail-A), `0901d78` (5.6-tail-B), `0858489` (5.6-tail-C), `8ae3587` (5.6-tail-D), `82b8d5e` (5.6-tail-E), `084b83f` (5.6-tail-F), `35854c6` (5.6-tail-G).
 
 **Branch:** `feature/wfst-architecture`.
 
 **Plan ref:** `~/.claude/plans/phase-5-persistent-builder.md`.
+
+---
+
+## Terminology note
+
+Pre-Phase-5 code used a `CursorMode { Lazy, Strict }` enum to gate the
+walker's per-cursor mutation strategy. The names INVERTED standard CS
+terminology:
+
+- **`CursorMode::Lazy`** denoted IMMEDIATE direct mutation of `self.builder`
+  (in standard CS, this would be called "eager").
+- **`CursorMode::Strict`** denoted DEFERRED/JOURNALED mutation queued in
+  `pending_builder_ops` and replayed later at `commit_winner` (in standard
+  CS, this would be called "lazy").
+
+The enum is DELETED post-Phase-5.6-tail-F; the replacement is a monotone
+`WpdsWalker.deterministic: bool` flag (true at construction, false
+after the first Fork, never reset). Throughout this document, when
+describing the pre-tail design, references to `Lazy`/`Strict` are to
+the deleted enum literals (with their unconventional meanings as above),
+NOT to standard CS terminology. Post-tail discussion uses the standard
+GLR/GLL parser-theory terms: **deterministic** (singleton cursor, no
+Fork has happened, single parse path being explored) and
+**nondeterministic** (multi-cursor, post-Fork, multiple parallel parse
+paths exploring grammar ambiguity).
+
+The Phase 5 changes do NOT alter the WPDS's inherently lazy step
+evaluation (configurations are processed one event at a time, on
+demand); they only change the per-cursor mutation-tracking mechanism
+from journal-and-replay to persistent-Arc clone-on-write.
 
 ---
 
@@ -231,21 +261,102 @@ The remaining 14 non-recovery variants (PushToken, PushIdent, …) are still emi
 - Clone goes from `O(N)` to `O(log N)` Arc-bump — important since both sets are cloned at every Fork (~13 sites).
 - API parity (insert / contains / iteration) — no call-site changes.
 
-### 5.8 — this doc
+### 5.8 — initial doc (this file's earlier revision)
+
+### 5.6-tail-A (`d0d637f`) — delete consistency_memo + DryRunState + cursor consistency override
+
+- `DryRunState` + `DryRunBrokenKind` enums deleted (~30 LoC).
+- `cursor_dry_run_state` (~155 LoC), `cursor_will_produce_term` (~18 LoC), `cursor_committed_ops_consistent` (~18 LoC) deleted — all derived from the B13d-R virtual-stack simulation.
+- `BranchCursor.consistency_memo` field + ~30 init/clone/set sites deleted.
+- B13d-R consistency-override blocks in `merge_equivalent_cursors` and `subsume_lex_dominated_cursors` deleted (broken cursors transition to `WpdsState::Error` at eager-fire time and are filtered by `cursor_resolution_check :: Drop`; the override is unreachable).
+- Added `SemanticBuilder::is_accepting_terminal()` (~29 LoC) — direct shape check on cursor.builder, replaces the dry-run.
+- Net −475 LoC.
+
+### 5.6-tail-B (`0901d78`) — unify Lazy/Strict in 14 emit helpers + post-step Arc-install
+
+- 14 emit-helper `match cursor_mode { Lazy => …, Strict => … }` blocks deleted (~150 LoC). Single eager `Arc::make_mut(&mut cursor.builder).<method>(...)` call.
+- `debug_flush_lazy_invariant` debug check + call deleted (~20 LoC).
+- `emit_fire_action` always eagerly fires on cursor.builder (~30 LoC of mode-split deleted).
+- `emit_start_collection` Lazy/Strict paths collapsed.
+- `apply_pop_body_to_cursor` CollectionMarker drain becomes unconditional.
+- `commit_winner_at_eoi` always installs winner.builder (Strict-only guard deleted).
+- Post-step install added in `apply_action`'s Alive/Resolved outcome (`self.builder = (*cursor.builder).clone()`, gated on `cursor_mode == Lazy`).
+- Install added in `resolve_at_end_of_input` Lazy fast-path.
+- `set_cursor_inner_state` kv_phase reader routed through `cursor.builder.collection_slot_len`.
+- `apply_pop_body_to_cursor` acc_id derivation routed through `cursor.builder.collection_stack_len`.
+- Net −113 LoC.
+
+### 5.6-tail-C (`0858489`) — delete Fork-arm Lazy-mirror guards + Hack #7 prologue residue
+
+- Hack #7 prologue + Phase 5.5 cursor.builder refresh deleted (~60 LoC).
+- 16 Fork-arm `if cursor_mode == Lazy { self.pos = child.pos; }` mirror guards deleted (~64 LoC). Post-Fork outer handler already mirrors `self.pos = first.pos`.
+- Net −86 LoC.
+
+### 5.6-tail-D (`8ae3587`) — gate Fork-arm effect journaling on is_recovery_delta; rename pending_builder_ops → recovery_deltas
+
+- Added `WpdsWalker::is_recovery_delta(&BuilderDelta) -> bool` (~12 LoC).
+- 6 Fork-arm "effect" journal pushes wrapped in the gate. Only recovery deltas land in `cursor.recovery_deltas`.
+- `BranchCursor.pending_builder_ops` → `BranchCursor.recovery_deltas` (100+ touches).
+- `fork_action_consume_and_replace_with_effect_logs_delta` test reshaped to observe binder scope on cursor.builder directly.
+- Net +54 LoC (mostly from rename touches; gating itself is LoC-neutral).
+
+### 5.6-tail-E (`82b8d5e`) — delete 9 dead BuilderDelta variants + apply_effect_to_builder arms + commit_winner no-op arms
+
+- Deleted 9 variants: PushToken, PushIdent, PushPredicate, ExtendBinderScope, FireAction, PushToCollection, StartOptionalScope, FinalizeOptionalScopePresent, PushOptionalAbsent.
+- 9 corresponding `Debug` impl arms, `apply_effect_to_builder` arms, `commit_winner` replay no-op arms deleted.
+- `predicate_in_fork_branch_clone_path` test deleted (variant gone).
+- BuilderDelta enum: 19 variants → 10 (5 codegen-effect + 5 recovery).
+- Net −146 LoC.
+
+### 5.6-tail-F (`084b83f`) — delete CursorMode enum; replace with monotone `deterministic: bool`
+
+- `enum CursorMode { Lazy, Strict }` + its 12-line invariant docstring deleted.
+- `WpdsWalker.cursor_mode: CursorMode` field deleted.
+- `WpdsWalker::cursor_mode()` accessor deleted.
+- Added `WpdsWalker.deterministic: bool` field + `WpdsWalker::deterministic() -> bool` accessor.
+- 4 constructor initializations + 1 Fork-arm promotion + ~14 mode-agnostic helper guards updated.
+- 6 unit tests reshaped to use `deterministic()` (test FUNCTION names also renamed: `phase4_lazy_*` → `phase4_deterministic_*`, `phase4_strict_*` → `phase4_nondeterministic_*`, `push_optional_group_at_one_*_in_lazy_mode` → `_in_deterministic_mode`, etc.).
+- Net −3 LoC (deletion roughly offset by rename verbosity).
+
+### 5.6-tail-G (`35854c6`) — delete BranchCursor.collection_stack + collection_slots_allocated mirrors
+
+- `BranchCursor.collection_stack: Vec<Vec<ActionArg>>` field deleted (was a mirror of cursor.builder.collection_stack).
+- `BranchCursor.collection_slots_allocated: u8` field deleted (was write-only post-Phase-5.5).
+- 20+ struct-literal initializers + `seed_from_live`'s `live_collection_stack_depth` parameter dropped.
+- `ConfigKey.collection_depth` / `merge_equivalent_cursors` shape-guard / `set_cursor_inner_state` kv_phase / `apply_pop_body_to_cursor` acc_id all routed through `cursor.builder.collection_stack_len`.
+- BranchCursor field count: 13 → 10.
+- Net −41 LoC.
+
+### Cumulative Phase 5.6-tail delta
+
+| Sub-commit | LoC delta |
+|---|---|
+| 5.6-tail-A | −475 |
+| 5.6-tail-B | −113 |
+| 5.6-tail-C | −86 |
+| 5.6-tail-D | +54 |
+| 5.6-tail-E | −146 |
+| 5.6-tail-F | −3 |
+| 5.6-tail-G | −41 |
+| **Total** | **−810** |
+
+Combined with Phase 5.1–5.7 (~−200 LoC net excluding 5.6-tail-A's
+consistency_memo deletion which started here), the Phase 5 cleanup
+delivers roughly the design's projected ~1000 LoC removal.
 
 ## What's NOT yet in scope
 
-A future Phase 5.6-tail / Phase 5.9 should:
+A future Phase 5.7+ could:
 
-1. Delete remaining non-recovery `BuilderDelta` variants (14 left).
-2. Delete `CursorMode { Lazy, Strict }` and switch all emit helpers to a unified "always cursor.builder eager" path.
-3. Delete `BranchCursor.pending_builder_ops` (recovery-only journal becomes `recovery_deltas: Vec<RecoveryDelta>`).
-4. Delete `BranchCursor.collection_stack` (informational mirror — no consumers post-5.5).
-5. Delete `BranchCursor.consistency_memo` (Phase 5.3's eager Arc::make_mut makes the memo's "would this delta-set apply cleanly?" question obsolete).
-6. Delete `BranchCursor.collection_slots_allocated` (only set, never read post-5.5).
-7. Delete `WpdsWalker.cursor_mode`.
-
-These are mechanical deletions but cross-cutting across the emit-helper surface. Each touches ~30-50 LoC. The total post-cleanup net delta would be ~1500-1900 LoC removed from `wpds_walker.rs` (matching the plan's original estimate).
+1. Drop `self.builder` entirely and route `take_dyn_result` through the
+   surviving singleton cursor's `cursor.builder`. Would touch ~10
+   accessor sites and the hang-dump snapshot path. Plan §3.1 estimates
+   −200 LoC.
+2. Benchmark the cumulative Phase 5 + 5.6-tail throughput vs the
+   pre-Phase-5 tip (`286813e`) on `bench_rhocalc`. No regression
+   expected (in fact a speedup on nondeterministic-mode parses since journal+replay
+   is gone), but should be measured.
+3. T4 SIGUSR1 hang-dump (~396 LoC, pre-existing pending).
 
 ## Verification
 
@@ -260,7 +371,7 @@ At every sub-phase commit:
 The `im::Vector` HAMT has `O(log N)` per-operation cost vs `Vec`'s `O(1)`. For small N (typical SemanticBuilder stack depth in arithmetic / lambda / process-calc parses), this is a constant-factor slowdown. Mitigations:
 
 - Arc structural sharing means clone (which used to be O(N) on `Vec<ActionArg>::clone`) is now O(1) refcount.
-- Strict-mode forks no longer journal+replay 14 variant types — the action / splice / push runs ONCE on cursor.builder, not twice (once at log, once at replay).
+- Nondeterministic-mode parses no longer journal+replay 14 BuilderDelta variant types — the action / splice / push runs ONCE on cursor.builder, not twice (once at log, once at replay).
 - Recovery-only journal is bounded by recovery_depth (default 5).
 
 No benchmarks landed with Phase 5. A follow-up benchmark commit should measure the steady-state parse throughput against the pre-5.0 tip (`286813e`) on the `bench_rhocalc` suite.

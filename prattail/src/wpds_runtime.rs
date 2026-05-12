@@ -1680,8 +1680,9 @@ impl SemanticBuilder {
     /// simulated the same property against `recovery_deltas`; under
     /// always-eager (Phase 5.3+), the live builder IS the authoritative
     /// state. The empty-stack arm mirrors the pre-tail "empty pending =
-    /// Lazy short-circuit" branch — a cursor with no recorded activity
-    /// has no falsifying evidence and is conservatively viable.
+    /// deterministic-singleton short-circuit" branch — a cursor with no
+    /// recorded activity has no falsifying evidence and is conservatively
+    /// viable.
     pub fn is_accepting_terminal(&self) -> bool {
         if !self.optional_stack.is_empty() {
             return false;
@@ -2007,21 +2008,23 @@ impl SemanticBuilder {
 
     /// Phase 4 #5b (2026-05-12): per-slot length accessor used by the
     /// walker's `set_cursor_inner_state` to compute `kv_phase` parity
-    /// for HashMap collection slots in Lazy mode. Returns 0 if the
-    /// `acc_id` is out of range (defensive — should not happen under
-    /// correct push/pop pairing).
+    /// for HashMap collection slots. Returns 0 if the `acc_id` is out of
+    /// range (defensive — should not happen under correct push/pop
+    /// pairing).
     pub fn collection_slot_len(&self, acc_id: usize) -> usize {
         self.collection_stack.get(acc_id).map(|s| s.len()).unwrap_or(0)
     }
 
     /// Stage 3.16 / Hack #7 walker fix (Mechanism γ closure, 2026-05-05) —
     /// remove the live builder's collection_stack and return ownership.
-    /// Used at the Lazy→Strict mode promotion in `apply_action::Fork` to
-    /// transfer Lazy-time-allocated collection slots into the parent
-    /// cursor's `collection_stack` so children inherit aligned slot
-    /// ownership. After this call the live builder's stack is empty —
-    /// `adopt_collection_stack` can subsequently re-populate it from the
-    /// winning cursor.
+    /// Pre-tail this was used at the deterministic→nondeterministic
+    /// promotion in `apply_action::Fork` to transfer slots allocated
+    /// during the deterministic-singleton phase into the parent cursor's
+    /// `collection_stack` so children inherited aligned slot ownership.
+    /// Phase 5.6-tail-C deleted the Fork prologue that called this; the
+    /// method is preserved for the recovery-replay path and any future
+    /// snapshot/restore caller. After this call the live builder's
+    /// collection_stack is empty.
     ///
     /// Phase 5.1 (2026-05-12): swap out the inner `im::Vector<im::Vector<...>>`
     /// via `std::mem::take` (yields the populated im::Vector and leaves
