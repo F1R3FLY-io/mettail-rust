@@ -216,6 +216,16 @@ pub struct CollectionSepInfo {
     /// HashMap pilot — drain length 0 satisfies the
     /// `[k0, v0, k1, v1, ...]` invariant trivially).
     pub key_val_separator: Option<String>,
+    /// Phase 4 #1 (2026-05-11): rule-global slot index. 0-based dense
+    /// index over collection slots in `shape.positions` order. Encoded
+    /// at the `CollectionMarker` symbol's `bp` field at push time so
+    /// the walker's per-CollectionMarker close/sep/element-src
+    /// lookups can disambiguate sibling slots within the same rule.
+    /// `accumulator_id` (runtime stack-relative slot id) is recovered
+    /// from `cursor.collection_stack.len() - 1` at push time. For
+    /// single-slot rules, `slot_idx == 0` and behavior is unchanged
+    /// (the slot_idx vs accumulator_id coincide).
+    pub slot_idx: u8,
 }
 
 /// What kind of arg the action body extracts at each position (in push order).
@@ -586,6 +596,16 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                             CollectionType::HashMap => Some(":".to_string()),
                             _ => None,
                         };
+                        // Phase 4 #1 (2026-05-11): slot_idx is the
+                        // 0-based dense index of this collection slot
+                        // within the rule. Sub-commit 4.1.A (data-
+                        // model expansion): stamp 0 for now to
+                        // preserve single-slot behavior (the lookup-
+                        // emit functions are still 2-tuple keyed
+                        // {result_src, rule_idx} and ignore slot_idx).
+                        // Sub-commit 4.1.B will wire dynamic counting
+                        // + 3-tuple lookup keys + walker dispatch
+                        // changes, unlocking multi-slot rules.
                         positions.push(BinderPosition::ParamParse {
                             cat: elem_cat.clone(),
                             collection: Some(CollectionSepInfo {
@@ -594,6 +614,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                 coll_kind: coll_kind.clone(),
                                 elem_cat: elem_cat.clone(),
                                 key_val_separator,
+                                slot_idx: 0,
                             }),
                         });
                         action_args.push(ActionArgKind::CollectionDrain {
@@ -677,6 +698,14 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                         // accumulator is always Vec
                                         // — no key/value separator.
                                         key_val_separator: None,
+                                        // Phase 4 #1 (2026-05-11):
+                                        // Class-3 names accumulator
+                                        // has its own slot management
+                                        // (the outer BinderListLoop
+                                        // owns the accumulator slot).
+                                        // slot_idx is informational
+                                        // here.
+                                        slot_idx: 0,
                                     }),
                                 });
                                 inner_action_args.push(ActionArgKind::Term(
