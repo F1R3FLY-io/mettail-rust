@@ -30,6 +30,7 @@ indexmap = { workspace = true }
 
 ascent = { workspace = true }
 ascent-byods-rels = { workspace = true }
+pathmap = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

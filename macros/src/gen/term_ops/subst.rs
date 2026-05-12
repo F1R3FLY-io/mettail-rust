@@ -25,7 +25,6 @@
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{CollectionCategory, LanguageDef};
 use crate::ast::types::{CollectionType, TypeExpr};
-use crate::gen::native::native_type_to_string;
 use crate::gen::{generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -248,7 +247,7 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
 fn generate_unify_freevars_arm(
     category: &Ident,
     variant: &VariantKind,
-    language: &LanguageDef,
+    _language: &LanguageDef,
 ) -> TokenStream {
     match variant {
         VariantKind::Var { label } => {
@@ -264,22 +263,9 @@ fn generate_unify_freevars_arm(
         },
 
         VariantKind::Literal { label } => {
-            // String is not Copy; use clone() for str/String to avoid E0507
-            let literal_arm = language
-                .types
-                .iter()
-                .find(|t| &t.name == category)
-                .and_then(|t| t.native_type.as_ref())
-                .map(|ty| {
-                    let type_str = native_type_to_string(ty);
-                    if type_str == "str" || type_str == "String" {
-                        quote! { #category::#label(v) => #category::#label(v.clone()) }
-                    } else {
-                        quote! { #category::#label(v) => #category::#label(*v) }
-                    }
-                })
-                .unwrap_or_else(|| quote! { #category::#label(v) => #category::#label(*v) });
-            literal_arm
+            // Deref-move `*v` fails for non-Copy payloads (e.g. `Box<ReadZipperLit>` literals).
+            // Clone is correct when matching on `&Self` for both Copy and non-Copy payloads.
+            quote! { #category::#label(v) => #category::#label(v.clone()) }
         },
 
         VariantKind::Nullary { label } => {

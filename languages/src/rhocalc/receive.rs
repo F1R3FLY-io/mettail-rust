@@ -1,6 +1,6 @@
 use super::{
     Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Pathmap,
-    Proc, Str, UInt32,
+    Proc, ReadZipper, Str, UInt32, WriteZipper,
 };
 use mettail_runtime::{Binder, FreeVar, HashBag, OrdVar, Scope, Var};
 use std::cmp::Ordering;
@@ -156,6 +156,34 @@ fn collect_pattern_bindings(
                 pm.len() == vm.len()
                     && pm.iter().all(|(k, pv)| {
                         vm.get(k)
+                            .map(|vv| collect_pattern_bindings(pv, vv, env))
+                            .unwrap_or(false)
+                    })
+            },
+            _ => pattern == value,
+        },
+        (Proc::CastReadZipper(p), Proc::CastReadZipper(v)) => match (p.as_ref(), v.as_ref()) {
+            (ReadZipper::Lit(pz), ReadZipper::Lit(vz)) => {
+                let pl = pz.as_ref();
+                let vl = vz.as_ref();
+                pl.1 == vl.1
+                    && pl.0.len() == vl.0.len()
+                    && pl.0.iter().all(|(k, pv)| {
+                        vl.0.get(k)
+                            .map(|vv| collect_pattern_bindings(pv, vv, env))
+                            .unwrap_or(false)
+                    })
+            },
+            _ => pattern == value,
+        },
+        (Proc::CastWriteZipper(p), Proc::CastWriteZipper(v)) => match (p.as_ref(), v.as_ref()) {
+            (WriteZipper::Lit(pz), WriteZipper::Lit(vz)) => {
+                let pl = pz.as_ref();
+                let vl = vz.as_ref();
+                pl.1 == vl.1
+                    && pl.0.len() == vl.0.len()
+                    && pl.0.iter().all(|(k, pv)| {
+                        vl.0.get(k)
                             .map(|vv| collect_pattern_bindings(pv, vv, env))
                             .unwrap_or(false)
                     })
