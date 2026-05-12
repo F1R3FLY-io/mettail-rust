@@ -1271,18 +1271,28 @@ impl RecoveryEvent {
     }
 }
 
+/// BuilderDelta — payload variants for `cursor.recovery_deltas` AND for
+/// `WpdsStepAction::AdvanceWithEffect` / `ForkActionKind::*WithEffect(s)`
+/// effect payloads.
+///
+/// Phase 5.6-tail-E (2026-05-12): 9 dead variants deleted (PushToken,
+/// PushIdent, PushPredicate, ExtendBinderScope, FireAction,
+/// PushToCollection, StartOptionalScope, FinalizeOptionalScopePresent,
+/// PushOptionalAbsent). Under Phase 5.6-tail-B's emit-helper unification,
+/// these are applied directly to `cursor.builder` via `Arc::make_mut` —
+/// they never reach the journal. The 5 codegen-emitted "effect" variants
+/// (StartBinderScope, EndBinderScope, StartCollection, PushCollectionId,
+/// SpliceIntoCollection) are still active because codegen wraps them in
+/// `*WithEffect`/`*WithMultipleEffects` payloads on `ForkBranch`/`WpdsStepAction`.
+/// Those flow through `apply_effect_to_builder` on the cursor.builder side;
+/// they no longer reach `cursor.recovery_deltas` (5.6-tail-D gated them).
+///
+/// The 5 recovery variants (RecoveryEvent, SubstituteToken, InsertToken,
+/// CommitLexAlternative, ApplyRecoverySequence) mutate state OUTSIDE
+/// cursor.builder (walker.recovery_events + mutable_token_source) and ARE
+/// the only deltas that land in `cursor.recovery_deltas` for replay.
 #[derive(Clone)]
 pub enum BuilderDelta {
-    PushToken {
-        kind: TokenKind,
-        text: String,
-        pos: usize,
-    },
-    PushIdent {
-        name: String,
-        pos: usize,
-    },
-    PushPredicate(Arc<dyn Any + Send + Sync>),
     StartBinderScope {
         names: Vec<String>,
     },
@@ -1295,14 +1305,6 @@ pub enum BuilderDelta {
     /// close and BinderScope args never reach the action — affecting
     /// PNew, PInputs, and any binder rule with a multi-binder list.
     EndBinderScope,
-    /// B8 / Issue C followup (2026-05-09): append a name to the
-    /// innermost binder scope's names list. Used by multi-binder
-    /// iterations where the scope opens once at bootstrap with empty
-    /// names and each iteration extends the list.
-    ExtendBinderScope { name: String },
-    FireAction {
-        symbol: StackSymbolV2,
-    },
     /// Option A (2026-04-28): a cursor opened a collection. The id was
     /// allocated from the cursor's local `collection_stack` mirror; on
     /// commit, replay pushes the corresponding `CollectionId(id)` arg
@@ -1327,47 +1329,12 @@ pub enum BuilderDelta {
     /// helper no-op).
     SpliceIntoCollection { id: u8 },
 
-    // ─── Stage 3.7 / ι Phase 2 (2026-05-01): 10 new variants ─────────────────
-    //
-    // Per `plan-iota-full-single-cursor.md`, these enable the cursor-side
-    // migration of every live-builder mutation in Phase 4 (Always-cursor
-    // walker). Today's commit_winner replays them on the live builder; in
-    // Phase 4, ALL mutations route through deltas regardless of CursorMode.
-
-    /// Optional-scope: cursor opens an optional-group scope. Replay
-    /// invokes `SemanticBuilder::start_optional_scope` which pushes a
-    /// new arg-frame onto `optional_stack` so subsequent inner pushes
-    /// land in the inner frame, not the outer main stack.
-    StartOptionalScope,
-
-    /// Optional-scope: cursor finalizes the optional with `Some(inner_args)`.
-    /// Replay invokes `SemanticBuilder::finalize_optional_scope_present`
-    /// which pops the inner frame and pushes
-    /// `ActionArg::Optional(Some(inner_args))`.
-    FinalizeOptionalScopePresent,
-
-    /// Optional-scope: cursor finalizes the optional with `None`.
-    /// Replay invokes `SemanticBuilder::push_optional_absent`.
-    PushOptionalAbsent,
-
-    /// Collection-cursor (paired with `PushCollectionId`): allocate a
-    /// fresh accumulator on the live builder. Replay invokes
-    /// `SemanticBuilder::start_collection()` and discards the returned id
-    /// (the cursor allocated its own id at log time; commit re-allocates
-    /// in matching order via `adopt_collection_stack` BEFORE delta
-    /// replay, so the live builder's accumulator indices align).
-    ///
-    /// This variant is reserved for Phase 4 / Phase 6 lazy-mode delta
-    /// emission paths that may need explicit collection-allocation
-    /// outside the GSS-symbol-driven `PushCollectionId` flow.
+    /// Codegen-emitted "allocate a fresh collection slot" payload. Survives
+    /// 5.6-tail-E because BinderListLoop codegen emits it via
+    /// `WithMultipleEffects` payloads. Walker-side emit_start_collection
+    /// no longer journals this (Phase 5.6-tail-B); it mutates cursor.builder
+    /// directly and the id flows back to codegen via the return value.
     StartCollection,
-
-    /// Collection-cursor: append the top-of-stack arg into accumulator
-    /// `id`. Replay invokes `SemanticBuilder::push_to_collection(id)`.
-    /// Identical semantics to `SpliceIntoCollection` but distinguishes
-    /// the explicit "logical element push" call site from the implicit
-    /// "post-pop splice" call site.
-    PushToCollection { id: u8 },
 
     /// Stage 3.20 prep: cursor logs a recovery event. Replay invokes
     /// `walker.recovery_events.push(RecoveryEvent { action, pos, cost })`.
@@ -1437,32 +1404,12 @@ pub enum BuilderDelta {
 impl std::fmt::Debug for BuilderDelta {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuilderDelta::PushToken { kind, text, pos } => f
-                .debug_struct("PushToken")
-                .field("kind", kind)
-                .field("text", text)
-                .field("pos", pos)
-                .finish(),
-            BuilderDelta::PushIdent { name, pos } => f
-                .debug_struct("PushIdent")
-                .field("name", name)
-                .field("pos", pos)
-                .finish(),
-            BuilderDelta::PushPredicate(_) => f.debug_struct("PushPredicate").finish(),
             BuilderDelta::StartBinderScope { names } => f
                 .debug_struct("StartBinderScope")
                 .field("names", names)
                 .finish(),
             BuilderDelta::EndBinderScope => f
                 .debug_struct("EndBinderScope")
-                .finish(),
-            BuilderDelta::ExtendBinderScope { name } => f
-                .debug_struct("ExtendBinderScope")
-                .field("name", name)
-                .finish(),
-            BuilderDelta::FireAction { symbol } => f
-                .debug_struct("FireAction")
-                .field("symbol", symbol)
                 .finish(),
             BuilderDelta::PushCollectionId { id } => f
                 .debug_struct("PushCollectionId")
@@ -1472,16 +1419,7 @@ impl std::fmt::Debug for BuilderDelta {
                 .debug_struct("SpliceIntoCollection")
                 .field("id", id)
                 .finish(),
-            BuilderDelta::StartOptionalScope => f.debug_struct("StartOptionalScope").finish(),
-            BuilderDelta::FinalizeOptionalScopePresent => {
-                f.debug_struct("FinalizeOptionalScopePresent").finish()
-            }
-            BuilderDelta::PushOptionalAbsent => f.debug_struct("PushOptionalAbsent").finish(),
             BuilderDelta::StartCollection => f.debug_struct("StartCollection").finish(),
-            BuilderDelta::PushToCollection { id } => f
-                .debug_struct("PushToCollection")
-                .field("id", id)
-                .finish(),
             BuilderDelta::RecoveryEvent {
                 action_kind,
                 pos,
@@ -4973,60 +4911,29 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             Arc::new(SemanticBuilder::new()),
         ))
         .unwrap_or_else(|arc| (*arc).clone());
+        // Phase 5.6-tail-E (2026-05-12): replay loop is now recovery-only
+        // by construction. winner.recovery_deltas holds ONLY the 5 recovery
+        // variants (gated by is_recovery_delta in Step D). Non-recovery
+        // codegen-effect deltas (StartBinderScope, EndBinderScope,
+        // StartCollection, PushCollectionId, SpliceIntoCollection) were
+        // applied to cursor.builder via apply_effect_to_builder at emit
+        // time; they're never journaled and thus never reach this loop.
         for delta in winner.recovery_deltas {
             match delta {
-                // Phase 5.5: non-recovery deltas are NO-OPs at replay
-                // (already applied to cursor.builder which is now
-                // self.builder via the install above). Kept here for
-                // exhaustiveness pending Phase 5.6 variant deletion.
-                BuilderDelta::PushToken { kind, text, pos } => {
-                    let _ = (kind, text, pos);
-                }
-                BuilderDelta::PushIdent { name, pos } => {
-                    let _ = (name, pos);
-                }
-                BuilderDelta::PushPredicate(pred) => {
-                    // Phase 5.5: no-op (already applied to cursor.builder
-                    // which is now self.builder).
-                    let _ = pred;
-                }
-                BuilderDelta::StartBinderScope { names } => {
-                    let _ = names;
-                }
-                BuilderDelta::EndBinderScope => {}
-                BuilderDelta::ExtendBinderScope { name } => {
-                    let _ = name;
-                }
-                BuilderDelta::FireAction { symbol } => {
-                    // Phase 5.5 (2026-05-12): FireAction is now no-op at
-                    // replay. emit_fire_action eagerly fires the action_fn
-                    // on cursor.builder (via Arc::make_mut) in Strict mode,
-                    // so by commit-time cursor.builder.stack already has
-                    // the action's pushed terms; install brings them onto
-                    // self.builder. Replay-FireAction would double-apply
-                    // (pop arity + push term) — symbol is discarded.
-                    //
-                    // Error state from arity underflow is set IN-PLACE at
-                    // emit_fire_action time (eager fire returns Error
-                    // synchronously), so the bail-out for Error survival
-                    // is no longer needed here.
-                    let _ = symbol;
-                }
-                BuilderDelta::PushCollectionId { id: logged_id } => {
-                    // Phase 5.5: no-op. cursor.builder (now self.builder)
-                    // already has the CollectionId pushed via Arc::make_mut
-                    // in emit_push_collection_id (Phase 5.3).
-                    let _ = logged_id;
-                }
-                BuilderDelta::SpliceIntoCollection { id: logged_id } => {
-                    let _ = logged_id;
-                }
-                BuilderDelta::StartOptionalScope => {}
-                BuilderDelta::FinalizeOptionalScopePresent => {}
-                BuilderDelta::PushOptionalAbsent => {}
-                BuilderDelta::StartCollection => {}
-                BuilderDelta::PushToCollection { id } => {
-                    let _ = id;
+                // Non-recovery variants (StartBinderScope, EndBinderScope,
+                // StartCollection, PushCollectionId, SpliceIntoCollection):
+                // can't be journaled to recovery_deltas under is_recovery_delta
+                // gating. Match them as unreachable for exhaustiveness.
+                BuilderDelta::StartBinderScope { .. }
+                | BuilderDelta::EndBinderScope
+                | BuilderDelta::StartCollection
+                | BuilderDelta::PushCollectionId { .. }
+                | BuilderDelta::SpliceIntoCollection { .. } => {
+                    debug_assert!(
+                        false,
+                        "non-recovery BuilderDelta reached commit_winner replay \
+                         — is_recovery_delta gate violated"
+                    );
                 }
                 BuilderDelta::RecoveryEvent {
                     action_kind,
@@ -5364,23 +5271,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// the mutable token source / recovery_events, not the builder.
     fn apply_effect_to_builder(builder: &mut SemanticBuilder, effect: &BuilderDelta) {
         match effect {
-            BuilderDelta::PushToken { kind, text, pos } => {
-                builder.push_token(kind.clone(), text.clone(), *pos);
-            }
-            BuilderDelta::PushIdent { name, pos } => {
-                builder.push_ident(name.clone(), *pos);
-            }
-            BuilderDelta::PushPredicate(pred) => {
-                builder.push_predicate_arc(Arc::clone(pred));
-            }
             BuilderDelta::StartBinderScope { names } => {
                 builder.start_binder_scope(names.clone());
             }
             BuilderDelta::EndBinderScope => {
                 builder.end_binder_scope();
-            }
-            BuilderDelta::ExtendBinderScope { name } => {
-                builder.extend_binder_scope(name.clone());
             }
             BuilderDelta::StartCollection => {
                 let _ = builder.start_collection();
@@ -5391,29 +5286,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             BuilderDelta::SpliceIntoCollection { id } => {
                 builder.push_to_collection(*id);
             }
-            BuilderDelta::PushToCollection { id } => {
-                builder.push_to_collection(*id);
-            }
-            BuilderDelta::StartOptionalScope => {
-                builder.start_optional_scope();
-            }
-            BuilderDelta::FinalizeOptionalScopePresent => {
-                builder.finalize_optional_scope_present();
-            }
-            BuilderDelta::PushOptionalAbsent => {
-                builder.push_optional_absent();
-            }
-            BuilderDelta::FireAction { .. }
-            | BuilderDelta::RecoveryEvent { .. }
+            BuilderDelta::RecoveryEvent { .. }
             | BuilderDelta::SubstituteToken { .. }
             | BuilderDelta::InsertToken { .. }
             | BuilderDelta::CommitLexAlternative { .. }
             | BuilderDelta::ApplyRecoverySequence { .. } => {
-                // SeedLive / FinalizeCollection: vestigial (no emission;
-                // see Phase 5.4 + L12 hotfix B5).
-                // FireAction: dispatched via fire_action_for_on_builder
-                // separately.
-                // Recovery*: applied at commit_winner; no eager apply.
+                // Recovery deltas mutate walker.recovery_events /
+                // mutable_token_source, NOT cursor.builder. They're
+                // applied by commit_winner's recovery-arm replay.
             }
         }
     }
@@ -8244,41 +8124,15 @@ mod tests {
         );
     }
 
-    /// Cleanup 4: `BranchCursor::clone()` must succeed when
-    /// `recovery_deltas` contains a `PushPredicate(Arc<dyn Any>)`.
-    /// This is a mechanical check — pre-cleanup the clone would panic
-    /// via `clone_non_predicate`'s explicit panic on PushPredicate.
-    #[test]
-    fn predicate_in_fork_branch_clone_path() {
-        use crate::behavioral_pred::BehavioralPred;
-        let cursor: BranchCursor<LexicographicWeight> = BranchCursor {
-            node: 0,
-            pos: 0,
-            weight: lex(1.0, 0, 0),
-            inner_state: WpdsState::InfixLoop { cur_bp: 0 },
-            recovery_deltas: vec![BuilderDelta::PushPredicate(
-                Arc::new(BehavioralPred::Top) as Arc<dyn std::any::Any + Send + Sync>,
-            )],
-            collection_stack: Vec::new(),
-            collection_slots_allocated: 0,
-            source_priority: 0,
-            incoming_edge_stack: Vec::new(),
-            recovery_depth: 0,
-            visited_recovery: OrdSet::new(),
-            visited_dispatch: OrdSet::new(),
-            // Phase 5.2 (2026-05-12): fresh empty Arc for the unit-test
-            // cursor. The test exercises the `Clone` path on a cursor
-            // carrying a PushPredicate delta — orthogonal to the
-            // builder field — so an empty Arc suffices.
-            builder: Arc::new(SemanticBuilder::new()),
-        };
-        let cloned = cursor.clone();
-        assert_eq!(cloned.recovery_deltas.len(), 1);
-        assert!(
-            matches!(&cloned.recovery_deltas[0], BuilderDelta::PushPredicate(_)),
-            "cloned cursor must carry PushPredicate variant",
-        );
-    }
+    // Phase 5.6-tail-E (2026-05-12): predicate_in_fork_branch_clone_path
+    // DELETED. Pre-tail it exercised the BranchCursor::clone() path
+    // against a `BuilderDelta::PushPredicate` entry in pending_builder_ops
+    // — that variant is deleted under is_recovery_delta gating + dead-
+    // variant pruning. Clone coverage is now subsumed by:
+    //   1. The Arc::clone fast-path on cursor.builder (any test that
+    //      forks a cursor exercises this).
+    //   2. predicate-carrying parsers in the language test corpus
+    //      (gen_rhocalc_op cross_cat tests).
 
     /// Cleanup 3: a `FireAction` delta whose action arity exceeds the
     /// builder stack must leave the walker in `Error` state — the
