@@ -2267,8 +2267,16 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         &mut self,
         max_steps: usize,
         tokens: &dyn WpdsTokenSource,
-    ) -> Result<(), WpdsMaxStepsExceeded> {
+    ) -> Result<(), WpdsMaxStepsExceeded>
+    where
+        W: 'static + std::fmt::Debug,
+    {
         for _ in 0..max_steps {
+            // T4 SIGUSR1 hang-dump (2026-05-12): publish a fresh snapshot
+            // so an out-of-band SIGUSR1 / watchdog dump sees current walker
+            // state. No-op when `hang-dump` feature is off or
+            // PRATTAIL_HANG_DUMP env var is unset.
+            self.publish_to_hang_dump_slot();
             if self.state.is_terminal() {
                 return Ok(());
             }
@@ -6605,9 +6613,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     ) -> WpdsState
     where
         C: WalkerConsumer<W> + CursorObserver<W>,
-        W: 'static,
+        W: 'static + std::fmt::Debug,
     {
         for _ in 0..max_steps {
+            // T4 SIGUSR1 hang-dump (2026-05-12): publish per-step snapshot
+            // for SIGUSR1 / watchdog dumps. No-op when feature is off.
+            self.publish_to_hang_dump_slot();
             if self.state.is_terminal() {
                 <C as WalkerConsumer<W>>::on_complete(consumer, &self.state);
                 return self.state.clone();

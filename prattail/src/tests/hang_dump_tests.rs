@@ -122,3 +122,137 @@ fn watchdog_trigger_field_renders_correctly() {
     let json = snap.to_json();
     assert!(json.contains("Watchdog"));
 }
+
+/// T4 Sub-commit 4 (2026-05-12): publish → take_snapshot pipeline test.
+///
+/// Verifies that:
+/// 1. `test_force_snapshot` populates the slot (mirroring the production
+///    `publish_snapshot` path).
+/// 2. `test_take_snapshot` returns the published snapshot wrapped in Arc.
+/// 3. The trigger field is OVERRIDDEN to the take-time trigger (the
+///    documented contract — the snapshot is captured by the walker with
+///    one trigger; the watcher overlays its own trigger on dump).
+/// 4. All other fields (step_index, walker_pos, cursors, etc.) are
+///    preserved verbatim.
+#[test]
+fn publish_then_take_overrides_trigger_and_preserves_fields() {
+    crate::hang_dump::test_clear_slot();
+    let original = sample_snapshot();
+    crate::hang_dump::test_force_snapshot(original);
+
+    let taken = crate::hang_dump::test_take_snapshot(
+        HangTrigger::Watchdog { idle_secs: 7 },
+    );
+    let snap = taken.expect("test_take_snapshot returned None after force_snapshot");
+
+    // Preserved fields.
+    assert_eq!(snap.step_index, 99);
+    assert_eq!(snap.walker_pos, 17);
+    assert_eq!(snap.cursor_count, 2);
+    assert_eq!(snap.cursors.len(), 2);
+    assert_eq!(snap.pid, 12345);
+
+    // Trigger overridden by the take call.
+    assert!(
+        matches!(snap.trigger, HangTrigger::Watchdog { idle_secs: 7 }),
+        "trigger should be overridden to Watchdog {{ idle_secs: 7 }}, got {:?}",
+        snap.trigger,
+    );
+
+    // Banner reflects the override.
+    let banner = snap.to_banner();
+    assert!(banner.contains("Watchdog"));
+    assert!(banner.contains("idle_secs: 7"));
+
+    // take_snapshot clones (doesn't consume) — second take with a
+    // different trigger returns the same data with the new trigger overlay.
+    let second_take = crate::hang_dump::test_take_snapshot(HangTrigger::Sigusr1)
+        .expect("second take_snapshot returned None — slot should still be populated");
+    assert!(
+        matches!(second_take.trigger, HangTrigger::Sigusr1),
+        "second take should overlay Sigusr1 trigger; got {:?}",
+        second_take.trigger,
+    );
+    assert_eq!(second_take.step_index, 99, "underlying data preserved");
+}
+
+/// T4 Sub-commit 5 (2026-05-12): walker → publish e2e test.
+///
+/// Drives a minimal scripted-engine walker through `run_to_end_of_input`
+/// and verifies that `publish_to_hang_dump_slot` (wired in Sub-commit 1)
+/// fires per-step, leaving a snapshot in the slot that `take_snapshot`
+/// returns.
+///
+/// This is the acceptance test for the wiring fix in Sub-commit 1 —
+/// it would have failed BEFORE the fix (`run_to_end_of_input` lacked
+/// the `publish_to_hang_dump_slot` call) and passes AFTER.
+#[test]
+fn walker_publishes_snapshot_during_run_to_end_of_input() {
+    use crate::automata::lex_weight::LexicographicWeight;
+    use crate::gss::{WpdsGss, WpdsGssNode};
+    use crate::wpds_runtime::{
+        SliceTokenSource, StackSymbolV2, WpdsState, WpdsTokenSource,
+    };
+    use crate::wpds_walker::{WpdsStepAction, WpdsStepEngine, WpdsWalker};
+    use std::cell::RefCell;
+
+    // Local minimal ScriptedEngine — pop the next action from a Vec
+    // each call. Mirrors the pattern at wpds_walker.rs:7000+.
+    struct ScriptedEngine {
+        script: RefCell<Vec<WpdsStepAction<LexicographicWeight>>>,
+    }
+    impl WpdsStepEngine<LexicographicWeight> for ScriptedEngine {
+        fn step(
+            &self,
+            _state: &WpdsState,
+            _gss: &WpdsGss<LexicographicWeight>,
+            _frontier_top: Option<&WpdsGssNode>,
+            _pos: usize,
+            _tokens: &dyn WpdsTokenSource,
+        ) -> WpdsStepAction<LexicographicWeight> {
+            self.script
+                .borrow_mut()
+                .pop()
+                .unwrap_or(WpdsStepAction::Idle)
+        }
+    }
+
+    crate::hang_dump::test_clear_slot();
+
+    // Two-step script: Push then Accept. Drives run_to_end_of_input
+    // through one non-terminal step (Push → PrefixDispatch) and one
+    // terminal-transition step (Accept).
+    let engine = ScriptedEngine {
+        script: RefCell::new(vec![
+            WpdsStepAction::Accept,
+            WpdsStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: LexicographicWeight::from_cost(0.0, 0, 0),
+                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]),
+    };
+    let mut walker: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(engine, 0);
+    let token_src = SliceTokenSource::new(&[]);
+
+    walker
+        .run_to_end_of_input(10, &token_src)
+        .expect("max_steps not exceeded");
+
+    // Snapshot was published per-step; take it now. Slot being populated
+    // at all is the wiring-acceptance test — pre-Sub-commit-1,
+    // `run_to_end_of_input` did NOT call `publish_to_hang_dump_slot`
+    // and the slot would remain empty (test_clear_slot cleared it).
+    let snap = crate::hang_dump::test_take_snapshot(HangTrigger::Sigusr1)
+        .expect(
+            "snapshot slot empty after run_to_end_of_input — \
+             publish_to_hang_dump_slot wiring is broken",
+        );
+    assert!(
+        snap.cursor_count >= 1,
+        "cursor_count should be >= 1 (singleton at least); got {}",
+        snap.cursor_count,
+    );
+    // pid + timestamp are populated by publish path; verify non-zero.
+    assert_eq!(snap.pid, std::process::id());
+}

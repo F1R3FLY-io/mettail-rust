@@ -327,6 +327,38 @@ mod imp {
     pub fn current_pid() -> u32 {
         std::process::id()
     }
+
+    // ─── Test-only helpers ───────────────────────────────────────────────────
+    //
+    // These let the test harness exercise the publish → take_snapshot
+    // pipeline without sending real signals. Cfg-gated so they don't
+    // leak into production builds.
+
+    /// T4 hang-dump test helper: force a snapshot into the slot
+    /// (bypassing the walker). Mirrors the production `publish_snapshot`
+    /// path so tests verify the same Mutex semantics.
+    #[cfg(test)]
+    pub(crate) fn test_force_snapshot(snapshot: HangSnapshot) {
+        publish_snapshot(snapshot);
+    }
+
+    /// T4 hang-dump test helper: take the currently-published snapshot
+    /// with the given trigger override (mirrors what the watcher does on
+    /// SIGUSR1 or watchdog firing).
+    #[cfg(test)]
+    pub(crate) fn test_take_snapshot(trigger: HangTrigger) -> Option<Arc<HangSnapshot>> {
+        take_snapshot(trigger)
+    }
+
+    /// T4 hang-dump test helper: clear the global slot + LAST_STEP_INDEX
+    /// so each test starts from a clean state. Required because the
+    /// snapshot slot is process-global; without explicit reset, test
+    /// ordering would leak state across test fns.
+    #[cfg(test)]
+    pub(crate) fn test_clear_slot() {
+        *SNAPSHOT_SLOT.lock() = None;
+        LAST_STEP_INDEX.store(0, Ordering::Relaxed);
+    }
 }
 
 #[cfg(feature = "hang-dump")]
