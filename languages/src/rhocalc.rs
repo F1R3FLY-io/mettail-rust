@@ -8,6 +8,7 @@ use mettail_macros::language;
 use num_traits::Zero;
 use std::ops::Neg;
 
+pub(crate) mod pathmap;
 pub(crate) mod receive;
 mod type_inference;
 pub(crate) mod zipper;
@@ -897,7 +898,7 @@ language! {
             { match &m {
                 Proc::CastPathmap(inner) => match inner.as_ref() {
                     Pathmap::PathmapLit(ref payload) => {
-                        match crate::rhocalc::pathmap_get(payload, &k) {
+                        match crate::rhocalc::pathmap::pathmap_get(payload, &k) {
                             Ok(Some(v)) => v,
                             Ok(None) | Err(()) => Proc::Err,
                         }
@@ -911,7 +912,7 @@ language! {
             { match &m {
                 Proc::CastPathmap(inner) => match inner.as_ref() {
                     Pathmap::PathmapLit(ref payload) => {
-                        match crate::rhocalc::pathmap_put(payload, &k, &v) {
+                        match crate::rhocalc::pathmap::pathmap_put(payload, &k, &v) {
                             Ok(updated) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(updated))),
                             Err(()) => Proc::Err,
                         }
@@ -925,7 +926,7 @@ language! {
             { match (&a, &b) {
                 (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
                     (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
-                        match crate::rhocalc::pathmap_merge(pa, pb) {
+                        match crate::rhocalc::pathmap::pathmap_merge(pa, pb) {
                             Ok(merged) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(merged))),
                             Err(()) => Proc::Err,
                         }
@@ -939,7 +940,7 @@ language! {
             { match &m {
                 Proc::CastPathmap(inner) => match inner.as_ref() {
                     Pathmap::PathmapLit(ref payload) => {
-                        match crate::rhocalc::pathmap_has(payload, &k) {
+                        match crate::rhocalc::pathmap::pathmap_has(payload, &k) {
                             Ok(b) => Proc::CastBool(Box::new(Bool::BoolLit(b))),
                             Err(()) => Proc::Err,
                         }
@@ -953,7 +954,7 @@ language! {
             { match (&a, &b) {
                 (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
                     (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
-                        match crate::rhocalc::pathmap_restrict(pa, pb) {
+                        match crate::rhocalc::pathmap::pathmap_restrict(pa, pb) {
                             Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
                             Err(()) => Proc::Err,
                         }
@@ -967,7 +968,7 @@ language! {
             { match (&a, &b) {
                 (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
                     (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
-                        match crate::rhocalc::pathmap_subtract(pa, pb) {
+                        match crate::rhocalc::pathmap::pathmap_subtract(pa, pb) {
                             Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
                             Err(()) => Proc::Err,
                         }
@@ -981,7 +982,7 @@ language! {
             { match (&a, &b) {
                 (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
                     (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
-                        match crate::rhocalc::pathmap_meet(pa, pb) {
+                        match crate::rhocalc::pathmap::pathmap_meet(pa, pb) {
                             Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
                             Err(()) => Proc::Err,
                         }
@@ -1717,87 +1718,4 @@ impl Proc {
         let rhs = normalize_query_send_sugar_proc(other);
         mettail_runtime::BoundTerm::term_eq(&lhs, &rhs)
     }
-}
-
-/// Path segments for trie keys. `None` when the path is not encodable (e.g. empty list path `[]`).
-fn proc_path_segments(key: &Proc) -> Option<Vec<Vec<u8>>> {
-    match key {
-        Proc::CastList(inner) => match inner.as_ref() {
-            List::ListLit(items) if items.is_empty() => None,
-            List::ListLit(items) => Some(
-                items
-                    .iter()
-                    .map(|segment| segment.to_string().into_bytes())
-                    .collect(),
-            ),
-            _ => Some(vec![key.to_string().into_bytes()]),
-        },
-        _ => Some(vec![key.to_string().into_bytes()]),
-    }
-}
-
-fn proc_to_path_key_bytes(key: &Proc) -> Option<Vec<u8>> {
-    Some(mettail_runtime::flatten_segments(&proc_path_segments(key)?))
-}
-
-pub(crate) fn encode_proc_path_entry(key: &Proc) -> Result<Vec<u8>, ()> {
-    proc_to_path_key_bytes(key).ok_or(())
-}
-
-fn pathmap_get(
-    payload: &mettail_runtime::PathMapLit<Proc, Proc>,
-    key: &Proc,
-) -> Result<Option<Proc>, ()> {
-    let enc = encode_proc_path_entry(key)?;
-    let trie = mettail_runtime::trie_from_lit(payload, encode_proc_path_entry)?;
-    Ok(trie.get_val_at(&enc).cloned())
-}
-
-fn pathmap_has(payload: &mettail_runtime::PathMapLit<Proc, Proc>, key: &Proc) -> Result<bool, ()> {
-    let enc = encode_proc_path_entry(key)?;
-    let trie = mettail_runtime::trie_from_lit(payload, encode_proc_path_entry)?;
-    Ok(trie.get_val_at(&enc).is_some())
-}
-
-fn pathmap_put(
-    payload: &mettail_runtime::PathMapLit<Proc, Proc>,
-    key: &Proc,
-    value: &Proc,
-) -> Result<mettail_runtime::PathMapLit<Proc, Proc>, ()> {
-    let enc = encode_proc_path_entry(key)?;
-    let (mut trie, mut key_index) =
-        mettail_runtime::trie_and_key_index_from_lit(payload, encode_proc_path_entry)?;
-    mettail_runtime::trie_put_encoded(&mut trie, &mut key_index, enc, key.clone(), value.clone());
-    Ok(mettail_runtime::pathmap_lit_from_trie_and_keys(&trie, key_index))
-}
-
-fn pathmap_merge(
-    left: &mettail_runtime::PathMapLit<Proc, Proc>,
-    right: &mettail_runtime::PathMapLit<Proc, Proc>,
-) -> Result<mettail_runtime::PathMapLit<Proc, Proc>, ()> {
-    let (mut trie, mut key_index) =
-        mettail_runtime::trie_and_key_index_from_lit(left, encode_proc_path_entry)?;
-    mettail_runtime::trie_merge_lit(&mut trie, &mut key_index, right, encode_proc_path_entry)?;
-    Ok(mettail_runtime::pathmap_lit_from_trie_and_keys(&trie, key_index))
-}
-
-fn pathmap_restrict(
-    base: &mettail_runtime::PathMapLit<Proc, Proc>,
-    mask: &mettail_runtime::PathMapLit<Proc, Proc>,
-) -> Result<mettail_runtime::PathMapLit<Proc, Proc>, ()> {
-    mettail_runtime::trie_restrict_lit(base, mask, encode_proc_path_entry)
-}
-
-fn pathmap_subtract(
-    left: &mettail_runtime::PathMapLit<Proc, Proc>,
-    right: &mettail_runtime::PathMapLit<Proc, Proc>,
-) -> Result<mettail_runtime::PathMapLit<Proc, Proc>, ()> {
-    mettail_runtime::trie_subtract_lit(left, right, encode_proc_path_entry)
-}
-
-fn pathmap_meet(
-    left: &mettail_runtime::PathMapLit<Proc, Proc>,
-    right: &mettail_runtime::PathMapLit<Proc, Proc>,
-) -> Result<mettail_runtime::PathMapLit<Proc, Proc>, ()> {
-    mettail_runtime::trie_meet_lit(left, right, encode_proc_path_entry)
 }

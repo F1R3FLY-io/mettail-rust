@@ -719,7 +719,7 @@ mod zipper_pattern_tests {
         let key = path_key(&[1]);
         let y_pat = Proc::parse("y").expect("pattern var");
         let lit_pat = pathmap_with_value(key.clone(), y_pat);
-        let focus = crate::rhocalc::encode_proc_path_entry(&key).expect("focus");
+        let focus = crate::rhocalc::pathmap::encode_proc_path_entry(&key).expect("focus");
         let pattern = read_zipper_proc(lit_pat, focus.clone());
         let lit_val = pathmap_with_value(key, int(42));
         let value = read_zipper_proc(lit_val, focus);
@@ -732,8 +732,9 @@ mod zipper_pattern_tests {
     fn read_zipper_pattern_blocks_focus_mismatch() {
         let key = path_key(&[1]);
         let lit = pathmap_with_value(key.clone(), int(1));
-        let focus_a = crate::rhocalc::encode_proc_path_entry(&key).expect("focus");
-        let focus_b = crate::rhocalc::encode_proc_path_entry(&path_key(&[2])).expect("focus");
+        let focus_a = crate::rhocalc::pathmap::encode_proc_path_entry(&key).expect("focus");
+        let focus_b =
+            crate::rhocalc::pathmap::encode_proc_path_entry(&path_key(&[2])).expect("focus");
         let pattern = read_zipper_proc(lit.clone(), focus_a);
         let value = read_zipper_proc(lit, focus_b);
         let body = int(0);
@@ -746,7 +747,7 @@ mod zipper_pattern_tests {
         let key = path_key(&[1]);
         let y_pat = Proc::parse("y").expect("pattern var");
         let lit_pat = pathmap_with_value(key.clone(), y_pat);
-        let focus = crate::rhocalc::encode_proc_path_entry(&key).expect("focus");
+        let focus = crate::rhocalc::pathmap::encode_proc_path_entry(&key).expect("focus");
         let pattern = write_zipper_proc(lit_pat, focus.clone());
         let lit_val = pathmap_with_value(key, int(42));
         let value = write_zipper_proc(lit_val, focus);

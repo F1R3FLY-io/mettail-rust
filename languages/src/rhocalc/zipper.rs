@@ -12,7 +12,8 @@ use pathmap::zipper::{
 };
 use pathmap::PathMap;
 
-use super::{encode_proc_path_entry, Int, List, Proc, Str};
+use super::pathmap::encode_proc_path_entry;
+use super::{Int, List, Proc, Str};
 
 /// Immutable read zipper: underlying literal plus absolute encoded focus path from trie root.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -410,11 +411,5 @@ mod tests {
             Proc::CastList(Box::new(List::ListLit(vec![Proc::CastInt(Box::new(Int::NumLit(1)))])));
         let leaf_zipper = read_zipper_at(&single, &leaf).unwrap();
         assert!(zipper_descend_first(&leaf_zipper).is_err());
-    }
-
-    #[test]
-    fn encode_proc_path_entry_rejects_empty_list() {
-        let empty = Proc::CastList(Box::new(List::ListLit(vec![])));
-        assert!(super::super::encode_proc_path_entry(&empty).is_err());
     }
 }
