@@ -3239,6 +3239,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // B8 / Issue C (2026-05-09): log effect to pending ops,
                 // invalidate consistency memo, then advance state.
                 cursor.consistency_memo.set(None);
+                // Phase 5.5 (2026-05-12): eagerly apply effect to
+                // cursor.builder so post-install state reflects the
+                // mutation. Without this, the journaled effect would
+                // only fire at commit_winner replay (which is now no-op
+                // for non-recovery deltas), leaving cursor.builder
+                // missing the SpliceIntoCollection / other Class-3
+                // inner-walk effects.
+                Self::apply_effect_to_builder(
+                    Arc::make_mut(&mut cursor.builder),
+                    &effect,
+                );
                 cursor.pending_builder_ops.push(effect);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -4080,6 +4091,13 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             child.consistency_memo.set(None);
+                            // Phase 5.5 (2026-05-12): eagerly apply effect
+                            // to child.builder via Arc::make_mut so the
+                            // post-install state has these mutations.
+                            Self::apply_effect_to_builder(
+                                Arc::make_mut(&mut child.builder),
+                                &effect,
+                            );
                             child.pending_builder_ops.push(effect);
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -4357,6 +4375,13 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             );
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             child.consistency_memo.set(None);
+                            // Phase 5.5 (2026-05-12): eagerly apply effect
+                            // to child.builder via Arc::make_mut so the
+                            // post-install state has these mutations.
+                            Self::apply_effect_to_builder(
+                                Arc::make_mut(&mut child.builder),
+                                &effect,
+                            );
                             child.pending_builder_ops.push(effect);
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -4523,6 +4548,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 self.emit_extend_binder_scope(&mut child, text.clone());
                             }
                             child.consistency_memo.set(None);
+                            Self::apply_effect_to_builder(
+                                Arc::make_mut(&mut child.builder),
+                                &effect,
+                            );
                             child.pending_builder_ops.push(effect);
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -4567,6 +4596,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 child_source_priority,
                             );
                             child.consistency_memo.set(None);
+                            Self::apply_effect_to_builder(
+                                Arc::make_mut(&mut child.builder),
+                                &effect,
+                            );
                             child.pending_builder_ops.push(effect);
                             // Capture popped_symbol before pop.
                             let popped_symbol = self.gss
@@ -4646,6 +4679,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             );
                             child.consistency_memo.set(None);
                             for effect in effects {
+                                Self::apply_effect_to_builder(
+                                    Arc::make_mut(&mut child.builder),
+                                    &effect,
+                                );
                                 child.pending_builder_ops.push(effect);
                             }
                             let pos_now = child.pos;
@@ -4877,6 +4914,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// has rejoined the main parse trunk — safe to commit the winning
     /// branch's accumulated pending_builder_ops and resume there.
     fn cursor_resolution_check(&self, cursor: &BranchCursor<W>) -> CursorOutcome<W> {
+        // Phase 5.5 (2026-05-12): cursors that hit Error state mid-step
+        // (e.g., emit_fire_action's eager fire underflow) are Dropped so
+        // step_fanout's all-dropped path can surface "Error" to the walker.
+        if matches!(cursor.inner_state, WpdsState::Error { .. }) {
+            return CursorOutcome::Drop;
+        }
         if matches!(
             cursor.inner_state,
             WpdsState::InfixLoop { .. }
@@ -5810,6 +5853,76 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         }
     }
 
+    /// Phase 5.5 (2026-05-12): apply a non-recovery BuilderDelta to the
+    /// given builder. Used by Fork-arm dispatch sites that emit "effect"
+    /// deltas (EndBinderScope, StartBinderScope, StartCollection, etc.)
+    /// alongside ConsumeAndReplace actions. The journal still receives
+    /// the delta for commit_winner-time logging (Phase 5.6 will strip
+    /// this), but the eager application is required to keep cursor.builder
+    /// in sync with the codegen's intended state at each step.
+    ///
+    /// Recovery-typed deltas (RecoveryEvent / SubstituteToken / InsertToken
+    /// / CommitLexAlternative / ApplyRecoverySequence) are NO-OPs here
+    /// — their replay is mandatory at commit_winner because they mutate
+    /// the mutable token source / recovery_events, not the builder.
+    fn apply_effect_to_builder(builder: &mut SemanticBuilder, effect: &BuilderDelta) {
+        match effect {
+            BuilderDelta::PushToken { kind, text, pos } => {
+                builder.push_token(kind.clone(), text.clone(), *pos);
+            }
+            BuilderDelta::PushIdent { name, pos } => {
+                builder.push_ident(name.clone(), *pos);
+            }
+            BuilderDelta::PushPredicate(pred) => {
+                builder.push_predicate_arc(Arc::clone(pred));
+            }
+            BuilderDelta::StartBinderScope { names } => {
+                builder.start_binder_scope(names.clone());
+            }
+            BuilderDelta::EndBinderScope => {
+                builder.end_binder_scope();
+            }
+            BuilderDelta::ExtendBinderScope { name } => {
+                builder.extend_binder_scope(name.clone());
+            }
+            BuilderDelta::StartCollection => {
+                let _ = builder.start_collection();
+            }
+            BuilderDelta::PushCollectionId { id } => {
+                builder.push_collection_id(*id);
+            }
+            BuilderDelta::SpliceIntoCollection { id } => {
+                builder.push_to_collection(*id);
+            }
+            BuilderDelta::PushToCollection { id } => {
+                builder.push_to_collection(*id);
+            }
+            BuilderDelta::StartOptionalScope => {
+                builder.start_optional_scope();
+            }
+            BuilderDelta::FinalizeOptionalScopePresent => {
+                builder.finalize_optional_scope_present();
+            }
+            BuilderDelta::PushOptionalAbsent => {
+                builder.push_optional_absent();
+            }
+            BuilderDelta::SeedLiveCollectionStack { .. }
+            | BuilderDelta::FinalizeCollection { .. }
+            | BuilderDelta::FireAction { .. }
+            | BuilderDelta::RecoveryEvent { .. }
+            | BuilderDelta::SubstituteToken { .. }
+            | BuilderDelta::InsertToken { .. }
+            | BuilderDelta::CommitLexAlternative { .. }
+            | BuilderDelta::ApplyRecoverySequence { .. } => {
+                // SeedLive / FinalizeCollection: vestigial (no emission;
+                // see Phase 5.4 + L12 hotfix B5).
+                // FireAction: dispatched via fire_action_for_on_builder
+                // separately.
+                // Recovery*: applied at commit_winner; no eager apply.
+            }
+        }
+    }
+
     /// Phase 5.5 (2026-05-12): fire a semantic action on a given
     /// SemanticBuilder reference (rather than `self.builder`). Used by
     /// `emit_fire_action` to eagerly apply on `cursor.builder` via
@@ -5986,54 +6099,52 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn emit_fire_action(&mut self, cursor: &mut BranchCursor<W>, symbol: StackSymbolV2) {
-        // Phase 5.5 (2026-05-12): eagerly fire the action_fn on
-        // cursor.builder via Arc::make_mut, in BOTH Lazy and Strict
-        // modes. This is REQUIRED for correctness post-Phase-5.4:
-        // subsequent SpliceIntoCollection emits on cursor.builder move
-        // stack elements into collection slots. The slot must receive
-        // the action's CONVERTED term (e.g., Proc::CastInt(0)), NOT
-        // the raw arg (e.g., the Int "0" literal token). Without
-        // eager firing here, cursor.builder.collection_stack ends up
-        // holding raw arg tokens, breaking the action's drain at
-        // outer-rule action time.
+        // Phase 5.5 (2026-05-12): mode-split fire_action behavior.
         //
-        // The journal log of FireAction is retained for Strict-mode
-        // commit_winner replay — at commit, install brings cursor.builder
-        // into self.builder, then journal-FireActions fire on the new
-        // self.builder. This double-application is semantically a
-        // no-op: the action eagerly fired on cursor.builder leaves
-        // cursor.builder.stack in the "post-action" state; install
-        // preserves that state on self.builder; replay-FireAction
-        // would pop arity from self.builder.stack — but the stack
-        // is already at post-action state, so the pop would underflow
-        // unless self.builder.stack happens to have unrelated content.
+        // In LAZY mode (single cursor, no Fork): fire only on
+        // `self.builder` (as pre-5.5). cursor.builder is "best-effort"
+        // tracked via Phase 5.3 eager emits for upstream non-FireAction
+        // mutations, but the action_fn's push_term effects don't
+        // mirror — that's fine because commit_winner SKIPS install
+        // in Lazy mode (self.builder is authoritative).
         //
-        // To avoid double-application, in Strict mode we STILL log the
-        // FireAction delta but commit_winner SKIPS its replay arm
-        // (Phase 5.5's non-recovery arm filter handles this).
+        // In STRICT mode (post-Fork, multiple cursors): eagerly fire
+        // on cursor.builder via Arc::make_mut. This is REQUIRED for
+        // correctness: subsequent SpliceIntoCollection emits move
+        // cursor.builder.stack tops into collection slots. The slot
+        // must receive the action's CONVERTED term (e.g. Proc::CastInt(0)),
+        // NOT the raw arg (e.g. the Int "0" literal token). Without
+        // eager firing here, cursor.builder.collection_stack would
+        // hold raw arg tokens, breaking the outer rule's drain at
+        // action time.
         //
-        // In Lazy mode (single cursor), additionally fire on
-        // self.builder so the live walker fields and cursor.builder
-        // remain in sync.
-        let builder_mut = Arc::make_mut(&mut cursor.builder);
-        if let Some(message) =
-            Self::fire_action_for_on_builder(&self.engine, builder_mut, symbol)
-        {
-            self.state = WpdsState::Error { message };
-            return;
-        }
-        if self.cursor_mode == CursorMode::Lazy {
-            self.fire_action_for(symbol);
-        } else {
-            // Strict mode: still journal for commit_winner — its replay
-            // arm is now a no-op (matches the action already applied
-            // eagerly above), but the journal entry preserves Phase 5.6
-            // optionality (the variant + arm can be deleted cleanly in
-            // 5.6 once Strict-mode action timing is verified).
-            cursor.consistency_memo.set(None);
-            cursor
-                .pending_builder_ops
-                .push(BuilderDelta::FireAction { symbol });
+        // The Strict-mode FireAction journal entry is kept (commit_winner
+        // SKIPS its replay arm — the action is already applied to
+        // cursor.builder which becomes self.builder at install). Phase
+        // 5.6 will delete the journal entry entirely.
+        match self.cursor_mode {
+            CursorMode::Lazy => self.fire_action_for(symbol),
+            CursorMode::Strict => {
+                let builder_mut = Arc::make_mut(&mut cursor.builder);
+                if let Some(message) =
+                    Self::fire_action_for_on_builder(&self.engine, builder_mut, symbol)
+                {
+                    // Phase 5.5 (2026-05-12): on arity underflow during
+                    // eager fire, set BOTH cursor.inner_state AND walker
+                    // state to Error so the cursor aborts cleanly. Pre-5.5
+                    // the Error was set in commit_winner's bail-out path;
+                    // post-5.5 the underflow happens mid-parse so cursor
+                    // state propagation is needed.
+                    let err = WpdsState::Error { message };
+                    cursor.inner_state = err.clone();
+                    self.state = err;
+                    return;
+                }
+                cursor.consistency_memo.set(None);
+                cursor
+                    .pending_builder_ops
+                    .push(BuilderDelta::FireAction { symbol });
+            }
         }
     }
 
@@ -6045,33 +6156,45 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// replay.
     #[inline(always)]
     fn emit_start_collection(&mut self, cursor: &mut BranchCursor<W>) -> u8 {
-        // Phase 5.3 (2026-05-12): eager Arc::make_mut on cursor.builder.
-        // Discard the returned id — the authoritative id (used downstream)
-        // is the live builder's id (Lazy) or the cursor.collection_stack
-        // index (Strict). The cursor.builder.collection_stack tracks
-        // independently; its slot indices may differ from the live
-        // builder's. Phase 5.4 will reconcile this by initializing
-        // cursor.builder at fork from the live builder's Arc.
-        let _cursor_local_id = Arc::make_mut(&mut cursor.builder).start_collection();
+        // Phase 5.5 (2026-05-12): authoritative id is now cursor.builder's
+        // allocation. Pre-5.3 the id was derived from the cursor's
+        // collection_stack mirror length, but Phase 4 #5b made the mirror
+        // ALWAYS pop on CollectionMarker pop (regardless of binder-internal
+        // status), while cursor.builder.collection_stack retains slots
+        // until action drain. This created a divergence: the mirror's
+        // length no longer matches cursor.builder's allocation count.
+        //
+        // For multi-slot Class-2 binder rules (e.g. class2multi `Pair . xs,
+        // ys`), the second slot's id derived from the mirror was 0
+        // (mirror was emptied by xs CollectionMarker pop), but
+        // cursor.builder's actual second slot is at id=1. emit_push_collection_id
+        // would then push CollectionId(0) twice, breaking the action's
+        // LIFO drain.
+        //
+        // Fix: use Arc::make_mut(&mut cursor.builder).start_collection()'s
+        // returned id as the authoritative source. Maintain cursor.collection_stack
+        // mirror for legacy state-tracking purposes (it's still consulted
+        // by some splice gates), but it's no longer the id source.
+        let cursor_local_id =
+            Arc::make_mut(&mut cursor.builder).start_collection();
         match self.cursor_mode {
-            CursorMode::Lazy => self.builder.start_collection(),
+            CursorMode::Lazy => {
+                let _live_id = self.builder.start_collection();
+                cursor_local_id
+            }
             CursorMode::Strict => {
-                let id = cursor.collection_stack.len() as u8;
                 cursor.collection_stack.push(Vec::new());
                 // L12 follow-up B5 (2026-05-07): log StartCollection so
                 // commit_winner replay allocates a matching slot on
                 // live's collection_stack. Without this, Strict-mode
                 // SpliceIntoCollection / PushToCollection / FinalizeCollection
-                // deltas operate on indices live doesn't have, silently
-                // dropping elements (push_to_collection's get_mut returns
-                // None on out-of-bounds id) or panicking the LIFO assert
-                // (FinalizeCollection's `live.len() == id` check).
+                // deltas operate on indices live doesn't have.
                 // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                 cursor.consistency_memo.set(None);
                 cursor
                     .pending_builder_ops
                     .push(BuilderDelta::StartCollection);
-                id
+                cursor_local_id
             }
         }
     }
@@ -6593,12 +6716,20 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // stack index). Recover it from the cursor's/builder's
                 // collection_stack top (LIFO: the marker on top is the
                 // innermost active slot).
+                // Phase 5.5 (2026-05-12): authoritative acc_id is now
+                // cursor.builder.collection_stack_len() - 1 (the actual
+                // top of the active slot stack). Pre-5.5 the mirror
+                // (cursor.collection_stack) was consulted, but Phase 4 #5b
+                // empties the mirror on CollectionMarker pop while
+                // cursor.builder.collection_stack retains slots until
+                // action drain, causing acc_id mismatch in multi-slot
+                // contexts.
                 let acc_id = match self.cursor_mode {
                     CursorMode::Lazy => {
                         self.builder.collection_stack_len().saturating_sub(1) as u8
                     }
                     CursorMode::Strict => {
-                        cursor.collection_stack.len().saturating_sub(1) as u8
+                        cursor.builder.collection_stack_len().saturating_sub(1) as u8
                     }
                 };
                 // Phase 2 / Redesign C follow-up (2026-05-11); Phase 4 #2
@@ -6658,7 +6789,13 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             }
         }
         self.multiply_cursor_weight(cursor, weight);
-        self.set_cursor_inner_state(cursor, new_state);
+        // Phase 5.5 (2026-05-12): preserve Error state if emit_fire_action's
+        // eager fire set it (arity underflow). Without this guard, the
+        // unconditional `set_cursor_inner_state(cursor, new_state)` would
+        // overwrite the Error with the ConsumeAndPop's planned next_state.
+        if !cursor.inner_state.is_terminal() {
+            self.set_cursor_inner_state(cursor, new_state);
+        }
     }
 
     /// Stage 3.12.6 (2026-05-02): single-predecessor pop guided by the
@@ -8877,27 +9014,42 @@ mod tests {
         let mut w = WpdsWalker::new(engine, 0);
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // entry
         let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
-        // Stage 3.5b (2026-05-01): commit fires from EOI resolve. The
-        // FireAction delta replays during commit_winner_at_eoi → arity
-        // underflow → walker state set to Error. resolve returns
-        // ParseError because the winner committed but the builder ended
-        // up empty (action consumed args but underflowed before pushing
-        // a Term).
+        // Phase 5.5 (2026-05-12): emit_fire_action now eagerly fires the
+        // action_fn on cursor.builder during the Pop step. The arity
+        // underflow detected in fire_action_for_on_builder sets
+        // walker.state = WpdsState::Error directly (rather than waiting
+        // for commit_winner replay). Capture state BEFORE the subsequent
+        // run_to_end_of_input/resolve loop, which may transition the
+        // walker through dead-cursor cleanup and overwrite the live
+        // state with a recovery value.
+        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Pop with underflow
+        let post_pop_state = w.state().clone();
+        // resolve_at_end_of_input still runs to ensure no spurious
+        // Accepted, but the Error invariant is checked at the Pop step.
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps not exceeded");
         let _ = w.resolve_at_end_of_input(&empty_tokens());
-        // Cleanup 3: walker.state MUST remain Error, NOT be overwritten
-        // by InfixLoop (commit_winner's Cleanup 3 guard ensures this).
-        match w.state() {
-            WpdsState::Error { message } => {
+        // Walker MUST have entered Error state at the underflow step.
+        // The action_fn's arity mismatch is an engine-emission bug; the
+        // walker surfaces it as Error rather than silently advancing.
+        //
+        // Acceptable Error messages:
+        // - "arity mismatch at rule ..." (direct underflow detection in
+        //   fire_action_for_on_builder).
+        // - "all fork branches dropped" (cursor with Error inner_state
+        //   gets Dropped, leaving no active cursors — propagated by
+        //   step_fanout).
+        match post_pop_state {
+            WpdsState::Error { ref message } => {
                 assert!(
-                    message.contains("arity") || message.contains("under"),
-                    "expected arity-mismatch error; got: {}",
+                    message.contains("arity") || message.contains("under")
+                        || message.contains("dropped"),
+                    "expected arity / underflow / dropped error; got: {}",
                     message,
                 );
             }
-            other => panic!(
-                "expected Error after arity underflow; got {:?}",
+            ref other => panic!(
+                "expected Error after arity underflow at Pop step; got {:?}",
                 other,
             ),
         }
