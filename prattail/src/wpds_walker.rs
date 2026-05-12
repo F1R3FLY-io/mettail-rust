@@ -946,6 +946,28 @@ pub struct BranchCursor<W: Semiring> {
     /// `Cell` (not `RefCell`) because the value is `Copy`; no borrow
     /// tracking needed.
     pub consistency_memo: std::cell::Cell<Option<Option<bool>>>,
+    /// Phase 5.2 (2026-05-12): per-cursor `Arc`-shared `SemanticBuilder`.
+    /// Future anchor for the persistent-builder redesign — the runtime
+    /// still routes walker-driven mutations through `pending_builder_ops`
+    /// (journal model). Phase 5.3 migrates emitter helpers to mutate
+    /// `cursor.builder` directly via `Arc::make_mut`; Phase 5.4 drops the
+    /// Hack #7 Fork prologue (`pre_fork_slots` donation) in favor of an
+    /// O(1) `Arc::clone` per child; Phase 5.6 deletes
+    /// `pending_builder_ops` entirely.
+    ///
+    /// Today (Phase 5.2): the field is structurally present but NOT read
+    /// or written by the engine. `BranchCursor::clone` bumps the Arc
+    /// (O(1)); `BranchCursor::fork_child` and `seed_from_live` initialize
+    /// it from the parent's Arc or a fresh empty `SemanticBuilder`,
+    /// respectively. Including the field NOW lets Phase 5.3+ route
+    /// mutations without touching every construction site again.
+    ///
+    /// NOT part of `ConfigKey` — this is operational per-cursor state,
+    /// not a merge-equivalence key. Merge tiebreak preserves the
+    /// surviving cursor's builder by Vec-write semantics in
+    /// `merge_equivalent_cursors`, identical to how `pending_builder_ops`
+    /// + `collection_stack` are kept today.
+    pub builder: Arc<SemanticBuilder>,
 }
 
 impl<W: Semiring> std::fmt::Debug for BranchCursor<W>
@@ -959,6 +981,10 @@ where
             .field("weight", &self.weight)
             .field("inner_state", &self.inner_state)
             .field("pending_builder_ops_len", &self.pending_builder_ops.len())
+            // Phase 5.2 (2026-05-12): Arc strong count is the most useful
+            // diagnostic — shows how many cursors share this builder
+            // before the next mutation triggers copy-on-write.
+            .field("builder_arc_refcount", &Arc::strong_count(&self.builder))
             .finish()
     }
 }
@@ -975,6 +1001,11 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
         // The pre-3.6 `debug_assert!` requiring `collection_stack` to be
         // empty has been removed — cloning a cursor with populated
         // accumulators is now safe and lossless.
+        //
+        // Phase 5.2 (2026-05-12): `builder: Arc<SemanticBuilder>` bumps
+        // the refcount in O(1) — no deep clone. The shared underlying
+        // builder is only forked when a Phase 5.3+ mutator calls
+        // `Arc::make_mut`.
         BranchCursor {
             node: self.node,
             pos: self.pos,
@@ -989,6 +1020,7 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
             visited_recovery: self.visited_recovery.clone(),
             visited_dispatch: self.visited_dispatch.clone(),
             consistency_memo: std::cell::Cell::new(self.consistency_memo.get()),
+            builder: Arc::clone(&self.builder),
         }
     }
 }
@@ -1056,6 +1088,14 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             visited_dispatch: BTreeSet::new(),
             // B13d-R Step 2 (2026-05-08): empty pending = Consistent.
             consistency_memo: std::cell::Cell::new(Some(Some(true))),
+            // Phase 5.2 (2026-05-12): fresh empty Arc<SemanticBuilder>.
+            // The seed cursor's builder is independent of the walker's
+            // live builder (the field is unused in 5.2 — see field
+            // docstring). Walker constructors that call `seed_from_live`
+            // initialize their `self.builder: SemanticBuilder` to
+            // `SemanticBuilder::new()` in lockstep, so the two stay
+            // structurally identical at construction time.
+            builder: Arc::new(SemanticBuilder::new()),
         }
     }
 
@@ -1099,6 +1139,12 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // shares parent's pending_builder_ops at construction time;
             // any subsequent push invalidates the child's memo).
             consistency_memo: std::cell::Cell::new(parent.consistency_memo.get()),
+            // Phase 5.2 (2026-05-12): O(1) Arc bump — the child shares
+            // the parent's `SemanticBuilder` until a Phase 5.3+ mutator
+            // forces copy-on-write via `Arc::make_mut`. This is the
+            // single-most-important reason the field exists: Fork
+            // fanout cost becomes constant per child.
+            builder: Arc::clone(&parent.builder),
         }
     }
 }
@@ -2244,6 +2290,13 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // B13d-R Step 2 (2026-05-08): post-resolution
                     // singleton has empty pending → Consistent memo.
                     consistency_memo: std::cell::Cell::new(Some(Some(true))),
+                    // Phase 5.2 (2026-05-12): fresh empty Arc — the
+                    // BranchResolved write-back resets cursor state to
+                    // a canonical post-resolution singleton; the
+                    // walker.builder (live mutation surface in 5.2)
+                    // already captured the winning branch's effects
+                    // via commit_winner journal replay.
+                    builder: Arc::new(SemanticBuilder::new()),
                 }];
                 self.state = new_state.clone();
                 let trace = WpdsTraceEntry {
@@ -3127,6 +3180,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // B13d-R Step 2 (2026-05-08): post-Drop reset has
                     // empty pending → Consistent memo.
                     consistency_memo: std::cell::Cell::new(Some(Some(true))),
+                    // Phase 5.2 (2026-05-12): fresh empty Arc — the
+                    // post-Drop fresh singleton has no Fork-ancestor
+                    // builder to inherit. Live mutations continue to
+                    // flow through `self.builder` (Lazy mode); the
+                    // cursor's Arc is a future anchor (5.3+).
+                    builder: Arc::new(SemanticBuilder::new()),
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -3630,6 +3689,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
                                 consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
+                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
+                                // Child shares parent's `SemanticBuilder`
+                                // until a 5.3+ mutator triggers
+                                // `Arc::make_mut` copy-on-write.
+                                builder: Arc::clone(&cursor.builder),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -3680,6 +3744,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
                                 consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
+                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
+                                // Child shares parent's `SemanticBuilder`
+                                // until a 5.3+ mutator triggers
+                                // `Arc::make_mut` copy-on-write.
+                                builder: Arc::clone(&cursor.builder),
                             };
                             // Strict mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -3741,6 +3810,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
                                 consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
+                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
+                                // Child shares parent's `SemanticBuilder`
+                                // until a 5.3+ mutator triggers
+                                // `Arc::make_mut` copy-on-write.
+                                builder: Arc::clone(&cursor.builder),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -3781,6 +3855,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
                                 consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
+                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
+                                // Child shares parent's `SemanticBuilder`
+                                // until a 5.3+ mutator triggers
+                                // `Arc::make_mut` copy-on-write.
+                                builder: Arc::clone(&cursor.builder),
                             };
                             child.pos += 1;
                             if self.cursor_mode == CursorMode::Lazy {
@@ -3814,6 +3893,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
                                 consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
+                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
+                                // Child shares parent's `SemanticBuilder`
+                                // until a 5.3+ mutator triggers
+                                // `Arc::make_mut` copy-on-write.
+                                builder: Arc::clone(&cursor.builder),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -3880,6 +3964,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
                                 consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
+                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
+                                // Child shares parent's `SemanticBuilder`
+                                // until a 5.3+ mutator triggers
+                                // `Arc::make_mut` copy-on-write.
+                                builder: Arc::clone(&cursor.builder),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3922,6 +4011,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
                                 consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
+                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
+                                // Child shares parent's `SemanticBuilder`
+                                // until a 5.3+ mutator triggers
+                                // `Arc::make_mut` copy-on-write.
+                                builder: Arc::clone(&cursor.builder),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3968,6 +4062,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
                                 consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
+                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
+                                // Child shares parent's `SemanticBuilder`
+                                // until a 5.3+ mutator triggers
+                                // `Arc::make_mut` copy-on-write.
+                                builder: Arc::clone(&cursor.builder),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             child.consistency_memo.set(None);
@@ -4012,6 +4111,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
                                 consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
+                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
+                                // Child shares parent's `SemanticBuilder`
+                                // until a 5.3+ mutator triggers
+                                // `Arc::make_mut` copy-on-write.
+                                builder: Arc::clone(&cursor.builder),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             child.consistency_memo.set(None);
@@ -4071,6 +4175,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
                                 consistency_memo: std::cell::Cell::new(cursor.consistency_memo.get()),
+                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
+                                // Child shares parent's `SemanticBuilder`
+                                // until a 5.3+ mutator triggers
+                                // `Arc::make_mut` copy-on-write.
+                                builder: Arc::clone(&cursor.builder),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -5657,6 +5766,16 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             // empty pending → Consistent memo (the winner's deltas
             // were drained at replay; pending_builder_ops is now Vec::new()).
             consistency_memo: std::cell::Cell::new(Some(Some(true))),
+            // Phase 5.2 (2026-05-12): preserve winner's Arc. The 5.2
+            // engine doesn't read this field — but preserving it here
+            // (vs reseting to fresh Arc) prepares for Phase 5.5 where
+            // the Arc swap REPLACES the journal-replay path; at that
+            // point `winner.builder` IS the post-commit live state, so
+            // installing it on the post-commit singleton becomes the
+            // committal step. Today (5.2) the move is a no-op vis-à-
+            // vis behavior — the live mutation surface is still
+            // `self.builder`, journaled deltas replay against it above.
+            builder: winner.builder,
         }];
     }
 
@@ -8611,6 +8730,11 @@ mod tests {
             visited_recovery: BTreeSet::new(),
             visited_dispatch: BTreeSet::new(),
             consistency_memo: std::cell::Cell::new(None),
+            // Phase 5.2 (2026-05-12): fresh empty Arc for the unit-test
+            // cursor. The test exercises the `Clone` path on a cursor
+            // carrying a PushPredicate delta — orthogonal to the
+            // builder field — so an empty Arc suffices.
+            builder: Arc::new(SemanticBuilder::new()),
         };
         let cloned = cursor.clone();
         assert_eq!(cloned.pending_builder_ops.len(), 1);
