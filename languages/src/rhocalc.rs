@@ -30,7 +30,7 @@ language! {
         ![str] as Str
         ![Vec<Proc>] as List ["[", "]", ","]
         ![mettail_runtime::HashBag<Proc>] as Bag [ "#{", "}#", "|" ]
-        ![HashMap<Proc, Proc>] as Map
+        ![HashMap<Proc, Proc>] as Map [ "{", "}", ",", ":" ]
     },
 
     literals {
@@ -70,11 +70,22 @@ language! {
 
     terms {
         PZero .
-        |- "{}" : Proc;
+        |- "Nil" : Proc;
 
         PDrop . n:Name  |- "*" n : Proc ;
 
+        // AST-level constructor for parallel composition (multiset of procs).
+        // Equations / rewrites match on `(PPar {…})`. User-facing surface
+        // syntax is either braced `{ P | Q }` or bare infix `P | Q` (`PParInfix`,
+        // folded via `merge_pp_parallel`). The `__ppar(…)` keyword exposes the
+        // constructor for internal use and round-trip parsing of normalized AST.
+        //
+        // Top-level `{ … }` is also used for Map literals (`{ k: v }`); the
+        // parser disambiguates on `:` vs `|`. Empty `{}` is an empty Map.
         PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
+        PParInternal . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc ![{
+            Proc::PPar(ps.clone())
+        }] fold;
 
         POutput . n:Name, q:Proc
         |- n "!" "(" q ")" : Proc ;
@@ -120,10 +131,62 @@ language! {
                 Box::new(crate::rhocalc::runtime::mk_proc_list(items)),
             )
         }] fold;
+        // Rholang `@Nil` send sugars.  Placed *before* `POutputQuoted` so the
+        // generated dispatcher tries the more specific `@ Nil ! ( q )` shape
+        // before the general `@ <Name> ! ( q )` shape, which can't accept the
+        // `Nil` keyword in its inner Name slot.
+        POutputNil . q:Proc
+        |- "@" "Nil" "!" "(" q ")" : Proc ![{
+            Proc::POutput(
+                Box::new(Name::NQuote(Box::new(Proc::PZero))),
+                Box::new(q.clone()),
+            )
+        }] fold;
+        PPersistOutputNil . q:Proc
+        |- "@" "Nil" "!!" "(" q ")" : Proc ![{
+            Proc::PPersistOutput(
+                Box::new(Name::NQuote(Box::new(Proc::PZero))),
+                Box::new(q.clone()),
+            )
+        }] fold;
         POutputQuoted . n:Name, q:Proc
         |- "@" n "!" "(" q ")" : Proc ![{
             Proc::POutput(Box::new(Name::NQuote(Box::new(crate::rhocalc::receive::name_pattern_to_proc(&n)))), Box::new(q.clone()))
         }] fold;
+
+        // Generalised `@P!(q)` and `@P!!(q)` send sugars (Rholang style).
+        //
+        // `POutputQuoted` only accepts shapes where the inner sub-expression
+        // parses as a `Name` (e.g. bare identifiers `@c` or NParen-wrapped
+        // forms), which excludes literal-typed quoted channels like `@1` or
+        // `@"k"`.  `POutputShort` / `PPersistOutputShort` accept any
+        // `p:Proc`, mirroring the `NQuoteShort` name shorthand below.
+        //
+        // Declared *after* `POutputQuoted` so that the NFA dispatcher gives
+        // the more specific Name-shape rule first crack at `@<Name>!(q)`,
+        // preserving its existing fold semantics; only when that path
+        // fails (e.g. inner is a literal) do we fall through to this rule.
+        //
+        // `prefix(220)` bounds the inner Proc parser's binding power so
+        // that `+`, `*`, `|`, etc. between `@` and `!` are NOT consumed
+        // into the quoted process — `@a + b!(0)` parses as
+        // `(@a) + (b!(0))` (a type error at the Proc level, surfaced
+        // explicitly), not `(@(a+b))!(0)`.  Same rationale as
+        // `NQuoteShort` below.
+        POutputShort . p:Proc, q:Proc
+        |- "@" p "!" "(" q ")" : Proc ![{
+            Proc::POutput(
+                Box::new(Name::NQuote(Box::new(p.clone()))),
+                Box::new(q.clone()),
+            )
+        }] fold prefix(220);
+        PPersistOutputShort . p:Proc, q:Proc
+        |- "@" p "!!" "(" q ")" : Proc ![{
+            Proc::PPersistOutput(
+                Box::new(Name::NQuote(Box::new(p.clone()))),
+                Box::new(q.clone()),
+            )
+        }] fold prefix(220);
 
         // Internal guard gate used by where-clause gating.
         GuardThen . cond:Proc, body:Proc
@@ -269,6 +332,36 @@ language! {
 
         NQuote . p:Proc
         |- "@" "(" p ")" : Name ;
+
+        // Rholang shorthand: `@Nil` parses as `@(Nil)` (= `Name::NQuote(Proc::PZero)`).
+        // Implemented as a zero-arg `fold` rule so it lowers to the canonical
+        // `NQuote(PZero)` AST node at evaluation time and reuses every existing
+        // equation, rewrite, and congruence rule on `NQuote`. Disambiguated from
+        // `@(P)` by the trigger pair `"@" "Nil"`: the parser only commits to this
+        // rule when it sees the `Nil` keyword immediately after `@`.
+        NQuoteNil .
+        |- "@" "Nil" : Name ![{
+            Name::NQuote(Box::new(Proc::PZero))
+        }] fold;
+
+        // Rholang generalised `@P` shorthand: `@P` parses as `Name::NQuote(P)`
+        // for any `P:Proc`.  This generalises both `NQuote` (`@(P)`) and
+        // `NQuoteNil` (`@Nil`), and `POutputQuoted`'s `@<Name>` shape — the
+        // NFA dispatcher tries each `@`-starting rule in declaration order and
+        // keeps the first success, so more-specific rules above continue to
+        // win where applicable.
+        //
+        // `prefix(220)` is a cross-category prefix binding-power annotation
+        // (honoured by `prattail` for cross-cat rules — see
+        // `prattail/src/pipeline.rs`).  It caps the inner Proc parser's
+        // `min_bp` at 220, well above any Proc-level infix BP, so `@P` only
+        // consumes a high-precedence Proc subterm.  Without it `*@1 + 0`
+        // would parse as `*(@(1+0))`; with it, the `+ 0` belongs to the
+        // outer expression and `*@1 + 0` parses as `(*@1) + 0`.
+        NQuoteShort . p:Proc
+        |- "@" p : Name ![{
+            Name::NQuote(Box::new(p.clone()))
+        }] fold prefix(220);
 
         // Parenthesized Name grouping used by `*(x)` compatibility.
         NParen . n:Name
@@ -989,6 +1082,122 @@ language! {
             }}
         ] fold;
 
+        // Rholang-style Map sugar.
+        //
+        // `Map()` is an alias for the empty brace literal `{}`.
+        // Method-call forms (`m.get(k)`, `m.size()`, …) fold to the
+        // corresponding prefix-call builtins (`GetMap`, `Len`, …) and
+        // therefore do not change semantics. They are implemented as zero / one
+        // / two-operand-after-trigger mixfix rules; the parser's mixfix
+        // dispatcher disambiguates by peeking the method-name keyword after
+        // the `.` trigger.
+        MapEmpty .
+        |- "Map" "(" ")" : Proc ![{
+            Proc::CastMap(Box::new(Map::MapLit(
+                mettail_runtime::HashMapLit::<Proc, Proc>::new(),
+            )))
+        }] fold;
+
+        MGet . m:Proc, k:Proc
+        |- m "." "get" "(" k ")" : Proc ![{
+            Proc::GetMap(Box::new(m.clone()), Box::new(k.clone()))
+        }] fold;
+
+        MSet . m:Proc, k:Proc, v:Proc
+        |- m "." "set" "(" k "," v ")" : Proc ![{
+            Proc::PutMap(Box::new(m.clone()), Box::new(k.clone()), Box::new(v.clone()))
+        }] fold;
+
+        MContains . m:Proc, k:Proc
+        |- m "." "contains" "(" k ")" : Proc ![{
+            Proc::HasMap(Box::new(m.clone()), Box::new(k.clone()))
+        }] fold;
+
+        MDelete . m:Proc, k:Proc
+        |- m "." "delete" "(" k ")" : Proc ![{
+            Proc::DeleteMap(Box::new(m.clone()), Box::new(k.clone()))
+        }] fold;
+
+        // `.union` is shared between `Map` and `Bag`: dispatch by receiver at
+        // fold time. After fold the operands are canonical (`CastMap` /
+        // `CastBag` literals), so a static match suffices; any other shape
+        // falls through to `Proc::Err`.
+        MUnion . a:Proc, b:Proc
+        |- a "." "union" "(" b ")" : Proc ![{
+            match &a {
+                Proc::CastMap(_) => Proc::MergeMap(Box::new(a.clone()), Box::new(b.clone())),
+                Proc::CastBag(_) => Proc::UnionBag(Box::new(a.clone()), Box::new(b.clone())),
+                _ => Proc::Err,
+            }
+        }] fold;
+
+        MSize . m:Proc
+        |- m "." "size" "(" ")" : Proc ![{
+            match &m {
+                Proc::CastMap(payload) => match payload.as_ref() {
+                    Map::MapLit(ref entries) => {
+                        Proc::CastInt(Box::new(Int::NumLit(entries.len() as i64)))
+                    },
+                    _ => Proc::Err,
+                },
+                Proc::CastBag(_) => Proc::Len(Box::new(m.clone())),
+                _ => Proc::Err,
+            }
+        }] fold;
+
+        MKeys . m:Proc
+        |- m "." "keys" "(" ")" : Proc ![{
+            Proc::KeysMap(Box::new(m.clone()))
+        }] fold;
+
+        MValues . m:Proc
+        |- m "." "values" "(" ")" : Proc ![{
+            Proc::ValuesMap(Box::new(m.clone()))
+        }] fold;
+
+        // ── Rholang-style List method-call sugar ─────────────────────────
+        //
+        // `[a, b, c].length()`, `[a, b, c].nth(i)`, `l1.concat(l2)` fold to
+        // the existing prefix builtins `Len` / `ElemList` / `ConcatList` and
+        // therefore inherit their semantics, congruence rules, and error
+        // handling unchanged.
+        LLength . l:Proc
+        |- l "." "length" "(" ")" : Proc ![{
+            Proc::Len(Box::new(l.clone()))
+        }] fold;
+
+        LNth . l:Proc, i:Proc
+        |- l "." "nth" "(" i ")" : Proc ![{
+            Proc::ElemList(Box::new(l.clone()), Box::new(i.clone()))
+        }] fold;
+
+        LConcat . l:Proc, r:Proc
+        |- l "." "concat" "(" r ")" : Proc ![{
+            Proc::ConcatList(Box::new(l.clone()), Box::new(r.clone()))
+        }] fold;
+
+        // ── rhocalc Bag method-call sugar ────────────────────────────────
+        //
+        // Bag has no Rholang counterpart (Rholang has Set instead); the
+        // literal stays `#{ a | b | … }#` per §3.3 of the Rholang-style
+        // syntax design.  Method sugars mirror Map/List to give a uniform
+        // method-call surface.  `.union(other)` is handled by the polymorphic
+        // `MUnion` rule above; `.size()` re-uses `MSize` (also polymorphic).
+        BCount . b:Proc, e:Proc
+        |- b "." "count" "(" e ")" : Proc ![{
+            Proc::CastInt(Box::new(Int::CountBag(Box::new(b.clone()), Box::new(e.clone()))))
+        }] fold;
+
+        BDiff . a:Proc, b:Proc
+        |- a "." "diff" "(" b ")" : Proc ![{
+            Proc::DiffBag(Box::new(a.clone()), Box::new(b.clone()))
+        }] fold;
+
+        BRemove . a:Proc, e:Proc
+        |- a "." "remove" "(" e ")" : Proc ![{
+            Proc::RemoveBag(Box::new(a.clone()), Box::new(e.clone()))
+        }] fold;
+
         Not . a:Proc |- "not" a : Proc ![
             { match &a {
                 Proc::CastBool(b) => match &**b {
@@ -1011,6 +1220,16 @@ language! {
                 },
                 Proc::CastMap(m) => match m.as_ref() {
                     Map::MapLit(ref payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))),
+                    _ => Proc::Err,
+                },
+                Proc::CastBag(b) => match b.as_ref() {
+                    // Bag size = sum of all element multiplicities. Use the
+                    // canonical normalisation first so equivalent surface forms
+                    // (e.g. `#{*@(0)|0}#` and `#{0|0}#`) report the same size.
+                    Bag::BagLit(h) => {
+                        let normalized = crate::rhocalc::runtime::normalize_bag_elements(h);
+                        Proc::CastInt(Box::new(Int::NumLit(normalized.len() as i64)))
+                    },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -1082,6 +1301,7 @@ language! {
         // `receive::try_comm_rw_proc` plus a custom `rw_proc` rule in the logic block below.
 
         Exec . |- (PDrop (NQuote P)) ~> P;
+        ExecQuoteShort . |- (PDrop (NQuoteShort P)) ~> P;
         ExecParenQuote . |- (PDrop (NParen (NQuote P))) ~> P;
 
         ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});

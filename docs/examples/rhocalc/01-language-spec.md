@@ -74,12 +74,15 @@ separates parameters from concrete syntax.  The `:` gives the result category.
 
 ```rust
 PZero .
-|- "{}" : Proc;
+|- "Nil" : Proc;
 ```
 
-No parameters.  The syntax is a single literal terminal `"{}"`.  This generates
-`Proc::PZero` with no fields and a prefix parse handler matching `Token::Braces`
-(or the comb-compressed equivalent).
+No parameters.  The syntax is the keyword terminal `"Nil"` — the
+[Rholang](https://rholang.io)-style spelling of the zero process.  This
+generates `Proc::PZero` with no fields and a prefix parse handler matching
+`Token::Nil`.  (Historically the rule was `"{}"`, but `{}` is now reserved for
+the empty `Map` literal; see
+[exploring/rhocalc-rholang-style-syntax.md](../../design/exploring/rhocalc-rholang-style-syntax.md).)
 
 ### 3.2 Prefix Terms
 
@@ -95,16 +98,77 @@ terminal tokens, not a nonterminal.
 ### 3.3 Collection Terms
 
 ```rust
-PPar . ps:HashBag(Proc)
-|- "{" ps.*sep("|") "}" : Proc;
+PParInfix . a:Proc, b:Proc |- a "|" b : Proc ![{
+    crate::rhocalc::runtime::merge_pp_parallel(a.clone(), b.clone())
+}] fold;
+
+// Internal AST constructor — matched by equations / rewrites, never input by
+// users. The `__ppar(…)` form is the round-trip surface for the AST.
+PPar . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc;
 ```
 
-The parameter `ps` has type `HashBag(Proc)` — a multiset of `Proc` values.
-The syntax `ps.*sep("|")` means "parse zero or more `Proc` values separated by
-`|`" and collect them into a `HashBag`.  Generates `Proc::PPar(HashBag<Proc>)`.
+Parallel composition uses Rholang-style bare infix `a | b` (`PParInfix`),
+which `fold`s to the multiset `Proc::PPar(HashBag<Proc>)` via
+`merge_pp_parallel`. The `__ppar(…)` keyword rule keeps the `Proc::PPar`
+variant available for equation/rewrite matching but is reserved for internal
+use (never appears in user input). The earlier braced surface
+`{ a | b | c }` was retired so that `{` `}` could be repurposed for the
+Rholang-style empty `Map` literal — see
+[exploring/rhocalc-rholang-style-syntax.md](../../design/exploring/rhocalc-rholang-style-syntax.md).
 
 The `*sep(delim)` operator is a collection operation.  Available collection
 types are `Vec(T)`, `HashBag(T)`, and `HashSet(T)`.
+
+### 3.3.1 Map Literals and Method-Call Sugar
+
+`Map` overrides the default `map(k:v)` delimiters to Rholang-style braces:
+
+```rust
+![HashMap<Proc, Proc>] as Map [ "{", "}", ",", ":" ]
+```
+
+producing `{}`, `{k: v}`, `{k₁: v₁, k₂: v₂, …}`. An explicit `Map()` alias
+is provided for chained method calls:
+
+```rust
+MapEmpty . |- "Map" "(" ")" : Proc ![{
+    Proc::CastMap(Box::new(Map::MapLit(Default::default())))
+}] fold;
+```
+
+Method-call sugar (`fold` into the existing prefix-form builtins):
+
+| Method form | Lowering | Receiver |
+|-------------|----------|----------|
+| `m.get(k)` | `GetMap(m, k)` | Map |
+| `m.set(k, v)` | `PutMap(m, k, v)` | Map |
+| `m.contains(k)` | `HasMap(m, k)` | Map |
+| `m.delete(k)` | `DeleteMap(m, k)` | Map |
+| `m.keys()` | `KeysMap(m)` | Map |
+| `m.values()` | `ValuesMap(m)` | Map |
+| `l.length()` | `Len(l)` | List |
+| `l.nth(i)` | `ElemList(l, i)` | List |
+| `l.concat(r)` | `ConcatList(l, r)` | List |
+| `b.count(e)` | `CastInt(Int::CountBag(b, e))` | Bag |
+| `b.diff(c)` | `DiffBag(b, c)` | Bag |
+| `b.remove(e)` | `RemoveBag(b, e)` | Bag |
+| `x.size()` | `CastInt(NumLit(entries.len()))` for Map; `Len(x)` for Bag | Map / Bag |
+| `x.union(y)` | `MergeMap(x, y)` for Map; `UnionBag(x, y)` for Bag | Map / Bag |
+
+The unary forms (`m.size()`, `m.keys()`, `m.values()`, `l.length()`,
+`b.size()`) use prattail's zero-operand-after-trigger mixfix shape (1 NT
+with 3+ terminals), dispatched inline without a frame push. The prefix
+forms (`len(x)`, `keys(m)`, `values(m)`, `at(l, i)`, `concat(a, b)`,
+`union(a, b)`, `count(b, e)`, `diff(a, b)`, `remove(b, e)`) remain
+available and produce identical AST nodes.
+
+The shared-name methods `.union` and `.size` use a single grammar rule each
+(`MUnion`, `MSize`) whose `fold` action inspects the (already-folded)
+receiver and lowers to the appropriate prefix builtin — `MergeMap` /
+`UnionBag` for `.union(n)`, and the constant-folded entry count /
+`Len` for `.size()`. The `Len` builtin is extended with a `CastBag` arm
+that uses `HashBag::len()` (sum of all element multiplicities, after
+`normalize_bag_elements`).
 
 ### 3.4 Binder Terms (Lambda / Multi-Lambda)
 
@@ -214,6 +278,102 @@ The parameter `p` is `Proc` but the result category is `Name`.  This is a
 *cross-category* rule: it appears in the `Name` category's parser but parses a
 `Proc` sub-expression.  Classification: `is_cross_category = true,
 cross_source_category = Some("Proc")`.
+
+#### `@Nil` shorthand
+
+Rholang spells `Name::NQuote(Proc::PZero)` as `@Nil`. We add the same
+shorthand by a Name-category fold rule that lowers to the canonical
+`NQuote(PZero)` AST node:
+
+```rust
+NQuoteNil .
+|- "@" "Nil" : Name ![{
+    Name::NQuote(Box::new(Proc::PZero))
+}] fold;
+```
+
+`Nil` is the surface keyword for `PZero` and is therefore not in `Name`'s
+FIRST set; `NQuoteNil` instead enters via the shared `@` token, with prattail
+disambiguating between `@(P)` (`NQuote`) and `@Nil` (`NQuoteNil`) by the
+second-token NFA branch (`LParen` vs `KwNil`).
+
+For send positions where `POutputQuoted`'s `@ <Name> ! ( q )` shape would
+otherwise reject `Nil` (the inner Name parser does not accept the keyword), two
+Proc-category sugars complete the surface:
+
+```rust
+POutputNil . q:Proc
+|- "@" "Nil" "!" "(" q ")" : Proc ![{
+    Proc::POutput(
+        Box::new(Name::NQuote(Box::new(Proc::PZero))),
+        Box::new(q.clone()),
+    )
+}] fold;
+
+PPersistOutputNil . q:Proc
+|- "@" "Nil" "!!" "(" q ")" : Proc ![{
+    Proc::PPersistOutput(
+        Box::new(Name::NQuote(Box::new(Proc::PZero))),
+        Box::new(q.clone()),
+    )
+}] fold;
+```
+
+All three Proc rules dispatch from `Token::At`; prattail's
+`write_nfa_merged_prefix_arm` NFA-tries each via its generated
+`parse_<label>` standalone function, taking the first declaration-order
+success.
+
+#### Generalised `@P` shorthand for arbitrary `P:Proc`
+
+Rholang lets `@` quote *any* process, not just `Nil` — `@1`, `@"k"`, `@*x`
+are all valid Names. A single fold rule generalises both `NQuote` (`@(P)`)
+and `NQuoteNil` (`@Nil`):
+
+```rust
+NQuoteShort . p:Proc
+|- "@" p : Name ![{
+    Name::NQuote(Box::new(p.clone()))
+}] fold;
+```
+
+For send positions where neither `POutputQuoted` nor `POutputNil` matches
+(e.g. the inner is a literal like `@1!(q)` or `@"k"!(q)`), we likewise
+add generalised sugars:
+
+```rust
+POutputShort . p:Proc, q:Proc
+|- "@" p "!" "(" q ")" : Proc ![{
+    Proc::POutput(
+        Box::new(Name::NQuote(Box::new(p.clone()))),
+        Box::new(q.clone()),
+    )
+}] fold;
+
+PPersistOutputShort . p:Proc, q:Proc
+|- "@" p "!!" "(" q ")" : Proc ![{
+    Proc::PPersistOutput(
+        Box::new(Name::NQuote(Box::new(p.clone()))),
+        Box::new(q.clone()),
+    )
+}] fold;
+```
+
+Five Proc-level rules now share the `@` opener; the NFA dispatcher above
+tries each in declaration order (more specific rules — `POutputNil`,
+`POutputQuoted` — declared first). For overlapping inputs the fold actions
+collapse to the same canonical `POutput(NQuote(P), q)` AST, so the choice
+is semantically transparent.
+
+**Precedence:** All three short-form rules carry `prefix(220)`, a
+cross-category prefix binding-power annotation. The framework now honours
+`prefix(N)` for any prefix-shaped rule, threading the BP into the rule's
+generated standalone parser without entering the same-category
+unary-prefix dispatch. With `min_bp = 220` (well above all Proc-level
+infix BPs), `@P` consumes only a high-precedence Proc subterm: `*@1 + 0`
+parses as `(*@1) + 0`, and `@1+2!(0)` is a parse error rather than the
+ambiguous `(@(1+2))!(0)`. Users wanting to quote a compound expression
+still write `@(1+2)` explicitly.
 
 ## 4. `equations { ... }` — Structural Equivalences
 

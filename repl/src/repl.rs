@@ -1816,4 +1816,24 @@ mod tests {
             results.rewrites.len()
         );
     }
+
+    #[test]
+    fn progress_normal_form_with_quote_short_channel_comm_should_not_stay_unreduced() {
+        mettail_runtime::clear_var_cache();
+        let lang = RhoCalcLanguage;
+        let term_raw = lang.parse_term("for(x <- @1){x} | @1!(42)").expect("parse");
+        let term = lang.normalize_term(term_raw.as_ref());
+        let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
+        let initial_id = Repl::resolve_graph_start_id(&results, term.as_ref());
+
+        let chosen = Repl::progress_normal_form_reachable_from(&results, initial_id)
+            .expect("expected chosen result");
+        assert!(
+            !chosen.display.contains("for("),
+            "expected reduced result, got `{}`; initial_id={}; rewrites_total={}",
+            chosen.display,
+            initial_id,
+            results.rewrites.len()
+        );
+    }
 }

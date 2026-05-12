@@ -1207,7 +1207,7 @@ fn generate_fold_big_step_rules(
                             .map(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Base(t), .. } if *t == "Name"))
                             .unwrap_or(false);
                     if is_pdrop_with_name {
-                        quote! { #category::#label(ref n) => !matches!(n.as_ref(), Name::NQuote(_)), }
+                        quote! { #category::#label(ref n) => !matches!(n.as_ref(), Name::NQuote(_) | Name::NQuoteShort(_)), }
                     } else if n == 0 {
                         quote! { #category::#label => true, }
                     } else {
@@ -1413,6 +1413,19 @@ fn generate_fold_big_step_rules(
                             if let #category::#label(inner) = s,
                             #ext_inner
                             #bind_p0
+                            let res = (#rust_code)
+                            #filter_err;
+                    });
+                } else if param_names.is_empty() {
+                    // Zero-arg `fold` rule (e.g. `MapEmpty . |- "Map" "(" ")" : Proc ![…] fold;`).
+                    // No sub-term fold dependencies and no captured params — just match the
+                    // unit variant and evaluate the action.  Without this, the trigger rule
+                    // (which lists the constructor) would be active but `fold_…(s, t)` would
+                    // never be derived, so the rewrite never fires.
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label = s,
                             let res = (#rust_code)
                             #filter_err;
                     });

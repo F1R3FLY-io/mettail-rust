@@ -1346,7 +1346,7 @@ mod tests {
             .iter()
             .filter(|r| r.is_infix)
             .map(|r| {
-                let (is_mixfix, mixfix_parts) = detect_mixfix(r);
+                let (is_mixfix, leading_terminals, mixfix_parts) = detect_mixfix(r);
                 InfixRuleInfo {
                     label: r.label.clone(),
                     terminal: r
@@ -1366,6 +1366,7 @@ mod tests {
                     is_cross_category: r.is_cross_category,
                     is_postfix: r.is_postfix,
                     is_mixfix,
+                    leading_terminals,
                     mixfix_parts,
                 }
             })
@@ -1429,15 +1430,18 @@ mod tests {
             .iter()
             .filter(|r| !r.is_infix && !r.is_var && !r.is_literal)
             .map(|rule| {
+                // See `pipeline.rs` for the mirroring construction and
+                // detailed rationale: same-category unary prefix → default
+                // `max_infix_bp+2`; cross-category prefix with explicit
+                // `prefix(N)` → honour annotation but skip unary-prefix
+                // dispatch.
                 let prefix_bp = if rule.is_unary_prefix {
-                    if let Some(explicit_bp) = rule.prefix_precedence {
-                        Some(explicit_bp)
-                    } else {
+                    rule.prefix_precedence.or_else(|| {
                         let cat_max = max_infix_bp.get(&rule.category).copied().unwrap_or(0);
                         Some(cat_max + 2)
-                    }
+                    })
                 } else {
-                    None
+                    rule.prefix_precedence
                 };
 
                 RDRuleInfo {
@@ -1450,6 +1454,7 @@ mod tests {
                     collection_type: rule.collection_type,
                     separator: rule.separator.clone(),
                     prefix_bp,
+                    is_unary_prefix: rule.is_unary_prefix,
                     eval_mode: rule.eval_mode.clone(),
                 }
             })
@@ -1508,7 +1513,9 @@ mod tests {
         }
     }
 
-    fn detect_mixfix(rule: &RuleSpec) -> (bool, Vec<crate::binding_power::MixfixPart>) {
+    fn detect_mixfix(
+        rule: &RuleSpec,
+    ) -> (bool, Vec<String>, Vec<crate::binding_power::MixfixPart>) {
         let operand_count = rule
             .syntax
             .iter()
@@ -1520,13 +1527,17 @@ mod tests {
             .filter(|item| matches!(item, SyntaxItemSpec::Terminal(_)))
             .count();
 
-        if operand_count < 3 || terminal_count < 2 {
-            return (false, Vec::new());
+        let multi_operand = operand_count >= 2 && terminal_count >= 2;
+        let unary_after_trigger = operand_count == 1 && terminal_count >= 3;
+        if !(multi_operand || unary_after_trigger) {
+            return (false, Vec::new(), Vec::new());
         }
 
-        let mut parts = Vec::with_capacity(operand_count - 1);
+        let mut leading_terminals: Vec<String> = Vec::new();
+        let mut parts = Vec::with_capacity(operand_count.saturating_sub(1));
         let mut after_trigger = false;
         let mut skip_count = 0;
+        let mut seen_first_part = false;
 
         for item in &rule.syntax {
             match item {
@@ -1537,6 +1548,7 @@ mod tests {
                     after_trigger = true;
                 },
                 SyntaxItemSpec::NonTerminal { category, param_name } if after_trigger => {
+                    seen_first_part = true;
                     parts.push(crate::binding_power::MixfixPart {
                         operand_category: category.clone(),
                         param_name: param_name.clone(),
@@ -1544,7 +1556,9 @@ mod tests {
                     });
                 },
                 SyntaxItemSpec::Terminal(t) if after_trigger => {
-                    if let Some(last_part) = parts.last_mut() {
+                    if !seen_first_part {
+                        leading_terminals.push(t.clone());
+                    } else if let Some(last_part) = parts.last_mut() {
                         last_part.following_terminal = Some(t.clone());
                     }
                 },
@@ -1552,7 +1566,7 @@ mod tests {
             }
         }
 
-        (true, parts)
+        (true, leading_terminals, parts)
     }
 
     fn convert_syntax_item(item: &SyntaxItemSpec) -> RDSyntaxItem {

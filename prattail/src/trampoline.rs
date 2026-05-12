@@ -23,7 +23,7 @@
 //! - `fn parse_Cat(tokens, pos, min_bp) -> Result<Cat, ParseError>` — trampolined parser
 //! - `fn parse_Cat_recovering(tokens, pos, min_bp, errors) -> Option<Cat>` — recovery variant
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use crate::automata::codegen::terminal_to_variant_name;
@@ -368,12 +368,18 @@ pub fn write_frame_enum(
     });
 
     // ── Per-unary-prefix variants ──
+    //
+    // Only *same-category* unary prefix rules participate in the
+    // `UnaryPrefix_*` frame dispatch: that unwind handler assumes the
+    // operand on `lhs` has the same type as the result (it builds
+    // `{cat}::{label}(Box::new(lhs))`).  Cross-category prefix rules with
+    // a `prefix_bp` annotation (e.g. `@P : Name` with `P : Proc`) still
+    // carry `prefix_bp` to bound their inner-operand parse but route
+    // through the regular RD-handler / NFA path instead.
     for rd_rule in rd_rules {
-        if rd_rule.category != *cat || rd_rule.prefix_bp.is_none() {
+        if rd_rule.category != *cat || !rd_rule.is_unary_prefix {
             continue;
         }
-        // Unary prefix: pattern is [Terminal, NonTerminal(same_category)]
-        // The terminal is consumed inline, the nonterminal triggers a frame push
         variants.push(FrameVariant {
             name: format!("UnaryPrefix_{}", rd_rule.label),
             fields: vec![FrameField {
@@ -388,9 +394,12 @@ pub fn write_frame_enum(
         if rd_rule.category != *cat {
             continue;
         }
-        // Skip unary prefix (handled above), collection rules (handled separately),
-        // and rules dispatched to standalone functions (ZipMapSep, multi-binder)
-        if rd_rule.prefix_bp.is_some()
+        // Skip same-category unary prefix (handled above), collection
+        // rules (handled separately), and rules dispatched to standalone
+        // functions (ZipMapSep, multi-binder).  Cross-category prefix
+        // rules carrying a `prefix_bp` are NOT skipped here — they keep
+        // their regular segment-frame variants.
+        if rd_rule.is_unary_prefix
             || is_simple_collection(rd_rule)
             || should_use_standalone_fn(rd_rule)
         {
@@ -920,10 +929,24 @@ fn write_prefix_match_arms(
     expected_escaped: &str,
 ) {
     let cat = &config.category;
+    let mut casts_by_token: HashMap<String, Vec<&CastRule>> = HashMap::new();
+    for cast_rule in &config.cast_rules {
+        if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
+            for token in &source_first.tokens {
+                let v = casts_by_token.entry(token.clone()).or_default();
+                if !v.iter().any(|r| {
+                    r.label == cast_rule.label && r.source_category == cast_rule.source_category
+                }) {
+                    v.push(cast_rule);
+                }
+            }
+        }
+    }
+    let mut cast_collection_merged_tokens: HashSet<String> = HashSet::new();
     let nonterminal_fallback_fns: Vec<String> = rd_rules
         .iter()
         .filter(|r| r.category == *cat)
-        .filter(|r| !is_simple_collection(r) && r.prefix_bp.is_none())
+        .filter(|r| !is_simple_collection(r) && !r.is_unary_prefix)
         .filter(|r| {
             matches!(
                 r.items.first(),
@@ -1043,11 +1066,14 @@ fn write_prefix_match_arms(
     }
 
     // ── Unary prefix operators ──
+    //
+    // Same-category unary prefix only.  Cross-category prefix rules with
+    // a `prefix_bp` route through the regular RD-handler / NFA path
+    // (which honours `prefix_bp` for the inner-operand sub-parse).
     for rd_rule in rd_rules {
-        if rd_rule.category != *cat || rd_rule.prefix_bp.is_none() {
+        if rd_rule.category != *cat || !rd_rule.is_unary_prefix {
             continue;
         }
-        // Pattern: [Terminal, NonTerminal(same_category)]
         if let Some(RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
             let variant = terminal_to_variant_name(t);
             let bp = rd_rule.prefix_bp.unwrap_or(0);
@@ -1151,34 +1177,46 @@ fn write_prefix_match_arms(
                 CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
             };
             let needs_elem_parse = elem_cat != *cat;
+            let elem_parse_push = if needs_elem_parse {
+                format!(
+                    "stack.push({}::ElemParse_{}_{} {{}}); ",
+                    frame_info.enum_name, rd_rule.label, elem_cat
+                )
+            } else {
+                String::new()
+            };
+            let collection_body = format!(
+                "*pos += 1; \
+                stack.push({}::CollectionElem_{} {{ \
+                    elements: {}, \
+                    saved_pos: *pos, \
+                    saved_bp: cur_bp, \
+                }}); \
+                {} \
+                cur_bp = 0; \
+                continue 'drive;",
+                frame_info.enum_name, rd_rule.label, init_str, elem_parse_push,
+            );
 
-            write!(
-                buf,
-                "Token::{} => {{ \
-                    *pos += 1; \
-                    stack.push({}::CollectionElem_{} {{ \
-                        elements: {}, \
-                        saved_pos: *pos, \
-                        saved_bp: cur_bp, \
-                    }}); \
-                    {} \
-                    cur_bp = 0; \
-                    continue 'drive; \
-                }},",
-                variant,
-                frame_info.enum_name,
-                rd_rule.label,
-                init_str,
-                if needs_elem_parse {
-                    format!(
-                        "stack.push({}::ElemParse_{}_{} {{}}); ",
-                        frame_info.enum_name, rd_rule.label, elem_cat
+            if let Some(cast_rules) = casts_by_token.get(&variant) {
+                cast_collection_merged_tokens.insert(variant.clone());
+                write!(buf, "Token::{} => {{ let __merge_saved = *pos;", variant).unwrap();
+                for cast_rule in cast_rules {
+                    write!(
+                        buf,
+                        "*pos = __merge_saved; \
+                        if let Ok(val) = parse_{}(tokens, pos, 0) {{ \
+                            break 'prefix {}::{}(Box::new(val)); \
+                        }}",
+                        cast_rule.source_category, cat, cast_rule.label,
                     )
-                } else {
-                    String::new()
-                },
-            )
-            .unwrap();
+                    .unwrap();
+                }
+                write!(buf, "*pos = __merge_saved; {}", collection_body).unwrap();
+                buf.push_str("},");
+            } else {
+                write!(buf, "Token::{} => {{ {} }},", variant, collection_body).unwrap();
+            }
         }
     }
 
@@ -1278,7 +1316,7 @@ fn write_prefix_match_arms(
         let rd_fallback: Vec<(String, String)> = rd_rules
             .iter()
             .filter(|r| r.category == *cat)
-            .filter(|r| !is_simple_collection(r) && r.prefix_bp.is_none())
+            .filter(|r| !is_simple_collection(r) && !r.is_unary_prefix)
             .filter_map(|r| {
                 let first_nt = matches!(
                     r.items.first(),
@@ -1401,22 +1439,12 @@ fn write_prefix_match_arms(
     // Multiple casts may share one token (e.g. Int, UInt32, BigInt all use Integer). Emit a
     // single match arm that tries parse_* in `cast_rules` declaration order so Rust does not
     // see duplicate `Token::Integer(_)` patterns.
-    let mut casts_by_token: HashMap<String, Vec<&CastRule>> = HashMap::new();
-    for cast_rule in &config.cast_rules {
-        if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
-            for token in &source_first.tokens {
-                let v = casts_by_token.entry(token.clone()).or_default();
-                if !v.iter().any(|r| {
-                    r.label == cast_rule.label && r.source_category == cast_rule.source_category
-                }) {
-                    v.push(cast_rule);
-                }
-            }
-        }
-    }
     let mut token_keys: Vec<String> = casts_by_token.keys().cloned().collect();
     token_keys.sort();
     for token in token_keys {
+        if cast_collection_merged_tokens.contains(&token) {
+            continue;
+        }
         let rules = casts_by_token.get(&token).expect("key from iter");
         if rules.len() == 1 {
             let cast_rule = rules[0];
@@ -1630,7 +1658,7 @@ fn group_rd_by_dispatch_token<'a>(
         if rd_rule.category != *cat {
             continue;
         }
-        if is_simple_collection(rd_rule) || rd_rule.prefix_bp.is_some() {
+        if is_simple_collection(rd_rule) || rd_rule.is_unary_prefix {
             continue;
         }
 
@@ -1757,17 +1785,38 @@ fn write_nfa_merged_prefix_arm(
         }
     }
 
-    // If there are frame-pushing rules that can't be NFA-merged, try them last
-    // by falling through to the first one if no inlineable succeeded.
-    // In practice, this case is rare — most duplicate-token situations are all-inlineable.
-    // Note: frame-pushing rules that can't be NFA-merged are tried in the 0 => branch
+    // Try each frame-pushing rule via its standalone parser function (the macro
+    // emits `parse_<label>` for every RD rule). Standalone fns call into
+    // `parse_<cat>` recursively for inner sub-parses, which re-enters the
+    // trampoline — so we get correct semantics without trying to push frames
+    // from inside an NFA-trial closure.  If exactly one frame-pushing rule
+    // exists *and* no inlineable rules need to share the dispatch, we fall
+    // through to the original frame-push (preserving the legacy fast path).
+    let use_standalone_for_frame_pushing =
+        !frame_pushing.is_empty() && (frame_pushing.len() > 1 || !inlineable.is_empty());
+
+    if use_standalone_for_frame_pushing {
+        for rd_rule in frame_pushing {
+            let fn_name = format!("parse_{}", rd_rule.label.to_lowercase());
+            buf.push_str("*pos = nfa_saved;");
+            write!(
+                buf,
+                "match {}(tokens, pos) {{ \
+                    Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); }}, \
+                    Err(e) => {{ if nfa_first_err.is_none() {{ nfa_first_err = Some(e); }} }}, \
+                }}",
+                fn_name,
+            )
+            .unwrap();
+        }
+    }
 
     // Result selection
     buf.push_str("match nfa_results.len() {");
 
-    // No successes — either fall through to frame-pushing or return error
-    if !frame_pushing.is_empty() {
-        // Fall through to first frame-pushing rule
+    if !frame_pushing.is_empty() && !use_standalone_for_frame_pushing {
+        // Legacy fast path: a single frame-pushing rule with no inlineable
+        // competition.  Fall through and push its frame.
         let rd_rule = frame_pushing[0];
         let segments = split_rd_handler(rd_rule);
         buf.push_str("0 => {");
@@ -2514,6 +2563,33 @@ fn write_infix_loop(
 }
 
 /// Write the mixfix led handler in the infix loop.
+/// Emit the post-trigger / post-leading-terminals body for a single mixfix
+/// operator: either push the first `Mixfix_{label}_0` frame to drive into the
+/// first operand, or — for zero-operand-after-trigger rules like `m.size()`
+/// (1 NT + N≥3 T) — build the AST node inline without descending.
+fn write_mixfix_dispatch_body(
+    buf: &mut String,
+    op: &crate::binding_power::InfixOperator,
+    cat: &str,
+    frame_info: &FrameInfo,
+) {
+    if op.mixfix_parts.is_empty() {
+        // No remaining operands — construct the term from `lhs` alone, leave
+        // `cur_bp` untouched so the outer infix loop keeps scanning.
+        write!(buf, "lhs = {cat}::{label}(Box::new(lhs));", cat = cat, label = op.label,).unwrap();
+    } else {
+        write!(
+            buf,
+            "stack.push({enum_name}::Mixfix_{label}_0 {{ lhs, saved_bp: cur_bp }}); \
+            cur_bp = 0; \
+            continue 'drive;",
+            enum_name = frame_info.enum_name,
+            label = op.label,
+        )
+        .unwrap();
+    }
+}
+
 fn write_mixfix_led(
     buf: &mut String,
     config: &TrampolineConfig,
@@ -2531,11 +2607,24 @@ fn write_mixfix_led(
     )
     .unwrap();
 
-    // Dispatch to the first mixfix operand based on operator
+    // Dispatch to the first mixfix operand based on operator.
+    //
+    // Each mixfix operator may have `leading_terminals` that appear between
+    // the trigger and the first operand (e.g. `.` is the trigger and
+    // `["get", "("]` are the leading terminals for `m.get(k)`). These are
+    // consumed *after* the trigger but *before* parsing the first operand.
+    //
+    // Multiple mixfix rules may share the same trigger terminal (e.g. both
+    // `.get(` and `.set(` use `.`). For each such group we peek the token
+    // that follows the trigger to decide which rule's frame to push;
+    // operators with an empty `leading_terminals` are taken when nothing
+    // else matched (catch-all).
     let mixfix_ops = bp_table.mixfix_operators_for_category(cat);
-    if mixfix_ops.len() == 1 {
+    if mixfix_ops.len() == 1 && mixfix_ops[0].leading_terminals.is_empty() {
         let op = &mixfix_ops[0];
-        // Single mixfix operator — no match needed
+        // Single ternary-style mixfix — no dispatch, no leading terminals.
+        // (Zero-parts case is impossible here: with no leading terminals and
+        // no parts the rule would not have been classified as mixfix.)
         write!(
             buf,
             "stack.push({enum_name}::Mixfix_{label}_0 {{ lhs, saved_bp: cur_bp }}); \
@@ -2546,22 +2635,81 @@ fn write_mixfix_led(
         )
         .unwrap();
     } else {
-        // Multiple mixfix operators — match on token
-        buf.push_str("match &_op_token {");
+        // Group operators by trigger terminal.
+        let mut groups: std::collections::BTreeMap<
+            String,
+            Vec<&crate::binding_power::InfixOperator>,
+        > = std::collections::BTreeMap::new();
         for op in &mixfix_ops {
-            let variant = terminal_to_variant_name(&op.terminal);
-            write!(
-                buf,
-                "Token::{} => {{ \
-                    stack.push({enum_name}::Mixfix_{label}_0 {{ lhs, saved_bp: cur_bp }}); \
-                    cur_bp = 0; \
-                    continue 'drive; \
-                }},",
-                variant,
-                enum_name = frame_info.enum_name,
-                label = op.label,
-            )
-            .unwrap();
+            groups.entry(op.terminal.clone()).or_default().push(op);
+        }
+
+        buf.push_str("match &_op_token {");
+        for (trigger, ops_in_group) in &groups {
+            let trigger_variant = terminal_to_variant_name(trigger);
+            write!(buf, "Token::{} => {{", trigger_variant).unwrap();
+
+            // Partition into ops with a leading terminal (peek-dispatched) and
+            // a fallback op whose `leading_terminals` is empty (immediate operand).
+            let mut keyed: Vec<&&crate::binding_power::InfixOperator> = ops_in_group
+                .iter()
+                .filter(|op| !op.leading_terminals.is_empty())
+                .collect();
+            let fallback: Option<&&crate::binding_power::InfixOperator> = ops_in_group
+                .iter()
+                .find(|op| op.leading_terminals.is_empty());
+
+            // Sort keyed ops by their leading terminal for deterministic output.
+            keyed.sort_by(|a, b| a.leading_terminals[0].cmp(&b.leading_terminals[0]));
+
+            if keyed.is_empty() {
+                // No leading terminals on any op in the group — preserve the
+                // original "first op wins" semantics with a warning emitted by
+                // earlier grammar analysis.
+                let op = ops_in_group[0];
+                write_mixfix_dispatch_body(buf, op, cat, frame_info);
+            } else {
+                // Peek the next token after the trigger and dispatch.
+                buf.push_str("match tokens.get(*pos).map(|(t, _)| t) {");
+                for op in &keyed {
+                    let head_terminal = &op.leading_terminals[0];
+                    let head_variant = terminal_to_variant_name(head_terminal);
+                    write!(buf, "Some(Token::{}) => {{", head_variant).unwrap();
+                    // Consume each leading terminal in order.
+                    for lt in &op.leading_terminals {
+                        let lt_variant = terminal_to_variant_name(lt);
+                        write!(
+                            buf,
+                            "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
+                            lt_variant, lt,
+                        )
+                        .unwrap();
+                    }
+                    write_mixfix_dispatch_body(buf, op, cat, frame_info);
+                    buf.push_str("},");
+                }
+                if let Some(op) = fallback {
+                    buf.push_str("_ => {");
+                    write_mixfix_dispatch_body(buf, op, cat, frame_info);
+                    buf.push_str("},");
+                } else {
+                    // No fallback — emit a parse error pointing at the trigger
+                    // so the user sees which token failed disambiguation.
+                    write!(
+                        buf,
+                        "_ => {{ return Err(ParseError::UnexpectedToken {{ \
+                            expected: \"method-name keyword after `{trigger_lit}`\", \
+                            found: format!(\"{{:?}}\", tokens.get(*pos).map(|(t, _)| t)), \
+                            range: tokens.get(*pos).map(|(_, r)| *r).unwrap_or(Range::zero()), \
+                        }}); }},",
+                        trigger_lit = trigger,
+                    )
+                    .unwrap();
+                }
+                buf.push('}');
+            }
+            buf.push('}');
+            buf.push(',');
         }
         buf.push_str("_ => unreachable!(\"mixfix_bp returned Some for non-mixfix token\"),");
         buf.push('}');
@@ -2607,8 +2755,13 @@ fn write_unwind_handlers(
     .unwrap();
 
     // ── UnaryPrefix variants ──
+    //
+    // Only same-category unary prefix rules emit this unwind handler — it
+    // builds `{cat}::{label}(Box::new(lhs))` which requires the operand
+    // (now sitting on `lhs`) to be of type `{cat}`.  Cross-category prefix
+    // rules don't go through this path.
     for rd_rule in rd_rules {
-        if rd_rule.category != *cat || rd_rule.prefix_bp.is_none() {
+        if rd_rule.category != *cat || !rd_rule.is_unary_prefix {
             continue;
         }
         write!(
@@ -2627,7 +2780,7 @@ fn write_unwind_handlers(
     for rd_rule in rd_rules {
         if rd_rule.category != *cat
             || is_simple_collection(rd_rule)
-            || rd_rule.prefix_bp.is_some()
+            || rd_rule.is_unary_prefix
             || should_use_standalone_fn(rd_rule)
         {
             continue;

@@ -53,7 +53,20 @@ pub(crate) fn name_pattern_to_proc(name_pat: &Name) -> Proc {
     match name_pat {
         Name::NVar(v) => Proc::PVar(v.clone()),
         Name::NQuote(p) => p.as_ref().clone(),
+        Name::NQuoteShort(p) => p.as_ref().clone(),
+        Name::NQuoteNil => Proc::PZero,
         _ => Proc::Err,
+    }
+}
+
+/// Lower `@P` / `@Nil` name sugar to the canonical `NQuote` channel shape used
+/// by send/receive matching and `Exec` rewrites.
+pub(crate) fn normalize_quote_name(name: &Name) -> Name {
+    match name {
+        Name::NQuoteNil => Name::NQuote(Box::new(Proc::PZero)),
+        Name::NQuoteShort(p) => Name::NQuote(Box::new(p.as_ref().clone())),
+        Name::NParen(inner) => Name::NParen(Box::new(normalize_quote_name(inner.as_ref()))),
+        other => other.clone(),
     }
 }
 
@@ -676,7 +689,7 @@ fn try_comm_single(
             if recv_ctx.empty_bind && !empty_bind_matches_payload(&q) {
                 continue;
             }
-            if &n_out == n_for_output {
+            if normalize_quote_name(&n_out) == normalize_quote_name(n_for_output) {
                 if let Some(next) = finish_single_comm(whole_bag, for_key, cand, &recv_ctx) {
                     return Some(next);
                 }
@@ -772,6 +785,12 @@ fn output_parts(p: &Proc) -> Option<(Name, Proc)> {
         Proc::POutput(n, q) | Proc::PPersistOutput(n, q) => {
             Some((n.as_ref().clone(), q.as_ref().clone()))
         },
+        Proc::POutputShort(p, q) => {
+            Some((Name::NQuote(Box::new(p.as_ref().clone())), q.as_ref().clone()))
+        },
+        Proc::PPersistOutputShort(p, q) => {
+            Some((Name::NQuote(Box::new(p.as_ref().clone())), q.as_ref().clone()))
+        },
         Proc::POutputEmpty(n) | Proc::PPersistOutputEmpty(n) => {
             Some((n.as_ref().clone(), crate::rhocalc::runtime::mk_proc_list(vec![])))
         },
@@ -789,6 +808,7 @@ fn is_persistent_output(p: &Proc) -> bool {
     matches!(
         p,
         Proc::PPersistOutput(_, _)
+            | Proc::PPersistOutputShort(_, _)
             | Proc::PPersistOutputEmpty(_)
             | Proc::PPersistOutput2Plus(_, _, _)
     )
