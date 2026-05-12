@@ -639,6 +639,16 @@ mod comm {
     }
 
     #[test]
+    fn pattern_comm_set_literal_pattern_matches() {
+        assert_reduces_to("for(@Set(1, 2) <- c){7} | c!(Set(2, 1))", "7");
+    }
+
+    #[test]
+    fn pattern_comm_set_literal_pattern_blocks_mismatch() {
+        assert_never_reaches("for(@Set(1, 2) <- c){7} | c!(Set(1, 1))", "7");
+    }
+
+    #[test]
     fn complex_join_map_and_list_literal_pattern_matches() {
         assert_reduces_to(
             "for(@{1:x, 3:4} <- c & @[1,2,3] <- c2 where x>1){x} | c!({3:4, 1:2}) | c2!([1,2,3])",
@@ -721,6 +731,13 @@ mod comm {
     fn proc_pattern_matches_map_is_strict() {
         let pat = parse("{1:2, 3:4}");
         let val = parse("{1:2, 3:5}");
+        assert!(!pat.pattern_matches(&val));
+    }
+
+    #[test]
+    fn proc_pattern_matches_set_is_strict() {
+        let pat = parse("Set(1, 2)");
+        let val = parse("Set(1, 2, 3)");
         assert!(!pat.pattern_matches(&val));
     }
 }
@@ -1579,6 +1596,71 @@ mod native_ops {
         #[test]
         fn map_values_method() {
             assert_reduces_to("at({1:10, 2:20}.values(), 0)", "10");
+        }
+
+        #[test]
+        fn map_keys_method_returns_set() {
+            assert_reduces_to("{1:10, 2:20}.keys().size()", "2");
+        }
+    }
+
+    mod set {
+        use super::*;
+
+        #[test]
+        fn set_len_prefix() {
+            assert_reduces_to("len(Set(1, 2, 3))", "3");
+        }
+
+        #[test]
+        fn set_empty_literal() {
+            assert_reduces_to("Set().size()", "0");
+        }
+
+        #[test]
+        fn set_deduplicates_on_parse() {
+            assert_reduces_to("Set(1, 1, 2).size()", "2");
+        }
+
+        #[test]
+        fn set_add_method() {
+            assert_reduces_to("Set(1, 2).add(3).size()", "3");
+        }
+
+        #[test]
+        fn set_delete_method() {
+            assert_reduces_to("Set(1, 2, 3).delete(2).size()", "2");
+        }
+
+        #[test]
+        fn set_contains_method() {
+            assert_reduces_to("Set(1, 2).contains(2)", "true");
+            assert_reduces_to("Set(1, 2).contains(3)", "false");
+        }
+
+        #[test]
+        fn set_union_method() {
+            assert_reduces_to("Set(1, 2).union(Set(2, 3)).size()", "3");
+        }
+
+        #[test]
+        fn set_diff_method() {
+            assert_reduces_to("Set(1, 2, 3).diff(Set(1, 4)).size()", "2");
+        }
+
+        #[test]
+        fn set_size_method() {
+            assert_reduces_to("Set(1, 2, 3).size()", "3");
+        }
+
+        #[test]
+        fn set_union_method_polymorphic_to_unionset() {
+            assert_reduces_to("Set(1, 2).union(Set(2, 3)).contains(3)", "true");
+        }
+
+        #[test]
+        fn set_equality_is_order_independent() {
+            assert_reduces_to("Set(1, 2, 3) == Set(3, 2, 1)", "true");
         }
     }
 

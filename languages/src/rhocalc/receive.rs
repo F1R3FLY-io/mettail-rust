@@ -1,6 +1,6 @@
 use super::{
-    Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Proc, Str,
-    UInt32,
+    Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Proc, Set,
+    Str, UInt32,
 };
 use mettail_runtime::{Binder, FreeVar, HashBag, OrdVar, Scope, Var};
 use std::cmp::Ordering;
@@ -230,8 +230,39 @@ fn collect_pattern_bindings(
             },
             _ => pattern.term_eq(value),
         },
+        (Proc::CastSet(p), Proc::CastSet(v)) => match (p.as_ref(), v.as_ref()) {
+            (Set::SetLit(ps), Set::SetLit(vs)) => match_set_pattern(ps, vs, env),
+            _ => pattern.term_eq(value),
+        },
         _ => pattern.term_eq(value),
     }
+}
+
+fn match_set_pattern(
+    pat: &mettail_runtime::HashSetLit<Proc>,
+    val: &mettail_runtime::HashSetLit<Proc>,
+    env: &mut HashMap<FreeVar<String>, Proc>,
+) -> bool {
+    if pat.len() != val.len() {
+        return false;
+    }
+    let mut remaining: Vec<Proc> = val.iter().cloned().collect();
+    for p_elem in pat.iter() {
+        let mut matched = false;
+        for (idx, v_elem) in remaining.iter().enumerate() {
+            let mut trial = env.clone();
+            if collect_pattern_bindings(p_elem, v_elem, &mut trial) {
+                *env = trial;
+                remaining.remove(idx);
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return false;
+        }
+    }
+    true
 }
 
 fn match_bag_pattern(

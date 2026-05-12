@@ -14,8 +14,9 @@
 // - Bare infix `P | Q` (no outer braces) for parallel composition.
 // - `Nil` is the zero process; `{}` is the empty `Map` literal.
 // - Map literals use brace+colon: `{1:2, 3:4}` (or `Map()` for empty).
+// - Set literals use `Set(1, 2, 3)` / `Set()`; `m.keys()` returns a `Set`.
 // - Map methods: `m.get(k)`, `m.set(k,v)`, `m.contains(k)`, `m.delete(k)`, `m.union(n)`.
-//   `keys`, `values`, `len` remain prefix-form for now.
+//   `values` and `len` remain prefix-form for now.
 
 // =============================================================================
 // Basic communication

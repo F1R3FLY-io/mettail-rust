@@ -207,12 +207,13 @@ pub struct CollectionDelimiters {
     pub key_val_sep: Option<String>,
 }
 
-/// Collection category kind (List, Bag, Map) with optional delimiters.
+/// Collection category kind (List, Bag, Map, Set) with optional delimiters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CollectionCategory {
     List(CollectionDelimiters),
     Bag(CollectionDelimiters),
     Map(CollectionDelimiters),
+    Set(CollectionDelimiters),
 }
 
 impl CollectionCategory {
@@ -242,6 +243,16 @@ impl CollectionCategory {
             close: ")".to_string(),
             sep: ",".to_string(),
             key_val_sep: Some(":".to_string()),
+        }
+    }
+
+    /// Default delimiters for Set: `Set(`, `)`, `,`
+    pub fn set_defaults() -> CollectionDelimiters {
+        CollectionDelimiters {
+            open: "Set(".to_string(),
+            close: ")".to_string(),
+            sep: ",".to_string(),
+            key_val_sep: None,
         }
     }
 }
@@ -614,12 +625,33 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
                 } else {
                     native_type_raw
                 }
+            } else if name_str == "Set" {
+                let is_hashset = match &native_type_raw {
+                    Type::Path(tp) => tp.path.segments.last().is_some_and(|seg| {
+                        seg.ident == "HashSet"
+                            && matches!(
+                                seg.arguments,
+                                syn::PathArguments::None | syn::PathArguments::AngleBracketed(_)
+                            )
+                    }),
+                    _ => false,
+                };
+                if is_hashset {
+                    syn::parse_str::<Type>("mettail_runtime::HashSetLit<Proc>")
+                        .expect("parse Set native type")
+                } else {
+                    native_type_raw
+                }
             } else {
                 native_type_raw
             };
             // Optional (Param) for collection: ![Vec<Proc>] as List or List(Proc), same for Bag
             // Optional [ "open", "close", "sep" ] for custom literal delimiters (e.g. Bag in rhocalc to avoid conflict with PPar)
-            let collection_kind = if name_str == "List" || name_str == "Bag" || name_str == "Map" {
+            let collection_kind = if name_str == "List"
+                || name_str == "Bag"
+                || name_str == "Map"
+                || name_str == "Set"
+            {
                 if content.peek(syn::token::Paren) {
                     let _content;
                     syn::parenthesized!(_content in content);
@@ -659,15 +691,19 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
                     CollectionCategory::list_defaults()
                 } else if name_str == "Bag" {
                     CollectionCategory::bag_defaults()
-                } else {
+                } else if name_str == "Map" {
                     CollectionCategory::map_defaults()
+                } else {
+                    CollectionCategory::set_defaults()
                 };
                 Some(if name_str == "List" {
                     CollectionCategory::List(delimiters)
                 } else if name_str == "Bag" {
                     CollectionCategory::Bag(delimiters)
-                } else {
+                } else if name_str == "Map" {
                     CollectionCategory::Map(delimiters)
+                } else {
+                    CollectionCategory::Set(delimiters)
                 })
             } else {
                 None
@@ -687,6 +723,8 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
                 Some(CollectionCategory::Bag(CollectionCategory::bag_defaults()))
             } else if name_str == "Map" {
                 Some(CollectionCategory::Map(CollectionCategory::map_defaults()))
+            } else if name_str == "Set" {
+                Some(CollectionCategory::Set(CollectionCategory::set_defaults()))
             } else {
                 None
             };

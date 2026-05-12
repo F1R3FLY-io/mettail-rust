@@ -440,7 +440,7 @@ pub fn write_frame_enum(
                                 format!("mettail_runtime::HashBag<{}>", element_category)
                             },
                             CollectionKind::HashSet => {
-                                format!("std::collections::HashSet<{}>", element_category)
+                                format!("mettail_runtime::HashSetLit<{}>", element_category)
                             },
                             CollectionKind::Vec => format!("Vec<{}>", element_category),
                             CollectionKind::HashMap => {
@@ -479,7 +479,7 @@ pub fn write_frame_enum(
 
         let type_str = match collection_type {
             CollectionKind::HashBag => format!("mettail_runtime::HashBag<{}>", element_category),
-            CollectionKind::HashSet => format!("std::collections::HashSet<{}>", element_category),
+            CollectionKind::HashSet => format!("mettail_runtime::HashSetLit<{}>", element_category),
             CollectionKind::Vec => format!("Vec<{}>", element_category),
             CollectionKind::HashMap => {
                 format!("mettail_runtime::HashMapLit<{}, {}>", element_category, element_category)
@@ -774,7 +774,7 @@ fn write_trampoline_body(
                     format!("{}::{}(mettail_runtime::HashBag::new())", config.category, r.label)
                 },
                 CollectionKind::HashSet => {
-                    format!("{}::{}(std::collections::HashSet::new())", config.category, r.label)
+                    format!("{}::{}(mettail_runtime::HashSetLit::new())", config.category, r.label)
                 },
                 CollectionKind::HashMap => {
                     format!("{}::{}(mettail_runtime::HashMapLit::new())", config.category, r.label)
@@ -812,7 +812,7 @@ fn write_trampoline_body(
                 },
                 CollectionKind::HashSet => {
                     format!(
-                        "{}::{}(std::collections::HashSet::new())",
+                        "{}::{}(mettail_runtime::HashSetLit::new())",
                         config.category, rd_rule.label
                     )
                 },
@@ -1172,7 +1172,7 @@ fn write_prefix_match_arms(
             let variant = terminal_to_variant_name(&terminal);
             let init_str = match kind {
                 CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
-                CollectionKind::HashSet => "std::collections::HashSet::new()",
+                CollectionKind::HashSet => "mettail_runtime::HashSetLit::new()",
                 CollectionKind::Vec => "Vec::new()",
                 CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
             };
@@ -2019,7 +2019,7 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                 let sep_variant = terminal_to_variant_name(separator);
                 let init = match kind {
                     CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
-                    CollectionKind::HashSet => "std::collections::HashSet::new()",
+                    CollectionKind::HashSet => "mettail_runtime::HashSetLit::new()",
                     CollectionKind::Vec => "Vec::new()",
                     CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
                 };
@@ -2084,7 +2084,7 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                 let sep_variant = terminal_to_variant_name(separator);
                 let init = match kind {
                     CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
-                    CollectionKind::HashSet => "std::collections::HashSet::new()",
+                    CollectionKind::HashSet => "mettail_runtime::HashSetLit::new()",
                     CollectionKind::Vec => "Vec::new()",
                     CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
                 };

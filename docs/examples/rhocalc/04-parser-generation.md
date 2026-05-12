@@ -48,7 +48,7 @@ For RhoCalc:
 
 | Category | FIRST set                                                                                                                                            |
 |----------|------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `Proc`   | `Nil`, `{`, `*`, `(`, `@`, `Map`, `Integer`, `Float`, `Boolean`, `StringLit`, `not`, `concat`, `len`, `int`, `float`, `bool`, `str`, `new`, `error`, `Ident` |
+| `Proc`   | `Nil`, `{`, `*`, `(`, `@`, `Map`, `Set`, `Integer`, `Float`, `Boolean`, `StringLit`, `not`, `concat`, `len`, `int`, `float`, `bool`, `str`, `new`, `error`, `Ident` |
 | `Name`   | `@`, `Ident`                                                                                                                                         |
 | `Int`    | `Integer`                                                                                                                                            |
 | `Float`  | `Float` (literal float)                                                                                                                              |
@@ -56,7 +56,7 @@ For RhoCalc:
 | `Str`    | `StringLit`                                                                                                                                          |
 
 Proc's FIRST set includes tokens from:
-- Its own prefix rules: `Nil` (PZero), `*` (PDrop), `(` (PInputs/POutput), `not` (Not), `Map` (`Map()` alias for empty Map), `{` (`Map` literal `{}`, `{k:v}`), etc.
+- Its own prefix rules: `Nil` (PZero), `*` (PDrop), `(` (PInputs/POutput), `not` (Not), `Map` (`Map()` alias for empty Map), `Set` (`Set()` alias for empty Set), `{` (`Map` literal `{}`, `{k:v}`), etc.
 - Cast rules: `Integer` (CastInt), `Float` (CastFloat), etc.
 - Cross-category casts from Name: `@` (NQuote → Proc via cast path)
 

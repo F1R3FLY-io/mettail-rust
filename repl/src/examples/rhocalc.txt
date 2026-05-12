@@ -52,6 +52,15 @@ map_values   = {1: 10, 2: 20}.values()
 map_delete   = {1: 10, 2: 20}.delete(1)
 map_union    = {1: 10}.union({2: 20})
 
+// Set literal + method-call sugar (Rholang style)
+set_size     = Set(1, 2, 3).size()
+set_add      = Set(1, 2).add(3)
+set_delete   = Set(1, 2, 3).delete(2)
+set_contains = Set(1, 2).contains(2)
+set_union    = Set(1, 2).union(Set(2, 3))
+set_diff     = Set(1, 2, 3).diff(Set(1, 4))
+set_keys     = {1: 10, 2: 20}.keys()
+
 // Generalised `@P` quote shorthand for arbitrary `P:Proc` (Rholang style).
 // `@P` parses as `Name::NQuote(P)`, generalising `@(P)` and `@Nil`.
 // Works in Name positions (receive channels, drops) and send sugars.

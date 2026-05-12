@@ -52,6 +52,9 @@ pub use hashbag::HashBag;
 mod hashmap_lit;
 pub use hashmap_lit::HashMapLit;
 
+mod hashset_lit;
+pub use hashset_lit::HashSetLit;
+
 // Language metadata for REPL introspection
 mod metadata;
 pub use metadata::*;

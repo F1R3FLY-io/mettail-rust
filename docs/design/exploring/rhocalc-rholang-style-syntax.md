@@ -463,7 +463,9 @@ corresponding prefix-form calls.
 
 ## 7. Out of Scope (Followups)
 
-- Rholang-style `Set` (`Set(…)`).
+- **Phase 3:** `Set` (`Set(…)` / `Set()` literals; `.add`, `.delete`,
+  `.contains`, `.union`, `.diff`, `.size()` method sugar). `Map.keys()`
+  returns `Set`. See [set-type-design.md](../made/native-types/set-type-design.md).
 - Rholang `++` infix concat for `List` / `Str` (currently only the
   method-call form `l.concat(r)` is sugared).
 - Map / List pattern matching beyond literal swap (e.g., `{k: x, ..}` /

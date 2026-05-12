@@ -1028,6 +1028,7 @@ pub(crate) fn collect_category_variants(
                 CollectionCategory::List(_) => (format_ident!("ListLit"), CollectionType::Vec),
                 CollectionCategory::Bag(_) => (format_ident!("BagLit"), CollectionType::HashBag),
                 CollectionCategory::Map(_) => (format_ident!("MapLit"), CollectionType::HashMap),
+                CollectionCategory::Set(_) => (format_ident!("SetLit"), CollectionType::HashSet),
             };
             variants.push(VariantKind::Collection { label, element_cat: elem_cat, coll_type });
         }

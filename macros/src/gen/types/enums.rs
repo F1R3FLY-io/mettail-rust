@@ -119,6 +119,10 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                 let nt = quote! { #native_type }.to_string();
                 if matches!(collection_kind, CollectionCategory::Map(_)) && nt.trim() == "HashMap" {
                     elem_type.map(|elem_type| quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> })
+                } else if matches!(collection_kind, CollectionCategory::Set(_))
+                    && (nt.trim() == "HashSet" || nt.contains("HashSetLit"))
+                {
+                    elem_type.map(|elem_type| quote! { mettail_runtime::HashSetLit<#elem_type> })
                 } else {
                     Some(quote! { #native_type })
                 }
@@ -127,6 +131,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                     CollectionCategory::List(_) => quote! { Vec<#elem_type> },
                     CollectionCategory::Bag(_) => quote! { mettail_runtime::HashBag<#elem_type> },
                     CollectionCategory::Map(_) => quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> },
+                    CollectionCategory::Set(_) => quote! { mettail_runtime::HashSetLit<#elem_type> },
                 })
             };
             if let (Some(payload_type), false) = (payload_opt, has_literal_rule) {
@@ -134,6 +139,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                     CollectionCategory::List(_) => quote::format_ident!("ListLit"),
                     CollectionCategory::Bag(_) => quote::format_ident!("BagLit"),
                     CollectionCategory::Map(_) => quote::format_ident!("MapLit"),
+                    CollectionCategory::Set(_) => quote::format_ident!("SetLit"),
                 };
                 variants.push(quote! {
                     #literal_label(#payload_type)

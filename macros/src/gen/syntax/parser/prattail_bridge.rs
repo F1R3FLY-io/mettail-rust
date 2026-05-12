@@ -128,6 +128,14 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                         CollectionKind::HashMap,
                         d.key_val_sep.clone(),
                     ),
+                    CollectionCategory::Set(d) => (
+                        "SetLit".to_string(),
+                        d.open.clone(),
+                        d.close.clone(),
+                        d.sep.clone(),
+                        CollectionKind::HashSet,
+                        None,
+                    ),
                 };
                 let category = lang_type.name.to_string();
                 inputs.push(RuleSpecInput {

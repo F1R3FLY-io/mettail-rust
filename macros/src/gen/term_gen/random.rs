@@ -691,6 +691,11 @@ fn generate_random_collection_constructor(
         .and_then(|t| t.collection_kind.as_ref())
         .map(|ck| matches!(ck, CollectionCategory::Map(_)))
         .unwrap_or(false);
+    let is_set = language
+        .get_type(cat_name)
+        .and_then(|t| t.collection_kind.as_ref())
+        .map(|ck| matches!(ck, CollectionCategory::Set(_)))
+        .unwrap_or(false);
 
     if is_list {
         quote! {
@@ -738,8 +743,27 @@ fn generate_random_collection_constructor(
                 #cat_name::#label(m)
             }
         }
+    } else if is_set {
+        quote! {
+            {
+                let size = rng.gen_range(0..=max_collection_width);
+                let mut set = mettail_runtime::HashSetLit::new();
+                for _ in 0..size {
+                    let elem_depth = if depth > 0 { rng.gen_range(0..depth) } else { 0 };
+                    let elem = #element_cat::generate_random_at_depth_internal(
+                        vars,
+                        elem_depth,
+                        max_collection_width,
+                        rng,
+                        binding_depth
+                    );
+                    set.insert(elem);
+                }
+                #cat_name::#label(set)
+            }
+        }
     } else {
-        // List and Bag both use the same bag-shaped generation when not is_list
+        // Bag uses multiset generation.
         quote! {
             {
                 let size = rng.gen_range(0..=max_collection_width);

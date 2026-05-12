@@ -819,6 +819,11 @@ fn generate_pure_collection_case(
         .and_then(|t| t.collection_kind.as_ref())
         .map(|ck| matches!(ck, CollectionCategory::Map(_)))
         .unwrap_or(false);
+    let is_set = language
+        .get_type(cat_name)
+        .and_then(|t| t.collection_kind.as_ref())
+        .map(|ck| matches!(ck, CollectionCategory::Set(_)))
+        .unwrap_or(false);
 
     if is_list {
         quote! {
@@ -981,6 +986,41 @@ fn generate_pure_collection_case(
                                                     }
                                                 }
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else if is_set {
+        quote! {
+            for size in 0..=self.max_collection_width {
+                if size == 0 {
+                    terms.push(#cat_name::#label(mettail_runtime::HashSetLit::new()));
+                } else if size == 1 {
+                    for d in 0..depth {
+                        if let Some(elems) = self.#field_name.get(&d) {
+                            for elem in elems {
+                                let mut set = mettail_runtime::HashSetLit::new();
+                                set.insert(elem.clone());
+                                terms.push(#cat_name::#label(set));
+                            }
+                        }
+                    }
+                } else if size == 2 {
+                    for d1 in 0..depth {
+                        for d2 in 0..depth {
+                            if let Some(elems1) = self.#field_name.get(&d1) {
+                                if let Some(elems2) = self.#field_name.get(&d2) {
+                                    for elem1 in elems1 {
+                                        for elem2 in elems2 {
+                                            let mut set = mettail_runtime::HashSetLit::new();
+                                            set.insert(elem1.clone());
+                                            set.insert(elem2.clone());
+                                            terms.push(#cat_name::#label(set));
                                         }
                                     }
                                 }

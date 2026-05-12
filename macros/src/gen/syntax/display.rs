@@ -133,6 +133,24 @@ fn generate_display_impl(
                     }
                 });
             },
+            CollectionCategory::Set(d) => {
+                let open = LitStr::new(&d.open, Span::call_site());
+                let close = LitStr::new(&d.close, Span::call_site());
+                let sep = LitStr::new(&d.sep, Span::call_site());
+                let lit_label = syn::Ident::new("SetLit", Span::call_site());
+                match_arms.push(quote! {
+                    #category::#lit_label(ref set) => {
+                        let mut parts: Vec<_> = set.iter().map(|e| e.to_string()).collect();
+                        parts.sort();
+                        write!(f, "{}", #open)?;
+                        for (i, p) in parts.iter().enumerate() {
+                            if i > 0 { write!(f, "{}", #sep)?; }
+                            write!(f, "{}", p)?;
+                        }
+                        write!(f, "{}", #close)
+                    }
+                });
+            },
         }
     }
 

@@ -1,8 +1,30 @@
-use super::{List, Proc};
+use super::{List, Proc, Set};
 use mettail_runtime::HashBag;
 
 pub(crate) fn mk_proc_list(items: Vec<Proc>) -> Proc {
     Proc::CastList(Box::new(List::ListLit(items)))
+}
+
+pub(crate) fn mk_proc_set(items: impl IntoIterator<Item = Proc>) -> Proc {
+    let mut set = mettail_runtime::HashSetLit::new();
+    for item in items {
+        set.insert(item);
+    }
+    Proc::CastSet(Box::new(Set::SetLit(set)))
+}
+
+pub(crate) fn normalize_collection_element(elem: &Proc) -> Proc {
+    match elem {
+        Proc::PDrop(n) => match n.as_ref() {
+            super::Name::NQuote(p) => p.as_ref().clone(),
+            super::Name::NParen(inner) => match inner.as_ref() {
+                super::Name::NQuote(p) => p.as_ref().clone(),
+                _ => elem.clone(),
+            },
+            _ => elem.clone(),
+        },
+        _ => elem.clone(),
+    }
 }
 
 pub(crate) fn mk_output(name: &super::Name, items: Vec<Proc>, persistent: bool) -> Proc {
