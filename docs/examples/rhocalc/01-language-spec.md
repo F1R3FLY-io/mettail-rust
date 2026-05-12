@@ -236,6 +236,21 @@ This combines several features:
 All arithmetic, comparison, logical, and conversion operators follow this
 same pattern (Sub, Mul, Div, Eq, Ne, Gt, Lt, ...).
 
+### 3.5.1 Collection equality (`==` / `!=`)
+
+`Eq` and `Ne` fold collection casts injected into `Proc` to `CastBool` using
+`compare_collection_equality` in `languages/src/rhocalc/runtime.rs`. List
+comparison is ordered and duplicate-sensitive; bag comparison is multiset
+(count-based) after `normalize_bag_elements`; map and set comparison are
+order-independent on keys/members. Cross-type collection pairs (for example
+`[1, 2] == Set(1, 2)`) fold to `false` / `true` for `!=`. Non-literal
+collection operands yield `Proc::Err`, matching scalar `Eq` on non-literal
+casts. `where` guards use the same helper via `eval_guard_bool` in
+`languages/src/rhocalc/receive.rs`. Ascent `eq_list` / `eq_bag` / `eq_map` /
+`eq_set` remain equational relations, separate from surface boolean
+comparison. See
+[rhocalc-collection-equality.md](../../design/made/rhocalc-collection-equality.md).
+
 ### 3.6 Unary Prefix with Fold
 
 ```rust

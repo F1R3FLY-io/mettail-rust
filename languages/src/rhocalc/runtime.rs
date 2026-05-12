@@ -1,5 +1,46 @@
-use super::{List, Proc, Set};
-use mettail_runtime::HashBag;
+use super::{Bag, List, Map, Proc, Set};
+use mettail_runtime::{BoundTerm, HashBag};
+
+fn is_collection_cast(proc: &Proc) -> bool {
+    matches!(proc, Proc::CastList(_) | Proc::CastBag(_) | Proc::CastMap(_) | Proc::CastSet(_))
+}
+
+fn compare_same_kind_collection_equality(lhs: &Proc, rhs: &Proc) -> Option<bool> {
+    match (lhs, rhs) {
+        (Proc::CastList(la), Proc::CastList(lb)) => match (la.as_ref(), lb.as_ref()) {
+            (List::ListLit(_), List::ListLit(_)) => Some(lhs.term_eq(rhs)),
+            _ => None,
+        },
+        (Proc::CastBag(ba), Proc::CastBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
+            (Bag::BagLit(ha), Bag::BagLit(hb)) => {
+                let na = normalize_bag_elements(ha);
+                let nb = normalize_bag_elements(hb);
+                Some(BoundTerm::term_eq(&na, &nb))
+            },
+            _ => None,
+        },
+        (Proc::CastMap(ma), Proc::CastMap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+            (Map::MapLit(_), Map::MapLit(_)) => Some(lhs.term_eq(rhs)),
+            _ => None,
+        },
+        (Proc::CastSet(sa), Proc::CastSet(sb)) => match (sa.as_ref(), sb.as_ref()) {
+            (Set::SetLit(_), Set::SetLit(_)) => Some(lhs.term_eq(rhs)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+pub(crate) fn compare_collection_equality(lhs: &Proc, rhs: &Proc) -> Option<bool> {
+    match (lhs, rhs) {
+        (Proc::CastList(_), Proc::CastList(_))
+        | (Proc::CastBag(_), Proc::CastBag(_))
+        | (Proc::CastMap(_), Proc::CastMap(_))
+        | (Proc::CastSet(_), Proc::CastSet(_)) => compare_same_kind_collection_equality(lhs, rhs),
+        (a, b) if is_collection_cast(a) || is_collection_cast(b) => Some(false),
+        _ => None,
+    }
+}
 
 pub(crate) fn mk_proc_list(items: Vec<Proc>) -> Proc {
     Proc::CastList(Box::new(List::ListLit(items)))
