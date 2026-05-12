@@ -48,7 +48,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use crate::cesk_store::{StoreAddr, StoreValue};

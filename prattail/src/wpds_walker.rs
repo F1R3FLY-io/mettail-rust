@@ -52,7 +52,6 @@
 //! engine returns [`WpdsStepAction::Idle`] (nothing more to derive).
 
 use std::any::Any;
-use std::collections::BTreeSet;
 // Phase 5.7 (2026-05-12): persistent OrdSet for cursor visited sets.
 // Replaces BTreeSet for `visited_recovery` and `visited_dispatch` —
 // these sets are cloned at every Fork (and at seed/Drop reset). The
@@ -67,7 +66,7 @@ use crate::automata::TokenKind;
 use crate::gss::{WpdsGss, WpdsGssNode};
 use crate::recovery::RecoveryConfig;
 use crate::wpds_runtime::{
-    pack_action_id, ActionArg, ActionEntry, CheckpointReason, SemanticBuilder, StackSymbolV2,
+    ActionArg, ActionEntry, SemanticBuilder, StackSymbolV2,
     SymbolKind, WpdsConfiguration, WpdsControl, WpdsEvent, WpdsMaxStepsExceeded,
     WpdsMutableTokenSource, WpdsResolveResult, WpdsState, WpdsTokenSource, WpdsTraceEntry,
     WpdsTransition,
@@ -7629,7 +7628,7 @@ mod tests {
     fn process_event_checkpoint_emits_checkpoint_transition() {
         let mut w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
         let t = w.process_event(WpdsEvent::Checkpoint {
-            reason: CheckpointReason::NaturalBoundary,
+            reason: crate::wpds_runtime::CheckpointReason::NaturalBoundary,
         }, &empty_tokens());
         match t {
             WpdsTransition::Checkpoint { config } => {
