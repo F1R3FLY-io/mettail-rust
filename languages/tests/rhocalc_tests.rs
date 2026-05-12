@@ -1141,7 +1141,7 @@ mod native_ops {
         mod pathmap_algebra {
             use super::*;
 
-            // tut-pathmap-all-methods.rho: intersection / meet
+            // intersection / meet
             #[test]
             fn pathmap_meet_keeps_overlap_with_right_values() {
                 assert_reduces_to(
@@ -1158,7 +1158,7 @@ mod native_ops {
                 );
             }
 
-            // tut-pathmap-all-methods.rho: diff / subtract
+            // diff / subtract
             #[test]
             fn pathmap_subtract_removes_masked_branch() {
                 assert_reduces_to(
@@ -1171,7 +1171,7 @@ mod native_ops {
                 );
             }
 
-            // tut-pathmap-all-methods.rho: restriction
+            // restriction
             #[test]
             fn pathmap_restrict_keeps_only_masked_paths() {
                 assert_reduces_to(
@@ -1227,7 +1227,7 @@ mod native_ops {
                 );
             }
 
-            // pathmap-demo.rho: query backend tasks via subtrie
+            // query backend tasks via subtrie
             #[test]
             fn pathmap_demo_queries_backend_subtrie() {
                 let db = task_db();
@@ -1241,7 +1241,7 @@ mod native_ops {
                 );
             }
 
-            // pathmap-demo.rho: complete a deep leaf via writeZipperSetLeaf
+            // complete a deep leaf via writeZipperSetLeaf
             #[test]
             fn pathmap_demo_set_leaf_on_deep_path() {
                 let db = task_db();
@@ -1254,7 +1254,7 @@ mod native_ops {
                 );
             }
 
-            // pathmap-demo.rho: replace subtree at prefix
+            // replace subtree at prefix (numeric and string path segments)
             #[test]
             fn pathmap_demo_replace_subtrie_at_prefix() {
                 let db = task_db();
@@ -1272,9 +1272,35 @@ mod native_ops {
                     ),
                     "false",
                 );
+
+                let db = books_fiction_db();
+                assert_reduces_to(
+                    &format!(
+                        concat!(
+                            "{{pathHas(writeZipperSetSubtrie(",
+                            "writeZipperAt({}, [\"books\",\"fiction\"]), ",
+                            "pathmap([\"hemingway\"]:77, [\"lovecraft\"]:88)), ",
+                            "[\"books\",\"fiction\",\"hemingway\"])}}"
+                        ),
+                        db
+                    ),
+                    "true",
+                );
+                assert_reduces_to(
+                    &format!(
+                        concat!(
+                            "{{pathHas(writeZipperSetSubtrie(",
+                            "writeZipperAt({}, [\"books\",\"fiction\"]), ",
+                            "pathmap([\"hemingway\"]:77, [\"lovecraft\"]:88)), ",
+                            "[\"books\",\"fiction\",\"gatsby\"])}}"
+                        ),
+                        db
+                    ),
+                    "false",
+                );
             }
 
-            // pathmap-demo.rho: graft external read zipper at root
+            // graft external read zipper at root
             #[test]
             fn pathmap_demo_graft_at_root() {
                 assert_reduces_to(
@@ -1287,7 +1313,7 @@ mod native_ops {
                 );
             }
 
-            // tut-pathmap-zippers.rho: read/write zipper constructors
+            // read/write zipper constructors
             #[test]
             fn tut_zipper_constructors_fold_to_tokens() {
                 let db = task_db();
@@ -1296,7 +1322,7 @@ mod native_ops {
                 normal_forms_contain(&format!("{{readZipperAt({}, [1])}}", db), "readZipper@");
             }
 
-            // tut-pathmap-zippers.rho: descendTo then getLeaf
+            // descendTo then getLeaf
             #[test]
             fn tut_zipper_descend_to_leaf() {
                 let db = books_fiction_db();
@@ -1309,7 +1335,7 @@ mod native_ops {
                 );
             }
 
-            // tut-pathmap-zippers.rho: root getLeaf on map without root value
+            // root getLeaf on map without root value
             #[test]
             fn tut_zipper_root_get_leaf_stays_stuck() {
                 let db = task_db();
@@ -1319,7 +1345,7 @@ mod native_ops {
                 );
             }
 
-            // tut-pathmap-zippers.rho: pathGetSubtrie at root and prefix
+            // pathGetSubtrie at root and prefix
             #[test]
             fn tut_path_get_subtrie_root_and_prefix() {
                 let db = books_fiction_db();
@@ -1339,7 +1365,7 @@ mod native_ops {
                 );
             }
 
-            // tut-pathmap-zippers.rho: writeZipper on empty map
+            // writeZipper on empty map
             #[test]
             fn tut_write_zipper_set_leaf_on_empty_map() {
                 assert_reduces_to(
@@ -1348,7 +1374,7 @@ mod native_ops {
                 );
             }
 
-            // tut-pathmap-zippers.rho: setSubtrie at root replaces entire map
+            // setSubtrie at root replaces entire map
             #[test]
             fn tut_write_zipper_set_subtrie_at_root() {
                 assert_reduces_to(
@@ -1361,7 +1387,7 @@ mod native_ops {
                 );
             }
 
-            // tut-pathmap-zippers.rho: empty relative subtrie clears focused branch
+            // empty relative subtrie clears focused branch
             #[test]
             fn tut_write_zipper_set_empty_subtrie_clears_branch() {
                 let db = nested_root_db();
@@ -1381,7 +1407,7 @@ mod native_ops {
                 );
             }
 
-            // tut-pathmap-zippers.rho: graft at focused prefix
+            // graft at focused prefix
             #[test]
             fn tut_write_zipper_graft_at_prefix() {
                 assert_reduces_to(
@@ -1394,7 +1420,7 @@ mod native_ops {
                 );
             }
 
-            // pathmap-immutability-test.rho: setSubtrie leaves original unchanged
+            // setSubtrie leaves original unchanged
             #[test]
             fn immutability_set_subtrie_preserves_original() {
                 let original = nested_root_db();
@@ -1408,7 +1434,7 @@ mod native_ops {
                 assert_reduces_to(&format!("{{pathGet({}, [1,1,1])}}", original), "10");
             }
 
-            // pathmap-immutability-test.rho: removeLeaf leaves original unchanged
+            // removeLeaf leaves original unchanged
             #[test]
             fn immutability_remove_leaf_preserves_original() {
                 let original = concat!("pathmap(", "[1,1]:10, ", "[1,2]:11, ", "[2]:12", ")");
@@ -1422,7 +1448,7 @@ mod native_ops {
                 assert_reduces_to(&format!("{{pathGet({}, [1,1])}}", original), "10");
             }
 
-            // pathmap-immutability-test.rho: removeBranches leaves original unchanged
+            // removeBranches leaves original unchanged
             #[test]
             fn immutability_remove_branches_preserves_original() {
                 let original = nested_root_db();
@@ -1436,7 +1462,7 @@ mod native_ops {
                 assert_reduces_to(&format!("{{pathGet({}, [1,1,1])}}", original), "10");
             }
 
-            // pathmap-immutability-test.rho: graft leaves original unchanged
+            // graft leaves original unchanged
             #[test]
             fn immutability_graft_preserves_original() {
                 let original = "pathmap([1]:1)";
@@ -1452,7 +1478,7 @@ mod native_ops {
                 assert_reduces_to(&format!("{{pathGet({}, [2,1])}}", source), "42");
             }
 
-            // pathmap-immutability-test.rho: joinInto leaves original unchanged
+            // joinInto leaves original unchanged
             #[test]
             fn immutability_join_into_preserves_original() {
                 let original = "pathmap([1,2]:10)";
@@ -1466,7 +1492,7 @@ mod native_ops {
                 assert_reduces_to(&format!("{{pathGet({}, [1,2])}}", original), "10");
             }
 
-            // zipper-navigation-demo.rho: descendFirst from users prefix
+            // descendFirst from users prefix
             #[test]
             fn navigation_descend_first_from_users_prefix() {
                 let db = users_age_db();
@@ -1476,7 +1502,7 @@ mod native_ops {
                 );
             }
 
-            // zipper-navigation-demo.rho: indexed branch under users
+            // indexed branch under users
             #[test]
             fn navigation_descend_indexed_branch_from_users() {
                 let db = users_age_db();
@@ -1486,7 +1512,7 @@ mod native_ops {
                 );
             }
 
-            // zipper-navigation-demo.rho: ascend from deep path
+            // ascend from deep path
             #[test]
             fn navigation_ascend_from_deep_path() {
                 let db = users_age_db();
@@ -1496,7 +1522,7 @@ mod native_ops {
                 );
             }
 
-            // zipper-navigation-demo.rho: invalid sibling navigation stays stuck
+            // invalid sibling navigation stays stuck
             #[test]
             fn navigation_invalid_sibling_stays_stuck() {
                 let db = users_age_db();
