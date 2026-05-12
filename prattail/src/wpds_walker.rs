@@ -120,15 +120,27 @@ pub trait WpdsStepEngine<W: Semiring> {
         false
     }
 
-    /// B8 / Issue D (2026-05-09): predicate identifying Class 3
-    /// ZIP-MAP-SEP CollectionMarker pushes whose enclosing binder rule
-    /// has a `^[xs]` MultiAbstraction. When this returns `true`, the
-    /// walker's `emit_push_side_effects` ALSO opens a binder scope
-    /// (StartBinderScope { names: vec![] }) atomically with the
-    /// accumulator allocation. The scope spans all loop iterations.
+    /// B8 / Issue D (2026-05-09); Phase 4 #2 (2026-05-12): per-(src, rule,
+    /// slot_idx) predicate identifying Class-3 ZIP-MAP-SEP CollectionMarker
+    /// pushes whose enclosing binder rule has a `^[xs]` MultiAbstraction.
+    /// When this returns `true` for the just-pushed CollectionMarker's
+    /// (src, rule, slot_idx), the walker's `emit_push_side_effects` ALSO
+    /// opens a binder scope (StartBinderScope { names: vec![] })
+    /// atomically with the accumulator allocation. The scope spans all
+    /// loop iterations.
+    ///
+    /// Phase 4 #2 multi-slot fix: pre-Phase-4-#2 this was a per-rule
+    /// predicate `is_class3_collection(src, rule)`. For rules with both
+    /// a Class-3 BinderListLoop AND a Class-2 SimpleCollection sibling
+    /// slot (e.g. PInputsTagged), the per-rule predicate incorrectly
+    /// returned `true` for the Class-2 sibling's CollectionMarker too —
+    /// opening a spurious BinderScope. The per-slot variant uses
+    /// `symbol.bp` (preserved as slot_idx since Phase 4 #1) to
+    /// distinguish.
+    ///
     /// Default returns `false`.
-    fn is_class3_collection(&self, src_idx: u16, rule_idx: u16) -> bool {
-        let _ = (src_idx, rule_idx);
+    fn is_class3_collection_per_slot(&self, src_idx: u16, rule_idx: u16, slot_idx: u8) -> bool {
+        let _ = (src_idx, rule_idx, slot_idx);
         false
     }
 
@@ -5901,16 +5913,26 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // ambient `{... | n[{0}]}` where inner PPar's
                 // accumulator_id=1 but slot_idx=0).
                 self.emit_push_collection_id(cursor, id);
-                // B8 / Issue D (2026-05-09): when this CollectionMarker
-                // belongs to a Class 3 binder rule's BinderListLoop slot,
+                // B8 / Issue D (2026-05-09); Phase 4 #2 (2026-05-12):
+                // when this CollectionMarker's (src, rule, slot_idx)
+                // identifies a Class-3 BinderListLoop's names accumulator,
                 // also open a BinderScope so the inner walk's BinderIdent
                 // captures land in a single shared scope (one scope spans
-                // all iterations). Per-rule predicate
-                // `is_class3_collection` distinguishes this from Class-5
-                // standalone collection literals.
-                if self.engine.is_class3_collection(
+                // all iterations). The per-(src, rule, slot_idx) predicate
+                // `is_class3_collection_per_slot` distinguishes the
+                // Class-3 slot from Class-5 standalone collection literals
+                // AND from Class-2 SimpleCollection sibling slots in the
+                // same rule (e.g. PInputsTagged: ns:Vec(Name) — Class-3
+                // slot 0 + tags:Vec(Proc) — Class-2 slot 1).
+                //
+                // `symbol.bp` carries the codegen-stamped slot_idx
+                // (preserved by Phase 4 #1; not overwritten with
+                // accumulator_id).
+                let slot_idx = symbol.bp.unwrap_or(0);
+                if self.engine.is_class3_collection_per_slot(
                     symbol.category_src_idx,
                     symbol.rule_index_in_category,
+                    slot_idx,
                 ) {
                     self.emit_start_binder_scope(cursor, Vec::new());
                 }
@@ -6220,20 +6242,27 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         cursor.collection_stack.len().saturating_sub(1) as u8
                     }
                 };
-                // Phase 2 / Redesign C follow-up (2026-05-11): skip
-                // splice when pred is a Class 3 binder-internal
-                // CollectionMarker. Class 3 has its own dedicated
-                // AdvanceWithEffect-based splice path emitted by the
-                // BinderListLoop Unwinding-OptionalGroupAt arm in
-                // engine_impl.rs (Issue C splice handling); the generic
-                // splice gate here would mis-target the splice for
-                // BinderIdent pops (popped OptionalGroupAt + next token
-                // is sep/close → engine.step returns Advance(Unwinding)
-                // → spurious splice). Defer to the dedicated path.
+                // Phase 2 / Redesign C follow-up (2026-05-11); Phase 4 #2
+                // (2026-05-12): skip splice when pred is a Class-3
+                // binder-internal CollectionMarker (the names accumulator
+                // slot). Class-3 has its own dedicated AdvanceWithEffect-
+                // based splice path emitted by the BinderListLoop
+                // Unwinding-OptionalGroupAt arm in engine_impl.rs (Issue C
+                // splice handling); the generic splice gate here would
+                // mis-target the splice for BinderIdent pops (popped
+                // OptionalGroupAt + next token is sep/close →
+                // engine.step returns Advance(Unwinding) → spurious
+                // splice). Defer to the dedicated path.
+                //
+                // Per-slot predicate via `pred_sym.bp` (preserved as
+                // slot_idx since Phase 4 #1) so Class-2 sibling slots
+                // are not skipped (they need the generic splice).
+                let pred_slot_idx = pred_sym.bp.unwrap_or(0);
                 let skip_for_class3 = pred_kind == SymbolKind::CollectionMarker
-                    && self.engine.is_class3_collection(
+                    && self.engine.is_class3_collection_per_slot(
                         pred_sym.category_src_idx,
                         pred_sym.rule_index_in_category,
+                        pred_slot_idx,
                     );
                 if pred_kind == SymbolKind::CollectionMarker && !skip_for_class3 {
                     let should_splice = match popped_symbol.map(|s| s.kind) {

@@ -1267,7 +1267,19 @@ pub(crate) fn emit_binder_rule_body(
                                                         expected_text: #close.to_string(),
                                                         effects: vec![
                                                             mettail_prattail::wpds_walker::BuilderDelta::StartCollection,
-                                                            mettail_prattail::wpds_walker::BuilderDelta::PushCollectionId { id: 0u8 },
+                                                            // Phase 4 #2 (2026-05-12): use the
+                                                            // BinderListLoop's `slot_idx` (was
+                                                            // hardcoded 0u8). In the no-outer-
+                                                            // collection-nesting supported subset,
+                                                            // slot_idx == accumulator_id at the
+                                                            // point of empty-list bootstrap. For
+                                                            // multi-slot Class-3 rules
+                                                            // (TaggedInputs), this matches the
+                                                            // names accumulator's runtime id
+                                                            // (which is 1 if a sibling Class-2
+                                                            // SimpleCollection at slot 0
+                                                            // occupied accumulator 0 first).
+                                                            mettail_prattail::wpds_walker::BuilderDelta::PushCollectionId { id: #slot_idx },
                                                             mettail_prattail::wpds_walker::BuilderDelta::StartBinderScope {
                                                                 names: Vec::new(),
                                                             },
@@ -1640,6 +1652,7 @@ pub(crate) fn emit_binderlist_inner_post_splice_lookup(per_cat: &[Vec<GrammarRul
                 if let BinderPosition::BinderListLoop {
                     inner_positions,
                     collection_param_cat: Some(_),
+                    slot_idx,
                     ..
                 } = position {
                     for (i, inner) in inner_positions.iter().enumerate() {
@@ -1654,10 +1667,20 @@ pub(crate) fn emit_binderlist_inner_post_splice_lookup(per_cat: &[Vec<GrammarRul
                             let cat = cat_i as u16;
                             let rule_idx = rule_i as u16;
                             let target_sub_pos = (i + 2) as u8;
-                            // Always splice into accumulator 0 (single
-                            // accumulator per Class 3 rule).
+                            // Phase 4 #2 (2026-05-12): splice into the
+                            // BinderListLoop's names accumulator at its
+                            // runtime accumulator_id. In the no-outer-
+                            // collection-nesting supported subset,
+                            // slot_idx == accumulator_id at the point
+                            // the splice fires. Pre-Phase-4-#2 this
+                            // hardcoded Some(0u8) — correct only for
+                            // single-slot Class-3 rules. For multi-slot
+                            // (PInputsTagged: tags at slot 0 + names at
+                            // slot 1), the names accumulator is at
+                            // accumulator_id=1.
+                            let slot_idx_lit = *slot_idx;
                             arms.push(quote! {
-                                (#cat, #rule_idx, #target_sub_pos) => Some(0u8),
+                                (#cat, #rule_idx, #target_sub_pos) => Some(#slot_idx_lit),
                             });
                         }
                     }
@@ -1732,32 +1755,42 @@ pub(crate) fn emit_is_class3_inner_marker_per_subpos(per_cat: &[Vec<GrammarRule>
     }
 }
 
-/// B8 / Issue D (2026-05-09): emit a per-rule predicate
-/// `is_class3_collection(rule_idx) -> bool` that returns `true` when
-/// the rule has a Class 3 BinderListLoop. Used by the walker's
+/// B8 / Issue D (2026-05-09); Phase 4 #2 (2026-05-12): emit a
+/// per-(src, rule, slot_idx) predicate
+/// `is_class3_collection_per_slot(src, rule, slot_idx) -> bool` that
+/// returns `true` ONLY for the specific slot_idx of a Class-3
+/// BinderListLoop's names accumulator. Used by the walker's
 /// `emit_push_side_effects` to atomically open a BinderScope alongside
-/// the Names accumulator allocation when a Class 3 CollectionMarker
+/// the Names accumulator allocation when a Class-3 CollectionMarker
 /// is pushed.
-pub(crate) fn emit_is_class3_collection(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
+///
+/// Phase 4 #1 + #2 multi-slot fix: pre-Phase-4-#2 this was a per-rule
+/// predicate `is_class3_collection(src, rule)`. For rules with both a
+/// Class-3 BinderListLoop AND a Class-2 SimpleCollection sibling slot
+/// (e.g. PInputsTagged: ns:Vec(Name) — slot 0 (Class-3) +
+/// tags:Vec(Proc) — slot 1 (Class-2)), the per-rule predicate
+/// incorrectly opened a BinderScope for the Class-2 sibling slot too.
+/// The per-slot variant keys on slot_idx (now preserved in the
+/// CollectionMarker symbol's `bp` field via Phase 4 #1) so only the
+/// Class-3 slot opens the scope.
+pub(crate) fn emit_is_class3_collection_per_slot(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
             let Some(shape) = classify_binder(rule) else {
                 continue;
             };
-            let is_class3 = shape.positions.iter().any(|p| {
-                matches!(
-                    p,
-                    BinderPosition::BinderListLoop {
-                        collection_param_cat: Some(_),
-                        ..
-                    }
-                )
-            });
-            if is_class3 {
-                let cat = cat_i as u16;
-                let rule_idx = rule_i as u16;
-                arms.push(quote! { (#cat, #rule_idx) => true, });
+            for position in shape.positions.iter() {
+                if let BinderPosition::BinderListLoop {
+                    collection_param_cat: Some(_),
+                    slot_idx,
+                    ..
+                } = position {
+                    let cat = cat_i as u16;
+                    let rule_idx = rule_i as u16;
+                    let slot_idx = *slot_idx;
+                    arms.push(quote! { (#cat, #rule_idx, #slot_idx) => true, });
+                }
             }
         }
     }
@@ -1765,7 +1798,7 @@ pub(crate) fn emit_is_class3_collection(per_cat: &[Vec<GrammarRule>]) -> TokenSt
         quote! { false }
     } else {
         quote! {
-            match (src_idx, rule_idx) {
+            match (src_idx, rule_idx, slot_idx) {
                 #(#arms)*
                 _ => false,
             }

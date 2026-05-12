@@ -182,47 +182,75 @@ pub fn generate_category_rules(language: &LanguageDef, cat_filter: CategoryFilte
     }
 }
 
-/// Generate deconstruction for a constructor that has both a collection field and a binding
-/// (e.g. PInputs(Vec(Name), Scope<..., Proc>)).
+/// Generate deconstruction for a constructor that has both one-or-more collection fields
+/// and a binding (e.g. PInputs(Vec(Name), Scope<..., Proc>) — 2 fields;
+/// or Phase 4 #2 TaggedInputs(Vec(Proc), Vec(Name), Scope<..., Proc>) — 3 fields).
 ///
 /// Produces:
-/// - One rule adding each collection element to its category: `name(n)` for each `n` in the vec.
-/// - One rule adding the scope to the same category wrapped as MLam{body_cat} (multi-binder)
-///   so the scope is visible as a lambda term without extracting the body.
+/// - One rule per collection field, adding each collection element to its category:
+///   `name(n)` for each `n` in the names vec; `proc(p)` for each `p` in the tags vec.
+/// - One rule adding the scope to the binding-body category wrapped as MLam{body_cat}
+///   (multi-binder) so the scope is visible as a lambda term without extracting the body.
 ///
-/// This does not cause the same fact explosion as full collection deconstruction because
-/// (1) the collection is a Vec (bounded by syntax), and (2) we add one MLam term, not the body.
+/// Phase 4 #2 (2026-05-12): generalized from the prior fixed 2-field
+/// `(ref vec_field, _) | (_, scope)` patterns to an arity-aware
+/// emission. AST field positional indices are derived from
+/// `term_context`: each `TermParam` corresponds to ONE AST field; the
+/// term_context order matches the AST tuple-variant field order.
+///
+/// Constraints:
+/// - Scope must still be present in term_context (caller filters
+///   `is_multi_binder`).
+/// - At least one Collection field must be present (caller filters
+///   `has_collection_field`).
+/// - The Collection fields and the Scope can be in ANY order within
+///   term_context (no longer hardcoded "Scope last").
+///
+/// This does not cause the same fact explosion as full collection
+/// deconstruction because (1) collections are bounded by syntax, and
+/// (2) we add one MLam term per rule, not the body.
 fn generate_collection_plus_binding_deconstruction(
     category: &Ident,
     constructor: &GrammarRule,
 ) -> Option<Vec<TokenStream>> {
     use mettail_ast::types::TypeExpr;
 
-    // Only for multi-binder + collection (e.g. PInputs): term_context has MultiAbstraction and Simple(Vec)
+    // Only for multi-binder + collection (e.g. PInputs, TaggedInputs):
+    // term_context has MultiAbstraction and at least one Simple(Collection).
     let term_context = constructor.term_context.as_ref()?;
-    let has_multi = term_context
-        .iter()
-        .any(|p| matches!(p, TermParam::MultiAbstraction { .. }));
-    let has_collection = term_context
-        .iter()
-        .any(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Collection { .. }, .. }));
-    if !has_multi || !has_collection || constructor.bindings.len() != 1 {
+    if constructor.bindings.len() != 1 {
         return None;
     }
 
-    let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
-    let label = &constructor.label;
-
-    // Find collection element type and binding body type from items
-    let mut element_type: Option<&Ident> = None;
-    for item in &constructor.items {
-        if let GrammarItem::Collection { element_type: e, .. } = item {
-            element_type = Some(e);
-            break;
+    // Phase 4 #2 (2026-05-12): walk term_context to collect Collection
+    // field indices + the Scope field index. Each TermParam maps to one
+    // AST tuple-variant field at the same positional index.
+    let mut collection_fields: Vec<(usize, Ident)> = Vec::new();
+    let mut scope_field_idx: Option<usize> = None;
+    for (i, param) in term_context.iter().enumerate() {
+        match param {
+            TermParam::Simple {
+                ty: TypeExpr::Collection { element, .. },
+                ..
+            } => {
+                if let TypeExpr::Base(elem) = element.as_ref() {
+                    collection_fields.push((i, elem.clone()));
+                }
+            }
+            TermParam::MultiAbstraction { .. } => {
+                scope_field_idx = Some(i);
+            }
+            _ => {}
         }
     }
-    let element_type = element_type?;
-    let elem_cat_lower = format_ident!("{}", element_type.to_string().to_lowercase());
+    if collection_fields.is_empty() {
+        return None;
+    }
+    let scope_field_idx = scope_field_idx?;
+    let total_fields = term_context.len();
+
+    let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
+    let label = &constructor.label;
 
     let (_binder_idx, body_indices) = &constructor.bindings[0];
     let body_idx = body_indices.first()?;
@@ -233,20 +261,49 @@ fn generate_collection_plus_binding_deconstruction(
     // Multi-binder scope → wrap as MLam{body_cat} so the scope appears in the category as a lambda
     let mlam_variant = format_ident!("MLam{}", body_cat);
 
-    // Rust enum has two fields: (collection_vec, scope). Vec uses .iter(), not (elem, _count).
-    Some(vec![
-        quote! {
+    let mut rules: Vec<TokenStream> = Vec::with_capacity(collection_fields.len() + 1);
+
+    // Phase 4 #2 generalization: one projection rule per Collection field.
+    // Each rule binds `vec_field` at the Collection's positional index;
+    // other fields (including the Scope and any sibling Collections) are
+    // wildcarded with `_`.
+    for (coll_idx, elem_type) in &collection_fields {
+        let elem_cat_lower = format_ident!("{}", elem_type.to_string().to_lowercase());
+        let pattern_fields: Vec<TokenStream> = (0..total_fields)
+            .map(|i| {
+                if i == *coll_idx {
+                    quote! { ref vec_field }
+                } else {
+                    quote! { _ }
+                }
+            })
+            .collect();
+        rules.push(quote! {
             #elem_cat_lower(elem.clone()) <--
                 #cat_lower(t),
-                if let #category::#label(ref vec_field, _) = t,
+                if let #category::#label(#(#pattern_fields),*) = t,
                 for elem in vec_field.iter();
-        },
-        quote! {
-            #cat_lower(#category::#mlam_variant(scope.clone())) <--
-                #cat_lower(t),
-                if let #category::#label(_, scope) = t;
-        },
-    ])
+        });
+    }
+
+    // Scope-wrap rule: bind `scope` at the Scope field's positional index;
+    // other fields wildcarded.
+    let scope_pattern_fields: Vec<TokenStream> = (0..total_fields)
+        .map(|i| {
+            if i == scope_field_idx {
+                quote! { scope }
+            } else {
+                quote! { _ }
+            }
+        })
+        .collect();
+    rules.push(quote! {
+        #cat_lower(#category::#mlam_variant(scope.clone())) <--
+            #cat_lower(t),
+            if let #category::#label(#(#scope_pattern_fields),*) = t;
+    });
+
+    Some(rules)
 }
 
 /// Generate special deconstruction rules that cannot be consolidated into helpers.

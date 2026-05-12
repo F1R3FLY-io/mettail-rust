@@ -120,6 +120,11 @@ name = "simulate_class2multi"
 path = "src/bin/simulate_class2multi.rs"
 required-features = ["strategies"]
 
+[[bin]]
+name = "simulate_class3multi"
+path = "src/bin/simulate_class3multi.rs"
+required-features = ["strategies"]
+
 
 
 [[bench]]

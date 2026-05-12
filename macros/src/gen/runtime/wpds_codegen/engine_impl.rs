@@ -96,10 +96,14 @@ pub(crate) fn emit_engine_impl_full(
     // Unwinding-OptionalGroupAt routing for Class 3 rules.
     let binderlist_inner_metadata =
         super::binder::emit_binderlist_inner_metadata(per_cat);
-    // B8 / Issue D (2026-05-09): per-rule predicate for Class 3
-    // CollectionMarker pushes that should also open a BinderScope.
+    // B8 / Issue D (2026-05-09); Phase 4 #2 (2026-05-12): per-(src, rule,
+    // slot_idx) predicate for Class 3 CollectionMarker pushes that should
+    // also open a BinderScope. Per-slot variant is required for rules
+    // with a Class-3 BinderListLoop AND a Class-2 SimpleCollection
+    // sibling (e.g. PInputsTagged) — the per-rule predicate (pre-Phase-4-#2)
+    // incorrectly opened a BinderScope for the Class-2 sibling too.
     let is_class3_collection_lookup =
-        super::binder::emit_is_class3_collection(per_cat);
+        super::binder::emit_is_class3_collection_per_slot(per_cat);
     // B8 / Issue 2 (2026-05-10): per-(src, rule, sub_pos) lookup
     // distinguishing Class 3 inner-walk OptionalGroupAt from genuine
     // *opt(...) OptionalGroup. Replaces the prior alias to
@@ -452,17 +456,31 @@ pub(crate) fn emit_engine_impl_full(
                                     // CollectionLoop to dispatch on close/sep.
                                     let result_src_idx = node.symbol.category_src_idx;
                                     let rule_idx = node.symbol.rule_index_in_category;
-                                    // B8 / Issue C followup (2026-05-09): for
-                                    // Class 3 binder rules, the CollectionMarker
+                                    // B8 / Issue C followup (2026-05-09); Phase 4 #2
+                                    // (2026-05-12): for Class-3 binder rules, the
+                                    // CollectionMarker for the names accumulator
                                     // never runs through CollectionLoop —
                                     // BinderListLoop handles iterations. After
                                     // the outer rule's terminal action fires,
                                     // the marker is left dangling at top. Pop
-                                    // it transparently when the per-rule
-                                    // `is_class3_collection` predicate confirms
-                                    // (not Class 2 which pops via ConsumeAndPop
-                                    // in CollectionLoop's close branch).
-                                    if self.is_class3_collection(result_src_idx, rule_idx) {
+                                    // it transparently when the per-(src, rule,
+                                    // slot_idx) `is_class3_collection_per_slot`
+                                    // predicate confirms (not Class-2 sibling
+                                    // slots which pop via ConsumeAndPop in
+                                    // CollectionLoop's close branch).
+                                    //
+                                    // Phase 4 #2 multi-slot fix: pre-fix this
+                                    // was a per-rule predicate. Rules with a
+                                    // Class-3 BinderListLoop + Class-2 sibling
+                                    // SimpleCollection (e.g. PInputsTagged)
+                                    // incorrectly transparently-popped the
+                                    // Class-2 sibling's marker. slot_idx is
+                                    // recovered from `symbol.bp` (Phase 4 #1
+                                    // preserves codegen-stamped slot_idx).
+                                    let slot_idx_for_class3 = node.symbol.bp.unwrap_or(0);
+                                    if self.is_class3_collection_per_slot(
+                                        result_src_idx, rule_idx, slot_idx_for_class3,
+                                    ) {
                                         return WpdsStepAction::Pop {
                                             weight: LexicographicWeight::one(),
                                             new_state: WpdsState::Unwinding,
@@ -1335,10 +1353,11 @@ pub(crate) fn emit_engine_impl_full(
                 #is_binder_internal_collection_lookup
             }
 
-            fn is_class3_collection(
+            fn is_class3_collection_per_slot(
                 &self,
                 src_idx: u16,
                 rule_idx: u16,
+                slot_idx: u8,
             ) -> bool {
                 #is_class3_collection_lookup
             }
