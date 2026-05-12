@@ -1567,7 +1567,13 @@ pub struct DispatchDiagnostics {
     pub full_activation_predicates: Vec<usize>,
     /// Total modules skipped across all predicates.
     pub total_modules_skipped: u32,
-    /// Cross-channel predicates found when two-way-transducer feature is disabled.
+    /// Predicates with backward (cross-channel) constraints. Pre-feature-flag-
+    /// consolidation this was gated on a removed `two-way-transducer` cargo
+    /// feature; now the field reports all backward-constraint predicates
+    /// unconditionally, as the two-way-transducer module is always-on
+    /// (`prattail/src/two_way_transducer.rs`). Useful as a diagnostic for
+    /// callers that want to know which predicates require the two-way
+    /// compiler pass.
     pub cross_channel_without_two_way: Vec<usize>,
 }
 
@@ -1586,6 +1592,7 @@ impl DispatchDiagnostics {
                 full_activation.push(i);
             }
             if profile.has_backward_constraint {
+                cross_channel_no_tw.push(i);
             }
         }
 

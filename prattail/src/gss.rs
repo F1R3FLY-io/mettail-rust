@@ -32,7 +32,7 @@
 //! - Tomita, M. (1986). *Efficient parsing for natural language.* Kluwer.
 //! - Reps, Lal & Kidd (2007). WPDS poststar/prestar saturation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::automata::semiring::Semiring;
 use crate::wpds_runtime::StackSymbolV2;

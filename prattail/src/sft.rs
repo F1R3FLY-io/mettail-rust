@@ -35,7 +35,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 
-use crate::symbolic::{BooleanAlgebra, SymbolicAutomaton, SymbolicState, SymbolicTransition};
+use crate::symbolic::{BooleanAlgebra, SymbolicAutomaton};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // §1  OutputFunction — closed enum for composable output operations

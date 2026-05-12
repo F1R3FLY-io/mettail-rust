@@ -1380,7 +1380,7 @@ pub fn estimate_channel_load(
 
     if total_load > 0.0 {
         // Compute fractional share of workers for each channel.
-        let mut fractional_shares: Vec<f64> = loads
+        let fractional_shares: Vec<f64> = loads
             .iter()
             .map(|&load| (load / total_load) * total_workers as f64)
             .collect();

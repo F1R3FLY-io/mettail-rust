@@ -2063,37 +2063,13 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> ProductAlgebra<A, B> {
         }
     }
 
-    /// Extract the left predicate from a product predicate (for witness extraction).
-    fn extract_left(&self, pred: &ProductPred<A, B>) -> A::Predicate {
-        match pred {
-            ProductPred::True | ProductPred::RightOnly(_) => self.left.true_pred(),
-            ProductPred::False => self.left.false_pred(),
-            ProductPred::Both(a, _) | ProductPred::LeftOnly(a) => a.clone(),
-            ProductPred::And(l, r) => {
-                self.left.and(&self.extract_left(l), &self.extract_left(r))
-            }
-            ProductPred::Or(l, r) => {
-                self.left.or(&self.extract_left(l), &self.extract_left(r))
-            }
-            ProductPred::Not(inner) => self.left.not(&self.extract_left(inner)),
-        }
-    }
-
-    /// Extract the right predicate from a product predicate (for witness extraction).
-    fn extract_right(&self, pred: &ProductPred<A, B>) -> B::Predicate {
-        match pred {
-            ProductPred::True | ProductPred::LeftOnly(_) => self.right.true_pred(),
-            ProductPred::False => self.right.false_pred(),
-            ProductPred::Both(_, b) | ProductPred::RightOnly(b) => b.clone(),
-            ProductPred::And(l, r) => {
-                self.right.and(&self.extract_right(l), &self.extract_right(r))
-            }
-            ProductPred::Or(l, r) => {
-                self.right.or(&self.extract_right(l), &self.extract_right(r))
-            }
-            ProductPred::Not(inner) => self.right.not(&self.extract_right(inner)),
-        }
-    }
+    // 2026-05-12: `extract_left` and `extract_right` methods DELETED —
+    // authored speculatively but never wired up; the documented
+    // ProductAlgebra surface (to_dnf, is_satisfiable, witness, evaluate,
+    // and/or/not) routes through `to_dnf` instead, which produces both
+    // left and right predicates directly via the `(A::Predicate,
+    // B::Predicate)` pair at its DNF leaves. See
+    // `prattail/docs/design/constraint-theories/product-algebra.md`.
 }
 
 impl<A: BooleanAlgebra, B: BooleanAlgebra> BooleanAlgebra for ProductAlgebra<A, B> {

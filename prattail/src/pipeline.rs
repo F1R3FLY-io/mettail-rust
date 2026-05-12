@@ -2137,16 +2137,14 @@ fn generate_parser_code(
     // D07: Check if runtime coverage instrumentation is requested
     let emit_coverage = std::env::var("PRATTAIL_COVERAGE").is_ok();
 
-    // Layer 10: Load incremental codegen cache (.prattail-cache)
-    let cache_path = std::env::var("PRATTAIL_CACHE_DIR")
-        .map(|d| std::path::PathBuf::from(d).join(".prattail-cache"))
-        .ok();
-    let prev_cache = cache_path.as_ref()
-        .and_then(|p| crate::decision_tree::IncrementalState::load(p));
-    let mut new_cache = crate::decision_tree::IncrementalState {
-        version: crate::decision_tree::CACHE_VERSION,
-        ..Default::default()
-    };
+    // Layer 10 incremental codegen cache scaffolding DELETED 2026-05-12:
+    // the prev_cache load was never consumed (no per-category content-hash
+    // check elided any codegen work) and new_cache was saved empty every
+    // run. The IncrementalState type at `decision_tree.rs:2505` and the
+    // `PRATTAIL_CACHE_DIR` env-var convention are preserved for a future
+    // proper implementation; the half-baked I/O is removed here so the
+    // cache file isn't silently produced+consumed as a no-op artifact.
+    // See `prattail/docs/design/decision-tree/code-emission.md` §6.2.
 
     // ── DB01: Early gate check for incremental FIRST/FOLLOW ──────────────
     // The full optimization gates are computed later (after FIRST/FOLLOW and
@@ -3533,12 +3531,10 @@ fn generate_parser_code(
 
         // ── Proof certificate generation ──
         {
-            let _confluence_ref: Option<&crate::confluence::ConfluenceAnalysis> = {
-                { confluence_result.as_ref() }
-            };
-            let _termination_ref: Option<&crate::termination::TerminationResult> = {
-                { termination_result.as_ref() }
-            };
+            let _confluence_ref: Option<&crate::confluence::ConfluenceAnalysis> =
+                confluence_result.as_ref();
+            let _termination_ref: Option<&crate::termination::TerminationResult> =
+                termination_result.as_ref();
             let certificates = crate::proof_output::generate_certificates(
                 _confluence_ref,
                 _termination_ref,
@@ -3796,10 +3792,10 @@ fn generate_parser_code(
         &advanced,
     );
 
-    // Layer 10: Save updated incremental state to .prattail-cache
-    if let Some(ref path) = cache_path {
-        let _ = new_cache.save(path); // Best-effort; don't fail on cache write error
-    }
+    // Layer 10: save scaffolding DELETED 2026-05-12 along with the load
+    // scaffolding (see comment near line 2140). The cache will be wired
+    // up properly when a future implementation has a real consumer
+    // populating `IncrementalState::category_hashes` during codegen.
 
     // Lint-A cleanup: emit the single consolidated summary line for this
     // grammar at the very end of the pipeline, covering all

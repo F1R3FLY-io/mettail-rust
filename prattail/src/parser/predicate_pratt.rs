@@ -337,7 +337,11 @@ pub struct PredicateParser {
 }
 
 impl PredicateParser {
-    pub fn new(tokens: Vec<TokenSpan>, config: PredicateParserConfig) -> Self {
+    // Visibility downgraded from `pub` to module-private 2026-05-12 —
+    // `TokenSpan` is module-private and the only caller is in this
+    // module (`parse_predicate` at line ~125 above). The `pub`
+    // visibility was triggering a `private_interfaces` warning.
+    fn new(tokens: Vec<TokenSpan>, config: PredicateParserConfig) -> Self {
         Self { tokens, pos: 0, config }
     }
 

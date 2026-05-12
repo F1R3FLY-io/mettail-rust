@@ -54,6 +54,17 @@ use std::hash::Hash;
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Result of evaluating a branch.
+///
+/// The `Yield` and `Fail` variants are part of the documented LogicT
+/// `msplit` protocol (Kiselyov ICFP 2005 §3.2; see
+/// `prattail/docs/design/constraint-theories/logict-framework.md:158-170`)
+/// but are not currently constructed by `LogicStream::suspend` — that
+/// constructor hard-codes `Fork(...)` since the suspension always
+/// represents a deferred set of branches. The variants are reserved for
+/// future direct-`BranchResult`-producing constructors. Match arms
+/// covering them remain in `msplit` and `fair_conjoin` for
+/// exhaustiveness.
+#[allow(dead_code)]
 enum BranchResult<T> {
     /// Yield a value, with additional branches to explore.
     Yield(T, Vec<Branch<T>>),
@@ -1225,9 +1236,7 @@ impl<T: ConstraintTheory> TheoryAlgebra<T> {
             },
             TheoryPred::And(a, b) => {
                 let a_stores = self.collect_constraints(a, store);
-                let theory = self.theory.clone();
                 let b_pred = (**b).clone();
-                let search_bound = self.search_bound;
                 let algebra_clone = self.clone();
                 a_stores.fair_conjoin(move |s| algebra_clone.collect_constraints(&b_pred, &s))
             }

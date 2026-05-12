@@ -324,10 +324,11 @@ struct PoolRuntime {
     coordinator: Coordinator,
     /// The worker pool (N native threads with work-stealing deques).
     worker_pool: Arc<WorkerPool>,
-    /// Shared green thread registry.
-    registry: Arc<GreenThreadRegistry>,
-    /// Shared channel map.
-    channels: Arc<ChannelMap>,
+    // 2026-05-12: `registry` and `channels` fields DELETED — they were
+    // stored here but never read. The Coordinator and WorkerPool already
+    // hold their own internal Arc<GreenThreadRegistry> / Arc<ChannelMap>
+    // clones passed at construction time, so dropping the redundant
+    // PoolRuntime-side clone has no Drop / liveness impact.
 }
 
 // PoolRuntime contains JoinHandle<()> (via Coordinator and WorkerPool).
@@ -428,6 +429,7 @@ impl GlobalPool {
     /// This does NOT register in the global singleton — use `get_or_init()`
     /// for production code. This constructor is `pub(crate)` to allow tests
     /// to create isolated pool instances without polluting the global state.
+    #[cfg(test)]
     pub(crate) fn new_isolated(worker_count: usize, budget: u32) -> Self {
         GlobalPool {
             worker_count,
@@ -568,9 +570,11 @@ impl GlobalPool {
         *runtime_guard = Some(PoolRuntime {
             coordinator,
             worker_pool,
-            registry,
-            channels,
         });
+        // registry + channels Arc handles are held internally by
+        // Coordinator and WorkerPool; the PoolRuntime-side clones were
+        // never read and have been removed.
+        let _ = (registry, channels);
     }
 
     /// Stop the M:N thread pool runtime.

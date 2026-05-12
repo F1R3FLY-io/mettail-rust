@@ -58,7 +58,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 
-use crate::lattice_theory::{LatticeStore, LatticeTheory, SubtypeConstraint, TypeAssignment, TypeId};
+use crate::lattice_theory::{LatticeStore, LatticeTheory, TypeId};
+#[cfg(test)]
+use crate::lattice_theory::SubtypeConstraint;
 use crate::logict::ConstraintTheory;
 
 // ==============================================================================
@@ -1395,7 +1397,6 @@ impl SetTheoreticTypeSystem {
         a: &crate::tree_automaton::TreeAutomaton<crate::automata::semiring::BooleanWeight>,
         b: &crate::tree_automaton::TreeAutomaton<crate::automata::semiring::BooleanWeight>,
     ) -> crate::tree_automaton::TreeAutomaton<crate::automata::semiring::BooleanWeight> {
-        use crate::automata::semiring::BooleanWeight;
         use crate::tree_automaton::{TreeAutomaton, TreeTransition};
 
         let mut result = TreeAutomaton::new();
@@ -1656,7 +1657,11 @@ impl TypeSystem for SetTheoreticTypeSystem {
 
     fn check(
         &self,
-        env: &Self::TypeEnv,
+        // SetTheoreticTypeSystem determines membership structurally via
+        // tree-automaton acceptance, not via variable bindings — env is
+        // unused. The trait signature retains the env param for other
+        // impls (LatticeTypeSystem, RefinementTypeSystem) that do consult it.
+        _env: &Self::TypeEnv,
         term: &Self::Term,
         ty: &Self::Type,
     ) -> bool {
@@ -1671,7 +1676,8 @@ impl TypeSystem for SetTheoreticTypeSystem {
 
     fn infer(
         &self,
-        env: &Self::TypeEnv,
+        // env unused — same reasoning as `check` above.
+        _env: &Self::TypeEnv,
         term: &Self::Term,
     ) -> Vec<Self::Type> {
         // Check the term against each named type definition

@@ -33,7 +33,11 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::cesk_store::{AllocStrategy, CeskConfig, KCfaAlloc, MonotonicAlloc, OneCfaAlloc, StoreAddr, StoreValue, ZeroCfaAlloc};
+use crate::cesk_store::StoreAddr;
+#[cfg(test)]
+use crate::cesk_store::{
+    AllocStrategy, CeskConfig, KCfaAlloc, MonotonicAlloc, OneCfaAlloc, StoreValue, ZeroCfaAlloc,
+};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Abstract Store — Maps addrs to SETS of values
