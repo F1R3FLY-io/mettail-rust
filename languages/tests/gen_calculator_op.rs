@@ -186,26 +186,26 @@ use mettail_runtime::BehavioralPred;
 //   - UInt32ToBigInt
 //   - UInt32ToBigRat
 // Constructor weights (lower = more frequent):
+//   NegBigInt            weight: 0.0000
+//   Fraction             weight: 0.0000
+//   NegFixed             weight: 0.0000
+//   BoolLit              weight: 0.0000
+//   CountBag             weight: 0.0000
 //   NegBigRat            weight: 0.0000
 //   EqFixed              weight: 0.0000
-//   BitNotBigInt         weight: 0.0000
-//   IntToBool            weight: 0.0000
-//   DeleteList           weight: 0.0000
-//   NegFloat             weight: 0.0000
-//   EqInt                weight: 0.0000
-//   BagLit               weight: 0.0000
-//   BitNotFixed          weight: 0.0000
-//   NegFixed             weight: 0.0000
-//   Not                  weight: 0.0000
-//   Len                  weight: 0.0000
-//   SinFloat             weight: 0.0000
-//   CastErrFloat         weight: 0.0000
-//   GetMap               weight: 0.0000
-//   LenList              weight: 0.0000
-//   LenMap               weight: 0.0000
-//   MapLit               weight: 0.0000
-//   LnFloat              weight: 0.0000
 //   UnionBag             weight: 0.0000
+//   DeleteList           weight: 0.0000
+//   ElemList             weight: 0.0000
+//   BitNotFixed          weight: 0.0000
+//   BitNotBigInt         weight: 0.0000
+//   BigratCast           weight: 0.0000
+//   BoolToStr            weight: 0.0000
+//   CastErrUInt32        weight: 0.0000
+//   LnFloat              weight: 0.0000
+//   Not                  weight: 0.0000
+//   KeysMap              weight: 0.0000
+//   Grouping             weight: 0.0000
+//   FloatToInt           weight: 0.0000
 //   ... and 221 more
 // Category weights:
 //   Bool                 weight: 0.0179
@@ -215,9 +215,9 @@ use mettail_runtime::BehavioralPred;
 //   Fixed                weight: 0.2857
 //   List                 weight: 0.2857
 //   BigInt               weight: 0.3125
-//   Map                  weight: 0.3333
 //   UInt32               weight: 0.3333
 //   Bag                  weight: 0.3333
+//   Map                  weight: 0.3333
 //   Str                  weight: 0.5000
 //   Proc                 weight: 0.5000
 //

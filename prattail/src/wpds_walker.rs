@@ -3432,56 +3432,66 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::Fork { mut branches, consume_trigger } => {
-                // Stage 3.16 (Mechanism γ closure / Hack #7 walker fix,
-                // 2026-05-05) — L2 Lazy→Strict transition: when the live
-                // builder still owns an open collection slot (e.g., Hack #7
-                // emits a Fork at PrefixDispatch with a CollectionMarker
-                // frontier — the marker push happened in Lazy mode and
-                // populated `self.builder.collection_stack`, but
-                // `cursor.collection_stack` is empty because Lazy mutates
-                // the live builder directly), transfer the live slot stack
-                // into the parent cursor so children inherit aligned slot
-                // ownership. Without this transfer, the close cursor's
-                // ConsumeAndPop logs a `FinalizeCollection { id: 0 }` while
-                // the live builder still has 1 slot — replay's LIFO
-                // assertion (`live.collection_stack_len() == id`) panics.
+                // Phase 5.4 (2026-05-12): Hack #7 prologue DELETED. The
+                // original prologue transferred live builder's slot stack
+                // into the parent cursor's mirror and journaled a
+                // `SeedLiveCollectionStack` delta so commit_winner could
+                // re-seed live before subsequent Strict-mode deltas
+                // executed. The transfer was needed because Lazy mode
+                // mutated live directly while cursor.collection_stack
+                // remained empty — at Fork the cursor needed to "own"
+                // those slots to maintain ID-allocation invariants.
                 //
-                // This closes the Lazy→Strict transfer gap that
-                // `seed_from_live`'s docstring (lines 622-636) anticipated
-                // but the constructor-only call sites left unaddressed.
-                // Idempotent — only runs at the actual mode boundary.
+                // Post-Phase-5.2/5.3, the cursor's `Arc<SemanticBuilder>`
+                // ALREADY contains the pre-fork state by structural
+                // sharing (parent's Arc is cloned to the child at Fork
+                // time, and the cursor.builder accumulates Lazy mutations
+                // via Arc::make_mut). The slot data is intrinsically
+                // present in cursor.builder; the live self.builder
+                // retains its own copy unchanged.
+                //
+                // Also: `BuilderDelta::FinalizeCollection` is dead code
+                // (defined + replayed but never emitted anywhere — see
+                // commit message). Without FinalizeCollection emissions,
+                // the SeedLive replay's "live.len() == id" assertion
+                // no longer needs satisfaction; the SpliceIntoCollection
+                // / PushToCollection replay arms derive their ids from
+                // `live.collection_stack_len() - 1` at replay time
+                // (Phase 4 #5b), so they find slots in self.builder
+                // where they expect them.
+                //
+                // Net: the prologue is structurally unnecessary post-5.3.
+                // Synchronize `cursor.collection_slots_allocated` (the
+                // monotonic id counter) and seed `cursor.collection_stack`
+                // (the mirror) with empty placeholders matching the
+                // live builder's slot count — preserves the mirror's
+                // role as an id-allocator without copying slot contents
+                // (which are already in cursor.builder).
                 if self.cursor_mode == CursorMode::Lazy {
-                    let pre_fork_slots = self.builder.take_collection_stack();
-                    if !pre_fork_slots.is_empty() {
-                        // L12 follow-up B5 (2026-05-07): log the pre-fork
-                        // slot list so commit_winner replay can re-seed
-                        // live before any cursor-emitted FinalizeCollection
-                        // / SpliceIntoCollection / PushToCollection deltas
-                        // execute. Without this, cursors that finalized
-                        // pre-fork-allocated collections during their
-                        // Strict-mode parse emitted FinalizeCollection
-                        // { id: N>0 } against an empty live state at
-                        // replay, panicking the LIFO assert. The clone
-                        // below is necessary because pre_fork_slots is
-                        // simultaneously the source for cursor's mirror
-                        // and the delta payload.
-                        // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
-                        cursor.consistency_memo.set(None);
-                        cursor.pending_builder_ops.push(
-                            BuilderDelta::SeedLiveCollectionStack {
-                                slots: pre_fork_slots.clone(),
-                            },
-                        );
-                    }
-                    // Phase 4 #1 (2026-05-11): also sync the monotonic
-                    // slot counter to match the pre-fork allocation
-                    // count, so subsequent Strict-mode
-                    // emit_start_collection allocates ids that
-                    // dovetail with live's view.
-                    cursor.collection_slots_allocated = pre_fork_slots.len() as u8;
-                    cursor.collection_stack = pre_fork_slots;
+                    let pre_fork_len = self.builder.collection_stack_len();
+                    cursor.consistency_memo.set(None);
+                    cursor.collection_slots_allocated = pre_fork_len as u8;
+                    cursor.collection_stack = (0..pre_fork_len)
+                        .map(|_| Vec::new())
+                        .collect();
+                    // Phase 5.5 (2026-05-12): refresh cursor.builder from
+                    // self.builder so cursor.builder reflects the pre-Fork
+                    // Lazy-mode state. In Lazy mode, emit_fire_action calls
+                    // `self.fire_action_for(symbol)` which mutates
+                    // self.builder directly — those term pushes are NOT
+                    // mirrored to cursor.builder via the Phase 5.3 eager
+                    // Arc::make_mut path (emit_fire_action was deliberately
+                    // skipped from that migration). Without this refresh,
+                    // commit_winner's install would overwrite self.builder
+                    // with a cursor.builder missing the pre-Fork action
+                    // terms. Children Arc::clone the refreshed parent
+                    // cursor.builder, inheriting the live state.
+                    cursor.builder = Arc::new(self.builder.clone());
                 }
                 // Stage 3.9 / ι Phase 4 (2026-05-01) — L2: promote to Strict.
+                // Phase 5.4: kept (Strict mode still gates emit-helper
+                // mirror-to-live dispatch). Will be deleted in Phase 5.6
+                // when cursor_mode itself goes away.
                 self.cursor_mode = CursorMode::Strict;
                 // Bounded recovery (Stage 3.20 / L12, 2026-05-06): detect
                 // whether this Fork is a recovery dispatch (any branch
@@ -5374,184 +5384,129 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     fn commit_winner(&mut self, winner_idx: usize) {
         let mut winner = self.branch_cursors.swap_remove(winner_idx);
         self.branch_cursors.clear();
-        // Phase 4 #1 (2026-05-11): adoption skipped ONLY when the
-        // cursor's pending_builder_ops contains at least as many
-        // StartCollection deltas as the cursor.collection_stack has
-        // slots. For multi-collection-slot Class 2 rules where slots
-        // stay open in the cursor's mirror (binder-internal pop
-        // suppressed), every slot has a corresponding StartCollection
-        // delta that will re-allocate at replay — adopt+replay would
-        // duplicate. For pre-fork-seeded slots (Lazy→Strict via Hack
-        // #7), the SeedLive delta covers them and the cursor's
-        // mirror also contains them; SeedLive itself asserts live
-        // empty at replay time, so adoption MUST be skipped in this
-        // case too.
+        // Phase 5.5 (2026-05-12): install winner.builder as the live
+        // SemanticBuilder. The winner cursor's `Arc<SemanticBuilder>`
+        // carries ALL the non-recovery state mutations that have been
+        // eagerly applied via `Arc::make_mut` in the emit helpers
+        // (Phase 5.3): PushToken, PushIdent, PushPredicate,
+        // StartBinderScope, EndBinderScope, ExtendBinderScope,
+        // StartCollection, PushCollectionId, SpliceIntoCollection,
+        // StartOptionalScope, FinalizeOptionalScopePresent,
+        // PushOptionalAbsent, PushToCollection. Plus the pre-fork
+        // state inherited via `Arc::clone` from the parent cursor
+        // (Phase 5.4 + Phase 5.2).
         //
-        // For Class-5 standalone collection parses (no fork, no
-        // binder-internal), the cursor's mirror is empty at commit
-        // (popped on FireAction); adoption is a no-op anyway.
-        let donated = std::mem::take(&mut winner.collection_stack);
-        let strict_alloc_count = winner.pending_builder_ops.iter()
-            .filter(|d| matches!(d, BuilderDelta::StartCollection))
-            .count();
-        let has_seed_live = winner.pending_builder_ops.iter()
-            .any(|d| matches!(d, BuilderDelta::SeedLiveCollectionStack { .. }));
-        let donate = !donated.is_empty()
-            && !has_seed_live
-            && strict_alloc_count < donated.len();
-        if donate {
-            self.builder.adopt_collection_stack(donated);
+        // The replay loop below now handles ONLY:
+        // - `FireAction` — emit_fire_action does NOT eagerly apply
+        //   (action_fn READS from the builder; firing eagerly before
+        //   install would mutate cursor.builder's stack with
+        //   intermediate terms that aren't durable until commit).
+        //   After install, replay fires action_fn on the installed
+        //   self.builder.
+        // - Recovery* deltas (RecoveryEvent / SubstituteToken /
+        //   InsertToken / CommitLexAlternative / ApplyRecoverySequence)
+        //   — these mutate `self.recovery_events` and the mutable
+        //   token source, NOT the builder. They must replay regardless
+        //   of how the builder is installed.
+        //
+        // The adoption gate (Phase 4 #1) is OBSOLETE: collection_stack
+        // donation is intrinsic to the Arc-installed builder. The
+        // winner.collection_stack mirror is now informational only.
+        // The Phase 5.6 type cleanup will delete the mirror entirely.
+        let _ = std::mem::take(&mut winner.collection_stack);
+        // Phase 5.5 install: replace live with winner's builder, but
+        // ONLY if a Fork happened (cursor_mode is Strict). In Lazy mode
+        // (no Fork), `emit_fire_action` fires directly on
+        // `self.builder` via `self.fire_action_for(symbol)` — those
+        // action_fn-pushed terms are NOT mirrored onto cursor.builder
+        // (emit_fire_action was deliberately skipped from the Phase 5.3
+        // eager Arc::make_mut migration because action_fn READS from
+        // its builder). So in Lazy mode, self.builder is the
+        // authoritative state; installing cursor.builder over it would
+        // lose those action_fn terms.
+        //
+        // `Arc::try_unwrap` keeps the underlying SemanticBuilder if the
+        // winner is the last Arc holder (the post-commit singleton at
+        // the bottom of this function REPLACES `branch_cursors` so
+        // sibling Arc refs in dead cursors are about to drop). If
+        // there's still another holder, fall back to deep clone via
+        // SemanticBuilder: Clone (Phase 5.3). The clone is structurally
+        // shared via `im::Vector` HAMTs — O(log N) per field root.
+        if self.cursor_mode == CursorMode::Strict {
+            self.builder = Arc::try_unwrap(std::mem::replace(
+                &mut winner.builder,
+                Arc::new(SemanticBuilder::new()),
+            ))
+            .unwrap_or_else(|arc| (*arc).clone());
         }
         for delta in winner.pending_builder_ops {
             match delta {
+                // Phase 5.5: non-recovery deltas are NO-OPs at replay
+                // (already applied to cursor.builder which is now
+                // self.builder via the install above). Kept here for
+                // exhaustiveness pending Phase 5.6 variant deletion.
                 BuilderDelta::PushToken { kind, text, pos } => {
-                    self.builder.push_token(kind, text, pos);
+                    let _ = (kind, text, pos);
                 }
                 BuilderDelta::PushIdent { name, pos } => {
-                    self.builder.push_ident(name, pos);
+                    let _ = (name, pos);
                 }
                 BuilderDelta::PushPredicate(pred) => {
-                    self.builder.push_predicate_arc(pred);
+                    // Phase 5.5: no-op (already applied to cursor.builder
+                    // which is now self.builder).
+                    let _ = pred;
                 }
                 BuilderDelta::StartBinderScope { names } => {
-                    self.builder.start_binder_scope(names);
+                    let _ = names;
                 }
-                BuilderDelta::EndBinderScope => {
-                    self.builder.end_binder_scope();
-                }
+                BuilderDelta::EndBinderScope => {}
                 BuilderDelta::ExtendBinderScope { name } => {
-                    self.builder.extend_binder_scope(name);
+                    let _ = name;
                 }
                 BuilderDelta::FireAction { symbol } => {
-                    self.fire_action_for(symbol);
-                    // Cleanup 3 (Option A refinement): fire_action_for sets
-                    // state = WpdsState::Error{..} on builder underflow
-                    // (engine arity bug). Bail out of the replay loop and
-                    // skip the post-loop state install so the Error survives
-                    // — without this guard, the unconditional Step-3 install
-                    // would silently overwrite Error with winner.inner_state.
-                    if self.state.is_terminal() {
-                        self.top_node = Some(winner.node);
-                        self.pos = winner.pos;
-                        self.weight = self.weight.times(&winner.weight);
-                        return;
-                    }
+                    // Phase 5.5 (2026-05-12): FireAction is now no-op at
+                    // replay. emit_fire_action eagerly fires the action_fn
+                    // on cursor.builder (via Arc::make_mut) in Strict mode,
+                    // so by commit-time cursor.builder.stack already has
+                    // the action's pushed terms; install brings them onto
+                    // self.builder. Replay-FireAction would double-apply
+                    // (pop arity + push term) — symbol is discarded.
+                    //
+                    // Error state from arity underflow is set IN-PLACE at
+                    // emit_fire_action time (eager fire returns Error
+                    // synchronously), so the bail-out for Error survival
+                    // is no longer needed here.
+                    let _ = symbol;
                 }
                 BuilderDelta::PushCollectionId { id: logged_id } => {
-                    // Phase 4 #5b (2026-05-12): the logged id reflects
-                    // `cursor.collection_stack.len()` at log time. In
-                    // Strict mode that counter pre-allocates ids before
-                    // drains happen (drains fire at FireAction replay,
-                    // not at CollectionMarker pop for binder-internal
-                    // collections), causing the logged id to diverge
-                    // from `live.collection_stack`'s state. At replay
-                    // time the StartCollection delta just ran (LIFO
-                    // order — StartCollection precedes its PushCollectionId
-                    // in the cursor's pending_builder_ops), so the live
-                    // builder's top slot is the one this PushCollectionId
-                    // refers to. Use `live.collection_stack_len() - 1`
-                    // as the runtime-correct id; the logged_id is
-                    // discarded.
-                    //
-                    // For non-binder-internal Class-5 collection rules,
-                    // logged_id and `live.len() - 1` already match
-                    // (CollectionMarker-pop pops both mirrors in sync),
-                    // so this change is transparent for those paths.
+                    // Phase 5.5: no-op. cursor.builder (now self.builder)
+                    // already has the CollectionId pushed via Arc::make_mut
+                    // in emit_push_collection_id (Phase 5.3).
                     let _ = logged_id;
-                    let runtime_id = self
-                        .builder
-                        .collection_stack_len()
-                        .saturating_sub(1) as u8;
-                    self.builder.push_collection_id(runtime_id);
                 }
                 BuilderDelta::SpliceIntoCollection { id: logged_id } => {
-                    // Phase 4 #5b (2026-05-12): mirror the PushCollectionId
-                    // fix — use `live.collection_stack_len() - 1` at
-                    // replay time, NOT the logged id. The logged id was
-                    // captured from the cursor's pre-fork view; in Strict
-                    // mode this can diverge from live's view when
-                    // binder-internal CollectionMarker pops keep slots
-                    // alive on the cursor's mirror past the inner action's
-                    // drain. The splice target is always the LIFO top of
-                    // live's collection_stack (the innermost active slot
-                    // at this point in replay).
-                    //
-                    // Non-binder-internal Class-5 paths already have
-                    // logged_id matching live's top at replay time
-                    // (their CollectionMarker pops in sync), so this
-                    // change is transparent there.
                     let _ = logged_id;
-                    let runtime_id = self
-                        .builder
-                        .collection_stack_len()
-                        .saturating_sub(1) as u8;
-                    self.builder.push_to_collection(runtime_id);
                 }
-                // ─── Stage 3.7 / ι Phase 2 (2026-05-01) replay arms ─────────
-                BuilderDelta::StartOptionalScope => {
-                    self.builder.start_optional_scope();
-                }
-                BuilderDelta::FinalizeOptionalScopePresent => {
-                    self.builder.finalize_optional_scope_present();
-                }
-                BuilderDelta::PushOptionalAbsent => {
-                    self.builder.push_optional_absent();
-                }
-                BuilderDelta::StartCollection => {
-                    // Phase 4 #1 (2026-05-11): unconditional re-allocate.
-                    // Adoption is no longer performed at commit_winner
-                    // start, so this delta is the canonical source for
-                    // live-side slot allocation in Strict-mode-allocated
-                    // collections.
-                    let _ = self.builder.start_collection();
-                }
+                BuilderDelta::StartOptionalScope => {}
+                BuilderDelta::FinalizeOptionalScopePresent => {}
+                BuilderDelta::PushOptionalAbsent => {}
+                BuilderDelta::StartCollection => {}
                 BuilderDelta::PushToCollection { id } => {
-                    // Identical operational semantics to SpliceIntoCollection
-                    // (both call push_to_collection); kept as a separate
-                    // variant to distinguish "logical element push" from
-                    // "post-pop splice" at log time for diagnostics.
-                    self.builder.push_to_collection(id);
+                    let _ = id;
                 }
                 BuilderDelta::SeedLiveCollectionStack { slots } => {
-                    // L12 follow-up B5 (2026-05-07): seed live's
-                    // collection_stack with pre-fork slots captured at
-                    // Lazy→Strict transition. At fork prologue, live's
-                    // collection_stack was drained via take_collection_stack
-                    // and the slots transferred to the parent cursor's
-                    // mirror; this delta replays the seed at commit time
-                    // so subsequent FinalizeCollection / SpliceIntoCollection
-                    // deltas operate against a properly-seeded live state.
-                    debug_assert_eq!(
-                        self.builder.collection_stack_len(),
-                        0,
-                        "SeedLiveCollectionStack: live builder \
-                         collection_stack must be empty at seed time; \
-                         got {} residual slots",
-                        self.builder.collection_stack_len(),
-                    );
-                    for slot in slots {
-                        self.builder.push_collection_slot(slot);
-                    }
+                    // Phase 5.4: emission deleted; this arm is dead
+                    // (kept for exhaustiveness until Phase 5.6 variant
+                    // deletion).
+                    let _ = slots;
                 }
                 BuilderDelta::FinalizeCollection { id, drained } => {
-                    // Stage 3.12.8 (2026-05-03): re-push the drained slot
-                    // onto the live builder's collection_stack at `id`
-                    // (LIFO: at this point in replay, `collection_stack`
-                    // length is exactly `id`). The subsequent FireAction
-                    // for the collection's finalize rule then calls
-                    // `b.drain_collection(id)` which LIFO-correctly pops
-                    // this slot. Pre-3.12.8 the drain happened against
-                    // an en-bloc-donated stack with sibling-collection
-                    // slots present, violating LIFO.
-                    debug_assert_eq!(
-                        self.builder.collection_stack_len() as u8,
-                        id,
-                        "FinalizeCollection: id={} but live collection_stack \
-                         has len={} — replay LIFO invariant violated",
-                        id,
-                        self.builder.collection_stack_len(),
-                    );
-                    self.builder.push_collection_slot(drained);
+                    // L12 hotfix B5 (commit ba6f24f): emission deleted as
+                    // part of the SeedLive + StartCollection generalization
+                    // (the slot's content lives on live throughout, so
+                    // re-pushing at FireAction time is unnecessary). The
+                    // replay arm is vestigial; deletion pending Phase 5.6.
+                    let _ = (id, drained);
                 }
                 BuilderDelta::RecoveryEvent {
                     action_kind,
@@ -5847,28 +5802,52 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// top of the builder's stack. No-op if the engine returns `None`
     /// (rule has no semantic action).
     fn fire_action_for(&mut self, symbol: StackSymbolV2) {
-        if let Some(entry) = self
-            .engine
-            .action_for(symbol.category_src_idx, symbol.rule_index_in_category)
-        {
+        let mut taken = std::mem::replace(&mut self.builder, SemanticBuilder::new());
+        let outcome = Self::fire_action_for_on_builder(&self.engine, &mut taken, symbol);
+        self.builder = taken;
+        if let Some(message) = outcome {
+            self.state = WpdsState::Error { message };
+        }
+    }
+
+    /// Phase 5.5 (2026-05-12): fire a semantic action on a given
+    /// SemanticBuilder reference (rather than `self.builder`). Used by
+    /// `emit_fire_action` to eagerly apply on `cursor.builder` via
+    /// `Arc::make_mut`, so Strict-mode parsing has the action's
+    /// pushed term available BEFORE subsequent SpliceIntoCollection
+    /// effects (which move stack elements into collection slots —
+    /// they must move the action's converted term, not the raw arg).
+    ///
+    /// Returns `None` on success; `Some(msg)` if the action's arity
+    /// exceeds the builder's stack — caller sets walker state to
+    /// `Error { message }` accordingly.
+    fn fire_action_for_on_builder(
+        engine: &E,
+        builder: &mut SemanticBuilder,
+        symbol: StackSymbolV2,
+    ) -> Option<String> {
+        if let Some(entry) = engine.action_for(
+            symbol.category_src_idx,
+            symbol.rule_index_in_category,
+        ) {
             let arity = entry.arity as usize;
             let action_fn = entry.action_fn;
-            if self.builder.len() >= arity {
-                let args = self.builder.pop_args(arity);
-                action_fn(&mut self.builder, args);
+            if builder.len() >= arity {
+                let args = builder.pop_args(arity);
+                action_fn(builder, args);
+                None
             } else {
-                // Builder under-flow is an engine-arity bug; set Error state.
-                self.state = WpdsState::Error {
-                    message: format!(
-                        "semantic-action arity mismatch at rule (src={}, rule={}): \
-                         expected {} args but builder held {}",
-                        symbol.category_src_idx,
-                        symbol.rule_index_in_category,
-                        arity,
-                        self.builder.len(),
-                    ),
-                };
+                Some(format!(
+                    "semantic-action arity mismatch at rule (src={}, rule={}): \
+                     expected {} args but builder held {}",
+                    symbol.category_src_idx,
+                    symbol.rule_index_in_category,
+                    arity,
+                    builder.len(),
+                ))
             }
+        } else {
+            None
         }
     }
 
@@ -6007,25 +5986,54 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn emit_fire_action(&mut self, cursor: &mut BranchCursor<W>, symbol: StackSymbolV2) {
-        // Phase 5.3 (2026-05-12): emit_fire_action does NOT eagerly apply on
-        // cursor.builder. Unlike the other emit_* helpers, the action_fn
-        // body READS from the builder it operates on (e.g. `drain_collection`).
-        // Since cursor.builder's `collection_stack` indices may diverge from
-        // the live builder's (cursor.builder starts EMPTY at fork init in
-        // 5.2; reconciliation lands in Phase 5.4), running the action_fn on
-        // cursor.builder can produce a LIFO violation. The action remains
-        // applied only on the live builder via the existing Lazy/Strict
-        // arms; Phase 5.5 will adopt cursor.builder as the source of truth
-        // ONCE Phase 5.4 has aligned its initialization with the live
-        // builder.
-        match self.cursor_mode {
-            CursorMode::Lazy => self.fire_action_for(symbol),
-            CursorMode::Strict => {
-                cursor.consistency_memo.set(None);
-                cursor
-                    .pending_builder_ops
-                    .push(BuilderDelta::FireAction { symbol });
-            }
+        // Phase 5.5 (2026-05-12): eagerly fire the action_fn on
+        // cursor.builder via Arc::make_mut, in BOTH Lazy and Strict
+        // modes. This is REQUIRED for correctness post-Phase-5.4:
+        // subsequent SpliceIntoCollection emits on cursor.builder move
+        // stack elements into collection slots. The slot must receive
+        // the action's CONVERTED term (e.g., Proc::CastInt(0)), NOT
+        // the raw arg (e.g., the Int "0" literal token). Without
+        // eager firing here, cursor.builder.collection_stack ends up
+        // holding raw arg tokens, breaking the action's drain at
+        // outer-rule action time.
+        //
+        // The journal log of FireAction is retained for Strict-mode
+        // commit_winner replay — at commit, install brings cursor.builder
+        // into self.builder, then journal-FireActions fire on the new
+        // self.builder. This double-application is semantically a
+        // no-op: the action eagerly fired on cursor.builder leaves
+        // cursor.builder.stack in the "post-action" state; install
+        // preserves that state on self.builder; replay-FireAction
+        // would pop arity from self.builder.stack — but the stack
+        // is already at post-action state, so the pop would underflow
+        // unless self.builder.stack happens to have unrelated content.
+        //
+        // To avoid double-application, in Strict mode we STILL log the
+        // FireAction delta but commit_winner SKIPS its replay arm
+        // (Phase 5.5's non-recovery arm filter handles this).
+        //
+        // In Lazy mode (single cursor), additionally fire on
+        // self.builder so the live walker fields and cursor.builder
+        // remain in sync.
+        let builder_mut = Arc::make_mut(&mut cursor.builder);
+        if let Some(message) =
+            Self::fire_action_for_on_builder(&self.engine, builder_mut, symbol)
+        {
+            self.state = WpdsState::Error { message };
+            return;
+        }
+        if self.cursor_mode == CursorMode::Lazy {
+            self.fire_action_for(symbol);
+        } else {
+            // Strict mode: still journal for commit_winner — its replay
+            // arm is now a no-op (matches the action already applied
+            // eagerly above), but the journal entry preserves Phase 5.6
+            // optionality (the variant + arm can be deleted cleanly in
+            // 5.6 once Strict-mode action timing is verified).
+            cursor.consistency_memo.set(None);
+            cursor
+                .pending_builder_ops
+                .push(BuilderDelta::FireAction { symbol });
         }
     }
 
