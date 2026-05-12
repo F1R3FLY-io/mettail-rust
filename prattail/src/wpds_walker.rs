@@ -3100,65 +3100,24 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::Fork { mut branches, consume_trigger } => {
-                // Phase 5.4 (2026-05-12): Hack #7 prologue DELETED. The
-                // original prologue transferred live builder's slot stack
-                // into the parent cursor's mirror and journaled a
-                // `SeedLiveCollectionStack` delta so commit_winner could
-                // re-seed live before subsequent Strict-mode deltas
-                // executed. The transfer was needed because Lazy mode
-                // mutated live directly while cursor.collection_stack
-                // remained empty — at Fork the cursor needed to "own"
-                // those slots to maintain ID-allocation invariants.
+                // Phase 5.6-tail-C (2026-05-12): Hack #7 prologue + Phase 5.5
+                // cursor.builder refresh DELETED.
                 //
-                // Post-Phase-5.2/5.3, the cursor's `Arc<SemanticBuilder>`
-                // ALREADY contains the pre-fork state by structural
-                // sharing (parent's Arc is cloned to the child at Fork
-                // time, and the cursor.builder accumulates Lazy mutations
-                // via Arc::make_mut). The slot data is intrinsically
-                // present in cursor.builder; the live self.builder
-                // retains its own copy unchanged.
+                // Pre-tail the prologue seeded `cursor.collection_slots_allocated`,
+                // `cursor.collection_stack`, and `cursor.builder` from `self.builder`'s
+                // live state to compensate for Lazy-mode emit_fire_action mutating
+                // self.builder directly (skipping cursor.builder). Under Phase
+                // 5.6-tail-B's emit-helper unification, ALL emit helpers (including
+                // emit_fire_action) eagerly mutate cursor.builder via Arc::make_mut.
+                // The cursor.builder thus IS the authoritative pre-Fork state —
+                // children inherit it via Arc::clone with no refresh needed. The
+                // collection_stack mirror is also kept in sync per-step
+                // (emit_start_collection always pushes; CollectionMarker pop always
+                // drains).
                 //
-                // Also: `BuilderDelta::FinalizeCollection` is dead code
-                // (defined + replayed but never emitted anywhere — see
-                // commit message). Without FinalizeCollection emissions,
-                // the SeedLive replay's "live.len() == id" assertion
-                // no longer needs satisfaction; the SpliceIntoCollection
-                // / PushToCollection replay arms derive their ids from
-                // `live.collection_stack_len() - 1` at replay time
-                // (Phase 4 #5b), so they find slots in self.builder
-                // where they expect them.
-                //
-                // Net: the prologue is structurally unnecessary post-5.3.
-                // Synchronize `cursor.collection_slots_allocated` (the
-                // monotonic id counter) and seed `cursor.collection_stack`
-                // (the mirror) with empty placeholders matching the
-                // live builder's slot count — preserves the mirror's
-                // role as an id-allocator without copying slot contents
-                // (which are already in cursor.builder).
-                if self.cursor_mode == CursorMode::Lazy {
-                    let pre_fork_len = self.builder.collection_stack_len();
-                        cursor.collection_slots_allocated = pre_fork_len as u8;
-                    cursor.collection_stack = (0..pre_fork_len)
-                        .map(|_| Vec::new())
-                        .collect();
-                    // Phase 5.5 (2026-05-12): refresh cursor.builder from
-                    // self.builder so cursor.builder reflects the pre-Fork
-                    // Lazy-mode state. In Lazy mode, emit_fire_action calls
-                    // `self.fire_action_for(symbol)` which mutates
-                    // self.builder directly — those term pushes are NOT
-                    // mirrored to cursor.builder via the Phase 5.3 eager
-                    // Arc::make_mut path (emit_fire_action was deliberately
-                    // skipped from that migration). Without this refresh,
-                    // commit_winner's install would overwrite self.builder
-                    // with a cursor.builder missing the pre-Fork action
-                    // terms. Children Arc::clone the refreshed parent
-                    // cursor.builder, inheriting the live state.
-                    cursor.builder = Arc::new(self.builder.clone());
-                }
-                // Stage 3.9 / ι Phase 4 (2026-05-01) — L2: promote to Strict.
-                // Phase 5.4: kept (Strict mode still gates emit-helper
-                // mirror-to-live dispatch). Will be deleted in Phase 5.6
-                // when cursor_mode itself goes away.
+                // L2: cursor_mode promotion to Strict is KEPT until Step F deletes
+                // the enum entirely. It still gates the 4 mode-agnostic helpers'
+                // mirror-to-live behavior in Lazy steady state.
                 self.cursor_mode = CursorMode::Strict;
                 // Bounded recovery (Stage 3.20 / L12, 2026-05-06): detect
                 // whether this Fork is a recovery dispatch (any branch
@@ -3498,9 +3457,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3535,9 +3491,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 builder: Arc::clone(&cursor.builder),
                             };
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3605,9 +3558,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3693,9 +3643,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 .cursor_gss_pop_via_edge(&mut child)
                                 .unwrap_or(crate::gss::GSS_NODE_NONE);
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
@@ -3754,9 +3701,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3872,9 +3816,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3906,9 +3847,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3956,9 +3894,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3984,9 +3919,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 child_source_priority,
                             );
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -4034,9 +3966,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -4083,9 +4012,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 .cursor_gss_pop_via_edge(&mut child)
                                 .unwrap_or(crate::gss::GSS_NODE_NONE);
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
@@ -4140,9 +4066,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -4203,9 +4126,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -4250,9 +4170,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 .cursor_gss_pop_via_edge(&mut child)
                                 .unwrap_or(crate::gss::GSS_NODE_NONE);
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
@@ -4333,9 +4250,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.weight.clone(),
                             );
                             child.pos += 1;
-                            if self.cursor_mode == CursorMode::Lazy {
-                                self.pos = child.pos;
-                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
