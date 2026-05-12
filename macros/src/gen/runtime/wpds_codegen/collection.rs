@@ -241,14 +241,26 @@ pub(crate) fn emit_collection_prefix_arms(
 /// dispatches: token == close → `ConsumeAndPop` (fires finalize); token
 /// == sep → `Consume` → `PrefixDispatch{cur_bp:0}` to parse next element;
 /// else → `Error`.
+///
+/// Phase 4 #5b (2026-05-12): for HashMap collection slots the dispatch is
+/// 3-phased per `kv_phase`:
+/// - `0`: outer dispatch — 3-branch Fork (close / inter-pair-sep
+///   / first-key element). Vec/HashBag/HashSet always stay at `0`.
+/// - `1`: single-arm Consume(`:`) → `kv_phase: 2`. Error if token != `:`.
+/// - `2`: single-arm Push CategoryEntry(element_src) → PrefixDispatch.
+///   The walker patches kv_phase back to 0 when the value returns via
+///   Unwinding-CollectionMarker (parity-driven in `set_cursor_inner_state`).
 pub(crate) fn emit_collection_loop_arm(
     language: &mettail_ast::language::LanguageDef,
     _categories: &[String],
     per_cat: &[Vec<GrammarRule>],
 ) -> TokenStream {
-    // Per-rule lookup arms: (result_src_idx, rule_idx, slot_idx) → (close, sep).
-    // Phase 4 #1.B (2026-05-11): 3-tuple keying so multi-slot rules can
-    // disambiguate sibling slots within the same rule.
+    // Per-rule lookup arms: (result_src_idx, rule_idx, slot_idx) →
+    // (close, sep, kv_sep). Phase 4 #1.B (2026-05-11): 3-tuple keying
+    // so multi-slot rules can disambiguate sibling slots within the
+    // same rule. Phase 4 #5b (2026-05-12): widened the value tuple
+    // to also carry the optional kv_sep (`":"` for HashMap, None
+    // otherwise) so the kv_phase dispatch can match on it directly.
     let mut lookup_arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
@@ -266,8 +278,12 @@ pub(crate) fn emit_collection_loop_arm(
                             let close = &info.close;
                             let sep = &info.separator;
                             let slot_idx = info.slot_idx;
+                            let kv_sep_expr = match &info.key_val_separator {
+                                Some(k) => quote! { Some(#k) },
+                                None => quote! { None },
+                            };
                             lookup_arms.push(quote! {
-                                (#result_src_idx, #rule_idx, #slot_idx) => Some((#close, #sep)),
+                                (#result_src_idx, #rule_idx, #slot_idx) => Some((#close, #sep, #kv_sep_expr)),
                             });
                         }
                     }
@@ -279,8 +295,16 @@ pub(crate) fn emit_collection_loop_arm(
             let rule_idx = rule_i as u16;
             let close = &shape.close;
             let sep = &shape.separator;
+            // Phase 4 #5b (2026-05-12): Class-5 collection rules expose
+            // their pair_separator (populated from
+            // `LangType.collection_kind = Some(Map(...))`). For
+            // List/Bag/Set this is None.
+            let kv_sep_expr = match &shape.pair_separator {
+                Some(k) => quote! { Some(#k) },
+                None => quote! { None },
+            };
             lookup_arms.push(quote! {
-                (#result_src_idx, #rule_idx, 0u8) => Some((#close, #sep)),
+                (#result_src_idx, #rule_idx, 0u8) => Some((#close, #sep, #kv_sep_expr)),
             });
         }
     }
@@ -289,86 +313,170 @@ pub(crate) fn emit_collection_loop_arm(
     }
     quote! {
         {
-            // Lookup (close, sep) for this marker's rule + slot.
-            let lookup: Option<(&'static str, &'static str)> = match (*result_src_idx, *rule_idx, *slot_idx) {
+            // Lookup (close, sep, kv_sep) for this marker's rule + slot.
+            let lookup: Option<(&'static str, &'static str, Option<&'static str>)> = match (*result_src_idx, *rule_idx, *slot_idx) {
                 #(#lookup_arms)*
                 _ => None,
             };
             let token_text = tokens.peek_text(_pos).unwrap_or("");
             match lookup {
-                Some((close, sep)) => {
-                    // Stage 3.16 / Hack #11 (Cluster 1, Mechanism γ,
-                    // 2026-05-05): three-branch Fork over close / sep /
-                    // bare-element. Lex-min over the three branches'
-                    // weights picks the surviving cursor:
-                    //   - close branch: from_cost(0.0, ...) — wins when
-                    //     token_text == close.
-                    //   - sep branch: from_cost(0.0, ...) — wins when
-                    //     token_text == sep (different token from close
-                    //     ⇒ mutually exclusive; on G1-style ambiguous
-                    //     close==sep, source-order picks close first).
-                    //   - bare-element branch: from_cost(SKIP_BIAS, ...)
-                    //     — wins when token_text matches neither close
-                    //     nor sep (G3 future-grammar support: `[a b c]`
-                    //     whitespace-separated lists). Penalized so close
-                    //     and sep branches win when their tokens match.
-                    //
-                    // Branches whose runtime guard fails downstream (e.g.
-                    // close branch when token_text != close means the
-                    // following Unwinding step will diverge from a clean
-                    // close-context) drop via cursor_resolution_check at
-                    // commit_winner time.
-                    let _ = (close, sep);
+                Some((close, sep, kv_sep)) => {
+                    // Phase 4 #5b (2026-05-12): three-phase dispatch
+                    // keyed on kv_phase. For Vec/HashBag/HashSet
+                    // (kv_sep == None), only phase 0 ever runs (the
+                    // walker's parity-driven patch keeps kv_phase=0).
+                    let _ = (close, sep, kv_sep);
                     let element_src_idx = *_element_src_idx;
-                    WpdsStepAction::Fork {
-                        branches: vec![
-                            // BRANCH 1: close — ConsumeAndPop into Unwinding.
-                            mettail_prattail::wpds_walker::ForkBranch {
-                                symbol: StackSymbolV2::category_entry(0),
+                    match *kv_phase {
+                        0u8 => {
+                            // Stage 3.16 / Hack #11 (Cluster 1, Mechanism γ,
+                            // 2026-05-05): three-branch Fork over close / sep /
+                            // bare-element. Lex-min over the three branches'
+                            // weights picks the surviving cursor:
+                            //   - close branch: from_cost(0.0, ...) — wins when
+                            //     token_text == close.
+                            //   - sep branch: from_cost(0.0, ...) — wins when
+                            //     token_text == sep (different token from close
+                            //     ⇒ mutually exclusive; on G1-style ambiguous
+                            //     close==sep, source-order picks close first).
+                            //   - bare-element branch: from_cost(SKIP_BIAS, ...)
+                            //     — wins when token_text matches neither close
+                            //     nor sep (G3 future-grammar support: `[a b c]`
+                            //     whitespace-separated lists). Penalized so close
+                            //     and sep branches win when their tokens match.
+                            //
+                            // Branches whose runtime guard fails downstream (e.g.
+                            // close branch when token_text != close means the
+                            // following Unwinding step will diverge from a clean
+                            // close-context) drop via cursor_resolution_check at
+                            // commit_winner time.
+                            WpdsStepAction::Fork {
+                                branches: vec![
+                                    // BRANCH 1: close — ConsumeAndPop into Unwinding.
+                                    mettail_prattail::wpds_walker::ForkBranch {
+                                        symbol: StackSymbolV2::category_entry(0),
+                                        weight: LexicographicWeight::from_cost(
+                                            0.0, *result_src_idx, *rule_idx,
+                                        ),
+                                        new_state: WpdsState::Unwinding,
+                                        action_kind:
+                                            mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndPop,
+                                    },
+                                    // BRANCH 2: sep — Consume token, return to
+                                    // PrefixDispatch for next element.
+                                    mettail_prattail::wpds_walker::ForkBranch {
+                                        symbol: StackSymbolV2::category_entry(0),
+                                        weight: LexicographicWeight::from_cost(
+                                            0.0, *result_src_idx, *rule_idx,
+                                        ),
+                                        new_state: WpdsState::PrefixDispatch {
+                                            pos: _pos + 1,
+                                            cur_bp: 0,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpds_walker::ForkActionKind::Consume,
+                                    },
+                                    // BRANCH 3: bare-element (G3 support) —
+                                    // Push CategoryEntry(element_src) onto GSS,
+                                    // dispatch element parse without consuming
+                                    // a separator first.
+                                    mettail_prattail::wpds_walker::ForkBranch {
+                                        symbol: StackSymbolV2::category_entry(
+                                            element_src_idx,
+                                        ),
+                                        weight: LexicographicWeight::from_cost(
+                                            mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                                            *result_src_idx, *rule_idx,
+                                        ),
+                                        new_state: WpdsState::PrefixDispatch {
+                                            pos: _pos,
+                                            cur_bp: 0,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                    },
+                                ],
+                                // Each branch's action_kind encodes its own
+                                // consume semantics (or no-consume for Push).
+                                consume_trigger: false,
+                            }
+                        }
+                        1u8 => {
+                            // Phase 4 #5b (2026-05-12): just parsed a key.
+                            // Consume the key/value separator `:` (or
+                            // user-overridden equivalent). On mismatch,
+                            // error — the cursor's collection_stack parity
+                            // is odd, so we MUST consume `:` to proceed.
+                            match kv_sep {
+                                Some(expected_kv_sep) => {
+                                    if token_text == expected_kv_sep {
+                                        WpdsStepAction::Consume {
+                                            weight: LexicographicWeight::from_cost(
+                                                0.0, *result_src_idx, *rule_idx,
+                                            ),
+                                            // Transition to kv_phase=2 to
+                                            // Push the value's CategoryEntry
+                                            // on the next step. We use
+                                            // explicit `2u8` here (not 0):
+                                            // the walker's parity-patch
+                                            // only overrides kv_phase==0,
+                                            // so this `2` survives.
+                                            new_state: WpdsState::CollectionLoop {
+                                                result_src_idx: *result_src_idx,
+                                                rule_idx: *rule_idx,
+                                                element_src_idx: *_element_src_idx,
+                                                outer_bp: *_outer_bp,
+                                                accumulator_id: *_accumulator_id,
+                                                slot_idx: *slot_idx,
+                                                kv_phase: 2u8,
+                                            },
+                                        }
+                                    } else {
+                                        WpdsStepAction::Error(format!(
+                                            "expected key/value separator `{}` after \
+                                             HashMap key at pos {}, found {:?}",
+                                            expected_kv_sep, _pos, token_text,
+                                        ))
+                                    }
+                                }
+                                None => {
+                                    // Defensive: kv_phase=1 reached but
+                                    // slot has no kv_sep — invariant
+                                    // violation (parity-patch should not
+                                    // have set kv_phase=1 for non-HashMap).
+                                    WpdsStepAction::Error(format!(
+                                        "kv_phase=1 reached at (src={}, rule={}, slot={}) \
+                                         but slot has no key/value separator — invariant \
+                                         violation",
+                                        *result_src_idx, *rule_idx, *slot_idx,
+                                    ))
+                                }
+                            }
+                        }
+                        2u8 => {
+                            // Phase 4 #5b (2026-05-12): just consumed `:`.
+                            // Push CategoryEntry(element_src) onto GSS
+                            // and dispatch value parse via PrefixDispatch.
+                            // When the value returns, splice happens in
+                            // apply_pop_body_to_cursor; the next state
+                            // (CollectionLoop with engine-emitted kv_phase=0)
+                            // gets parity-patched to phase 0 since the
+                            // slot's len is now even.
+                            WpdsStepAction::Push {
+                                symbol: StackSymbolV2::category_entry(element_src_idx),
                                 weight: LexicographicWeight::from_cost(
                                     0.0, *result_src_idx, *rule_idx,
-                                ),
-                                new_state: WpdsState::Unwinding,
-                                action_kind:
-                                    mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndPop,
-                            },
-                            // BRANCH 2: sep — Consume token, return to
-                            // PrefixDispatch for next element.
-                            mettail_prattail::wpds_walker::ForkBranch {
-                                symbol: StackSymbolV2::category_entry(0),
-                                weight: LexicographicWeight::from_cost(
-                                    0.0, *result_src_idx, *rule_idx,
-                                ),
-                                new_state: WpdsState::PrefixDispatch {
-                                    pos: _pos + 1,
-                                    cur_bp: 0,
-                                },
-                                action_kind:
-                                    mettail_prattail::wpds_walker::ForkActionKind::Consume,
-                            },
-                            // BRANCH 3: bare-element (G3 support) —
-                            // Push CategoryEntry(element_src) onto GSS,
-                            // dispatch element parse without consuming
-                            // a separator first.
-                            mettail_prattail::wpds_walker::ForkBranch {
-                                symbol: StackSymbolV2::category_entry(
-                                    element_src_idx,
-                                ),
-                                weight: LexicographicWeight::from_cost(
-                                    mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                    *result_src_idx, *rule_idx,
                                 ),
                                 new_state: WpdsState::PrefixDispatch {
                                     pos: _pos,
                                     cur_bp: 0,
                                 },
-                                action_kind:
-                                    mettail_prattail::wpds_walker::ForkActionKind::Push,
-                            },
-                        ],
-                        // Each branch's action_kind encodes its own
-                        // consume semantics (or no-consume for Push).
-                        consume_trigger: false,
+                            }
+                        }
+                        other => WpdsStepAction::Error(format!(
+                            "invalid kv_phase {} at (src={}, rule={}, slot={})",
+                            other, *result_src_idx, *rule_idx, *slot_idx,
+                        )),
                     }
                 }
                 None => WpdsStepAction::Idle,
@@ -565,6 +673,69 @@ fn lookup_element_src_idx(element_cat: &str, categories: &[String]) -> Option<u1
         .iter()
         .position(|c| c == element_cat)
         .map(|i| i as u16)
+}
+
+/// Phase 4 #5b (2026-05-12): emit the body of
+/// `WpdsStepEngine::kv_separator_for_collection`. Returns the per-
+/// (result_src_idx, rule_idx, slot_idx) lookup that yields
+/// `Some(":")` (or user-overridden literal) for HashMap collection
+/// slots and `None` for Vec/HashBag/HashSet slots or unknown tuples.
+///
+/// Used by the walker's `set_cursor_inner_state` to detect HashMap
+/// slots and patch `WpdsState::CollectionLoop.kv_phase` based on
+/// `cursor.collection_stack[acc_id].len()` parity.
+pub(crate) fn emit_kv_separator_for_collection(
+    language: &mettail_ast::language::LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> TokenStream {
+    let mut arms = Vec::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        for (rule_i, rule) in rules.iter().enumerate() {
+            let Some(shape) = classify_collection(rule, language) else {
+                // Class-2 binder rule SimpleCollection slots: emit one
+                // arm per slot keyed on (src, rule, slot_idx) when the
+                // slot's coll_kind is HashMap. The arm yields the
+                // hardcoded `":"` separator (per binder.rs::605-625's
+                // Phase 4 #5 pilot wiring).
+                if let Some(shape) = classify_binder(rule) {
+                    for position in shape.positions.iter() {
+                        if let BinderPosition::ParamParse {
+                            collection: Some(info),
+                            ..
+                        } = position {
+                            if let Some(kv) = &info.key_val_separator {
+                                let result_src_idx = cat_i as u16;
+                                let rule_idx = rule_i as u16;
+                                let slot_idx = info.slot_idx;
+                                arms.push(quote! {
+                                    (#result_src_idx, #rule_idx, #slot_idx) => Some(#kv),
+                                });
+                            }
+                        }
+                    }
+                }
+                continue;
+            };
+            // Class-5 collection rules: single slot at slot_idx=0. Emit
+            // an arm iff this rule is a Map (has pair_separator).
+            if let Some(kv) = &shape.pair_separator {
+                let result_src_idx = cat_i as u16;
+                let rule_idx = rule_i as u16;
+                arms.push(quote! {
+                    (#result_src_idx, #rule_idx, 0u8) => Some(#kv),
+                });
+            }
+        }
+    }
+    if arms.is_empty() {
+        return quote! { None::<&'static str> };
+    }
+    quote! {
+        match (result_src_idx, rule_idx, slot_idx) {
+            #(#arms)*
+            _ => None,
+        }
+    }
 }
 
 /// B9 / Class 2 (2026-05-08): emit a per-rule lookup that returns true

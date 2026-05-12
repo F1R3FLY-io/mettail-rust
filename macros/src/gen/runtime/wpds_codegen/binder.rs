@@ -410,6 +410,32 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                         }
                         _ => return None,
                     },
+                    // Phase 4 #5b (2026-05-12): HashMap(K, V) — the
+                    // parser produces `TypeExpr::Map { key, value }`
+                    // rather than `Collection { coll_type: HashMap, ... }`.
+                    // Lower to SimpleCollection with `coll_kind: HashMap`
+                    // when both K and V are `Base(_)` and equal (mirror
+                    // Class-5's same-element-cat assumption for the
+                    // empty-drain materialization invariant `[k0, v0,
+                    // k1, v1, ...]`).
+                    TypeExpr::Map { key, value } => {
+                        match (key.as_ref(), value.as_ref()) {
+                            (TypeExpr::Base(k_ident), TypeExpr::Base(v_ident))
+                                if k_ident == v_ident =>
+                            {
+                                let elem_cat = k_ident.to_string();
+                                param_cats.push(elem_cat.clone());
+                                param_map.insert(
+                                    name.to_string(),
+                                    ParamKind::SimpleCollection {
+                                        elem_cat,
+                                        coll_kind: CollectionType::HashMap,
+                                    },
+                                );
+                            }
+                            _ => return None,
+                        }
+                    }
                     _ => return None,
                 },
                 TermParam::Abstraction { binder, body, ty } => {

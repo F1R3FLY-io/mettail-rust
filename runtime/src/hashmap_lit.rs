@@ -118,6 +118,19 @@ impl<K, V> HashMapLit<K, V> {
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.0.values()
     }
+
+    /// Phase 4 #5b (2026-05-12): consume the map and return the inner
+    /// `IndexMap`. Used by codegen sites (iterative_drop, iterative_clone,
+    /// etc.) that need to walk the entries by value — `IndexMap` implements
+    /// `IntoIterator<Item = (K, V)>` but `HashMapLit` (the newtype) does
+    /// not implement it directly (manual impl would conflict with future
+    /// `&HashMapLit` impls and would add a public API surface that's
+    /// hard to evolve). Exposing the inner map gives callers the iterator
+    /// without committing the wrapper to `IntoIterator`.
+    #[inline]
+    pub fn into_inner(self) -> indexmap::IndexMap<K, V, FxBuildHasher> {
+        self.0
+    }
 }
 
 impl<K: Ord + Eq + Hash, V: Ord> PartialOrd for HashMapLit<K, V> {

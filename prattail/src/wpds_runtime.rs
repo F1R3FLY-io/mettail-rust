@@ -361,6 +361,27 @@ pub enum WpdsState {
         /// `emit_collection_loop_arm` to disambiguate sibling slots
         /// within the same rule.
         slot_idx: u8,
+        /// Phase 4 #5b (2026-05-12): key/value dispatch phase for
+        /// HashMap collections. Three values:
+        /// - `0`: outer dispatch — 3-branch Fork (close / inter-pair-sep
+        ///   / first-key element). Vec/HashBag/HashSet always stay at
+        ///   `0`. For HashMap, also the state after a value parses
+        ///   (the pair is complete; expect close or `,`).
+        /// - `1`: just parsed a key (HashMap only); expect the
+        ///   key/value separator `:`. Single-arm Consume → `kv_phase: 2`.
+        /// - `2`: just consumed `:` (HashMap only); Push CategoryEntry
+        ///   for the value parse → PrefixDispatch. After the value
+        ///   returns, walker restores `kv_phase: 0` based on the
+        ///   slot's collection_stack parity.
+        ///
+        /// For non-HashMap slots, `kv_phase` is always `0` and the
+        /// dispatch is identical to pre-Phase-4-#5b behavior.
+        ///
+        /// The walker patches `kv_phase` on every transition into
+        /// `CollectionLoop` based on `cursor.collection_stack[acc_id].len()`
+        /// parity AND the per-slot `kv_separator_for_collection`
+        /// engine query — keeping the engine's `step` function pure.
+        kv_phase: u8,
     },
     /// B7 (2-token open delimiter): after the prefix arm consumed the
     /// open keyword (e.g. `"list"`) and pushed the `CollectionMarker`,
@@ -1860,6 +1881,15 @@ impl SemanticBuilder {
     /// the `BuilderDelta::FinalizeCollection` replay invariant check.
     pub fn collection_stack_len(&self) -> usize {
         self.collection_stack.len()
+    }
+
+    /// Phase 4 #5b (2026-05-12): per-slot length accessor used by the
+    /// walker's `set_cursor_inner_state` to compute `kv_phase` parity
+    /// for HashMap collection slots in Lazy mode. Returns 0 if the
+    /// `acc_id` is out of range (defensive — should not happen under
+    /// correct push/pop pairing).
+    pub fn collection_slot_len(&self, acc_id: usize) -> usize {
+        self.collection_stack.get(acc_id).map(|s| s.len()).unwrap_or(0)
     }
 
     /// Stage 3.16 / Hack #7 walker fix (Mechanism γ closure, 2026-05-05) —

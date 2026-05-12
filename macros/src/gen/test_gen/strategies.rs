@@ -927,13 +927,31 @@ fn generate_direct_recursive_build(
                     let coll_type = field.coll_type.as_ref()
                         .unwrap_or_else(|| panic!("collection field of category `{}` missing coll_type in language! spec", field.category));
                     match coll_type {
-                        mettail_ast::types::CollectionType::HashBag | mettail_ast::types::CollectionType::HashMap => {
+                        mettail_ast::types::CollectionType::HashBag => {
                             code.push_str(&format!(
                                 "            let f{i} = if reader.next_byte() & 1 == 0 {{ None }} else {{\n\
                                                  let num_elems = (reader.next_byte() % 4) as usize;\n\
                                                  let mut bag = mettail_runtime::HashBag::new();\n\
                                                  for _ in 0..num_elems {{ bag.insert(build_{fc}_from_tape(reader, child_depth)); }}\n\
                                                  Some(bag)\n\
+                                             }};\n",
+                                i = i,
+                                fc = field_cat_lower,
+                            ));
+                            field_exprs.push(format!("f{}", i));
+                        }
+                        // Phase 4 #5b (2026-05-12): Optional-HashMap.
+                        mettail_ast::types::CollectionType::HashMap => {
+                            code.push_str(&format!(
+                                "            let f{i} = if reader.next_byte() & 1 == 0 {{ None }} else {{\n\
+                                                 let num_elems = (reader.next_byte() % 4) as usize;\n\
+                                                 let mut m = mettail_runtime::HashMapLit::default();\n\
+                                                 for _ in 0..num_elems {{\n\
+                                                     let k = build_{fc}_from_tape(reader, child_depth);\n\
+                                                     let v = build_{fc}_from_tape(reader, child_depth);\n\
+                                                     m.insert(k, v);\n\
+                                                 }}\n\
+                                                 Some(m)\n\
                                              }};\n",
                                 i = i,
                                 fc = field_cat_lower,
@@ -973,12 +991,29 @@ fn generate_direct_recursive_build(
                     let coll_type = field.coll_type.as_ref()
                         .unwrap_or_else(|| panic!("collection field of category `{}` missing coll_type in language! spec", field.category));
                     match coll_type {
-                        mettail_ast::types::CollectionType::HashBag | mettail_ast::types::CollectionType::HashMap => {
+                        mettail_ast::types::CollectionType::HashBag => {
                             code.push_str(&format!(
                                 "            let num_elems_{i} = (reader.next_byte() % 4) as usize;\n\
                                              let mut coll_{i} = mettail_runtime::HashBag::new();\n\
                                              for _ in 0..num_elems_{i} {{\n\
                                                  coll_{i}.insert(build_{fc}_from_tape(reader, child_depth));\n\
+                                             }}\n",
+                                i = i,
+                                fc = field_cat_lower,
+                            ));
+                            field_exprs.push(format!("coll_{}", i));
+                        }
+                        // Phase 4 #5b (2026-05-12): HashMap binder field —
+                        // tape-driven construction produces `HashMapLit::default()`,
+                        // then inserts pairs (each key + value from tape).
+                        mettail_ast::types::CollectionType::HashMap => {
+                            code.push_str(&format!(
+                                "            let num_elems_{i} = (reader.next_byte() % 4) as usize;\n\
+                                             let mut coll_{i} = mettail_runtime::HashMapLit::default();\n\
+                                             for _ in 0..num_elems_{i} {{\n\
+                                                 let k = build_{fc}_from_tape(reader, child_depth);\n\
+                                                 let v = build_{fc}_from_tape(reader, child_depth);\n\
+                                                 coll_{i}.insert(k, v);\n\
                                              }}\n",
                                 i = i,
                                 fc = field_cat_lower,

@@ -479,9 +479,16 @@ fn emit_reg_field_decl(i: usize, field: &FieldInfo) -> TokenStream {
         let start_name = format_ident!("f{}_start", i);
         let count_name = format_ident!("f{}_count", i);
         match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-            CollectionType::HashBag | CollectionType::HashMap => {
+            CollectionType::HashBag => {
                 let counts_name = format_ident!("f{}_counts", i);
                 quote! { #start_name: usize, #count_name: usize, #counts_name: Vec<usize> }
+            }
+            // Phase 4 #5b (2026-05-12): HashMap stores 2*N slots (K, V, K,
+            // V, ...) per the matching alloc/push in
+            // `emit_collection_field_alloc`. Same decl shape as Vec —
+            // start + count (count = entry count, not slot count).
+            CollectionType::HashMap => {
+                quote! { #start_name: usize, #count_name: usize }
             }
             _ => quote! { #start_name: usize, #count_name: usize },
         }
@@ -514,9 +521,13 @@ fn emit_pre_field_decl_list(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> 
                 let start_name = format_ident!("pf{}_start", i);
                 let count_name = format_ident!("pf{}_count", i);
                 match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                    CollectionType::HashBag | CollectionType::HashMap => {
+                    CollectionType::HashBag => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! { #start_name: usize, #count_name: usize, #counts_name: Vec<usize> }
+                    }
+                    // Phase 4 #5b (2026-05-12): HashMap stores 2*N slots.
+                    CollectionType::HashMap => {
+                        quote! { #start_name: usize, #count_name: usize }
                     }
                     _ => quote! { #start_name: usize, #count_name: usize },
                 }
@@ -874,7 +885,7 @@ fn emit_collection_field_alloc(
     let visit_task = format_ident!("Visit{}", field.category);
 
     match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-        CollectionType::HashBag | CollectionType::HashMap => {
+        CollectionType::HashBag => {
             let counts_name = format_ident!("f{}_counts", i);
             alloc_stmts.push(quote! {
                 let #start_name = results.len();
@@ -894,6 +905,42 @@ fn emit_collection_field_alloc(
                 }
             });
             assemble_fields.push(quote! { #start_name, #count_name, #counts_name });
+        }
+        CollectionType::HashMap => {
+            // Phase 4 #5b (2026-05-12): HashMap field — HashMapLit's
+            // `iter` yields `(&K, &V)`, not `(&T, usize)` (which HashBag
+            // yields). The Phase 4 #5 pilot left this codepath broken
+            // for non-empty HashMaps (drains of length 0 trivially
+            // matched). With Phase 4 #5b's walker support populating
+            // pairs end-to-end, we materialize a Vec slot per BOTH key
+            // AND value (one Visit per entry, flattened K then V), then
+            // reconstruct via the AssembleReg arm reading 2 results per
+            // entry. Since K and V share the SAME category (per the
+            // K==V invariant `classify_binder` enforces), one
+            // visit_task variant suffices.
+            alloc_stmts.push(quote! {
+                let #start_name = results.len();
+                for _ in 0..#name.len() {
+                    results.push(None); // k slot
+                    results.push(None); // v slot
+                }
+                let #count_name = #name.len();
+            });
+            push_stmts.push(quote! {
+                for (entry_idx, (k, v)) in #name.iter().enumerate() {
+                    let k_slot = #start_name + entry_idx * 2;
+                    let v_slot = #start_name + entry_idx * 2 + 1;
+                    stack.push(NormTask::#visit_task {
+                        src: k as *const _,
+                        slot: k_slot,
+                    });
+                    stack.push(NormTask::#visit_task {
+                        src: v as *const _,
+                        slot: v_slot,
+                    });
+                }
+            });
+            assemble_fields.push(quote! { #start_name, #count_name });
         }
         CollectionType::Vec => {
             alloc_stmts.push(quote! {
@@ -1444,9 +1491,12 @@ fn generate_regular_assemble_arm(
             pat_flat.push(quote! { #count_name });
             decl_flat.push(quote! { #count_name: usize });
             call_flat.push(quote! { #count_name });
+            // Phase 4 #5b (2026-05-12): HashBag carries `counts` Vec
+            // (multiplicities); HashMap does NOT (entries stored as
+            // 2*N flat slots). Distinguish.
             if matches!(
                 field.coll_type.as_ref().unwrap_or(&CollectionType::Vec),
-                CollectionType::HashBag | CollectionType::HashMap
+                CollectionType::HashBag
             ) {
                 let counts_name = format_ident!("f{}_counts", i);
                 pat_flat.push(quote! { #counts_name });
@@ -1521,10 +1571,12 @@ fn emit_reg_slot_pattern(i: usize, field: &FieldInfo) -> TokenStream {
         let start_name = format_ident!("f{}_start", i);
         let count_name = format_ident!("f{}_count", i);
         match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-            CollectionType::HashBag | CollectionType::HashMap => {
+            CollectionType::HashBag => {
                 let counts_name = format_ident!("f{}_counts", i);
                 quote! { #start_name, #count_name, #counts_name }
             }
+            // Phase 4 #5b (2026-05-12): HashMap matches the Vec shape
+            // (start + count) since entries are flattened 2*N slots.
             _ => quote! { #start_name, #count_name },
         }
     } else {
@@ -1572,7 +1624,7 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
         let start_name = format_ident!("f{}_start", i);
         let count_name = format_ident!("f{}_count", i);
         return match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-            CollectionType::HashBag | CollectionType::HashMap => {
+            CollectionType::HashBag => {
                 let counts_name = format_ident!("f{}_counts", i);
                 let helper_name = format_ident!("insert_into_{}", "placeholder");
                 let _ = helper_name;
@@ -1590,6 +1642,32 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
                             AnyNormalizedTerm::#wrap(v) => #result_ident.insert_n(v, *count),
                             _ => unreachable!("normalize: wrong category in collection slot"),
                         }
+                    }
+                }
+            }
+            // Phase 4 #5b (2026-05-12): HashMap — 2*N flat slots laid
+            // out as (k0, v0, k1, v1, ...) per `emit_collection_field_alloc`.
+            // Reconstruct entries by zipping consecutive pairs.
+            CollectionType::HashMap => {
+                quote! {
+                    let mut #result_ident =
+                        mettail_runtime::HashMapLit::default();
+                    for entry_idx in 0..#count_name {
+                        let k_slot = #start_name + entry_idx * 2;
+                        let v_slot = #start_name + entry_idx * 2 + 1;
+                        let k = match results[k_slot].take()
+                            .expect("normalize: missing hashmap key")
+                        {
+                            AnyNormalizedTerm::#wrap(v) => v,
+                            _ => unreachable!("normalize: wrong category in hashmap k slot"),
+                        };
+                        let v = match results[v_slot].take()
+                            .expect("normalize: missing hashmap value")
+                        {
+                            AnyNormalizedTerm::#wrap(v) => v,
+                            _ => unreachable!("normalize: wrong category in hashmap v slot"),
+                        };
+                        #result_ident.insert(k, v);
                     }
                 }
             }

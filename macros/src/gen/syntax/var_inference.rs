@@ -268,6 +268,12 @@ enum InferFieldKind {
     Simple,      // Regular field
     HashBag,     // HashBag collection (iter returns (&T, usize))
     Vec,         // Vec collection (iter returns &T)
+    /// Phase 4 #5b (2026-05-12): HashMap collection. `iter()` returns
+    /// `(&K, &V)`. Inference must visit BOTH k and v (each may
+    /// contain free variables). For the Phase 4 #5b empty-only pilot
+    /// invariant `K == V`, both are the same category, so the recursive
+    /// call yields the same result type whether invoked on k or v.
+    HashMap,
     Binder,      // Scope with single binder
     MultiBinder, // Scope with multiple binders
 }
@@ -313,6 +319,9 @@ fn collect_inference_fields(
                         TypeExpr::Collection { coll_type: CollectionType::HashSet, .. } => {
                             InferFieldKind::Vec
                         }
+                        // Phase 4 #5b (2026-05-12): HashMap(K, V).
+                        TypeExpr::Collection { coll_type: CollectionType::HashMap, .. }
+                        | TypeExpr::Map { .. } => InferFieldKind::HashMap,
                         _ => InferFieldKind::Simple,
                     };
                     let name = syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
@@ -547,6 +556,18 @@ fn generate_var_inference_arm(
                         }
                     }
                 },
+                // Phase 4 #5b (2026-05-12): HashMap iter yields (&K, &V) —
+                // probe both since either side may carry a free variable.
+                InferFieldKind::HashMap => quote! {
+                    for (k, v) in __v.iter() {
+                        if let Some(cat) = k.infer_var_category(var_name) {
+                            return Some(cat);
+                        }
+                        if let Some(cat) = v.infer_var_category(var_name) {
+                            return Some(cat);
+                        }
+                    }
+                },
                 InferFieldKind::Binder | InferFieldKind::MultiBinder => quote! {
                     if let Some(cat) = __v.unsafe_body().infer_var_category(var_name) {
                         return Some(cat);
@@ -741,6 +762,18 @@ fn generate_var_type_inference_arm(
                 InferFieldKind::Vec => quote! {
                     for item in __v.iter() {
                         if let Some(t) = item.infer_var_type(var_name) {
+                            return Some(t);
+                        }
+                    }
+                },
+                // Phase 4 #5b (2026-05-12): HashMap iter yields (&K, &V) —
+                // probe both since either side may carry a free variable.
+                InferFieldKind::HashMap => quote! {
+                    for (k, v) in __v.iter() {
+                        if let Some(t) = k.infer_var_type(var_name) {
+                            return Some(t);
+                        }
+                        if let Some(t) = v.infer_var_type(var_name) {
                             return Some(t);
                         }
                     }

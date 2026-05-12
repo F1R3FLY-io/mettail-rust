@@ -747,12 +747,19 @@ fn convert_pattern_op(
                         separator: separator.clone(),
                     });
                 } else {
-                    let (elem_cat, kind) = find_collection_info(&coll_name, context);
+                    // Phase 4 #5b (2026-05-12): propagate the per-slot
+                    // kv_separator from the param's type. HashMap binder
+                    // slots emit `Some(":")` (or user-overridden), Vec/
+                    // HashBag/HashSet emit `None`. This populates the
+                    // lexer's terminal set via `collect_terminals_recursive`
+                    // in `pipeline.rs:4263-4296` so the `:` token is
+                    // recognized by the lexer.
+                    let (elem_cat, kind, kv) = find_collection_info(&coll_name, context);
                     items.push(SyntaxItemSpec::Collection {
                         param_name: coll_name,
                         element_category: elem_cat,
                         separator: separator.clone(),
-                        key_val_separator: None,
+                        key_val_separator: kv,
                         kind,
                     });
                 }
@@ -1020,8 +1027,18 @@ fn extract_binder_category(ty: &TypeExpr) -> String {
     }
 }
 
-/// Find collection info (element category and kind) from term context.
-fn find_collection_info(name: &str, context: &[TermParam]) -> (String, CollectionKind) {
+/// Find collection info (element category, kind, and optional kv_separator)
+/// from term context.
+///
+/// Phase 4 #5b (2026-05-12): also returns the optional key/value separator
+/// for HashMap collection slots. For Vec/HashBag/HashSet, the kv_separator
+/// is `None`. For HashMap (whether parsed as `TypeExpr::Collection {
+/// coll_type: HashMap, ... }` or `TypeExpr::Map { ... }`), the kv_separator
+/// defaults to `":"` (the language! `map_defaults`).
+fn find_collection_info(
+    name: &str,
+    context: &[TermParam],
+) -> (String, CollectionKind, Option<String>) {
     for param in context {
         if let TermParam::Simple { name: n, ty, .. } = param {
             if n.to_string() == name {
@@ -1032,14 +1049,23 @@ fn find_collection_info(name: &str, context: &[TermParam]) -> (String, Collectio
                         CollectionType::HashSet => CollectionKind::HashSet,
                         CollectionType::Vec => CollectionKind::Vec,
                     };
-                    return (elem_cat, kind);
+                    let kv = match coll_type {
+                        CollectionType::HashMap => Some(":".to_string()),
+                        _ => None,
+                    };
+                    return (elem_cat, kind, kv);
+                }
+                if let TypeExpr::Map { value, .. } = ty {
+                    // Phase 4 #5b (2026-05-12): `HashMap(K, V)` Map type.
+                    let elem_cat = extract_base_category(value);
+                    return (elem_cat, CollectionKind::HashBag, Some(":".to_string()));
                 }
             }
         }
     }
 
     // Fallback: unknown element type
-    ("Unknown".to_string(), CollectionKind::Vec)
+    ("Unknown".to_string(), CollectionKind::Vec, None)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

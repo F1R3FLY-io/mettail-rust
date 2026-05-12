@@ -197,10 +197,12 @@ fn generate_assemble_variant(
                         let start_name = format_ident!("f{}_start", i);
                         let count_name = format_ident!("f{}_count", i);
                         match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                            CollectionType::HashBag | CollectionType::HashMap => {
+                            CollectionType::HashBag => {
                                 let counts_name = format_ident!("f{}_counts", i);
                                 quote! { #start_name: usize, #count_name: usize, #counts_name: Vec<usize> }
                             }
+                            // Phase 4 #5b (2026-05-12): HashMap matches the
+                            // Vec shape (start + count) — no counts vec.
                             _ => {
                                 quote! { #start_name: usize, #count_name: usize }
                             }
@@ -536,7 +538,7 @@ fn generate_regular_clone_arm(
             let count_name = format_ident!("f{}_count", i);
 
             match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                CollectionType::HashBag | CollectionType::HashMap => {
+                CollectionType::HashBag => {
                     let counts_name = format_ident!("f{}_counts", i);
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -556,6 +558,32 @@ fn generate_regular_clone_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name, #counts_name });
+                }
+                // Phase 4 #5b (2026-05-12): HashMap stores 2*N flat slots.
+                CollectionType::HashMap => {
+                    alloc_stmts.push(quote! {
+                        let #start_name = results.len();
+                        for _ in 0..#name.len() {
+                            results.push(None); // k slot
+                            results.push(None); // v slot
+                        }
+                        let #count_name = #name.len();
+                    });
+                    push_stmts.push(quote! {
+                        for (entry_idx, (k, v)) in #name.iter().enumerate() {
+                            let k_slot = #start_name + entry_idx * 2;
+                            let v_slot = #start_name + entry_idx * 2 + 1;
+                            stack.push(CloneTask::#clone_task {
+                                src: k as *const _,
+                                slot: k_slot,
+                            });
+                            stack.push(CloneTask::#clone_task {
+                                src: v as *const _,
+                                slot: v_slot,
+                            });
+                        }
+                    });
+                    assemble_fields.push(quote! { #start_name, #count_name });
                 }
                 CollectionType::Vec => {
                     alloc_stmts.push(quote! {
@@ -1066,9 +1094,10 @@ fn generate_regular_assemble_arm(
             field_pat_names.push(quote! { #count_name });
             helper_arg_decls.push(quote! { #count_name: usize });
             helper_arg_names.push(quote! { #count_name });
+            // Phase 4 #5b (2026-05-12): only HashBag carries `counts` Vec.
             if matches!(
                 field.coll_type.as_ref().unwrap_or(&CollectionType::Vec),
-                CollectionType::HashBag | CollectionType::HashMap
+                CollectionType::HashBag
             ) {
                 let counts_name = format_ident!("f{}_counts", i);
                 field_pat_names.push(quote! { #counts_name });
@@ -1117,7 +1146,7 @@ fn generate_regular_assemble_arm(
                 let result_ident = format_ident!("field_{}", i);
 
                 match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                    CollectionType::HashBag | CollectionType::HashMap => {
+                    CollectionType::HashBag => {
                         let counts_name = format_ident!("f{}_counts", i);
                         quote! {
                             let mut #result_ident = mettail_runtime::HashBag::new();
@@ -1126,6 +1155,34 @@ fn generate_regular_assemble_arm(
                                     AnyClonedTerm::#wrap(v) => #result_ident.insert_n(v, *count),
                                     _ => unreachable!("iterative clone: wrong category in collection slot"),
                                 }
+                            }
+                        }
+                    }
+                    // Phase 4 #5b (2026-05-12): HashMap — 2*N flat slots.
+                    CollectionType::HashMap => {
+                        quote! {
+                            let mut #result_ident =
+                                mettail_runtime::HashMapLit::default();
+                            for entry_idx in 0..#count_name {
+                                let k_slot = #start_name + entry_idx * 2;
+                                let v_slot = #start_name + entry_idx * 2 + 1;
+                                let k = match results[k_slot].take()
+                                    .expect("iterative clone: missing hashmap key")
+                                {
+                                    AnyClonedTerm::#wrap(v) => v,
+                                    _ => unreachable!(
+                                        "iterative clone: wrong category in hashmap k slot"
+                                    ),
+                                };
+                                let v = match results[v_slot].take()
+                                    .expect("iterative clone: missing hashmap value")
+                                {
+                                    AnyClonedTerm::#wrap(v) => v,
+                                    _ => unreachable!(
+                                        "iterative clone: wrong category in hashmap v slot"
+                                    ),
+                                };
+                                #result_ident.insert(k, v);
                             }
                         }
                     }

@@ -397,12 +397,29 @@ fn generate_regular_push_arm(
                             }
                         }
                     }
-                    CollectionType::HashBag | CollectionType::HashMap => {
+                    CollectionType::HashBag => {
                         quote! {
                             for (elem, count) in std::mem::take(#name).into_iter() {
                                 // Each element in a HashBag is unique; count is multiplicity.
                                 // We only need to drop each unique element once.
                                 stack.push(DropTask::#task_variant(elem));
+                            }
+                        }
+                    }
+                    CollectionType::HashMap => {
+                        // Phase 4 #5b (2026-05-12): HashMap field — HashMapLit
+                        // is a key-value store, not a multiset. `take` swaps
+                        // the field with a fresh empty HashMapLit (via
+                        // `mem::take` + `HashMapLit::default()` provided
+                        // by the Default impl). The drained map's entries
+                        // are (key, value) pairs of the SAME `category`
+                        // (per the K==V invariant). Push DropTask per key
+                        // AND per value so both reach drop.
+                        quote! {
+                            let __taken = std::mem::take(#name);
+                            for (k, v) in __taken.into_inner().into_iter() {
+                                stack.push(DropTask::#task_variant(k));
+                                stack.push(DropTask::#task_variant(v));
                             }
                         }
                     }

@@ -1102,6 +1102,29 @@ pub fn convert_term_context_to_items(
                             delimiters: None,
                         });
                     }
+                } else if let TypeExpr::Map { key, value } = ty {
+                    // Phase 4 #5b (2026-05-12): `HashMap(K, V)` Map type
+                    // in a Class-2 binder slot. The downstream codegen
+                    // (term_gen/random.rs) checks `rule.items` for
+                    // `GrammarItem::Collection` to decide whether a rule
+                    // has a collection field; without this case it would
+                    // miss HashMap slots and emit a variant constructor
+                    // with the wrong arity. Lower to
+                    // `GrammarItem::Collection { coll_type: HashMap,
+                    // element_type: value }` mirroring the K==V invariant
+                    // enforced by `classify_binder`.
+                    if let (TypeExpr::Base(k_name), TypeExpr::Base(v_name)) =
+                        (key.as_ref(), value.as_ref())
+                    {
+                        if k_name == v_name {
+                            items.push(GrammarItem::Collection {
+                                coll_type: CollectionType::HashMap,
+                                element_type: v_name.clone(),
+                                separator: ",".to_string(),
+                                delimiters: None,
+                            });
+                        }
+                    }
                 }
             },
             TermParam::Abstraction { ty, .. } => {
@@ -1174,6 +1197,27 @@ pub fn convert_term_context_to_items(
                                             separator: "|".to_string(),
                                             delimiters: None,
                                         });
+                                    }
+                                } else if let TypeExpr::Map { key, value } = ty {
+                                    // Phase 4 #5b (2026-05-12): HashMap(K, V)
+                                    // inside *opt(...). Mirror the outer
+                                    // Simple-param handling: lower to
+                                    // GrammarItem::Collection {
+                                    // coll_type: HashMap, element_type: V }
+                                    // when K == V.
+                                    if let (
+                                        TypeExpr::Base(k_name),
+                                        TypeExpr::Base(v_name),
+                                    ) = (key.as_ref(), value.as_ref())
+                                    {
+                                        if k_name == v_name {
+                                            items.push(GrammarItem::Collection {
+                                                coll_type: CollectionType::HashMap,
+                                                element_type: v_name.clone(),
+                                                separator: ",".to_string(),
+                                                delimiters: None,
+                                            });
+                                        }
                                     }
                                 }
                             },

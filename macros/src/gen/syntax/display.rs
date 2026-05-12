@@ -1439,9 +1439,15 @@ fn generate_engine_pattern_op(
                 // unconditional (item, count) iteration assumed HashBag,
                 // breaking Class-5 Vec collections AND Class-2 binder-rule
                 // Vec collection slots (the smoke test's `qs:Vec(Proc)`).
+                // Phase 4 #5b (2026-05-12): also recognize `TypeExpr::Map`
+                // (`HashMap(K, V)` form) — `parse_type_atom` lowers
+                // `HashMap(K, V)` to `TypeExpr::Map` rather than
+                // `TypeExpr::Collection { coll_type: HashMap, ... }`.
                 let coll_kind = param_types.get(&coll_name).and_then(|ty| {
                     if let TypeExpr::Collection { coll_type, .. } = ty {
                         Some(coll_type.clone())
+                    } else if let TypeExpr::Map { .. } = ty {
+                        Some(mettail_ast::types::CollectionType::HashMap)
                     } else {
                         None
                     }
@@ -1461,8 +1467,9 @@ fn generate_engine_pattern_op(
                         parts.sort();
                     },
                     Some(mettail_ast::types::CollectionType::HashMap) => quote! {
-                        // HashMap: pair-wise iteration — defensive; pilot
-                        // grammars do not exercise HashMap-in-binder.
+                        // HashMap: pair-wise iteration with `:` between
+                        // K and V — matches the parse-side `:` consumption
+                        // in walker phase 1 (`emit_collection_loop_arm`).
                         for (k, v) in #coll_ident.iter() {
                             parts.push(format!("{} : {}", k, v));
                         }
@@ -1636,9 +1643,13 @@ fn generate_engine_pattern_op(
                             let inner_var = quote::format_ident!("__opt_{}", collection);
                             let coll_name = collection.to_string();
                             let sep_with_spaces = format!(" {} ", separator);
+                            // Phase 4 #5b (2026-05-12): also recognize
+                            // `TypeExpr::Map` (HashMap(K, V) form).
                             let coll_kind = param_types.get(&coll_name).and_then(|ty| {
                                 if let TypeExpr::Collection { coll_type, .. } = ty {
                                     Some(coll_type.clone())
+                                } else if let TypeExpr::Map { .. } = ty {
+                                    Some(mettail_ast::types::CollectionType::HashMap)
                                 } else {
                                     None
                                 }

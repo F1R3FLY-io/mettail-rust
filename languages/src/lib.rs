@@ -11,6 +11,7 @@
 
 pub mod ambient;
 pub mod calculator;
+pub mod class2hashmapsmoke;
 pub mod class2multi;
 pub mod class2optsmoke;
 pub mod class2smoke;

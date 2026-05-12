@@ -68,6 +68,11 @@ pub(crate) fn emit_engine_impl_full(
     // lookup used by InfixLoop's CollectionMarker filter.
     let collection_close_sep_lookup =
         super::collection::emit_collection_close_sep_lookup(language, per_cat);
+    // Phase 4 #5b (2026-05-12): per-(src, rule, slot_idx) lookup for
+    // HashMap collection slots' key/value separator. Yields the body
+    // of `kv_separator_for_collection` (returns `Option<&'static str>`).
+    let kv_separator_for_collection_lookup =
+        super::collection::emit_kv_separator_for_collection(language, per_cat);
     let collection_element_src_lookup =
         super::collection::emit_collection_element_src_lookup(language, categories, per_cat);
     // B9 / Class 2 (2026-05-08): per-rule lookup for Class-2 binder rules'
@@ -513,6 +518,16 @@ pub(crate) fn emit_engine_impl_full(
                                         #collection_element_src_lookup
                                     };
                                     let element_src_idx = element_src_lookup.unwrap_or(result_src_idx);
+                                    // Phase 4 #5b (2026-05-12): emit
+                                    // `kv_phase: 0` as the default; the
+                                    // walker's `set_cursor_inner_state`
+                                    // patches it to 1 (key just parsed)
+                                    // for HashMap slots whose cursor
+                                    // collection_stack[acc_id].len() is
+                                    // odd. For non-HashMap slots, this
+                                    // 0 survives and dispatch routes
+                                    // through the existing 3-branch
+                                    // Fork (close / sep / bare-element).
                                     WpdsStepAction::Advance(WpdsState::CollectionLoop {
                                         result_src_idx,
                                         rule_idx,
@@ -520,6 +535,7 @@ pub(crate) fn emit_engine_impl_full(
                                         outer_bp: 0,
                                         accumulator_id,
                                         slot_idx,
+                                        kv_phase: 0u8,
                                     })
                                 }
                                 mettail_prattail::wpds_runtime::SymbolKind::RuleAt(position) => {
@@ -1004,11 +1020,14 @@ pub(crate) fn emit_engine_impl_full(
                         outer_bp: _outer_bp,
                         accumulator_id: _accumulator_id,
                         slot_idx,
+                        kv_phase,
                     } => {
                         // Phase 4: dispatch on close / sep / element.
                         // Phase 4 #1.B (2026-05-11): slot_idx in scope
                         // for 3-tuple-keyed (close, sep) lookup in
                         // `emit_collection_loop_arm`.
+                        // Phase 4 #5b (2026-05-12): kv_phase in scope
+                        // for HashMap 3-phase dispatch.
                         #collection_loop_body
                     }
                     WpdsState::MixfixContinuation {
@@ -1373,6 +1392,22 @@ pub(crate) fn emit_engine_impl_full(
                 // belongs to a Class 3 inner walk (not a genuine
                 // *opt(...) OptionalGroup).
                 #is_class3_inner_marker_lookup
+            }
+
+            fn kv_separator_for_collection(
+                &self,
+                result_src_idx: u16,
+                rule_idx: u16,
+                slot_idx: u8,
+            ) -> Option<&'static str> {
+                // Phase 4 #5b (2026-05-12): per-(src, rule, slot_idx)
+                // lookup. Returns `Some(":")` (or user-overridden
+                // literal) for HashMap collection slots and `None`
+                // for Vec/HashBag/HashSet slots or unknown tuples.
+                // Consumed by the walker's `set_cursor_inner_state`
+                // to patch `WpdsState::CollectionLoop.kv_phase` from
+                // cursor.collection_stack[acc_id].len() parity.
+                #kv_separator_for_collection_lookup
             }
         }
     }

@@ -567,9 +567,19 @@ fn type_expr_to_field_type(
             // Refinement type: delegate to the base type
             type_expr_to_field_type(base, language_category)
         },
-        TypeExpr::Map { value, .. } => {
-            // Map type: delegate to the value element type for field purposes
-            type_expr_to_field_type(value, language_category)
+        TypeExpr::Map { key, value } => {
+            // Phase 4 #5b (2026-05-12): Map binder slot. Lower to
+            // `HashMapLit<K, V>` for consistency with the action body's
+            // CollectionDrain materialization (which produces a
+            // `HashMapLit<elem, elem>` per binder.rs::3072-3090). The
+            // prior behavior — `type_expr_to_field_type(value)` →
+            // `Box<#value>` for `Base` value — was incorrect: it
+            // produced a Box<Proc> field that did not match the
+            // materialized HashMapLit container, causing a type
+            // mismatch at variant construction.
+            let k = type_expr_to_rust_type(key);
+            let v = type_expr_to_rust_type(value);
+            quote! { mettail_runtime::HashMapLit<#k, #v> }
         },
     }
 }

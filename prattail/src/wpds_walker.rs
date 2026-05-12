@@ -165,6 +165,32 @@ pub trait WpdsStepEngine<W: Semiring> {
         let _ = (src_idx, rule_idx, sub_pos);
         false
     }
+
+    /// Phase 4 #5b (2026-05-12): per-(src, rule, slot_idx) lookup that
+    /// returns the key/value separator literal for HashMap collection
+    /// slots, or `None` for Vec/HashBag/HashSet slots and unknown
+    /// (src, rule, slot) tuples.
+    ///
+    /// When `Some(_)`, the walker patches `WpdsState::CollectionLoop.kv_phase`
+    /// at transition time based on `cursor.collection_stack[acc_id].len()`
+    /// parity:
+    /// - len % 2 == 1 (odd, just parsed a key) → `kv_phase = 1` (expect `:`)
+    /// - len % 2 == 0 (even, just parsed a value pair, or initial) →
+    ///   `kv_phase = 0` (expect close or inter-pair separator)
+    ///
+    /// When `None`, `kv_phase` stays at `0` (the engine's emitted default).
+    ///
+    /// Default returns `None` for backward compatibility with engines that
+    /// don't expose HashMap binder collection slots.
+    fn kv_separator_for_collection(
+        &self,
+        result_src_idx: u16,
+        rule_idx: u16,
+        slot_idx: u8,
+    ) -> Option<&'static str> {
+        let _ = (result_src_idx, rule_idx, slot_idx);
+        None
+    }
 }
 
 /// One step of action returned by a [`WpdsStepEngine`].
@@ -1116,6 +1142,25 @@ struct ConfigKey {
     /// requires same stack word, which the GSS dedup obscures at the
     /// tip).
     incoming_edge: Option<crate::gss::GssEdgeId>,
+    /// Phase 4 #5b (2026-05-12): collection-stack depth. Two cursors
+    /// at the same `(state, node, pos, incoming_edge)` but different
+    /// `collection_stack.len()` represent DISTINCT operational states
+    /// — one has opened more inner collection slots than the other.
+    /// Merging them would violate the
+    /// `debug_assert_eq!(merged[idx].collection_stack.len(), cursor.
+    /// collection_stack.len())` invariant at the cursor-replacement
+    /// site. Adding this to the key forces them into separate buckets,
+    /// so the merge logic only fires when shapes truly agree.
+    ///
+    /// This becomes relevant after the Phase 4 #5b policy change that
+    /// pops the cursor's collection_stack on EVERY CollectionMarker pop
+    /// (including binder-internal). Pre-fix, the cursor's mirror was
+    /// monotonic for binder-internal slots — two branches reaching the
+    /// same `(state, node, pos)` had identical depths by induction.
+    /// Post-fix, the depths can transiently diverge when one branch's
+    /// inner CollectionMarker has popped but the other's has not.
+    /// Including depth in the key segregates them cleanly.
+    collection_depth: usize,
 }
 
 /// Step 3 (Fork plan F4): deferred mutation of the live
@@ -4900,6 +4945,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // different stack histories at the same (state, node,
                 // pos) do NOT merge.
                 incoming_edge: cursor.incoming_edge_stack.last().copied(),
+                // Phase 4 #5b (2026-05-12): include collection_stack
+                // depth so cursors with different operational shapes
+                // (e.g. one mid-binder-internal-collection, the other
+                // post-pop) bucket separately and never trip the
+                // merge invariant.
+                collection_depth: cursor.collection_stack.len(),
             };
             match by_key.entry(key) {
                 std::collections::hash_map::Entry::Vacant(v) => {
@@ -5277,14 +5328,55 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         return;
                     }
                 }
-                BuilderDelta::PushCollectionId { id } => {
-                    self.builder.push_collection_id(id);
+                BuilderDelta::PushCollectionId { id: logged_id } => {
+                    // Phase 4 #5b (2026-05-12): the logged id reflects
+                    // `cursor.collection_stack.len()` at log time. In
+                    // Strict mode that counter pre-allocates ids before
+                    // drains happen (drains fire at FireAction replay,
+                    // not at CollectionMarker pop for binder-internal
+                    // collections), causing the logged id to diverge
+                    // from `live.collection_stack`'s state. At replay
+                    // time the StartCollection delta just ran (LIFO
+                    // order — StartCollection precedes its PushCollectionId
+                    // in the cursor's pending_builder_ops), so the live
+                    // builder's top slot is the one this PushCollectionId
+                    // refers to. Use `live.collection_stack_len() - 1`
+                    // as the runtime-correct id; the logged_id is
+                    // discarded.
+                    //
+                    // For non-binder-internal Class-5 collection rules,
+                    // logged_id and `live.len() - 1` already match
+                    // (CollectionMarker-pop pops both mirrors in sync),
+                    // so this change is transparent for those paths.
+                    let _ = logged_id;
+                    let runtime_id = self
+                        .builder
+                        .collection_stack_len()
+                        .saturating_sub(1) as u8;
+                    self.builder.push_collection_id(runtime_id);
                 }
-                BuilderDelta::SpliceIntoCollection { id } => {
-                    // Cleanup 1: pure replay. The id was captured at log
-                    // time from the predecessor's CollectionMarker.symbol.bp,
-                    // so no walker-state mutation, no GSS read.
-                    self.builder.push_to_collection(id);
+                BuilderDelta::SpliceIntoCollection { id: logged_id } => {
+                    // Phase 4 #5b (2026-05-12): mirror the PushCollectionId
+                    // fix — use `live.collection_stack_len() - 1` at
+                    // replay time, NOT the logged id. The logged id was
+                    // captured from the cursor's pre-fork view; in Strict
+                    // mode this can diverge from live's view when
+                    // binder-internal CollectionMarker pops keep slots
+                    // alive on the cursor's mirror past the inner action's
+                    // drain. The splice target is always the LIFO top of
+                    // live's collection_stack (the innermost active slot
+                    // at this point in replay).
+                    //
+                    // Non-binder-internal Class-5 paths already have
+                    // logged_id matching live's top at replay time
+                    // (their CollectionMarker pops in sync), so this
+                    // change is transparent there.
+                    let _ = logged_id;
+                    let runtime_id = self
+                        .builder
+                        .collection_stack_len()
+                        .saturating_sub(1) as u8;
+                    self.builder.push_to_collection(runtime_id);
                 }
                 // ─── Stage 3.7 / ι Phase 2 (2026-05-01) replay arms ─────────
                 BuilderDelta::StartOptionalScope => {
@@ -6005,9 +6097,85 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn set_cursor_inner_state(&mut self, cursor: &mut BranchCursor<W>, state: WpdsState) {
-        cursor.inner_state = state.clone();
+        // Phase 4 #5b (2026-05-12): when transitioning to CollectionLoop,
+        // patch `kv_phase` for HashMap collection slots based on the
+        // cursor's `collection_stack[acc_id].len()` parity. The engine's
+        // `step` is pure and emits `kv_phase: 0` always; this is the
+        // single choke point where cursor-aware kv_phase resolution
+        // happens. For non-HashMap slots (no kv separator), `kv_phase`
+        // stays at `0`.
+        //
+        // Why here: every state transition routes through
+        // `set_cursor_inner_state`, so this catches all CollectionLoop
+        // arrivals — Unwinding-CollectionMarker (post-element splice),
+        // CollectionOpenParen ConsumeAndPush new_state (initial entry),
+        // CollectionLoop's own phase-1 Consume new_state (Consume → phase 2),
+        // etc. The walker's `cursor.collection_stack` is up-to-date by
+        // this point: the splice happens in `apply_pop_body_to_cursor`
+        // *before* `set_cursor_inner_state`, so the parity is correct.
+        //
+        // Special-case phase 2 → phase 0 self-transition NOT triggered
+        // here: when phase 2 emits Push CategoryEntry(value_src), the
+        // new_state is `PrefixDispatch`, not `CollectionLoop`. The
+        // CollectionLoop re-entry happens after the value pops to
+        // Unwinding-CollectionMarker, and at that point the splice
+        // already brought len to even (phase 0 by parity). So the
+        // default `kv_phase: 0` from the engine is correct for that
+        // re-entry; the patch logic also preserves it (len % 2 == 0).
+        //
+        // We must NOT override `kv_phase` when state was emitted by the
+        // engine with `kv_phase >= 1` deliberately (the phase-1
+        // ConsumeAndReplace transition emits `kv_phase: 2`). Detect
+        // this: only override when the engine's emitted `kv_phase == 0`,
+        // leaving 1/2 alone.
+        let patched_state = match &state {
+            WpdsState::CollectionLoop {
+                result_src_idx,
+                rule_idx,
+                element_src_idx,
+                outer_bp,
+                accumulator_id,
+                slot_idx,
+                kv_phase: 0,
+            } => {
+                match self
+                    .engine
+                    .kv_separator_for_collection(*result_src_idx, *rule_idx, *slot_idx)
+                {
+                    Some(_) => {
+                        // HashMap slot: pick phase from parity.
+                        let acc_id_usize = *accumulator_id as usize;
+                        let slot_len = match self.cursor_mode {
+                            CursorMode::Lazy => {
+                                // In Lazy mode the live builder is the
+                                // source of truth.
+                                self.builder.collection_slot_len(acc_id_usize)
+                            }
+                            CursorMode::Strict => cursor
+                                .collection_stack
+                                .get(acc_id_usize)
+                                .map(|s| s.len())
+                                .unwrap_or(0),
+                        };
+                        let new_kv_phase: u8 = if slot_len % 2 == 1 { 1 } else { 0 };
+                        WpdsState::CollectionLoop {
+                            result_src_idx: *result_src_idx,
+                            rule_idx: *rule_idx,
+                            element_src_idx: *element_src_idx,
+                            outer_bp: *outer_bp,
+                            accumulator_id: *accumulator_id,
+                            slot_idx: *slot_idx,
+                            kv_phase: new_kv_phase,
+                        }
+                    }
+                    None => state.clone(),
+                }
+            }
+            _ => state.clone(),
+        };
+        cursor.inner_state = patched_state.clone();
         if self.cursor_mode == CursorMode::Lazy {
-            self.state = state;
+            self.state = patched_state;
         }
     }
 
@@ -6142,14 +6310,31 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // (NOT suppressed by is_binder_internal), the action
                 // drains the slot from LIVE (live.len--), and we MUST
                 // pop the cursor's mirror to stay in sync with live.
-                let is_binder_internal = self.engine.is_binder_internal_collection(
+                //
+                // Phase 4 #5b (2026-05-12): ALWAYS pop the cursor's mirror
+                // on CollectionMarker pop, regardless of is_binder_internal.
+                // The replay-time `BuilderDelta::PushCollectionId` /
+                // `BuilderDelta::SpliceIntoCollection` arms now derive
+                // their ids from `live.collection_stack_len() - 1` (not
+                // the logged id), so the cursor's collection_stack
+                // tracking no longer needs to encode binder-internal
+                // slots' persistent presence. This restores the merge
+                // invariant in `merge_equivalent_cursors` (operational
+                // state shape — cursors at the same configuration MUST
+                // have matching collection-stack depths) for nested
+                // binder rules like `chooseMap chooseMap 0 ( ) ( )`.
+                //
+                // The Phase 4 #1 multi-slot rationale ("popping the
+                // cursor's mirror would desync future emit_start_collection
+                // calls") is resolved by the replay-time id derivation:
+                // the runtime live state advances in real-time, and the
+                // logged id is no longer the source of truth.
+                let _ = self.engine.is_binder_internal_collection(
                     symbol.category_src_idx,
                     symbol.rule_index_in_category,
                 );
-                if !is_binder_internal {
-                    cursor.consistency_memo.set(None);
-                    let _ = cursor.collection_stack.pop();
-                }
+                cursor.consistency_memo.set(None);
+                let _ = cursor.collection_stack.pop();
             }
         }
         // Per-child FireAction (keyed on popped_symbol — same across all
