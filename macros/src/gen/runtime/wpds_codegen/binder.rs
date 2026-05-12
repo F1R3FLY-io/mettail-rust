@@ -468,6 +468,13 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
     let mut positions = Vec::new();
     let mut action_args = Vec::new();
     let mut skip_next: bool = false;
+    // Phase 4 #1.B (2026-05-11): track collection-slot index. Each
+    // SimpleCollection / Class-3 BinderListLoop push increments.
+    // Stamped into `CollectionSepInfo.slot_idx` / (eventually) the
+    // CollectionMarker symbol's `bp` field via emit_binder_rule_body
+    // so the walker's per-CollectionMarker lookups can disambiguate
+    // sibling slots within the same rule.
+    let mut collection_slots_so_far: u8 = 0;
     for (i, item) in sp.iter().enumerate().skip(1) {
         if skip_next {
             skip_next = false;
@@ -596,16 +603,15 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                             CollectionType::HashMap => Some(":".to_string()),
                             _ => None,
                         };
-                        // Phase 4 #1 (2026-05-11): slot_idx is the
-                        // 0-based dense index of this collection slot
-                        // within the rule. Sub-commit 4.1.A (data-
-                        // model expansion): stamp 0 for now to
-                        // preserve single-slot behavior (the lookup-
-                        // emit functions are still 2-tuple keyed
-                        // {result_src, rule_idx} and ignore slot_idx).
-                        // Sub-commit 4.1.B will wire dynamic counting
-                        // + 3-tuple lookup keys + walker dispatch
-                        // changes, unlocking multi-slot rules.
+                        // Phase 4 #1.B (2026-05-11): stamp the rule-
+                        // global slot_idx and increment for the next
+                        // SimpleCollection push. The CollectionMarker
+                        // emitted at this position in
+                        // `emit_binder_rule_body` will carry this
+                        // slot_idx in its `bp` field so the walker's
+                        // 3-tuple lookups disambiguate sibling slots.
+                        let slot_idx_here = collection_slots_so_far;
+                        collection_slots_so_far += 1;
                         positions.push(BinderPosition::ParamParse {
                             cat: elem_cat.clone(),
                             collection: Some(CollectionSepInfo {
@@ -614,7 +620,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                 coll_kind: coll_kind.clone(),
                                 elem_cat: elem_cat.clone(),
                                 key_val_separator,
-                                slot_idx: 0,
+                                slot_idx: slot_idx_here,
                             }),
                         });
                         action_args.push(ActionArgKind::CollectionDrain {
@@ -1405,27 +1411,30 @@ pub(crate) fn emit_binder_rule_body(
                                     };
                                 }
                             },
-                            Some(_) => {
+                            Some(info) => {
                                 // B9 / Class 2 (2026-05-08): the slot is a
                                 // Sep-driven collection. Replace the rule's
                                 // RuleAt marker with `next_pos` (so when the
                                 // CollectionMarker pops, Unwinding-RuleAt
                                 // sees the post-collection position) AND
                                 // push a CollectionMarker keyed on this
-                                // rule's `(result_src_idx, rule_idx)`.
+                                // rule's `(result_src_idx, rule_idx, slot_idx)`.
                                 //
                                 // The walker's emit_push_side_effects logic
-                                // sees the CollectionMarker push, allocates
-                                // an accumulator id, patches symbol.bp =
-                                // Some(id), and pushes ActionArg::CollectionId
-                                // onto the args stack. The transition state
-                                // is PrefixDispatch{cur_bp: 0} — the next
-                                // step's frontier_top is the marker, and
-                                // the existing CollectionLoop apparatus
-                                // (emit_collection_close_lookup +
-                                // emit_collection_loop_arm, extended in
-                                // collection.rs to recognize Class-2 binder
-                                // rules) parses elements separated by
+                                // sees the CollectionMarker push and pushes
+                                // ActionArg::CollectionId onto the args
+                                // stack. Phase 4 #1.B (2026-05-11): the
+                                // marker's `bp` field carries the codegen-
+                                // stamped `slot_idx`; the runtime accumulator
+                                // id is recovered from
+                                // `cursor.collection_stack.len() - 1` at push
+                                // time (LIFO invariant). The transition
+                                // state is PrefixDispatch{cur_bp: 0} — the
+                                // next step's frontier_top is the marker,
+                                // and the existing CollectionLoop apparatus
+                                // (now 3-tuple keyed on slot_idx for
+                                // disambiguating sibling slots in the same
+                                // rule) parses elements separated by
                                 // `separator` until `close`.
                                 //
                                 // On close, the CollectionMarker pops and
@@ -1434,6 +1443,7 @@ pub(crate) fn emit_binder_rule_body(
                                 // FireAction is suppressed (the binder
                                 // rule's terminal action will drain the
                                 // CollectionId at its own RuleAt pop).
+                                let slot_idx = info.slot_idx;
                                 quote! {
                                     (#result_src_idx, #rule_idx, #pos) => {
                                         return WpdsStepAction::ReplaceAndPush {
@@ -1441,7 +1451,7 @@ pub(crate) fn emit_binder_rule_body(
                                                 #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
                                             ),
                                             push_symbol: StackSymbolV2::collection_marker(
-                                                #result_src_idx, #rule_idx, 0,
+                                                #result_src_idx, #rule_idx, #slot_idx,
                                             ),
                                             weight: LexicographicWeight::one(),
                                             new_state: WpdsState::PrefixDispatch {
