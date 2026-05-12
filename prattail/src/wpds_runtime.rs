@@ -1513,46 +1513,65 @@ impl fmt::Debug for ActionEntry {
 /// the root AST node for the parse. `take_result::<T>()` downcasts and
 /// returns it.
 pub struct SemanticBuilder {
-    stack: Vec<ActionArg>,
-    binder_scopes: Vec<BinderHandle>,
+    /// Phase 5.1 (2026-05-12): migrated from `Vec<ActionArg>` to
+    /// `im::Vector<ActionArg>` (HAMT-backed persistent vector). O(log N)
+    /// clone via Arc-shared internal nodes prepares this field for
+    /// Phase 5.2's `Arc<SemanticBuilder>` cursor-shared builder. ActionArg
+    /// derives Clone (Stage 3.6 / ι Phase 1) so this migration is
+    /// type-safe. Method signatures returning `Vec<ActionArg>` are
+    /// preserved; internal conversion bridges the API.
+    stack: im::Vector<ActionArg>,
+    binder_scopes: im::Vector<BinderHandle>,
     /// Phase 4: in-flight collection accumulators, indexed by id. Each
     /// entry collects `ActionArg::Term` values pushed during element
     /// parsing; the collection-finalize action drains the entry and
     /// constructs the final container (HashBag / Vec / etc.).
-    collection_stack: Vec<Vec<ActionArg>>,
+    ///
+    /// Phase 5.1 (2026-05-12): both outer and inner containers migrated
+    /// to `im::Vector` for Phase 5.2's structural sharing across cursor
+    /// clones during Fork fanout. The inner per-slot accumulator is also
+    /// `im::Vector<ActionArg>` so a cursor-clone shares the slot's
+    /// internal HAMT nodes until a write triggers copy-on-write.
+    collection_stack: im::Vector<im::Vector<ActionArg>>,
     /// Opt-Group (2026-04-29): in-flight inner-arg accumulators for
     /// taken optional groups. When `start_optional_scope()` is called
     /// (auto-triggered when the walker pushes an
-    /// `OptionalGroupAt(1)` marker), a fresh `Vec<ActionArg>` is
-    /// pushed onto this stack. While the stack top is non-empty, every
+    /// `OptionalGroupAt(1)` marker), a fresh inner buffer is pushed
+    /// onto this stack. While the stack top is non-empty, every
     /// subsequent `push_xxx` call routes through `push_arg_internal`
-    /// to the top inner Vec instead of `stack`. On
-    /// `finalize_optional_scope_present()`, the inner Vec is popped
+    /// to the top inner buffer instead of `stack`. On
+    /// `finalize_optional_scope_present()`, the inner buffer is popped
     /// and wrapped as `ActionArg::Optional(Some(inner))` — pushed
     /// either to `stack` (if no outer optional scope is active) or to
-    /// the next-outer scope's Vec (nested-Optional flattening).
+    /// the next-outer scope's buffer (nested-Optional flattening).
     ///
     /// On the skip path, no scope is opened; `push_optional_absent()`
     /// pushes `ActionArg::Optional(None)` directly via the same routing.
-    optional_stack: Vec<Vec<ActionArg>>,
+    ///
+    /// Phase 5.1 (2026-05-12): migrated to `im::Vector`-of-`im::Vector`
+    /// (see `collection_stack` rationale). Each push/pop scope creation
+    /// is O(log N).
+    optional_stack: im::Vector<im::Vector<ActionArg>>,
 }
 
 impl SemanticBuilder {
     pub fn new() -> Self {
         SemanticBuilder {
-            stack: Vec::new(),
-            binder_scopes: Vec::new(),
-            collection_stack: Vec::new(),
-            optional_stack: Vec::new(),
+            stack: im::Vector::new(),
+            binder_scopes: im::Vector::new(),
+            collection_stack: im::Vector::new(),
+            optional_stack: im::Vector::new(),
         }
     }
 
     /// Opt-Group: route an `ActionArg` push to the top of `optional_stack`
     /// if a scope is open, otherwise to the main `stack`. Nested Optional
     /// chains correctly because the innermost scope is the routing target.
+    ///
+    /// Phase 5.1 (2026-05-12): uses `push_back` (im::Vector's append-end).
     #[inline]
     fn push_arg_internal(&mut self, arg: ActionArg) {
-        self.active_arg_stack_mut().push(arg);
+        self.active_arg_stack_mut().push_back(arg);
     }
 
     /// Opt-Group: routing-aware mutable accessor for the active argument
@@ -1563,9 +1582,14 @@ impl SemanticBuilder {
     /// scope but pops drained `self.stack` directly, so a literal captured
     /// inside `*opt(...)` was popped from the wrong cursor when its
     /// `LiteralPatterned` action fired.
+    ///
+    /// Phase 5.1 (2026-05-12): return type migrated from `&mut Vec` to
+    /// `&mut im::Vector` (HAMT-backed). API parity: `push_back` /
+    /// `pop_back` / `back` / `back_mut` mirror `Vec::push` / `pop` /
+    /// `last` / `last_mut`.
     #[inline]
-    fn active_arg_stack_mut(&mut self) -> &mut Vec<ActionArg> {
-        if let Some(top) = self.optional_stack.last_mut() {
+    fn active_arg_stack_mut(&mut self) -> &mut im::Vector<ActionArg> {
+        if let Some(top) = self.optional_stack.back_mut() {
             top
         } else {
             &mut self.stack
@@ -1573,9 +1597,11 @@ impl SemanticBuilder {
     }
 
     /// Read-only counterpart to `active_arg_stack_mut`.
+    ///
+    /// Phase 5.1 (2026-05-12): return type migrated to `&im::Vector`.
     #[inline]
-    fn active_arg_stack(&self) -> &Vec<ActionArg> {
-        if let Some(top) = self.optional_stack.last() {
+    fn active_arg_stack(&self) -> &im::Vector<ActionArg> {
+        if let Some(top) = self.optional_stack.back() {
             top
         } else {
             &self.stack
@@ -1585,8 +1611,11 @@ impl SemanticBuilder {
     /// Opt-Group: open a new optional-scope inner-arg accumulator. Called
     /// by the walker when pushing `OptionalGroupAt(1)` (the take-path
     /// entry into an optional group).
+    ///
+    /// Phase 5.1 (2026-05-12): pushes an empty `im::Vector` (O(1)) onto
+    /// the outer `im::Vector` (O(log N) push_back).
     pub fn start_optional_scope(&mut self) {
-        self.optional_stack.push(Vec::new());
+        self.optional_stack.push_back(im::Vector::new());
     }
 
     /// Stage 3.9 / ι Phase 4 (2026-05-01): introspection accessor for
@@ -1599,9 +1628,15 @@ impl SemanticBuilder {
     /// Opt-Group: close the innermost optional scope, wrapping its
     /// inner-arg buffer as `ActionArg::Optional(Some(inner))` and pushing
     /// to the surrounding scope (next-outer optional scope OR main stack).
+    ///
+    /// Phase 5.1 (2026-05-12): `pop_back` returns `Option<im::Vector<...>>`;
+    /// convert to `Vec<ActionArg>` via `into_iter().collect()` to satisfy
+    /// `ActionArg::Optional`'s `Option<Vec<ActionArg>>` payload type. The
+    /// conversion is O(N) (walks the HAMT once) — typical inner-arg
+    /// buffers hold 1–8 elements, so cost is negligible.
     pub fn finalize_optional_scope_present(&mut self) {
-        let inner = self.optional_stack.pop().unwrap_or_default();
-        let arg = ActionArg::Optional(Some(inner));
+        let inner = self.optional_stack.pop_back().unwrap_or_default();
+        let arg = ActionArg::Optional(Some(inner.into_iter().collect()));
         self.push_arg_internal(arg);
     }
 
@@ -1693,19 +1728,30 @@ impl SemanticBuilder {
     /// Drains from the **active argument cursor** so a sub-rule's action
     /// firing inside an open optional scope pops the inner-scope args its
     /// pushes targeted, not the outer main stack.
+    ///
+    /// Phase 5.1 (2026-05-12): the active stack is now `im::Vector`. We
+    /// `split_off` at the underflow-checked index — returning the tail as
+    /// a new `im::Vector` (O(log N)) — then convert to `Vec<ActionArg>`
+    /// via `into_iter().collect()`. The signature still returns
+    /// `Vec<ActionArg>` for codegen action_fn compatibility (downstream
+    /// actions iterate / pattern-match args in array form). Typical N
+    /// for a single action is 1–6, so the conversion is cheap.
     pub fn pop_args(&mut self, n: usize) -> Vec<ActionArg> {
         let active = self.active_arg_stack_mut();
         let start = active
             .len()
             .checked_sub(n)
             .expect("SemanticBuilder::pop_args: stack underflow (engine arity bug)");
-        active.drain(start..).collect()
+        let tail = active.split_off(start);
+        tail.into_iter().collect()
     }
 
     /// Begin a binder scope — used by binder rules before parsing the body.
+    ///
+    /// Phase 5.1 (2026-05-12): `push_back` against `im::Vector<BinderHandle>`.
     pub fn start_binder_scope(&mut self, names: Vec<String>) {
         let depth = self.binder_scopes.len() as u16;
-        self.binder_scopes.push(BinderHandle::new(names, depth));
+        self.binder_scopes.push_back(BinderHandle::new(names, depth));
     }
 
     /// B8 / Issue C followup (2026-05-09): append a binder name to the
@@ -1716,8 +1762,12 @@ impl SemanticBuilder {
     /// only got pushed to the args stack as `ActionArg::Ident`, never
     /// reaching the BinderHandle.names that the action's BinderScope
     /// arg extraction reads.
+    ///
+    /// Phase 5.1 (2026-05-12): `back_mut` returns `Option<&mut BinderHandle>`
+    /// — same shape as the old `last_mut`. The inner `handle.names: Vec<String>`
+    /// is unchanged (BinderHandle is unmigrated in 5.1).
     pub fn extend_binder_scope(&mut self, name: String) {
-        if let Some(handle) = self.binder_scopes.last_mut() {
+        if let Some(handle) = self.binder_scopes.back_mut() {
             handle.names.push(name);
         }
     }
@@ -1725,8 +1775,10 @@ impl SemanticBuilder {
     /// End the innermost binder scope and leave a `BinderScope` arg on the
     /// active argument cursor (so a binder fired inside `*opt(...)` lands
     /// in the inner scope just like other captures).
+    ///
+    /// Phase 5.1 (2026-05-12): `pop_back` against `im::Vector<BinderHandle>`.
     pub fn end_binder_scope(&mut self) {
-        if let Some(handle) = self.binder_scopes.pop() {
+        if let Some(handle) = self.binder_scopes.pop_back() {
             self.push_arg_internal(ActionArg::BinderScope(handle));
         }
     }
@@ -1735,14 +1787,19 @@ impl SemanticBuilder {
     /// `BinderScope` arg back onto the stack. Used by binder-rule actions
     /// where the action body already has the binder name as a captured
     /// `Ident` arg and doesn't need a `BinderScope` slot.
+    ///
+    /// Phase 5.1 (2026-05-12): `pop_back` against `im::Vector<BinderHandle>`.
     pub fn pop_binder_scope_silent(&mut self) {
-        self.binder_scopes.pop();
+        self.binder_scopes.pop_back();
     }
 
     /// View the innermost binder scope without popping it (for binder-aware
     /// inner parses that need to know which names are in scope).
+    ///
+    /// Phase 5.1 (2026-05-12): `back` returns `Option<&BinderHandle>` —
+    /// same shape as the old `last`.
     pub fn current_binder_scope(&self) -> Option<&BinderHandle> {
-        self.binder_scopes.last()
+        self.binder_scopes.back()
     }
 
     /// At parse completion, extract the single remaining term as the
@@ -1761,7 +1818,7 @@ impl SemanticBuilder {
         if self.stack.len() != 1 {
             return None;
         }
-        match self.stack.pop()? {
+        match self.stack.pop_back()? {
             ActionArg::Term { value, .. } => match Arc::downcast::<T>(value) {
                 Ok(arc) => Some(Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())),
                 Err(_) => None,
@@ -1784,7 +1841,7 @@ impl SemanticBuilder {
         if self.stack.len() != 1 {
             return None;
         }
-        match self.stack.pop()? {
+        match self.stack.pop_back()? {
             ActionArg::Term { value, .. } => Some(value),
             _ => None,
         }
@@ -1794,9 +1851,12 @@ impl SemanticBuilder {
 
     /// Start a fresh collection accumulator. Returns the id (8-bit) to
     /// embed in the `CollectionMarker` symbol's `bp` field.
+    ///
+    /// Phase 5.1 (2026-05-12): pushes an empty inner `im::Vector` onto
+    /// the outer `im::Vector<im::Vector<ActionArg>>` (both O(log N)).
     pub fn start_collection(&mut self) -> u8 {
         let id = self.collection_stack.len() as u8;
-        self.collection_stack.push(Vec::new());
+        self.collection_stack.push_back(im::Vector::new());
         id
     }
 
@@ -1805,10 +1865,13 @@ impl SemanticBuilder {
     /// walker when transitioning to `CollectionLoop` after a per-element
     /// parse. Scope-aware so that a `[a, b, c]` collection literal nested
     /// inside `*opt(...)` correctly drains the inner-scope cursor.
+    ///
+    /// Phase 5.1 (2026-05-12): `pop_back` from active stack, `push_back`
+    /// onto inner `im::Vector` at the slot.
     pub fn push_to_collection(&mut self, id: u8) {
-        if let Some(arg) = self.active_arg_stack_mut().pop() {
+        if let Some(arg) = self.active_arg_stack_mut().pop_back() {
             if let Some(acc) = self.collection_stack.get_mut(id as usize) {
-                acc.push(arg);
+                acc.push_back(arg);
             }
         }
     }
@@ -1827,6 +1890,15 @@ impl SemanticBuilder {
     /// because grammars can only close collections in the reverse order
     /// they opened (the close-delim of an inner collection always
     /// precedes the close-delim of an outer collection that contains it).
+    ///
+    /// Phase 5.1 (2026-05-12): `pop_back` returns the inner `im::Vector`
+    /// in O(log N); the result is converted to `Vec<ActionArg>` via
+    /// `into_iter().collect()` to preserve the public signature. The
+    /// release-build fallback path uses `std::mem::replace` to swap an
+    /// empty `im::Vector` into the slot (mirroring legacy `mem::take`
+    /// semantics on `Vec`); the drained inner Vector is then converted
+    /// in-place. Collection elements are typically small (1–50 items),
+    /// so the `into_iter().collect()` walk is cheap.
     pub fn drain_collection(&mut self, id: u8) -> Vec<ActionArg> {
         let id_usize = id as usize;
         debug_assert!(
@@ -1843,14 +1915,19 @@ impl SemanticBuilder {
             id, self.collection_stack.len(),
         );
         if id_usize + 1 == self.collection_stack.len() {
-            self.collection_stack.pop().unwrap_or_default()
+            self.collection_stack
+                .pop_back()
+                .map(|v| v.into_iter().collect())
+                .unwrap_or_default()
         } else if let Some(acc) = self.collection_stack.get_mut(id_usize) {
             // Defensive fallback in release builds when LIFO is violated:
             // drain the slot in place (legacy mem::take behavior). Slot
             // remains, leaving an empty husk — but better than panicking
             // on a non-LIFO grammar (none ship today; future grammars
             // would surface via the debug_assert above).
-            std::mem::take(acc)
+            std::mem::replace(acc, im::Vector::new())
+                .into_iter()
+                .collect()
         } else {
             Vec::new()
         }
@@ -1867,6 +1944,12 @@ impl SemanticBuilder {
     /// in-flight collection state exists on the live builder. The cursor's
     /// `collection_stack` carries all accumulators allocated during fanout;
     /// after donate, the cursor's mirror is empty (moved here).
+    ///
+    /// Phase 5.1 (2026-05-12): the public signature still accepts
+    /// `Vec<Vec<ActionArg>>` (so walker call sites stay unchanged); we
+    /// convert the outer Vec into `im::Vector` via `into_iter().map().collect()`,
+    /// promoting each inner `Vec` to an `im::Vector`. Cost is O(N + Σ inner-len)
+    /// — at fanout boundaries N is typically 0–3.
     pub fn adopt_collection_stack(&mut self, accs: Vec<Vec<ActionArg>>) {
         debug_assert!(
             self.collection_stack.is_empty(),
@@ -1874,7 +1957,10 @@ impl SemanticBuilder {
              empty at fanout boundary; got {} in-flight accumulators",
             self.collection_stack.len(),
         );
-        self.collection_stack = accs;
+        self.collection_stack = accs
+            .into_iter()
+            .map(|inner| inner.into_iter().collect::<im::Vector<_>>())
+            .collect();
     }
 
     /// Stage 3.12.8 (2026-05-03): collection_stack length accessor for
@@ -1900,8 +1986,19 @@ impl SemanticBuilder {
     /// ownership. After this call the live builder's stack is empty —
     /// `adopt_collection_stack` can subsequently re-populate it from the
     /// winning cursor.
+    ///
+    /// Phase 5.1 (2026-05-12): swap out the inner `im::Vector<im::Vector<...>>`
+    /// via `std::mem::take` (yields the populated im::Vector and leaves
+    /// an empty one in place — analogous to old Vec behavior). Convert the
+    /// outer to Vec; each inner `im::Vector<ActionArg>` becomes `Vec<ActionArg>`.
+    /// Public signature still returns `Vec<Vec<ActionArg>>` for walker
+    /// call sites.
     pub fn take_collection_stack(&mut self) -> Vec<Vec<ActionArg>> {
-        std::mem::take(&mut self.collection_stack)
+        let taken = std::mem::take(&mut self.collection_stack);
+        taken
+            .into_iter()
+            .map(|inner| inner.into_iter().collect::<Vec<_>>())
+            .collect()
     }
 
     /// Stage 3.12.8 (2026-05-03): re-push a previously-drained
@@ -1913,8 +2010,14 @@ impl SemanticBuilder {
     /// captured at the cursor-side pop time when grammar logically
     /// closed the collection. After replay's re-push, the live
     /// builder's stack length matches the cursor's logical snapshot.
+    ///
+    /// Phase 5.1 (2026-05-12): the public signature still accepts
+    /// `Vec<ActionArg>` (so delta-replay call sites stay unchanged); we
+    /// convert into `im::Vector` via `into_iter().collect()` before
+    /// `push_back` onto the outer `im::Vector<im::Vector<ActionArg>>`.
     pub fn push_collection_slot(&mut self, drained: Vec<ActionArg>) {
-        self.collection_stack.push(drained);
+        self.collection_stack
+            .push_back(drained.into_iter().collect());
     }
 }
 
