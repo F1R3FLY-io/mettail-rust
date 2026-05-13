@@ -1680,7 +1680,7 @@ mod native_ops {
 
         #[test]
         fn pattern_comm_pathmap_literal_blocks_key_mismatch() {
-            assert_never_produces(
+            assert_never_reaches(
                 r#"{for(@pathmap(["k"]: y) <- c){999} | c!(pathmap(["j"]: 42))}"#,
                 "999",
             );
