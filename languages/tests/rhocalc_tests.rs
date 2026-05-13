@@ -1613,6 +1613,12 @@ mod native_ops {
         }
 
         #[test]
+        fn set_literal_allows_space_before_paren() {
+            assert_reduces_to("len(Set (1, 2, 3))", "3");
+            assert_reduces_to("Set (1, 2, 3).size()", "3");
+        }
+
+        #[test]
         fn set_empty_literal() {
             assert_reduces_to("Set().size()", "0");
         }

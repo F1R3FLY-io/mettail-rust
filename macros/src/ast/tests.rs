@@ -2,7 +2,7 @@
 mod tests {
     use crate::ast::grammar::{GrammarItem, TermParam};
     use crate::ast::grammar::{PatternOp, SyntaxExpr};
-    use crate::ast::language::LanguageDef;
+    use crate::ast::language::{CollectionCategory, LanguageDef};
     use crate::ast::types::{CollectionType, TypeExpr};
     use quote::quote;
     use syn::{parse2, Ident};
@@ -761,5 +761,69 @@ mod tests {
 
         assert_eq!(literals.specs[1].type_name.to_string(), "Bool");
         assert_eq!(literals.specs[1].pattern, "yes|no");
+    }
+
+    #[test]
+    fn parse_types_collection_delimiter_dictionary() {
+        let input = quote! {
+            name: T,
+            types {
+                ![Vec<Proc>] as List {
+                    open_parts: ["["],
+                    close_parts: ["]"],
+                    sep: ",",
+                }
+                ![HashMap<Proc, Proc>] as Map {
+                    open_parts: ["{"],
+                    close_parts: ["}"],
+                    sep: ",",
+                    key_val_sep: ":",
+                }
+            },
+            terms { }
+        };
+
+        let lang: LanguageDef = syn::parse2(input).expect("parse LanguageDef");
+        let list = lang
+            .types
+            .iter()
+            .find(|t| t.name.to_string() == "List")
+            .expect("List type");
+        let list_d = match list.collection_kind.as_ref().unwrap() {
+            CollectionCategory::List(d) => d,
+            _ => panic!("expected List collection"),
+        };
+        assert_eq!(list_d.open_parts, vec!["["]);
+        assert_eq!(list_d.close_parts, vec!["]"]);
+        assert_eq!(list_d.sep, ",");
+        assert!(list_d.key_val_sep.is_none());
+
+        let map = lang
+            .types
+            .iter()
+            .find(|t| t.name.to_string() == "Map")
+            .expect("Map type");
+        let map_d = match map.collection_kind.as_ref().unwrap() {
+            CollectionCategory::Map(d) => d,
+            _ => panic!("expected Map collection"),
+        };
+        assert_eq!(map_d.key_val_sep.as_deref(), Some(":"));
+    }
+
+    #[test]
+    fn parse_types_collection_dict_rejects_key_val_sep_on_list() {
+        let input = quote! {
+            name: T,
+            types {
+                ![Vec<Proc>] as List {
+                    open_parts: ["["],
+                    close_parts: ["]"],
+                    sep: ",",
+                    key_val_sep: ":",
+                }
+            },
+            terms { }
+        };
+        assert!(syn::parse2::<LanguageDef>(input).is_err());
     }
 }

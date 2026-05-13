@@ -103,55 +103,43 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
     if let Some(ref elem_cat) = elem_cat {
         for lang_type in &language.types {
             if let Some(ref coll) = lang_type.collection_kind {
-                let (label, open, close, sep, kind, key_val_sep) = match coll {
-                    CollectionCategory::List(d) => (
-                        "ListLit".to_string(),
-                        d.open.clone(),
-                        d.close.clone(),
-                        d.sep.clone(),
-                        CollectionKind::Vec,
-                        None,
-                    ),
-                    CollectionCategory::Bag(d) => (
-                        "BagLit".to_string(),
-                        d.open.clone(),
-                        d.close.clone(),
-                        d.sep.clone(),
-                        CollectionKind::HashBag,
-                        None,
-                    ),
+                let (label, delimiters, sep, kind, key_val_sep) = match coll {
+                    CollectionCategory::List(d) => {
+                        ("ListLit".to_string(), d, d.sep.clone(), CollectionKind::Vec, None)
+                    },
+                    CollectionCategory::Bag(d) => {
+                        ("BagLit".to_string(), d, d.sep.clone(), CollectionKind::HashBag, None)
+                    },
                     CollectionCategory::Map(d) => (
                         "MapLit".to_string(),
-                        d.open.clone(),
-                        d.close.clone(),
+                        d,
                         d.sep.clone(),
                         CollectionKind::HashMap,
                         d.key_val_sep.clone(),
                     ),
-                    CollectionCategory::Set(d) => (
-                        "SetLit".to_string(),
-                        d.open.clone(),
-                        d.close.clone(),
-                        d.sep.clone(),
-                        CollectionKind::HashSet,
-                        None,
-                    ),
+                    CollectionCategory::Set(d) => {
+                        ("SetLit".to_string(), d, d.sep.clone(), CollectionKind::HashSet, None)
+                    },
                 };
                 let category = lang_type.name.to_string();
+                let mut syntax: Vec<SyntaxItemSpec> = Vec::new();
+                for s in &delimiters.open_parts {
+                    syntax.push(SyntaxItemSpec::Terminal(s.clone()));
+                }
+                syntax.push(SyntaxItemSpec::Collection {
+                    param_name: "elems".to_string(),
+                    element_category: elem_cat.clone(),
+                    separator: sep,
+                    kind,
+                    key_val_separator: key_val_sep,
+                });
+                for s in &delimiters.close_parts {
+                    syntax.push(SyntaxItemSpec::Terminal(s.clone()));
+                }
                 inputs.push(RuleSpecInput {
                     label: label.clone(),
                     category: category.clone(),
-                    syntax: vec![
-                        SyntaxItemSpec::Terminal(open),
-                        SyntaxItemSpec::Collection {
-                            param_name: "elems".to_string(),
-                            element_category: elem_cat.clone(),
-                            separator: sep,
-                            kind,
-                            key_val_separator: key_val_sep,
-                        },
-                        SyntaxItemSpec::Terminal(close),
-                    ],
+                    syntax,
                     associativity: mettail_prattail::binding_power::Associativity::Left,
                     prefix_precedence: None,
                     has_rust_code: false,

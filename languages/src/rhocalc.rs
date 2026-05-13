@@ -28,9 +28,22 @@ language! {
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
-        ![Vec<Proc>] as List ["[", "]", ","]
-        ![mettail_runtime::HashBag<Proc>] as Bag [ "#{", "}#", "|" ]
-        ![HashMap<Proc, Proc>] as Map [ "{", "}", ",", ":" ]
+        ![Vec<Proc>] as List {
+            open_parts: ["["],
+            close_parts: ["]"],
+            sep: ",",
+        }
+        ![mettail_runtime::HashBag<Proc>] as Bag {
+            open_parts: ["#{"],
+            close_parts: ["}#"],
+            sep: "|",
+        }
+        ![HashMap<Proc, Proc>] as Map {
+            open_parts: ["{"],
+            close_parts: ["}"],
+            sep: ",",
+            key_val_sep: ":",
+        }
         ![mettail_runtime::HashSetLit<Proc>] as Set
     },
 
@@ -1160,13 +1173,6 @@ language! {
         |- "Map" "(" ")" : Proc ![{
             Proc::CastMap(Box::new(Map::MapLit(
                 mettail_runtime::HashMapLit::<Proc, Proc>::new(),
-            )))
-        }] fold;
-
-        SetEmpty .
-        |- "Set" "(" ")" : Proc ![{
-            Proc::CastSet(Box::new(Set::SetLit(
-                mettail_runtime::HashSetLit::<Proc>::new(),
             )))
         }] fold;
 
