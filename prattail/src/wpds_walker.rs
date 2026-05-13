@@ -5254,9 +5254,46 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             let arity = entry.arity as usize;
             let action_fn = entry.action_fn;
             if builder.len() >= arity {
+                // Cat-A fix (2026-05-13): post-action invariant check. Every
+                // action_fn pushes EXACTLY ONE Term on the success path. The
+                // failure path is `match arg.into_term::<T>() { None => return }`
+                // (type-mismatch on a cross-cat arg) — args are popped but no
+                // push happens. Pre-fix, the cursor continued to Accept with
+                // an inconsistent builder; lex-min could then select it and
+                // `take_dyn_result` would error "winner committed but builder
+                // result was empty". Pass-2c's implicit-cast Fork branches
+                // exposed this latent bug systematically (16 tests broken).
+                //
+                // The check: builder.len() must increase by exactly 1
+                // (gain 1 from push, lose `arity` from pop_args). If not, the
+                // action silent-failed → return Err so the walker transitions
+                // the cursor to `WpdsState::Error` and drops it.
+                //
+                // Invariant verified across all action emitters in
+                // `macros/src/gen/runtime/wpds_codegen/semantic_actions.rs`
+                // and generated artifacts: every action_fn ends with
+                // `b.push_term::<...>(...)` on success. No action legitimately
+                // pushes 0 or 2+ terms.
+                let pre_action_len = builder.len();
                 let args = builder.pop_args(arity);
                 action_fn(builder, args);
-                None
+                let expected_len = pre_action_len.saturating_sub(arity).saturating_add(1);
+                if builder.len() != expected_len {
+                    Some(format!(
+                        "semantic-action type mismatch at rule (src={}, rule={}): \
+                         action did not push the expected single Term — silent \
+                         failure on arg type-coercion (e.g., `arg.into_term::<T>()` \
+                         returned None for a cross-cat-incompatible arg). \
+                         Builder shape inconsistent: had {} → {} (expected {}).",
+                        symbol.category_src_idx,
+                        symbol.rule_index_in_category,
+                        pre_action_len,
+                        builder.len(),
+                        expected_len,
+                    ))
+                } else {
+                    None
+                }
             } else {
                 Some(format!(
                     "semantic-action arity mismatch at rule (src={}, rule={}): \

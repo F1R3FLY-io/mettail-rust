@@ -417,6 +417,19 @@ pub fn parse_int_lit(text: &str, default_suffix: Option<Suffix>) -> Result<IntLi
     let big = if negative { -magnitude } else { magnitude };
 
     if let Some(s) = suffix {
+        // D1 fix (2026-05-13): when `default_suffix` is `Some(hint)` AND the
+        // text has an explicit suffix that doesn't match the hint, reject.
+        // The doc comment at lines 397-400 says `default_suffix` is "a strict
+        // requirement". Prior to this fix, the explicit-suffix branch
+        // honored the explicit suffix unconditionally, allowing `1u32` to be
+        // accepted by an Int (i32) literal action when only u32 should be
+        // accepted by UInt32. Closes test_int_parse_rejects_u32_suffix and
+        // test_uint32_bitwise.
+        if let Some(ref hint) = default_suffix {
+            if s != *hint {
+                return Err(());
+            }
+        }
         return try_fit_type(&big, &s).ok_or(());
     }
 

@@ -40,16 +40,69 @@ use syn::Ident;
 
 use super::subst::{collect_category_variants, FieldInfo, VariantKind};
 
+/// Cat-A fix (2026-05-13): detect user-declared cross-cat unary cast rules.
+/// Shape: `<Source>To<Target> . a:Y |- <triggers> a <triggers> : X` where
+/// `Y != X` and `sp.len() >= 3`. Calculator examples: `IntToBool`, `BoolToFloat`,
+/// `StrToInt`, `BigintCast`, `BigratCast`, `ProcToBool`, `ProcToStr`, etc.
+///
+/// Byte-identical to Pass 2c's emission gate in
+/// `macros/src/gen/runtime/wpds_codegen/prefix.rs:1041+`, ensuring the marked
+/// rule set is exactly the rules Pass 2c synthesizes implicit-cast arms for.
+fn is_cross_cat_unary_cast(rule: &mettail_ast::grammar::GrammarRule) -> bool {
+    let Some(tc) = rule.term_context.as_ref() else { return false; };
+    if tc.len() != 1 {
+        return false;
+    }
+    let mettail_ast::grammar::TermParam::Simple { ty, .. } = &tc[0] else {
+        return false;
+    };
+    let mettail_ast::types::TypeExpr::Base(source) = ty else {
+        return false;
+    };
+    let Some(sp) = rule.syntax_pattern.as_ref() else { return false; };
+    if sp.len() < 3 {
+        return false;
+    }
+    source.to_string() != rule.category.to_string()
+}
+
 /// Generate `is_uniformly_auto_injected()` and `_collect_uniform_flags()`
 /// methods for all categories in the language. Plus the inner-enum
 /// dispatch on `<LangName>TermInner`.
 pub fn generate_parse_alt_filter_methods(language: &LanguageDef) -> TokenStream {
     let inner_enum_name = format_ident!("{}TermInner", language.name);
     let inner_enum_name = &inner_enum_name;
+    // Cat-A fix (2026-05-13): include user-declared cross-cat unary cast
+    // rules in the auto-inject-equivalent set. These are NonAtomic rules
+    // of shape `<Source>To<Target> . a:Y |- <triggers> a <triggers> : X`
+    // where `Y != X` (e.g., Calculator's `IntToBool`, `BoolToFloat`,
+    // `BigintCast`, `BigratCast`, `ProcToBool`, `ProcToStr`, etc.).
+    //
+    // Pass 2c (wpds_codegen/prefix.rs:1041+) emits implicit-cast Fork
+    // branches in the result category's prefix dispatch for FIRST(source)
+    // tokens. These are REQUIRED for internal cross-cat sub-parses inside
+    // single-cat `Cat::parse` (e.g., LtBool's RHS in `int(false > b < -N)`
+    // wraps an Int via IntToBool to produce a Bool arg). BUT they ALSO
+    // create spurious lossy multi-cat parses (`(3r/4r) bitand (1r/4r)`
+    // parses as `BigInt::BitAndBigInt(BigintCast(...), BigintCast(...))`
+    // alongside the correct `BigRat::BitAndBigRat(...)`).
+    //
+    // Marking these rules as auto-inject-equivalent in `auto_inj_labels`
+    // lets `is_uniformly_auto_injected` flag the BigInt alt (`BitAndBigInt`
+    // recursing into `BigintCast`-tagged fields) as spurious. The filter
+    // at `language.rs:2702-2716` then drops the BigInt alt when any
+    // non-spurious alt (BigRat) survives. The mechanism mirrors how
+    // auto-injected `<Source>To<Target>` rules from `auto_inject.rs` are
+    // handled today.
+    //
+    // Predicate (`is_cross_cat_unary_cast`) is byte-identical to Pass 2c's
+    // emission gate so the marked rule set exactly matches the arms Pass 2c
+    // emits. Pass 2c STAYS in place; WPDS-level internal cross-cat sub-
+    // parses continue to work.
     let auto_inj_labels: HashSet<String> = language
         .terms
         .iter()
-        .filter(|r| r.is_auto_injected)
+        .filter(|r| r.is_auto_injected || is_cross_cat_unary_cast(r))
         .map(|r| r.label.to_string())
         .collect();
 
@@ -70,11 +123,22 @@ pub fn generate_parse_alt_filter_methods(language: &LanguageDef) -> TokenStream 
                     /// term is a "uniformly auto-injected" parse alternative
                     /// — auto-injection wrappers around a foreign category
                     /// with no same-category native literal anchor.
+                    ///
+                    /// Cat-A v3 refinement (2026-05-13): additionally requires
+                    /// `is_ground()`. The auto-inj-no-native-lit shape is only
+                    /// spurious when the tree is fully ground — i.e., a lossy
+                    /// cast actually fires. Var-containing trees (where env-
+                    /// substitution will ground a foreign-cat var later) must
+                    /// be KEPT so the var-bearing alt survives the filter and
+                    /// reduces correctly post-substitute (e.g.,
+                    /// `Float::BoolToFloat(Bool::BVar(x))` with
+                    /// `env.bool["x"]=BoolLit(true)` reduces to FloatLit(1.0)
+                    /// only if the alt is preserved during parse).
                     pub fn is_uniformly_auto_injected(&self) -> bool {
                         let mut has_auto_inj = false;
                         let mut has_native_lit = false;
                         self._collect_uniform_flags(&mut has_auto_inj, &mut has_native_lit);
-                        has_auto_inj && !has_native_lit
+                        has_auto_inj && !has_native_lit && self.is_ground()
                     }
 
                     fn _collect_uniform_flags(

@@ -67,6 +67,7 @@ pub fn emit_action_for_body(
                     &cat_ident,
                     refinement_name.as_deref(),
                     categories,
+                    language,
                 ) {
                     arms.push(entry);
                 }
@@ -95,6 +96,40 @@ pub fn emit_action_for_body(
     }
 }
 
+/// D7 fix (2026-05-13): Look up a zero-arity terminal-keyword rule for
+/// `cat_name` whose label can serve as an error-fallback variant for a
+/// failing literal-eval action.
+///
+/// Matches shape `<Label> . |- "<terminal>" : <Cat>` where:
+///   - `rule.category.to_string() == cat_name`
+///   - `term_context` is `Some(empty)` (no params)
+///   - `syntax_pattern` is `Some([SyntaxExpr::Literal(_)])` (single literal)
+///
+/// Returns the rule's label ident (e.g., `Err` for `Err . |- "error" : BigRat`).
+/// Calculator has `Err . |- "error" : BigRat` and `Err . |- "error" : Int`;
+/// rhocalc has `Err . |- "error" : Proc`. Pattern is grammar-determined.
+///
+/// Returns the FIRST matching rule (source order). If a grammar lacks such a
+/// rule for a category, returns None and the literal action silent-fails as
+/// before (W2 detector catches and drops the cursor).
+fn lookup_err_fallback_variant(language: &LanguageDef, cat_name: &str) -> Option<Ident> {
+    use mettail_ast::grammar::SyntaxExpr;
+    language.terms.iter().find_map(|rule| {
+        if rule.category.to_string() != cat_name {
+            return None;
+        }
+        let tc = rule.term_context.as_ref()?;
+        let sp = rule.syntax_pattern.as_ref()?;
+        if !tc.is_empty() || sp.len() != 1 {
+            return None;
+        }
+        if !matches!(sp.first(), Some(SyntaxExpr::Literal(_))) {
+            return None;
+        }
+        Some(rule.label.clone())
+    })
+}
+
 fn emit_action_entry_arm(
     src_idx: u16,
     rule_idx: u16,
@@ -102,6 +137,7 @@ fn emit_action_entry_arm(
     cat_ident: &Ident,
     refinement_name: Option<&str>,
     categories: &[String],
+    language: &LanguageDef,
 ) -> Option<TokenStream> {
     // B13c / Candidate H (2026-05-08): per-shape input/output category
     // metadata for cursor-side type-tag projection. Output cat is always
@@ -138,19 +174,41 @@ fn emit_action_entry_arm(
             family,
             wrapper_variant,
             rust_code,
+            cat_name: lit_cat_name,
             ..
-        } => (
-            emit_literal_patterned_action(
-                cat_ident,
-                native_type,
-                *family,
-                wrapper_variant,
-                rust_code,
-                refinement_name,
-            ),
-            1u8,
-            quote! { &[#any_cat] },
-        ),
+        } => {
+            // D7 fix (2026-05-13, refined): on eval failure, push the cat's
+            // Err variant ONLY when `family == LiteralFamily::Rational`.
+            // Other families fail post-regex only via parse-rejection (Integer
+            // overflow/suffix-mismatch; FixedPoint mantissa precision; Float
+            // f64 parse failure) which must silent-fail so alternate dispatch
+            // (e.g., UInt32 wins for `0u32` after Int rejects) works.
+            // Rational is the only family whose post-regex eval can produce a
+            // true semantic runtime error (zero denominator → `1r/0r` becomes
+            // BigRat::Err displayed as "error").
+            //
+            // Without this family gate, the unconditional Err fallback closes
+            // test_bigrat_literal_division_by_zero_is_error BUT regresses 7
+            // tests that depend on silent-fail-then-alternate-dispatch.
+            let err_fallback = if matches!(*family, LiteralFamily::Rational) {
+                lookup_err_fallback_variant(language, lit_cat_name)
+            } else {
+                None
+            };
+            (
+                emit_literal_patterned_action(
+                    cat_ident,
+                    native_type,
+                    *family,
+                    wrapper_variant,
+                    rust_code,
+                    refinement_name,
+                    err_fallback.as_ref(),
+                ),
+                1u8,
+                quote! { &[#any_cat] },
+            )
+        },
         AtomicShape::TerminalKeyword { wrapper_variant, .. } => (
             emit_terminal_keyword_action(cat_ident, wrapper_variant),
             1u8,
@@ -225,6 +283,7 @@ fn emit_literal_patterned_action(
     wrapper_variant: &Ident,
     rust_code: &TokenStream,
     refinement_name: Option<&str>,
+    err_fallback_variant: Option<&Ident>,
 ) -> TokenStream {
     let conversion = emit_native_conversion(native_type, family);
     // The payload type for `push_term` — unsized `str` becomes `String`.
@@ -243,6 +302,25 @@ fn emit_literal_patterned_action(
             b.push_term::<#cat_ident>(#cat_ident::#wrapper_variant(__v));
         },
     };
+    // D7 fix (2026-05-13): on eval failure, push the cat's zero-arity Err
+    // variant if one exists. Closes test_bigrat_literal_division_by_zero_is_error
+    // (input `1r/0r` — regex matches as one token; parse_rational_lit returns
+    // Err for zero denom; previously silent-failed → W2 dropped cursor →
+    // parse failed entirely; now pushes BigRat::Err → downstream rewrite
+    // surfaces as "error" display).
+    //
+    // For categories WITHOUT an Err variant in their grammar, the legacy
+    // silent-fail behavior is preserved (W2 detector catches and drops).
+    let err_branch = match err_fallback_variant {
+        Some(err_ident) => quote! {
+            b.push_term::<#cat_ident>(#cat_ident::#err_ident);
+        },
+        None => quote! {
+            // No Err variant for this category — preserve legacy silent-fail
+            // (W2 detector at wpds_walker.rs:5281 catches the missing push
+            // and transitions the cursor to Error).
+        },
+    };
     quote! {
         |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
          args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
@@ -257,9 +335,9 @@ fn emit_literal_patterned_action(
             })();
             if let Ok(__v) = __result {
                 #push_guard
+            } else {
+                #err_branch
             }
-            // On Err: no push. Facade converts empty builder to
-            // ParseError::InvalidLiteral.
         }
     }
 }

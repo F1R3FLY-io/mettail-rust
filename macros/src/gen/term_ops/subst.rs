@@ -854,14 +854,72 @@ fn generate_nullary_visit_arm(cat: &Ident, label: &Ident) -> TokenStream {
 /// - `Env<Cat>`: try to replace v.0 by pretty_name lookup.
 /// - `Unify`: canonicalize FreeVar ID via VAR_CACHE.
 /// - wildcard: op is for a different category, passthrough clone.
+///
+/// D5 fix (2026-05-13): emits per-source-cat `SubstOp::Env<Y>` arms for each
+/// cross-cat cast rule `<Label> . a:Y |- ... : <cat>` in the grammar. When
+/// env.<Y>[name] is bound and the term contains `<cat>::<label>(v)` whose
+/// pretty_name matches, wrap env.<Y>[name] in the cast variant. This closes
+/// `test_nfa_spillover_float_bool_var` and similar tests where the parse
+/// alt is `Float::FloatId(Float::FVar(x))` with env.bool["x"] = BoolLit(true) —
+/// the new EnvBool arm substitutes `Float::FVar(x)` with `Float::BoolToFloat(
+/// Box::new(BoolLit(true)))` so eval can reduce to `FloatLit(1.0)`.
 fn generate_var_visit_arm(
     cat: &Ident,
     label: &Ident,
-    _language: &LanguageDef,
+    language: &LanguageDef,
 ) -> TokenStream {
     let wrap = format_ident!("Wrap{}", cat);
     let match_variant = format_ident!("Match{}", cat);
     let env_variant = format_ident!("Env{}", cat);
+
+    // D5: scan grammar for cast rules `<Label> . a:Y |- ... : <cat>` where
+    // Y != cat. These produce per-source-cat EnvY arms below.
+    let cat_name = cat.to_string();
+    let mut cross_cat_arms: Vec<TokenStream> = Vec::new();
+    let mut seen_sources: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for rule in &language.terms {
+        if rule.category.to_string() != cat_name {
+            continue;
+        }
+        let Some(tc) = rule.term_context.as_ref() else { continue; };
+        if tc.len() != 1 {
+            continue;
+        }
+        let mettail_ast::grammar::TermParam::Simple { ty, .. } = &tc[0] else { continue; };
+        let mettail_ast::types::TypeExpr::Base(source_ident) = ty else { continue; };
+        let source_name = source_ident.to_string();
+        if source_name == cat_name {
+            continue;
+        }
+        // Dedup: only the first cast rule per source_cat (source-order).
+        if !seen_sources.insert(source_name.clone()) {
+            continue;
+        }
+        let source_env_variant = format_ident!("Env{}", source_ident);
+        let cast_label = &rule.label;
+        let source_ident_clone = source_ident.clone();
+        cross_cat_arms.push(quote! {
+            SubstOp::#source_env_variant { env_map } => {
+                // D5: cross-cat substitution via grammar-declared cast rule.
+                // Replace `<cat>::<label>(v)` with `<cat>::<cast_label>(
+                // Box::new(env.<source>[name]))` so eval can reduce.
+                let result = 'find: {
+                    if let mettail_runtime::Var::Free(ref fv) = v.0 {
+                        if let Some(name) = &fv.pretty_name {
+                            if let Some(replacement) = env_map.get(name) {
+                                break 'find #cat::#cast_label(
+                                    Box::new(replacement.clone())
+                                );
+                            }
+                        }
+                    }
+                    let _: &#source_ident_clone;  // suppress unused-import-style warning
+                    #cat::#label(v.clone())
+                };
+                results[slot] = Some(AnySubstTerm::#wrap(result));
+            }
+        });
+    }
 
     quote! {
         #cat::#label(v) => {
@@ -892,6 +950,7 @@ fn generate_var_visit_arm(
                     };
                     results[slot] = Some(AnySubstTerm::#wrap(result));
                 }
+                #(#cross_cat_arms)*
                 SubstOp::Unify => {
                     let new_v = if let mettail_runtime::Var::Free(ref fv) = v.0 {
                         let canonical = mettail_runtime::get_or_insert_var(fv);

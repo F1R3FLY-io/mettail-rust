@@ -186,26 +186,26 @@ use mettail_runtime::BehavioralPred;
 //   - UInt32ToBigInt
 //   - UInt32ToBigRat
 // Constructor weights (lower = more frequent):
-//   MergeMap             weight: 0.0000
-//   Fraction             weight: 0.0000
-//   SinFloat             weight: 0.0000
-//   LnFloat              weight: 0.0000
-//   ListLit              weight: 0.0000
-//   FloatToInt           weight: 0.0000
-//   BoolToStr            weight: 0.0000
-//   CastErrFixed         weight: 0.0000
-//   EqFloat              weight: 0.0000
-//   CastErrFloat         weight: 0.0000
-//   NegBigInt            weight: 0.0000
-//   LenList              weight: 0.0000
-//   RemoveBag            weight: 0.0000
-//   DeleteMap            weight: 0.0000
-//   StrLit               weight: 0.0000
-//   BitNotBigInt         weight: 0.0000
-//   FixedBin             weight: 0.0000
-//   EqInt                weight: 0.0000
+//   IntToFloat           weight: 0.0000
+//   ExpFloat             weight: 0.0000
+//   GetMap               weight: 0.0000
 //   BigintCast           weight: 0.0000
-//   EqFixed              weight: 0.0000
+//   BitNotInt            weight: 0.0000
+//   BitNotFixed          weight: 0.0000
+//   BoolToStr            weight: 0.0000
+//   KeysMap              weight: 0.0000
+//   DiffBag              weight: 0.0000
+//   MapLit               weight: 0.0000
+//   BigRatLit            weight: 0.0000
+//   CastErrInt           weight: 0.0000
+//   NegBigRat            weight: 0.0000
+//   BigratCast           weight: 0.0000
+//   MergeMap             weight: 0.0000
+//   CastErrUInt32        weight: 0.0000
+//   IntToBool            weight: 0.0000
+//   EqInt                weight: 0.0000
+//   Not                  weight: 0.0000
+//   RemoveBag            weight: 0.0000
 //   ... and 221 more
 // Category weights:
 //   Bool                 weight: 0.0179

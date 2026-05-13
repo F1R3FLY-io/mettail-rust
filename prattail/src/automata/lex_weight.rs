@@ -246,6 +246,29 @@ pub const BP_TIER_CROSSCAT_LHS: f64 = 0.05;
 pub const BP_TIER_POSTFIX: f64 = 0.10;
 pub const BP_TIER_MIXFIX: f64 = 0.20;
 
+/// WPDS-architectural redesign (2026-05-13): Pass 2c synthesized implicit-cast
+/// arms. Pass 2c emits `<Source>To<Target> . a:Y |- "trigger" "(" a ")" : X`
+/// shaped rules as CrossCatProjection-style descriptors in result_cat's
+/// prefix dispatch (covering FIRST(source_cat) tokens) so internal cross-cat
+/// sub-parses succeed (e.g., LtBool's RHS wraps an Int as IntToBool inside
+/// `int(false > b < -N)`).
+///
+/// Strictly higher than CROSSCAT_PROJECTION so a SINGLE Pass 2c hop ALWAYS
+/// loses lex-min to a DIRECT user-declared cast that reaches the same
+/// `(pos, gss-node-symbol)` configuration. Without this, both paths had
+/// primary=0.0 and `rule_idx` declaration-order tiebreak picked the wrong
+/// one — causing `int(true)` to parse as `Int::FloatToInt(BoolToFloat(...))`
+/// (chained, 2 hops) instead of `Int::BoolToInt(BoolLit)` (direct, 1 hop).
+///
+/// Magnitude `0.15`:
+/// - Higher than `BP_TIER_CROSSCAT_LHS = 0.05` so cross-cat-LHS still wins
+///   over implicit-cast synthesis when both apply.
+/// - Lower than `EPSILON_OPT_SKIP = 0.5` so Opt-Group dangling-else ordering
+///   is preserved (`0.5 > 0.15 + 0.025`).
+/// - Lower than recovery costs (`TIER1_INSERT_COST = 1.0+`) so productive
+///   Pass 2c paths beat recovery dispatch.
+pub const BP_TIER_PASS2C_SYNTHESIZED: f64 = 0.15;
+
 impl LexicographicWeight {
     /// Construct a weight with the given components. Sets `lex_alt_idx` to 0.
     #[inline]

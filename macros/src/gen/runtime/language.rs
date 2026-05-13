@@ -3427,10 +3427,23 @@ fn generate_language_trait_impl_multi(
                 };
                 match &typed_term.0 {
                     #inner_enum_name::Ambiguous(alts) => {
-                        if let Some(first) = alts.first() {
-                            let sub = #term_name(first.clone());
-                            self.infer_var_types(&sub)
-                        } else { Vec::new() }
+                        // D6 fix (2026-05-13): iterate over alts and return
+                        // the alt with the most found vars. Prior behavior
+                        // picked `alts.first()` only — for `x + 1` the first
+                        // alt may be Proc::ProcInt(Int::AddInt(IVar(x), ...))
+                        // whose Proc-level collector doesn't recurse into
+                        // foreign-cat (Int) fields, returning []. Iterating
+                        // picks the alt whose category's collector finds the
+                        // var (e.g., the Int alt with Int::AddInt directly).
+                        let mut best: Vec<mettail_runtime::VarTypeInfo> = Vec::new();
+                        for alt in alts.iter() {
+                            let sub = #term_name(alt.clone());
+                            let vars = self.infer_var_types(&sub);
+                            if vars.len() > best.len() {
+                                best = vars;
+                            }
+                        }
+                        best
                     }
                     #(#infer_var_types_arms),*
                 }
