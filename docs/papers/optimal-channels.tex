@@ -115,15 +115,16 @@ rewrite rule $L \rew R$ as
 \Recv{\sem{L}}{t\!\ell}{\,\Send{t\!\ell}{\sem{R}}\,}
 \end{equation}
 and a contextual rewrite as
-\begin{multline}\label{eq:context-rule}
+\begin{equation}\label{eq:context-rule}
+\begin{array}{@{}l@{}}
 \sem{L_{1} \rew R_{1}, \ldots, L_{n} \rew R_{n}
-     \;\Rightarrow\; K(L_{1}, \ldots, L_{n}) \rew K'(R_{1}, \ldots, R_{n})} \\
-\;=\;
-\Let{tc}{\sem{K}}{\,
-  \Recv{(\sem{L_{1}}, \ldots, \sem{L_{n}})}{tc}{\,
-    \Send{tc}{\sem{K'}(\sem{R_{1}}, \ldots, \sem{R_{n}})}\,}
-\,}
-\end{multline}
+     \;\Rightarrow\; K(L_{1}, \ldots, L_{n}) \rew K'(R_{1}, \ldots, R_{n})} \;=\; \\[2pt]
+\quad \mathsf{let}\;tc = \sem{K}\;\mathsf{in} \\
+\quad\quad \mathsf{for}\,((\sem{L_{1}}, \ldots, \sem{L_{n}}) \Leftarrow tc)\,\{ \\
+\quad\quad\quad \Send{tc}{\sem{K'}(\sem{R_{1}}, \ldots, \sem{R_{n}})} \\
+\quad\quad \}
+\end{array}
+\end{equation}
 The polymorphic interpretation of $\Let{tc}{\sem{K}}{\cdots}$ is the locus
 of optimisation. Since $K$ is a context (a term with $n$ holes), the channel
 $tc$ is a function of $K$'s shape; the question is which function makes the
@@ -631,15 +632,16 @@ For a single rule $L \rew R$ on translation channel $t\!\ell$,
   \Recv{\sem{L}}{t\!\ell}{\,\Send{t\!\ell}{\sem{R}}\,}.
 \]
 For a contextual rewrite,
-\begin{multline*}
+\[
+\begin{array}{@{}l@{}}
   \sem{\,L_{1} \rew R_{1}, \ldots, L_{n} \rew R_{n}
-        \,\Rightarrow\, K \rew K'\,} \\
-  \;=\;
-  \Let{tc}{\sem{K}}{\,
-    \Recv{(\sem{L_{1}}, \ldots, \sem{L_{n}})}{tc}{\,
-      \Send{tc}{\sem{K'}(\sem{R_{1}}, \ldots, \sem{R_{n}})}\,}
-  \,}.
-\end{multline*}
+        \,\Rightarrow\, K \rew K'\,} \;=\; \\[2pt]
+  \quad \mathsf{let}\;tc = \sem{K}\;\mathsf{in} \\
+  \quad\quad \mathsf{for}\,((\sem{L_{1}}, \ldots, \sem{L_{n}}) \Leftarrow tc)\,\{ \\
+  \quad\quad\quad \Send{tc}{\sem{K'}(\sem{R_{1}}, \ldots, \sem{R_{n}})} \\
+  \quad\quad \}.
+\end{array}
+\]
 \end{definition}
 
 The \emph{polymorphic interpretation} of $\Let{tc}{\sem{K}}{\cdots}$ is
@@ -719,12 +721,14 @@ phenomenon noted in~\cite[\S 1.1]{BouwmanErkens2022}.
 
 Substituting Definition~\ref{def:channel} into Definition~\ref{def:compile},
 the contextual rule compiles to
-\begin{multline*}
-  \Let{tc}{\reflect{T_{M}(K)}}{\,
-    \mathsf{for}\,((\sem{L_{1}}, \ldots, \sem{L_{n}}) \Leftarrow tc)\, \\
-    \{\,\Send{tc}{\sem{K'}(\sem{R_{1}}, \ldots, \sem{R_{n}})}\,\}
-  \,}.
-\end{multline*}
+\[
+\begin{array}{@{}l@{}}
+  \mathsf{let}\;tc = \reflect{T_{M}(K)}\;\mathsf{in} \\
+  \quad \mathsf{for}\,((\sem{L_{1}}, \ldots, \sem{L_{n}}) \Leftarrow tc)\,\{ \\
+  \quad\quad \Send{tc}{\sem{K'}(\sem{R_{1}}, \ldots, \sem{R_{n}})} \\
+  \quad \}.
+\end{array}
+\]
 The for-receive on $tc$ blocks until $n$ names arrive, one per hole. Their
 arrival corresponds, automaton-side, to taking the suspended transitions
 and continuing matching on the hole-fillers. The send on $tc$ in the body
@@ -1030,10 +1034,12 @@ $(s_{\mathit{app}}, \epsilon)$ awaiting position $1$, plus a
 canonical reflection $tc(K) = \reflect{T_{M}(K)}$ encodes both. The
 compiled rule, eliding the boilerplate, is:
 \[
-  \Let{tc}{\reflect{T_{M}(K)}}{\,
-    \Recv{\sem{\mathit{app}(\mathit{lam}(M), N)}}{tc}{\,
-      \Send{tc}{\sem{\mathit{app}(M[N/x], N)}}\,}
-  \,}.
+\begin{array}{@{}l@{}}
+  \mathsf{let}\;tc = \reflect{T_{M}(K)}\;\mathsf{in} \\
+  \quad \mathsf{for}\,(\sem{\mathit{app}(\mathit{lam}(M), N)} \Leftarrow tc)\,\{ \\
+  \quad\quad \Send{tc}{\sem{\mathit{app}(M[N/x], N)}} \\
+  \quad \}.
+\end{array}
 \]
 
 \paragraph{What optimality delivers.}
@@ -1248,23 +1254,27 @@ Let $L$ be a pattern with non-linear partition $\pi(L)$. For each
 non-singleton class $P \in \pi(L)$ with $P = \{q_{1}, \ldots, q_{k}\}$
 ($k \ge 2$), define a guarded receive
 \[
-  \Match{P}(t) \;=\;
-  \mathsf{for}\,(z_{1}, \ldots, z_{k} \Leftarrow @t|_{q_{1}}, \ldots, @t|_{q_{k}})\,\{\,
-    \mathit{if}\;\bigwedge_{i=2}^{k} z_{1} =_{\mathcal{N}} z_{i}\;\mathit{then}\;\mathit{enable}\;\mathit{else}\;\mathit{disable}\,
-  \}
+\begin{array}{@{}l@{}}
+  \Match{P}(t) \;=\; \\
+  \quad \mathsf{for}\,(z_{1}, \ldots, z_{k} \Leftarrow @t|_{q_{1}}, \ldots, @t|_{q_{k}})\,\{ \\
+  \quad\quad \mathit{if}\;\bigwedge_{i=2}^{k} z_{1} =_{\mathcal{N}} z_{i}\;\mathit{then}\;\mathit{enable}\;\mathit{else}\;\mathit{disable} \\
+  \quad \}
+\end{array}
 \]
 where $=_{\mathcal{N}}$ is the rho-calculus name equality of
 \S\ref{sec:prelim}.
 \end{definition}
 
 The compiled non-linear rule then becomes
-\begin{multline*}
-  \Let{tc}{\reflect{T_{M}(K)}}{\,
-    \mathsf{for}\,((\sem{L_{1}}, \ldots, \sem{L_{n}}) \Leftarrow tc)\, \\
-    \bigl\{\,\bigl(\bigparallel_{i, P \in \pi(L_{i}), |P| \ge 2} \Match{P}(L_{i})\bigr)
-      \mid \mathit{enable\text{-}guarded}(\Send{tc}{\sem{K'}(\ldots)})\,\bigr\}
-  \,},
-\end{multline*}
+\[
+\begin{array}{@{}l@{}}
+  \mathsf{let}\;tc = \reflect{T_{M}(K)}\;\mathsf{in} \\
+  \quad \mathsf{for}\,((\sem{L_{1}}, \ldots, \sem{L_{n}}) \Leftarrow tc)\,\bigl\{ \\
+  \quad\quad \bigl(\bigparallel_{i, P \in \pi(L_{i}), |P| \ge 2} \Match{P}(L_{i})\bigr) \\
+  \quad\quad \mid \mathit{enable\text{-}guarded}(\Send{tc}{\sem{K'}(\ldots)}) \\
+  \quad \bigr\},
+\end{array}
+\]
 where $\mathit{enable\text{-}guarded}(P)$ denotes the process that
 proceeds as $P$ once one $\mathit{enable}$ token has been received per
 non-singleton class on a dedicated coordination channel, and remains
