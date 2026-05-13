@@ -15,13 +15,22 @@ between elements in concrete syntax.
 
 ## Running Example
 
-RhoCalc's parallel composition `PPar` uses `HashBag`:
+RhoCalc's parallel composition `PPar` uses `HashBag` and is built from the
+bare-infix surface rule `PParInfix . a "|" b` which folds into the
+multiset `Proc::PPar`:
 
 ```text
-PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
+PParInfix . a:Proc, b:Proc |- a "|" b : Proc
+    ![{ merge_pp_parallel(a, b) }] fold ;
+PPar      . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc ; // internal
 ```
 
-Concrete syntax: `{ a | b | c }` → `Proc::PPar(HashBag { a, b, c })`
+Concrete surface syntax: `a | b | c` → `Proc::PParInfix(…)` →
+(fold via `merge_pp_parallel`) → `Proc::PPar(HashBag { a, b, c })`. The
+internal `__ppar(…)` form is reserved for AST round-tripping and never
+appears in user input. See
+[exploring/rhocalc-rholang-style-syntax.md](../../../../../design/exploring/rhocalc-rholang-style-syntax.md)
+for the Rholang-style alignment that drove this split.
 
 ## Key Types
 

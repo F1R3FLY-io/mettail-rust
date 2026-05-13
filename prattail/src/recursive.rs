@@ -31,6 +31,15 @@ pub struct RDRuleInfo {
     /// Binding power for the recursive call in unary prefix rules.
     /// When set, NonTerminal calls use this bp instead of 0.
     pub prefix_bp: Option<u8>,
+    /// True iff this rule is a *same-category* unary prefix (shape
+    /// `[Terminal, NonTerminal(same_category)]`).  Same-category unary
+    /// prefix rules participate in the dedicated `UnaryPrefix_*` frame
+    /// dispatch (which assumes operand and result share the result type).
+    /// Cross-category prefix rules (e.g. `@P : Name` with `P : Proc`) may
+    /// still carry a `prefix_bp` to bound their inner-operand parse, but
+    /// MUST NOT enter the unary-prefix dispatch path — they continue to
+    /// be served by the regular RD-handler / NFA standalone path.
+    pub is_unary_prefix: bool,
     /// Eval mode for HOL rules.
     pub eval_mode: Option<String>,
 }

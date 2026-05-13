@@ -41,13 +41,20 @@ pub struct InfixOperator {
     /// Whether this is a postfix operator (e.g., a!, a?, a++).
     /// Postfix operators have left_bp but no right recursive call.
     pub is_postfix: bool,
-    /// Whether this is a mixfix operator (e.g., a ? b : c, with 3+ operands).
+    /// Whether this is a mixfix operator (e.g., a ? b : c, with 2+ operands).
     /// Mixfix operators parse middle operands at min_bp=0 (reset like grouping)
     /// and the final operand at right_bp.
     pub is_mixfix: bool,
     /// Parts of a mixfix operator: the operand-separator pairs after the trigger.
     /// Empty for regular infix/postfix.
     pub mixfix_parts: Vec<MixfixPart>,
+    /// Terminals appearing between the trigger and the first operand part.
+    /// For `a ? b : c` this is empty. For `m "." "get" "(" k ")"` the trigger
+    /// is `.` and the leading terminals are `["get", "("]`; they are consumed
+    /// by the mixfix unwind handler before parsing the first operand. Also
+    /// used to disambiguate multiple mixfix rules sharing the same trigger
+    /// (e.g. `m.get(k)` vs `m.set(k, v)` both keyed by `.`).
+    pub leading_terminals: Vec<String>,
 }
 
 /// A part of a mixfix operator after the trigger terminal.
@@ -248,6 +255,7 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
                 is_postfix: false,
                 is_mixfix: rule.is_mixfix,
                 mixfix_parts: rule.mixfix_parts.clone(),
+                leading_terminals: rule.leading_terminals.clone(),
             });
         }
 
@@ -266,6 +274,7 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
                 is_postfix: true,
                 is_mixfix: false,
                 mixfix_parts: Vec::new(),
+                leading_terminals: Vec::new(),
             });
             postfix_prec += 2;
         }
@@ -292,8 +301,13 @@ pub struct InfixRuleInfo {
     pub is_cross_category: bool,
     /// Whether this is a postfix operator.
     pub is_postfix: bool,
-    /// Whether this is a mixfix operator (3+ operands, 2+ terminals).
+    /// Whether this is a mixfix operator (2+ operands, 2+ terminals).
     pub is_mixfix: bool,
+    /// Terminals appearing between the trigger and the first operand part.
+    /// Empty for ordinary infix and "ternary-style" mixfix where the trigger
+    /// is immediately followed by an operand. For method-call sugar like
+    /// `m "." "get" "(" k ")"` this carries `["get", "("]`.
+    pub leading_terminals: Vec<String>,
     /// Mixfix parts (operand-separator pairs after the trigger). Empty for non-mixfix.
     pub mixfix_parts: Vec<MixfixPart>,
 }

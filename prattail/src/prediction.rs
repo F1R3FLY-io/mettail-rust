@@ -975,21 +975,39 @@ fn detect_ambiguous_prefix(
 ) {
     use std::collections::BTreeMap;
 
-    // (category, label) -> terminal skeleton
+    // (category, label) -> structural skeleton.
+    //
+    // The skeleton records both terminals (verbatim) and the *category* of
+    // each NonTerminal/Collection slot.  Two rules whose skeletons differ
+    // on a slot category can be disambiguated at parse time by lookahead
+    // into that slot's FIRST set (or, when FIRSTs overlap, by the NFA
+    // dispatcher in `trampoline.rs` which tries each candidate rule via
+    // its standalone `parse_<label>` function — first success wins).
+    // Skeletons matching *exactly* indicate a true grammar ambiguity that
+    // even the NFA dispatcher cannot resolve without semantic information.
     let terminal_skeletons: BTreeMap<(String, String), Vec<String>> = all_syntax
         .iter()
         .map(|(label, category, syntax)| {
-            let terminals = syntax
+            let skeleton = syntax
                 .iter()
-                .filter_map(|item| {
-                    if let crate::SyntaxItemSpec::Terminal(t) = item {
-                        Some(t.clone())
-                    } else {
-                        None
-                    }
+                .map(|item| match item {
+                    crate::SyntaxItemSpec::Terminal(t) => format!("T:{}", t),
+                    crate::SyntaxItemSpec::NonTerminal { category: cat, .. } => {
+                        format!("NT:{}", cat)
+                    },
+                    crate::SyntaxItemSpec::IdentCapture { .. } => "ID".to_string(),
+                    crate::SyntaxItemSpec::Binder { category: cat, .. } => format!("B:{}", cat),
+                    crate::SyntaxItemSpec::Collection { element_category, .. } => {
+                        format!("C:{}", element_category)
+                    },
+                    crate::SyntaxItemSpec::BinderCollection { .. } => "BC".to_string(),
+                    crate::SyntaxItemSpec::ZipMapSep { left_category, right_category, .. } => {
+                        format!("Z:{}:{}", left_category, right_category)
+                    },
+                    crate::SyntaxItemSpec::Optional { .. } => "OPT".to_string(),
                 })
                 .collect::<Vec<_>>();
-            ((category.clone(), label.clone()), terminals)
+            ((category.clone(), label.clone()), skeleton)
         })
         .collect();
 
@@ -1077,8 +1095,10 @@ fn detect_left_recursion(
                 // Postfix pattern: exactly 1 NT + 1 terminal
                 let is_postfix_pattern = nt_count == 1 && terminal_count == 1 && syntax.len() == 2;
 
-                // Mixfix: 3+ NTs with terminals — also handled by Pratt
-                let is_mixfix_pattern = nt_count >= 3 && terminal_count >= 2;
+                // Mixfix: 2+ NTs with 2+ terminals OR 1 NT with 3+ terminals
+                // (zero-operand-after-trigger method call like `m.size()`).
+                let is_mixfix_pattern = (nt_count >= 2 && terminal_count >= 2)
+                    || (nt_count == 1 && terminal_count >= 3);
 
                 if !is_infix_pattern && !is_postfix_pattern && !is_mixfix_pattern {
                     warnings.push(GrammarWarning::LeftRecursion {
@@ -1196,9 +1216,12 @@ pub fn build_dispatch_action_tables(
             if rd_rule.category != *cat {
                 continue;
             }
-            // Skip infix-like, collection-first, and nonterminal-first rules
-            if rd_rule.prefix_bp.is_some() {
-                // Unary prefix — still Direct, just with a different parse_fn
+            // Skip infix-like, collection-first, and nonterminal-first rules.
+            // Same-category unary prefix → Direct dispatch with its own
+            // `parse_<label>` fn (which handles the prefix BP).  Cross-cat
+            // prefix rules carrying a `prefix_bp` fall through to the
+            // normal terminal-dispatch path below.
+            if rd_rule.is_unary_prefix {
                 if let Some(crate::recursive::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
                     let variant = terminal_to_variant_name(t);
                     entries

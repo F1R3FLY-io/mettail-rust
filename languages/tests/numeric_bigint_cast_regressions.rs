@@ -89,7 +89,7 @@ fn calc_unary_int_is_not_surface_syntax() {
 
 #[test]
 fn rho_bigint_from_sci_float() {
-    let results = rho_run("{bigint(3.14e100)}");
+    let results = rho_run("bigint(3.14e100)");
     let nfs: Vec<_> = results
         .normal_forms()
         .iter()

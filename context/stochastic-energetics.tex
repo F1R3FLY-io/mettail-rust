@@ -1,0 +1,547 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{stmaryrd}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{booktabs}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!50!black
+}
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\rew}{\rightsquigarrow}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\C}{\mathbb{C}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\Z}{\mathcal{Z}}
+\newcommand{\F}{\mathcal{F}}
+\newcommand{\HML}{\mathrm{HML}}
+\newcommand{\bd}{\partial}
+\newcommand{\ie}{\textit{i.e.}}
+\newcommand{\eg}{\textit{e.g.}}
+\newcommand{\cf}{\textit{cf.}}
+
+\title{Stochastic Thermodynamics of Rewriting:\\
+An Energetic Foundation for Graph-Structured Lambda Theories}
+
+\author{L.\ G.\ Meredith\thanks{\texttt{f1r3fly.ceo@gmail.com}}\\Michael Stay\thanks{\texttt{director.research@f1r3fly.io}}}
+
+\date{Draft, \today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We develop a stochastic-thermodynamic foundation for the energetics of rewrite systems, with particular attention to graph-structured lambda theories (GSLTs): categories that capture a calculus together with its small-step operational semantics, finitely presentable by a grammar, equations on terms, and rewrite rules. The lambda calculus and process calculi such as $\pi$ and $\rho$ are instances. Rate-decorated rewrite systems generate continuous-time Markov chains; under Arrhenius-form rates, equilibrium distributions are Gibbs--Boltzmann at a chosen energy functional, and the corresponding free energy descends to the quotient of states by Hennessy--Milner equivalence. We survey the chemistry-of-computation tradition---AlChemy, $\kappa$, stochastic $\pi$, PEPA, chemical reaction network theory---as the existence proof that this apparatus is workable in practice, and we show how the modern stochastic-thermodynamic theorems (Crooks, Jarzynski, finite-time Landauer) yield rigorous lower bounds on the cost of irreversible computation. The Doi--Peliti correspondence places stochastic and quantum rewriting in a single second-quantised formalism distinguished only by the weight semiring of the underlying calculus. We close by recasting earlier energetic readings of GSLTs against this anchor: linear discipline becomes detailed balance, the action functional becomes equilibrium free-energy difference, and the speculative parts of the framework are pruned in favour of theorem-grade replacements.
+\end{abstract}
+
+\section{Introduction}
+
+The phrase ``energy of a state'' has a long-running and uneasy currency in the theory of rewrite systems. It surfaces in resource-aware proof theory, in implicit computational complexity, in the statistical mechanics of computation, and most recently in attempts to read graph-structured lambda theories (GSLTs)---categories capturing a calculus together with its small-step operational semantics, finitely presentable by grammar, equations, and rewrite rules---as discrete dynamical systems with conserved quantities. The intuition is sharp: a state in a rewrite system has a stored capacity for change, that capacity is consumed at rewrites, and the resulting bookkeeping ought to be a discrete analogue of mechanics or thermodynamics. The temptation to import the full physical apparatus---Hamiltonians, Legendre transforms, conservation laws, $E = mc^2$---is strong, and in recent informal work has been answered with a flourish.
+
+This paper takes a more conservative line. We argue that the closest \emph{rigorous} relative of the energetic intuition is not classical mechanics but \emph{stochastic thermodynamics}: the modern theory of small driven systems whose dynamics are continuous-time Markov chains, whose equilibrium distributions are Gibbs--Boltzmann, and whose departures from equilibrium obey fluctuation theorems with theorem-grade content. Each of the structural moves the energetic reading wants to make has a precise correlate in this theory:
+
+\begin{itemize}
+\item ``States have energies'' becomes a choice of energy function $\mu : T \to \R$ on terms.
+\item ``Rewrites are transitions'' becomes a CTMC whose rates are Arrhenius in $\mu$.
+\item ``Energy is conserved'' becomes detailed balance, which is preserved by some structural disciplines (linearity) and broken by others (erasure-bearing exponentials).
+\item ``Bisimilar states have the same energy spectrum'' becomes the lift of free energy to the bisimulation quotient.
+\item ``Computation costs energy'' becomes the entropy production of a non-equilibrium steady state, lower-bounded by the stochastic Landauer principle.
+\item ``Quantum reading via complex weights'' becomes the Doi--Peliti correspondence, in which classical stochastic mechanics and quantum mechanics are the same second-quantised formalism over different weight semirings.
+\end{itemize}
+
+The thesis is that the energetic reading earns its keep by attaching to this apparatus rather than to a bespoke discrete mechanics. Where the bespoke reading was metaphor, the apparatus is theorem; and the apparatus is mature enough that systems-biology, performance-modelling, and physical-chemistry communities have been using it for decades on rewrite-systems-with-rates that look exactly like the calculi a GSLT can present.
+
+\paragraph{Structure of the paper.} Section~\ref{sec:prelim} fixes notation: GSLTs, interactive GSLTs with their distinguished K-family, the Hennessy--Milner-style modal logic generated from a rewrite system, and the unified context-label-location set $\bd T$. Section~\ref{sec:ctmc} develops the CTMC induced by a rate-decorated rewrite system and recovers the Gibbs--Boltzmann equilibrium under Arrhenius rates. Section~\ref{sec:freeenergy} lifts the free energy to the bisimulation quotient via Markovian bisimulation and quantitative HML. Section~\ref{sec:chemistry} surveys the chemistry-of-computation tradition. Section~\ref{sec:ness} treats the non-equilibrium regime, where computation actually lives, and states the relevant fluctuation theorems and stochastic Landauer bounds. Section~\ref{sec:weightring} sketches the Doi--Peliti bridge between stochastic and quantum mechanics as a parametrisation by the weight semiring. Section~\ref{sec:recast} recasts the earlier energetic framework, item by item, against this foundation; some material survives, some is pruned, and some is sharpened. Section~\ref{sec:open} closes with open problems.
+
+\section{Preliminaries}\label{sec:prelim}
+
+We summarise the relevant apparatus \cite{gslt-context,oslf-meredith} as needed.
+
+\subsection{Graph-structured lambda theories}
+
+A \emph{graph-structured lambda theory} (GSLT) is a cartesian closed category $\mathcal{C}$ with all finite limits, equipped with a distinguished object $P \in \mathcal{C}$ (the \emph{processes}, or \emph{states}) and a distinguished subobject $R \hookrightarrow P \times P$ (the \emph{reduction relation}). A \emph{finite presentation} of a GSLT is a triple $(G, E, R)$ with all three components finite: $G$ is a grammar generating the carrier of $P$, $E$ is a set of equations imposed on terms, and $R$ is a finite inductive definition of the reduction subobject---typically presented in the structural-operational-semantics style as a finite collection of inference rules (rule schemas with finitely many hypotheses), whose inductive closure is the subobject of $P \times P$. (We reuse the letter $R$ for the rule schemas and for the subobject they inductively generate, by abuse of notation; no confusion arises in practice.) The distinction between rules with hypotheses and rules without will become important in \S\ref{sec:interactive}: the hypothesis-free rules are the \emph{base rewrites}, the dynamics proper, while the rules with hypotheses are structural propagation. We work throughout with finite presentations, and unless emphasis is needed we refer to a finite presentation as ``a GSLT'' by the usual abuse. Terms are states; equations quotient them; rewrites animate the quotient. The lambda calculus, the $\pi$-calculus, the $\rho$-calculus, ambient calculi, and combinatory algebra all admit finite presentations of this kind. Universal algebra and Lawvere theories are the degenerate slice in which the rewrite component is empty---the reduction subobject is the diagonal $\Delta : P \hookrightarrow P \times P$.
+
+A morphism of GSLTs in the \emph{semantic} category is required only to preserve bisimulation; a morphism in the \emph{syntactic} category preserves grammar, equations, and rewrites on the nose. The forgetful functor from syntactic to semantic forgets everything that is not visible to a Hennessy--Milner-style modal logic generated by the rewrite system (\S\ref{sec:oslf-intro}).
+
+\subsection{Interactive GSLTs and the K-family}\label{sec:interactive}
+
+A GSLT is \emph{interactive} when it is equipped with a distinguished family $\{K_i\}$ of term constructors picked out by the criterion that $K_i$ is the head of the LHS of every base rewrite (a rule with no hypotheses). The K-family is canonical: it is read off the rule presentation rather than supplied externally. Examples:
+
+\begin{itemize}
+\item Lambda calculus: $K = \mathit{App}$, base rewrite $\beta : (\lambda x.M)\,N \rew M\{N/x\}$, asymmetric.
+\item $\pi$-calculus: $K = (\cdot \mid \cdot)$, base rewrite COMM, symmetric.
+\item $\rho$-calculus: as $\pi$ for COMM, plus reflection-mediated rewrites whose K is the same parallel composition.
+\item Ambient calculus: $K = (\cdot \mid \cdot)$ with in/out/open as base rewrites.
+\end{itemize}
+
+Each K is the syntactic locus at which a state decomposes into a program and an environment, and is therefore the site at which interaction occurs. Cost (and, as we shall argue, energy difference) attaches per K-firing because base rules are the ground events; structural rules are inference, not dynamics.
+
+\subsection{Hennessy--Milner logic and the unified $\bd T$}\label{sec:oslf-intro}
+
+The Operational Semantics in Logical Form (OSLF) functor produces from $(G, E, R)$ a Hennessy--Milner-style modal logic over $T$ whose modalities are indexed by \emph{splittings}, that is, pairs $(k, t)$ where $k$ is a one-hole context and $t$ is a subterm such that $k[t]$ is a state and $t$ matches the LHS of some base rule. Adequacy holds: $P \sim Q$ if and only if $P$ and $Q$ satisfy the same formulae \cite{HM85,oslf-meredith}.
+
+Write $\bd T$ for the set of splittings. Three a priori distinct apparatuses pass through $\bd T$:
+
+\begin{itemize}
+\item Witnessing: $\bd T$ as the index set of OSLF-generated HML modalities.
+\item Firing: $\bd T$ as the label set of LTS transitions, derived from $R$ by the Milner--Sewell--Leifer minimal-context construction.
+\item Placing: $\bd T$ as the location-side of one-hole-context decompositions of states.
+\end{itemize}
+
+Adequacy is the assertion that these are three views of one object. We will add a fourth view: $\bd T$ as the natural domain on which to deposit Arrhenius rates.
+
+\section{Rate-decorated rewriting and the induced CTMC}\label{sec:ctmc}
+
+\subsection{Rates}
+
+\begin{definition}\label{def:rated-gslt}
+A \emph{rate-decorated GSLT} is a tuple $(G, E, R, k)$ where $(G, E, R)$ is a GSLT and $k$ is a rate function assigning to each match of a base rule LHS a positive real $k(t \xrightarrow{\ell} t') > 0$, where $\ell \in \bd T$ is the splitting at which the rule fires.
+\end{definition}
+
+\begin{remark}
+The rate is attached per match, not per rule. Two distinct splittings $(k_1, t)$, $(k_2, t)$ in the same term may carry different rates if the rule LHS has free parameters that differ across matches. In a rule schema such as $\pi$-COMM, $k\bigl(x\langle v\rangle.P \mid x(y).Q \rew P \mid Q\{v/y\}\bigr)$ may depend on the channel $x$, the message $v$, and the location of the parallel cut.
+\end{remark}
+
+The induced dynamics is a continuous-time Markov chain on $T$ (or, more precisely, on $T$ quotiented by $E$). For each ordered pair of equivalence classes $[t]$, $[t']$ define
+\[
+Q_{[t],[t']} \;=\; \sum_{\substack{(k,r) \in \bd T \\ k[r] \in [t],\, k[r'] \in [t']}} k(t \xrightarrow{(k,r)} t'),
+\qquad
+Q_{[t],[t]} \;=\; -\sum_{[t'] \neq [t]} Q_{[t],[t']}.
+\]
+The probability vector $p_t$ over states evolves under the master equation
+\begin{equation}\label{eq:master}
+\frac{d p}{dt} \;=\; p \, Q,
+\end{equation}
+which preserves total probability and is positivity-preserving.
+
+\subsection{Stationary distributions and detailed balance}
+
+A probability distribution $\pi$ on $T$ is \emph{stationary} if $\pi Q = 0$, equivalently if for every state $[t]$
+\[
+\sum_{[t']} \pi([t'])\, Q_{[t'],[t]} \;=\; \sum_{[t']} \pi([t])\, Q_{[t],[t']}.
+\]
+A stationary $\pi$ satisfies \emph{detailed balance} when each pairwise current vanishes:
+\begin{equation}\label{eq:db}
+\pi([t])\, Q_{[t],[t']} \;=\; \pi([t'])\, Q_{[t'],[t]} \qquad \text{for all } [t], [t'].
+\end{equation}
+
+Detailed balance is strictly stronger than stationarity (cycle currents may sum to zero without each pair-current vanishing). When detailed balance holds, the dynamics is \emph{reversible} in the Markov sense: $\Prob(t_0 \to t_1 \to \cdots \to t_n) = \Prob(t_n \to \cdots \to t_1 \to t_0)$ in the equilibrium ensemble.
+
+\subsection{Arrhenius rates and the Gibbs--Boltzmann equilibrium}
+
+\begin{definition}\label{def:arrhenius}
+Fix an inverse temperature $\beta > 0$ and an energy function $\mu : T/E \to \R$. The rates $k$ are \emph{Arrhenius for $(\mu, \beta)$} if there is a per-pair barrier $E^\ddagger([t],[t']) = E^\ddagger([t'],[t])$ and a prefactor $\nu([t],[t']) = \nu([t'],[t])$ such that
+\begin{equation}\label{eq:eyring}
+Q_{[t],[t']} \;=\; \nu([t],[t']) \, \exp\bigl(-\beta\,(E^\ddagger([t],[t']) - \mu([t]))\bigr).
+\end{equation}
+\end{definition}
+
+\begin{proposition}\label{prop:boltzmann}
+If the rates are Arrhenius for $(\mu, \beta)$, then $\pi^\beta([t]) \propto e^{-\beta \mu([t])}$ satisfies detailed balance \eqref{eq:db}, and is stationary for the master equation \eqref{eq:master}.
+\end{proposition}
+
+\begin{proof}
+Symmetry of $E^\ddagger$ and $\nu$ in their two arguments gives
+\begin{align*}
+\pi^\beta([t]) Q_{[t],[t']} &= e^{-\beta\mu([t])} \, \nu \, e^{-\beta(E^\ddagger - \mu([t]))} \\
+&= \nu \, e^{-\beta E^\ddagger}\\
+&= e^{-\beta\mu([t'])} \, \nu \, e^{-\beta(E^\ddagger - \mu([t']))} \\
+&= \pi^\beta([t']) Q_{[t'],[t]}.
+\end{align*}
+Stationarity follows from detailed balance.
+\end{proof}
+
+The partition function $\Z(\beta) = \sum_{[t]} e^{-\beta \mu([t])}$ and free energy $\F(\beta) = -\beta^{-1} \log \Z(\beta)$ are well-defined provided $\mu$ has bounded sub-level sets at each level (so the sum converges). For combinatorial $\mu$ on a syntactic carrier, this typically reduces to combinatorial enumeration of states by complexity.
+
+\begin{example}[Stochastic $\pi$-calculus]\label{ex:stochpi}
+Take $T$ to be $\pi$-calculus processes modulo structural congruence. Decorate each input/output capability with a rate; the COMM rate at a particular synchronisation is, in the standard convention, the minimum (or product) of the input and output rates on that channel \cite{Priami95}. Choose $\mu([P]) = c_1 \cdot |P|_{\mathrm{prefixes}} + c_2 \cdot |P|_{\mathrm{depth}}$ for constants $c_1, c_2$. Detailed balance is generally \emph{not} present in the standard rate convention, because COMM is irreversible at the language level: there is no $\pi$ rule rebuilding a prefix from its successor. The Boltzmann picture only applies in the closure where reverse rates are added by hand---an artefact of the calculus's intentional one-directionality. We return to this in \S\ref{sec:ness}.
+\end{example}
+
+\begin{example}[Stochastic chemical reaction networks]\label{ex:crn}
+A chemical reaction network specifies a multiset rewrite system: rules $\sum_i a_i X_i \rew \sum_j b_j Y_j$ with rate constants. The induced CTMC is on multisets of species. Reversible CRNs (every reaction paired with its reverse) admit detailed balance; the Wegscheider conditions \cite{Feinberg19,AndersonKurtz15} characterise when the rates are consistent with thermodynamic equilibrium. Where consistent, $\pi^\beta$ is the Boltzmann distribution at the chemical free energy. CRNs are a faithful instance of rate-decorated GSLTs whose carrier is a free commutative monoid on a species set.
+\end{example}
+
+\subsection{The K-firing as primitive event}
+
+Because base rules are the ground events of the dynamics, all CTMC transitions correspond to K-firings, and structural rules contribute no transitions of their own (they are propagation, not motion). The energy difference associated with a transition is therefore wholly attached to the K-firing:
+\begin{equation}\label{eq:efiring}
+\Delta\mu(K\text{-firing at } \ell) \;=\; \mu([k[r']]) - \mu([k[r]]),
+\end{equation}
+where $\ell = (k, r)$ and $r \rew r'$ is the base rewrite at the splitting. This will be the natural locus on which to charge thermodynamic cost.
+
+\section{Free energy on the bisimulation quotient}\label{sec:freeenergy}
+
+\subsection{Markovian bisimulation}
+
+Larsen and Skou \cite{LarsenSkou91} introduced probabilistic bisimulation; Hillston \cite{Hillston96} (PEPA), Hermanns \cite{HermannsBaier97}, Bernardo and Gorrieri \cite{BernardoGorrieri98}, and others extended the construction to continuous-time Markovian process calculi. The relevant notion for our setting is:
+
+\begin{definition}\label{def:markovbisim}
+A \emph{Markovian bisimulation} on a CTMC $(T/E, Q)$ is an equivalence relation $\mathcal{R}$ such that for any $\mathcal{R}$-equivalent classes $[t]\, \mathcal{R}\, [s]$ and any $\mathcal{R}$-class $C$,
+\[
+\sum_{[t'] \in C} Q_{[t],[t']} \;=\; \sum_{[s'] \in C} Q_{[s],[s']}.
+\]
+The largest such relation is \emph{Markovian bisimulation equivalence}, written $\sim_M$.
+\end{definition}
+
+The point of Markovian bisimulation is that the quotient CTMC is well-defined and observationally indistinguishable: a continuous-time observer stationed at the quotient sees the same exit-rate distributions to subsequent classes regardless of the representative chosen. The pertinent connection to OSLF is:
+
+\begin{theorem}[Quantitative HML adequacy; Desharnais--Edalat--Panangaden \cite{DEP02}, van Breugel--Worrell \cite{vBW01}, Baier--Hermanns \cite{HermannsBaier97}, in suitable specialisations]\label{thm:qhml}
+Let $\HML_M$ be the Markovian variant of HML with formulae of the shape $\langle a \rangle_q \varphi$ asserting that the rate of $a$-transitions to states satisfying $\varphi$ is at least $q \in \mathbb{Q}_{\geq 0}$. Then $[t] \sim_M [s]$ iff $[t]$ and $[s]$ satisfy the same $\HML_M$ formulae.
+\end{theorem}
+
+For OSLF-generated logics, the modalities are indexed by splittings $\bd T$ rather than action names; the quantitative HML construction lifts to this setting \emph{mutatis mutandis}, producing a logic $\HML_M(\bd T)$ whose adequacy theorem coincides with Markovian bisimulation on rate-decorated GSLTs.
+
+\subsection{Free energy descends to the quotient}
+
+\begin{proposition}\label{prop:Fdescends}
+If the rates are Arrhenius for $(\mu, \beta)$ and the energy $\mu : T/E \to \R$ is constant on Markovian bisimulation classes, then the partition function and free energy descend to $T/{\sim_M}$:
+\[
+\Z(\beta) \;=\; \sum_{[t] \in T/{\sim_M}} |[t]|_E \cdot e^{-\beta \mu([t])},
+\qquad
+\F(\beta) \;=\; -\beta^{-1} \log \Z(\beta),
+\]
+where $|[t]|_E$ counts equational representatives within a single Markovian bisimulation class.
+\end{proposition}
+
+The hypothesis that $\mu$ is constant on Markovian bisimulation classes is mild for canonical choices of $\mu$. For the redex-counting $\mu([t]) = $ \#\{distinct splittings of $[t]$ that match a base-rule LHS\}, $\mu$ is bisimulation-invariant: bisimilar states have the same multiset of available transitions, hence the same number of redexes. For finer choices of $\mu$ (size, depth), invariance is generally not automatic and must be checked. We record the following:
+
+\begin{lemma}\label{lem:redex-mu}
+The redex-counting energy $\mu_{\mathrm{rdx}}([t]) = \#\{(k,r) \in \bd T : r \text{ matches a base rule LHS}\}$ is constant on Markovian bisimulation classes.
+\end{lemma}
+
+\begin{proof}
+By Markovian bisimulation each class has a well-defined exit-rate distribution; the number of distinct splittings supporting transitions is the support of that distribution, which is invariant.
+\end{proof}
+
+\begin{remark}[Bisimulation as energy-spectrum equivalence, properly]
+The slogan from \cite{energetics-context} that ``bisimulation $=$ energy-spectrum equivalence'' was reaching for Proposition~\ref{prop:Fdescends}. The precise content is: bisimulation classes have well-defined free energies, and exchange of representatives within a class is free in the thermodynamic sense (changes neither the partition function nor the equilibrium distribution at the level of the quotient). We do not need to assert that the energy decomposition into ``potential'' and ``kinetic'' is gauge-invariant; the partition function does the job.
+\end{remark}
+
+\subsection{The metric reading}
+
+Quantitative bisimulation is equipped with a natural pseudo-metric \cite{vBW01,DGJP04} measuring how far apart two states are in their behavioural distributions. For OSLF-generated $\HML_M$, this metric is read off the formula complexity weighted by $\bd T$-spatial reach \cite{gslt-context}. Free energy lifts to a Lipschitz function on the metric quotient: nearby bisimulation classes have nearby free energies, with the Lipschitz constant controlled by the rate Lipschitz constant of $\mu$. This is the rigorous form of the ``phenomenal-noumenal metric duality'' from \cite{gslt-context}: the noumenal (bisimulation classes) is positively measurable from the phenomenal (term-level rates and energies).
+
+\section{Chemistry-of-computation: a brief survey}\label{sec:chemistry}
+
+The apparatus of \S\ref{sec:ctmc} and \S\ref{sec:freeenergy} is not new in any structural sense; what is new is its application to GSLT/OSLF-generated logics. The same apparatus has been deployed in three traditions worth surveying.
+
+\subsection{Fontana's algorithmic chemistry}
+
+Walter Fontana \cite{Fontana91,FontanaBuss94,FontanaBuss96} introduced \emph{algorithmic chemistry} (AlChemy): the lambda calculus interpreted as a chemistry, with terms as molecules and $\beta$-reduction as the elementary reaction. A reaction event takes a pair of terms $(M, N)$ and produces $M N \to_\beta M\{N/x\}$ (or its normal form, when defined and within a complexity budget). The reactor is a well-stirred tank with a finite carrying capacity; collision rates depend on concentrations; outflow keeps the population bounded.
+
+The empirical findings are striking. Generic random initial pools collapse to small \emph{closed organisations}: subsets of terms closed under $\beta$-reduction in the sense that all products fall back into the set. These organisations are not designed; they emerge as the dynamical fixed points of the reactor. Some organisations are \emph{autocatalytic}: every member is produced by collisions among other members. Fontana's programme is the most direct demonstration that the energetic/thermodynamic apparatus does real work on a calculus: equilibrium populations of normal forms are predicted from rate equations and matched against simulation, and the limits of organisation closure correspond to phase-transition-like behaviour in the term ensemble.
+
+The connection to the GSLT framework is immediate. AlChemy is a rate-decorated GSLT in our sense: $G$ generates lambda terms, $E$ is $\alpha$-equivalence, $R$ is $\beta$-reduction with rates derived from collision frequencies. The K-family is a singleton ($K = \mathit{App}$). The energy reading is $\mu([M]) = $ size, depth, or normal-form size; the equilibrium distribution favours small normal forms, consistently with the empirical observation that closed organisations are dominated by short normal-form words.
+
+\subsection{The $\kappa$ language}
+
+The $\kappa$ language \cite{Danos07Scalable,Danos08Rule} is rule-based modelling for biological signalling networks. States are site graphs (graphs of agents with named sites, possibly bound or unbound, possibly carrying internal state); rules rewrite site-graph patterns with explicit rates. The language is industrial-strength: a $\kappa$ model of a cellular signalling pathway typically has $10^3$--$10^5$ species, with rule-based compression giving compact representations and stochastic simulation algorithms (Gillespie-style \cite{Gillespie77} with rule-graph optimisations) running at usable speeds.
+
+What $\kappa$ demonstrates for our purposes is that rate-decorated rewrite systems with non-trivial structural disciplines (graph-shaped states, multi-agent interactions, rules with patterns and refinements) admit complete and useful thermodynamic and statistical-mechanical analysis. Steady-state distributions, free-energy landscapes, sensitivity coefficients, and rare-event statistics are computed routinely. A GSLT presentation of $\kappa$ exists in principle---site graphs as a grammar, structural congruence as equations, rule-application as rewrites---and would inherit the entire apparatus.
+
+\subsection{Stochastic process calculi}
+
+Stochastic $\pi$-calculus \cite{Priami95}, BioPEPA \cite{CiocchettaHillston09}, BioSPI, SPiM, and a growing family of variants attach rates to the COMM rule (or its refinements) and exploit the resulting CTMC for performance modelling and biological simulation. PEPA's compositional theory gives steady-state analysis at the level of the proper algebra: parallel composition has a clean interaction with rate composition, prefix sequences contribute exponentially distributed delays, choice resolves by the race condition. The PEPA and BioPEPA workbenches \cite{Hillston96,CiocchettaHillston09} compute steady-state metrics, transient solutions, and Markovian bisimulation quotients automatically.
+
+For our purposes, stochastic process algebras are the most direct demonstration that an interactive GSLT (in our sense) can be made into a working stochastic theory. The K-family is preserved under the rate decoration; rules retain their structural identities; bisimulation lifts to Markovian bisimulation; the resulting CTMC is analysable.
+
+\subsection{Chemical reaction networks}
+
+The most general and most mathematically developed framework is chemical reaction network theory. A CRN is a triple $(\mathcal{S}, \mathcal{C}, \mathcal{R})$ of species, complexes (multisets of species), and reactions (ordered pairs of complexes). Equipped with rates, a CRN generates both a deterministic dynamics (mass-action ODE) and a stochastic dynamics (CTMC on multisets), with the deterministic dynamics arising as the large-volume limit of the stochastic one (Kurtz \cite{Kurtz72}). The Feinberg deficiency-zero theorem \cite{Feinberg19} characterises a wide class of CRNs whose deterministic dynamics admit a unique globally attracting equilibrium, regardless of rate constants.
+
+Many existing GSLTs are CRNs in disguise (or admit CRN presentations of their interactive sub-fragment): replace species by ground patterns of $K$, complexes by multisets of patterns occupying the $K$-slots, reactions by base rewrites. The CRN apparatus---deficiency theory, stochastic-deterministic limit theorems, network-topology obstructions to multistability---is therefore inherited.
+
+\subsection{The common pattern}
+
+What these traditions show is that the question ``does the energetic reading of rewriting work?'' has been answered \emph{yes}, in the form: place rates on rules, derive a CTMC, study its equilibrium and non-equilibrium behaviour by the standard machinery. The structural specifics of GSLTs (the K-family, OSLF, the unified $\bd T$) refine this picture but do not require its rederivation. Our contribution in \S\ref{sec:ness}--\S\ref{sec:weightring} is to indicate which threads of modern stochastic thermodynamics are most useful for the specifically computational concerns---erasure, irreversibility, complexity-bounded oracles---of the GSLT setting.
+
+\section{Computation lives out of equilibrium}\label{sec:ness}
+
+\subsection{Equilibrium is informationally inert}
+
+A system in detailed balance does no computation. Under \eqref{eq:db}, every pair of states exchanges probability mass at equal forward and reverse rates; the joint distribution of trajectories is symmetric under time reversal; no preferred direction of progress exists. This is, of course, exactly what equilibrium means in physical thermodynamics, and it is the same problem the chemistry-of-computation tradition encountered when trying to use equilibrium populations as proxies for computational steady states. Real computation is irreversible: a $\beta$-reduction discards information about which reduction strategy was used; a COMM destroys the prefix structure that supplied the message; a $\rho$-style unquoting decreases the surface complexity of a state. These are not equilibrium moves.
+
+The thermodynamics of computation therefore lives in the \emph{non-equilibrium steady state} (NESS) regime: a system held away from equilibrium by an external drive, with a stationary distribution that is not detailed-balance.
+
+\subsection{Trajectory ensembles, entropy production, and Crooks}
+
+For a CTMC governed by \eqref{eq:master} with not-necessarily-reversible rates, the natural object is the trajectory ensemble. A trajectory $\gamma$ is a sequence of states $[t_0] \to [t_1] \to \cdots \to [t_n]$ with sojourn times $\tau_i$. Its forward probability density is
+\[
+\Prob(\gamma) \;=\; e^{Q_{[t_n][t_n]} \tau_n} \prod_{i=0}^{n-1} Q_{[t_i],[t_{i+1}]}\, e^{Q_{[t_i][t_i]} \tau_i}.
+\]
+The reverse trajectory $\gamma^R$ has probability density obtained by reversing the chain. The path-entropy production is
+\[
+\Sigma[\gamma] \;=\; \log \frac{\Prob(\gamma)}{\Prob(\gamma^R)},
+\]
+which is identically zero under detailed balance and strictly positive on average otherwise.
+
+\begin{theorem}[Crooks fluctuation theorem \cite{Crooks99}]\label{thm:crooks}
+For a Markov process with time-dependent rates obtained by switching between two equilibrium ensembles at inverse temperature $\beta$,
+\[
+\frac{\Prob(\gamma)}{\Prob(\gamma^R)} \;=\; e^{\beta W_{\mathrm{diss}}[\gamma]},
+\]
+where $W_{\mathrm{diss}}[\gamma]$ is the work dissipated along the trajectory beyond the equilibrium free-energy difference.
+\end{theorem}
+
+\begin{theorem}[Jarzynski equality \cite{Jarzynski97}]\label{thm:jarzynski}
+With $W$ the work performed along a trajectory,
+\[
+\E[e^{-\beta W}] \;=\; e^{-\beta \Delta \F},
+\]
+where $\Delta \F$ is the equilibrium free-energy difference between initial and final ensembles.
+\end{theorem}
+
+These theorems hold for any small driven system whose dynamics is a CTMC with rates given as in Definition~\ref{def:arrhenius} and an external protocol switching the energy. They apply to rate-decorated GSLTs without modification: any computation, formalised as a sequence of K-firings under a time-dependent rate protocol, satisfies Crooks and Jarzynski in the corresponding ensemble. The free-energy difference $\Delta \F$ is between the initial and final distributions, and the dissipated work $W_{\mathrm{diss}}$ measures the irreversibility of the trajectory.
+
+\subsection{The stochastic Landauer principle}
+
+The thermodynamic floor on irreversibility traces back to Landauer \cite{Landauer61} and was given a stochastic-thermodynamic refinement by Esposito and Van den Broeck \cite{EspVdB10} and others. In the Markovian setting:
+
+\begin{theorem}[Stochastic Landauer]\label{thm:landauer}
+For a CTMC driven from an initial distribution $p_0$ to a final distribution $p_f$ at inverse temperature $\beta$, the average heat dissipated to the bath is bounded below:
+\[
+\langle Q_{\mathrm{diss}} \rangle \;\geq\; -\beta^{-1} \bigl( H(p_f) - H(p_0) \bigr),
+\]
+where $H$ is the Shannon entropy. Equality is attained only by quasi-static reversible protocols.
+\end{theorem}
+
+For the case $p_f$ concentrated on a normal form (a deterministic computation collapsing $p_0$ to a point), the bound becomes $\langle Q_{\mathrm{diss}} \rangle \geq \beta^{-1} H(p_0)$: erasing the $H(p_0)$ bits of input information costs at least $\beta^{-1} H(p_0) = k_B T H(p_0) \ln 2$ of dissipated heat. This is the stochastic version of Bennett's reversible-computation observation \cite{Bennett73,Bennett82}: linear, reversible rewriting can in principle be performed at zero thermodynamic cost; erasure-bearing rewriting cannot.
+
+\subsection{Linear discipline as detailed-balance preservation}
+
+We can now make precise the often-stated claim that ``linear logic is conservation.'' What linearity actually preserves is information: a multiplicative-linear-logic cut elimination is a bijection on proof representatives at the level of normal forms, and Lafont's interaction nets \cite{Lafont90} make this explicit at the rule level. In our framework:
+
+\begin{proposition}[Linear discipline preserves detailed balance]\label{prop:lindb}
+Let $(G, E, R, k)$ be a rate-decorated interactive GSLT in which every base rule $r \rew r'$ is paired with an inverse base rule $r' \rew r$ with rate $k(r' \rew r)$ chosen so that the Arrhenius condition \eqref{eq:eyring} holds. If the system uses no contraction or weakening at the K-firing site (\ie, every base rule consumes and produces information bijectively), then the induced CTMC satisfies detailed balance \eqref{eq:db} at the equilibrium $\pi^\beta$, and stochastic Landauer \eqref{thm:landauer} is saturated trivially: $\langle Q_{\mathrm{diss}}\rangle = 0$.
+\end{proposition}
+
+This is the rigorous home for the slogan ``linearity is mechanics; exponentials are thermodynamics.'' Linearity preserves detailed balance and saturates the Landauer bound at zero dissipation; exponentials introduce contraction (which does not erase but does duplicate, at zero physical cost) and weakening (which does erase, with $\beta^{-1} \log 2$ cost per bit). The thermodynamic content of the linear/exponential distinction is exactly the detailed-balance / non-detailed-balance distinction, with stochastic Landauer providing the floor.
+
+\section{The weight ring: stochastic-quantum correspondence}\label{sec:weightring}
+
+The GSLT framework is parametric in a weight ring on rewrites \cite{gslt-context}: real non-negative weights give classical stochastic mechanics; complex weights give a quantum reading. We argue this is not analogy; it is the Doi--Peliti correspondence in disguise.
+
+\subsection{Doi--Peliti: classical stochastic mechanics in second-quantised form}
+
+Doi \cite{Doi76} and Peliti \cite{Peliti85} showed that a chemical reaction network's master equation can be written as a Schrödinger-like equation on a Fock space:
+\[
+\frac{d|\psi\rangle}{dt} \;=\; H |\psi\rangle,
+\]
+where $|\psi\rangle$ is the generating function of the species' multiplicities, $H$ is built from creation/annihilation operators on each species, and the linearity of $H$ is the linearity of the master equation. Crucially:
+
+\begin{itemize}
+\item For real non-negative rates, $H$ is a stochastic generator (rows-or-columns of $-Q$ structure); $|\psi\rangle$ encodes a probability distribution; conservation is conservation of total probability.
+\item For complex rates, $H$ becomes a Hamiltonian; $|\psi\rangle$ is a quantum state; conservation is conservation of $L^2$-norm.
+\end{itemize}
+
+Baez and Biamonte \cite{BaezBiamonte18} developed the parallel systematically. The same algebraic apparatus---Fock space, creation and annihilation, normal-ordered generators, path integrals---admits both readings, distinguished only by the weight ring. Translation between the readings is at the level of replacing real semiring-valued amplitudes with complex amplitudes and tracking the conservation law that follows.
+
+\subsection{The GSLT correspondence}
+
+For an interactive GSLT, the parallel composition $K = (\cdot \mid \cdot)$ plays the role of multiset union; sub-processes are species; base rewrites at K are reactions. A second-quantised formalism on $\bd T$-indexed Fock space is therefore available. Replacing real rates by complex amplitudes (as in stochastic-$\pi$'s real-rate convention versus a hypothetical quantum-$\pi$ amplitude convention) yields a quantum-mechanical reading of the calculus, with the analogue of detailed balance being the Hermiticity of $H$ and the analogue of stochastic Landauer being the no-cloning constraint on copying operations.
+
+\begin{remark}[The Born rule in this register]
+The original energetic framework \cite{energetics-context} suggested that the Born rule emerges from complex-weighted phlo. In the Doi--Peliti register, this is more precisely: under complex amplitudes, the conserved quantity is the squared modulus of the state vector (an $L^2$ norm), and the probabilities of measurement outcomes at any K-firing are read off the squared moduli of the amplitudes for each branch. This is the Born rule, and it is forced by the choice of $\C$ as the weight ring; no separate axiom is needed.
+\end{remark}
+
+\subsection{What this gives the framework}
+
+The Doi--Peliti perspective justifies a single piece of the original energetic reading: the assertion that the GSLT/OSLF apparatus extends to a quantum regime by varying the weight ring is correct, and is theorem-grade once the dynamics is taken to be in second-quantised form. It does not justify the further claims about $\kappa^2$, dark mass-energy, or relativistic regimes, which have no analogue in the Doi--Peliti correspondence.
+
+\section{Recasting the energetics framework}\label{sec:recast}
+
+We collect the substitutions implied by the foregoing. Where the original energetic framework \cite{energetics-context} made informal claims, we name precise replacements.
+
+\begin{center}
+\begin{tabular}{p{0.42\linewidth}p{0.52\linewidth}}
+\toprule
+\textbf{Original claim} & \textbf{Recast} \\
+\midrule
+Term assignment is automatic for OSLF-HML & Carries forward unchanged: OSLF generates HML with proof terms; standard \\
+Contexts carry energy; PE/KE distinction & Energy is a chosen $\mu : T/E \to \R$. Internal energy is $\mu(t)$; contextual potential is $\mu(C[t]) - \mu(C[\square]) - \mu(t)$ counting context-induced redexes. PE/KE are reading conventions, not Legendre duals \\
+Mass at a K-firing & Stoichiometric coefficient: how many copies of a sub-pattern appear/disappear under the rule. Conservation = mass balance on the rule, an explicit accounting check \\
+Linear discipline = mass conservation & Linear discipline preserves detailed balance under reversible rate decoration; stochastic Landauer is saturated at zero dissipation (Proposition~\ref{prop:lindb}) \\
+Phlo = action with units [space $\times$ time] & Phlo cost per K-firing is the equilibrium free-energy difference $\Delta \F$ (or, in the irreversible regime, the mean dissipated work $\langle W_{\mathrm{diss}}\rangle$). Calibrated by the implicit-computational-complexity literature on cut-elimination cost \\
+$E_{\mathrm{phlo}} = m \cdot \kappa^2$ & No analogue. The closest theorem is the polynomial bound on cut-elimination cost in light/soft/elementary linear logics. Not quadratic \\
+Dark mass-energy from oracle hierarchy & No analogue. The oracle hierarchy stratifies decidability, not energy. Replace by complexity-gap: cost of \emph{implementing} an oracle minus what the level-$\alpha$ agent can afford \\
+Bisimulation = energy-spectrum equivalence & Free energy descends to the bisimulation quotient (Proposition~\ref{prop:Fdescends}) \\
+Born rule from complex-weighted phlo & Born rule is forced by choosing $\C$ as the weight ring in the Doi--Peliti correspondence \\
+Linear logic mechanics, exponentials thermodynamics & Linear core preserves detailed balance and saturates Landauer at 0; exponentials introduce contraction (free) and weakening (Landauer-bounded) \\
+Cost-energy-mass triangle & Cost = $\langle W \rangle$ (charged); free-energy difference = $\Delta \F$ (recoverable); dissipation = $\langle W_{\mathrm{diss}} \rangle = \langle W \rangle - \Delta \F \geq 0$. Triangle inequality is the second law \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The headline simplification is that the entire framework collapses to standard stochastic thermodynamics on a CTMC induced by a rate-decorated GSLT, with one specifically computational addition (stochastic Landauer charged at K-firings that erase) and one specifically logical addition (the lift of free energy to the OSLF/Markovian-bisimulation quotient). Items that survive: term assignment, the $\bd T$ unification, the K-firing as the locus of cost, linearity as the boundary of zero-dissipation reversibility, and the weight-ring parameterisation. Items that do not survive: the Legendre-dual reading of PE/KE, $E = m \kappa^2$, dark mass-energy, and any claim that physical action has been recovered at the calculus level.
+
+\subsection{What is genuinely new in the GSLT instance}
+
+Two contributions are not strictly inherited from the chemistry-of-computation tradition and are worth isolating.
+
+\textbf{The unified $\bd T$ as the natural domain of rates.} In standard stochastic process algebras, rates are attached to action labels (in PEPA), to channels (in stochastic $\pi$), or to rule schemas (in $\kappa$). The GSLT framework with OSLF identifies action labels with splittings, and so attaches rates uniformly to elements of $\bd T$. This unification is, in our view, the cleanest available presentation, and is the natural structural home for quantitative HML with context-indexed modalities.
+
+\textbf{Per-K thermodynamic coordinates.} The K-family $\{K_i\}$ supports a per-K decomposition of energy and dissipation:
+\[
+\langle Q_{\mathrm{diss}}\rangle \;=\; \sum_i \langle Q_{\mathrm{diss}, K_i}\rangle,
+\]
+where $\langle Q_{\mathrm{diss}, K_i}\rangle$ collects dissipation due to firings of $K_i$. This is the rigorous form of the original framework's claim that there are exactly as many primitive cost categories as hypothesis-free rule heads. In a calculus with multiple K's (\eg, $\rho$-calculus with COMM and reflection rewrites), each K acquires its own thermodynamic budget, with constraints (Kirchhoff-style cycle conditions on the coupled CTMC) determining how the budgets interact.
+
+\section{Open problems}\label{sec:open}
+
+We close with several technical questions left open by the foregoing.
+
+\paragraph{Quantitative OSLF.} OSLF as currently stated produces a qualitative HML; its quantitative refinement, producing $\HML_M(\bd T)$, requires extending the OSLF construction to handle rate-decorated rewrite presentations. The expected adequacy theorem is Markovian bisimulation = same $\HML_M(\bd T)$ formulae. The functoriality of this construction over the syntactic and semantic GSLT categories should be checked, and the lift of rates under bisimulation-preserving morphisms should be characterised.
+
+\paragraph{Effective free energy at fiber level $(g, \alpha)$.} The hypercomputation fibration \cite{gslt-context} stratifies GSLTs by oracle level. At each level, the partition function $\Z(\beta)$ is computable only to the extent that the energy $\mu$ and the equational class structure are decidable. The constructive content of $\Z$ at $(g, \alpha)$---the analogue of an effective $\alpha$-compactness assertion---should be characterised. We expect: $\Z(\beta)$ is computable at level $\alpha$ iff $\mu$ is level-$\alpha$ computable and the equational decision problem for $E$ is at level $\alpha$. The dark-mass-energy phenomenon claimed in \cite{energetics-context} is then more honestly the gap between level-$\alpha$ and level-$\beta$ partition functions, with $\beta > \alpha$.
+
+\paragraph{Stochastic interaction nets.} Lafont's interaction nets \cite{Lafont90} present linear logic with explicit per-step bookkeeping. A rate-decorated stochastic interaction net should provide the cleanest possible model of MLL as a detailed-balance-preserving CTMC, with each cell-cell interaction one transition. The Doi--Peliti dual would be a unitary interaction net, an explicit quantum-circuit model in interaction-net form. Both directions deserve formal development.
+
+\paragraph{Calibration to implicit computational complexity.} The light, soft, and elementary fragments of linear logic \cite{Girard98LLL,Lafont04SLL,DanosJoinet03} bound cut-elimination cost by structural typing alone. In the stochastic-thermodynamic register, these bounds should appear as bounds on the partition function or on equilibrium relaxation times. The expected result: a system typable in soft linear logic has a polynomial relaxation time at fixed $\beta$; a system typable in elementary linear logic has elementary relaxation time; light linear logic gives polylogarithmic depth. Establishing this connection rigorously would give the first thermodynamic reading of implicit computational complexity.
+
+\paragraph{Least action as least dissipation.} The original framework conjectured that cut elimination chooses paths of minimal phlo. In the present register, this becomes: among trajectories from $p_0$ to $p_f$, which minimise $\langle W_{\mathrm{diss}}\rangle$? For Markov processes, this is the optimal-transport / Schrödinger-bridge problem \cite{ChenGeorgiouPavon16}, well-studied in stochastic control. A least-action reading of cut elimination would identify the Schrödinger-bridge solution with the canonical normal-form evaluation strategy.
+
+\paragraph{Coupling to the cost discipline.} The F1R3FLY phlogiston economy attaches an external monetary cost to K-firings. The relationship between the agent-internal thermodynamic cost $\langle W \rangle$ and the agent-external monetary price ought to be a structural one---a market-clearing condition on phlo prices that respects the detailed-balance structure of the underlying calculus. In particular, a phlo pricing scheme that violates Wegscheider conditions would create economic arbitrage from physical irreversibility, which is presumably bad. Working out the dual constraint---phlo prices respect the reversibility structure of the calculus---would tie the cost discipline to a thermodynamic foundation rather than to stipulation.
+
+\section*{Acknowledgements}
+
+This paper extends earlier informal notes on energetics in OSLF-decorated GSLTs and benefits from extensive conversation around their interpretation. The chemistry-of-computation tradition that anchors most of \S\ref{sec:chemistry} was indicated by several decades of work by Walter Fontana, Vincent Danos, Jean Krivine, Cosimo Laneve, Gianluigi Zavattaro, Jane Hillston, Corrado Priami, and many others; the stochastic-thermodynamic framework of \S\ref{sec:ness} draws on the syntheses of Seifert, Esposito, and Van den Broeck. Errors and infelicities are the author's own.
+
+\begin{thebibliography}{99}
+
+\bibitem{gslt-context}
+M.~Stay and L.~G.~Meredith. \emph{Graph-structured lambda theories and the OSLF construction.} Working notes, F1R3FLY-io.
+
+\bibitem{energetics-context}
+M.~Stay and L.~G.~Meredith. \emph{Energy, mass, and phlo in OSLF-decorated GSLTs.} Working notes, F1R3FLY-io.
+
+\bibitem{oslf-meredith}
+L.~G.~Meredith and C.~Wells. \emph{Operational Semantics in Logical Form for graph-structured lambda theories.} Forthcoming.
+
+\bibitem{HM85}
+M.~Hennessy and R.~Milner. Algebraic laws for nondeterminism and concurrency. \emph{Journal of the ACM} 32(1):137--161, 1985.
+
+\bibitem{LarsenSkou91}
+K.~G.~Larsen and A.~Skou. Bisimulation through probabilistic testing. \emph{Information and Computation} 94(1):1--28, 1991.
+
+\bibitem{HermannsBaier97}
+H.~Hermanns and C.~Baier. Weak bisimulation for fully probabilistic processes. In \emph{CAV '97}, LNCS 1254, 119--130, 1997.
+
+\bibitem{BernardoGorrieri98}
+M.~Bernardo and R.~Gorrieri. A tutorial on EMPA: a theory of concurrent processes with nondeterminism, priorities, probabilities and time. \emph{Theoretical Computer Science} 202(1--2):1--54, 1998.
+
+\bibitem{DEP02}
+J.~Desharnais, A.~Edalat, and P.~Panangaden. Bisimulation for labelled Markov processes. \emph{Information and Computation} 179(2):163--193, 2002.
+
+\bibitem{vBW01}
+F.~van Breugel and J.~Worrell. Towards quantitative verification of probabilistic transition systems. In \emph{ICALP '01}, LNCS 2076, 421--432, 2001.
+
+\bibitem{DGJP04}
+J.~Desharnais, V.~Gupta, R.~Jagadeesan, and P.~Panangaden. Metrics for labelled Markov processes. \emph{Theoretical Computer Science} 318(3):323--354, 2004.
+
+\bibitem{Hillston96}
+J.~Hillston. \emph{A Compositional Approach to Performance Modelling.} Cambridge University Press, 1996.
+
+\bibitem{Priami95}
+C.~Priami. Stochastic $\pi$-calculus. \emph{The Computer Journal} 38(7):578--589, 1995.
+
+\bibitem{CiocchettaHillston09}
+F.~Ciocchetta and J.~Hillston. Bio-PEPA: a framework for the modelling and analysis of biological systems. \emph{Theoretical Computer Science} 410(33--34):3065--3084, 2009.
+
+\bibitem{Fontana91}
+W.~Fontana. Algorithmic chemistry. In \emph{Artificial Life II}, 159--209, Addison-Wesley, 1991.
+
+\bibitem{FontanaBuss94}
+W.~Fontana and L.~W.~Buss. ``The arrival of the fittest'': toward a theory of biological organization. \emph{Bulletin of Mathematical Biology} 56(1):1--64, 1994.
+
+\bibitem{FontanaBuss96}
+W.~Fontana and L.~W.~Buss. The barrier of objects: from dynamical systems to bounded organizations. In J.~Casti and A.~Karlqvist, eds., \emph{Boundaries and Barriers}, 56--116, Addison-Wesley, 1996.
+
+\bibitem{Danos07Scalable}
+V.~Danos, J.~Feret, W.~Fontana, and J.~Krivine. Scalable simulation of cellular signaling networks. In \emph{APLAS '07}, LNCS 4807, 139--157, 2007.
+
+\bibitem{Danos08Rule}
+V.~Danos, J.~Feret, W.~Fontana, R.~Harmer, and J.~Krivine. Rule-based modelling of cellular signalling. In \emph{CONCUR '07}, LNCS 4703, 17--41, 2007.
+
+\bibitem{Gillespie77}
+D.~T.~Gillespie. Exact stochastic simulation of coupled chemical reactions. \emph{Journal of Physical Chemistry} 81(25):2340--2361, 1977.
+
+\bibitem{Feinberg19}
+M.~Feinberg. \emph{Foundations of Chemical Reaction Network Theory.} Springer, 2019.
+
+\bibitem{AndersonKurtz15}
+D.~F.~Anderson and T.~G.~Kurtz. \emph{Stochastic Analysis of Biochemical Systems.} Springer, 2015.
+
+\bibitem{Kurtz72}
+T.~G.~Kurtz. The relationship between stochastic and deterministic models for chemical reactions. \emph{Journal of Chemical Physics} 57:2976--2978, 1972.
+
+\bibitem{Crooks99}
+G.~E.~Crooks. Entropy production fluctuation theorem and the nonequilibrium work relation for free energy differences. \emph{Physical Review E} 60(3):2721--2726, 1999.
+
+\bibitem{Jarzynski97}
+C.~Jarzynski. Nonequilibrium equality for free energy differences. \emph{Physical Review Letters} 78(14):2690--2693, 1997.
+
+\bibitem{Seifert12}
+U.~Seifert. Stochastic thermodynamics, fluctuation theorems and molecular machines. \emph{Reports on Progress in Physics} 75(12):126001, 2012.
+
+\bibitem{EspVdB10}
+M.~Esposito and C.~Van den Broeck. Three faces of the second law. I: Master equation formulation. \emph{Physical Review E} 82(1):011143, 2010.
+
+\bibitem{Landauer61}
+R.~Landauer. Irreversibility and heat generation in the computing process. \emph{IBM Journal of Research and Development} 5(3):183--191, 1961.
+
+\bibitem{Bennett73}
+C.~H.~Bennett. Logical reversibility of computation. \emph{IBM Journal of Research and Development} 17(6):525--532, 1973.
+
+\bibitem{Bennett82}
+C.~H.~Bennett. The thermodynamics of computation: a review. \emph{International Journal of Theoretical Physics} 21(12):905--940, 1982.
+
+\bibitem{Doi76}
+M.~Doi. Second quantization representation for classical many-particle system. \emph{Journal of Physics A} 9(9):1465--1477, 1976.
+
+\bibitem{Peliti85}
+L.~Peliti. Path integral approach to birth-death processes on a lattice. \emph{Journal de Physique} 46(9):1469--1483, 1985.
+
+\bibitem{BaezBiamonte18}
+J.~C.~Baez and J.~D.~Biamonte. \emph{Quantum Techniques for Stochastic Mechanics.} World Scientific, 2018.
+
+\bibitem{Lafont90}
+Y.~Lafont. Interaction nets. In \emph{POPL '90}, 95--108, ACM, 1990.
+
+\bibitem{Girard98LLL}
+J.-Y.~Girard. Light linear logic. \emph{Information and Computation} 143(2):175--204, 1998.
+
+\bibitem{Lafont04SLL}
+Y.~Lafont. Soft linear logic and polynomial time. \emph{Theoretical Computer Science} 318(1--2):163--180, 2004.
+
+\bibitem{DanosJoinet03}
+V.~Danos and J.-B.~Joinet. Linear logic and elementary time. \emph{Information and Computation} 183(1):123--137, 2003.
+
+\bibitem{ChenGeorgiouPavon16}
+Y.~Chen, T.~Georgiou, and M.~Pavon. On the relation between optimal transport and Schrödinger bridges: a stochastic control viewpoint. \emph{Journal of Optimization Theory and Applications} 169(2):671--691, 2016.
+
+\end{thebibliography}
+
+\end{document}
