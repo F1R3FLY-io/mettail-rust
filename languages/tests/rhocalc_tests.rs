@@ -2231,9 +2231,10 @@ mod native_ops {
 
             #[test]
             fn map_and_pathmap_literals_stay_distinct() {
-                assert_reduces_to("{get(map(1:10), 1)}", "10");
+                // Map literals use Rholang-style `{ k: v }`; Pathmap uses prefix `pathmap(...)`.
+                assert_reduces_to("{get({1:10}, 1)}", "10");
                 assert_reduces_to("{pathGet(pathmap(1:10), 1)}", "10");
-                assert_reduces_to("{has(map(1:2), 1)}", "true");
+                assert_reduces_to("{has({1:2}, 1)}", "true");
                 assert_reduces_to("{pathHas(pathmap(1:2), 1)}", "true");
             }
         }
