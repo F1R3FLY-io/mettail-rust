@@ -1164,7 +1164,8 @@ language! {
         //
         // `Map()` is an alias for the empty brace literal `{}`.
         // Method-call forms (`m.get(k)`, `m.size()`, …) fold to the
-        // corresponding prefix-call builtins (`GetMap`, `Len`, …) and
+        // corresponding builtins (`GetMap`, `LLength` for `.length()` / bag size,
+        // …) and therefore do not change semantics. They are implemented as zero /
         // therefore do not change semantics. They are implemented as zero / one
         // / two-operand-after-trigger mixfix rules; the parser's mixfix
         // dispatcher disambiguates by peeking the method-name keyword after
@@ -1223,7 +1224,7 @@ language! {
                     },
                     _ => Proc::Err,
                 },
-                Proc::CastBag(_) => Proc::Len(Box::new(m.clone())),
+                Proc::CastBag(_) => Proc::LLength(Box::new(m.clone())),
                 Proc::CastSet(payload) => match payload.as_ref() {
                     Set::SetLit(ref entries) => {
                         Proc::CastInt(Box::new(Int::NumLit(entries.len() as i64)))
@@ -1246,13 +1247,13 @@ language! {
 
         // ── Rholang-style List method-call sugar ─────────────────────────
         //
-        // `[a, b, c].length()`, `[a, b, c].nth(i)`, `l1.concat(l2)` fold to
-        // the existing prefix builtins `Len` / `ElemList` / `ConcatList` and
-        // therefore inherit their semantics, congruence rules, and error
-        // handling unchanged.
+        // `[a, b, c].length()`, `[a, b, c].nth(i)`, `l1.concat(l2)` lower to
+        // `LLength` / `ElemList` / `ConcatList`. Length is computed in
+        // `rhocalc::runtime::fold_proc_length` once the receiver is folded to a
+        // literal-backed `Cast*` shape (no separate `len` / `__len` surface).
         LLength . l:Proc
         |- l "." "length" "(" ")" : Proc ![{
-            Proc::Len(Box::new(l.clone()))
+            crate::rhocalc::runtime::fold_proc_length(&l)
         }] fold;
 
         LNth . l:Proc, i:Proc
@@ -1307,40 +1308,6 @@ language! {
             { match &a {
                 Proc::CastBool(b) => match &**b {
                     Bool::BoolLit(v) => Proc::CastBool(Box::new(Bool::BoolLit(!v))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
-        Len . p:Proc |- "len" "(" p ")" : Proc ![
-            { match &p {
-                Proc::CastStr(inner) => match &**inner {
-                    Str::StringLit(x) => Proc::CastInt(Box::new(Int::NumLit(x.len() as i64))),
-                    _ => Proc::Err,
-                },
-                Proc::CastList(l) => match l.as_ref() {
-                    List::ListLit(v) => Proc::CastInt(Box::new(Int::NumLit(v.len() as i64))),
-                    _ => Proc::Err,
-                },
-                Proc::CastMap(m) => match m.as_ref() {
-                    Map::MapLit(ref payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))),
-                    _ => Proc::Err,
-                },
-                Proc::CastBag(b) => match b.as_ref() {
-                    // Bag size = sum of all element multiplicities. Use the
-                    // canonical normalisation first so equivalent surface forms
-                    // (e.g. `#{*@(0)|0}#` and `#{0|0}#`) report the same size.
-                    Bag::BagLit(h) => {
-                        let normalized = crate::rhocalc::runtime::normalize_bag_elements(h);
-                        Proc::CastInt(Box::new(Int::NumLit(normalized.len() as i64)))
-                    },
-                    _ => Proc::Err,
-                },
-                Proc::CastSet(s) => match s.as_ref() {
-                    Set::SetLit(ref payload) => {
-                        Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64)))
-                    },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -1472,7 +1439,7 @@ language! {
         OrCongL . | S ~> T |- (Or S X) ~> (Or T X);
         OrCongR . | S ~> T |- (Or X S) ~> (Or X T);
 
-        LenCong . | S ~> T |- (Len S) ~> (Len T);
+        LLengthCong . | S ~> T |- (LLength S) ~> (LLength T);
 
         ConcatListCongL . | S ~> T |- (ConcatList S X) ~> (ConcatList T X);
         ConcatListCongR . | S ~> T |- (ConcatList X S) ~> (ConcatList X T);

@@ -1,4 +1,4 @@
-use super::{List, Proc, Set};
+use super::{Bag, Int, List, Map, Proc, Set, Str};
 use mettail_runtime::HashBag;
 
 pub(crate) fn mk_proc_list(items: Vec<Proc>) -> Proc {
@@ -82,6 +82,36 @@ pub(crate) fn normalize_bag_elements(bag: &HashBag<Proc>) -> HashBag<Proc> {
         }
     }
     out
+}
+
+/// Length of a folded `CastStr` / `CastList` / `CastMap` / `CastBag` / `CastSet` literal.
+pub(crate) fn fold_proc_length(p: &Proc) -> Proc {
+    match p {
+        Proc::CastStr(inner) => match &**inner {
+            Str::StringLit(x) => Proc::CastInt(Box::new(Int::NumLit(x.len() as i64))),
+            _ => Proc::Err,
+        },
+        Proc::CastList(l) => match l.as_ref() {
+            List::ListLit(v) => Proc::CastInt(Box::new(Int::NumLit(v.len() as i64))),
+            _ => Proc::Err,
+        },
+        Proc::CastMap(m) => match m.as_ref() {
+            Map::MapLit(ref payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))),
+            _ => Proc::Err,
+        },
+        Proc::CastBag(b) => match b.as_ref() {
+            Bag::BagLit(h) => {
+                let normalized = normalize_bag_elements(h);
+                Proc::CastInt(Box::new(Int::NumLit(normalized.len() as i64)))
+            },
+            _ => Proc::Err,
+        },
+        Proc::CastSet(s) => match s.as_ref() {
+            Set::SetLit(ref payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))),
+            _ => Proc::Err,
+        },
+        _ => Proc::Err,
+    }
 }
 
 fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {

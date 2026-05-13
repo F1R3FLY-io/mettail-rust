@@ -23,7 +23,7 @@ write = ^loc.{^val.{for(x <- loc){loc!(val)}}}
 
 // List, Bag, and Map (communication then operation, like add)
 list_concat_comm = a!([ 1, 2 ]) | b!([ 3, 4 ]) | for(x <- a & y <- b){ concat(*(x), *(y)) }
-list_len_comm = a!([ 1, 2, 3 ]) | for(x <- a){ len(*(x)) }
+list_len_comm = a!([ 1, 2, 3 ]) | for(x <- a){ (*(x)).length() }
 list_at_comm = a!([ 1, 2, 3 ]) | b!( 1 ) | for(lst <- a & i <- b){ at(*(lst), *(i)) }
 bag_union_comm = a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ union(*(x), *(y)) }
 bag_count_comm = a!(#{ 1 | 2 | 2 }#) | c!( 2 ) | for(b <- a & e <- c){ count(*(b), *(e)) }
