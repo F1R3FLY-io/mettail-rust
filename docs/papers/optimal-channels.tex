@@ -743,7 +743,34 @@ of~\cite[Ex.~8]{BouwmanErkens2022}:
 \end{align*}
 The set automaton has four states $s_{0}, s_{1}, s_{2}, s_{3}$ with
 $L(s_{0}) = \epsilon$, $L(s_{1}) = 1$, $L(s_{2}) = 1$, and the transitions
-displayed in~\cite[Fig.~3]{BouwmanErkens2022}.
+of Table~\ref{tab:setautomatonif} (a transcription
+of~\cite[Fig.~3]{BouwmanErkens2022}).
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{c|c|c|l|l}
+state $s$ & $L(s)$ & symbol $f$ & $\delta(s, f)$ & $\eta(s, f)$ \\\hline
+$s_{0}$ & $\epsilon$ & $\mathit{if}$    & $\{(s_{1}, \epsilon),\, (s_{0}, 2),\, (s_{0}, 3)\}$ & $\emptyset$ \\
+$s_{0}$ & $\epsilon$ & $\mathit{not}$   & $\{(s_{2}, \epsilon),\, (s_{0}, 1)\}$               & $\emptyset$ \\
+$s_{0}$ & $\epsilon$ & $\mathit{true}$  & $\emptyset$                                          & $\emptyset$ \\
+$s_{0}$ & $\epsilon$ & $\mathit{false}$ & $\emptyset$                                          & $\emptyset$ \\\hline
+$s_{1}$ & $1$        & $\mathit{if}$    & $\{(s_{0}, 1),\, (s_{0}, 1.2),\, (s_{0}, 1.3)\}$    & $\emptyset$ \\
+$s_{1}$ & $1$        & $\mathit{true}$  & $\emptyset$                                          & $\{R_{1}@\epsilon\}$ \\
+$s_{1}$ & $1$        & $\mathit{false}$ & $\emptyset$                                          & $\{R_{2}@\epsilon\}$ \\\hline
+$s_{2}$ & $1$        & $\mathit{not}$   & $\{(s_{2}, 1)\}$                                     & $\{R_{5}@\epsilon\}$ \\
+$s_{2}$ & $1$        & $\mathit{true}$  & $\emptyset$                                          & $\{R_{3}@\epsilon\}$ \\
+$s_{2}$ & $1$        & $\mathit{false}$ & $\emptyset$                                          & $\{R_{4}@\epsilon\}$ \\
+$s_{2}$ & $1$        & $\mathit{if}$    & \multicolumn{2}{l}{leads to $s_{3}$; omitted in~\cite[Fig.~3]{BouwmanErkens2022} and unused below} \\
+\end{tabular}
+\caption{Transitions of the set automaton for $\mathcal{R}$, transcribed
+from~\cite[Fig.~3]{BouwmanErkens2022}. A row $(s, f) \mapsto (\delta, \eta)$
+records both the partition output $\delta(s, f) \subseteq \States \times \Pos$
+(pairs of a target state and a position offset) and the match-announcement
+output $\eta(s, f) \subseteq \Lhs \times \Pos$. Symbols on which no
+left-hand-side activity is possible are listed with $\delta = \eta = \emptyset$.}
+\label{tab:setautomatonif}
+\end{table}
 \par\medskip\noindent
 Consider the context $K = \mathit{if}(\Box, \false, \true)$ in a
 contextual rewrite whose inner rule is $R_{5}$ (so the hole is at position
