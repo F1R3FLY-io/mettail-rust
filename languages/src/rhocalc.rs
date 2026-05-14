@@ -1981,10 +1981,5 @@ language! {
             if let Proc::MLamProc(_) = c,
             let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]),
             let res = app.normalize();
-
-        // relation garbage(Name,Proc);
-        // garbage(n,p) <--
-        //     proc(p),name(n),
-        //     !(proc(k), trans(p,k,q), can_comm(q,n));
     },
 }
