@@ -1,7 +1,7 @@
 # Rhocalc Collection Equality (`==` / `!=`)
 
 **Status:** Implemented (RhoCalc)  
-**Context:** Surface comparison on `CastList`, `CastBag`, `CastMap`, and `CastSet`; see [map-type-design.md](./native-types/map-type-design.md), [set-type-design.md](./native-types/set-type-design.md), and [lists-and-bags-support.md](./native-types/lists-and-bags-support.md).
+**Context:** Program `==` / `!=` on `CastList`, `CastBag`, `CastMap`, and `CastSet`; see [map-type-design.md](./native-types/map-type-design.md), [set-type-design.md](./native-types/set-type-design.md), and [lists-and-bags-support.md](./native-types/lists-and-bags-support.md).
 
 ---
 
@@ -32,11 +32,17 @@
 
 ---
 
-## 3. Ascent vs Surface
+## 3. Two different “equality” mechanisms
 
-Ascent relations `eq_list`, `eq_bag`, `eq_map`, and `eq_set` in generated `rhocalc-datalog.rs` support equational reasoning and congruence. They are **not** the implementation of surface `==` / `!=`.
+Rhocalc has **two separate places** where “these things are equal” can be discussed. They are **not** the same code, and they are **not** meant to do the same job.
 
-Surface comparison is a separate `fold_proc` path on `Proc::Eq` / `Proc::Ne` that calls `compare_collection_equality` before falling back to scalar literal arms.
+**A) Equality in your running program (`==` and `!=`)**  
+When you write `a == b` in Rhocalc, the evaluator handles that as normal expression evaluation. For collections, it uses the collection rules described in this document (via `compare_collection_equality` during folding). This is what actually decides whether your program reduces to `true` or `false` (or an error in the cases described elsewhere).
+
+**B) Equality inside the Ascent-generated rules (`eq_list`, `eq_bag`, …)**  
+The generated Datalog file also contains relations with names like `eq_list`, `eq_bag`, `eq_map`, and `eq_set`. Those exist to support **internal equational reasoning** (congruence-style reasoning over terms). They are **not** wired up as “when the user writes `==`, call these relations instead.”
+
+**Takeaway:** If you care about what happens when **user code** compares collections, look at the **`==` / `!=` evaluation path**. If you care about what the **Ascent rules** can prove about terms, that is a different subsystem.
 
 ---
 
