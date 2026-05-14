@@ -212,6 +212,16 @@ fn generate_subterm_pool_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) 
                     }],
                 });
             },
+            CollectionCategory::Set(_) => {
+                arms.push(PoolArm {
+                    pattern: quote! { #src::#lit_label(ref set) },
+                    pushes: vec![quote! {
+                        for e in set.iter() {
+                            buf.push(e.clone());
+                        }
+                    }],
+                });
+            },
         }
     }
 

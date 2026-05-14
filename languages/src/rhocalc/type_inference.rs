@@ -1,6 +1,6 @@
 use super::{
     Bag, Bool, ForRow, InputBind, List, Map, Name, Pathmap, Proc, ReadZipper, RhoCalcLanguage,
-    RhoCalcTerm, RhoCalcTermInner, WriteZipper,
+    RhoCalcTerm, RhoCalcTermInner, Set, WriteZipper,
 };
 use crate::rhocalc::receive;
 use mettail_runtime::{Language, Term, TermType, VarTypeInfo};
@@ -53,6 +53,13 @@ fn infer_receive_pattern_names(pat: &Proc, out: &mut Vec<String>) {
             if let WriteZipper::Lit(inner) = z.as_ref() {
                 for (_, value) in inner.as_ref().0.iter() {
                     infer_receive_pattern_names(value, out);
+                }
+            }
+        },
+        Proc::CastSet(s) => {
+            if let Set::SetLit(items) = s.as_ref() {
+                for item in items.iter() {
+                    infer_receive_pattern_names(item, out);
                 }
             }
         },

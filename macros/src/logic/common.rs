@@ -55,6 +55,7 @@ pub fn literal_label_for(language: &LanguageDef, category: &Ident) -> Option<Ide
             crate::ast::language::CollectionCategory::Pathmap(_) => {
                 quote::format_ident!("PathmapLit")
             },
+            crate::ast::language::CollectionCategory::Set(_) => quote::format_ident!("SetLit"),
         };
         return Some(label);
     }

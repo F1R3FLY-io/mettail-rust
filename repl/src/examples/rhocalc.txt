@@ -23,7 +23,7 @@ write = ^loc.{^val.{for(x <- loc){loc!(val)}}}
 
 // List, Bag, and Map (communication then operation, like add)
 list_concat_comm = a!([ 1, 2 ]) | b!([ 3, 4 ]) | for(x <- a & y <- b){ concat(*(x), *(y)) }
-list_len_comm = a!([ 1, 2, 3 ]) | for(x <- a){ len(*(x)) }
+list_len_comm = a!([ 1, 2, 3 ]) | for(x <- a){ (*(x)).length() }
 list_at_comm = a!([ 1, 2, 3 ]) | b!( 1 ) | for(lst <- a & i <- b){ at(*(lst), *(i)) }
 bag_union_comm = a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ union(*(x), *(y)) }
 bag_count_comm = a!(#{ 1 | 2 | 2 }#) | c!( 2 ) | for(b <- a & e <- c){ count(*(b), *(e)) }
@@ -51,6 +51,14 @@ map_keys     = {1: 10, 2: 20}.keys()
 map_values   = {1: 10, 2: 20}.values()
 map_delete   = {1: 10, 2: 20}.delete(1)
 map_union    = {1: 10}.union({2: 20})
+
+// Set literal + method-call sugar (Rholang style)
+set_size     = Set(1, 2, 3).size()
+set_add      = Set(1, 2).add(3)
+set_delete   = Set(1, 2, 3).delete(2)
+set_contains = Set(1, 2).contains(2)
+set_union    = Set(1, 2).union(Set(2, 3))
+set_diff     = Set(1, 2, 3).diff(Set(1, 4))
 
 // Generalised `@P` quote shorthand for arbitrary `P:Proc` (Rholang style).
 // `@P` parses as `Name::NQuote(P)`, generalising `@(P)` and `@Nil`.

@@ -639,6 +639,16 @@ mod comm {
     }
 
     #[test]
+    fn pattern_comm_set_literal_pattern_matches() {
+        assert_reduces_to("for(@Set(1, 2) <- c){7} | c!(Set(2, 1))", "7");
+    }
+
+    #[test]
+    fn pattern_comm_set_literal_pattern_blocks_mismatch() {
+        assert_never_reaches("for(@Set(1, 2) <- c){7} | c!(Set(1, 1))", "7");
+    }
+
+    #[test]
     fn complex_join_map_and_list_literal_pattern_matches() {
         assert_reduces_to(
             "for(@{1:x, 3:4} <- c & @[1,2,3] <- c2 where x>1){x} | c!({3:4, 1:2}) | c2!([1,2,3])",
@@ -721,6 +731,13 @@ mod comm {
     fn proc_pattern_matches_map_is_strict() {
         let pat = parse("{1:2, 3:4}");
         let val = parse("{1:2, 3:5}");
+        assert!(!pat.pattern_matches(&val));
+    }
+
+    #[test]
+    fn proc_pattern_matches_set_is_strict() {
+        let pat = parse("Set(1, 2)");
+        let val = parse("Set(1, 2, 3)");
         assert!(!pat.pattern_matches(&val));
     }
 }
@@ -1361,8 +1378,8 @@ mod native_ops {
         }
 
         #[test]
-        fn len() {
-            assert_reduces_to(r#"len("hello")"#, "5");
+        fn length_method() {
+            assert_reduces_to(r#""hello".length()"#, "5");
         }
     }
 
@@ -1391,13 +1408,6 @@ mod native_ops {
         //
         // Bag has no Rholang counterpart, so the literal stays `#{a|b|…}#`,
         // but the method surface mirrors Map/List for a uniform feel.
-
-        #[test]
-        fn bag_size_extends_len() {
-            // Underlying `Len` is extended to dispatch over `CastBag`
-            // (size = sum of element multiplicities, normalised).
-            assert_reduces_to("len(#{1|2|2}#)", "3");
-        }
 
         #[test]
         fn bag_size_method() {
@@ -1431,14 +1441,6 @@ mod native_ops {
 
     mod list {
         use super::*;
-
-        // Smoke test for the existing prefix forms (kept as the canonical AST
-        // builtins that the method sugars below fold to).
-
-        #[test]
-        fn list_len_prefix() {
-            assert_reduces_to("len([1, 2, 3])", "3");
-        }
 
         #[test]
         fn list_at_prefix() {
@@ -1490,13 +1492,13 @@ mod native_ops {
         // Method-call sugars below fold to these same constructors.
 
         #[test]
-        fn map_len_empty() {
-            assert_reduces_to("len(Map())", "0");
+        fn map_size_empty() {
+            assert_reduces_to("Map().size()", "0");
         }
 
         #[test]
-        fn map_len_one() {
-            assert_reduces_to("len({1:2})", "1");
+        fn map_size_one() {
+            assert_reduces_to("{1:2}.size()", "1");
         }
 
         #[test]
@@ -1535,8 +1537,8 @@ mod native_ops {
         }
 
         #[test]
-        fn map_keys_prefix() {
-            assert_reduces_to("len(keys({1:10, 2:20}))", "2");
+        fn map_keys_size() {
+            assert_reduces_to("keys({1:10, 2:20}).size()", "2");
         }
 
         #[test]
@@ -1546,7 +1548,7 @@ mod native_ops {
 
         #[test]
         fn map_delete_method() {
-            assert_reduces_to("len({1:10, 2:20}.delete(1))", "1");
+            assert_reduces_to("{1:10, 2:20}.delete(1).size()", "1");
             assert_reduces_to("{1:10, 2:20}.delete(1).get(2)", "20");
         }
 
@@ -1573,7 +1575,7 @@ mod native_ops {
 
         #[test]
         fn map_keys_method() {
-            assert_reduces_to("len({1:10, 2:20}.keys())", "2");
+            assert_reduces_to("{1:10, 2:20}.keys().size()", "2");
         }
 
         #[test]
@@ -2237,6 +2239,71 @@ mod native_ops {
                 assert_reduces_to("{has({1:2}, 1)}", "true");
                 assert_reduces_to("{pathHas(pathmap(1:2), 1)}", "true");
             }
+        }
+    }
+
+    mod set {
+        use super::*;
+
+        #[test]
+        fn set_size_literal() {
+            assert_reduces_to("Set(1, 2, 3).size()", "3");
+        }
+
+        #[test]
+        fn set_literal_allows_space_before_paren() {
+            assert_reduces_to("Set (1, 2, 3).size()", "3");
+        }
+
+        #[test]
+        fn set_empty_literal() {
+            assert_reduces_to("Set().size()", "0");
+        }
+
+        #[test]
+        fn set_deduplicates_on_parse() {
+            assert_reduces_to("Set(1, 1, 2).size()", "2");
+        }
+
+        #[test]
+        fn set_add_method() {
+            assert_reduces_to("Set(1, 2).add(3).size()", "3");
+        }
+
+        #[test]
+        fn set_delete_method() {
+            assert_reduces_to("Set(1, 2, 3).delete(2).size()", "2");
+        }
+
+        #[test]
+        fn set_contains_method() {
+            assert_reduces_to("Set(1, 2).contains(2)", "true");
+            assert_reduces_to("Set(1, 2).contains(3)", "false");
+        }
+
+        #[test]
+        fn set_union_method() {
+            assert_reduces_to("Set(1, 2).union(Set(2, 3)).size()", "3");
+        }
+
+        #[test]
+        fn set_diff_method() {
+            assert_reduces_to("Set(1, 2, 3).diff(Set(1, 4)).size()", "2");
+        }
+
+        #[test]
+        fn set_size_method() {
+            assert_reduces_to("Set(1, 2, 3).size()", "3");
+        }
+
+        #[test]
+        fn set_union_method_polymorphic_to_unionset() {
+            assert_reduces_to("Set(1, 2).union(Set(2, 3)).contains(3)", "true");
+        }
+
+        #[test]
+        fn set_equality_is_order_independent() {
+            assert_reduces_to("Set(1, 2, 3) == Set(3, 2, 1)", "true");
         }
     }
 

@@ -196,23 +196,39 @@ impl RewriteRule {
     }
 }
 
-/// Delimiter parameters for List/Bag literal syntax (open, close, separator).
+/// Delimiter parameters for List/Bag/Map/Set literal syntax.
+///
+/// Each entry in `open_parts` / `close_parts` becomes one lexer `Terminal` in order,
+/// so whitespace may appear between adjacent segments (e.g. `Set` then `(`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollectionDelimiters {
-    pub open: String,
-    pub close: String,
+    pub open_parts: Vec<String>,
+    pub close_parts: Vec<String>,
     pub sep: String,
     /// Map-only separator between key and value (e.g., ":").
-    /// `None` for List/Bag, `Some` for Map.
+    /// `None` for List/Bag/Set, `Some` for Map.
     pub key_val_sep: Option<String>,
 }
 
-/// Collection category kind (List, Bag, Map, Pathmap) with optional delimiters.
+impl CollectionDelimiters {
+    /// Concatenated open segments (for display / generated string literals).
+    pub fn open_display(&self) -> String {
+        self.open_parts.concat()
+    }
+
+    /// Concatenated close segments (for display / generated string literals).
+    pub fn close_display(&self) -> String {
+        self.close_parts.concat()
+    }
+}
+
+/// Collection category kind (List, Bag, Map, Set, Pathmap) with optional delimiters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CollectionCategory {
     List(CollectionDelimiters),
     Bag(CollectionDelimiters),
     Map(CollectionDelimiters),
+    Set(CollectionDelimiters),
     Pathmap(CollectionDelimiters),
 }
 
@@ -220,8 +236,8 @@ impl CollectionCategory {
     /// Default delimiters for List: `list(`, `)`, `,`
     pub fn list_defaults() -> CollectionDelimiters {
         CollectionDelimiters {
-            open: "list(".to_string(),
-            close: ")".to_string(),
+            open_parts: vec!["list".to_string(), "(".to_string()],
+            close_parts: vec![")".to_string()],
             sep: ",".to_string(),
             key_val_sep: None,
         }
@@ -229,8 +245,8 @@ impl CollectionCategory {
     /// Default delimiters for Bag: `bag(`, `)`, `,`
     pub fn bag_defaults() -> CollectionDelimiters {
         CollectionDelimiters {
-            open: "bag(".to_string(),
-            close: ")".to_string(),
+            open_parts: vec!["bag".to_string(), "(".to_string()],
+            close_parts: vec![")".to_string()],
             sep: ",".to_string(),
             key_val_sep: None,
         }
@@ -239,8 +255,8 @@ impl CollectionCategory {
     /// Default delimiters for Map: `map(`, `)`, `,`, `:`
     pub fn map_defaults() -> CollectionDelimiters {
         CollectionDelimiters {
-            open: "map(".to_string(),
-            close: ")".to_string(),
+            open_parts: vec!["map".to_string(), "(".to_string()],
+            close_parts: vec![")".to_string()],
             sep: ",".to_string(),
             key_val_sep: Some(":".to_string()),
         }
@@ -249,10 +265,20 @@ impl CollectionCategory {
     /// Default delimiters for Pathmap: `pathmap(`, `)`, `,`, `:`
     pub fn pathmap_defaults() -> CollectionDelimiters {
         CollectionDelimiters {
-            open: "pathmap(".to_string(),
-            close: ")".to_string(),
+            open_parts: vec!["pathmap".to_string(), "(".to_string()],
+            close_parts: vec![")".to_string()],
             sep: ",".to_string(),
             key_val_sep: Some(":".to_string()),
+        }
+    }
+
+    /// Default delimiters for Set: `Set(`, `)`, `,`
+    pub fn set_defaults() -> CollectionDelimiters {
+        CollectionDelimiters {
+            open_parts: vec!["Set".to_string(), "(".to_string()],
+            close_parts: vec![")".to_string()],
+            sep: ",".to_string(),
+            key_val_sep: None,
         }
     }
 }
@@ -276,7 +302,7 @@ pub struct LiteralBlock {
 }
 
 /// Export: category name, optionally with native Rust type or collection kind
-/// types { Elem; Name; ![i32] as Int; List; Bag ["{", "}", ","]; }
+/// types { Elem; Name; ![i32] as Int; List; Bag { open_parts: [...], close_parts: [...], sep: "..." }; }
 pub struct LangType {
     pub name: Ident,
     /// Optional native Rust type (e.g., `i32` for `![i32] as Int`)
@@ -582,6 +608,131 @@ fn parse_literals(input: ParseStream) -> SynResult<LiteralBlock> {
     Ok(LiteralBlock { specs })
 }
 
+/// Parse `["a", "b"]` — non-empty array of non-empty string literals.
+fn parse_string_lit_array(input: ParseStream) -> SynResult<Vec<String>> {
+    let arr;
+    syn::bracketed!(arr in input);
+    let span = arr.span();
+    let mut out = Vec::new();
+    while !arr.is_empty() {
+        let lit: syn::LitStr = arr.parse()?;
+        if lit.value().is_empty() {
+            return Err(syn::Error::new(lit.span(), "delimiter string must be non-empty"));
+        }
+        out.push(lit.value());
+        if arr.peek(Token![,]) {
+            let _ = arr.parse::<Token![,]>()?;
+        }
+    }
+    if out.is_empty() {
+        return Err(syn::Error::new(span, "expected at least one string in delimiter list"));
+    }
+    Ok(out)
+}
+
+/// Parse `{ open_parts: [...], close_parts: [...], sep: "...", key_val_sep: "..." }`.
+fn parse_collection_delimiters_dict(
+    input: ParseStream,
+    type_name: &str,
+) -> SynResult<CollectionDelimiters> {
+    let dict;
+    syn::braced!(dict in input);
+    let mut open_parts: Option<Vec<String>> = None;
+    let mut close_parts: Option<Vec<String>> = None;
+    let mut sep: Option<String> = None;
+    let mut key_val_sep: Option<String> = None;
+
+    while !dict.is_empty() {
+        let key: Ident = dict.parse()?;
+        dict.parse::<Token![:]>()?;
+        match key.to_string().as_str() {
+            "open_parts" => {
+                if open_parts.is_some() {
+                    return Err(syn::Error::new(key.span(), "duplicate open_parts"));
+                }
+                open_parts = Some(parse_string_lit_array(&dict)?);
+            },
+            "close_parts" => {
+                if close_parts.is_some() {
+                    return Err(syn::Error::new(key.span(), "duplicate close_parts"));
+                }
+                close_parts = Some(parse_string_lit_array(&dict)?);
+            },
+            "sep" => {
+                if sep.is_some() {
+                    return Err(syn::Error::new(key.span(), "duplicate sep"));
+                }
+                let lit: syn::LitStr = dict.parse()?;
+                if lit.value().is_empty() {
+                    return Err(syn::Error::new(lit.span(), "separator cannot be empty"));
+                }
+                sep = Some(lit.value());
+            },
+            "key_val_sep" => {
+                if key_val_sep.is_some() {
+                    return Err(syn::Error::new(key.span(), "duplicate key_val_sep"));
+                }
+                let lit: syn::LitStr = dict.parse()?;
+                if lit.value().is_empty() {
+                    return Err(syn::Error::new(
+                        lit.span(),
+                        "key_val_sep cannot be an empty string",
+                    ));
+                }
+                key_val_sep = Some(lit.value());
+            },
+            other => {
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!(
+                        "unknown delimiter field `{other}`; expected open_parts, close_parts, sep, or key_val_sep"
+                    ),
+                ));
+            },
+        }
+        if dict.peek(Token![,]) {
+            let _ = dict.parse::<Token![,]>()?;
+        }
+    }
+
+    let open_parts = open_parts.ok_or_else(|| {
+        syn::Error::new(dict.span(), "collection delimiter block requires open_parts: [ ... ]")
+    })?;
+    let close_parts = close_parts.ok_or_else(|| {
+        syn::Error::new(dict.span(), "collection delimiter block requires close_parts: [ ... ]")
+    })?;
+    let sep = sep.ok_or_else(|| {
+        syn::Error::new(dict.span(), "collection delimiter block requires sep: \"...\"")
+    })?;
+
+    if type_name == "Map" || type_name == "Pathmap" {
+        let kvs = key_val_sep.ok_or_else(|| {
+            syn::Error::new(
+                dict.span(),
+                "Map and Pathmap collection delimiter blocks require key_val_sep: \"...\"",
+            )
+        })?;
+        Ok(CollectionDelimiters {
+            open_parts,
+            close_parts,
+            sep,
+            key_val_sep: Some(kvs),
+        })
+    } else if key_val_sep.is_some() {
+        Err(syn::Error::new(
+            dict.span(),
+            "key_val_sep is only valid for Map and Pathmap collection types",
+        ))
+    } else {
+        Ok(CollectionDelimiters {
+            open_parts,
+            close_parts,
+            sep,
+            key_val_sep: None,
+        })
+    }
+}
+
 fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
     let types_ident = input.parse::<Ident>()?;
     if types_ident != "types" {
@@ -643,14 +794,33 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
                 } else {
                     native_type_raw
                 }
+            } else if name_str == "Set" {
+                let is_hashset = match &native_type_raw {
+                    Type::Path(tp) => tp.path.segments.last().is_some_and(|seg| {
+                        seg.ident == "HashSet"
+                            && matches!(
+                                seg.arguments,
+                                syn::PathArguments::None | syn::PathArguments::AngleBracketed(_)
+                            )
+                    }),
+                    _ => false,
+                };
+                if is_hashset {
+                    syn::parse_str::<Type>("mettail_runtime::HashSetLit<Proc>")
+                        .expect("parse Set native type")
+                } else {
+                    native_type_raw
+                }
             } else {
                 native_type_raw
             };
             // Optional (Param) for collection: ![Vec<Proc>] as List or List(Proc), same for Bag
-            // Optional [ "open", "close", "sep" ] for custom literal delimiters (e.g. Bag in rhocalc to avoid conflict with PPar)
+            // Optional `{ open_parts: [...], close_parts: [...], sep: "...", key_val_sep: "..." }`
+            // for custom literal delimiters (e.g. Bag in rhocalc to avoid conflict with PPar).
             let collection_kind = if name_str == "List"
                 || name_str == "Bag"
                 || name_str == "Map"
+                || name_str == "Set"
                 || name_str == "Pathmap"
             {
                 if content.peek(syn::token::Paren) {
@@ -663,48 +833,29 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
                         let _ = _content.parse::<Ident>()?;
                     }
                 }
-                let delimiters: CollectionDelimiters = if content.peek(syn::token::Bracket) {
-                    let bracket_content;
-                    syn::bracketed!(bracket_content in content);
-                    let open: syn::LitStr = bracket_content.parse()?;
-                    let _ = bracket_content.parse::<Token![,]>()?;
-                    let close: syn::LitStr = bracket_content.parse()?;
-                    let _ = bracket_content.parse::<Token![,]>()?;
-                    let sep: syn::LitStr = bracket_content.parse()?;
-                    if name_str == "Map" || name_str == "Pathmap" {
-                        let _ = bracket_content.parse::<Token![,]>()?;
-                        let key_val_sep: syn::LitStr = bracket_content.parse()?;
-                        CollectionDelimiters {
-                            open: open.value(),
-                            close: close.value(),
-                            sep: sep.value(),
-                            key_val_sep: Some(key_val_sep.value()),
-                        }
-                    } else {
-                        CollectionDelimiters {
-                            open: open.value(),
-                            close: close.value(),
-                            sep: sep.value(),
-                            key_val_sep: None,
-                        }
-                    }
+                let delimiters: CollectionDelimiters = if content.peek(syn::token::Brace) {
+                    parse_collection_delimiters_dict(&content, &name_str)?
                 } else if name_str == "List" {
                     CollectionCategory::list_defaults()
                 } else if name_str == "Bag" {
                     CollectionCategory::bag_defaults()
+                } else if name_str == "Map" {
+                    CollectionCategory::map_defaults()
                 } else if name_str == "Pathmap" {
                     CollectionCategory::pathmap_defaults()
                 } else {
-                    CollectionCategory::map_defaults()
+                    CollectionCategory::set_defaults()
                 };
                 Some(if name_str == "List" {
                     CollectionCategory::List(delimiters)
                 } else if name_str == "Bag" {
                     CollectionCategory::Bag(delimiters)
+                } else if name_str == "Map" {
+                    CollectionCategory::Map(delimiters)
                 } else if name_str == "Pathmap" {
                     CollectionCategory::Pathmap(delimiters)
                 } else {
-                    CollectionCategory::Map(delimiters)
+                    CollectionCategory::Set(delimiters)
                 })
             } else {
                 None
@@ -726,6 +877,8 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
                 Some(CollectionCategory::Map(CollectionCategory::map_defaults()))
             } else if name_str == "Pathmap" {
                 Some(CollectionCategory::Pathmap(CollectionCategory::pathmap_defaults()))
+            } else if name_str == "Set" {
+                Some(CollectionCategory::Set(CollectionCategory::set_defaults()))
             } else {
                 None
             };

@@ -142,7 +142,7 @@ MeTTaIL’s generated parsers use this codegen path so the REPL and tests are ro
 
 The lexer is **generated** from the terminals implied by the grammar (literals, keywords, punctuation). Conceptually: extract character classes and patterns, build automata, emit a function in the family `lex(input) -> Vec<(Token, Range)>`. You do not hand-write token kinds for each language; they fall out of `LanguageSpec` plus literal configuration from the DSL (`literals { ... }`, bridge).
 
-**Deeper:** Literal token definitions in `literals { }` supply **regex-like patterns** and Rust `eval` blocks; the lexer generator merges these with punctuators and keywords derived from quoted `"..."` fragments in `terms { }`. Ambiguity between two literal classes (overlapping regexes) shows up as wrong tokens first—narrow patterns or reordering may be needed. The bridge may add collection delimiters as terminals when you declare `List`/`Bag`/`Map` with `[ open, close, sep ]`-style syntax in `types { }`.
+**Deeper:** Literal token definitions in `literals { }` supply **regex-like patterns** and Rust `eval` blocks; the lexer generator merges these with punctuators and keywords derived from quoted `"..."` fragments in `terms { }`. Ambiguity between two literal classes (overlapping regexes) shows up as wrong tokens first—narrow patterns or reordering may be needed. The bridge may add collection delimiters as terminals when you declare `List`/`Bag`/`Map`/`Set` with `[ open, close, sep ]`-style syntax in `types { }`.
 
 ---
 
@@ -603,7 +603,7 @@ types {
 
 - Plain `Name;` declares a **category** with no built-in Rust payload (pure algebraic).
 - `![RustType] as Category` declares that AST values of `Category` carry a **native** `RustType` (integers, `bool`, `str`, custom Newtypes, etc.). This enables **`try_direct_eval`**, `fold`/`step` codegen, and native printers.
-- **`List` / `Bag` / `Map`** entries can use bracket delimiter specs; internally bound to `CollectionCategory` (`macros/src/ast/language.rs`). The **native** type is usually `Vec<Elem>`, `HashBag<Elem>`, `HashMap<K,V>`.
+- **`List` / `Bag` / `Map` / `Set`** entries can use bracket delimiter specs; internally bound to `CollectionCategory` (`macros/src/ast/language.rs`). The **native** type is usually `Vec<Elem>`, `HashBag<Elem>`, `HashMapLit<K,V>`, or `HashSetLit<Elem>`.
 
 **Semantics:** Defines the set of generated **enum variants per category**, variable forms (`IVar`, `PVar`, … from naming conventions), and what PraTTaIL treats as a **category** in `LanguageSpec`.
 

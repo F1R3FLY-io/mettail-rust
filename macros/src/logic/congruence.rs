@@ -191,6 +191,27 @@ pub fn generate_auto_congruence_rules(
         }
     }
 
+    // Add congruence for Set literal constructor (SetLit) when Set exists as a type.
+    for lang_type in &language.types {
+        if !in_cat_filter(&lang_type.name, cat_filter) {
+            continue;
+        }
+        let is_set = matches!(
+            lang_type.collection_kind.as_ref(),
+            Some(crate::ast::language::CollectionCategory::Set(_))
+        );
+        if !is_set {
+            continue;
+        }
+        let set_cat = &lang_type.name;
+        let elem_cat = language
+            .collection_element_type_for_category(set_cat)
+            .unwrap_or_else(|| format_ident!("Proc"));
+        if let Some(ts) = generate_set_literal_congruence(set_cat, &elem_cat) {
+            rules.push(ts);
+        }
+    }
+
     rules
 }
 
@@ -235,6 +256,34 @@ fn generate_map_literal_congruence(
                 m.remove(k);
                 m.insert(k_rewritten.clone(), v.clone());
                 m
+            });
+    })
+}
+
+/// Congruence for `Set::SetLit(HashSetLit<Proc>)`.
+fn generate_set_literal_congruence(
+    set_category: &Ident,
+    element_category: &Ident,
+) -> Option<TokenStream> {
+    let rn = relation_names(set_category);
+    let cat_lower = &rn.cat_lower;
+    let rw_rel = &rn.rw_rel;
+    let elem_rn = relation_names(element_category);
+    let elem_rw_rel = &elem_rn.rw_rel;
+
+    let constructor = format_ident!("SetLit");
+
+    Some(quote! {
+        #rw_rel(parent.clone(), result) <--
+            #cat_lower(parent),
+            if let #set_category::#constructor(ref set) = parent,
+            for elem in set.iter(),
+            #elem_rw_rel(elem.clone(), elem_rewritten),
+            let result = #set_category::#constructor({
+                let mut s = set.clone();
+                s.remove(elem);
+                s.insert(elem_rewritten.clone());
+                s
             });
     })
 }

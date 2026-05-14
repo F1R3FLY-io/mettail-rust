@@ -63,6 +63,67 @@ fn is_simple_collection(rule: &RDRuleInfo) -> bool {
     !has_extra_nonterminals
 }
 
+/// Consecutive opening `Terminal` items before the `Collection` item.
+fn opening_terminals(rule: &RDRuleInfo) -> Vec<String> {
+    let mut out = Vec::new();
+    for item in &rule.items {
+        match item {
+            RDSyntaxItem::Terminal(t) => out.push(t.clone()),
+            RDSyntaxItem::Collection { .. } => break,
+            _ => {},
+        }
+    }
+    out
+}
+
+fn opening_terminal_count(rule: &RDRuleInfo) -> usize {
+    opening_terminals(rule).len()
+}
+
+/// Consecutive closing `Terminal` items after the `Collection` item.
+fn closing_terminals(rule: &RDRuleInfo) -> Vec<String> {
+    let mut after = false;
+    let mut out = Vec::new();
+    for item in &rule.items {
+        if matches!(item, RDSyntaxItem::Collection { .. }) {
+            after = true;
+            continue;
+        }
+        if after {
+            match item {
+                RDSyntaxItem::Terminal(t) => out.push(t.clone()),
+                _ => break,
+            }
+        }
+    }
+    out
+}
+
+fn generated_expect_all_closes(closes: &[String]) -> String {
+    closes
+        .iter()
+        .map(|t| {
+            let v = terminal_to_variant_name(t);
+            let escaped = t.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;", v, escaped)
+        })
+        .collect()
+}
+
+fn generated_expect_all_closes_if_present(closes: &[String]) -> String {
+    closes
+        .iter()
+        .map(|t| {
+            let v = terminal_to_variant_name(t);
+            let escaped = t.replace('\\', "\\\\").replace('"', "\\\"");
+            format!(
+                "if *pos < tokens.len() {{ expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; }}",
+                v, escaped
+            )
+        })
+        .collect()
+}
+
 /// Check if a rule has any ZipMapSep syntax items.
 ///
 /// ZipMapSep rules are too complex for trampoline splitting and must use
@@ -440,7 +501,7 @@ pub fn write_frame_enum(
                                 format!("mettail_runtime::HashBag<{}>", element_category)
                             },
                             CollectionKind::HashSet => {
-                                format!("std::collections::HashSet<{}>", element_category)
+                                format!("mettail_runtime::HashSetLit<{}>", element_category)
                             },
                             CollectionKind::Vec => format!("Vec<{}>", element_category),
                             CollectionKind::HashMap => {
@@ -485,7 +546,7 @@ pub fn write_frame_enum(
 
         let type_str = match collection_type {
             CollectionKind::HashBag => format!("mettail_runtime::HashBag<{}>", element_category),
-            CollectionKind::HashSet => format!("std::collections::HashSet<{}>", element_category),
+            CollectionKind::HashSet => format!("mettail_runtime::HashSetLit<{}>", element_category),
             CollectionKind::Vec => format!("Vec<{}>", element_category),
             CollectionKind::HashMap => {
                 format!("mettail_runtime::HashMapLit<{}, {}>", element_category, element_category)
@@ -783,7 +844,7 @@ fn write_trampoline_body(
                     format!("{}::{}(mettail_runtime::HashBag::new())", config.category, r.label)
                 },
                 CollectionKind::HashSet => {
-                    format!("{}::{}(std::collections::HashSet::new())", config.category, r.label)
+                    format!("{}::{}(mettail_runtime::HashSetLit::new())", config.category, r.label)
                 },
                 CollectionKind::HashMap => {
                     format!("{}::{}(mettail_runtime::HashMapLit::new())", config.category, r.label)
@@ -824,7 +885,7 @@ fn write_trampoline_body(
                 },
                 CollectionKind::HashSet => {
                     format!(
-                        "{}::{}(std::collections::HashSet::new())",
+                        "{}::{}(mettail_runtime::HashSetLit::new())",
                         config.category, rd_rule.label
                     )
                 },
@@ -1109,59 +1170,55 @@ fn write_prefix_match_arms(
         }
     }
 
-    // ── Empty collection close (] or }) — when we see ]/} immediately after [/{ ──
+    // ── Empty collection close — when we see the first closing segment immediately ──
     for rd_rule in rd_rules {
         if rd_rule.category != *cat || !is_simple_collection(rd_rule) {
             continue;
         }
-        let closing_terminal = rd_rule.items.iter().rev().find_map(|item| {
-            if let RDSyntaxItem::Terminal(t) = item {
-                Some(t.clone())
-            } else {
-                None
-            }
-        });
+        let closes = closing_terminals(rd_rule);
+        let Some(first_close) = closes.first() else {
+            continue;
+        };
         let element_category = rd_rule.items.iter().find_map(|item| match item {
             RDSyntaxItem::Collection { element_category, .. } => Some(element_category.clone()),
             _ => None,
         });
         let needs_elem_parse = element_category.as_deref().unwrap_or("Proc") != cat.as_str();
-        if let Some(ref closing) = closing_terminal {
-            let close_variant = terminal_to_variant_name(closing);
-            let elem_cat = element_category.as_deref().unwrap_or("Proc");
-            write!(buf, "Token::{} => {{", close_variant).unwrap();
-            if needs_elem_parse {
-                write!(
-                    buf,
-                    "if matches!(stack.last(), Some(&{}::ElemParse_{}_{} {{}})) {{ \
-                        stack.pop(); \
-                        pending_elem = None; \
-                    }} ",
-                    frame_info.enum_name, rd_rule.label, elem_cat,
-                )
-                .unwrap();
-            }
+        let close_variant = terminal_to_variant_name(first_close);
+        let expect_all_closes = generated_expect_all_closes(&closes);
+        let closing_expected_escaped = closes.join(" ").replace('\\', "\\\\").replace('"', "\\\"");
+        let elem_cat = element_category.as_deref().unwrap_or("Proc");
+        write!(buf, "Token::{} => {{", close_variant).unwrap();
+        if needs_elem_parse {
             write!(
                 buf,
-                "if let Some({}::CollectionElem_{} {{ elements, saved_pos, saved_bp }}) = stack.pop() {{ \
-                    *pos = saved_pos; \
-                    expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; \
-                    cur_bp = saved_bp; \
-                    break 'prefix {}::{}(elements); \
-                }} else {{ \
-                    return Err(ParseError::UnexpectedToken {{ expected: \"{}\", found: format!(\"{{:?}}\", tokens[*pos].0), range: tokens[*pos].1 }}); \
-                }}",
-                frame_info.enum_name,
-                rd_rule.label,
-                close_variant,
-                closing,
-                cat,
-                rd_rule.label,
-                expected_escaped,
+                "if matches!(stack.last(), Some(&{}::ElemParse_{}_{} {{}})) {{ \
+                    stack.pop(); \
+                    pending_elem = None; \
+                }} ",
+                frame_info.enum_name, rd_rule.label, elem_cat,
             )
             .unwrap();
-            buf.push_str("},");
         }
+        write!(
+            buf,
+            "if let Some({}::CollectionElem_{} {{ elements, saved_pos, saved_bp }}) = stack.pop() {{ \
+                *pos = saved_pos; \
+                {} \
+                cur_bp = saved_bp; \
+                break 'prefix {}::{}(elements); \
+            }} else {{ \
+                return Err(ParseError::UnexpectedToken {{ expected: \"{}\", found: format!(\"{{:?}}\", tokens[*pos].0), range: tokens[*pos].1 }}); \
+            }}",
+            frame_info.enum_name,
+            rd_rule.label,
+            expect_all_closes,
+            cat,
+            rd_rule.label,
+            closing_expected_escaped,
+        )
+        .unwrap();
+        buf.push_str("},");
     }
 
     // ── Collection rules ──
@@ -1190,7 +1247,7 @@ fn write_prefix_match_arms(
             let variant = terminal_to_variant_name(&terminal);
             let init_str = match kind {
                 CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
-                CollectionKind::HashSet => "std::collections::HashSet::new()",
+                CollectionKind::HashSet => "mettail_runtime::HashSetLit::new()",
                 CollectionKind::Vec => "Vec::new()",
                 CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
                 CollectionKind::PathMap => "mettail_runtime::PathMapLit::new()",
@@ -1204,8 +1261,9 @@ fn write_prefix_match_arms(
             } else {
                 String::new()
             };
+            let opening_skip = opening_terminal_count(rd_rule);
             let collection_body = format!(
-                "*pos += 1; \
+                "*pos += {opening_skip}; \
                 stack.push({}::CollectionElem_{} {{ \
                     elements: {}, \
                     saved_pos: *pos, \
@@ -2038,7 +2096,7 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                 let sep_variant = terminal_to_variant_name(separator);
                 let init = match kind {
                     CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
-                    CollectionKind::HashSet => "std::collections::HashSet::new()",
+                    CollectionKind::HashSet => "mettail_runtime::HashSetLit::new()",
                     CollectionKind::Vec => "Vec::new()",
                     CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
                     CollectionKind::PathMap => "mettail_runtime::PathMapLit::new()",
@@ -2104,7 +2162,7 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                 let sep_variant = terminal_to_variant_name(separator);
                 let init = match kind {
                     CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
-                    CollectionKind::HashSet => "std::collections::HashSet::new()",
+                    CollectionKind::HashSet => "mettail_runtime::HashSetLit::new()",
                     CollectionKind::Vec => "Vec::new()",
                     CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
                     CollectionKind::PathMap => "mettail_runtime::PathMapLit::new()",
@@ -2933,18 +2991,12 @@ fn write_unwind_handlers(
             CollectionKind::HashMap | CollectionKind::PathMap => "insert",
         };
 
-        // Find separator and closing terminal
+        // Find separator and closing terminals (after Collection)
         let sep_info = rd_rule.items.iter().find_map(|item| match item {
             RDSyntaxItem::Collection { separator, .. } => Some(separator.clone()),
             _ => None,
         });
-        let closing_terminal = rd_rule.items.iter().rev().find_map(|item| {
-            if let RDSyntaxItem::Terminal(t) = item {
-                Some(t.clone())
-            } else {
-                None
-            }
-        });
+        let closes = closing_terminals(rd_rule);
 
         // Element category: when != cat, we use pending_elem (from ElemParse); else use lhs.
         let element_category = rd_rule.items.iter().find_map(|item| match item {
@@ -3013,15 +3065,10 @@ fn write_unwind_handlers(
             .unwrap();
         }
 
-        // Finalize: expect closing terminal, construct
-        if let Some(ref closing) = closing_terminal {
-            let close_variant = terminal_to_variant_name(closing);
-            write!(
-                buf,
-                "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
-                close_variant, closing,
-            )
-            .unwrap();
+        // Finalize: expect all closing terminals, construct
+        if !closes.is_empty() {
+            let expect_all = generated_expect_all_closes(&closes);
+            buf.push_str(&expect_all);
         }
 
         // List = Vec, Bag = HashBag in the enum; pass elements directly (no wrapper)
@@ -3261,13 +3308,7 @@ fn write_collection_eof_catch(
             continue;
         }
 
-        let closing_terminal = rd_rule.items.iter().rev().find_map(|item| {
-            if let RDSyntaxItem::Terminal(t) = item {
-                Some(t.clone())
-            } else {
-                None
-            }
-        });
+        let closes = closing_terminals(rd_rule);
 
         write!(
             buf,
@@ -3278,16 +3319,9 @@ fn write_collection_eof_catch(
         )
         .unwrap();
 
-        if let Some(ref closing) = closing_terminal {
-            let close_variant = terminal_to_variant_name(closing);
-            write!(
-                buf,
-                "if *pos < tokens.len() {{ \
-                    expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; \
-                }}",
-                close_variant, closing,
-            )
-            .unwrap();
+        if !closes.is_empty() {
+            let guarded = generated_expect_all_closes_if_present(&closes);
+            buf.push_str(&guarded);
         }
 
         // Use break 'prefix to exit the prefix block with the finalized collection.
@@ -3319,13 +3353,7 @@ fn write_collection_error_catch_inline(
             continue;
         }
 
-        let closing_terminal = rd_rule.items.iter().rev().find_map(|item| {
-            if let RDSyntaxItem::Terminal(t) = item {
-                Some(t.clone())
-            } else {
-                None
-            }
-        });
+        let closes = closing_terminals(rd_rule);
 
         write!(
             buf,
@@ -3336,14 +3364,9 @@ fn write_collection_error_catch_inline(
         )
         .unwrap();
 
-        if let Some(ref closing) = closing_terminal {
-            let close_variant = terminal_to_variant_name(closing);
-            write!(
-                buf,
-                "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
-                close_variant, closing,
-            )
-            .unwrap();
+        if !closes.is_empty() {
+            let expect_all = generated_expect_all_closes(&closes);
+            buf.push_str(&expect_all);
         }
 
         // Use break 'prefix to exit the prefix block with the finalized collection.

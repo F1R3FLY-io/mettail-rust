@@ -63,6 +63,9 @@ pub use pathmap_bridge::{
 };
 pub use pathmap_codec::{flatten_segments, unflatten_segments, ESCAPE_BYTE, SEGMENT_DELIM};
 
+mod hashset_lit;
+pub use hashset_lit::HashSetLit;
+
 // Language metadata for REPL introspection
 mod metadata;
 pub use metadata::*;

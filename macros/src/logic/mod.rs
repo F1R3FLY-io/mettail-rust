@@ -1044,6 +1044,7 @@ fn generate_fold_big_step_rules(
                 Some(crate::ast::language::CollectionCategory::Pathmap(_)) => {
                     format_ident!("PathmapLit")
                 },
+                Some(crate::ast::language::CollectionCategory::Set(_)) => format_ident!("SetLit"),
                 None => continue,
             };
             rules.push(quote! {

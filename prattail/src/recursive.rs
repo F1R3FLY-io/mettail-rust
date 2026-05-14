@@ -187,7 +187,7 @@ enum CaptureKind {
 fn collection_init_str(kind: &CollectionKind) -> &'static str {
     match kind {
         CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
-        CollectionKind::HashSet => "std::collections::HashSet::new()",
+        CollectionKind::HashSet => "mettail_runtime::HashSetLit::new()",
         CollectionKind::Vec => "Vec::new()",
         CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
         CollectionKind::PathMap => "mettail_runtime::PathMapLit::new()",
