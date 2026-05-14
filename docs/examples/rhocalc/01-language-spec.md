@@ -256,6 +256,14 @@ casts. `where` guards use the same helper via `eval_guard_bool` in
 comparison. See
 [rhocalc-collection-equality.md](../../design/made/rhocalc-collection-equality.md).
 
+### 3.5.2 Collection wire (`toByteArray()`)
+
+Collection casts support zero-argument `.toByteArray()`, which folds to
+`CastBytes` with a lowercase hex encoding of the f1r3node `Par` protobuf bytes
+for the corresponding Rholang collection kind. Bag literals use the Rhocalc
+extension rule (multiset expanded to `EList`). See
+[rhocalc-collection-wire.md](../../design/made/rhocalc-collection-wire.md).
+
 ### 3.6 Unary Prefix with Fold
 
 ```rust

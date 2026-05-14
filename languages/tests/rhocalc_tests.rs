@@ -1730,6 +1730,63 @@ mod native_ops {
         }
     }
 
+    mod collection_wire {
+        use super::*;
+
+        #[test]
+        fn list_to_byte_array_folds_to_hex() {
+            assert_reduces_to(
+                "[1, 2, 3].toByteArray()",
+                r#""2a15a201120a042a0210020a042a0210040a042a021006""#,
+            );
+        }
+
+        #[test]
+        fn set_to_byte_array_is_order_independent() {
+            assert_reduces_to(
+                "Set(1, 2, 3).toByteArray()",
+                r#""2a15b201120a042a0210020a042a0210040a042a021006""#,
+            );
+            assert_reduces_to(
+                "Set(3, 2, 1).toByteArray()",
+                r#""2a15b201120a042a0210020a042a0210040a042a021006""#,
+            );
+        }
+
+        #[test]
+        fn map_to_byte_array_is_order_independent() {
+            assert_reduces_to(
+                "{1: 10, 2: 20}.toByteArray()",
+                r#""2a1fba011c0a0c0a042a02100212042a0210140a0c0a042a02100412042a021028""#,
+            );
+            assert_reduces_to(
+                "{2: 20, 1: 10}.toByteArray()",
+                r#""2a1fba011c0a0c0a042a02100212042a0210140a0c0a042a02100412042a021028""#,
+            );
+        }
+
+        #[test]
+        fn nested_list_to_byte_array() {
+            assert_reduces_to(
+                "[[1, 2], [3]].toByteArray()",
+                r#""2a23a201200a112a0fa2010c0a042a0210020a042a0210040a0b2a09a201060a042a021006""#,
+            );
+        }
+
+        #[test]
+        fn bag_to_byte_array_expands_multiset() {
+            assert_reduces_to(
+                "#{1 | 2 | 2}#.toByteArray()",
+                r#""2a15a201120a042a0210040a042a0210040a042a021002""#,
+            );
+        }
+
+        #[test]
+        fn unsupported_receiver_errors() {
+            assert_never_reaches("[1, 2].length().toByteArray()", r#""0""#);
+        }
+    }
+
     mod type_conversion {
         use super::*;
 
