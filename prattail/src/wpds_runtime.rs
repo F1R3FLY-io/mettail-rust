@@ -869,6 +869,26 @@ pub trait WpdsTokenSource {
             None
         }
     }
+
+    /// M6c.8.2 (2026-05-14): index of the canonical EOF position the
+    /// walker must reach for a parse to be Accepted.
+    ///
+    /// Default: `self.len().saturating_sub(1)` — for slice and
+    /// `MultiTokenSource` sources, the EOF sentinel is the last token
+    /// in the flat sequence.
+    ///
+    /// `LatticeTokenSource` overrides to return `self.dag.eof_node`,
+    /// the DAG node anchored at `byte_start = input.len()`. The DAG
+    /// may contain orphan nodes (allocated by `lex_dag_core`'s
+    /// M6c.7.1 soft-fail for secondary-alt dead-ends) at indices
+    /// AFTER the EOF sentinel, so `len() - 1` is NOT generally the
+    /// EOF index for lattice sources.
+    ///
+    /// Used by `is_logical_eoi` (walker) and the facade's
+    /// trailing-token check.
+    fn eof_node(&self) -> usize {
+        self.len().saturating_sub(1)
+    }
 }
 
 // M4 (2026-05-13): `LexOverride` and `CursorViewSource` DELETED.
@@ -1398,6 +1418,15 @@ impl WpdsTokenSource for LatticeTokenSource {
             .edges
             .get(alt_idx)
             .map(|e| e.target_node)
+    }
+
+    /// M6c.8.2 (2026-05-14): the canonical EOF sentinel index from the
+    /// DAG. Orphan nodes (allocated by `lex_dag_core`'s soft-fail
+    /// mechanism for secondary-alt dead-ends) may sit at indices
+    /// AFTER the EOF sentinel, so `nodes.len() - 1` is NOT the EOF
+    /// index in general.
+    fn eof_node(&self) -> usize {
+        self.dag.eof_node
     }
 }
 

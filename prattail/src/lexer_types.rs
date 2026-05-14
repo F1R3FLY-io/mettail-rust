@@ -182,14 +182,26 @@ pub struct LexDagNode {
 /// per-cursor state.
 #[derive(Debug, Clone, Default)]
 pub struct LexDag {
-    /// Nodes in the DAG, ordered by `byte_start` ascending. The first
-    /// node always has `byte_start: 0`; the last is a sentinel at
-    /// `byte_start: input.len()` with no outgoing edges (EOF).
+    /// Nodes in the DAG, ordered by allocation (worklist FIFO pop) order.
+    /// The first node always has `byte_start: 0`. The EOF sentinel (the
+    /// node with `byte_start: input.len()` and empty `edges`) is
+    /// **referenced by `eof_node`**, NOT by `nodes.last()` — M6c.7.1's
+    /// soft-fail mechanism may allocate orphan nodes (for
+    /// secondary-alt dead-ends) at indices AFTER the EOF sentinel,
+    /// since dead-end byte positions are popped from the worklist
+    /// later than the primary chain's terminal accept.
     pub nodes: Vec<LexDagNode>,
     /// Map from byte offset to node index. Used by `lex_dag_core` during
     /// construction (worklist scan) and by callers that need to look up
     /// nodes by byte position.
     pub byte_to_node: std::collections::BTreeMap<usize, usize>,
+    /// M6c.8.1 (2026-05-14): index of the EOF sentinel node — the node
+    /// at `byte_start = input.len()` with no outgoing edges. This is
+    /// the canonical "end of input" position the walker must reach for
+    /// a parse to be considered Accepted. May NOT equal
+    /// `nodes.len() - 1` when the soft-fail logic has allocated orphan
+    /// nodes for secondary-alt dead-ends after the EOF byte.
+    pub eof_node: usize,
 }
 
 impl LexDag {
@@ -206,6 +218,14 @@ impl LexDag {
     /// Whether the DAG has no nodes.
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+
+    /// M6c.8.1 (2026-05-14): index of the EOF sentinel node. Use this
+    /// instead of `nodes.len() - 1` — orphan nodes (M6c.7.1 soft-fail
+    /// allocations for secondary-alt dead-ends) may be appended AFTER
+    /// the EOF sentinel.
+    pub fn eof_node(&self) -> usize {
+        self.eof_node
     }
 
     /// Returns true if any node has ≥2 outgoing edges (multi-length

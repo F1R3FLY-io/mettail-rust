@@ -948,6 +948,30 @@ pub fn lex_dag_core<'a, T: Clone>(
         Vec::new();
     let mut worklist: VecDeque<usize> = VecDeque::new();
     worklist.push_back(0);
+    // M6c.7.1 (2026-05-14): primary-chain tracking for soft-fail
+    // semantics. A position is "primary" if it's reachable via the
+    // maximal-munch (longest-end) accept at some node, OR if it's the
+    // initial position (byte 0). When the DFA fails to scan from a
+    // primary position, that's a TRUE input error and we hard-fail
+    // (matching `lex` parity). When it fails at a SECONDARY-only
+    // position (only reachable via a non-longest alt's downstream),
+    // we soft-fail: allocate an orphan node with empty edges. The
+    // secondary alt's lex-Fork branch in the walker spawns a cursor
+    // that lands at the orphan, sees `peek_kind = Eof`, fails to
+    // dispatch in the parser state machine, and dies naturally —
+    // pure rule-out by structural evidence (the alt's downstream
+    // doesn't lex, so the alt cannot contribute to any valid parse).
+    let mut primary_targets: std::collections::HashSet<usize> =
+        std::collections::HashSet::new();
+    primary_targets.insert(0);
+    // M6c.8.1 (2026-05-14): canonical EOF sentinel index, captured
+    // when we allocate the node at `byte_start == bytes.len()`.
+    // `byte_to_node` is keyed on the worklist's PRE-WS-skip `start`,
+    // not the post-skip `pos` — so `byte_to_node[bytes.len()]` may
+    // miss when the EOF sentinel is reached via a `start` < bytes.len()
+    // followed by WS skip to bytes.len(). Capture during allocation
+    // instead.
+    let mut eof_node_idx: Option<usize> = None;
 
     while let Some(start) = worklist.pop_front() {
         if byte_to_node.contains_key(&start) {
@@ -982,7 +1006,13 @@ pub fn lex_dag_core<'a, T: Clone>(
 
         if pos >= bytes.len() {
             // EOF sentinel: no edges, but still allocated so callers can
-            // observe the node.
+            // observe the node. M6c.8.1: capture the EOF index for
+            // `LexDag.eof_node`. Multiple worklist starts may reach
+            // bytes.len() (only happens with overlapping accepts that
+            // all reach EOF — rare; first writer wins).
+            if eof_node_idx.is_none() {
+                eof_node_idx = Some(node_idx);
+            }
             continue;
         }
 
@@ -1007,6 +1037,25 @@ pub fn lex_dag_core<'a, T: Clone>(
         }
 
         if accepts.is_empty() {
+            // M6c.7.1 (2026-05-14): soft-fail for secondary-alt dead-ends.
+            // If this position is reachable ONLY via a non-primary
+            // (shorter-than-maximal-munch) alt's downstream, the
+            // failure is structural rule-out by evidence: the alt
+            // cannot contribute to any valid parse, so the
+            // corresponding lex-Fork branch in the walker spawns a
+            // cursor that lands at the orphan node (empty edges →
+            // peek_kind = Eof), fails to dispatch, dies naturally.
+            //
+            // If `start` IS on the primary maximal-munch chain
+            // (reachable via the longest-end accept of some node),
+            // this is a true input error that `lex` would ALSO fail
+            // on. Preserve the hard-fail surface.
+            if !primary_targets.contains(&start) {
+                // Orphan node: already allocated at line 977 with
+                // empty `edges`. raw_edges[node_idx] stays empty;
+                // fixup loop below emits no edges for this node.
+                continue;
+            }
             let (ch, _ch_len) = decode_char_at(input, pos).unwrap_or(('\u{FFFD}', 1));
             return Err(format!(
                 "unexpected character '{}' at byte {}",
@@ -1019,21 +1068,69 @@ pub fn lex_dag_core<'a, T: Clone>(
         // Order by end_byte DESCENDING (longest-first) so edges[0] is
         // the canonical primary.
         accepts.sort_by(|a, b| b.1.cmp(&a.1));
+        // M6c.4-bugfix (2026-05-14): apply longest-match-per-kind
+        // filtering HERE (during edge collection) rather than only at
+        // the edge-fixup step below. This is critical for cursor
+        // pos-advancement correctness: the walker's
+        // `advance_cursor_pos(cursor, 1)` increments `cursor.pos` by 1,
+        // which (for LatticeTokenSource) is the NEXT node id. If we
+        // queue intermediate accept end_bytes to the worklist
+        // unconditionally, the DAG gets ORPHAN intermediate nodes (no
+        // incoming edges after dedup) interleaved with real nodes.
+        // E.g., for `merge` (Ident accepts at end=1, 2, 3, 4, 5), the
+        // worklist allocates 5 intermediate nodes before reaching the
+        // longest accept at end=5. After edge dedup keeps only the
+        // longest per kind, those 4 intermediate nodes are orphans —
+        // but they're still indexed in `dag.nodes`. The walker's
+        // `pos += 1` then advances into orphan territory, producing
+        // bogus peek_kind/peek_text values and walker termination
+        // beyond the legitimate input boundary (e.g., pos=10 for a
+        // 9-byte input).
+        //
+        // The fix: filter accepts to LONGEST per kind BEFORE queueing
+        // their end_bytes to the worklist. This keeps node IDs dense
+        // and aligned with token positions.
+        let mut seen_kinds_this_node: std::collections::HashSet<
+            crate::automata::TokenKind,
+        > = std::collections::HashSet::new();
+        // M6c.7.1: the longest end_byte is the primary maximal-munch
+        // target. Track it to propagate primary-chain status through
+        // the worklist; secondary alts (shorter end_bytes) get
+        // soft-fail semantics when their downstream can't lex.
+        let primary_end_byte = accepts.first().map(|a| a.1);
         for (accept_state, end_byte) in accepts.iter() {
             let text = &input[pos..*end_byte];
             let alt_tokens = accept_alternatives(*accept_state, text);
+            let mut emitted_any_for_this_accept = false;
             for (token, weight) in alt_tokens {
                 let kind = token_to_kind(&token);
+                if !seen_kinds_this_node.insert(kind.clone()) {
+                    // Already have a longer-or-equal edge for this kind
+                    // at this node — drop the redundant shorter accept.
+                    continue;
+                }
                 raw_edges[node_idx].1.push((
                     kind,
                     text.to_string(),
                     *end_byte,
                     TropicalWeight(weight),
                 ));
+                emitted_any_for_this_accept = true;
             }
-            // Queue the target byte position for scanning.
-            if !byte_to_node.contains_key(end_byte) {
+            // Queue the target byte position for scanning ONLY if at
+            // least one edge survived the longest-per-kind filter for
+            // this accept. Otherwise the accept is fully redundant and
+            // creating an orphan node would just confuse the walker's
+            // pos-advancement.
+            if emitted_any_for_this_accept && !byte_to_node.contains_key(end_byte) {
                 worklist.push_back(*end_byte);
+                // M6c.7.1: mark primary-chain targets so soft-fail
+                // logic at the worklist pop above can distinguish
+                // dead-end secondaries (soft-fail) from primary-chain
+                // dead-ends (hard-fail, preserves `lex` parity).
+                if Some(*end_byte) == primary_end_byte {
+                    primary_targets.insert(*end_byte);
+                }
             }
         }
     }
@@ -1044,18 +1141,29 @@ pub fn lex_dag_core<'a, T: Clone>(
     // byte_to_node is keyed by the raw end_byte but the worklist allocates
     // nodes at the post-skip byte.
     //
-    // M6b (2026-05-14): dedupe edges by (kind, text, end_byte). The
+    // M6b (2026-05-14): dedupe edges by `(kind, text, end_byte)`. The
     // codegen-emitted `accept_alternatives` may produce duplicate
     // (Token, weight) pairs when two literal rules share a regex pattern
     // (e.g., Int's NumLit and UInt32's UInt32Lit both matching `[0-9]+`
-    // both emit `Token::Integer(...)` at the same DFA state), AND multiple
-    // DFA accept states can map to the same lex outcome. Without dedup,
-    // `LatticeTokenSource::peek_alternatives` exposes both as separate
-    // alts → the walker's lex-Fork emits multiple Fork branches with
-    // identical (kind, text, target_node), causing K^N cursor explosion
-    // on K-way per-position duplicate alts. The duplicates carry zero
-    // information; the cross-category dispatch happens at the parser
-    // layer, not the lexer.
+    // both emit `Token::Integer(...)` at the same DFA state).
+    //
+    // M6c.4 (2026-05-14): ALSO collapse same-kind multi-length entries to
+    // their longest match. The DFA's accepting-state traversal naturally
+    // emits one accept per intermediate state on the way to the longest
+    // match. For identifiers like `MergeMap`, that yields 8 same-kind
+    // entries: `Ident "M"`, `Ident "Me"`, ..., `Ident "MergeMap"`. These
+    // are NOT semantically distinct alternatives — they're DFA-implementation
+    // artifacts of greedy longest-match. Without this collapse, the
+    // walker's lex-Fork emits one branch per prefix and the cursor count
+    // explodes per identifier (O(N^k) where N is identifier length, k is
+    // identifiers in input). The longest-match-per-kind rule preserves
+    // genuine cross-kind multi-length ambiguity like `-3` (Minus@end=1
+    // vs Integer@end=2) while eliminating same-kind redundancy.
+    //
+    // Ordering note: `accepts` is sorted longest-first at line ~1021, so
+    // iteration sees longest-length entries before shorter ones. The
+    // `seen` set keyed by `kind` ensures the FIRST entry for each kind
+    // (= longest-match) wins.
     for (node_idx, edges) in raw_edges.into_iter() {
         let mut alt_idx_counter: u16 = 0;
         let mut seen: std::collections::HashSet<(
@@ -1063,6 +1171,13 @@ pub fn lex_dag_core<'a, T: Clone>(
             String,
             usize,
         )> = std::collections::HashSet::new();
+        // M6c.4: per-kind longest-match filter. Iterates edges in the
+        // order they were collected (longest end_byte first per the
+        // sort at line ~1021); the FIRST entry for each kind is the
+        // longest, and subsequent same-kind entries are dropped.
+        let mut seen_kinds: std::collections::HashSet<
+            crate::automata::TokenKind,
+        > = std::collections::HashSet::new();
         for (kind, text, end_byte, weight) in edges {
             let target_node = match byte_to_node.get(&end_byte) {
                 Some(&idx) => idx,
@@ -1077,6 +1192,11 @@ pub fn lex_dag_core<'a, T: Clone>(
                 // Duplicate (kind, text, end_byte) — already pushed.
                 continue;
             }
+            if !seen_kinds.insert(kind.clone()) {
+                // Same kind already has a (longer) edge — drop this
+                // shorter-prefix accept.
+                continue;
+            }
             nodes[node_idx].edges.push(LexDagEdge {
                 kind,
                 text,
@@ -1089,7 +1209,26 @@ pub fn lex_dag_core<'a, T: Clone>(
         }
     }
 
-    Ok(LexDag { nodes, byte_to_node })
+    // M6c.8.1 (2026-05-14): record the EOF sentinel index. The worklist
+    // always seeds byte 0 and reaches `bytes.len()` along the primary
+    // chain (the longest accept's end_byte chain), so `bytes.len()` is
+    // always allocated as a node. For empty input, the very first pop
+    // allocates node 0 at byte 0 (= `bytes.len()`); that's the EOF
+    // sentinel.
+    let eof_node = eof_node_idx.unwrap_or_else(|| {
+        debug_assert!(
+            false,
+            "EOF sentinel must be allocated by lex_dag_core"
+        );
+        // Defensive fallback: last node (may be an orphan, but
+        // better than panicking in release).
+        nodes.len().saturating_sub(1)
+    });
+    Ok(LexDag {
+        nodes,
+        byte_to_node,
+        eof_node,
+    })
 }
 
 #[inline(always)]

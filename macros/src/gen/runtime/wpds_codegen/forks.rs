@@ -177,6 +177,18 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             let mut __branches: Vec<mettail_prattail::wpds_walker::ForkBranch<
                 LexicographicWeight,
             >> = Vec::with_capacity(alts.len() + 1);
+            // M6c.8.5 (2026-05-14): track whether the primary alt
+            // survived the `lex_alt_rule_for` evidence filter. The
+            // fall-through optimization (skip Fork when only the
+            // primary survives → defer to standard PrefixDispatch
+            // arms) is ONLY safe when the survivor IS the primary —
+            // standard PrefixDispatch dispatches on `peek_kind` which
+            // returns the primary's kind. When only a SECONDARY
+            // survives, fall-through would silently dispatch the
+            // primary kind (wrong rule), violating "never
+            // disambiguate early". In that case we MUST Fork (even
+            // for a single branch).
+            let mut __primary_survived: bool = false;
 
             // Branch[0] — PRIMARY (lex_alt_idx = 0).
             if let Some(primary_kind) = tokens.peek_kind(*pos) {
@@ -202,6 +214,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             rule_idx: primary_rule_idx,
                         },
                     });
+                    __primary_survived = true;
                 }
             }
 
@@ -232,12 +245,17 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 }
             }
 
-            // Fork only when ≥2 branches survive the rule-out filter.
-            // Otherwise fall through to the standard per-cat PrefixDispatch
-            // arms below (preserves byte-identical fast path for
-            // non-ambiguous lex AND for cases where only the primary has
-            // a rule in this cat).
-            if __branches.len() >= 2 {
+            // M6c.8.5 (2026-05-14): Fork when ≥2 branches survive OR
+            // when the sole survivor is a SECONDARY (not the primary).
+            // Fall-through only when 0 branches survived (standard
+            // arm handles dispatch / fails naturally) OR when exactly
+            // the primary survived (standard PrefixDispatch dispatches
+            // on `peek_kind = primary` — byte-identical to non-
+            // ambiguous lex, optimization preserved).
+            let __fall_through =
+                __branches.is_empty()
+                    || (__branches.len() == 1 && __primary_survived);
+            if !__fall_through {
                 return WpdsStepAction::Fork {
                     branches: __branches,
                     consume_trigger: false,
