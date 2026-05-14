@@ -4,6 +4,7 @@
 //! `Terminals -> NFA -> DFA -> Minimize -> Equiv Classes -> Codegen`
 
 pub mod codegen;
+pub mod derivation_weight;
 pub mod lex_weight;
 pub mod minimize;
 pub mod mph;
