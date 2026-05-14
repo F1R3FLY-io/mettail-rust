@@ -123,6 +123,61 @@ impl<W, D> DerivationWeight<W, D> {
     pub fn iter(&self) -> std::slice::Iter<'_, (W, D)> {
         self.entries.iter()
     }
+
+    /// M11.1 (2026-05-14): project the first entry's weight component.
+    ///
+    /// Returns `None` if the multiset is empty (additive identity / `zero`).
+    /// Used by D5 callers projecting a multi-derivation weight back to a
+    /// single `LexicographicWeight` for scoring / confidence APIs.
+    ///
+    /// The "first entry" is the entry at index 0 in `self.entries`. After
+    /// merge operations (multiset union) the order reflects insertion
+    /// order; callers that need a specific tiebreak should sort `entries`
+    /// explicitly before projecting.
+    pub fn first_inner(&self) -> Option<&W> {
+        self.entries.first().map(|(w, _)| w)
+    }
+
+    /// M11.1 (2026-05-14): project the first entry's derivation component.
+    ///
+    /// Returns `None` if the multiset is empty. Symmetric to
+    /// [`first_inner`](Self::first_inner) — see its docs for ordering
+    /// semantics.
+    pub fn first_snapshot(&self) -> Option<&D> {
+        self.entries.first().map(|(_, d)| d)
+    }
+}
+
+impl<W: Clone, D> DerivationWeight<W, D> {
+    /// M11.1 (2026-05-14): replace every entry's derivation component with
+    /// the supplied `snapshot`, leaving weights untouched.
+    ///
+    /// Codegen-emitted Fork-branch weights start as
+    /// `DerivationWeight::singleton(w, DerivationSnapshot::unit())` because
+    /// the codegen has no cursor scope. The walker's Fork-arm sites then
+    /// call `branch.weight.clone().with_snapshot(parent_snapshot)` to inject
+    /// the parent cursor's `Arc<SemanticBuilder>` snapshot before merging
+    /// into the child cursor's accumulated weight.
+    ///
+    /// **Distributivity over `plus_ref`**: `(a ⊕ b).with_snapshot(s) ==
+    /// a.with_snapshot(s) ⊕ b.with_snapshot(s)`. Verified by unit test
+    /// `with_snapshot_distributes_over_plus` below.
+    ///
+    /// **NOT distributive over `times_ref`**: `(a ⊗ b).with_snapshot(s)` is
+    /// distinct from `a.with_snapshot(s) ⊗ b.with_snapshot(s)` in general,
+    /// because `combine` is right-bias in the existing
+    /// `DerivationCombine for Arc<SemanticBuilder>` impl. Callers MUST
+    /// apply `with_snapshot` to the BRANCH weight only, BEFORE multiplying
+    /// into the parent's cumulative weight.
+    pub fn with_snapshot<D2: Clone>(self, snapshot: D2) -> DerivationWeight<W, D2> {
+        DerivationWeight {
+            entries: self
+                .entries
+                .into_iter()
+                .map(|(w, _)| (w, snapshot.clone()))
+                .collect(),
+        }
+    }
 }
 
 impl<W: SemiringRef, D: DerivationCombine> SemiringRef for DerivationWeight<W, D> {
@@ -380,5 +435,66 @@ mod tests {
         let lhs2 = b.plus_ref(&c).times_ref(&a);
         let rhs2 = b.times_ref(&a).plus_ref(&c.times_ref(&a));
         assert!(equiv(&lhs2, &rhs2));
+    }
+
+    // M11.1 (2026-05-14): with_snapshot + first_inner/first_snapshot tests.
+
+    #[test]
+    fn first_inner_first_snapshot_on_empty_return_none() {
+        let z: DW = DerivationWeight::zero_ref();
+        assert!(z.first_inner().is_none());
+        assert!(z.first_snapshot().is_none());
+    }
+
+    #[test]
+    fn first_inner_first_snapshot_on_singleton() {
+        let a = w(1.0, b'a');
+        assert_eq!(a.first_inner().map(|w| w.0), Some(1.0));
+        assert_eq!(a.first_snapshot(), Some(&TagSeq(vec![b'a'])));
+    }
+
+    #[test]
+    fn first_inner_first_snapshot_on_multi_returns_index_zero() {
+        let a = w(1.0, b'a');
+        let b = w(2.0, b'b');
+        let ab = a.plus_ref(&b);
+        // multiset union appends; index 0 is the original `a` entry.
+        assert_eq!(ab.first_inner().map(|w| w.0), Some(1.0));
+        assert_eq!(ab.first_snapshot(), Some(&TagSeq(vec![b'a'])));
+    }
+
+    #[test]
+    fn with_snapshot_replaces_all_entries() {
+        let a = w(1.0, b'a');
+        let b = w(2.0, b'b');
+        let ab = a.plus_ref(&b);
+        let replaced = ab.clone().with_snapshot(TagSeq(vec![b'z']));
+        assert_eq!(replaced.len(), 2);
+        // Weights preserved; snapshots all equal to the injected value.
+        assert_eq!(replaced.entries[0].0 .0, 1.0);
+        assert_eq!(replaced.entries[0].1, TagSeq(vec![b'z']));
+        assert_eq!(replaced.entries[1].0 .0, 2.0);
+        assert_eq!(replaced.entries[1].1, TagSeq(vec![b'z']));
+    }
+
+    #[test]
+    fn with_snapshot_distributes_over_plus() {
+        // (a ⊕ b).with_snapshot(s) == a.with_snapshot(s) ⊕ b.with_snapshot(s)
+        let a = w(1.0, b'a');
+        let b = w(2.0, b'b');
+        let s = TagSeq(vec![b'z']);
+        let lhs = a.plus_ref(&b).with_snapshot(s.clone());
+        let rhs = a
+            .clone()
+            .with_snapshot(s.clone())
+            .plus_ref(&b.clone().with_snapshot(s));
+        assert!(equiv(&lhs, &rhs));
+    }
+
+    #[test]
+    fn with_snapshot_on_empty_stays_empty() {
+        let z: DW = DerivationWeight::zero_ref();
+        let replaced = z.with_snapshot(TagSeq(vec![b'z']));
+        assert!(replaced.is_zero_ref());
     }
 }
