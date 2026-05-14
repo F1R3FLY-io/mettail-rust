@@ -61,8 +61,15 @@ pub fn generate_precedence_assoc_tests(
     // Step 3: Build leaf map for concrete values
     let leaf_map = super::nested_expr_gen::build_simple_leaf_map_pub(language);
 
-    // Step 4: Generate precedence tests (pairs at different levels)
-    for (category, ops) in &ops_by_category {
+    // Step 4: Generate precedence tests (pairs at different levels).
+    // 2026-05-14: sort categories alphabetically so generated test
+    // output is deterministic across runs (HashMap iteration order is
+    // non-deterministic, and `MAX_PREC_TESTS` cap means earlier
+    // categories fill the cap → testgen output churns on rebuild).
+    let mut sorted_cats: Vec<&String> = ops_by_category.keys().collect();
+    sorted_cats.sort();
+    for category in sorted_cats {
+        let ops = &ops_by_category[category];
         if test_cases.len() >= MAX_PREC_TESTS {
             break;
         }
@@ -265,9 +272,18 @@ fn collect_infix_ops(
             .push(info);
     }
 
-    // Sort each category's ops by binding power (ascending)
+    // Sort each category's ops by binding power (ascending), tiebroken
+    // by label so equal-bp operators always appear in the same order
+    // regardless of declaration order. 2026-05-14: extra tiebreak
+    // protects testgen determinism if two infix ops share both
+    // left_bp and right_bp (rare but possible).
     for ops in by_category.values_mut() {
-        ops.sort_by_key(|o| o.left_bp.min(o.right_bp));
+        ops.sort_by(|a, b| {
+            a.left_bp
+                .min(a.right_bp)
+                .cmp(&b.left_bp.min(b.right_bp))
+                .then_with(|| a.label.cmp(&b.label))
+        });
     }
 
     by_category
