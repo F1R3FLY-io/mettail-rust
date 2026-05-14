@@ -1890,14 +1890,21 @@ fn generate_language_struct_multi(
             // now quiescent (all weights tie); future Stage 10b-prime
             // can wire real per-cat WPDS weights via
             // `parse_<Cat>_via_wpds_with_weight`.
+            // M8b (2026-05-14): use parse_via_wpds_all so within-cat
+            // multi-result is surfaced into `successes`. The cross-cat
+            // flatten below (match-on-len at lines 2718-2727) then
+            // folds within-cat AND cross-cat ambiguity uniformly into
+            // `Ambiguous(Vec<Inner>)`.
             let try_block = quote! {
-                match #cat::parse(input) {
-                    Ok(t) => {
-                        successes.push(#inner_enum_name::#variant(t));
-                        success_weights.push(0.5);
+                match #cat::parse_via_wpds_all(input) {
+                    Ok(terms) => {
+                        for t in terms {
+                            successes.push(#inner_enum_name::#variant(t));
+                            success_weights.push(0.5);
+                        }
                     },
                     Err(e) => {
-                        if first_err.is_none() { first_err = Some(e); }
+                        if first_err.is_none() { first_err = Some(e.to_string()); }
                     },
                 }
             };
