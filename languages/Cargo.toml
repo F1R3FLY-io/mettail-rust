@@ -16,6 +16,8 @@ publish = false
 ## Propagate WFST features through macros to mettail-prattail.
 wfst = ["mettail-macros/wfst"]
 wfst-log = ["mettail-macros/wfst-log"]
+## Golden-byte wire tests against f1r3node reference vectors.
+rholang-wire = []
 
 [dependencies]
 mettail-macros = { path = "../macros" }
@@ -27,14 +29,21 @@ num-traits = "0.2"
 moniker = { workspace = true }
 rand = { workspace = true }
 indexmap = { workspace = true }
+prost = "0.13"
+hex = "0.4"
 
 ascent = { workspace = true }
 ascent-byods-rels = { workspace = true }
 pathmap = { workspace = true }
 
+[build-dependencies]
+prost-build = "0.13"
+protoc-bin-vendored = "3.2"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
+hex = "0.4"
 
 [[bench]]
 name = "rhocalc_bench"

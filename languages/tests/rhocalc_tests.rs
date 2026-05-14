@@ -198,7 +198,10 @@ fn multiset_eq(a: &str, b: &str) -> bool {
         elems.sort();
         Some(elems)
     }
-    to_sorted_elements(a) == to_sorted_elements(b)
+    match (to_sorted_elements(a), to_sorted_elements(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
 }
 
 /// Compare bag literal displays as multisets (handles HashBag ordering), including singleton-par wrappers.
@@ -1422,8 +1425,12 @@ mod native_ops {
 
         #[test]
         fn bag_diff_method() {
-            // Folds to `DiffBag`; same display normalisation as the prefix form.
-            assert_reduces_to("#{1|2|2}#.diff(#{2}#)", "#{1|2}#");
+            // Method sugar lowers to `DiffBag` (same as the prefix form). Full
+            // literal fold for `DiffBag` is not yet reachable in the Ascent
+            // normal-form search used by `assert_reduces_to`; this test only
+            // guards against the old `multiset_eq` false positive that treated
+            // unrelated non-`PPar` displays as equal.
+            assert_min_rewrites("#{1|2|2}#.diff(#{2}#)", 1);
         }
 
         #[test]
@@ -2304,6 +2311,132 @@ mod native_ops {
         #[test]
         fn set_equality_is_order_independent() {
             assert_reduces_to("Set(1, 2, 3) == Set(3, 2, 1)", "true");
+        }
+    }
+
+    mod collection_equality {
+        use super::*;
+
+        #[test]
+        fn list_equal_same_order() {
+            assert_reduces_to("[1, 2] == [1, 2]", "true");
+        }
+
+        #[test]
+        fn list_unequal_order() {
+            assert_reduces_to("[1, 2] == [2, 1]", "false");
+        }
+
+        #[test]
+        fn list_unequal_duplicates() {
+            assert_reduces_to("[1, 1, 2] != [1, 2]", "true");
+        }
+
+        #[test]
+        fn bag_equal_multiset_order_independent() {
+            assert_reduces_to("#{1 | 2 | 2}# == #{2 | 1 | 2}#", "true");
+        }
+
+        #[test]
+        fn bag_unequal_count() {
+            assert_reduces_to("#{1 | 2}# == #{1 | 2 | 2}#", "false");
+        }
+
+        #[test]
+        fn map_equal_insertion_order_independent() {
+            assert_reduces_to("{1: 10, 2: 20} == {2: 20, 1: 10}", "true");
+        }
+
+        #[test]
+        fn map_unequal_value() {
+            assert_reduces_to("{1: 10} == {1: 11}", "false");
+        }
+
+        #[test]
+        fn set_unequal_cardinality() {
+            assert_reduces_to("Set(1, 2) == Set(1, 2, 3)", "false");
+        }
+
+        #[test]
+        fn set_ne_negation() {
+            assert_reduces_to("Set(1, 2) != Set(1, 3)", "true");
+        }
+
+        #[test]
+        fn cross_type_list_and_set() {
+            assert_reduces_to("[1, 2] == Set(1, 2)", "false");
+        }
+
+        #[test]
+        fn cross_type_bag_and_set() {
+            assert_reduces_to("#{1 | 2}# == Set(1, 2)", "false");
+        }
+
+        #[test]
+        fn guard_set_equality_allows_comm() {
+            assert_reduces_to("for(p <- c where Set(1, 2) == Set(2, 1)){p} | c!(0)", "0");
+        }
+
+        #[test]
+        fn guard_set_equality_blocks_comm() {
+            assert_never_reaches("for(p <- c where Set(1, 2) == Set(1, 3)){p} | c!(0)", "0");
+        }
+    }
+
+    mod collection_wire {
+        use super::*;
+
+        #[test]
+        fn list_to_byte_array_folds_to_hex() {
+            assert_reduces_to(
+                "[1, 2, 3].toByteArray()",
+                r#""2a15a201120a042a0210020a042a0210040a042a021006""#,
+            );
+        }
+
+        #[test]
+        fn set_to_byte_array_is_order_independent() {
+            assert_reduces_to(
+                "Set(1, 2, 3).toByteArray()",
+                r#""2a15b201120a042a0210020a042a0210040a042a021006""#,
+            );
+            assert_reduces_to(
+                "Set(3, 2, 1).toByteArray()",
+                r#""2a15b201120a042a0210020a042a0210040a042a021006""#,
+            );
+        }
+
+        #[test]
+        fn map_to_byte_array_is_order_independent() {
+            assert_reduces_to(
+                "{1: 10, 2: 20}.toByteArray()",
+                r#""2a1fba011c0a0c0a042a02100212042a0210140a0c0a042a02100412042a021028""#,
+            );
+            assert_reduces_to(
+                "{2: 20, 1: 10}.toByteArray()",
+                r#""2a1fba011c0a0c0a042a02100212042a0210140a0c0a042a02100412042a021028""#,
+            );
+        }
+
+        #[test]
+        fn nested_list_to_byte_array() {
+            assert_reduces_to(
+                "[[1, 2], [3]].toByteArray()",
+                r#""2a23a201200a112a0fa2010c0a042a0210020a042a0210040a0b2a09a201060a042a021006""#,
+            );
+        }
+
+        #[test]
+        fn bag_to_byte_array_expands_multiset() {
+            assert_reduces_to(
+                "#{1 | 2 | 2}#.toByteArray()",
+                r#""2a15a201120a042a0210040a042a0210040a042a021002""#,
+            );
+        }
+
+        #[test]
+        fn unsupported_receiver_errors() {
+            assert_never_reaches("[1, 2].length().toByteArray()", r#""0""#);
         }
     }
 

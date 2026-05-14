@@ -175,8 +175,20 @@ fn eval_guard_bool(cond: &Proc) -> Option<bool> {
         Proc::And(a, b) => Some(eval_guard_bool(a)? && eval_guard_bool(b)?),
         Proc::Or(a, b) => Some(eval_guard_bool(a)? || eval_guard_bool(b)?),
         Proc::Not(a) => Some(!eval_guard_bool(a)?),
-        Proc::Eq(a, b) => Some(eval_cmp_order(a, b)? == Ordering::Equal),
-        Proc::Ne(a, b) => Some(eval_cmp_order(a, b)? != Ordering::Equal),
+        Proc::Eq(a, b) => {
+            if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(a, b) {
+                Some(v)
+            } else {
+                Some(eval_cmp_order(a, b)? == Ordering::Equal)
+            }
+        },
+        Proc::Ne(a, b) => {
+            if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(a, b) {
+                Some(!v)
+            } else {
+                Some(eval_cmp_order(a, b)? != Ordering::Equal)
+            }
+        },
         Proc::Gt(a, b) => Some(eval_cmp_order(a, b)? == Ordering::Greater),
         Proc::Lt(a, b) => Some(eval_cmp_order(a, b)? == Ordering::Less),
         Proc::GtEq(a, b) => {

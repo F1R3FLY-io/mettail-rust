@@ -96,6 +96,18 @@ for the Rholang-style alignment that drove this split.
 | [01-hashbag.md](01-hashbag.md)                           | Full pipeline trace for `HashBag(Proc)` using `PPar` |
 | [02-hashset-and-vec.md](02-hashset-and-vec.md)           | Differences for `HashSet` and `Vec`                  |
 | [03-ascent-decomposition.md](03-ascent-decomposition.md) | Ascent fixpoint rules for collection terms           |
+| [Rhocalc collection equality](../../../../design/made/rhocalc-collection-equality.md) | Surface `==` / `!=` on Rhocalc `CastList` / `CastBag` / `CastMap` / `CastSet` (fold and guards), separate from Ascent `eq_*` |
+| [Rhocalc collection wire](../../../../design/made/rhocalc-collection-wire.md) | Surface `.toByteArray()` on collection casts; protobuf `Par` bytes via `languages/src/rhocalc/wire.rs` |
+
+## Rhocalc surface equality
+
+Rhocalc programs compare collection values at the `Proc` layer with `==` and
+`!=`, which fold to booleans via `compare_collection_equality`. This is
+distinct from Ascent `eq_list`, `eq_bag`, `eq_map`, and `eq_set`, which
+support rewriting and congruence. See
+[rhocalc-collection-equality.md](../../../../design/made/rhocalc-collection-equality.md).
+Collection `.toByteArray()` wire encoding is documented in
+[rhocalc-collection-wire.md](../../../../design/made/rhocalc-collection-wire.md).
 
 ## Source Files
 

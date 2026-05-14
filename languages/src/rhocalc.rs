@@ -13,6 +13,7 @@ pub(crate) mod receive;
 pub(crate) mod runtime;
 mod type_inference;
 pub(crate) mod zipper;
+pub(crate) mod wire;
 
 language! {
     name: RhoCalc,
@@ -30,6 +31,7 @@ language! {
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
+        ![String] as Bytes
         ![Vec<Proc>] as List {
             open_parts: ["["],
             close_parts: ["]"],
@@ -404,6 +406,7 @@ language! {
         CastInt . k:Int |- k : Proc;
         CastBool . k:Bool |- k : Proc;
         CastStr . s:Str |- s : Proc;
+        CastBytes . b:Bytes |- b : Proc;
         CastList . l:List |- l : Proc;
         CastBag . b:Bag |- b : Proc;
         CastMap . m:Map |- m : Proc;
@@ -592,7 +595,13 @@ language! {
                     (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x == y))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                _ => {
+                    if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(&a, &b) {
+                        Proc::CastBool(Box::new(Bool::BoolLit(v)))
+                    } else {
+                        Proc::Err
+                    }
+                },
             }}
         ] fold;
 
@@ -626,7 +635,13 @@ language! {
                     (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                _ => {
+                    if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(&a, &b) {
+                        Proc::CastBool(Box::new(Bool::BoolLit(!v)))
+                    } else {
+                        Proc::Err
+                    }
+                },
             }}
         ] fold;
 
@@ -1238,6 +1253,17 @@ language! {
                         Proc::CastInt(Box::new(Int::NumLit(entries.len() as i64)))
                     },
                     _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
+        }] fold;
+
+        MToByteArray . m:Proc
+        |- m "." "toByteArray" "(" ")" : Proc ![{
+            match &m {
+                Proc::CastList(_) | Proc::CastMap(_) | Proc::CastSet(_) | Proc::CastBag(_) => {
+                    crate::rhocalc::wire::collection_to_byte_array_proc(m)
+                        .unwrap_or(Proc::Err)
                 },
                 _ => Proc::Err,
             }
