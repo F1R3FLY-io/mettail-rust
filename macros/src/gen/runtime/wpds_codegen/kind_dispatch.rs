@@ -143,14 +143,36 @@ fn emit_arms_for_shape(
             cat_name, family, ..
         } => {
             let cat_name_lit = cat_name.as_str();
+            // M6c.5.fix (2026-05-14): the calculator/rhocalc codegen
+            // emits `TokenKind::Custom(cat_name)` for BigInt/BigRat/
+            // Fixed literals (the suffix-tagged ones: `42n`, `1/2r`,
+            // `3.14p`), AND `TokenKind::Integer/Float/etc.` for
+            // unsuffixed numeric literals. Per `token_to_kind` in
+            // `target/generated/<lang>/parser.rs`:
+            //     Token::Integer(_, _) → TokenKind::Integer
+            //     Token::BigInt(_)     → TokenKind::Custom("BigInt")
+            //     Token::BigRat(_)     → TokenKind::Custom("BigRat")
+            //     Token::Fixed(_)      → TokenKind::Custom("Fixed")
+            //     Token::Float(_)      → TokenKind::Float
+            // The previously-emitted `IntegerLit/RationalLit/
+            // FixedPointLit(cat_name)` variants ARE in the
+            // `TokenKind` enum but are never produced by current
+            // codegen — they're legacy. Emit `Custom(cat_name)` for
+            // the suffix-tagged literals AND keep the typed-lit
+            // arms as defense-in-depth (zero-cost; match is exhaustive
+            // on `_ => None`).
             match family {
                 LiteralFamily::Integer => {
-                    // Polymorphic bare `TokenKind::Integer` AND the
-                    // per-cat `IntegerLit(cat_name)`. Both surface as
-                    // edges in the lex DAG when the input could be
-                    // either; bind both to this rule.
+                    // Polymorphic bare `TokenKind::Integer` (unsuffixed)
+                    // AND `Custom(cat_name)` (suffixed, for BigInt
+                    // family) AND `IntegerLit(cat_name)` (legacy).
                     push_simple(
                         quote! { mettail_prattail::automata::TokenKind::Integer },
+                        arms,
+                    );
+                    push_payload_eq(
+                        quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
+                        cat_name_lit,
                         arms,
                     );
                     push_payload_eq(
@@ -161,12 +183,22 @@ fn emit_arms_for_shape(
                 }
                 LiteralFamily::Rational => {
                     push_payload_eq(
+                        quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
+                        cat_name_lit,
+                        arms,
+                    );
+                    push_payload_eq(
                         quote! { mettail_prattail::automata::TokenKind::RationalLit(__cat) },
                         cat_name_lit,
                         arms,
                     );
                 }
                 LiteralFamily::FixedPoint => {
+                    push_payload_eq(
+                        quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
+                        cat_name_lit,
+                        arms,
+                    );
                     push_payload_eq(
                         quote! { mettail_prattail::automata::TokenKind::FixedPointLit(__cat) },
                         cat_name_lit,
@@ -201,19 +233,55 @@ fn emit_arms_for_shape(
                 }
             }
         }
-        AtomicShape::VarRule { .. } => {
-            push_simple(
-                quote! { mettail_prattail::automata::TokenKind::Ident },
-                arms,
-            );
-        }
+        // M6c.5 / P3 (2026-05-14): Var rules are NOT bound by the
+        // lex-Fork. Var (Ident → categorical variable) is a
+        // name-resolution concern; it's handled by standard
+        // PrefixDispatch's per-cat Ident dispatch arms — which emit
+        // their own Forks over `Ident → {Var, cross-cat-projection-1,
+        // ...}` when in cats with cross-cat injection. The lex-Fork's
+        // proper domain is multi-LITERAL ambiguity (Integer-vs-BigInt
+        // for `"0"`), NOT Ident multiplicity.
+        //
+        // Concretely: at a position where the lex DAG has both
+        // `Fixed("merge")` (keyword) AND `Ident "merge"` (var-name
+        // interpretation), the canonical PARSE is the keyword. The
+        // pre-P3 code mapped `Ident → MVar_rule` so the lex-Fork
+        // emitted a phantom Var branch alongside the Fixed-keyword
+        // primary; the phantom would `emit_push_token(Ident, "merge")`
+        // and `cursor_gss_push(MVar_rule_idx.with_kind_return())`,
+        // producing a downstream cursor with an AST term shaped like
+        // `MVar("merge")` that polluted the cursor graph and crowded
+        // out the canonical MergeMap dispatch.
+        //
+        // P3 fix: drop the `Ident → VarRule` mapping entirely. At
+        // keyword positions, both Fixed (no rule in table — terminals
+        // dispatch via standard PrefixDispatch trigger arms) AND Ident
+        // (no rule after P3) yield None → `__branches.len() == 0` →
+        // fall-through to standard PrefixDispatch which dispatches
+        // `Fixed("merge")` → MergeMap canonically. At bare-variable
+        // positions (Ident-only, no Fixed), `is_ambiguous_at` is false
+        // so lex-Fork is inert; standard PrefixDispatch's Ident →
+        // Var arm fires directly.
+        //
+        // Mandate compliance: pure rule-out by domain ("Var is not a
+        // literal lex alternative"). No weight-based pre-filter. The
+        // multiplicity for Var/cross-cat-from-Ident is still preserved
+        // by standard PrefixDispatch's own Fork emission.
+        //
+        // Out of scope (M6c.6 / M6d): prefix-operator rules like
+        // `Neg . - n:Int |- ... : Int`. To handle `-3!` →
+        // BOTH `(-3)!` and `-(3!)`, `lex_alt_rule_for` needs to be
+        // extended to map `Fixed("-")` to the unary prefix rule.
+        // That requires a different walker action shape (binder-rule
+        // entry, not atomic-literal with_kind_return).
+        AtomicShape::VarRule { .. }
         // The remaining shapes don't directly consume a single TokenKind
         // via the lex-Fork code path. TerminalKeyword's `Fixed(text)` is
         // never a lex-DAG ambiguity producer (terminals are exact byte
         // matches, never multi-alt); CrossCatProjection/PrefixUnary
         // depend on cross-cat dispatch which the walker handles
         // separately; NonAtomic doesn't apply.
-        AtomicShape::TerminalKeyword { .. }
+        | AtomicShape::TerminalKeyword { .. }
         | AtomicShape::CrossCatProjection { .. }
         | AtomicShape::CrossCatPrefixUnary { .. }
         | AtomicShape::NonAtomic => {}
