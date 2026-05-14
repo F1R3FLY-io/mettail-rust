@@ -584,7 +584,13 @@ language! {
                     (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x == y))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                _ => {
+                    if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(&a, &b) {
+                        Proc::CastBool(Box::new(Bool::BoolLit(v)))
+                    } else {
+                        Proc::Err
+                    }
+                },
             }}
         ] fold;
 
@@ -618,7 +624,13 @@ language! {
                     (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                _ => {
+                    if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(&a, &b) {
+                        Proc::CastBool(Box::new(Bool::BoolLit(!v)))
+                    } else {
+                        Proc::Err
+                    }
+                },
             }}
         ] fold;
 
