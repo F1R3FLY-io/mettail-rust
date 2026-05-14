@@ -47,8 +47,23 @@ use super::prefix::{classify_atomic, AtomicShape, LiteralFamily};
 pub fn emit_lex_alt_rule_for_fn(
     _language: &LanguageDef,
     per_cat: &[Vec<GrammarRule>],
+    categories: &[String],
 ) -> TokenStream {
-    let mut arms: Vec<TokenStream> = Vec::new();
+    // M6c.6.4.b (2026-05-14): split into two per-site tables —
+    // `lex_alt_rule_for_prefix` for PrefixDispatch site (Atomic +
+    // PrefixOp arms) and `lex_alt_rule_for_infix` for InfixLoop site
+    // (PostfixOp + InfixOp + MixfixFirstTrigger arms; populated by
+    // M6c.6.4.c/c2/c3). Same-token-kind ambiguity (e.g., `Fixed("-")`
+    // for both unary `Neg` and binary `SubInt`) is resolved by site:
+    // the lex-Fork at PrefixDispatch queries `_prefix`, the lex-Fork
+    // at InfixLoop queries `_infix`. Each per-site table has no cross-
+    // shape arms — clean rule-out by site discriminator.
+    //
+    // `categories` is threaded for codegen-time category name →
+    // src_idx lookup (used by PrefixOp's `body_src_idx` resolution
+    // and later by InfixOp's `result_src_idx` etc.).
+    let mut prefix_arms: Vec<TokenStream> = Vec::new();
+    let mut infix_arms: Vec<TokenStream> = Vec::new();
     for (cat_src_idx, rules) in per_cat.iter().enumerate() {
         let cat_src_idx_u16 = cat_src_idx as u16;
         for (rule_idx, rule) in rules.iter().enumerate() {
@@ -58,85 +73,129 @@ pub fn emit_lex_alt_rule_for_fn(
                 &shape,
                 cat_src_idx_u16,
                 rule_idx_u16,
-                &mut arms,
+                categories,
+                &mut prefix_arms,
+                &mut infix_arms,
             );
         }
     }
     quote! {
-        /// M6c (2026-05-14): map `(cat_src_idx, kind)` to the atomic-literal
-        /// rule that consumes the kind in that category. Used by the lex-Fork
-        /// emitter to bind each `LexDagEdge` alternative to a concrete rule
-        /// before forking — `None` means the alt's kind cannot produce an AST
-        /// term in the requesting cat (rule-out by evidence).
+        /// M6c.6.4.b (2026-05-14): map `(cat_src_idx, kind)` at
+        /// `LexForkSite::PrefixDispatch` to a `LexAltRuleInfo` carrying
+        /// the rule index AND a `LexAltRuleKind` discriminator. The
+        /// lex-Fork at PrefixDispatch consults this fn; `_infix`
+        /// sibling handles InfixLoop. `None` means the alt's kind has
+        /// no consuming rule in the requesting cat at this site —
+        /// rule-out by evidence per "never disambiguate early".
+        ///
+        /// Possible `kind` variants:
+        /// - `Atomic`: atomic-literal rule (e.g., `NumLit`).
+        /// - `PrefixOp { body_src_idx }`: same-cat unary prefix
+        ///   rule (e.g., `Neg . a:Int |- "-" a : Int`).
         #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
-        fn lex_alt_rule_for(
+        fn lex_alt_rule_for_prefix(
             cat_src_idx: u16,
             kind: &mettail_prattail::automata::TokenKind,
-        ) -> Option<u16> {
+        ) -> Option<mettail_prattail::wpds_runtime::LexAltRuleInfo> {
             match (cat_src_idx, kind) {
-                #( #arms )*
+                #( #prefix_arms )*
+                _ => None,
+            }
+        }
+
+        /// M6c.6.4.b (2026-05-14): InfixLoop-site counterpart.
+        /// Possible `kind` variants:
+        /// - `PostfixOp { l_bp, result_src_idx }`: unary postfix.
+        /// - `InfixOp { l_bp, r_bp, result_src_idx }`: binary infix.
+        /// - `MixfixFirstTrigger { l_bp, result_src_idx }`: mixfix's
+        ///   first trigger (e.g., `?` of Tern).
+        ///
+        /// M6c.6.4.c/c2/c3 populate the arms; until then this fn
+        /// returns `None` for all inputs.
+        #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
+        fn lex_alt_rule_for_infix(
+            cat_src_idx: u16,
+            kind: &mettail_prattail::automata::TokenKind,
+        ) -> Option<mettail_prattail::wpds_runtime::LexAltRuleInfo> {
+            match (cat_src_idx, kind) {
+                #( #infix_arms )*
                 _ => None,
             }
         }
     }
 }
 
-/// Emit `(cat, kind) => Some(rule_idx)` arms for a given atomic shape.
+/// M6c.6.4.b: Emit `(cat, kind) => Some(LexAltRuleInfo { rule_idx, kind: ... })`
+/// arms for a given atomic shape, routed to `prefix_arms` or `infix_arms`
+/// based on the shape's dispatch site.
 ///
-/// Returns one or more match arms via the `arms` accumulator. Non-atomic
-/// or non-literal shapes contribute zero arms.
+/// Returns one or more match arms via the accumulator references.
+/// Non-atomic or non-literal shapes contribute zero arms.
+///
+/// `categories` is used for codegen-time category name → src_idx
+/// lookup (e.g., PrefixOp's `body_src_idx`).
 fn emit_arms_for_shape(
     shape: &AtomicShape,
     cat_src_idx: u16,
     rule_idx: u16,
-    arms: &mut Vec<TokenStream>,
+    categories: &[String],
+    prefix_arms: &mut Vec<TokenStream>,
+    infix_arms: &mut Vec<TokenStream>,
 ) {
-    // `push_simple` emits `(cat, KIND) => Some(rule_idx),`
-    let push_simple = |k: TokenStream, arms: &mut Vec<TokenStream>| {
+    // `push_simple_atomic` emits an Atomic-kind arm to prefix_arms.
+    let push_simple_atomic = |k: TokenStream, arms: &mut Vec<TokenStream>| {
         arms.push(quote! {
-            (#cat_src_idx, #k) => Some(#rule_idx),
+            (#cat_src_idx, #k) => Some(
+                mettail_prattail::wpds_runtime::LexAltRuleInfo {
+                    rule_idx: #rule_idx,
+                    kind: mettail_prattail::wpds_runtime::LexAltRuleKind::Atomic,
+                }
+            ),
         });
     };
-    // `push_payload_eq` emits `(cat, KIND(__cat)) if __cat == "..." => ...`
-    // — guard pattern is at the match-arm level, NOT inside the tuple
-    // (guard patterns inside the pattern slot are still experimental in
-    // stable Rust).
-    let push_payload_eq = |k: TokenStream, expected: &str, arms: &mut Vec<TokenStream>| {
+    // `push_payload_eq_atomic` emits an Atomic-kind arm with a string-payload
+    // equality guard (e.g., `Custom(__cat) if __cat == "BigInt"`).
+    let push_payload_eq_atomic = |k: TokenStream, expected: &str, arms: &mut Vec<TokenStream>| {
         arms.push(quote! {
-            (#cat_src_idx, #k) if __cat == #expected => Some(#rule_idx),
+            (#cat_src_idx, #k) if __cat == #expected => Some(
+                mettail_prattail::wpds_runtime::LexAltRuleInfo {
+                    rule_idx: #rule_idx,
+                    kind: mettail_prattail::wpds_runtime::LexAltRuleKind::Atomic,
+                }
+            ),
         });
     };
     match shape {
         AtomicShape::LiteralInteger => {
-            push_simple(
+            push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::Integer },
-                arms,
+                prefix_arms,
             );
         }
         AtomicShape::LiteralBoolean => {
-            push_simple(
+            push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::True },
-                arms,
+                prefix_arms,
             );
-            push_simple(
+            push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::False },
-                arms,
+                prefix_arms,
             );
-            push_simple(
+            push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::BooleanLit },
-                arms,
+                prefix_arms,
             );
         }
         AtomicShape::LiteralString => {
-            push_simple(
+            push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::StringLit },
-                arms,
+                prefix_arms,
             );
         }
         AtomicShape::LiteralFloat => {
-            push_simple(
+            push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::Float },
-                arms,
+                prefix_arms,
             );
         }
         AtomicShape::LiteralPatterned {
@@ -166,69 +225,69 @@ fn emit_arms_for_shape(
                     // Polymorphic bare `TokenKind::Integer` (unsuffixed)
                     // AND `Custom(cat_name)` (suffixed, for BigInt
                     // family) AND `IntegerLit(cat_name)` (legacy).
-                    push_simple(
+                    push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Integer },
-                        arms,
+                        prefix_arms,
                     );
-                    push_payload_eq(
+                    push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
                         cat_name_lit,
-                        arms,
+                        prefix_arms,
                     );
-                    push_payload_eq(
+                    push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::IntegerLit(__cat) },
                         cat_name_lit,
-                        arms,
+                        prefix_arms,
                     );
                 }
                 LiteralFamily::Rational => {
-                    push_payload_eq(
+                    push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
                         cat_name_lit,
-                        arms,
+                        prefix_arms,
                     );
-                    push_payload_eq(
+                    push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::RationalLit(__cat) },
                         cat_name_lit,
-                        arms,
+                        prefix_arms,
                     );
                 }
                 LiteralFamily::FixedPoint => {
-                    push_payload_eq(
+                    push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
                         cat_name_lit,
-                        arms,
+                        prefix_arms,
                     );
-                    push_payload_eq(
+                    push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::FixedPointLit(__cat) },
                         cat_name_lit,
-                        arms,
+                        prefix_arms,
                     );
                 }
                 LiteralFamily::Float => {
-                    push_simple(
+                    push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Float },
-                        arms,
+                        prefix_arms,
                     );
                 }
                 LiteralFamily::Boolean => {
-                    push_simple(
+                    push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::True },
-                        arms,
+                        prefix_arms,
                     );
-                    push_simple(
+                    push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::False },
-                        arms,
+                        prefix_arms,
                     );
-                    push_simple(
+                    push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::BooleanLit },
-                        arms,
+                        prefix_arms,
                     );
                 }
                 LiteralFamily::String => {
-                    push_simple(
+                    push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::StringLit },
-                        arms,
+                        prefix_arms,
                     );
                 }
             }
@@ -274,6 +333,38 @@ fn emit_arms_for_shape(
         // extended to map `Fixed("-")` to the unary prefix rule.
         // That requires a different walker action shape (binder-rule
         // entry, not atomic-literal with_kind_return).
+        // M6c.6.4.b (2026-05-14): same-cat unary prefix operator.
+        // Emits a PrefixDispatch-site arm binding `Fixed(trigger)` to
+        // this rule's `LexAltRuleKind::PrefixOp { body_src_idx }`.
+        // The lex-Fork at PrefixDispatch uses this to spawn a Fork
+        // branch that walker's `LexAltPrefixOp` apply arm dispatches
+        // into the rule's BinderRule state (operand sub-parse).
+        //
+        // `body_src_idx` is the operand cat's src_idx — for same-cat
+        // unary prefix it equals `cat_src_idx`. Looked up via
+        // `categories` slice (codegen-baked).
+        AtomicShape::PrefixOperator {
+            trigger,
+            operand_cat_name,
+        } => {
+            let body_src_idx = categories
+                .iter()
+                .position(|c| c == operand_cat_name)
+                .map(|i| i as u16)
+                .unwrap_or(cat_src_idx);
+            let trigger_lit = trigger.as_str();
+            prefix_arms.push(quote! {
+                (#cat_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
+                    if __t == #trigger_lit => Some(
+                        mettail_prattail::wpds_runtime::LexAltRuleInfo {
+                            rule_idx: #rule_idx,
+                            kind: mettail_prattail::wpds_runtime::LexAltRuleKind::PrefixOp {
+                                body_src_idx: #body_src_idx,
+                            },
+                        }
+                    ),
+            });
+        }
         AtomicShape::VarRule { .. }
         // The remaining shapes don't directly consume a single TokenKind
         // via the lex-Fork code path. TerminalKeyword's `Fixed(text)` is
@@ -284,6 +375,11 @@ fn emit_arms_for_shape(
         | AtomicShape::TerminalKeyword { .. }
         | AtomicShape::CrossCatProjection { .. }
         | AtomicShape::CrossCatPrefixUnary { .. }
-        | AtomicShape::NonAtomic => {}
+        | AtomicShape::NonAtomic => {
+            // M6c.6.4.c/c2/c3 will route PostfixOperator/InfixOperator/
+            // MixfixFirstTriggerOperator shapes to `infix_arms`.
+            // Silence unused-var warning until then.
+            let _ = infix_arms;
+        }
     }
 }

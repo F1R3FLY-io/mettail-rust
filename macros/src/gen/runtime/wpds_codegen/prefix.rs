@@ -164,6 +164,28 @@ pub enum AtomicShape {
         /// AST variant name = rule.label.
         wrapper_variant: Ident,
     },
+    /// M6c.6.4 (2026-05-14): same-cat unary prefix operator
+    /// (e.g., `Neg . a:Int |- "-" a : Int`, `BitNotInt . a:Int |-
+    /// "bitnot" a : Int`). Pattern: `tc = [Simple(name, T)]`,
+    /// `sp = [Literal(trigger), Param(name)]`, `T == rule.category`.
+    /// Recognized via `builtin_metadata::classify_unary_prefix_shape`.
+    ///
+    /// The lex-Fork at PrefixDispatch emits a branch for this rule
+    /// when the lex DAG offers `Fixed(trigger)` as one of the alts at
+    /// the current position. Walker apply (`LexAltPrefixOp`) mirrors
+    /// the standard `Fixed(trigger)` ConsumeAndPush arm: push
+    /// `rule_at(cat, rule_idx, slot=1, Some(*cur_bp))` (NO
+    /// `with_kind_return`), `new_state = BinderRule { ...,
+    /// body_src_idx, outer_bp = *cur_bp }`, no `emit_push_token`.
+    /// Operand sub-parse runs the operand at the rule's
+    /// `prefix_bp_map` operand cur_bp (installed downstream by
+    /// `BinderRule`'s ParamParse arm).
+    PrefixOperator {
+        /// Trigger literal (e.g., `"-"`, `"bitnot"`).
+        trigger: String,
+        /// Operand category name (== `rule.category` for same-cat).
+        operand_cat_name: String,
+    },
     /// Not atomic — requires Phase A.3+ emission.
     NonAtomic,
 }
@@ -238,6 +260,18 @@ pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShap
                     }
                 }
             }
+        }
+        // M6c.6.4.b (2026-05-14): same-cat unary prefix (e.g.,
+        // `Neg . a:Int |- "-" a : Int`). Recognized via the existing
+        // `builtin_metadata::classify_unary_prefix_shape` (operand
+        // category == rule.category guard already enforced there).
+        // Emits `AtomicShape::PrefixOperator` so the lex-Fork can
+        // bind `Fixed(trigger)` → this rule's `LexAltPrefixOp` branch.
+        if let Some(shape) = super::builtin_metadata::classify_unary_prefix_shape(rule) {
+            return AtomicShape::PrefixOperator {
+                trigger: shape.trigger,
+                operand_cat_name: shape.operand_category,
+            };
         }
         // Other judgement-style rules need Phase A.3+ emission.
         return AtomicShape::NonAtomic;
@@ -620,6 +654,17 @@ fn collect_first_set(
                 collect_first_set(&source_cat_name, language, acc, visited);
             }
             AtomicShape::CrossCatPrefixUnary { trigger, .. } => {
+                acc.push(FirstToken {
+                    pattern: quote! {
+                        Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
+                    },
+                    extra_guard: Some(quote! { __kw == #trigger }),
+                });
+            }
+            AtomicShape::PrefixOperator { trigger, .. } => {
+                // M6c.6.4.b (2026-05-14): same-cat unary prefix uses
+                // the trigger literal as its FIRST token, matching
+                // the existing CrossCatPrefixUnary FIRST-set shape.
                 acc.push(FirstToken {
                     pattern: quote! {
                         Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
@@ -1265,6 +1310,14 @@ fn atomic_arm_descriptors(
         AtomicShape::CrossCatProjection { .. } | AtomicShape::CrossCatPrefixUnary { .. } => {
             return Vec::new()
         }
+        // M6c.6.4.b (2026-05-14): PrefixOperator does not emit an
+        // atomic-arm descriptor — same-cat unary prefix rules are
+        // handled by the standard prefix-trigger arm (BinderRule
+        // entry), NOT by atomic-literal dispatch. The lex-Fork at
+        // PrefixDispatch separately consults `lex_alt_rule_for_prefix`
+        // to bind `Fixed(trigger)` as a Fork branch for the same rule
+        // when multi-LENGTH lex ambiguity is present.
+        AtomicShape::PrefixOperator { .. } => return Vec::new(),
         AtomicShape::NonAtomic => return Vec::new(),
     };
     pattern_guards
@@ -1653,6 +1706,14 @@ fn emit_atomic_arms(
         AtomicShape::CrossCatProjection { .. } | AtomicShape::CrossCatPrefixUnary { .. } => {
             return Vec::new()
         }
+        // M6c.6.4.b (2026-05-14): PrefixOperator does not emit an
+        // atomic-arm descriptor — same-cat unary prefix rules are
+        // handled by the standard prefix-trigger arm (BinderRule
+        // entry), NOT by atomic-literal dispatch. The lex-Fork at
+        // PrefixDispatch separately consults `lex_alt_rule_for_prefix`
+        // to bind `Fixed(trigger)` as a Fork branch for the same rule
+        // when multi-LENGTH lex ambiguity is present.
+        AtomicShape::PrefixOperator { .. } => return Vec::new(),
         AtomicShape::NonAtomic => return Vec::new(),
     };
     pattern_guards

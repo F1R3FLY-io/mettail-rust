@@ -241,6 +241,11 @@ fn emit_action_entry_arm(
                 quote! { &[#source_src_idx] },
             )
         }
+        // M6c.6.4.b (2026-05-14): same-cat unary prefix has no atomic-
+        // literal semantic action — the rule's action body emits its
+        // own AST term wrapping the operand's sub-parse result. Phase
+        // 3 binder/prefix dispatch handles emission.
+        AtomicShape::PrefixOperator { .. } => return None,
         AtomicShape::NonAtomic => return None, // Phase 3 dispatch handled separately.
     };
     Some(quote! {

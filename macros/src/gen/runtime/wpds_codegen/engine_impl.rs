@@ -173,7 +173,7 @@ pub(crate) fn emit_engine_impl_full(
     // codegen output uses a single match expression with all
     // (cat, kind) entries.
     let lex_alt_rule_for_fn =
-        super::kind_dispatch::emit_lex_alt_rule_for_fn(language, per_cat);
+        super::kind_dispatch::emit_lex_alt_rule_for_fn(language, per_cat, categories);
 
     quote! {
         #lex_alt_rule_for_fn
