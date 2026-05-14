@@ -122,6 +122,117 @@ impl LexStream {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// LexDag — M2 (2026-05-13): DAG-shaped lex output for multi-length ambiguity
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// One outgoing edge from a [`LexDagNode`].
+///
+/// Represents a single tokenization alternative: consuming the alt's
+/// `text` advances the cursor from `self_node` (the source) to
+/// `target_node` (the DAG node whose `byte_start == self.end_byte`).
+///
+/// Edges within a node are sorted longest-first (greatest `end_byte`)
+/// to preserve maximal-munch as the canonical PRIMARY interpretation
+/// (the first edge); shorter alternatives are SECONDARIES that the
+/// walker may Fork over.
+#[derive(Debug, Clone)]
+pub struct LexDagEdge {
+    /// Token kind for this alternative.
+    pub kind: crate::automata::TokenKind,
+    /// Owned text of the matched bytes.
+    pub text: String,
+    /// Byte position AFTER consuming this alt's bytes.
+    pub end_byte: usize,
+    /// Target node index (into [`LexDag::nodes`]).
+    pub target_node: usize,
+    /// Priority weight (lower = higher priority). Used by caller-forced
+    /// tiebreak ordering at EOI when the walker chooses to surface a
+    /// single result among ambiguous parses.
+    pub weight: crate::automata::semiring::TropicalWeight,
+    /// Sibling-edge ordinal at the parent node (matches the LexAlternative
+    /// alt_idx convention). Used to populate `LexicographicWeight.lex_alt_idx`
+    /// when a Fork branch is emitted for this alt.
+    pub alt_idx: u16,
+}
+
+/// One node in a [`LexDag`] — represents a byte position (= token boundary).
+#[derive(Debug, Clone)]
+pub struct LexDagNode {
+    /// Byte offset where this node begins (= a token boundary in the input).
+    pub byte_start: usize,
+    /// Outgoing edges, sorted longest-first by `end_byte` then by `weight`
+    /// ascending (lowest weight = highest priority among equal-length alts).
+    /// `edges[0]` is the canonical primary (maximal munch).
+    pub edges: Vec<LexDagEdge>,
+}
+
+/// A DAG of token-boundary nodes connected by [`LexDagEdge`]s.
+///
+/// Replaces the flat `Vec<LexEntry>` for inputs with multi-LENGTH lex
+/// ambiguity (e.g., `-3` lexing as both `Integer(-3)@end=2` and
+/// `Minus@end=1`). Each ambiguous byte position has ≥2 outgoing edges
+/// with different `end_byte`s; non-ambiguous positions are chains.
+///
+/// The walker's `LatticeTokenSource` (M3) wraps a `LexDag` and exposes
+/// it through the `WpdsTokenSource` trait — the cursor's `pos: usize`
+/// becomes a DAG node-id, and `next_pos(pos, alt_idx)` returns the
+/// target node of the chosen alt. This replaces the `pending_lex_alts`
+/// sidecar (commits `3290e05` / `ed53ea3`) with a WPDS-stack-pure
+/// design: alt identity lives in the SHARED input structure, not in
+/// per-cursor state.
+#[derive(Debug, Clone, Default)]
+pub struct LexDag {
+    /// Nodes in the DAG, ordered by `byte_start` ascending. The first
+    /// node always has `byte_start: 0`; the last is a sentinel at
+    /// `byte_start: input.len()` with no outgoing edges (EOF).
+    pub nodes: Vec<LexDagNode>,
+    /// Map from byte offset to node index. Used by `lex_dag_core` during
+    /// construction (worklist scan) and by callers that need to look up
+    /// nodes by byte position.
+    pub byte_to_node: std::collections::BTreeMap<usize, usize>,
+}
+
+impl LexDag {
+    /// Construct an empty DAG.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Number of nodes in the DAG (includes the EOF sentinel).
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Whether the DAG has no nodes.
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Returns true if any node has ≥2 outgoing edges (multi-length
+    /// lex ambiguity). Linear (chain) DAGs return false.
+    pub fn has_ambiguity(&self) -> bool {
+        self.nodes.iter().any(|n| n.edges.len() > 1)
+    }
+
+    /// Walk the DAG via the longest-first primary edges and return the
+    /// flat (kind, text) sequence. Used by callers that want the
+    /// maximal-munch tokenization without ambiguity branching (e.g.,
+    /// the facade's fast-path when `!has_ambiguity()`).
+    pub fn linear_path(&self) -> Vec<(crate::automata::TokenKind, String)> {
+        let mut result = Vec::new();
+        let mut current = 0usize;
+        while let Some(node) = self.nodes.get(current) {
+            let Some(edge) = node.edges.first() else {
+                break;
+            };
+            result.push((edge.kind.clone(), edge.text.clone()));
+            current = edge.target_node;
+        }
+        result
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // LexerConfig — driving case-insensitive matching, normalization, modes
 // ══════════════════════════════════════════════════════════════════════════════
 

@@ -889,6 +889,186 @@ pub fn lex_stream_core<'a, T: Clone>(
     Ok((stream, eof_pos))
 }
 
+/// M2 (2026-05-13): build a [`LexDag`] over the input bytes.
+///
+/// Parallel to [`lex_stream_core`] but produces a DAG of token-boundary
+/// nodes connected by edges (one per accepting state visited at each
+/// byte position). The DAG replaces the flat `Vec<LexEntry>` for inputs
+/// with multi-LENGTH lex ambiguity (e.g., `-3` lexing as both
+/// `Integer(-3)@end=2` and `Minus@end=1`).
+///
+/// **Algorithm** (worklist scan):
+/// 1. Start with byte position 0 on the worklist.
+/// 2. For each byte position `b` in the worklist:
+///    a. Allocate a node at `b`.
+///    b. Walk the DFA from `b`, recording every accepting state visited.
+///    c. For each accept, emit a `LexDagEdge` from `b → b.end_byte`.
+///    d. Add each new `end_byte` to the worklist.
+/// 3. After all reachable byte positions are scanned, fix up
+///    `target_node` indices and sort each node's edges longest-first.
+/// 4. Append an EOF sentinel node at `input.len()` with no edges.
+///
+/// **Result**: a DAG where:
+/// - For unambiguous inputs, every node has exactly one outgoing edge
+///   (a chain). `has_ambiguity() == false`. Callers can `linear_path()`
+///   and route to the fast `SliceTokenSource` path.
+/// - For ambiguous inputs (multi-length accepts at one position), the
+///   relevant nodes have ≥2 outgoing edges. The walker's
+///   `LatticeTokenSource` (M3) exposes these to the engine via
+///   `peek_alternatives` for Fork emission.
+///
+/// **Complexity**: O(input_length × avg_DFA_walk_per_position). Each byte
+/// position is scanned at most once (deduplicated via `byte_to_node`).
+/// For non-ambiguous inputs, behavior is byte-for-byte equivalent to
+/// `lex_stream_core` in cost.
+///
+/// The `token_to_kind` callback converts the language-specific `Token<'a>`
+/// (from `accept_alternatives`) to the kind-only `TokenKind` carried by
+/// `LexDagEdge`.
+pub fn lex_dag_core<'a, T: Clone>(
+    input: &'a str,
+    file_id: Option<u32>,
+    char_class: &[u8; 256],
+    dfa_next: impl Fn(u32, u8) -> u32,
+    is_accepting: impl Fn(u32) -> bool,
+    accept_alternatives: impl Fn(u32, &'a str) -> Vec<(T, f64)>,
+    token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
+) -> Result<crate::lexer_types::LexDag, String> {
+    use crate::automata::semiring::TropicalWeight;
+    use crate::lexer_types::{LexDag, LexDagEdge, LexDagNode};
+    use std::collections::{BTreeMap, VecDeque};
+
+    let _ = file_id;
+    let bytes = input.as_bytes();
+    let mut byte_to_node: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut nodes: Vec<LexDagNode> = Vec::new();
+    // (raw edges with `target_byte` instead of `target_node` — fix up after
+    // all nodes are allocated)
+    let mut raw_edges: Vec<(usize, Vec<(crate::automata::TokenKind, String, usize, TropicalWeight)>)> =
+        Vec::new();
+    let mut worklist: VecDeque<usize> = VecDeque::new();
+    worklist.push_back(0);
+
+    while let Some(start) = worklist.pop_front() {
+        if byte_to_node.contains_key(&start) {
+            continue;
+        }
+        // Skip whitespace at this position; the resulting `pos` becomes
+        // the actual node's byte_start. This keeps the DAG semantically
+        // aligned with `lex_stream_core` (whitespace is non-token).
+        // line/col tracking is not needed here — the DAG only carries
+        // byte positions; error reporting upstream handles line/col.
+        let mut pos = start;
+        {
+            let result = skip_whitespace_simd(bytes, pos, 0, 0);
+            pos = result.pos;
+        }
+        while pos < bytes.len() && bytes[pos] >= 0x80 {
+            match decode_char_at(input, pos) {
+                Some((ch, ch_len)) if ch.is_whitespace() => {
+                    pos += ch_len;
+                }
+                _ => break,
+            }
+        }
+
+        let node_idx = nodes.len();
+        byte_to_node.insert(start, node_idx);
+        nodes.push(LexDagNode {
+            byte_start: pos,
+            edges: Vec::new(),
+        });
+        raw_edges.push((node_idx, Vec::new()));
+
+        if pos >= bytes.len() {
+            // EOF sentinel: no edges, but still allocated so callers can
+            // observe the node.
+            continue;
+        }
+
+        // Walk the DFA from `pos`, recording every accepting state.
+        let mut walk_pos = pos;
+        let mut state: u32 = 0;
+        let mut accepts: Vec<(u32, usize)> = Vec::new();
+        if is_accepting(0) {
+            accepts.push((0, walk_pos));
+        }
+        while walk_pos < bytes.len() {
+            let class = char_class[bytes[walk_pos] as usize];
+            let next = dfa_next(state, class);
+            if next == u32::MAX {
+                break;
+            }
+            state = next;
+            walk_pos += 1;
+            if is_accepting(state) {
+                accepts.push((state, walk_pos));
+            }
+        }
+
+        if accepts.is_empty() {
+            let (ch, _ch_len) = decode_char_at(input, pos).unwrap_or(('\u{FFFD}', 1));
+            return Err(format!(
+                "unexpected character '{}' at byte {}",
+                ch.escape_debug(),
+                pos
+            ));
+        }
+
+        // For each accept, emit a raw edge (target_byte = end_byte).
+        // Order by end_byte DESCENDING (longest-first) so edges[0] is
+        // the canonical primary.
+        accepts.sort_by(|a, b| b.1.cmp(&a.1));
+        for (accept_state, end_byte) in accepts.iter() {
+            let text = &input[pos..*end_byte];
+            let alt_tokens = accept_alternatives(*accept_state, text);
+            for (token, weight) in alt_tokens {
+                let kind = token_to_kind(&token);
+                raw_edges[node_idx].1.push((
+                    kind,
+                    text.to_string(),
+                    *end_byte,
+                    TropicalWeight(weight),
+                ));
+            }
+            // Queue the target byte position for scanning.
+            if !byte_to_node.contains_key(end_byte) {
+                worklist.push_back(*end_byte);
+            }
+        }
+    }
+
+    // Fix up raw_edges: convert target_byte → target_node via byte_to_node.
+    // Whitespace-skipped target bytes (when end_byte falls in a run of
+    // whitespace) resolve to the node at the SKIPPED position, since
+    // byte_to_node is keyed by the raw end_byte but the worklist allocates
+    // nodes at the post-skip byte.
+    for (node_idx, edges) in raw_edges.into_iter() {
+        let mut alt_idx_counter: u16 = 0;
+        for (kind, text, end_byte, weight) in edges {
+            let target_node = match byte_to_node.get(&end_byte) {
+                Some(&idx) => idx,
+                None => {
+                    // No node allocated for this end_byte — should be
+                    // impossible given the worklist scan, but be defensive.
+                    continue;
+                }
+            };
+            nodes[node_idx].edges.push(LexDagEdge {
+                kind,
+                text,
+                end_byte,
+                target_node,
+                weight,
+                alt_idx: alt_idx_counter,
+            });
+            alt_idx_counter += 1;
+        }
+    }
+
+    Ok(LexDag { nodes, byte_to_node })
+}
+
 #[inline(always)]
 pub fn is_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\r')
@@ -1399,5 +1579,147 @@ mod tests {
         let restored = Range::from_char_offset(input, cr.start_chars, cr.end_chars);
         assert_eq!(restored.start, original.start);
         assert_eq!(restored.end, original.end);
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // M2 (2026-05-13): lex_dag_core unit tests
+    // ──────────────────────────────────────────────────────────────────
+
+    /// Minimal DFA encoding for the M2 tests: two tokens, `Minus` and
+    /// `Integer`. The DFA recognizes `-?\d+` (Integer) AND `-` (Minus).
+    /// State 0: start. State 1: just saw `-` (accepts Minus AND continues
+    /// toward Integer). State 2: saw `\d+` (accepts Integer). State u32::MAX:
+    /// no transition.
+    fn make_test_dfa() -> (
+        [u8; 256],
+        impl Fn(u32, u8) -> u32,
+        impl Fn(u32) -> bool,
+        impl for<'a> Fn(u32, &'a str) -> Vec<(crate::automata::TokenKind, f64)>,
+        impl Fn(&crate::automata::TokenKind) -> crate::automata::TokenKind,
+    ) {
+        // char_class: '-' → 0, '0'..='9' → 1, else → 2 (no-transition).
+        let mut char_class = [2u8; 256];
+        char_class[b'-' as usize] = 0;
+        for c in b'0'..=b'9' {
+            char_class[c as usize] = 1;
+        }
+        // state 0: '-' → 1, digit → 2
+        // state 1: '-' → MAX, digit → 2
+        // state 2: '-' → MAX, digit → 2
+        let dfa_next = |s: u32, c: u8| -> u32 {
+            match (s, c) {
+                (0, 0) => 1,
+                (0, 1) => 2,
+                (1, 1) => 2,
+                (2, 1) => 2,
+                _ => u32::MAX,
+            }
+        };
+        let is_accepting = |s: u32| -> bool { s == 1 || s == 2 };
+        // Both accept states emit ONE alternative each.
+        let accept_alternatives = |s: u32, text: &str| -> Vec<(crate::automata::TokenKind, f64)> {
+            let _ = text;
+            match s {
+                1 => vec![(crate::automata::TokenKind::Fixed("-".to_string()), 0.0)],
+                2 => vec![(crate::automata::TokenKind::Integer, 0.0)],
+                _ => Vec::new(),
+            }
+        };
+        // Identity for this test (we pass TokenKind in, get TokenKind out).
+        let token_to_kind = |t: &crate::automata::TokenKind| -> crate::automata::TokenKind {
+            t.clone()
+        };
+        (
+            char_class,
+            dfa_next,
+            is_accepting,
+            accept_alternatives,
+            token_to_kind,
+        )
+    }
+
+    #[test]
+    fn lex_dag_minus_3_has_ambiguity() {
+        // Input "-3": DFA visits state 1 (accepts Minus) at byte 1, then
+        // state 2 (accepts Integer) at byte 2. Expected DAG:
+        //   node 0 (byte_start=0): edges = [Integer@end=2, Minus@end=1]
+        //   node 1 (byte_start=1, allocated for Minus's target): edges = [Integer@end=2]
+        //   node 2 (byte_start=2, EOF sentinel): edges = []
+        let (cc, dfa_next, is_acc, accept_alts, to_kind) = make_test_dfa();
+        let dag = lex_dag_core("-3", None, &cc, dfa_next, is_acc, accept_alts, to_kind)
+            .expect("lex_dag should succeed");
+        assert!(dag.has_ambiguity(), "DAG should have multi-length ambiguity for `-3`");
+        // Node 0 has 2 edges, longest-first.
+        let node_0 = &dag.nodes[0];
+        assert_eq!(node_0.byte_start, 0);
+        assert_eq!(node_0.edges.len(), 2);
+        assert_eq!(node_0.edges[0].end_byte, 2); // Integer first (longest)
+        assert_eq!(node_0.edges[1].end_byte, 1); // Minus second (shorter)
+        assert!(matches!(
+            node_0.edges[0].kind,
+            crate::automata::TokenKind::Integer
+        ));
+        assert!(matches!(
+            node_0.edges[1].kind,
+            crate::automata::TokenKind::Fixed(ref s) if s == "-"
+        ));
+        // The shorter alt's target (byte 1) is also a node with its own edge.
+        let target_for_minus = node_0.edges[1].target_node;
+        let node_1 = &dag.nodes[target_for_minus];
+        assert_eq!(node_1.byte_start, 1);
+        assert_eq!(node_1.edges.len(), 1);
+        assert_eq!(node_1.edges[0].end_byte, 2);
+        assert!(matches!(
+            node_1.edges[0].kind,
+            crate::automata::TokenKind::Integer
+        ));
+    }
+
+    #[test]
+    fn lex_dag_linear_3_no_ambiguity() {
+        // Input "3": only state 2 (Integer) reached. One edge.
+        let (cc, dfa_next, is_acc, accept_alts, to_kind) = make_test_dfa();
+        let dag = lex_dag_core("3", None, &cc, dfa_next, is_acc, accept_alts, to_kind)
+            .expect("lex_dag should succeed");
+        assert!(!dag.has_ambiguity(), "DAG should be linear for `3`");
+        let node_0 = &dag.nodes[0];
+        assert_eq!(node_0.edges.len(), 1);
+        assert!(matches!(
+            node_0.edges[0].kind,
+            crate::automata::TokenKind::Integer
+        ));
+    }
+
+    #[test]
+    fn lex_dag_alt_idx_assignment() {
+        // For `-3`, node 0's edges should carry alt_idx 0 (primary/longest)
+        // and alt_idx 1 (secondary/shorter).
+        let (cc, dfa_next, is_acc, accept_alts, to_kind) = make_test_dfa();
+        let dag = lex_dag_core("-3", None, &cc, dfa_next, is_acc, accept_alts, to_kind)
+            .expect("lex_dag should succeed");
+        let node_0 = &dag.nodes[0];
+        assert_eq!(node_0.edges[0].alt_idx, 0);
+        assert_eq!(node_0.edges[1].alt_idx, 1);
+    }
+
+    #[test]
+    fn lex_dag_linear_path_returns_primary_chain() {
+        // For `-3!` (but with our test DFA, just `-3`), `linear_path()`
+        // should return [(Integer, "-3")] — the longest-first primary
+        // path, ignoring the Minus alt.
+        let (cc, dfa_next, is_acc, accept_alts, to_kind) = make_test_dfa();
+        let dag = lex_dag_core("-3", None, &cc, dfa_next, is_acc, accept_alts, to_kind)
+            .expect("lex_dag should succeed");
+        let path = dag.linear_path();
+        assert_eq!(path.len(), 1);
+        assert!(matches!(path[0].0, crate::automata::TokenKind::Integer));
+        assert_eq!(path[0].1, "-3");
+    }
+
+    #[test]
+    fn lex_dag_unrecognized_byte_errors() {
+        let (cc, dfa_next, is_acc, accept_alts, to_kind) = make_test_dfa();
+        let result = lex_dag_core("abc", None, &cc, dfa_next, is_acc, accept_alts, to_kind);
+        assert!(result.is_err());
     }
 }
