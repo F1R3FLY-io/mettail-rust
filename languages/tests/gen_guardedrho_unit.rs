@@ -8,7 +8,7 @@ use mettail_languages::guardedrho::*;
 use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
 
-// Dead rules detected by WFST analysis: {"CastInt", "POutput"}
+// Dead rules detected by WFST analysis: ["CastInt", "POutput"]
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)

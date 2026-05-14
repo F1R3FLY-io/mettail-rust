@@ -235,10 +235,18 @@ pub fn generate_wfst_coverage_comment(
     }
 
     // Constructor weights
+    // 2026-05-14: tiebreak primary `weight` sort with `label` so equal-
+    // weight entries get a deterministic order. HashMap iteration order
+    // was previously leaking through stable-sort, causing testgen output
+    // to churn across compilation runs.
     if !pipeline.constructor_weights.is_empty() {
         out.push_str("// Constructor weights (lower = more frequent):\n");
         let mut weights: Vec<(&String, &f64)> = pipeline.constructor_weights.iter().collect();
-        weights.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
+        weights.sort_by(|a, b| {
+            a.1.partial_cmp(b.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(b.0))
+        });
         for (label, weight) in weights.iter().take(20) {
             out.push_str(&format!("//   {:20} weight: {:.4}\n", label, weight));
         }
@@ -251,7 +259,11 @@ pub fn generate_wfst_coverage_comment(
     if !pipeline.category_weights.is_empty() {
         out.push_str("// Category weights:\n");
         let mut cat_weights: Vec<(&String, &f64)> = pipeline.category_weights.iter().collect();
-        cat_weights.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
+        cat_weights.sort_by(|a, b| {
+            a.1.partial_cmp(b.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(b.0))
+        });
         for (cat, weight) in &cat_weights {
             out.push_str(&format!("//   {:20} weight: {:.4}\n", cat, weight));
         }

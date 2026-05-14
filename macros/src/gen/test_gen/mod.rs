@@ -185,8 +185,14 @@ fn generate_unit_section(language: &LanguageDef, pipeline: &PipelineAnalysis) ->
     let lang_struct = format!("{}Language", lang_name);
 
     let mut out = String::with_capacity(16384);
+    // 2026-05-14: sort the dead-rules set into a Vec before formatting
+    // so generated test files don't churn on each compile due to HashSet
+    // iteration order. The set is informational (a comment), so any
+    // deterministic ordering is fine; alphabetical reads cleanly.
     let dead_rules_str = if !pipeline.dead_rule_labels.is_empty() {
-        Some(format!("{:?}", pipeline.dead_rule_labels))
+        let mut sorted: Vec<&String> = pipeline.dead_rule_labels.iter().collect();
+        sorted.sort();
+        Some(format!("{:?}", sorted))
     } else {
         None
     };

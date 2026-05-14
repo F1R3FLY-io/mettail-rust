@@ -8,7 +8,7 @@ use mettail_languages::ledtest::*;
 use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
 
-// Dead rules detected by WFST analysis: {"PredToNum"}
+// Dead rules detected by WFST analysis: ["PredToNum"]
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
