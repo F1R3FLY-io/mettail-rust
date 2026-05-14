@@ -110,8 +110,10 @@ Note: `@Nil` is the Rholang-style shorthand for
 `Name::NQuote(Box::new(Proc::PZero))` — the zero process is spelled `Nil` in
 surface syntax. The send-side spelling is `@Nil!(Nil)` (Proc-category sugar
 `POutputNil`); the drop-side spelling is `*@Nil` (Name-category fold rule
-`NQuoteNil`). `{}` is now the empty `Map` literal (see
+`NQuoteNil`). `{}` is now the empty `Map` literal and `Set()` is the empty
+`Set` literal (see
 [exploring/rhocalc-rholang-style-syntax.md](../../design/exploring/rhocalc-rholang-style-syntax.md)).
+`Map.keys()` reduces to a `CastSet` / `SetLit` value.
 
 ## Stage 3: Normalization
 

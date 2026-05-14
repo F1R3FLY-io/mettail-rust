@@ -124,7 +124,12 @@ types are `Vec(T)`, `HashBag(T)`, and `HashSet(T)`.
 `Map` overrides the default `map(k:v)` delimiters to Rholang-style braces:
 
 ```rust
-![HashMap<Proc, Proc>] as Map [ "{", "}", ",", ":" ]
+![HashMap<Proc, Proc>] as Map {
+    open_parts: ["{"],
+    close_parts: ["}"],
+    sep: ",",
+    key_val_sep: ":",
+}
 ```
 
 producing `{}`, `{k: v}`, `{k₁: v₁, k₂: v₂, …}`. An explicit `Map()` alias
@@ -144,16 +149,21 @@ Method-call sugar (`fold` into the existing prefix-form builtins):
 | `m.set(k, v)` | `PutMap(m, k, v)` | Map |
 | `m.contains(k)` | `HasMap(m, k)` | Map |
 | `m.delete(k)` | `DeleteMap(m, k)` | Map |
-| `m.keys()` | `KeysMap(m)` | Map |
+| `m.keys()` | `KeysMap(m)` → `Set` | Map |
 | `m.values()` | `ValuesMap(m)` | Map |
+| `s.add(e)` | `AddSet(s, e)` | Set |
+| `s.delete(e)` | `DeleteSet(s, e)` | Set |
+| `s.contains(e)` | `HasSet(s, e)` | Set |
+| `s.diff(t)` | `DiffSet(s, t)` | Set |
 | `l.length()` | `Len(l)` | List |
 | `l.nth(i)` | `ElemList(l, i)` | List |
 | `l.concat(r)` | `ConcatList(l, r)` | List |
 | `b.count(e)` | `CastInt(Int::CountBag(b, e))` | Bag |
 | `b.diff(c)` | `DiffBag(b, c)` | Bag |
 | `b.remove(e)` | `RemoveBag(b, e)` | Bag |
-| `x.size()` | `CastInt(NumLit(entries.len()))` for Map; `Len(x)` for Bag | Map / Bag |
-| `x.union(y)` | `MergeMap(x, y)` for Map; `UnionBag(x, y)` for Bag | Map / Bag |
+| `x.size()` | `CastInt(NumLit(entries.len()))` for Map/Set; `Len(x)` for Bag | Map / Set / Bag |
+| `x.union(y)` | `MergeMap` / `UnionSet` / `UnionBag` by receiver | Map / Set / Bag |
+| `x.contains(e)` | `HasMap` / `HasSet` by receiver | Map / Set |
 
 The unary forms (`m.size()`, `m.keys()`, `m.values()`, `l.length()`,
 `b.size()`) use prattail's zero-operand-after-trigger mixfix shape (1 NT

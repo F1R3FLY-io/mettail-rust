@@ -28,9 +28,23 @@ language! {
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
-        ![Vec<Proc>] as List ["[", "]", ","]
-        ![mettail_runtime::HashBag<Proc>] as Bag [ "#{", "}#", "|" ]
-        ![HashMap<Proc, Proc>] as Map [ "{", "}", ",", ":" ]
+        ![Vec<Proc>] as List {
+            open_parts: ["["],
+            close_parts: ["]"],
+            sep: ",",
+        }
+        ![mettail_runtime::HashBag<Proc>] as Bag {
+            open_parts: ["#{"],
+            close_parts: ["}#"],
+            sep: "|",
+        }
+        ![HashMap<Proc, Proc>] as Map {
+            open_parts: ["{"],
+            close_parts: ["}"],
+            sep: ",",
+            key_val_sep: ":",
+        }
+        ![mettail_runtime::HashSetLit<Proc>] as Set
     },
 
     literals {
@@ -388,6 +402,7 @@ language! {
         CastList . l:List |- l : Proc;
         CastBag . b:Bag |- b : Proc;
         CastMap . m:Map |- m : Proc;
+        CastSet . s:Set |- s : Proc;
 
         // Numeric casts (see `docs/design/made/native-types/numeric-casting.md`): binary width required.
         IntBinProc . a:Proc, w:Int |- "int" "(" a "," w ")" : Proc ![{
@@ -1066,7 +1081,9 @@ language! {
         KeysMap . m:Proc |- "keys" "(" m ")" : Proc ![
             { match &m {
                 Proc::CastMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => crate::rhocalc::runtime::mk_proc_list(payload.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()),
+                    Map::MapLit(ref payload) => crate::rhocalc::runtime::mk_proc_set(
+                        payload.iter().map(|(k, _)| k.clone()),
+                    ),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -1082,11 +1099,73 @@ language! {
             }}
         ] fold;
 
+        // Set operations: take Proc (CastSet/SetLit), return Proc or Bool
+        AddSet . a:Proc, e:Proc |- "addset" "(" a "," e ")" : Proc ![
+            { match &a {
+                Proc::CastSet(inner) => match inner.as_ref() {
+                    Set::SetLit(ref payload) => {
+                        let mut new_set = payload.clone();
+                        new_set.insert(crate::rhocalc::runtime::normalize_collection_element(&e));
+                        Proc::CastSet(Box::new(Set::SetLit(new_set)))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        DeleteSet . a:Proc, e:Proc |- "deleteset" "(" a "," e ")" : Proc ![
+            { match &a {
+                Proc::CastSet(inner) => match inner.as_ref() {
+                    Set::SetLit(ref payload) => {
+                        let mut new_set = payload.clone();
+                        new_set.remove(&crate::rhocalc::runtime::normalize_collection_element(&e));
+                        Proc::CastSet(Box::new(Set::SetLit(new_set)))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        HasSet . a:Proc, e:Proc |- "hasset" "(" a "," e ")" : Proc ![
+            { match &a {
+                Proc::CastSet(inner) => match inner.as_ref() {
+                    Set::SetLit(ref payload) => Proc::CastBool(Box::new(Bool::BoolLit(
+                        payload.contains(&crate::rhocalc::runtime::normalize_collection_element(&e)),
+                    ))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        UnionSet . a:Proc, b:Proc |- "unionset" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::CastSet(sa), Proc::CastSet(sb)) => match (sa.as_ref(), sb.as_ref()) {
+                    (Set::SetLit(ha), Set::SetLit(hb)) => {
+                        Proc::CastSet(Box::new(Set::SetLit(ha.union(hb))))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        DiffSet . a:Proc, b:Proc |- "diffset" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::CastSet(sa), Proc::CastSet(sb)) => match (sa.as_ref(), sb.as_ref()) {
+                    (Set::SetLit(ha), Set::SetLit(hb)) => {
+                        Proc::CastSet(Box::new(Set::SetLit(ha.difference(hb))))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
         // Rholang-style Map sugar.
         //
         // `Map()` is an alias for the empty brace literal `{}`.
         // Method-call forms (`m.get(k)`, `m.size()`, …) fold to the
-        // corresponding prefix-call builtins (`GetMap`, `Len`, …) and
+        // corresponding builtins (`GetMap`, `LLength` for `.length()` / bag size,
+        // …) and therefore do not change semantics. They are implemented as zero /
         // therefore do not change semantics. They are implemented as zero / one
         // / two-operand-after-trigger mixfix rules; the parser's mixfix
         // dispatcher disambiguates by peeking the method-name keyword after
@@ -1110,7 +1189,11 @@ language! {
 
         MContains . m:Proc, k:Proc
         |- m "." "contains" "(" k ")" : Proc ![{
-            Proc::HasMap(Box::new(m.clone()), Box::new(k.clone()))
+            match &m {
+                Proc::CastMap(_) => Proc::HasMap(Box::new(m.clone()), Box::new(k.clone())),
+                Proc::CastSet(_) => Proc::HasSet(Box::new(m.clone()), Box::new(k.clone())),
+                _ => Proc::Err,
+            }
         }] fold;
 
         MDelete . m:Proc, k:Proc
@@ -1127,6 +1210,7 @@ language! {
             match &a {
                 Proc::CastMap(_) => Proc::MergeMap(Box::new(a.clone()), Box::new(b.clone())),
                 Proc::CastBag(_) => Proc::UnionBag(Box::new(a.clone()), Box::new(b.clone())),
+                Proc::CastSet(_) => Proc::UnionSet(Box::new(a.clone()), Box::new(b.clone())),
                 _ => Proc::Err,
             }
         }] fold;
@@ -1140,7 +1224,13 @@ language! {
                     },
                     _ => Proc::Err,
                 },
-                Proc::CastBag(_) => Proc::Len(Box::new(m.clone())),
+                Proc::CastBag(_) => Proc::LLength(Box::new(m.clone())),
+                Proc::CastSet(payload) => match payload.as_ref() {
+                    Set::SetLit(ref entries) => {
+                        Proc::CastInt(Box::new(Int::NumLit(entries.len() as i64)))
+                    },
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }
         }] fold;
@@ -1157,13 +1247,13 @@ language! {
 
         // ── Rholang-style List method-call sugar ─────────────────────────
         //
-        // `[a, b, c].length()`, `[a, b, c].nth(i)`, `l1.concat(l2)` fold to
-        // the existing prefix builtins `Len` / `ElemList` / `ConcatList` and
-        // therefore inherit their semantics, congruence rules, and error
-        // handling unchanged.
+        // `[a, b, c].length()`, `[a, b, c].nth(i)`, `l1.concat(l2)` lower to
+        // `LLength` / `ElemList` / `ConcatList`. Length is computed in
+        // `rhocalc::runtime::fold_proc_length` once the receiver is folded to a
+        // literal-backed `Cast*` shape (no separate `len` / `__len` surface).
         LLength . l:Proc
         |- l "." "length" "(" ")" : Proc ![{
-            Proc::Len(Box::new(l.clone()))
+            crate::rhocalc::runtime::fold_proc_length(&l)
         }] fold;
 
         LNth . l:Proc, i:Proc
@@ -1198,38 +1288,26 @@ language! {
             Proc::RemoveBag(Box::new(a.clone()), Box::new(e.clone()))
         }] fold;
 
+        // ── Rholang-style Set method-call sugar ──────────────────────────
+        SAdd . set_proc:Proc, e:Proc
+        |- set_proc "." "add" "(" e ")" : Proc ![{
+            Proc::AddSet(Box::new(set_proc.clone()), Box::new(e.clone()))
+        }] fold;
+
+        SDelete . set_proc:Proc, e:Proc
+        |- set_proc "." "delete" "(" e ")" : Proc ![{
+            Proc::DeleteSet(Box::new(set_proc.clone()), Box::new(e.clone()))
+        }] fold;
+
+        SDiff . a:Proc, b:Proc
+        |- a "." "diff" "(" b ")" : Proc ![{
+            Proc::DiffSet(Box::new(a.clone()), Box::new(b.clone()))
+        }] fold;
+
         Not . a:Proc |- "not" a : Proc ![
             { match &a {
                 Proc::CastBool(b) => match &**b {
                     Bool::BoolLit(v) => Proc::CastBool(Box::new(Bool::BoolLit(!v))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
-        Len . p:Proc |- "len" "(" p ")" : Proc ![
-            { match &p {
-                Proc::CastStr(inner) => match &**inner {
-                    Str::StringLit(x) => Proc::CastInt(Box::new(Int::NumLit(x.len() as i64))),
-                    _ => Proc::Err,
-                },
-                Proc::CastList(l) => match l.as_ref() {
-                    List::ListLit(v) => Proc::CastInt(Box::new(Int::NumLit(v.len() as i64))),
-                    _ => Proc::Err,
-                },
-                Proc::CastMap(m) => match m.as_ref() {
-                    Map::MapLit(ref payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))),
-                    _ => Proc::Err,
-                },
-                Proc::CastBag(b) => match b.as_ref() {
-                    // Bag size = sum of all element multiplicities. Use the
-                    // canonical normalisation first so equivalent surface forms
-                    // (e.g. `#{*@(0)|0}#` and `#{0|0}#`) report the same size.
-                    Bag::BagLit(h) => {
-                        let normalized = crate::rhocalc::runtime::normalize_bag_elements(h);
-                        Proc::CastInt(Box::new(Int::NumLit(normalized.len() as i64)))
-                    },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -1361,7 +1439,7 @@ language! {
         OrCongL . | S ~> T |- (Or S X) ~> (Or T X);
         OrCongR . | S ~> T |- (Or X S) ~> (Or X T);
 
-        LenCong . | S ~> T |- (Len S) ~> (Len T);
+        LLengthCong . | S ~> T |- (LLength S) ~> (LLength T);
 
         ConcatListCongL . | S ~> T |- (ConcatList S X) ~> (ConcatList T X);
         ConcatListCongR . | S ~> T |- (ConcatList X S) ~> (ConcatList X T);
@@ -1393,6 +1471,17 @@ language! {
         ValuesMapCong . | S ~> T |- (ValuesMap S) ~> (ValuesMap T);
 
         CastMapCong . | S ~> T |- (CastMap S) ~> (CastMap T);
+        CastSetCong . | S ~> T |- (CastSet S) ~> (CastSet T);
+        AddSetCongL . | S ~> T |- (AddSet S X) ~> (AddSet T X);
+        AddSetCongR . | S ~> T |- (AddSet X S) ~> (AddSet X T);
+        DeleteSetCongL . | S ~> T |- (DeleteSet S X) ~> (DeleteSet T X);
+        DeleteSetCongR . | S ~> T |- (DeleteSet X S) ~> (DeleteSet X T);
+        HasSetCongL . | S ~> T |- (HasSet S X) ~> (HasSet T X);
+        HasSetCongR . | S ~> T |- (HasSet X S) ~> (HasSet X T);
+        UnionSetCongL . | S ~> T |- (UnionSet S X) ~> (UnionSet T X);
+        UnionSetCongR . | S ~> T |- (UnionSet X S) ~> (UnionSet X T);
+        DiffSetCongL . | S ~> T |- (DiffSet S X) ~> (DiffSet T X);
+        DiffSetCongR . | S ~> T |- (DiffSet X S) ~> (DiffSet X T);
         CastIntCong . | S ~> T |- (CastInt S) ~> (CastInt T);
         CastUInt32Cong . | S ~> T |- (CastUInt32 S) ~> (CastUInt32 T);
         CastBigIntCong . | S ~> T |- (CastBigInt S) ~> (CastBigInt T);

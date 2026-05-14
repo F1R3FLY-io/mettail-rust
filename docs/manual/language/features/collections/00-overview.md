@@ -8,6 +8,9 @@ each with different ordering and multiplicity semantics:
 |-------------|--------------|-----------|-------------------|----------------|--------------------|
 | **HashBag** | `HashBag<T>` | Unordered | Allowed (counted) | Count-based    | `ps:HashBag(Proc)` |
 | **HashSet** | `HashSet<T>` | Unordered | Deduplicated      | Set membership | `ss:HashSet(Name)` |
+
+RhoCalc also exposes a native **`Set`** category (`Set(…)` literals backed by
+`HashSetLit<Proc>`; see [set-type-design.md](../../../../design/made/native-types/set-type-design.md)).
 | **Vec**     | `Vec<T>`     | Ordered   | Allowed           | Positional     | `vs:Vec(Proc)`     |
 
 All three use the `*sep(delim)` metasyntax to specify the separator token
