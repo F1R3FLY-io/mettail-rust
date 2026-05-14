@@ -721,10 +721,16 @@ fn test_factorial_with_addition() {
 
 #[test]
 fn test_factorial_with_negation() {
-    // With atomic-negative lexing (`-?` on the Int pattern), `-5` lexes as a
-    // single `Int::NumLit(-5)`. Factorial is undefined on negative integers,
-    // so `Fact(NumLit(-5))` rewrites to `Int::Err` (displays as "error").
-    calc_normal_form("-5!", "error");
+    // M9 rewrite (2026-05-14): use explicit `(-5)!` rather than the
+    // ambiguous `-5!` form. Under the ambiguity-preserving WPDS
+    // redesign, `-5!` will eventually parse as BOTH `(-5)!` AND
+    // `-(5!)` (lex DAG produces two `-` alts: prefix Minus vs
+    // atomic-negative Int). The eval layer then picks the
+    // non-Err interpretation (`-(5!)` = -120). This test asserts
+    // the EXPLICITLY-PARENTHESIZED form, which is unambiguous and
+    // always yields the legitimate "factorial of a negative number
+    // is undefined" → Int::Err display = "error".
+    calc_normal_form("(-5)!", "error");
 }
 
 #[test]
