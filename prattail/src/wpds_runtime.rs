@@ -635,18 +635,21 @@ impl WpdsState {
 /// return `AcceptedAmbiguous`.
 #[derive(Debug)]
 pub enum WpdsResolveResult<W: SemiringRef> {
-    /// Single Accepted configuration at EOI.
+    /// M7c (2026-05-13): one or more Accepted configurations at EOI.
+    ///
+    /// `weights` and `terms` are parallel vectors of length ≥ 1; index
+    /// `i` is the i-th derivation's weight and term. Length 1 = single
+    /// unambiguous parse; length N > 1 = N preserved derivations (the
+    /// `Ambiguous(Vec<Term>)` end-state of the user's mandate
+    /// "ambiguity preserved to EOI unless ruled out by evidence").
+    ///
+    /// **Replaces** the pre-M7c single-result `Accepted{weight, term}`
+    /// + `AcceptedAmbiguous{weight, term, equivalence_class_size}` pair
+    /// — the M7c semantics carry ALL derivations end-to-end rather
+    /// than collapsing to one via lex-min.
     Accepted {
-        weight: W,
-        term: Arc<dyn std::any::Any + Send + Sync>,
-    },
-    /// ≥2 Accepted configurations tied on weight after `LexicographicWeight`
-    /// 4-tuple comparison. `equivalence_class_size` reports how many
-    /// branches tied; the chosen `term` is the source-order earliest.
-    AcceptedAmbiguous {
-        weight: W,
-        term: Arc<dyn std::any::Any + Send + Sync>,
-        equivalence_class_size: usize,
+        weights: Vec<W>,
+        terms: Vec<Arc<dyn std::any::Any + Send + Sync>>,
     },
     /// Zero accepting configurations at EOI — input cannot be parsed by
     /// the grammar. `position` is where the cursor stalled (max position

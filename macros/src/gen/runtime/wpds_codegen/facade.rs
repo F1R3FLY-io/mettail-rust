@@ -115,23 +115,25 @@ pub(crate) fn emit_parse_fns(
                 // via Semiring::plus + lex-min selection.
                 match walker.run_to_end_of_input_env_aware(MAX_STEPS, &src) {
                     Ok(()) => match walker.resolve_at_end_of_input(&src) {
-                        WpdsResolveResult::Accepted { weight, term }
-                        | WpdsResolveResult::AcceptedAmbiguous { weight, term, .. } => {
+                        WpdsResolveResult::Accepted { weights, terms } => {
                             *pos = walker.position();
-                            // Stage 3.6 / ι Phase 1 (2026-05-01): term is
-                            // `Arc<dyn Any + Send + Sync>` (was `Box<dyn Any + Send>`).
-                            // `Arc::downcast` returns `Result<Arc<T>, _>`; we
-                            // move out via `Arc::try_unwrap` (zero-copy when
-                            // unique) and fall back to `(*arc).clone()` when
-                            // the Arc has been cloned for fanout.
+                            // M7c (2026-05-13): WpdsResolveResult::Accepted
+                            // is now multi-result. For backward compat,
+                            // pick the FIRST term (M8 will introduce
+                            // AmbiguousResult<Cat> for proper multi-result
+                            // return).
+                            let term = terms
+                                .into_iter()
+                                .next()
+                                .ok_or(WpdsParseError::EmptyResult)?;
+                            let weight = weights
+                                .into_iter()
+                                .next()
+                                .ok_or(WpdsParseError::EmptyResult)?;
                             let arc = std::sync::Arc::downcast::<#cat_ident>(term)
                                 .map_err(|_| WpdsParseError::EmptyResult)?;
                             let typed = std::sync::Arc::try_unwrap(arc)
                                 .unwrap_or_else(|arc| (*arc).clone());
-                            // The walker's accumulated weight `walker.weight()`
-                            // is the lex-min winner's weight after EOI
-                            // resolution committed. The resolve result
-                            // also returns it; both are consistent.
                             Ok((typed, weight))
                         }
                         WpdsResolveResult::ParseError { message, position } => {
@@ -239,13 +241,17 @@ pub(crate) fn emit_parse_fns(
                     })
                     .collect();
                 match resolve {
-                    WpdsResolveResult::Accepted { term, .. }
-                    | WpdsResolveResult::AcceptedAmbiguous { term, .. } => {
+                    WpdsResolveResult::Accepted { terms, .. } => {
                         *pos = walker.position();
-                        let result = std::sync::Arc::downcast::<#cat_ident>(term)
-                            .map(|arc| std::sync::Arc::try_unwrap(arc)
-                                .unwrap_or_else(|arc| (*arc).clone()))
-                            .map_err(|_| WpdsParseError::EmptyResult);
+                        // M7c (2026-05-13): pick the first term for
+                        // backward-compat (M8 returns AmbiguousResult).
+                        let result = match terms.into_iter().next() {
+                            Some(term) => std::sync::Arc::downcast::<#cat_ident>(term)
+                                .map(|arc| std::sync::Arc::try_unwrap(arc)
+                                    .unwrap_or_else(|arc| (*arc).clone()))
+                                .map_err(|_| WpdsParseError::EmptyResult),
+                            None => Err(WpdsParseError::EmptyResult),
+                        };
                         (result, attempts)
                     }
                     WpdsResolveResult::ParseError { message, position } => {

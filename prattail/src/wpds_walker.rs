@@ -2461,7 +2461,10 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     let term = self.builder.take_dyn_result();
                     let weight = self.weight.clone();
                     match term {
-                        Some(t) => WpdsResolveResult::Accepted { weight, term: t },
+                        Some(t) => WpdsResolveResult::Accepted {
+                            weights: vec![weight],
+                            terms: vec![t],
+                        },
                         None => WpdsResolveResult::ParseError {
                             message: "walker accepted but builder result was empty".to_string(),
                             position: self.pos,
@@ -2512,7 +2515,10 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 self.commit_winner_at_eoi(winner_idx);
                 let term = self.builder.take_dyn_result();
                 match term {
-                    Some(t) => WpdsResolveResult::Accepted { weight, term: t },
+                    Some(t) => WpdsResolveResult::Accepted {
+                        weights: vec![weight],
+                        terms: vec![t],
+                    },
                     None => WpdsResolveResult::ParseError {
                         message: "winner committed but builder result was empty"
                             .to_string(),
@@ -2521,59 +2527,44 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 }
             }
             _ => {
-                // Pick lex-min winner via Semiring::plus fold across the
-                // accepting set, with `source_priority` as final tiebreak
-                // (Stage 3.12 Fix 2(ii), 2026-05-02). The pre-3.12 fold
-                // depended on receiver-on-Equal semantics for source
-                // order, but that's order-of-arrival dependent. Now ties
-                // are explicitly broken by Fork-source-order priority.
-                let mut best_idx = accepting_indices[0];
-                let mut best_weight = self.branch_cursors[best_idx].weight.clone();
-                for &idx in &accepting_indices[1..] {
-                    let candidate = &self.branch_cursors[idx].weight;
-                    let merged = best_weight.plus_ref(candidate);
-                    if merged != best_weight {
-                        best_idx = idx;
-                        best_weight = merged;
-                    } else if merged == *candidate
-                        && self.branch_cursors[idx].source_priority
-                            < self.branch_cursors[best_idx].source_priority
-                    {
-                        best_idx = idx;
-                        best_weight = merged;
+                // M7c (2026-05-13): preserve all Accepted derivations as
+                // multi-result rather than collapsing via lex-min. Each
+                // cursor's `(weight, term)` is surfaced; the caller (or
+                // downstream consumer) decides whether to pick one or
+                // surface all.
+                //
+                // Per-cursor term extraction: each Accepted cursor's
+                // builder snapshot is finalized via take_dyn_result on
+                // a clone of the cursor's builder, preserving the
+                // cursor's own history without affecting siblings.
+                let mut weights: Vec<W> = Vec::with_capacity(accepting_indices.len());
+                let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> =
+                    Vec::with_capacity(accepting_indices.len());
+                for &idx in &accepting_indices {
+                    let cursor_weight = self.branch_cursors[idx].weight.clone();
+                    let mut cursor_builder: SemanticBuilder =
+                        (*self.branch_cursors[idx].builder).clone();
+                    if let Some(t) = cursor_builder.take_dyn_result() {
+                        weights.push(cursor_weight);
+                        terms.push(t);
                     }
                 }
-                // Count tied (equivalence-class size) for ambiguity
-                // reporting. Two cursors tie iff plus is idempotent on
-                // both directions (each.plus(other) == self).
-                let tied_count = accepting_indices
-                    .iter()
-                    .filter(|&&idx| {
-                        let w = &self.branch_cursors[idx].weight;
-                        w.plus_ref(&best_weight) == *w && best_weight.plus_ref(w) == best_weight
-                    })
-                    .count();
-                let weight = best_weight.clone();
-                self.commit_winner_at_eoi(best_idx);
-                let term = self.builder.take_dyn_result();
-                match term {
-                    Some(t) => {
-                        if tied_count >= 2 {
-                            WpdsResolveResult::AcceptedAmbiguous {
-                                weight,
-                                term: t,
-                                equivalence_class_size: tied_count,
-                            }
-                        } else {
-                            WpdsResolveResult::Accepted { weight, term: t }
-                        }
-                    }
-                    None => WpdsResolveResult::ParseError {
-                        message: "winner committed but builder result was empty"
+                // Commit the first accepting cursor as the live winner
+                // for legacy single-result accessors (`walker.builder()`,
+                // `walker.state()`, etc.). Done BEFORE the empty-terms
+                // check so synthetic test mocks that produce no Terms
+                // still observe walker.state transitioning to Accepted.
+                // The multi-result is RETURNED via `weights`/`terms`.
+                let winner_idx = accepting_indices[0];
+                self.commit_winner_at_eoi(winner_idx);
+                if weights.is_empty() {
+                    return WpdsResolveResult::ParseError {
+                        message: "accepting cursors had no extractable terms"
                             .to_string(),
                         position: self.pos,
-                    },
+                    };
                 }
+                WpdsResolveResult::Accepted { weights, terms }
             }
         }
     }
@@ -4568,14 +4559,20 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // for pop-time determinism with structural sharing, not for
         // parse-time semantic distinctness). Within each group, drop
         // any cursor C if a sibling S has `S.weight.lex_cmp(C.weight) ==
-        // Less`. This is algebraically equivalent to lex-min selection
-        // at EOI — pruning eagerly caps fanout before the next
-        // step_fanout iteration re-amplifies via Pass 0/1/2a Forks.
-        // Recovery semantics are unchanged; recovery dispatch can itself
-        // be lex-dominated and dropped iff a non-recovering sibling at
-        // the same configuration has lower weight, which is the
-        // WPDS-correct outcome.
-        self.subsume_lex_dominated_cursors();
+        // M7c (2026-05-13): `subsume_lex_dominated_cursors()` DELETED.
+        // The prior pruning dropped weight-dominated cursors mid-stream
+        // — violating the user mandate "ambiguity preserved unless
+        // ruled out by evidence." Dominated cursors haven't failed via
+        // evidence; they may yield a different (still valid) derivation
+        // that the caller wants. The walker now relies on:
+        //   1. merge_equivalent_cursors collapsing identical ConfigKeys
+        //      via plus_ref (multiset union when W is DerivationWeight;
+        //      lex-min when W is LexicographicWeight today).
+        //   2. Beam pruning (maybe_prune_frontier, default None) as an
+        //      opt-in escape hatch for adversarial inputs.
+        // Per `~/.claude/plans/wpds-ambiguity-preserving-redesign.md`
+        // §C.6 ("Delete subsume_lex_dominated_cursors") and the
+        // `feedback_never_disambiguate_early` memo.
 
         if self.branch_cursors.is_empty() {
             // CASE 1: all branches dropped.
@@ -4707,139 +4704,27 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         self.branch_cursors = merged;
     }
 
-    /// B10 / Option κ Part 3 (2026-05-07) — lex-dominated cursor subsumption.
-    ///
-    /// Runs after `merge_equivalent_cursors`. Groups remaining cursors by a
-    /// RELAXED `(state, gss-node-symbol, pos)` key — intentionally dropping
-    /// the `incoming_edge_stack` discriminator from the merge-key. That
-    /// discriminator exists for pop-time determinism with structural sharing
-    /// (see `merge_equivalent_cursors` rationale at the `incoming_edge` field
-    /// comment); it is NOT a parse-time semantic distinguisher. Two cursors
-    /// at the same `(state, gss-node-symbol, pos)` but different edge
-    /// histories are at the SAME parse configuration — lex-min selects the
-    /// better one; the loser's edge history is consumed by GSS GC.
-    ///
-    /// Within each group, this pass drops any cursor C iff a sibling S has
-    /// `S.weight.lex_cmp(C.weight) == Less` AND
-    /// `S.source_priority <= C.source_priority` (the second clause prevents
-    /// reversing the existing source-priority tiebreak that
-    /// `merge_equivalent_cursors` enforces).
-    ///
-    /// **Algebraic equivalence**: pruning a strictly-dominated cursor is
-    /// definitionally what tropical lex-min does at EOI. This pass moves
-    /// that work to step time, where it caps fanout BEFORE the next
-    /// `step_fanout` iteration re-amplifies via Pass 0/1/2a Forks at shared-
-    /// FIRST tokens.
-    ///
-    /// **Recovery preservation**: recovery semantics are unchanged. Recovery
-    /// dispatch fires at the same dead-ends as before; if a non-recovering
-    /// sibling at the same parse configuration has lower weight, the
-    /// recovering cursor is lex-dominated — dropping it is the WPDS-correct
-    /// outcome (the parse already has a strictly-better path).
-    ///
-    /// **Rationale (LedTest cursor explosion)**: post-B7 mixed-bucket Forks
-    /// at shared-FIRST tokens (e.g. `Some(Integer)` for Num's atomic NumLit
-    /// + cross-cat-LHS EqNum/NeNum + cross-cat-projection PredToNum) generate
-    /// sibling cursors at the same `(state, node-symbol, pos)` configuration
-    /// but with diverging `incoming_edge_stack` tails. The strict-key
-    /// `merge_equivalent_cursors` cannot collapse them; without this pass,
-    /// every successor PrefixDispatch re-emits the same Fork, doubling the
-    /// live cursor count per recursive cross-cat cycle iteration (Pred → Num
-    /// → Pred → ...). Subsumption converges the live set to the lex-min
-    /// representative per configuration; the recursive cycle still exists
-    /// but is bounded.
-    fn subsume_lex_dominated_cursors(&mut self) {
-        if self.branch_cursors.len() < 2 {
-            return;
-        }
-        // Group by (state, node-symbol, pos). Cursors whose gss node has
-        // been GC'd (no live reference) get a `None` symbol key — they
-        // form a degenerate group of their own.
-        let mut by_relaxed: std::collections::HashMap<
-            (WpdsState, Option<crate::wpds_runtime::StackSymbolV2>, usize),
-            Vec<usize>,
-        > = std::collections::HashMap::with_capacity(self.branch_cursors.len());
-        for (idx, c) in self.branch_cursors.iter().enumerate() {
-            let symbol_key = self.gss.node(c.node).map(|n| n.symbol);
-            by_relaxed
-                .entry((c.inner_state.clone(), symbol_key, c.pos))
-                .or_default()
-                .push(idx);
-        }
-        // For each multi-cursor group, find the lex-min cursor (using the
-        // same `Semiring::plus` ordering as `pick_lex_min_resolved` —
-        // `a.plus(b) == a` iff `a` is the smaller of the two under the
-        // semiring's lex-min ordering). Drop strictly-dominated siblings.
-        let mut drop_set: std::collections::BTreeSet<usize> = Default::default();
-        for (_key, idxs) in &by_relaxed {
-            if idxs.len() < 2 {
-                continue;
-            }
-            // Linear scan to find the lex-min cursor in this group.
-            // Mirrors `pick_lex_min_resolved`'s loop semantics.
-            let mut best_idx = idxs[0];
-            for &idx in &idxs[1..] {
-                let merged = self.branch_cursors[best_idx]
-                    .weight
-                    .plus_ref(&self.branch_cursors[idx].weight);
-                if merged != self.branch_cursors[best_idx].weight {
-                    best_idx = idx;
-                } else if merged == self.branch_cursors[idx].weight
-                    && self.branch_cursors[idx].source_priority
-                        < self.branch_cursors[best_idx].source_priority
-                {
-                    // True weight tie: lower `source_priority` wins
-                    // (matches `pick_lex_min_resolved`'s tiebreak).
-                    best_idx = idx;
-                }
-            }
-            // Phase 5.6-tail-A (2026-05-12): pre-tail this block had a
-            // B13d-R/Resolution-R consistency promotion+override loop
-            // (`cursor_committed_ops_consistent` dry-run on cursor.
-            // recovery_deltas). Under always-eager Arc::make_mut
-            // (Phase 5.3+), broken cursors transition to
-            // `WpdsState::Error` at eager-fire time and are filtered by
-            // `cursor_resolution_check :: Drop` BEFORE subsumption. By
-            // construction, all cursors here are "consistent" — the
-            // promotion and broken-sibling drop are unreachable.
-            let best_w = self.branch_cursors[best_idx].weight.clone();
-            let best_p = self.branch_cursors[best_idx].source_priority;
-            for &idx in idxs {
-                if idx == best_idx {
-                    continue;
-                }
-                if drop_set.contains(&idx) {
-                    continue;
-                }
-                let c = &self.branch_cursors[idx];
-                // Strict domination (lex-min, mathematical sense, unrelated to
-                // the deleted CursorMode::Strict enum name):
-                // `best.plus(c) == best` AND `best != c`.
-                // The first clause is "best is at-or-better than c"; the
-                // second clause excludes ties (handled by merge_equivalent_
-                // cursors when keys match exactly; for ties at the relaxed
-                // key, we keep both — only STRICT dominance is grounds for
-                // drop). Source-priority guard: `best_p <= c.source_priority`
-                // prevents reversing the existing source-order tiebreak.
-                let merged = best_w.plus_ref(&c.weight);
-                let strictly_dominates = merged == best_w
-                    && merged != c.weight;
-                if strictly_dominates && best_p <= c.source_priority {
-                    drop_set.insert(idx);
-                }
-            }
-        }
-        if drop_set.is_empty() {
-            return;
-        }
-        // swap_remove in descending index order to preserve stable indices
-        // for the remaining drops.
-        let mut drop_vec: Vec<usize> = drop_set.into_iter().collect();
-        drop_vec.sort_unstable_by(|a, b| b.cmp(a));
-        for idx in drop_vec {
-            self.branch_cursors.swap_remove(idx);
-        }
-    }
+    // M7c (2026-05-13): `subsume_lex_dominated_cursors` DELETED.
+    //
+    // Per the longstanding "never disambiguate early" principle
+    // (`feedback_never_disambiguate_early.md`), weight-based "pick one"
+    // collapse of strictly-dominated cursors mid-stream violates the
+    // ambiguity-preservation mandate. The dropped cursors haven't
+    // failed via evidence; they may yield a different (still valid)
+    // derivation that the caller wants.
+    //
+    // Cursor count bounding is now provided by:
+    //   1. merge_equivalent_cursors (strict ConfigKey), which collapses
+    //      observationally-equivalent cursors via plus_ref (multiset
+    //      union when W is DerivationWeight; same as before when W is
+    //      LexicographicWeight).
+    //   2. Beam pruning via maybe_prune_frontier (opt-in, default None),
+    //      reserved as an escape hatch for adversarial inputs.
+    //
+    // For the "LedTest cursor explosion" rationale that motivated the
+    // deleted function: under multi-result preservation, the supposedly
+    // "dominated" siblings ARE the valid alternative derivations to
+    // surface at EOI. Pruning them violated the mandate.
 
     // Phase 5.6-tail follow-up (2026-05-12): `pick_lex_min_resolved`
     // method DELETED. The pre-tail call site was the mid-stream
@@ -8012,8 +7897,8 @@ mod tests {
             .expect("max_steps not exceeded");
         let result = w.resolve_at_end_of_input(&empty_tokens());
         match result {
-            WpdsResolveResult::Accepted { term, .. }
-            | WpdsResolveResult::AcceptedAmbiguous { term, .. } => {
+            WpdsResolveResult::Accepted { terms, .. } => {
+                let term = terms.into_iter().next().expect("≥1 term required");
                 let val = *term
                     .downcast::<usize>()
                     .expect("expected usize Term from finalize action");
