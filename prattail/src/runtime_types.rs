@@ -1043,8 +1043,26 @@ pub fn lex_dag_core<'a, T: Clone>(
     // whitespace) resolve to the node at the SKIPPED position, since
     // byte_to_node is keyed by the raw end_byte but the worklist allocates
     // nodes at the post-skip byte.
+    //
+    // M6b (2026-05-14): dedupe edges by (kind, text, end_byte). The
+    // codegen-emitted `accept_alternatives` may produce duplicate
+    // (Token, weight) pairs when two literal rules share a regex pattern
+    // (e.g., Int's NumLit and UInt32's UInt32Lit both matching `[0-9]+`
+    // both emit `Token::Integer(...)` at the same DFA state), AND multiple
+    // DFA accept states can map to the same lex outcome. Without dedup,
+    // `LatticeTokenSource::peek_alternatives` exposes both as separate
+    // alts → the walker's lex-Fork emits multiple Fork branches with
+    // identical (kind, text, target_node), causing K^N cursor explosion
+    // on K-way per-position duplicate alts. The duplicates carry zero
+    // information; the cross-category dispatch happens at the parser
+    // layer, not the lexer.
     for (node_idx, edges) in raw_edges.into_iter() {
         let mut alt_idx_counter: u16 = 0;
+        let mut seen: std::collections::HashSet<(
+            crate::automata::TokenKind,
+            String,
+            usize,
+        )> = std::collections::HashSet::new();
         for (kind, text, end_byte, weight) in edges {
             let target_node = match byte_to_node.get(&end_byte) {
                 Some(&idx) => idx,
@@ -1054,6 +1072,11 @@ pub fn lex_dag_core<'a, T: Clone>(
                     continue;
                 }
             };
+            let key = (kind.clone(), text.clone(), end_byte);
+            if !seen.insert(key) {
+                // Duplicate (kind, text, end_byte) — already pushed.
+                continue;
+            }
             nodes[node_idx].edges.push(LexDagEdge {
                 kind,
                 text,

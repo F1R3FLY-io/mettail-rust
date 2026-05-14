@@ -184,6 +184,23 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 // trait default returns `pos + 1`. Calling
                 // `tokens.next_pos(*pos, alt_idx + 1)` runs through the
                 // active source's impl — correct in both cases.
+                //
+                // M6b (2026-05-14): KNOWN INCOMPLETE. The LexAlt action
+                // advances cursor.pos past the alternative WITHOUT
+                // parsing it via a rule — the resulting cursor at
+                // alt_next_pos has no AST for the consumed token.
+                // For `-3` style multi-length ambiguity (Minus@end=1
+                // vs Integer@end=2 at pos 0), the Integer-alt cursor
+                // is at EOF with no AST → walker rejects. The Minus-alt
+                // cursor is at byte 1 expecting another token but the
+                // Minus consumption was never bound to a `Neg` prefix
+                // rule. Result: parse fails. A full M6b fix needs to
+                // reconcile LexAlt's "skip past token" semantics with
+                // the parser's "match token via rule" expectation —
+                // either by leaving cursor.pos at the original position
+                // and letting PrefixDispatch parse the alt's kind, or
+                // by binding the alt's kind to a categorical literal
+                // rule that produces an AST term automatically.
                 let alt_next_pos = tokens
                     .next_pos(*pos, alt_idx + 1)
                     .unwrap_or(*pos + 1);
