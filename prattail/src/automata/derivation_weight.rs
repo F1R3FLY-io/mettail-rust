@@ -181,6 +181,27 @@ impl<W: fmt::Debug, D: fmt::Debug> fmt::Debug for DerivationWeight<W, D> {
     }
 }
 
+/// `DerivationCombine` impl for `Arc<SemanticBuilder>` (the walker's D
+/// carrier, set up by M7b).
+///
+/// **`unit()`**: a fresh empty `SemanticBuilder` wrapped in `Arc::new`.
+/// Represents the "identity derivation" — no terms pushed yet.
+///
+/// **`combine(a, b)`**: returns `Arc::clone(b)` (right-bias composition).
+/// Conceptually: `a` is "the derivation so far," `b` is "the next step's
+/// builder snapshot." For sequential composition `a ⊗ b`, the right side
+/// supersedes since the cursor's current builder IS the in-progress
+/// state. This is correct for the WPDS walker's use case where each
+/// cursor's builder is monotonically refined; older snapshots are
+/// historical anchors only.
+///
+/// **`is_unit()`**: true when the builder has no pushed args / collections.
+/// The check uses `is_accepting_terminal` (already O(1) via field reads).
+///
+/// Lives in `wpds_runtime.rs` to avoid a circular dep between
+/// `automata::derivation_weight` and `wpds_runtime::SemanticBuilder`.
+/// See `wpds_runtime.rs::impl DerivationCombine for Arc<SemanticBuilder>`.
+
 #[cfg(test)]
 mod tests {
     use super::*;

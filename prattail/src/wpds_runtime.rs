@@ -2282,6 +2282,70 @@ impl Default for SemanticBuilder {
     }
 }
 
+/// M7b (2026-05-13): newtype wrapper over `Arc<SemanticBuilder>` carrying
+/// the D component of the walker's
+/// `DerivationWeight<LexicographicWeight, DerivationSnapshot>`.
+///
+/// **Why a newtype**: `DerivationCombine` requires `PartialEq` (for
+/// `DerivationWeight: PartialEq` to work, used by the walker's
+/// configuration-merge keys). `SemanticBuilder` doesn't implement
+/// `PartialEq` (it carries `Arc<dyn Any + Send + Sync>` payloads that
+/// can't be compared structurally). The wrapper provides
+/// **`Arc::ptr_eq`-based equality** — two snapshots are "equal" iff they
+/// point to the same heap allocation. This is structurally equivalent
+/// to "same merge-time builder snapshot" for the walker's use case.
+///
+/// For full structural equality (same AST after both snapshots evolved
+/// to terminal), upgrade to a deep-compare scheme in a follow-up.
+#[derive(Clone)]
+pub struct DerivationSnapshot(pub std::sync::Arc<SemanticBuilder>);
+
+impl DerivationSnapshot {
+    pub fn new(builder: SemanticBuilder) -> Self {
+        DerivationSnapshot(std::sync::Arc::new(builder))
+    }
+
+    pub fn from_arc(builder: std::sync::Arc<SemanticBuilder>) -> Self {
+        DerivationSnapshot(builder)
+    }
+}
+
+impl PartialEq for DerivationSnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for DerivationSnapshot {}
+
+impl fmt::Debug for DerivationSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("DerivationSnapshot")
+            .field(&std::sync::Arc::as_ptr(&self.0))
+            .finish()
+    }
+}
+
+impl crate::automata::derivation_weight::DerivationCombine for DerivationSnapshot {
+    fn unit() -> Self {
+        DerivationSnapshot::new(SemanticBuilder::new())
+    }
+
+    fn combine(&self, other: &Self) -> Self {
+        // Right-bias: for sequential composition a ⊗ b, the right side
+        // supersedes. The walker's cursor.builder IS the in-progress
+        // state; historical snapshots in earlier multiset entries are
+        // anchors for EOI extraction, not for forward stepping.
+        other.clone()
+    }
+
+    fn is_unit(&self) -> bool {
+        // A builder is "unit" when no args/collections have been pushed.
+        // is_accepting_terminal's empty-stack short-circuit captures this.
+        self.0.is_accepting_terminal() && self.0.collection_stack_len() == 0
+    }
+}
+
 impl fmt::Debug for SemanticBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SemanticBuilder")
