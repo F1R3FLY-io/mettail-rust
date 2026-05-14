@@ -1,0 +1,1284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Optimal Channel Naming — A Tutorial</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 2em 2em 4em;
+    color: #222;
+    line-height: 1.6;
+    background: #fafaf7;
+  }
+  h1 { font-size: 1.7em; margin-bottom: 0.2em; }
+  h1 + p.lead { color: #555; margin-top: 0; }
+  h2 {
+    font-size: 1.3em;
+    margin-top: 2.2em;
+    color: #1a4180;
+    border-bottom: 1px solid #d4d0c2;
+    padding-bottom: 0.2em;
+  }
+  h3 { font-size: 1.05em; margin: 1.4em 0 0.4em; color: #333; }
+  a { color: #2c5aa0; }
+  code, .mono, kbd {
+    font-family: "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  code {
+    background: #f0eee5;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.92em;
+  }
+  kbd {
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 0.85em;
+    box-shadow: 0 1px 0 #ccc;
+  }
+  .intro, .callout {
+    background: #f5f1e6;
+    border-left: 3px solid #d97500;
+    padding: 0.8em 1.1em;
+    border-radius: 0 4px 4px 0;
+    margin: 1em 0 1.5em;
+  }
+  .intro p, .callout p { margin: 0.4em 0; }
+  .callout.blue { background: #eef3fa; border-color: #2c5aa0; }
+  .callout.green { background: #ecfbed; border-color: #2d8a3e; }
+  pre {
+    background: #2d2d2d;
+    color: #e6e6e6;
+    padding: 0.8em 1em;
+    border-radius: 5px;
+    overflow-x: auto;
+    font-size: 0.9em;
+    line-height: 1.5;
+  }
+  pre .kw { color: #ffa657; }
+  pre .ch { color: #79c0ff; }
+  pre .br { color: #c5c5c5; }
+  pre .sem { color: #d2a8ff; }
+  pre .com { color: #8b949e; font-style: italic; }
+  pre .red { color: #ff7b72; font-weight: 600; }
+  .term-display {
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 1.15em;
+    background: #fff;
+    padding: 0.7em 1.1em;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .controls {
+    margin: 0.8em 0;
+    display: flex;
+    gap: 0.5em;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  button, select {
+    font-family: inherit;
+    font-size: 0.95em;
+    padding: 0.35em 0.9em;
+    border-radius: 4px;
+    border: 1px solid #aaa;
+    background: #fff;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled), select:hover { background: #f0f0f0; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.primary {
+    background: #2c5aa0; color: white; border-color: #1a4180;
+  }
+  button.primary:hover:not(:disabled) { background: #1a4180; }
+  button.fire {
+    background: #2d8a3e; color: white; border-color: #1f6b2c;
+    font-size: 0.82em; padding: 0.25em 0.7em;
+  }
+  button.fire:hover:not(:disabled) { background: #1f6b2c; }
+
+  table.auto {
+    border-collapse: collapse;
+    margin: 0.6em 0;
+    font-size: 0.92em;
+    background: #fff;
+    border-radius: 5px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  table.auto th, table.auto td {
+    padding: 0.5em 0.9em;
+    border: 1px solid #e0dcc8;
+    text-align: left;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 0.92em;
+  }
+  table.auto th {
+    background: #f5f1e6;
+    font-weight: 600;
+    font-family: inherit;
+    font-size: 0.85em;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  table.auto td.state { font-weight: 600; }
+  table.auto td.s0 { color: #2c5aa0; }
+  table.auto td.s_app { color: #d97500; }
+  table.auto td.empty { color: #aaa; text-align: center; }
+  table.auto td.announce { background: #ecfbed; }
+  .rules-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.5em 0;
+  }
+  .rules-list li {
+    padding: 0.5em 0;
+    border-bottom: 1px dashed #ddd;
+    display: flex;
+    align-items: baseline;
+    gap: 1em;
+  }
+  .rules-list li:last-child { border-bottom: none; }
+  .rule-name {
+    background: #eef3fa;
+    color: #2c5aa0;
+    padding: 0.1em 0.5em;
+    border-radius: 3px;
+    font-weight: 600;
+    font-size: 0.85em;
+    min-width: 5em;
+    text-align: center;
+    font-family: inherit;
+  }
+  .rule-body { font-family: "SF Mono", Menlo, monospace; font-size: 0.95em; }
+  .trace-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+    gap: 1em;
+    margin: 0.8em 0;
+  }
+  .trace-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 0.8em 1em;
+  }
+  .trace-card h4 {
+    margin: 0 0 0.4em;
+    font-size: 0.95em;
+    color: #2c5aa0;
+  }
+  .trace-card svg { display: block; margin: 0 auto; }
+  .trace-card .channel {
+    margin-top: 0.6em;
+    padding: 0.4em 0.6em;
+    background: #f7f5e9;
+    border-radius: 3px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 0.85em;
+    border-left: 3px solid #d97500;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1em;
+    margin-top: 0.6em;
+    align-items: start;
+  }
+  .tree-container {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    overflow: auto;
+    padding: 0.8em;
+  }
+  .panel {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 0.8em 1em;
+  }
+  .panel h3 {
+    margin: 0 0 0.4em;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #777;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 0.3em;
+  }
+  .panel h3:not(:first-child) { margin-top: 1em; }
+  svg { display: block; margin: 0 auto; }
+  .node-rect { fill: #fff; stroke: #aaa; stroke-width: 1.2; }
+  .node-rect.s0 { stroke: #2c5aa0; stroke-width: 2.5; }
+  .node-rect.s_app { stroke: #d97500; stroke-width: 2.5; }
+  .node-rect.redex { fill: #d3f7d6; stroke: #2d8a3e; stroke-width: 2.5; }
+  .node-rect.pending { stroke-dasharray: 3 3; stroke-width: 1.5; }
+  .node-rect.current { fill: #fff3d6; stroke: #d97500; stroke-width: 3.5; }
+  .node-rect.hole { fill: #f7f5e9; stroke: #d97500; stroke-dasharray: 3 3; }
+  .node-rect.suspended { fill: #fff3d6; stroke: #d97500; stroke-width: 2.5; }
+  .node-label { font-family: "SF Mono", Menlo, monospace; font-size: 13px; fill: #222; text-anchor: middle; dominant-baseline: middle; }
+  .node-pos { font-size: 9px; fill: #888; text-anchor: middle; dominant-baseline: middle; }
+  .config-badge {
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    fill: #d97500;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    font-weight: 600;
+  }
+  .config-badge.s0 { fill: #2c5aa0; }
+  .config-badge.s_app { fill: #d97500; }
+  .edge { stroke: #bbb; stroke-width: 1.1; fill: none; }
+  .edge-label { font-size: 9px; fill: #888; text-anchor: middle; }
+  .redex-item {
+    background: #ecfbed;
+    border: 1px solid #2d8a3e;
+    padding: 0.4em 0.6em;
+    border-radius: 3px;
+    margin-bottom: 0.4em;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5em;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 0.83em;
+  }
+  .redex-item code {
+    background: transparent;
+    padding: 0;
+    overflow-x: auto;
+    max-width: 220px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+  }
+  .config-item {
+    background: #fcfcf8;
+    border-left: 3px solid #aaa;
+    padding: 0.25em 0.55em;
+    margin-bottom: 0.25em;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 0.83em;
+    border-radius: 0 3px 3px 0;
+  }
+  .config-item.s0 { border-color: #2c5aa0; }
+  .config-item.s_app { border-color: #d97500; }
+  .config-item.next { background: #fff3d6; font-weight: 600; }
+  .log-item {
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 0.83em;
+    background: #fcfcf8;
+    padding: 0.35em 0.7em;
+    border-left: 3px solid #aaa;
+    margin-bottom: 0.25em;
+    border-radius: 0 3px 3px 0;
+    line-height: 1.4;
+  }
+  .log-item.s0 { border-color: #2c5aa0; }
+  .log-item.s_app { border-color: #d97500; }
+  .log-item.redex { background: #ecfbed; border-color: #2d8a3e; }
+  .log-item.fire { background: #fff3d6; border-color: #d97500; }
+  .log-item.comm { background: #eef3fa; border-color: #2c5aa0; }
+  .legend {
+    display: flex; gap: 1em; flex-wrap: wrap;
+    font-size: 0.85em; margin: 0.4em 0; color: #555;
+  }
+  .legend-item { display: flex; align-items: center; gap: 0.4em; }
+  .legend-swatch {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border-radius: 3px;
+    background: #fff;
+  }
+  details {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 0.6em 1em;
+    margin: 0.4em 0;
+  }
+  details summary { cursor: pointer; font-weight: 600; color: #444; }
+  details[open] summary { color: #2c5aa0; margin-bottom: 0.4em; }
+  details ul { margin: 0.3em 0 0.5em 1.2em; padding: 0; }
+  details ul ul { margin-top: 0.2em; }
+  details li { margin: 0.2em 0; }
+  .muted { color: #999; font-style: italic; font-size: 0.85em; }
+  .stat-row {
+    display: flex;
+    gap: 1.5em;
+    font-size: 0.9em;
+    color: #555;
+    margin: 0.4em 0;
+  }
+  .stat-row strong { color: #222; }
+  .log-area {
+    max-height: 280px;
+    overflow-y: auto;
+    background: #fafaf7;
+    padding: 0.4em;
+    border: 1px solid #e2e2e2;
+    border-radius: 4px;
+  }
+  .nav-toc {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 0.5em 1em;
+    margin-bottom: 1em;
+    font-size: 0.9em;
+  }
+  .nav-toc ol { margin: 0.3em 0 0.3em 1.5em; padding: 0; }
+  .nav-toc li { margin: 0.15em 0; }
+</style>
+</head>
+<body>
+
+<h1>Optimal channel naming, by example</h1>
+<p class="lead">An interactive tutorial for
+<a href="optimal-channels.pdf"><em>Optimal Channel Naming for Compositional
+Rewrite Translations via Set Automaton Partial Evaluation</em></a>.</p>
+
+<div class="intro">
+<p>The paper compiles a rewrite system into a rho-calculus process. The
+hard part is the <em>contextual</em> rules — rules of the form
+<code>L → R ⇒ K(L) → K'(R)</code>, where firing the outer rewrite
+requires the inner rule to fire first inside some context <code>K</code>.
+The compiled outer rule listens for the inner match on a channel
+<code>tc(K)</code>, and the trick is choosing that channel so that
+(a) every function symbol of <code>K</code> is inspected at most once,
+and (b) firing inner rewrites doesn't invalidate the outer
+<code>for</code>-receive's listening state.</p>
+<p>The construction: <strong>build a Bouwman–Erkens set automaton</strong>
+from the left-hand-side patterns of the rule set, then define
+<code>tc(K) = ⌜δ*(s₀, surface(K))⌝</code> — the canonical reflection of
+the automaton state that the surface of <code>K</code> walks the
+automaton to. Below we work through every piece of this construction for
+the lambda calculus, then watch it find redexes in a nontrivial term.</p>
+</div>
+
+<div class="nav-toc">
+<strong>Contents:</strong>
+<ol>
+  <li><a href="#sec-rules">The lambda calculus as a rewrite system</a></li>
+  <li><a href="#sec-process">The rho-calculus translation of a rewrite rule</a></li>
+  <li><a href="#sec-automaton">The set automaton for the β-pattern</a></li>
+  <li><a href="#sec-tc">Channel naming: from context to channel</a></li>
+  <li><a href="#sec-compiled">The compiled lambda calculus</a></li>
+  <li><a href="#sec-demo">Reducing a term: the matcher in action</a></li>
+  <li><a href="#sec-optimality">Why this is optimal</a></li>
+</ol>
+</div>
+
+<h2 id="sec-rules">1. The lambda calculus as a rewrite system</h2>
+<p>We want full β-reduction: a redex anywhere inside the term should be
+firable. As a term-rewriting presentation that is one principal rule
+plus three contextual rules — one for each position a hole can sit in
+relative to a lambda-calculus constructor.</p>
+
+<ul class="rules-list">
+  <li>
+    <span class="rule-name">β</span>
+    <span class="rule-body">app(lam(x, M), N) ⇝ M[N/x]</span>
+  </li>
+  <li>
+    <span class="rule-name">CtxF</span>
+    <span class="rule-body">M ⇝ M′ &nbsp;⇒&nbsp; app(M, N) ⇝ app(M′, N)</span>
+  </li>
+  <li>
+    <span class="rule-name">CtxA</span>
+    <span class="rule-body">M ⇝ M′ &nbsp;⇒&nbsp; app(N, M) ⇝ app(N, M′)</span>
+  </li>
+  <li>
+    <span class="rule-name">CtxB</span>
+    <span class="rule-body">M ⇝ M′ &nbsp;⇒&nbsp; lam(x, M) ⇝ lam(x, M′)</span>
+  </li>
+</ul>
+
+<p>Each contextual rule has an outer context that pinpoints where the
+hole sits: <code>K_F = app(□, N)</code> for CtxF,
+<code>K_A = app(N, □)</code> for CtxA,
+<code>K_B = lam(x, □)</code> for CtxB. <code>N</code> is a schema variable
+— a stand-in for any subterm the rule does not inspect.</p>
+
+<p>There is only <em>one</em> LHS pattern in the rule set:
+<code>app(lam(x, M), N)</code>, the β-LHS. The contextual rules don't
+introduce new patterns — they only say that the same β-pattern, when it
+matches deeper inside, can fire and the surrounding shape gets rebuilt.</p>
+
+<div class="callout">
+<p><strong>A note on variables.</strong> The two function symbols of the
+signature are <code>app</code> (arity 2) and <code>lam</code> (arity 1,
+body-binding). There is <em>no</em> separate <code>var</code>
+constructor: in a GSLT the closedness of the host category gives an
+internal hom <code>P ⇒ P</code>, so <code>lam : (P ⇒ P) → P</code> is the
+ordinary HOAS reading and object-level variables are just free names of
+the host calculus. The tree leaves you see below — <code>x</code>,
+<code>y</code>, <code>v</code>, etc. — are exactly those free names,
+not <code>var(x)</code> cells. The matcher only ever dispatches on
+<code>app</code> and <code>lam</code> head symbols; reaching a leaf
+means there is no function-symbol head to dispatch on, so the walk just
+terminates there.</p>
+</div>
+
+<h2 id="sec-process">2. The rho-calculus translation of a rewrite rule</h2>
+<p>A single rewrite rule <code>L ⇝ R</code> compiles to a process listening
+on a channel for the LHS pattern, and sending the RHS on the same channel
+when the match arrives. Reading <code>⟦t⟧</code> as the rho encoding of
+<code>t</code>:</p>
+
+<pre>⟦<span class="kw">L ⇝ R</span>⟧(<span class="ch">tℓ</span>)  =  <span class="kw">for</span> (⟦L⟧ ⇐ <span class="ch">tℓ</span>) { <span class="ch">tℓ</span> ! ⟦R⟧ }</pre>
+
+<p>A <em>contextual</em> rewrite is trickier. The outer
+<code>for</code>-receive must wait for the inner match to land, then emit
+the rebuilt outer term. The polymorphic step is choosing the channel
+<code>tc</code> the for-receive listens on:</p>
+
+<pre>⟦<span class="kw">L₁ ⇝ R₁, ..., Lₙ ⇝ Rₙ  ⇒  K(L₁,...,Lₙ) ⇝ K′(R₁,...,Rₙ)</span>⟧
+  =  <span class="kw">let</span> <span class="ch">tc</span> = ⟦K⟧ <span class="kw">in</span>
+       <span class="kw">for</span> ((⟦L₁⟧, ..., ⟦Lₙ⟧) ⇐ <span class="ch">tc</span>) {
+         <span class="ch">tc</span> ! ⟦K′(R₁,...,Rₙ)⟧
+       }</pre>
+
+<p>The whole question of optimality reduces to one question: what is
+<code>⟦K⟧</code>? The paper's answer is the set automaton.</p>
+
+<h2 id="sec-automaton">3. The set automaton for the β-pattern</h2>
+<p>A set automaton for a pattern set <code>L</code> is a deterministic
+tree-walking automaton that recognises every occurrence of every pattern
+in <code>L</code>, visiting each function symbol of the input at most
+once. We build it once, offline, from the β-LHS. The construction (which
+the paper inlines from Bouwman–Erkens 2022) yields exactly two reachable
+states; before we can write down its transition table, we need a word
+on positions and configurations.</p>
+
+<h3>Positions, configurations, and what <code>(s, q)</code> means</h3>
+<p>A <strong>position</strong> is a path from the root of a term, written
+as a dot-separated sequence of 1-indexed child indices (with
+<code>ε</code> for the root). For <code>app(f, a)</code>, position
+<code>1</code> is <code>f</code> and position <code>2</code> is
+<code>a</code>; for <code>lam(x, body)</code>, position <code>1</code>
+is <code>body</code>; <code>1.2</code> means "child 2 of child 1 of the
+root", and so on. Position concatenation is just path concatenation:
+<code>p · q</code> appends <code>q</code> after <code>p</code>.</p>
+
+<p>A <strong>configuration</strong> is a pair <code>(s, p)</code> where
+<code>s</code> is an automaton state and <code>p</code> is an
+<em>absolute</em> position — the configuration's base in the term being
+walked. The actual symbol the automaton inspects from configuration
+<code>(s, p)</code> is the one at <code>p · L(s)</code>: the base
+position composed with the state's inspection offset
+<code>L(s)</code>.</p>
+
+<div class="callout blue">
+<p>The same <code>(s, q)</code> notation gets used in two slightly
+different ways, which is the most common stumbling block when reading
+the paper:</p>
+<ul>
+  <li><strong>In the δ table below</strong> the <code>q</code> is a
+  <em>position offset</em>, relative to whatever the current
+  configuration's base is. The entry
+  <code>δ(s₀, app) = {(s_app, ε), (s₀, 2)}</code> reads: "if a
+  configuration with base <code>p</code> in state <code>s₀</code> reads
+  <code>app</code>, spawn two new configurations —
+  <code>(s_app, p · ε) = (s_app, p)</code> and
+  <code>(s₀, p · 2)</code>." The <code>2</code> here means
+  "go to the argument child."</li>
+  <li><strong>In the Pending list of the live matcher (§6)</strong>, the
+  <code>q</code> is an <em>absolute</em> position — the cumulative path
+  from the root after all the concatenations.</li>
+</ul>
+<p>Same syntax, two reference frames. In both cases the digit
+<code>2</code> always means "argument child of an <code>app</code>";
+what changes is whether it's measured from the configuration's base or
+from the root.</p>
+</div>
+
+<table class="auto">
+<thead>
+<tr><th>state</th><th>L(s)</th><th>reads <code>app</code></th><th>reads <code>lam</code></th><th>η(s, ·)</th></tr>
+</thead>
+<tbody>
+<tr>
+  <td class="state s0">s₀</td>
+  <td>ε</td>
+  <td>{(s_app, ε), (s₀, 2)}</td>
+  <td>{(s₀, 1)}</td>
+  <td class="empty">∅</td>
+</tr>
+<tr>
+  <td class="state s_app">s_app</td>
+  <td>1</td>
+  <td>{(s_app, ε), (s₀, 2)}</td>
+  <td class="announce">★ {(s₀, 1)}</td>
+  <td class="announce">η(s_app, lam) = { β-LHS @ ε }</td>
+</tr>
+</tbody>
+</table>
+
+<p>The table covers both head symbols of the signature. When the inspection
+position <code>p · L(s)</code> sits on a leaf (a free name) instead of a
+function symbol, there is nothing for δ to dispatch on, so the
+configuration simply terminates with no spawns and no announcement —
+that is the third case, and the only thing the matcher does at leaves.</p>
+
+<p>Reading the table:</p>
+<ul>
+  <li><strong>State s₀</strong> means "I'm searching for a β-redex at
+  the current base position." Its label <code>L(s₀) = ε</code> says to
+  inspect the symbol <em>at</em> the base position.</li>
+  <li><strong>State s_app</strong> means "I've already seen an
+  <code>app</code> at the base position and I'm checking whether the
+  function child (offset <code>1</code>) is a <code>lam</code> to
+  complete the match." Hence <code>L(s_app) = 1</code>.</li>
+  <li>The δ entry <code>{(s_app, ε), (s₀, 2)}</code> means: when state
+  s₀ sees <code>app</code> at the inspection position, spawn
+  configuration (s_app, base) — same base, will inspect the function
+  child — and configuration (s₀, base·2) — start a fresh redex search
+  in the argument.</li>
+  <li>η records match announcements. The only nonempty entry is
+  <code>η(s_app, lam) = {β-LHS @ ε}</code> — when s_app actually sees a
+  <code>lam</code> at offset 1, it announces a β-redex at offset ε
+  (i.e., at the base position, which is the position of the
+  <code>app</code>).</li>
+</ul>
+
+<p>The automaton's job is to compute <code>tc(K)</code> for the
+contextual rules — its states <code>s</code> reflect to channel names
+<code>⌜s⌝</code> that appear as components of <code>tc(K)</code> in the
+next section. The principal β-rule itself is compiled by the
+plain template of §2 against its own dedicated channel
+<code>tβ</code>:</p>
+
+<pre><span class="kw">for</span> (⟦app(lam(x, M), N)⟧ ⇐ <span class="ch">tβ</span>) { <span class="ch">tβ</span> ! ⟦M[N/x]⟧ }</pre>
+
+<p>(<code>tβ</code> is just a fresh channel name; nothing automaton-derived
+about it. The automaton-derived channels are <code>tc(K)</code> for each
+contextual rule, below.)</p>
+
+<h2 id="sec-tc">4. Channel naming: from context to channel</h2>
+<p>For each contextual rule, the channel <code>tc(K)</code> is computed by
+walking the automaton against <code>surface(K)</code> — the partial term
+that <em>is</em> <code>K</code>, with every hole and schema variable
+treated as an opaque "I don't know what's there yet" symbol the
+automaton can't inspect. The walk produces a tree of
+<em>configurations</em> with some of them suspended at the holes;
+reflecting that tree of suspended configurations gives the channel
+name.</p>
+
+<p>Here are the three contextual contexts of §1, with the automaton trace
+that <code>tc</code> reflects:</p>
+
+<div class="trace-grid">
+  <div class="trace-card" id="trace-KF"></div>
+  <div class="trace-card" id="trace-KA"></div>
+  <div class="trace-card" id="trace-KB"></div>
+</div>
+
+<p>The orange dashed boxes are holes / schema variables — positions the
+automaton suspends at. The suspended configurations on those boxes
+together <em>are</em> the channel: any two contexts whose surface walks
+suspend at the same configurations get the <em>same</em>
+<code>tc</code>. This is why the channel-quotient is the coarsest
+equivalence sound for matching (Theorem 5.3 of the paper).</p>
+
+<h2 id="sec-compiled">5. The compiled lambda calculus</h2>
+<p>Plugging the four rewrite rules into the templates of §2, with channels
+named by the automaton states of §4:</p>
+
+<pre><span class="com">// principal β-rule — listens on its own dedicated channel tβ</span>
+<span class="kw">for</span> (⟦app(lam(x, M), N)⟧ ⇐ <span class="ch">tβ</span>) { <span class="ch">tβ</span> ! ⟦M[N/x]⟧ }
+
+<span class="com">// CtxF: reduce in the function position of an app</span>
+<span class="kw">let</span> <span class="ch">tc_F</span> = <span class="ch">⌜trace(K_F)⌝</span> <span class="kw">in</span>
+  <span class="kw">for</span> (⟦β-LHS⟧ ⇐ <span class="ch">tc_F</span>) { <span class="ch">tc_F</span> ! ⟦app(β-RHS, N)⟧ }
+
+<span class="com">// CtxA: reduce in the argument position of an app</span>
+<span class="kw">let</span> <span class="ch">tc_A</span> = <span class="ch">⌜trace(K_A)⌝</span> <span class="kw">in</span>
+  <span class="kw">for</span> (⟦β-LHS⟧ ⇐ <span class="ch">tc_A</span>) { <span class="ch">tc_A</span> ! ⟦app(N, β-RHS)⟧ }
+
+<span class="com">// CtxB: reduce in the body of a lam</span>
+<span class="kw">let</span> <span class="ch">tc_B</span> = <span class="ch">⌜trace(K_B)⌝</span> <span class="kw">in</span>
+  <span class="kw">for</span> (⟦β-LHS⟧ ⇐ <span class="ch">tc_B</span>) { <span class="ch">tc_B</span> ! ⟦lam(x, β-RHS)⟧ }</pre>
+
+<p>The principal β-rule has a fixed listening channel <code>tβ</code>; the
+contextual rules' channels are automaton-derived. The matcher's job is
+to walk a term once and route each <em>announcement</em> of a β-match to
+<code>tβ</code> so the principal rule fires, with the β-RHS then arriving
+on the appropriate <code>tc(K)</code> of whichever contextual rule wraps
+the redex position. Different positions in the term that reach the same
+automaton state share a <code>tc</code>, so their contextual rules' for-receives
+share their matching work — that's the entire trick.</p>
+
+<h2 id="sec-demo">6. Reducing a term: the matcher in action</h2>
+<p>Pick a term and step the matcher. It runs the same automaton you saw
+in §3, configuration by configuration. Every position gets exactly one
+configuration; the <code>for</code>-receive on each (reflected) state is
+the listener that would fire if the corresponding rule's LHS arrives.
+When you click <em>fire</em> on an announced redex, the demo:</p>
+
+<ol>
+  <li>Substitutes the β-reduct in place (this is the contents of the
+  send that the compiled β-rule would emit).</li>
+  <li>Discards configurations strictly inside the fired subtree (the
+  symbols they inspected don't exist anymore).</li>
+  <li>Restarts the matcher with one initial configuration at the fired
+  position — the <code>for</code>-receive on the appropriate
+  outer-context channel will now match this position's new shape.</li>
+</ol>
+
+<p>The configurations <em>outside</em> the fired subtree are preserved:
+those <code>for</code>-receives stay live on their channels across the
+firing. This is the rho-calculus realisation of the
+prune-preserves-work theorem.</p>
+
+<h3>Pick a term</h3>
+<div class="controls">
+  <select id="example-select">
+    <option value="0">Example 1 — 3 redexes scattered across left and right subterms</option>
+    <option value="1">Example 2 — 2 redexes, outer and one nested</option>
+    <option value="2">Example 3 — 4 nested redexes</option>
+    <option value="3">Example 4 — 1 redex now, 2 more after firing</option>
+    <option value="4">Example 5 — redexes on both sides at different depths</option>
+  </select>
+  <button id="reset">Reset</button>
+</div>
+
+<span class="term-display" id="term-display"></span>
+
+<div class="legend">
+  <span class="legend-item"><span class="legend-swatch" style="border: 2.5px solid #2c5aa0;"></span> s₀ visited here</span>
+  <span class="legend-item"><span class="legend-swatch" style="border: 2.5px solid #d97500;"></span> s_app visited here</span>
+  <span class="legend-item"><span class="legend-swatch" style="background: #d3f7d6; border: 2.5px solid #2d8a3e;"></span> β-redex announced</span>
+  <span class="legend-item"><span class="legend-swatch" style="background: #fff3d6; border: 2.5px solid #d97500;"></span> just processed</span>
+  <span class="legend-item"><span class="legend-swatch" style="border: 1.5px dashed #aaa;"></span> pending (config queued)</span>
+</div>
+
+<div class="controls">
+  <button class="primary" id="step">Step</button>
+  <button id="run">Run all</button>
+  <span class="stat-row">
+    <span><strong id="stat-visited">0</strong> nodes inspected</span>
+    <span><strong id="stat-pending">0</strong> pending</span>
+    <span><strong id="stat-redexes">0</strong> redexes found</span>
+  </span>
+</div>
+
+<div class="layout">
+  <div class="tree-container">
+    <svg id="tree" width="800" height="350"></svg>
+  </div>
+  <div class="panel">
+    <h3>Pending configurations</h3>
+    <div id="pending-list"></div>
+    <h3>Found redexes</h3>
+    <div id="redex-list"></div>
+  </div>
+</div>
+
+<h3>Step log</h3>
+<div class="log-area" id="log-area"></div>
+
+<h2 id="sec-optimality">7. Why this is optimal</h2>
+<p>The paper transports three optimality theorems from Bouwman–Erkens
+into this rho-calculus setting:</p>
+
+<div class="callout green">
+<p><strong>Symbol-once (Theorem 5.1).</strong> Every function symbol of
+<code>K</code> is consumed by exactly one <code>for</code>-receive. In
+the demo: <em>#nodes inspected</em> equals the number of function
+symbols in the term, no matter how many redexes are firing.</p>
+</div>
+
+<div class="callout green">
+<p><strong>Prune-preserves-work (Theorem 5.2).</strong> Firing a redex at
+position <em>p</em> does not invalidate any <code>for</code>-receive
+whose channel reflects an automaton state reached at a position outside
+<em>p</em>'s subtree. The demo logs this on every fire: how many configs
+got pruned, how many were preserved.</p>
+</div>
+
+<div class="callout green">
+<p><strong>Coarsest-sound (Theorem 5.3).</strong> Two contexts share
+<code>tc(K) = tc(K′)</code> exactly when no choice of hole-filler can
+distinguish them from the rule set's standpoint. This is the
+strongest possible sharing — any coarser equivalence on contexts would
+let some hole-filler fire a rule in one and not in the other.</p>
+</div>
+
+<details>
+  <summary>How the matcher implements the rho semantics</summary>
+  <p>The simulator queues configurations and steps them one at a time
+  (BFS over the configuration tree). One configuration step corresponds
+  to one for-receive consuming a send in the rho semantics: the
+  configuration's state determines which channel the send/receive pair
+  uses, and the spawned configurations correspond to the body of the
+  for-receive (which is itself a parallel composition of further
+  for-receives waiting on successor-state channels).</p>
+  <p>A redex announcement corresponds to the matcher routing a send to
+  the principal β-rule's channel <code>tβ</code>. When you click
+  <em>fire</em>, the demo carries out that send-receive communication:
+  the principal β-rule's for-receive on <code>tβ</code> reads the
+  matched β-LHS, runs its body (the substitution), and emits the result
+  on the surrounding contextual rule's channel
+  <code>tc(K)</code> — which is the channel reflected from the
+  automaton trace of whatever context K wraps the redex position.</p>
+</details>
+
+<details>
+  <summary>Connection to the paper's lambda example (§5.1)</summary>
+  <p>The paper works out the head-reduction case in detail — only
+  context <code>K_F = app(□, N)</code>. The construction here is the
+  obvious generalisation: build the same set automaton from the same
+  β-pattern, then add a contextual rule (and a corresponding channel)
+  for each of the three structural positions a hole can sit in. The
+  automaton states and labels (s₀, s_app, L(s_app) = 1) are
+  unchanged.</p>
+</details>
+
+<script>
+"use strict";
+
+// === Term ADT (also reused for context surfaces, with 'hole' tag) ===
+const V = (name) => ({ tag: 'var', name });
+const Lm = (param, body) => ({ tag: 'lam', param, body });
+const Ap = (func, arg) => ({ tag: 'app', func, arg });
+const H = (label) => ({ tag: 'hole', name: label });  // surface holes
+
+// === Examples ===
+const examples = [
+  Ap(
+    Ap(Lm('x', Ap(V('x'), V('x'))), Lm('y', V('y'))),
+    Ap(Lm('z', V('z')), Ap(Lm('w', V('w')), V('v')))
+  ),
+  Ap(Lm('x', Ap(V('x'), V('x'))), Ap(Lm('y', V('y')), V('z'))),
+  Ap(Lm('a', V('a')),
+    Ap(Lm('b', V('b')),
+      Ap(Lm('c', V('c')),
+        Ap(Lm('d', V('d')), V('e'))))),
+  Ap(Lm('f', Ap(V('f'), Ap(V('f'), V('y')))), Lm('x', Ap(V('x'), V('x')))),
+  Ap(Ap(Lm('x', V('x')), V('y')), Lm('z', Ap(Lm('w', V('w')), V('z'))))
+];
+
+// === Pretty printer (full term-rewriting notation: app(f,a), lam(x,body)) ===
+function pretty(t) {
+  if (t.tag === 'var') return t.name;
+  if (t.tag === 'hole') return t.name;
+  if (t.tag === 'lam') return 'lam(' + t.param + ', ' + pretty(t.body) + ')';
+  if (t.tag === 'app') return 'app(' + pretty(t.func) + ', ' + pretty(t.arg) + ')';
+}
+
+// === Subterm / replacement ===
+function subterm(t, pos) {
+  if (pos.length === 0) return t;
+  const i = pos[0], rest = pos.slice(1);
+  if (t.tag === 'lam' && i === 0) return subterm(t.body, rest);
+  if (t.tag === 'app' && i === 0) return subterm(t.func, rest);
+  if (t.tag === 'app' && i === 1) return subterm(t.arg, rest);
+  throw new Error('bad position');
+}
+function replaceAt(t, pos, r) {
+  if (pos.length === 0) return r;
+  const i = pos[0], rest = pos.slice(1);
+  if (t.tag === 'lam' && i === 0) return Lm(t.param, replaceAt(t.body, rest, r));
+  if (t.tag === 'app' && i === 0) return Ap(replaceAt(t.func, rest, r), t.arg);
+  if (t.tag === 'app' && i === 1) return Ap(t.func, replaceAt(t.arg, rest, r));
+  throw new Error('bad position');
+}
+
+// === Capture-avoiding substitution ===
+function freeVars(t) {
+  if (t.tag === 'var') return new Set([t.name]);
+  if (t.tag === 'lam') {
+    const s = freeVars(t.body); s.delete(t.param); return s;
+  }
+  const s = freeVars(t.func);
+  for (const v of freeVars(t.arg)) s.add(v);
+  return s;
+}
+function freshName(base, used) {
+  if (!used.has(base)) return base;
+  let i = 1;
+  while (used.has(base + i)) i++;
+  return base + i;
+}
+function subst(t, x, val) {
+  if (t.tag === 'var') return t.name === x ? val : t;
+  if (t.tag === 'app') return Ap(subst(t.func, x, val), subst(t.arg, x, val));
+  if (t.param === x) return t;
+  const fv = freeVars(val);
+  if (fv.has(t.param)) {
+    const used = new Set([...fv, ...freeVars(t.body), x]);
+    const f = freshName(t.param, used);
+    return Lm(f, subst(subst(t.body, t.param, V(f)), x, val));
+  }
+  return Lm(t.param, subst(t.body, x, val));
+}
+function beta(t) { return subst(t.func.body, t.func.param, t.arg); }
+
+// === Position helpers ===
+const posKey = (p) => p.join('.');
+const posLabel = (p) => p.length === 0 ? 'ε' : p.map(i => i + 1).join('.');
+function isPrefix(p, q) {
+  if (p.length > q.length) return false;
+  for (let i = 0; i < p.length; i++) if (p[i] !== q[i]) return false;
+  return true;
+}
+function parseKey(k) { return k === '' ? [] : k.split('.').map(Number); }
+
+// === Tree layout ===
+function layout(tree, opts) {
+  opts = opts || {};
+  const hSpacing = opts.hSpacing || 65;
+  const vSpacing = opts.vSpacing || 62;
+  const nodes = [];
+  const edges = [];
+  let nextLeafX = 0;
+  function go(t, pos, depth) {
+    const idx = nodes.length;
+    let label, tag = t.tag;
+    if (t.tag === 'var') label = t.name;
+    else if (t.tag === 'hole') label = t.name;
+    else if (t.tag === 'lam') label = 'lam ' + t.param;
+    else label = 'app';
+    const node = { idx, pos, label, tag, x: 0, y: depth * vSpacing + 28 };
+    nodes.push(node);
+    const children = [];
+    if (t.tag === 'lam') children.push(go(t.body, pos.concat(0), depth + 1));
+    else if (t.tag === 'app') {
+      children.push(go(t.func, pos.concat(0), depth + 1));
+      children.push(go(t.arg, pos.concat(1), depth + 1));
+    }
+    if (children.length === 0) {
+      node.x = nextLeafX; nextLeafX += hSpacing;
+    } else {
+      node.x = (children[0].x + children[children.length - 1].x) / 2;
+      for (let i = 0; i < children.length; i++) {
+        edges.push({
+          from: idx, to: children[i].idx,
+          edgeLabel: t.tag === 'app' ? String(i + 1) : ''
+        });
+      }
+    }
+    return node;
+  }
+  go(tree, [], 0);
+  const xs = nodes.map(n => n.x);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const offsetX = 36 - minX;
+  for (const n of nodes) n.x += offsetX;
+  const svgWidth = Math.max(opts.minWidth || 280, maxX - minX + 72);
+  const svgHeight = Math.max(...nodes.map(n => n.y)) + 36;
+  return { nodes, edges, svgWidth, svgHeight };
+}
+
+// === Automaton step (used by both the surface tracer and the term matcher) ===
+function autStep(state, node, pos, parent) {
+  const newConfigs = [];
+  let announceAt = null;
+  if (state === 's0') {
+    if (node.tag === 'app') {
+      newConfigs.push({ state: 's_app', position: pos.concat(0), parent: pos });
+      newConfigs.push({ state: 's0',    position: pos.concat(1), parent: null });
+    } else if (node.tag === 'lam') {
+      newConfigs.push({ state: 's0', position: pos.concat(0), parent: null });
+    }
+  } else { // s_app
+    if (node.tag === 'lam') {
+      announceAt = parent;
+      newConfigs.push({ state: 's0', position: pos.concat(0), parent: null });
+    } else if (node.tag === 'app') {
+      newConfigs.push({ state: 's_app', position: pos.concat(0), parent: pos });
+      newConfigs.push({ state: 's0',    position: pos.concat(1), parent: null });
+    }
+  }
+  return { newConfigs, announceAt };
+}
+
+// === Trace the automaton against a surface (with holes that suspend) ===
+function traceSurface(surface) {
+  const visited = new Map();   // posKey -> {state, parent}
+  const suspended = [];        // [{state, position, parent}]
+  let queue = [{ state: 's0', position: [], parent: null }];
+  while (queue.length > 0) {
+    const cfg = queue.shift();
+    const node = subterm(surface, cfg.position);
+    if (node.tag === 'hole') {
+      // Suspend here — can't advance the automaton past an unknown symbol
+      suspended.push(cfg);
+      continue;
+    }
+    visited.set(posKey(cfg.position), { state: cfg.state, parent: cfg.parent });
+    const { newConfigs } = autStep(cfg.state, node, cfg.position, cfg.parent);
+    for (const nc of newConfigs) queue.push(nc);
+  }
+  return { visited, suspended };
+}
+
+// === SVG helpers ===
+function el(tag, attrs, children) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const e = document.createElementNS(ns, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (children) for (const c of children) e.appendChild(c);
+  return e;
+}
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// === Render a small surface trace card ===
+function renderTraceCard(target, title, surface, channelText) {
+  const trace = traceSurface(surface);
+  const lay = layout(surface, { hSpacing: 70, vSpacing: 60, minWidth: 280 });
+  const card = document.getElementById(target);
+  card.innerHTML = '';
+  const h = document.createElement('h4');
+  h.textContent = title;
+  card.appendChild(h);
+
+  const eq = document.createElement('div');
+  eq.style.fontFamily = '"SF Mono", Menlo, monospace';
+  eq.style.fontSize = '0.88em';
+  eq.style.color = '#555';
+  eq.style.marginBottom = '0.4em';
+  eq.textContent = 'K = ' + pretty(surface);
+  card.appendChild(eq);
+
+  const svg = el('svg', { width: lay.svgWidth, height: lay.svgHeight });
+  for (const e of lay.edges) {
+    const from = lay.nodes[e.from], to = lay.nodes[e.to];
+    svg.appendChild(el('line', {
+      x1: from.x, y1: from.y + 12, x2: to.x, y2: to.y - 12, class: 'edge'
+    }));
+    if (e.edgeLabel) {
+      const lx = from.x + (to.x - from.x) * 0.5 + 6;
+      const ly = from.y + (to.y - from.y) * 0.5 - 2;
+      const t = el('text', { x: lx, y: ly, class: 'edge-label' });
+      t.textContent = e.edgeLabel;
+      svg.appendChild(t);
+    }
+  }
+  const suspendedKeys = new Set(trace.suspended.map(c => posKey(c.position)));
+  const suspendedByKey = new Map(trace.suspended.map(c => [posKey(c.position), c]));
+  for (const n of lay.nodes) {
+    const key = posKey(n.pos);
+    const visit = trace.visited.get(key);
+    const isSus = suspendedKeys.has(key);
+    const isHole = n.tag === 'hole';
+    const classes = ['node-rect'];
+    if (isHole) classes.push('hole');
+    else if (isSus) classes.push('suspended');
+    else if (visit) classes.push(visit.state);
+    const width = Math.max(32, n.label.length * 8.5 + 12);
+    const g = el('g', {});
+    g.appendChild(el('rect', {
+      x: n.x - width / 2, y: n.y - 12,
+      width: width, height: 24, rx: 4,
+      class: classes.join(' ')
+    }));
+    const lab = el('text', { x: n.x, y: n.y, class: 'node-label' });
+    lab.textContent = n.label;
+    g.appendChild(lab);
+    // Show config badge: state + position
+    let badge = '';
+    if (visit) badge = (visit.state === 's0' ? 's₀' : 's_app');
+    else if (isSus) {
+      const sus = suspendedByKey.get(key);
+      badge = (sus.state === 's0' ? 's₀' : 's_app') + ' ⏸';
+    }
+    if (badge) {
+      const bclass = visit ? ('config-badge ' + visit.state)
+                          : ('config-badge ' + (suspendedByKey.get(key)).state);
+      const bt = el('text', { x: n.x, y: n.y - 18, class: bclass });
+      bt.textContent = badge;
+      g.appendChild(bt);
+    }
+    const pl = el('text', { x: n.x, y: n.y + 22, class: 'node-pos' });
+    pl.textContent = posLabel(n.pos);
+    g.appendChild(pl);
+    svg.appendChild(g);
+  }
+  card.appendChild(svg);
+
+  // Channel description
+  const ch = document.createElement('div');
+  ch.className = 'channel';
+  const susDesc = trace.suspended.map(c => {
+    const st = c.state === 's0' ? 's₀' : 's_app';
+    return '(' + st + ' @ ' + posLabel(c.position) + ')';
+  }).join(' ∥ ');
+  ch.innerHTML = '<strong>tc(K)</strong> = ⌜ ' + (susDesc || '∅') + ' ⌝';
+  card.appendChild(ch);
+}
+
+// === Initialise the three trace cards ===
+// K_F = app(□, N) — hole at func position
+renderTraceCard('trace-KF', 'CtxF: K_F = app(□, N)',
+  Ap(H('□'), H('N')),
+  'app(□, N)');
+// K_A = app(N, □) — hole at arg position
+renderTraceCard('trace-KA', 'CtxA: K_A = app(N, □)',
+  Ap(H('N'), H('□')),
+  'app(N, □)');
+// K_B = lam(x, □) — hole at body
+renderTraceCard('trace-KB', 'CtxB: K_B = lam(x, □)',
+  Lm('x', H('□')),
+  'lam(x, □)');
+
+// === Main matcher state ===
+let state;
+
+function reset(exampleIdx) {
+  state = {
+    tree: examples[exampleIdx],
+    visited: new Map(),
+    redexes: [],
+    pending: [{ state: 's0', position: [], parent: null }],
+    current: null,
+    log: [{ kind: 'info', text: 'Reset. Initial config: (s₀, ε) on ' + pretty(examples[exampleIdx]) }],
+    stepCount: 0
+  };
+  render();
+}
+
+function doStep() {
+  if (state.pending.length === 0) return;
+  const cfg = state.pending.shift();
+  state.current = cfg;
+  state.stepCount++;
+  const node = subterm(state.tree, cfg.position);
+  const { newConfigs, announceAt } = autStep(cfg.state, node, cfg.position, cfg.parent);
+
+  const stLabel = (s) => s === 's0' ? 's₀' : 's_app';
+  const here = posLabel(cfg.position);
+  let action = '';
+  if (cfg.state === 's0') {
+    if (node.tag === 'app') {
+      action = `δ(s₀, app) — spawn (s_app, ${posLabel(cfg.position.concat(0))}, parent=${here}) and (s₀, ${posLabel(cfg.position.concat(1))})`;
+    } else if (node.tag === 'lam') {
+      action = `δ(s₀, lam) — spawn (s₀, ${posLabel(cfg.position.concat(0))}) into body`;
+    } else {
+      action = `leaf — no function-symbol head to dispatch on, walk terminates`;
+    }
+  } else {
+    if (node.tag === 'lam') {
+      action = `δ(s_app, lam) — ★ η announces β @ ${posLabel(cfg.parent)} ★; spawn (s₀, ${posLabel(cfg.position.concat(0))}) into body`;
+    } else if (node.tag === 'app') {
+      action = `δ(s_app, app) — not lam at parent's offset 1; restart redex search: spawn (s_app, ${posLabel(cfg.position.concat(0))}, parent=${here}) and (s₀, ${posLabel(cfg.position.concat(1))})`;
+    } else {
+      action = `leaf — not lam, so no β at ${posLabel(cfg.parent)}; walk terminates`;
+    }
+  }
+
+  state.visited.set(posKey(cfg.position), { state: cfg.state, parent: cfg.parent });
+  for (const nc of newConfigs) state.pending.push(nc);
+  if (announceAt !== null) state.redexes.push({ position: announceAt });
+
+  const symLabel = node.tag === 'app' ? 'app'
+                  : node.tag === 'lam' ? 'lam ' + node.param
+                  : 'leaf ' + node.name;
+  const parentBit = cfg.parent ? `, parent=${posLabel(cfg.parent)}` : '';
+  state.log.push({
+    kind: announceAt !== null ? 'redex' : cfg.state,
+    text: `[${state.stepCount}] (${stLabel(cfg.state)}, ${here}${parentBit}) reads ${symLabel} — ${action}`
+  });
+  render();
+}
+
+function runAll() { while (state.pending.length > 0) doStep(); }
+
+function fireRedex(pos) {
+  const oldSub = subterm(state.tree, pos);
+  const reduced = beta(oldSub);
+  const oldKeys = [];
+  for (const k of state.visited.keys()) {
+    if (isPrefix(pos, parseKey(k))) oldKeys.push(k);
+  }
+  const prunedRedexCount = state.redexes.filter(r => isPrefix(pos, r.position)).length;
+  const preservedCount = state.visited.size - oldKeys.length;
+
+  state.log.push({
+    kind: 'fire',
+    text: `🔥 fire β @ ${posLabel(pos)}: ${pretty(oldSub)}  →  ${pretty(reduced)}`
+  });
+  state.log.push({
+    kind: 'comm',
+    text: `   rho: matcher routes the β-LHS announcement at ${posLabel(pos)} to the principal β-rule's channel tβ; the β-rule's for-receive fires and emits the β-RHS on the surrounding context's tc(K)`
+  });
+  state.log.push({
+    kind: 'fire',
+    text: `   pruned ${oldKeys.length} configuration(s) and ${prunedRedexCount} redex announcement(s) inside ${posLabel(pos)}; preserved ${preservedCount} configuration(s) outside`
+  });
+
+  for (const k of oldKeys) state.visited.delete(k);
+  state.redexes = state.redexes.filter(r => !isPrefix(pos, r.position));
+  state.tree = replaceAt(state.tree, pos, reduced);
+
+  let init;
+  if (pos.length === 0) {
+    init = { state: 's0', position: [], parent: null };
+  } else {
+    const parentPos = pos.slice(0, -1);
+    const childIdx = pos[pos.length - 1];
+    const parentNode = subterm(state.tree, parentPos);
+    if (parentNode.tag === 'app' && childIdx === 0) {
+      init = { state: 's_app', position: pos, parent: parentPos };
+    } else {
+      init = { state: 's0', position: pos, parent: null };
+    }
+  }
+  state.pending = [init];
+  const initLabel = init.state === 's0' ? 's₀' : 's_app';
+  const initParent = init.parent ? `, parent=${posLabel(init.parent)}` : '';
+  state.log.push({
+    kind: 'fire',
+    text: `   re-seed matcher with (${initLabel}, ${posLabel(pos)}${initParent})`
+  });
+
+  render();
+}
+
+function render() {
+  document.getElementById('term-display').textContent = pretty(state.tree);
+
+  const lay = layout(state.tree);
+  const svg = document.getElementById('tree');
+  svg.setAttribute('width', lay.svgWidth);
+  svg.setAttribute('height', lay.svgHeight);
+  svg.innerHTML = '';
+
+  for (const e of lay.edges) {
+    const from = lay.nodes[e.from], to = lay.nodes[e.to];
+    svg.appendChild(el('line', {
+      x1: from.x, y1: from.y + 12, x2: to.x, y2: to.y - 12, class: 'edge'
+    }));
+    if (e.edgeLabel) {
+      const lx = from.x + (to.x - from.x) * 0.5 + 6;
+      const ly = from.y + (to.y - from.y) * 0.5 - 2;
+      const t = el('text', { x: lx, y: ly, class: 'edge-label' });
+      t.textContent = e.edgeLabel;
+      svg.appendChild(t);
+    }
+  }
+
+  const currentKey = state.current ? posKey(state.current.position) : null;
+  const pendingAt = new Map();
+  for (const p of state.pending) pendingAt.set(posKey(p.position), p);
+
+  for (const n of lay.nodes) {
+    const key = posKey(n.pos);
+    const visit = state.visited.get(key);
+    const isCurrent = currentKey === key;
+    const isRedex = state.redexes.some(r => posKey(r.position) === key);
+    const pending = pendingAt.get(key);
+    const classes = ['node-rect'];
+    if (isCurrent) classes.push('current');
+    else if (isRedex) classes.push('redex');
+    else if (visit) classes.push(visit.state);
+    else if (pending) classes.push('pending', pending.state);
+
+    const width = Math.max(32, n.label.length * 8.5 + 12);
+    const g = el('g', {});
+    g.appendChild(el('rect', {
+      x: n.x - width / 2, y: n.y - 12,
+      width: width, height: 24, rx: 4,
+      class: classes.join(' ')
+    }));
+    const lab = el('text', { x: n.x, y: n.y, class: 'node-label' });
+    lab.textContent = n.label;
+    g.appendChild(lab);
+    // Visited-state badge above node
+    if (visit) {
+      const bt = el('text', { x: n.x, y: n.y - 18, class: 'config-badge ' + visit.state });
+      bt.textContent = visit.state === 's0' ? 's₀' : 's_app';
+      g.appendChild(bt);
+    } else if (pending) {
+      const bt = el('text', { x: n.x, y: n.y - 18, class: 'config-badge ' + pending.state });
+      bt.textContent = (pending.state === 's0' ? 's₀' : 's_app') + ' ⏳';
+      g.appendChild(bt);
+    }
+    const pl = el('text', { x: n.x, y: n.y + 22, class: 'node-pos' });
+    pl.textContent = posLabel(n.pos);
+    g.appendChild(pl);
+    svg.appendChild(g);
+  }
+
+  // Pending list
+  const pendDiv = document.getElementById('pending-list');
+  pendDiv.innerHTML = '';
+  if (state.pending.length === 0) {
+    pendDiv.innerHTML = '<div class="muted">(empty — matcher finished)</div>';
+  } else {
+    state.pending.forEach((p, i) => {
+      const d = document.createElement('div');
+      d.className = 'config-item ' + p.state + (i === 0 ? ' next' : '');
+      const stLabel = p.state === 's0' ? 's₀' : 's_app';
+      const parentBit = p.parent ? ', parent=' + posLabel(p.parent) : '';
+      d.textContent = `(${stLabel}, ${posLabel(p.position)}${parentBit})`;
+      pendDiv.appendChild(d);
+    });
+  }
+
+  // Redex list
+  const rDiv = document.getElementById('redex-list');
+  rDiv.innerHTML = '';
+  if (state.redexes.length === 0) {
+    rDiv.innerHTML = '<div class="muted">(none yet)</div>';
+  } else {
+    state.redexes.forEach((r) => {
+      const d = document.createElement('div');
+      d.className = 'redex-item';
+      const subStr = pretty(subterm(state.tree, r.position));
+      d.innerHTML = `<span>β @ ${posLabel(r.position)} <code>${escapeHtml(subStr)}</code></span>`;
+      const btn = document.createElement('button');
+      btn.className = 'fire';
+      btn.textContent = 'fire';
+      btn.disabled = state.pending.length > 0;
+      btn.title = state.pending.length > 0
+        ? 'Finish the matcher first (Run all)'
+        : 'Fire this redex';
+      btn.onclick = () => fireRedex(r.position);
+      d.appendChild(btn);
+      rDiv.appendChild(d);
+    });
+  }
+
+  // Log
+  const logDiv = document.getElementById('log-area');
+  logDiv.innerHTML = '';
+  state.log.forEach((l) => {
+    const d = document.createElement('div');
+    d.className = 'log-item ' + (l.kind || '');
+    d.textContent = l.text;
+    logDiv.appendChild(d);
+  });
+  logDiv.scrollTop = logDiv.scrollHeight;
+
+  document.getElementById('stat-visited').textContent = state.visited.size;
+  document.getElementById('stat-pending').textContent = state.pending.length;
+  document.getElementById('stat-redexes').textContent = state.redexes.length;
+  document.getElementById('step').disabled = state.pending.length === 0;
+  document.getElementById('run').disabled = state.pending.length === 0;
+}
+
+document.getElementById('step').onclick = doStep;
+document.getElementById('run').onclick = runAll;
+document.getElementById('reset').onclick = () =>
+  reset(parseInt(document.getElementById('example-select').value));
+document.getElementById('example-select').onchange = () =>
+  reset(parseInt(document.getElementById('example-select').value));
+
+reset(0);
+</script>
+</body>
+</html>
