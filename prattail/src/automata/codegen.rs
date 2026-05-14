@@ -1524,7 +1524,12 @@ fn write_lex_stream_via_core(buf: &mut String) {
                  weight: mettail_prattail::automata::semiring::TropicalWeight::new(0.0), \
              }], \
          }); \
-         Ok(stream) }",
+         Ok(stream) }\n\
+         pub fn lex_dag<'a>(input: &'a str) \
+         -> Result<mettail_prattail::lexer_types::LexDag, String> { \
+         mettail_prattail::runtime_types::lex_dag_core( \
+         input, None, &CHAR_CLASS, dfa_next, is_accepting_state, accept_alternatives, token_to_kind) \
+         }",
     );
 }
 
