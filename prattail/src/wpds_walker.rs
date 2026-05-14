@@ -947,18 +947,12 @@ pub struct BranchCursor<W: Semiring> {
     /// `merge_equivalent_cursors`, identical to how `recovery_deltas`
     /// + `collection_stack` are kept today.
     pub builder: Arc<SemanticBuilder>,
-    /// L-substrate Piece #5 (2026-05-13): per-cursor lex-alternative
-    /// overrides for the lex-fork mechanism. Populated when a
-    /// `ForkActionKind::LexAlt` Fork branch is allocated. Wrapped in
-    /// `CursorViewSource` and consulted by `engine.step` so each cursor
-    /// sees ITS OWN lex commits at the positions it has forked at —
-    /// without mutating the shared live `MutableMultiTokenSource`.
-    ///
-    /// Inherited via `Clone` for descendants (a cascade of LexAlt Forks
-    /// accumulates overrides). Replayed onto the live source at
-    /// `commit_winner` via `BuilderDelta::CommitLexAlternative`.
-    pub pending_lex_alts:
-        std::collections::BTreeMap<usize, crate::wpds_runtime::LexOverride>,
+    // M4 (2026-05-13): `pending_lex_alts` field DELETED. Per-cursor lex-
+    // alternative state violated WPDS stack purity (the multiset grew
+    // monotonically with no pop counterpart, and was excluded from
+    // ConfigKey). Replaced by `LatticeTokenSource` (M3) where alt identity
+    // lives in the SHARED input DAG; the cursor's `pos: usize` (DAG node-id)
+    // suffices to distinguish alt timelines.
 }
 
 impl<W: Semiring> std::fmt::Debug for BranchCursor<W>
@@ -1009,7 +1003,6 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
             visited_recovery: self.visited_recovery.clone(),
             visited_dispatch: self.visited_dispatch.clone(),
             builder: Arc::clone(&self.builder),
-            pending_lex_alts: self.pending_lex_alts.clone(),
         }
     }
 }
@@ -1086,9 +1079,6 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // `SemanticBuilder::new()` in lockstep, so the two stay
             // structurally identical at construction time.
             builder: Arc::new(SemanticBuilder::new()),
-            // L-substrate Piece #5 (2026-05-13): seed cursor has no
-            // lex-alt overrides — empty map.
-            pending_lex_alts: std::collections::BTreeMap::new(),
         }
     }
 
@@ -1135,10 +1125,6 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // single-most-important reason the field exists: Fork
             // fanout cost becomes constant per child.
             builder: Arc::clone(&parent.builder),
-            // L-substrate Piece #5 (2026-05-13): inherit parent's
-            // lex-alt overrides. The LexAlt Fork apply (in the walker's
-            // Fork arm) inserts the alt for THIS child after construction.
-            pending_lex_alts: parent.pending_lex_alts.clone(),
         }
     }
 }
@@ -2176,12 +2162,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // already captured the winning branch's effects
                     // via commit_winner journal replay.
                     builder: Arc::new(SemanticBuilder::new()),
-                    // L-substrate Piece #5 (2026-05-13): post-resolution
-                    // singleton starts with no lex-alt overrides — the
-                    // winning branch's overrides were committed onto the
-                    // live MutableMultiTokenSource via
-                    // CommitLexAlternative replay at commit_winner.
-                    pending_lex_alts: std::collections::BTreeMap::new(),
                 }];
                 self.state = new_state.clone();
                 let trace = WpdsTraceEntry {
@@ -2820,10 +2800,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // flow through `self.builder` (deterministic mode); the
                     // cursor's Arc is a future anchor (5.3+).
                     builder: Arc::new(SemanticBuilder::new()),
-                    // L-substrate Piece #5 (2026-05-13): post-Drop reset
-                    // clears lex-alt overrides; subsequent recovery
-                    // attempts re-emit Forks from scratch if needed.
-                    pending_lex_alts: std::collections::BTreeMap::new(),
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -3328,11 +3304,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
-                                // L-substrate Piece #5 (2026-05-13): Fork child
-                                // inherits parent's lex-alt overrides. LexAlt
-                                // Fork apply overrides this with the alt's
-                                // pos/kind/text/tail_entries below.
-                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -3385,11 +3356,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
-                                // L-substrate Piece #5 (2026-05-13): Fork child
-                                // inherits parent's lex-alt overrides. LexAlt
-                                // Fork apply overrides this with the alt's
-                                // pos/kind/text/tail_entries below.
-                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             // nondeterministic mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -3453,11 +3419,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
-                                // L-substrate Piece #5 (2026-05-13): Fork child
-                                // inherits parent's lex-alt overrides. LexAlt
-                                // Fork apply overrides this with the alt's
-                                // pos/kind/text/tail_entries below.
-                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -3497,11 +3458,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
-                                // L-substrate Piece #5 (2026-05-13): Fork child
-                                // inherits parent's lex-alt overrides. LexAlt
-                                // Fork apply overrides this with the alt's
-                                // pos/kind/text/tail_entries below.
-                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             child.pos += 1;
                             children.push(child);
@@ -3534,11 +3490,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
-                                // L-substrate Piece #5 (2026-05-13): Fork child
-                                // inherits parent's lex-alt overrides. LexAlt
-                                // Fork apply overrides this with the alt's
-                                // pos/kind/text/tail_entries below.
-                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -3604,11 +3555,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
-                                // L-substrate Piece #5 (2026-05-13): Fork child
-                                // inherits parent's lex-alt overrides. LexAlt
-                                // Fork apply overrides this with the alt's
-                                // pos/kind/text/tail_entries below.
-                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3653,11 +3599,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
-                                // L-substrate Piece #5 (2026-05-13): Fork child
-                                // inherits parent's lex-alt overrides. LexAlt
-                                // Fork apply overrides this with the alt's
-                                // pos/kind/text/tail_entries below.
-                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3703,11 +3644,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
-                                // L-substrate Piece #5 (2026-05-13): Fork child
-                                // inherits parent's lex-alt overrides. LexAlt
-                                // Fork apply overrides this with the alt's
-                                // pos/kind/text/tail_entries below.
-                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             // Phase 5.5 (2026-05-12): eagerly apply effect
@@ -3760,36 +3696,17 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
-                                // L-substrate Piece #5 (2026-05-13): Fork child
-                                // inherits parent's lex-alt overrides. LexAlt
-                                // Fork apply overrides this with the alt's
-                                // pos/kind/text/tail_entries below.
-                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
-                            // L-substrate Piece #5b (2026-05-13): record
-                            // the alt as a per-cursor override. The
-                            // `tail_entries` field is empty for now —
-                            // future commits will compute it via a
-                            // trait-extension re-lex of
-                            // `source_text[end_byte..]` so downstream
-                            // peeks return the alt's timeline (not the
-                            // primary's). Empty `tail_entries` means
-                            // downstream peeks fall through to the
-                            // primary — workable for ALIGNED-end alts
-                            // (e.g., `if` vs `Ident` both ending at the
-                            // same byte) and a known limitation for
-                            // NON-aligned alts (e.g., `Minus@1` vs
-                            // `Integer@2` for `-3`).
-                            child.pending_lex_alts.insert(
-                                child.pos,
-                                crate::wpds_runtime::LexOverride {
-                                    kind: kind.clone(),
-                                    text: text.clone(),
-                                    end_byte,
-                                    alt_idx,
-                                    tail_entries: Vec::new(),
-                                },
-                            );
+                            // M4 (2026-05-13): `pending_lex_alts.insert(...)`
+                            // DELETED. Per-cursor alt-override storage was
+                            // the sidecar violating WPDS stack purity.
+                            // Replaced by LatticeTokenSource (M3) — the
+                            // child's `pos: usize` (DAG node-id, set via
+                            // M5's `next_pos`) suffices to identify the
+                            // alt's timeline. `end_byte` is retained on
+                            // the LexAlt action for now (M5 reworks to
+                            // `next_pos`).
+                            let _ = end_byte;
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             child.recovery_deltas.push(
                                 BuilderDelta::CommitLexAlternative {
@@ -3849,11 +3766,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
-                                // L-substrate Piece #5 (2026-05-13): Fork child
-                                // inherits parent's lex-alt overrides. LexAlt
-                                // Fork apply overrides this with the alt's
-                                // pos/kind/text/tail_entries below.
-                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -4578,22 +4490,16 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         let drained: Vec<BranchCursor<W>> = std::mem::take(&mut self.branch_cursors);
         for cursor in drained {
             let frontier_top = self.gss.node(cursor.node).cloned();
-            // L-substrate Piece #5 (2026-05-13): per-cursor token view.
-            // Each cursor's `pending_lex_alts` overlays the base
-            // tokens — so a LexAlt Fork child sees the alt's kind/text
-            // at the forked position (and the re-lexed downstream) while
-            // siblings and ancestors see the primary. Empty overrides
-            // → behaves identically to passing `tokens` directly.
-            let view = crate::wpds_runtime::CursorViewSource {
-                base: tokens,
-                overrides: &cursor.pending_lex_alts,
-            };
+            // M4 (2026-05-13): pass `tokens` directly. The CursorViewSource
+            // wrap is deleted — alt identity now lives in the SHARED input
+            // DAG (`LatticeTokenSource`, M3) and the cursor's `pos: usize`
+            // (DAG node-id) is sufficient to identify its alt timeline.
             let action = self.engine.step(
                 &cursor.inner_state,
                 &self.gss,
                 frontier_top.as_ref(),
                 cursor.pos,
-                &view,
+                tokens,
             );
             let mut cursor = cursor;
             let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
@@ -5248,12 +5154,6 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             // vis behavior — the live mutation surface is still
             // `self.builder`, journaled deltas replay against it above.
             builder: winner.builder,
-            // L-substrate Piece #5 (2026-05-13): post-commit singleton
-            // clears lex-alt overrides — the winner's overrides have
-            // been committed onto the live MutableMultiTokenSource via
-            // CommitLexAlternative replay; subsequent steps see the
-            // committed alternative through the live source directly.
-            pending_lex_alts: std::collections::BTreeMap::new(),
         }];
     }
 
@@ -6100,20 +6000,15 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             // borrow on `self.gss` is short-lived.
                             let frontier_snap =
                                 self.gss.node(cursor.node).cloned();
-                            // L-substrate Piece #5 (2026-05-13): wrap
-                            // with cursor's lex-alt view so the test
-                            // step sees the same tokenization as the
-                            // normal per-cursor dispatch.
-                            let view = crate::wpds_runtime::CursorViewSource {
-                                base: tokens,
-                                overrides: &cursor.pending_lex_alts,
-                            };
+                            // M4 (2026-05-13): pass `tokens` directly.
+                            // CursorViewSource wrap deleted — alt identity
+                            // lives in the shared LatticeTokenSource (M3).
                             let test_action = self.engine.step(
                                 &WpdsState::InfixLoop { cur_bp: 0 },
                                 &self.gss,
                                 frontier_snap.as_ref(),
                                 cursor.pos,
-                                &view,
+                                tokens,
                             );
                             matches!(
                                 test_action,
@@ -6129,6 +6024,74 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             }
         }
         self.multiply_cursor_weight(cursor, weight);
+
+        // D-strings non-grouping cat fix (2026-05-13): when a cross-cat
+        // infix Return just popped, the new GSS top may be a
+        // `CategoryEntry` whose category is the OPERAND cat (e.g., Str
+        // for LtStr's outer CrossCatLhs CE), but the builder top is now
+        // the RESULT cat (e.g., Bool). Re-synchronize the GSS top's CE
+        // to match the builder's actual category so subsequent
+        // InfixLoop dispatch uses the RESULT cat's tables (e.g., Bool's
+        // `==` → EqBool, not Str's `==` → EqStr-on-Bool-args silent
+        // fail).
+        //
+        // Complementary to D8 (commit 4d2c615) which handles the
+        // grouping case (`(...) op` where op is cross-cat). This
+        // handles the non-grouping case (`crosscat_op op` directly).
+        //
+        // Gates (all must hold):
+        //   1. popped symbol is Return (the cross-cat infix Return).
+        //   2. cursor still has a GSS top (pred_id != GSS_NODE_NONE).
+        //   3. new top is a CategoryEntry.
+        //   4. builder top is a Term with a known cat (via
+        //      engine.cat_of_type_name).
+        //   5. builder cat differs from new top's cat.
+        //
+        // Uses W::one() so the cursor weight isn't perturbed.
+        //
+        // Why ONLY for Return: same-cat infix Pops (popped.cat ==
+        // pred.cat) trivially pass gate 5 as a no-op; cross-cat prefix
+        // Pops (ImplicitCast, CrossCatProjection, CrossCatPrefixUnary)
+        // have new top.cat == popped.cat == result_cat (the wrapping
+        // Return is in the calling cat, and the OUTER CE is also the
+        // calling cat), so gate 5 is a no-op there too. Only cross-cat
+        // INFIX has the OUTER CE in the OPERAND cat while the wrapping
+        // Return / builder top are in the RESULT cat.
+        if let Some(popped) = popped_symbol {
+            if popped.kind == SymbolKind::Return
+                && pred_id != crate::gss::GSS_NODE_NONE
+            {
+                let new_top_cat_opt = self
+                    .gss
+                    .node(pred_id)
+                    .and_then(|n| {
+                        if n.symbol.kind == SymbolKind::CategoryEntry {
+                            Some(n.symbol.category_src_idx)
+                        } else {
+                            None
+                        }
+                    });
+                if let Some(new_top_cat) = new_top_cat_opt {
+                    if let Some(builder_cat) = cursor
+                        .builder
+                        .top_term_type_name()
+                        .and_then(|tn| self.engine.cat_of_type_name(tn))
+                    {
+                        if builder_cat != new_top_cat {
+                            let new_sym =
+                                StackSymbolV2::category_entry(builder_cat);
+                            let _ = self.cursor_gss_replace_top(
+                                cursor,
+                                new_sym,
+                                cursor.pos,
+                                W::one(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // D8 fix (2026-05-13): resolve `GroupingClosePreservingInner`'s
         // `inner_cat_src_idx` from the cursor builder's top-Term
         // `type_name` instead of trusting the popped CategoryEntry's

@@ -868,120 +868,14 @@ pub trait WpdsTokenSource {
     }
 }
 
-/// L-substrate Piece #5 (2026-05-13): per-cursor lex-alternative override.
-///
-/// Populated when a `ForkActionKind::LexAlt` Fork branch is allocated by
-/// the walker. Carries the alternative's kind/text/end_byte plus the
-/// downstream `LexEntry` rows obtained by re-lexing `source_text[end_byte..]`
-/// — so the cursor's view of `peek_kind(pos+k)` reflects the alt's
-/// timeline rather than the primary's.
-///
-/// Lifecycle:
-/// - Empty in the canonical primary cursor.
-/// - Populated for each LexAlt Fork child at allocation time.
-/// - Inherited by descendants (a cascade of LexAlt Forks accumulates
-///   overrides).
-/// - Replayed onto the live `MutableMultiTokenSource` at `commit_winner`
-///   via `BuilderDelta::CommitLexAlternative`.
-#[derive(Debug, Clone)]
-pub struct LexOverride {
-    /// The alt's TokenKind.
-    pub kind: TokenKind,
-    /// Owned text of the alt's matched bytes.
-    pub text: String,
-    /// Byte position after the alt's consumed bytes (the source-text
-    /// offset where the alt's tail begins).
-    pub end_byte: usize,
-    /// Alt index within the original `LexEntry.alternatives` — populates
-    /// the `lex_alt_idx` field of `LexicographicWeight` for tiebreak
-    /// ordering.
-    pub alt_idx: u16,
-    /// Re-lexed downstream entries starting at `end_byte`. The cursor's
-    /// view at `pos+k` (for `k >= 1`) consults `tail_entries[k-1]`
-    /// instead of the primary's `peek_kind(pos+k)`. Empty when the alt's
-    /// `end_byte` aligns with the primary's `end_byte` (degenerate case).
-    pub tail_entries: Vec<crate::lexer_types::LexEntry>,
-}
-
-/// L-substrate Piece #5 (2026-05-13): per-cursor wrapper that overlays a
-/// cursor's `pending_lex_alts` onto a base `WpdsTokenSource`.
-///
-/// Constructed for every `engine.step` call in the walker's per-cursor
-/// dispatcher. The engine's `step()` receives `&CursorViewSource` instead
-/// of the raw base source, so each cursor sees ITS OWN lex commits at
-/// the positions it has forked at — without mutating the shared live
-/// source.
-///
-/// Forwards through to `base` for positions WITHOUT overrides. At
-/// positions WITH overrides, returns the override's kind/text/end_byte.
-/// `peek_alternatives(pos)` returns empty when an override is committed
-/// at `pos` (the Fork was already emitted; don't re-emit).
-pub struct CursorViewSource<'a> {
-    /// The base WpdsTokenSource (e.g., `SliceTokenSource`,
-    /// `MultiTokenSource`, or `MutableMultiTokenSource`).
-    pub base: &'a dyn WpdsTokenSource,
-    /// The cursor's pending lex-alternative overrides, keyed by token
-    /// position.
-    pub overrides: &'a std::collections::BTreeMap<usize, LexOverride>,
-}
-
-impl<'a> WpdsTokenSource for CursorViewSource<'a> {
-    fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
-        if let Some(o) = self.overrides.get(&pos) {
-            return Some(o.kind.clone());
-        }
-        for (&override_pos, o) in self.overrides.iter().rev() {
-            if pos > override_pos {
-                let tail_idx = pos - override_pos - 1;
-                if let Some(entry) = o.tail_entries.get(tail_idx) {
-                    return Some(entry.primary().kind.clone());
-                }
-            }
-        }
-        self.base.peek_kind(pos)
-    }
-
-    fn peek_text(&self, pos: usize) -> Option<&str> {
-        if let Some(o) = self.overrides.get(&pos) {
-            return Some(o.text.as_str());
-        }
-        for (&override_pos, o) in self.overrides.iter().rev() {
-            if pos > override_pos {
-                let tail_idx = pos - override_pos - 1;
-                if let Some(entry) = o.tail_entries.get(tail_idx) {
-                    return Some(entry.primary().text.as_str());
-                }
-            }
-        }
-        self.base.peek_text(pos)
-    }
-
-    fn len(&self) -> usize {
-        if let Some((&override_pos, o)) = self.overrides.iter().next_back() {
-            override_pos + 1 + o.tail_entries.len()
-        } else {
-            self.base.len()
-        }
-    }
-
-    fn peek_alternatives(&self, pos: usize) -> &[crate::lexer_types::LexAlternative] {
-        // Suppress re-emission of the same Fork at a position where this
-        // cursor has already committed to an alt. Downstream positions
-        // (with alts of their own) delegate to base.
-        if self.overrides.contains_key(&pos) {
-            return &[];
-        }
-        self.base.peek_alternatives(pos)
-    }
-
-    fn is_ambiguous_at(&self, pos: usize) -> bool {
-        !self.peek_alternatives(pos).is_empty()
-    }
-
-    fn end_byte(&self, pos: usize, alt_idx: usize) -> Option<usize> {
-        self.base.end_byte(pos, alt_idx)
-    }
-}
+// M4 (2026-05-13): `LexOverride` and `CursorViewSource` DELETED.
+// These were the per-cursor sidecar mechanism for lex-alternative
+// commitment (commits 3290e05 + ed53ea3). Under the WPDS-stack-purity
+// principle (`feedback_never_disambiguate_early.md`), per-cursor
+// state outside `(p, w, pos, builder, recovery_deltas)` violates the
+// WPDS model. Replaced by `LatticeTokenSource` (M3) where alt identity
+// lives in the SHARED input DAG and the cursor's `pos: usize` (= DAG
+// node-id) suffices to distinguish alt timelines.
 
 /// L10 (2026-04-28): a token source that supports incremental edits.
 ///
