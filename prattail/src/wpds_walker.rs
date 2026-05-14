@@ -648,6 +648,16 @@ pub enum ForkActionKind {
         kind: TokenKind,
         text: String,
         next_pos: usize,
+        /// M6c.1 (2026-05-14): the literal rule that consumes this alt's
+        /// `kind` in the current category. Codegen-baked at lex-Fork
+        /// emit time via the per-grammar `lex_alt_rule_for(cat, kind)
+        /// -> Option<u16>` table. Used by the walker's apply arm
+        /// (M6c.3) to push the rule's Return marker onto the GSS so
+        /// the captured token flows through `FireAction` and produces
+        /// an AST term (e.g., `Int::NumLit(0)`).
+        ///
+        /// Placeholder `0u16` during M6c.1; populated by codegen in M6c.3.
+        rule_idx: u16,
     },
 
     /// Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ, 2026-05-05) — atomic
@@ -3664,7 +3674,12 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
-                        ForkActionKind::LexAlt { alt_idx, kind, text, next_pos } => {
+                        ForkActionKind::LexAlt { alt_idx, kind, text, next_pos, rule_idx } => {
+                            // M6c.1 (2026-05-14): rule_idx is the literal rule
+                            // that consumes this alt's kind; M6c.3 will use it
+                            // to push the rule's Return marker so the token
+                            // flows through FireAction. Currently ignored.
+                            let _ = rule_idx;
                             let mut sym = branch.symbol;
                             // M5 (2026-05-13): set child's pos to the alt's
                             // `next_pos` directly. For LatticeTokenSource,

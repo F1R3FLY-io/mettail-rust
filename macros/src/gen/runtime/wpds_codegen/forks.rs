@@ -218,6 +218,9 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                         kind: alt.kind.clone(),
                         text: alt.text.to_string(),
                         next_pos: alt_next_pos,
+                        // M6c.1 (2026-05-14): placeholder; M6c.3 will
+                        // replace with the lex_alt_rule_for lookup.
+                        rule_idx: 0u16,
                     },
                 });
             }
