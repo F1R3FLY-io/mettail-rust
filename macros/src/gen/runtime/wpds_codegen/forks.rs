@@ -186,7 +186,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                     },
                     action_kind: mettail_prattail::wpds_walker::ForkActionKind::LexAlt {
                         alt_idx: (alt_idx + 1) as u16,
-                        kind: alt.kind,
+                        kind: alt.kind.clone(),
                         text: alt.text.to_string(),
                         end_byte: alt.end_byte,
                     },

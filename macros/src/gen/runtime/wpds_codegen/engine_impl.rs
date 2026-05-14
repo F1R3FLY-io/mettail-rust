@@ -162,6 +162,10 @@ pub(crate) fn emit_engine_impl_full(
     // `GroupingClosePreservingInner` sentinel resolution.
     let cat_of_type_name_body =
         emit_cat_of_type_name(language, categories);
+    // L-substrate Piece #6 (2026-05-13): lex-fork dispatch block,
+    // emitted at the top of the WpdsState::PrefixDispatch arm.
+    let lex_fork_dispatch =
+        super::forks::emit_lex_fork_at_prefix_dispatch(primary_src_idx);
 
     quote! {
         impl mettail_prattail::wpds_walker::WpdsStepEngine<
@@ -200,6 +204,21 @@ pub(crate) fn emit_engine_impl_full(
                         }
                     }
                     WpdsState::PrefixDispatch { pos, cur_bp } => {
+                        // L-substrate Piece #6 (2026-05-13): lex-fork
+                        // dispatch BEFORE any other PrefixDispatch
+                        // logic. Emits a Fork over `peek_alternatives(*pos)`
+                        // when the active token source detected lex
+                        // ambiguity (multi-length-accept points along
+                        // the DFA walk — e.g., for input `-3` the
+                        // scanner visits both `Minus@end=1` and
+                        // `Integer@end=2`, surfacing as 2 alternatives
+                        // in `entries[0]`). The default
+                        // `SliceTokenSource::peek_alternatives` returns
+                        // `&[]` so this dispatch is inert without a
+                        // `MutableMultiTokenSource` attached (Pieces
+                        // #3/#7 facade glue gates the source
+                        // selection).
+                        #lex_fork_dispatch
                         // Stage 3.16 / Hack #7 (Cluster 1, Mechanism γ,
                         // 2026-05-05): Fork over close + cross-cat-redirect
                         // branches. For shipped grammars the conditions
