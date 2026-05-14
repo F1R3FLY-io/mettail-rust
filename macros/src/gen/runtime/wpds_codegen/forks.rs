@@ -168,19 +168,27 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 // apply_action::Fork dispatch logs
                 // BuilderDelta::CommitLexAlternative with the right
                 // arguments.
+                // L-substrate (2026-05-13): `(alt_idx + 1) as u16` so
+                // the first secondary alt gets `lex_alt_idx = 1` — the
+                // primary cursor (fall-through, no Fork branch)
+                // defaults to `lex_alt_idx = 0` per from_cost, so
+                // tying primary-cost cursors prefer the canonical
+                // longest-match (lex_alt_idx=0) over secondaries
+                // (lex_alt_idx>=1) via LexicographicWeight::lex_cmp.
                 __branches.push(mettail_prattail::wpds_walker::ForkBranch {
                     symbol: StackSymbolV2::category_entry(primary_src),
                     weight: LexicographicWeight::from_cost_with_lex(
-                        0.0, primary_src, 0, alt_idx as u16,
+                        0.0, primary_src, 0, (alt_idx + 1) as u16,
                     ),
                     new_state: WpdsState::PrefixDispatch {
                         pos: *pos,
                         cur_bp: *cur_bp,
                     },
                     action_kind: mettail_prattail::wpds_walker::ForkActionKind::LexAlt {
-                        alt_idx: alt_idx as u16,
+                        alt_idx: (alt_idx + 1) as u16,
                         kind: alt.kind,
                         text: alt.text.to_string(),
+                        end_byte: alt.end_byte,
                     },
                 });
             }

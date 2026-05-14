@@ -634,7 +634,17 @@ pub enum ForkActionKind {
     /// AND logs a `BuilderDelta::CommitLexAlternative { pos, alt_idx, kind,
     /// text }` onto its pending ops. Replay (commit_winner) drives the
     /// MutableMultiTokenSource to commit the alt at parse time.
-    LexAlt { alt_idx: u16, kind: TokenKind, text: String },
+    ///
+    /// L-substrate Piece #5b (2026-05-13): `end_byte` added so the
+    /// walker's apply can populate `cursor.pending_lex_alts` with the
+    /// alt's byte boundary, enabling the per-cursor `CursorViewSource`
+    /// to project the correct downstream tokenization for this alt.
+    LexAlt {
+        alt_idx: u16,
+        kind: TokenKind,
+        text: String,
+        end_byte: usize,
+    },
 
     /// Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ, 2026-05-05) — atomic
     /// literal multi-arm Fork branch. Mirrors `WpdsStepAction::ConsumeAndPush
@@ -3723,7 +3733,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
-                        ForkActionKind::LexAlt { alt_idx, kind, text } => {
+                        ForkActionKind::LexAlt { alt_idx, kind, text, end_byte } => {
                             let mut sym = branch.symbol;
                             let mut child = BranchCursor {
                                 node: cursor.node,
@@ -3756,6 +3766,30 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // pos/kind/text/tail_entries below.
                                 pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
+                            // L-substrate Piece #5b (2026-05-13): record
+                            // the alt as a per-cursor override. The
+                            // `tail_entries` field is empty for now —
+                            // future commits will compute it via a
+                            // trait-extension re-lex of
+                            // `source_text[end_byte..]` so downstream
+                            // peeks return the alt's timeline (not the
+                            // primary's). Empty `tail_entries` means
+                            // downstream peeks fall through to the
+                            // primary — workable for ALIGNED-end alts
+                            // (e.g., `if` vs `Ident` both ending at the
+                            // same byte) and a known limitation for
+                            // NON-aligned alts (e.g., `Minus@1` vs
+                            // `Integer@2` for `-3`).
+                            child.pending_lex_alts.insert(
+                                child.pos,
+                                crate::wpds_runtime::LexOverride {
+                                    kind: kind.clone(),
+                                    text: text.clone(),
+                                    end_byte,
+                                    alt_idx,
+                                    tail_entries: Vec::new(),
+                                },
+                            );
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             child.recovery_deltas.push(
                                 BuilderDelta::CommitLexAlternative {
