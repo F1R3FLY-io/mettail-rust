@@ -4544,12 +4544,22 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         let drained: Vec<BranchCursor<W>> = std::mem::take(&mut self.branch_cursors);
         for cursor in drained {
             let frontier_top = self.gss.node(cursor.node).cloned();
+            // L-substrate Piece #5 (2026-05-13): per-cursor token view.
+            // Each cursor's `pending_lex_alts` overlays the base
+            // tokens — so a LexAlt Fork child sees the alt's kind/text
+            // at the forked position (and the re-lexed downstream) while
+            // siblings and ancestors see the primary. Empty overrides
+            // → behaves identically to passing `tokens` directly.
+            let view = crate::wpds_runtime::CursorViewSource {
+                base: tokens,
+                overrides: &cursor.pending_lex_alts,
+            };
             let action = self.engine.step(
                 &cursor.inner_state,
                 &self.gss,
                 frontier_top.as_ref(),
                 cursor.pos,
-                tokens,
+                &view,
             );
             let mut cursor = cursor;
             let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
@@ -6056,12 +6066,20 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             // borrow on `self.gss` is short-lived.
                             let frontier_snap =
                                 self.gss.node(cursor.node).cloned();
+                            // L-substrate Piece #5 (2026-05-13): wrap
+                            // with cursor's lex-alt view so the test
+                            // step sees the same tokenization as the
+                            // normal per-cursor dispatch.
+                            let view = crate::wpds_runtime::CursorViewSource {
+                                base: tokens,
+                                overrides: &cursor.pending_lex_alts,
+                            };
                             let test_action = self.engine.step(
                                 &WpdsState::InfixLoop { cur_bp: 0 },
                                 &self.gss,
                                 frontier_snap.as_ref(),
                                 cursor.pos,
-                                tokens,
+                                &view,
                             );
                             matches!(
                                 test_action,
