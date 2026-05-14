@@ -844,6 +844,28 @@ pub trait WpdsTokenSource {
     fn end_byte(&self, _pos: usize, _alt_idx: usize) -> Option<usize> {
         None
     }
+
+    /// M3 (2026-05-13): return the target token-position after consuming
+    /// alternative `alt_idx` from `pos`.
+    ///
+    /// For LINEAR sources (`SliceTokenSource`, `MultiTokenSource`,
+    /// `MutableMultiTokenSource`), the default `Some(pos + 1)` is correct:
+    /// all alternatives at the same position share the same downstream
+    /// timeline.
+    ///
+    /// For LATTICE sources (`LatticeTokenSource`, M3 below), `pos` is a
+    /// DAG node-id and each alt's `target_node` may differ — so the
+    /// override returns the alt's `target_node`. This is the mechanism
+    /// that lets the WPDS walker advance Fork branches to DIFFERENT
+    /// downstream positions purely via `cursor.pos`, with NO per-cursor
+    /// sidecar state.
+    fn next_pos(&self, pos: usize, _alt_idx: usize) -> Option<usize> {
+        if pos < self.len() {
+            Some(pos + 1)
+        } else {
+            None
+        }
+    }
 }
 
 /// L-substrate Piece #5 (2026-05-13): per-cursor lex-alternative override.
@@ -1333,6 +1355,152 @@ impl WpdsTokenSource for MultiTokenSource {
             .alternatives
             .get(alt_idx)
             .map(|a| a.end_byte)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LatticeTokenSource — M3 (2026-05-13): WpdsTokenSource over a LexDag
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A `WpdsTokenSource` backed by a [`crate::lexer_types::LexDag`].
+///
+/// The cursor's `pos: usize` is interpreted as a **DAG node-id** (not a
+/// flat token index). `peek_kind(pos)` returns the kind of the primary
+/// (longest-match) outgoing edge of node `pos`; `peek_alternatives(pos)`
+/// returns the secondary edges; `next_pos(pos, alt_idx)` returns the
+/// `target_node` of the chosen edge.
+///
+/// **Why this matters**: under the LEGACY linear sources (SliceTokenSource,
+/// MultiTokenSource), all alternatives at the same position share the
+/// same downstream — the cursor's `pos + 1` after consuming any alt
+/// lands at the same token. Under multi-LENGTH ambiguity (e.g., `Minus@end=1`
+/// vs `Integer@end=2` at byte 0 of `-3`), different alts have DIFFERENT
+/// downstream positions. The DAG encodes this: each cursor's `pos` (a
+/// DAG node) naturally identifies its alt-timeline. NO per-cursor sidecar
+/// is needed — alt identity lives in the SHARED input structure.
+///
+/// This replaces the `pending_lex_alts: BTreeMap` sidecar (commits
+/// `3290e05` / `ed53ea3`, reverted at M4) per the WPDS-stack-purity
+/// principle in `~/.claude/plans/wpds-ambiguity-preserving-redesign.md`.
+pub struct LatticeTokenSource {
+    /// The underlying DAG.
+    pub dag: crate::lexer_types::LexDag,
+    /// Cached per-node primary kind (= `edges[0].kind`) for O(1)
+    /// `peek_kind`. Indexed by node id.
+    primary_kinds: Vec<TokenKind>,
+    /// Cached per-node primary text. Indexed by node id. Empty string
+    /// for the EOF sentinel (no edges).
+    primary_texts: Vec<String>,
+    /// Cached per-node secondary `LexAlternative` slice (= `edges[1..]`
+    /// converted to `LexAlternative` records). The walker's lex-fork
+    /// emitter at PrefixDispatch consults this via `peek_alternatives`.
+    secondary_alts: Vec<Vec<crate::lexer_types::LexAlternative>>,
+}
+
+impl LatticeTokenSource {
+    /// Construct from a [`crate::lexer_types::LexDag`]. Pre-computes the
+    /// per-node primary-kind/text caches for O(1) accessors.
+    pub fn new(dag: crate::lexer_types::LexDag) -> Self {
+        let n = dag.nodes.len();
+        let mut primary_kinds = Vec::with_capacity(n);
+        let mut primary_texts = Vec::with_capacity(n);
+        let mut secondary_alts: Vec<Vec<crate::lexer_types::LexAlternative>> =
+            Vec::with_capacity(n);
+        for node in &dag.nodes {
+            match node.edges.first() {
+                Some(primary) => {
+                    primary_kinds.push(primary.kind.clone());
+                    primary_texts.push(primary.text.clone());
+                }
+                None => {
+                    // EOF sentinel: emit Eof so callers can detect end.
+                    primary_kinds.push(TokenKind::Eof);
+                    primary_texts.push(String::new());
+                }
+            }
+            // Secondaries: edges[1..] converted to LexAlternative.
+            let secs: Vec<crate::lexer_types::LexAlternative> = node
+                .edges
+                .iter()
+                .skip(1)
+                .map(|e| crate::lexer_types::LexAlternative {
+                    kind: e.kind.clone(),
+                    text: e.text.clone(),
+                    end_byte: e.end_byte,
+                    weight: e.weight,
+                })
+                .collect();
+            secondary_alts.push(secs);
+        }
+        LatticeTokenSource {
+            dag,
+            primary_kinds,
+            primary_texts,
+            secondary_alts,
+        }
+    }
+
+    /// Returns the target node of edge `alt_idx` (0 = primary; 1+ =
+    /// secondaries) from node `pos`. Used by the walker (M5+) to advance
+    /// LexAlt Fork children to the alt's target node.
+    pub fn target_node(&self, pos: usize, alt_idx: usize) -> Option<usize> {
+        self.dag
+            .nodes
+            .get(pos)?
+            .edges
+            .get(alt_idx)
+            .map(|e| e.target_node)
+    }
+}
+
+impl WpdsTokenSource for LatticeTokenSource {
+    fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
+        self.primary_kinds.get(pos).cloned()
+    }
+
+    fn peek_text(&self, pos: usize) -> Option<&str> {
+        self.primary_texts.get(pos).map(|s| s.as_str())
+    }
+
+    fn len(&self) -> usize {
+        self.dag.nodes.len()
+    }
+
+    fn peek_alternatives(&self, pos: usize) -> &[crate::lexer_types::LexAlternative] {
+        self.secondary_alts
+            .get(pos)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    fn is_ambiguous_at(&self, pos: usize) -> bool {
+        self.dag
+            .nodes
+            .get(pos)
+            .map(|n| n.edges.len() > 1)
+            .unwrap_or(false)
+    }
+
+    fn end_byte(&self, pos: usize, alt_idx: usize) -> Option<usize> {
+        self.dag
+            .nodes
+            .get(pos)?
+            .edges
+            .get(alt_idx)
+            .map(|e| e.end_byte)
+    }
+
+    /// M3: return the target NODE INDEX after consuming edge `alt_idx`
+    /// from node `pos`. Replaces the default linear `pos + 1` advance —
+    /// the LATTICE source's `pos` is a DAG node and the next position
+    /// depends on which alt is chosen.
+    fn next_pos(&self, pos: usize, alt_idx: usize) -> Option<usize> {
+        self.dag
+            .nodes
+            .get(pos)?
+            .edges
+            .get(alt_idx)
+            .map(|e| e.target_node)
     }
 }
 
@@ -2658,5 +2826,106 @@ mod tests {
         let args = b.pop_args(1);
         let collected: Vec<i32> = args.into_iter().next().unwrap().into_collection().expect("Vec<i32>");
         assert_eq!(collected, vec![1, 2, 3]);
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // M3 (2026-05-13): LatticeTokenSource + next_pos
+    // ──────────────────────────────────────────────────────────────────
+
+    /// Build a small LexDag for `-3` to exercise LatticeTokenSource.
+    /// The DFA recognizes `-?\d+` (Integer) AND `-` (Minus). See the
+    /// `runtime_types::tests::make_test_dfa` for the recipe.
+    fn make_minus3_dag() -> crate::lexer_types::LexDag {
+        let mut char_class = [2u8; 256];
+        char_class[b'-' as usize] = 0;
+        for c in b'0'..=b'9' {
+            char_class[c as usize] = 1;
+        }
+        let dfa_next = |s: u32, c: u8| -> u32 {
+            match (s, c) {
+                (0, 0) => 1,
+                (0, 1) => 2,
+                (1, 1) => 2,
+                (2, 1) => 2,
+                _ => u32::MAX,
+            }
+        };
+        let is_accepting = |s: u32| -> bool { s == 1 || s == 2 };
+        let accept_alternatives = |s: u32, _text: &str| -> Vec<(crate::automata::TokenKind, f64)> {
+            match s {
+                1 => vec![(crate::automata::TokenKind::Fixed("-".to_string()), 0.0)],
+                2 => vec![(crate::automata::TokenKind::Integer, 0.0)],
+                _ => Vec::new(),
+            }
+        };
+        let token_to_kind = |t: &crate::automata::TokenKind| -> crate::automata::TokenKind {
+            t.clone()
+        };
+        crate::runtime_types::lex_dag_core(
+            "-3",
+            None,
+            &char_class,
+            dfa_next,
+            is_accepting,
+            accept_alternatives,
+            token_to_kind,
+        )
+        .expect("lex_dag should succeed")
+    }
+
+    #[test]
+    fn lattice_source_peek_kind_returns_primary() {
+        let src = LatticeTokenSource::new(make_minus3_dag());
+        // Node 0 is at byte 0; primary edge = Integer (longest, end=2).
+        assert!(matches!(src.peek_kind(0), Some(TokenKind::Integer)));
+    }
+
+    #[test]
+    fn lattice_source_peek_text_returns_primary_text() {
+        let src = LatticeTokenSource::new(make_minus3_dag());
+        // Primary edge from node 0 consumes "-3".
+        assert_eq!(src.peek_text(0), Some("-3"));
+    }
+
+    #[test]
+    fn lattice_source_is_ambiguous_at_node_0() {
+        let src = LatticeTokenSource::new(make_minus3_dag());
+        // Node 0 has 2 edges (Integer + Minus).
+        assert!(src.is_ambiguous_at(0));
+        let alts = src.peek_alternatives(0);
+        // Secondaries only (primary is at edges[0]; alts = edges[1..]).
+        assert_eq!(alts.len(), 1);
+        assert!(matches!(alts[0].kind, TokenKind::Fixed(ref s) if s == "-"));
+    }
+
+    #[test]
+    fn lattice_source_next_pos_returns_alt_target() {
+        let src = LatticeTokenSource::new(make_minus3_dag());
+        // Primary edge (alt_idx=0) targets the node at byte 2 (end of "-3").
+        let primary_target = src.next_pos(0, 0).expect("primary edge must exist");
+        // Secondary edge (alt_idx=1) targets the node at byte 1 (end of "-").
+        let secondary_target = src.next_pos(0, 1).expect("secondary edge must exist");
+        assert_ne!(primary_target, secondary_target);
+        // Verify the byte_start of each target node.
+        assert_eq!(src.dag.nodes[primary_target].byte_start, 2);
+        assert_eq!(src.dag.nodes[secondary_target].byte_start, 1);
+    }
+
+    #[test]
+    fn lattice_source_end_byte_matches_edge() {
+        let src = LatticeTokenSource::new(make_minus3_dag());
+        assert_eq!(src.end_byte(0, 0), Some(2)); // Integer ends at byte 2
+        assert_eq!(src.end_byte(0, 1), Some(1)); // Minus ends at byte 1
+    }
+
+    #[test]
+    fn slice_source_next_pos_default_linear() {
+        // SliceTokenSource uses the default `next_pos = pos + 1` impl.
+        // Verify it advances linearly regardless of alt_idx.
+        let kinds = vec![TokenKind::Integer, TokenKind::Eof];
+        let src = SliceTokenSource::new(&kinds);
+        assert_eq!(src.next_pos(0, 0), Some(1));
+        assert_eq!(src.next_pos(0, 5), Some(1)); // ignores alt_idx
+        assert_eq!(src.next_pos(2, 0), None); // past end
     }
 }
