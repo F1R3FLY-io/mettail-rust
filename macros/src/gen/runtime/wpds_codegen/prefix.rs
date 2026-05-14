@@ -656,7 +656,7 @@ fn collect_first_set(
 ///     return WpdsStepAction::ConsumeAndPush {
 ///         symbol: StackSymbolV2::grouping_marker(#c_src, *cur_bp),
 ///         weight: LexicographicWeight::one(),
-///         new_state: WpdsState::PrefixDispatch { pos: *pos + 1, cur_bp: 0 },
+///         new_state: WpdsState::PrefixDispatch { pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1), cur_bp: 0 },
 ///         capture_token: false,
 ///     };
 /// }
@@ -687,7 +687,7 @@ pub fn emit_grouping_arms(categories: &[String]) -> TokenStream {
                     ),
                     weight: LexicographicWeight::one(),
                     new_state: WpdsState::PrefixDispatch {
-                        pos: *pos + 1,
+                        pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                         cur_bp: 0,
                     },
                     capture_token: false,
@@ -747,7 +747,7 @@ pub fn emit_paren_dispatch_arms(
                         ),
                         weight: LexicographicWeight::one(),
                         new_state: WpdsState::PrefixDispatch {
-                            pos: *pos + 1,
+                            pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                             cur_bp: 0,
                         },
                         capture_token: false,
@@ -768,7 +768,7 @@ pub fn emit_paren_dispatch_arms(
                 ),
                 weight: LexicographicWeight::one(),
                 new_state: WpdsState::PrefixDispatch {
-                    pos: *pos + 1,
+                    pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                     cur_bp: 0,
                 },
                 action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,

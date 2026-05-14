@@ -2638,7 +2638,31 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// that `parse_<Cat>::parse_via_wpds` uses on its outer `pos` check.
     #[inline]
     fn is_logical_eoi(&self, pos: usize, tokens: &dyn WpdsTokenSource) -> bool {
-        pos >= tokens.len()
+        // M6c.8.4 (2026-05-14): cursor is at EOI iff `pos` equals the
+        // canonical EOF sentinel index OR is past the slice's flat
+        // length.
+        //
+        // For `SliceTokenSource` and `MultiTokenSource`, the default
+        // `eof_node()` returns `len() - 1` and the trailing-Eof clause
+        // preserves the pre-M6c.8.4 "pos is at the trailing Eof token"
+        // semantics. The `pos >= len()` clause covers cursors that
+        // advanced past the end (defensive).
+        //
+        // For `LatticeTokenSource`, `eof_node()` returns the canonical
+        // EOF sentinel index from the DAG. Crucially, this is NOT
+        // necessarily `nodes.len() - 1`: orphan nodes (allocated by
+        // M6c.7.1 soft-fail for secondary-alt dead-ends) may sit at
+        // indices BEFORE OR AFTER the EOF sentinel. A cursor parked
+        // at an orphan node MUST NOT be considered EOI — the orphan
+        // is structurally a dead-end alt that should die, not accept.
+        //
+        // The `pos == eof_node` check is precise: it accepts ONLY at
+        // the canonical EOF sentinel. The `pos >= len()` slice
+        // fallback covers SliceTokenSource's past-end semantics where
+        // `eof_node = len() - 1` and `pos = len()` is "consumed
+        // the Eof token and advanced past."
+        pos == tokens.eof_node()
+            || pos >= tokens.len()
             || (pos + 1 == tokens.len()
                 && tokens.peek_kind(pos) == Some(TokenKind::Eof))
     }
@@ -2961,7 +2985,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::Consume { weight, new_state } => {
-                self.advance_cursor_pos(cursor, 1);
+                self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -2985,7 +3009,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // side effects (CollectionMarker + OptionalGroupAt(1)).
                 self.emit_push_side_effects(cursor, &mut symbol);
                 let _ = self.cursor_gss_push(cursor, symbol, cursor.pos, weight.clone());
-                self.advance_cursor_pos(cursor, 1);
+                self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -2997,7 +3021,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
                 let pred_id =
                     self.cursor_gss_pop_via_edge(cursor).unwrap_or(crate::gss::GSS_NODE_NONE);
-                self.advance_cursor_pos(cursor, 1);
+                self.advance_cursor_pos(cursor, tokens, 1);
                 self.apply_pop_body_to_cursor(
                     cursor, pred_id, popped_symbol, &weight, new_state, tokens,
                 );
@@ -3005,7 +3029,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             }
             WpdsStepAction::ConsumeAndReplace { symbol, weight, new_state } => {
                 let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight.clone());
-                self.advance_cursor_pos(cursor, 1);
+                self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -3025,7 +3049,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     self.emit_push_ident(cursor, text, pos);
                 }
                 let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight.clone());
-                self.advance_cursor_pos(cursor, 1);
+                self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -3220,7 +3244,14 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     }
                 }
                 let pos_after = if consume_trigger {
-                    cursor.pos + 1
+                    // M6c.6.1 (2026-05-14): use the source's next_pos
+                    // instead of `cursor.pos + 1`. For SliceTokenSource
+                    // the default impl returns `Some(pos + 1)`, so this
+                    // is byte-identical. For LatticeTokenSource this
+                    // tracks the primary edge's `target_node` which
+                    // may not equal `pos + 1` under multi-LENGTH
+                    // ambiguity.
+                    tokens.next_pos(cursor.pos, 0).unwrap_or(cursor.pos + 1)
                 } else {
                     cursor.pos
                 };
@@ -3432,7 +3463,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos_now,
                                 branch.weight.clone(),
                             );
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3464,7 +3495,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
                             };
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3529,7 +3560,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos_now,
                                 branch.weight.clone(),
                             );
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3610,7 +3641,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let pred_id = self
                                 .cursor_gss_pop_via_edge(&mut child)
                                 .unwrap_or(crate::gss::GSS_NODE_NONE);
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
@@ -3669,7 +3700,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos_now,
                                 branch.weight.clone(),
                             );
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3812,7 +3843,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos_now,
                                 branch.weight.clone(),
                             );
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3843,7 +3874,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos_now,
                                 branch.weight.clone(),
                             );
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3890,7 +3921,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos_now,
                                 branch.weight.clone(),
                             );
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3915,7 +3946,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -3965,7 +3996,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos_now,
                                 branch.weight.clone(),
                             );
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -4011,7 +4042,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let pred_id = self
                                 .cursor_gss_pop_via_edge(&mut child)
                                 .unwrap_or(crate::gss::GSS_NODE_NONE);
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
@@ -4065,7 +4096,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos_now,
                                 branch.weight.clone(),
                             );
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -4128,7 +4159,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos_now,
                                 branch.weight.clone(),
                             );
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -4175,7 +4206,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let pred_id = self
                                 .cursor_gss_pop_via_edge(&mut child)
                                 .unwrap_or(crate::gss::GSS_NODE_NONE);
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
@@ -4257,7 +4288,7 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 pos_now,
                                 branch.weight.clone(),
                             );
-                            child.pos += 1;
+                            child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -5550,12 +5581,44 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     // to 1 but `self.deterministic` stays false. The monotone flag avoids
     // accidentally re-mirroring post-commit state.
 
+    /// M6c.6.1 (2026-05-14): advance the cursor's `pos` via the
+    /// token source's `next_pos` rather than a hardcoded `+= n`.
+    ///
+    /// **Why**: for `SliceTokenSource`, `next_pos(pos, 0)` returns
+    /// `Some(pos + 1)` (the trait default), so this is byte-identical
+    /// to the pre-M6c.6.1 behavior. For `LatticeTokenSource`, `next_pos`
+    /// returns the primary edge's `target_node` — which may NOT equal
+    /// `pos + 1` when the DAG has multi-LENGTH ambiguity (e.g., `-3`
+    /// with `Minus@end=1` and `Integer@end=2` having different target
+    /// nodes). The pre-M6c.6.1 walker used `pos += 1` everywhere and
+    /// silently desynced from the lattice DAG; this fix makes every
+    /// advance source-driven.
+    ///
+    /// `n` is always 1 in current callers; the parameter is retained
+    /// for symmetry with the pre-M6c.6.1 signature. Iterative calls
+    /// would be needed for `n > 1` but no such callers exist today.
     #[inline(always)]
-    fn advance_cursor_pos(&mut self, cursor: &mut BranchCursor<W>, n: usize) {
-        cursor.pos += n;
+    fn advance_cursor_pos(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        tokens: &dyn WpdsTokenSource,
+        n: usize,
+    ) {
+        debug_assert_eq!(n, 1, "advance_cursor_pos n > 1 not yet supported");
+        let new_pos = tokens.next_pos(cursor.pos, 0).unwrap_or(cursor.pos + n);
+        cursor.pos = new_pos;
         if self.deterministic {
             self.pos = cursor.pos;
         }
+    }
+
+    /// M6c.6.1 helper: advance a child cursor by one step via the
+    /// source's `next_pos`. Used at 14 sites in the `WpdsStepAction::Fork`
+    /// apply arm to replace `child.pos += 1` (which silently desynced
+    /// from lattice DAGs with non-sequential primary edges).
+    #[inline(always)]
+    fn child_next_pos(tokens: &dyn WpdsTokenSource, pos: usize) -> usize {
+        tokens.next_pos(pos, 0).unwrap_or(pos + 1)
     }
 
     #[inline(always)]

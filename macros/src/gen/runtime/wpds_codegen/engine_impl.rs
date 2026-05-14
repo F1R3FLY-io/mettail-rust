@@ -961,7 +961,7 @@ pub(crate) fn emit_engine_impl_full(
                                         }
                                     } else {
                                         WpdsState::PrefixDispatch {
-                                            pos: _pos + 1,
+                                            pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
                                             cur_bp: r_bp,
                                         }
                                     };
@@ -1031,7 +1031,7 @@ pub(crate) fn emit_engine_impl_full(
                                             result_src, rule_idx,
                                         ),
                                         new_state: WpdsState::PrefixDispatch {
-                                            pos: _pos + 1,
+                                            pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
                                             cur_bp: 0,
                                         },
                                         action_kind:
@@ -1279,7 +1279,7 @@ pub(crate) fn emit_engine_impl_full(
                             Some("(") => WpdsStepAction::Consume {
                                 weight: LexicographicWeight::one(),
                                 new_state: WpdsState::PrefixDispatch {
-                                    pos: _pos + 1,
+                                    pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
                                     cur_bp: 0,
                                 },
                             },

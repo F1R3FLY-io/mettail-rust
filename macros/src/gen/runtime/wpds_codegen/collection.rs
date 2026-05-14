@@ -211,7 +211,7 @@ pub(crate) fn emit_collection_prefix_arms(
             } else {
                 quote! {
                     WpdsState::PrefixDispatch {
-                        pos: *pos + 1,
+                        pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                         cur_bp: 0,
                     }
                 }
@@ -370,7 +370,7 @@ pub(crate) fn emit_collection_loop_arm(
                                             0.0, *result_src_idx, *rule_idx,
                                         ),
                                         new_state: WpdsState::PrefixDispatch {
-                                            pos: _pos + 1,
+                                            pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
                                             cur_bp: 0,
                                         },
                                         action_kind:
