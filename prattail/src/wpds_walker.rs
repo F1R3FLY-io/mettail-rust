@@ -937,6 +937,18 @@ pub struct BranchCursor<W: Semiring> {
     /// `merge_equivalent_cursors`, identical to how `recovery_deltas`
     /// + `collection_stack` are kept today.
     pub builder: Arc<SemanticBuilder>,
+    /// L-substrate Piece #5 (2026-05-13): per-cursor lex-alternative
+    /// overrides for the lex-fork mechanism. Populated when a
+    /// `ForkActionKind::LexAlt` Fork branch is allocated. Wrapped in
+    /// `CursorViewSource` and consulted by `engine.step` so each cursor
+    /// sees ITS OWN lex commits at the positions it has forked at —
+    /// without mutating the shared live `MutableMultiTokenSource`.
+    ///
+    /// Inherited via `Clone` for descendants (a cascade of LexAlt Forks
+    /// accumulates overrides). Replayed onto the live source at
+    /// `commit_winner` via `BuilderDelta::CommitLexAlternative`.
+    pub pending_lex_alts:
+        std::collections::BTreeMap<usize, crate::wpds_runtime::LexOverride>,
 }
 
 impl<W: Semiring> std::fmt::Debug for BranchCursor<W>
@@ -987,6 +999,7 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
             visited_recovery: self.visited_recovery.clone(),
             visited_dispatch: self.visited_dispatch.clone(),
             builder: Arc::clone(&self.builder),
+            pending_lex_alts: self.pending_lex_alts.clone(),
         }
     }
 }
@@ -1063,6 +1076,9 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // `SemanticBuilder::new()` in lockstep, so the two stay
             // structurally identical at construction time.
             builder: Arc::new(SemanticBuilder::new()),
+            // L-substrate Piece #5 (2026-05-13): seed cursor has no
+            // lex-alt overrides — empty map.
+            pending_lex_alts: std::collections::BTreeMap::new(),
         }
     }
 
@@ -1109,6 +1125,10 @@ impl<W: Semiring + Clone> BranchCursor<W> {
             // single-most-important reason the field exists: Fork
             // fanout cost becomes constant per child.
             builder: Arc::clone(&parent.builder),
+            // L-substrate Piece #5 (2026-05-13): inherit parent's
+            // lex-alt overrides. The LexAlt Fork apply (in the walker's
+            // Fork arm) inserts the alt for THIS child after construction.
+            pending_lex_alts: parent.pending_lex_alts.clone(),
         }
     }
 }
@@ -2146,6 +2166,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // already captured the winning branch's effects
                     // via commit_winner journal replay.
                     builder: Arc::new(SemanticBuilder::new()),
+                    // L-substrate Piece #5 (2026-05-13): post-resolution
+                    // singleton starts with no lex-alt overrides — the
+                    // winning branch's overrides were committed onto the
+                    // live MutableMultiTokenSource via
+                    // CommitLexAlternative replay at commit_winner.
+                    pending_lex_alts: std::collections::BTreeMap::new(),
                 }];
                 self.state = new_state.clone();
                 let trace = WpdsTraceEntry {
@@ -2784,6 +2810,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     // flow through `self.builder` (deterministic mode); the
                     // cursor's Arc is a future anchor (5.3+).
                     builder: Arc::new(SemanticBuilder::new()),
+                    // L-substrate Piece #5 (2026-05-13): post-Drop reset
+                    // clears lex-alt overrides; subsequent recovery
+                    // attempts re-emit Forks from scratch if needed.
+                    pending_lex_alts: std::collections::BTreeMap::new(),
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -3288,6 +3318,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // L-substrate Piece #5 (2026-05-13): Fork child
+                                // inherits parent's lex-alt overrides. LexAlt
+                                // Fork apply overrides this with the alt's
+                                // pos/kind/text/tail_entries below.
+                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -3340,6 +3375,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // L-substrate Piece #5 (2026-05-13): Fork child
+                                // inherits parent's lex-alt overrides. LexAlt
+                                // Fork apply overrides this with the alt's
+                                // pos/kind/text/tail_entries below.
+                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             // nondeterministic mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -3403,6 +3443,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // L-substrate Piece #5 (2026-05-13): Fork child
+                                // inherits parent's lex-alt overrides. LexAlt
+                                // Fork apply overrides this with the alt's
+                                // pos/kind/text/tail_entries below.
+                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -3442,6 +3487,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // L-substrate Piece #5 (2026-05-13): Fork child
+                                // inherits parent's lex-alt overrides. LexAlt
+                                // Fork apply overrides this with the alt's
+                                // pos/kind/text/tail_entries below.
+                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             child.pos += 1;
                             children.push(child);
@@ -3474,6 +3524,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // L-substrate Piece #5 (2026-05-13): Fork child
+                                // inherits parent's lex-alt overrides. LexAlt
+                                // Fork apply overrides this with the alt's
+                                // pos/kind/text/tail_entries below.
+                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -3539,6 +3594,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // L-substrate Piece #5 (2026-05-13): Fork child
+                                // inherits parent's lex-alt overrides. LexAlt
+                                // Fork apply overrides this with the alt's
+                                // pos/kind/text/tail_entries below.
+                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3583,6 +3643,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // L-substrate Piece #5 (2026-05-13): Fork child
+                                // inherits parent's lex-alt overrides. LexAlt
+                                // Fork apply overrides this with the alt's
+                                // pos/kind/text/tail_entries below.
+                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3628,6 +3693,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // L-substrate Piece #5 (2026-05-13): Fork child
+                                // inherits parent's lex-alt overrides. LexAlt
+                                // Fork apply overrides this with the alt's
+                                // pos/kind/text/tail_entries below.
+                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             // Phase 5.5 (2026-05-12): eagerly apply effect
@@ -3680,6 +3750,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // L-substrate Piece #5 (2026-05-13): Fork child
+                                // inherits parent's lex-alt overrides. LexAlt
+                                // Fork apply overrides this with the alt's
+                                // pos/kind/text/tail_entries below.
+                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             child.recovery_deltas.push(
@@ -3740,6 +3815,11 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // L-substrate Piece #5 (2026-05-13): Fork child
+                                // inherits parent's lex-alt overrides. LexAlt
+                                // Fork apply overrides this with the alt's
+                                // pos/kind/text/tail_entries below.
+                                pending_lex_alts: cursor.pending_lex_alts.clone(),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -5124,6 +5204,12 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             // vis behavior — the live mutation surface is still
             // `self.builder`, journaled deltas replay against it above.
             builder: winner.builder,
+            // L-substrate Piece #5 (2026-05-13): post-commit singleton
+            // clears lex-alt overrides — the winner's overrides have
+            // been committed onto the live MutableMultiTokenSource via
+            // CommitLexAlternative replay; subsequent steps see the
+            // committed alternative through the live source directly.
+            pending_lex_alts: std::collections::BTreeMap::new(),
         }];
     }
 
