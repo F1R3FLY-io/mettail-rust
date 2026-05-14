@@ -48,6 +48,12 @@ pub(crate) fn emit_parse_fns(
         let fn_name = format_ident!("parse_{}_via_wpds", cat_name);
         let recovering_fn_name = format_ident!("parse_{}_via_wpds_recovering", cat_name);
         let with_weight_fn_name = format_ident!("parse_{}_via_wpds_with_weight", cat_name);
+        // M8 (2026-05-14): multi-result entry points. `_all_with_source`
+        // takes `&dyn WpdsTokenSource` (slice OR lattice) and returns
+        // every accepted term from the walker's `WpdsResolveResult::Accepted`
+        // vec. `_all` is a `SliceTokenSource` wrapper for backward compat.
+        let all_with_source_fn_name = format_ident!("parse_{}_via_wpds_all_with_source", cat_name);
+        let all_fn_name = format_ident!("parse_{}_via_wpds_all", cat_name);
         let cat_src_idx_u16 = cat_src_idx as u16;
         fns.push(quote! {
             /// WPDS-runtime parser for the `#cat_ident` category.
@@ -151,6 +157,97 @@ pub(crate) fn emit_parse_fns(
                         position: exceeded.position,
                     }),
                 }
+            }
+
+            /// M8 (2026-05-14): multi-result WPDS parser that takes any
+            /// `WpdsTokenSource` impl (slice OR lattice). Returns every
+            /// term the walker's `WpdsResolveResult::Accepted` carries —
+            /// the ambiguity-preserving final state. Use this when you
+            /// need to surface ALL parses for downstream disambiguation
+            /// at the eval layer (run_ascent_typed's Ambiguous-flatten),
+            /// or via `Cat::parse_all`.
+            ///
+            /// `parse_<Cat>_via_wpds_all_with_source` is the source-generic
+            /// entry; `parse_<Cat>_via_wpds_all` wraps it with a
+            /// `SliceTokenSource` for slice callers.
+            ///
+            /// Does NOT apply recovery — a clean accept yields
+            /// `Ok((terms, weights))`; non-Accepted termination yields
+            /// `Err(WpdsParseError)`.
+            pub fn #all_with_source_fn_name(
+                source: &dyn mettail_prattail::wpds_runtime::WpdsTokenSource,
+                pos: &mut usize,
+                min_bp: u8,
+            ) -> Result<
+                (
+                    Vec<#cat_ident>,
+                    Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                ),
+                WpdsParseError,
+            > {
+                use mettail_prattail::wpds_runtime::WpdsResolveResult;
+                use mettail_prattail::wpds_walker::WpdsWalker;
+                use mettail_prattail::automata::lex_weight::LexicographicWeight;
+                const MAX_STEPS: usize = 1_000_000;
+                let mut walker = WpdsWalker::<LexicographicWeight, _>::new_for_category(
+                    #engine_ident::default(),
+                    #cat_src_idx_u16,
+                    min_bp,
+                );
+                match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
+                    Ok(()) => match walker.resolve_at_end_of_input(source) {
+                        WpdsResolveResult::Accepted { weights, terms } => {
+                            *pos = walker.position();
+                            if terms.is_empty() {
+                                return Err(WpdsParseError::EmptyResult);
+                            }
+                            let mut typed_terms: Vec<#cat_ident> = Vec::with_capacity(terms.len());
+                            for term in terms {
+                                let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                    .map_err(|_| WpdsParseError::EmptyResult)?;
+                                let typed = std::sync::Arc::try_unwrap(arc)
+                                    .unwrap_or_else(|arc| (*arc).clone());
+                                typed_terms.push(typed);
+                            }
+                            Ok((typed_terms, weights))
+                        }
+                        WpdsResolveResult::ParseError { message, position } => {
+                            Err(WpdsParseError::ParseFailed {
+                                message,
+                                position,
+                                attempts: Vec::new(),
+                            })
+                        }
+                        WpdsResolveResult::MaxStepsExceeded { position } => {
+                            Err(WpdsParseError::Incomplete { position })
+                        }
+                    },
+                    Err(exceeded) => Err(WpdsParseError::Incomplete {
+                        position: exceeded.position,
+                    }),
+                }
+            }
+
+            /// M8 wrapper: slice-source convenience for callers that
+            /// already have `kinds` + `texts` Vecs. Routes through
+            /// `parse_<Cat>_via_wpds_all_with_source` with a
+            /// `SliceTokenSource`.
+            pub fn #all_fn_name(
+                kinds: &[mettail_prattail::automata::TokenKind],
+                texts: &[&str],
+                pos: &mut usize,
+                min_bp: u8,
+            ) -> Result<
+                (
+                    Vec<#cat_ident>,
+                    Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                ),
+                WpdsParseError,
+            > {
+                let src = mettail_prattail::wpds_runtime::SliceTokenSource::with_texts(
+                    kinds, texts,
+                );
+                #all_with_source_fn_name(&src, pos, min_bp)
             }
 
             /// WPDS-runtime parser variant that exposes the recovery trail
