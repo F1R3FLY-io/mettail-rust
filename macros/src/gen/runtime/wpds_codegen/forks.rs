@@ -146,13 +146,28 @@ pub(crate) fn emit_first_set_fork(
 /// edge work in Commit 4). For default lexers, this emission is inert.
 pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStream {
     quote! {
-        // Cluster 2 #12 (Stage 3.14 / 2026-05-05): lex-Fork dispatch.
+        // M6c.3 (2026-05-14): lex-Fork emits ALL alternatives — primary
+        // (branch[0]) + each secondary that has a literal rule in the
+        // requesting cat. Each branch is bound to its categorical
+        // literal rule via `lex_alt_rule_for(state_cat, kind)`; the
+        // walker's LexAlt apply arm uses the rule's Return marker
+        // symbol to flow the token through FireAction and produce an
+        // AST term.
         //
-        // When the active token source has multiple lex alternatives at
-        // *pos, emit a Fork over them so lex-min picks the canonical
-        // interpretation. `peek_alternatives` returns `&[]` for sources
-        // without ambiguity (the default `SliceTokenSource`); only
-        // `MutableMultiTokenSource` populates non-empty alts.
+        // Mandate compliance: pure rule-out by evidence. A branch is
+        // dropped iff `lex_alt_rule_for` returns None (no rule in the
+        // requesting cat for that kind). No weight-based pre-filter.
+        //
+        // Primary cursor preserved: pre-M6c the Fork emitted only
+        // secondaries and `return`ed, replacing the primary cursor.
+        // Now branch[0] IS the primary alt (`alt_idx=0`,
+        // `lex_alt_idx=0`); secondaries are `alt_idx=1..` with
+        // `lex_alt_idx>=1`.
+        //
+        // Fast path: when `__branches.len() < 2` (no actual ambiguity
+        // surviving the rule-out filter, or only the primary has a
+        // rule), the function FALLS THROUGH to the normal per-cat
+        // PrefixDispatch arms — byte-identical to non-ambiguous lex.
         if tokens.is_ambiguous_at(*pos) {
             let alts = tokens.peek_alternatives(*pos);
             let primary_src_for_fork: u16 = #primary_src_idx;
@@ -161,70 +176,68 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 .unwrap_or(primary_src_for_fork);
             let mut __branches: Vec<mettail_prattail::wpds_walker::ForkBranch<
                 LexicographicWeight,
-            >> = Vec::with_capacity(alts.len());
-            for (alt_idx, alt) in alts.iter().enumerate() {
-                // Mechanism γ (Stage 3.16, 2026-05-05): LexAlt action_kind
-                // carries the alt's kind/text payload so the walker's
-                // apply_action::Fork dispatch logs
-                // BuilderDelta::CommitLexAlternative with the right
-                // arguments.
-                //
-                // L-substrate (2026-05-13): `(alt_idx + 1) as u16` so
-                // the first secondary alt gets `lex_alt_idx = 1` — the
-                // primary cursor (fall-through, no Fork branch)
-                // defaults to `lex_alt_idx = 0` per from_cost, so
-                // tying primary-cost cursors prefer the canonical
-                // longest-match (lex_alt_idx=0) over secondaries
-                // (lex_alt_idx>=1) via LexicographicWeight::lex_cmp.
-                //
-                // M5 (2026-05-13): `next_pos` replaces `end_byte`. The
-                // walker's apply uses `next_pos` to set the child's
-                // `cursor.pos` directly. For LatticeTokenSource this is
-                // the alt's DAG `target_node`; for linear sources the
-                // trait default returns `pos + 1`. Calling
-                // `tokens.next_pos(*pos, alt_idx + 1)` runs through the
-                // active source's impl — correct in both cases.
-                //
-                // M6b (2026-05-14): KNOWN INCOMPLETE. The LexAlt action
-                // advances cursor.pos past the alternative WITHOUT
-                // parsing it via a rule — the resulting cursor at
-                // alt_next_pos has no AST for the consumed token.
-                // For `-3` style multi-length ambiguity (Minus@end=1
-                // vs Integer@end=2 at pos 0), the Integer-alt cursor
-                // is at EOF with no AST → walker rejects. The Minus-alt
-                // cursor is at byte 1 expecting another token but the
-                // Minus consumption was never bound to a `Neg` prefix
-                // rule. Result: parse fails. A full M6b fix needs to
-                // reconcile LexAlt's "skip past token" semantics with
-                // the parser's "match token via rule" expectation —
-                // either by leaving cursor.pos at the original position
-                // and letting PrefixDispatch parse the alt's kind, or
-                // by binding the alt's kind to a categorical literal
-                // rule that produces an AST term automatically.
-                let alt_next_pos = tokens
-                    .next_pos(*pos, alt_idx + 1)
-                    .unwrap_or(*pos + 1);
-                __branches.push(mettail_prattail::wpds_walker::ForkBranch {
-                    symbol: StackSymbolV2::category_entry(primary_src),
-                    weight: LexicographicWeight::from_cost_with_lex(
-                        0.0, primary_src, 0, (alt_idx + 1) as u16,
-                    ),
-                    new_state: WpdsState::PrefixDispatch {
-                        pos: alt_next_pos,
-                        cur_bp: *cur_bp,
-                    },
-                    action_kind: mettail_prattail::wpds_walker::ForkActionKind::LexAlt {
-                        alt_idx: (alt_idx + 1) as u16,
-                        kind: alt.kind.clone(),
-                        text: alt.text.to_string(),
-                        next_pos: alt_next_pos,
-                        // M6c.1 (2026-05-14): placeholder; M6c.3 will
-                        // replace with the lex_alt_rule_for lookup.
-                        rule_idx: 0u16,
-                    },
-                });
+            >> = Vec::with_capacity(alts.len() + 1);
+
+            // Branch[0] — PRIMARY (lex_alt_idx = 0).
+            if let Some(primary_kind) = tokens.peek_kind(*pos) {
+                if let Some(primary_rule_idx) =
+                    lex_alt_rule_for(primary_src, &primary_kind)
+                {
+                    let primary_text = tokens.peek_text(*pos).unwrap_or("").to_string();
+                    let primary_next_pos = tokens.next_pos(*pos, 0).unwrap_or(*pos + 1);
+                    let sym = StackSymbolV2::rule_at(
+                        primary_src, primary_rule_idx, 0u8, Some(*cur_bp),
+                    ).with_kind_return();
+                    __branches.push(mettail_prattail::wpds_walker::ForkBranch {
+                        symbol: sym,
+                        weight: LexicographicWeight::from_cost_with_lex(
+                            0.0, primary_src, primary_rule_idx, 0u16,
+                        ),
+                        new_state: WpdsState::Unwinding,
+                        action_kind: mettail_prattail::wpds_walker::ForkActionKind::LexAlt {
+                            alt_idx: 0u16,
+                            kind: primary_kind,
+                            text: primary_text,
+                            next_pos: primary_next_pos,
+                            rule_idx: primary_rule_idx,
+                        },
+                    });
+                }
             }
-            if !__branches.is_empty() {
+
+            // Branches[1..] — SECONDARIES (lex_alt_idx = 1..).
+            for (sec_idx, alt) in alts.iter().enumerate() {
+                let alt_idx = (sec_idx + 1) as u16;
+                if let Some(rule_idx) = lex_alt_rule_for(primary_src, &alt.kind) {
+                    let alt_next_pos = tokens
+                        .next_pos(*pos, sec_idx + 1)
+                        .unwrap_or(*pos + 1);
+                    let sym = StackSymbolV2::rule_at(
+                        primary_src, rule_idx, 0u8, Some(*cur_bp),
+                    ).with_kind_return();
+                    __branches.push(mettail_prattail::wpds_walker::ForkBranch {
+                        symbol: sym,
+                        weight: LexicographicWeight::from_cost_with_lex(
+                            0.0, primary_src, rule_idx, alt_idx,
+                        ),
+                        new_state: WpdsState::Unwinding,
+                        action_kind: mettail_prattail::wpds_walker::ForkActionKind::LexAlt {
+                            alt_idx,
+                            kind: alt.kind.clone(),
+                            text: alt.text.to_string(),
+                            next_pos: alt_next_pos,
+                            rule_idx,
+                        },
+                    });
+                }
+            }
+
+            // Fork only when ≥2 branches survive the rule-out filter.
+            // Otherwise fall through to the standard per-cat PrefixDispatch
+            // arms below (preserves byte-identical fast path for
+            // non-ambiguous lex AND for cases where only the primary has
+            // a rule in this cat).
+            if __branches.len() >= 2 {
                 return WpdsStepAction::Fork {
                     branches: __branches,
                     consume_trigger: false,

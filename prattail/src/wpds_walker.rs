@@ -3675,61 +3675,81 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                         }
 
                         ForkActionKind::LexAlt { alt_idx, kind, text, next_pos, rule_idx } => {
-                            // M6c.1 (2026-05-14): rule_idx is the literal rule
-                            // that consumes this alt's kind; M6c.3 will use it
-                            // to push the rule's Return marker so the token
-                            // flows through FireAction. Currently ignored.
+                            // M6c.3 (2026-05-14): proper literal-rule
+                            // consumption. The pre-M6c.3 path advanced
+                            // `cursor.pos` past the alt's token via
+                            // `pos: next_pos` WITHOUT binding the token
+                            // to a grammar rule — the child cursor had
+                            // no AST term and the walker rejected at EOI.
+                            //
+                            // The new path mirrors
+                            // `ForkActionKind::ConsumeAndCaptureAndPush`
+                            // (atomic-literal multi-arm Fork, line 3737):
+                            //   1. Allocate child at cursor.pos (NOT
+                            //      advanced yet) so emit_push_token
+                            //      records the alt's text at the
+                            //      original byte position.
+                            //   2. Push the alt's (kind, text) onto the
+                            //      builder via `emit_push_token`. This
+                            //      makes the token available to
+                            //      FireAction.
+                            //   3. Push the codegen-emitted
+                            //      `with_kind_return` symbol via
+                            //      cursor_gss_push (codegen guarantees
+                            //      branch.symbol is
+                            //      `rule_at(state_cat, rule_idx, 0,
+                            //      Some(cur_bp)).with_kind_return()`).
+                            //      The Unwinding fires the literal
+                            //      rule's FireAction, producing the
+                            //      AST term (e.g., Int::NumLit(0)).
+                            //   4. ONLY THEN advance child.pos to
+                            //      `next_pos` so the next dispatch
+                            //      runs from the alt's downstream
+                            //      position.
+                            //
+                            // `rule_idx` is implicitly encoded in
+                            // branch.symbol via codegen; we keep it as
+                            // an action payload so the walker can log
+                            // it for diagnostics (currently `let _ =
+                            // rule_idx;` since the symbol is the
+                            // authoritative carrier).
+                            //
+                            // `alt_idx` is retained for diagnostic
+                            // tracing only; no per-cursor sidecar state
+                            // (per M4 + WPDS-stack-purity).
                             let _ = rule_idx;
+                            let _ = alt_idx;
                             let mut sym = branch.symbol;
-                            // M5 (2026-05-13): set child's pos to the alt's
-                            // `next_pos` directly. For LatticeTokenSource,
-                            // this is the alt's DAG `target_node`; for
-                            // linear sources it falls back to `pos + 1`
-                            // via the WpdsTokenSource trait's default.
-                            // Either way, the cursor's `pos` alone encodes
-                            // the alt's downstream timeline.
                             let mut child = BranchCursor {
                                 node: cursor.node,
-                                pos: next_pos,
+                                pos: cursor.pos,
                                 weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
-                                // Bounded recovery (Stage 3.20 / L12,
-                                // 2026-05-06): inherit parent's recovery
-                                // book-keeping. The Fork-arm prologue
-                                // (when this is a recovery Fork) bumps
-                                // depth + extends visited_recovery on
-                                // each child after allocation; for
-                                // non-recovery Forks (Push, OptGroupAbsent,
-                                // lex-alt, etc.) the inherited values
-                                // pass through unchanged.
                                 recovery_depth: cursor.recovery_depth,
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
-                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
-                                // Child shares parent's `SemanticBuilder`
-                                // until a 5.3+ mutator triggers
-                                // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
                             };
-                            // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
-                            child.recovery_deltas.push(
-                                BuilderDelta::CommitLexAlternative {
-                                    pos: cursor.pos,
-                                    alt_idx,
-                                    kind,
-                                    text,
-                                },
-                            );
+                            // Capture the alt's token text at child.pos
+                            // (the original byte position, before
+                            // advancing). Mirrors emit_push_token in
+                            // ConsumeAndCaptureAndPush at line 3779-3786.
+                            let pos_now = child.pos;
+                            self.emit_push_token(&mut child, kind, text, pos_now);
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let _ = self.cursor_gss_push(
                                 &mut child,
                                 sym,
-                                pos_after,
+                                pos_now,
                                 branch.weight.clone(),
                             );
+                            // Advance to the alt's downstream DAG node
+                            // (LatticeTokenSource) or pos+1 (slice
+                            // sources via the default trait method).
+                            child.pos = next_pos;
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
