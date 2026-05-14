@@ -388,6 +388,8 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             let parse_via_wpds_fn = format_ident!("parse_{}_via_wpds", cat);
             let parse_via_wpds_recovering_fn = format_ident!("parse_{}_via_wpds_recovering", cat);
             let parse_via_wpds_all_fn = format_ident!("parse_{}_via_wpds_all", cat);
+            let parse_via_wpds_all_with_source_fn =
+                format_ident!("parse_{}_via_wpds_all_with_source", cat);
             let parse_via_wpds_method = quote! {
                 /// WPDS-driven parser entry point.
                 ///
@@ -470,15 +472,114 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 /// (e.g. `parse_preserving_vars` flattening into
                 /// `Ambiguous`, or `run_ascent_typed` iterating alts).
                 ///
-                /// Currently uses `SliceTokenSource` like `parse_via_wpds`.
-                /// M6 (deferred): wire through `lex_dag(input)` +
-                /// `LatticeTokenSource` so multi-LENGTH lex ambiguity
-                /// surfaces as walker lex-Forks. The `_all_with_source`
-                /// facade variant already accepts `&dyn WpdsTokenSource`
-                /// so callers can opt into a `LatticeTokenSource` today.
+                /// M6c.4 (2026-05-14): when `lex_dag(input).has_ambiguity()`
+                /// is true (multi-kind or multi-length lex alts at any
+                /// byte position), routes through `LatticeTokenSource`
+                /// so the walker's lex-Fork surfaces all alternatives.
+                /// Otherwise uses the slice path — byte-identical to
+                /// `parse_via_wpds`. The `_all_with_source` facade
+                /// variant accepts either source.
                 pub fn parse_via_wpds_all(input: &str) -> Result<Vec<#cat>, ParseError> {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
                     let tokens = lex(input)?;
+                    // M6c.4 + M6c.7.2 (2026-05-14): route through
+                    // LatticeTokenSource when dag.has_ambiguity().
+                    // Post-M6c.7.1 (lex_dag soft-fail), `lex_dag(input)?`
+                    // only errors on TRUE primary-chain dead-ends —
+                    // same conditions where `lex` also errors. So `?`
+                    // is safe; we no longer need the `.ok()` band-aid.
+                    let dag = lex_dag(input).map_err(|msg| ParseError::UnexpectedEof {
+                        expected: Cow::Owned(msg),
+                        range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                        hint: None,
+                    })?;
+                    if dag.has_ambiguity() {
+                        let source = mettail_prattail::wpds_runtime::LatticeTokenSource::new(dag);
+                        let mut pos = 0usize;
+                        return match #parse_via_wpds_all_with_source_fn(&source, &mut pos, 0) {
+                            Ok((terms, _weights)) => {
+                                // M6c.8.3 (2026-05-14): use the source's
+                                // `eof_node()` instead of
+                                // `dag.nodes.len() - 1`. M6c.7.1
+                                // soft-fail may allocate orphan nodes
+                                // for secondary-alt dead-ends at
+                                // indices AFTER the EOF sentinel, so
+                                // `len() - 1` would point to an orphan
+                                // and the walker's correct EOF-Accept
+                                // (at the real EOF sentinel index)
+                                // would be misreported as
+                                // `TrailingTokens`.
+                                use mettail_prattail::wpds_runtime::WpdsTokenSource as _;
+                                let eof_node = source.eof_node();
+                                if pos < eof_node {
+                                    return Err(ParseError::TrailingTokens {
+                                        found: tokens
+                                            .get(pos)
+                                            .map(|(t, _)| format_token_friendly(t))
+                                            .unwrap_or_else(|| "<dag-node>".to_string()),
+                                        range: tokens
+                                            .get(pos)
+                                            .map(|(_, r)| *r)
+                                            .unwrap_or_else(|| {
+                                                tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                            }),
+                                        hint: Some(Cow::Borrowed(
+                                            "the WPDS parser finished but input remains; check for missing operators or extra tokens",
+                                        )),
+                                    });
+                                }
+                                if terms.is_empty() {
+                                    return Err(ParseError::UnexpectedEof {
+                                        expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
+                                        range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                                        hint: None,
+                                    });
+                                }
+                                Ok(terms)
+                            }
+                            Err(WpdsParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
+                                expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
+                                range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                                hint: None,
+                            }),
+                            Err(WpdsParseError::ParseFailed { message, position, attempts: _ }) => {
+                                let range = tokens
+                                    .get(position)
+                                    .map(|(_, r)| *r)
+                                    .unwrap_or_else(|| {
+                                        tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                    });
+                                Err(ParseError::UnexpectedToken {
+                                    expected: Cow::Owned(message),
+                                    found: tokens
+                                        .get(position)
+                                        .map(|(t, _)| format_token_friendly(t))
+                                        .unwrap_or_else(|| "end of input".to_string()),
+                                    range,
+                                    hint: None,
+                                })
+                            }
+                            Err(WpdsParseError::Incomplete { position }) => {
+                                let range = tokens
+                                    .get(position)
+                                    .map(|(_, r)| *r)
+                                    .unwrap_or_else(|| {
+                                        tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                    });
+                                Err(ParseError::UnexpectedToken {
+                                    expected: Cow::Borrowed("WPDS engine did not consume all tokens"),
+                                    found: tokens
+                                        .get(position)
+                                        .map(|(t, _)| format_token_friendly(t))
+                                        .unwrap_or_else(|| "end of input".to_string()),
+                                    range,
+                                    hint: None,
+                                })
+                            }
+                        };
+                    }
+                    // Slice path: no DAG ambiguity, byte-identical to
+                    // pre-M6c.4 behavior.
                     let kinds: Vec<mettail_prattail::automata::TokenKind> =
                         tokens.iter().map(|(t, _)| token_to_kind(t)).collect();
                     let texts: Vec<&str> = tokens
