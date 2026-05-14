@@ -417,17 +417,25 @@ pub fn parse_int_lit(text: &str, default_suffix: Option<Suffix>) -> Result<IntLi
     let big = if negative { -magnitude } else { magnitude };
 
     if let Some(s) = suffix {
-        // D1 fix (2026-05-13): when `default_suffix` is `Some(hint)` AND the
-        // text has an explicit suffix that doesn't match the hint, reject.
-        // The doc comment at lines 397-400 says `default_suffix` is "a strict
-        // requirement". Prior to this fix, the explicit-suffix branch
-        // honored the explicit suffix unconditionally, allowing `1u32` to be
-        // accepted by an Int (i32) literal action when only u32 should be
-        // accepted by UInt32. Closes test_int_parse_rejects_u32_suffix and
-        // test_uint32_bitwise.
-        if let Some(ref hint) = default_suffix {
-            if s != *hint {
-                return Err(());
+        // D1 fix (2026-05-13, refined): the `n` (BigInt) explicit suffix is
+        // a "promote to arbitrary precision" annotation and always wins over
+        // any fixed-width default (matches the pre-existing
+        // `bigint_default_suffix_is_respected` contract).
+        //
+        // For FIXED-WIDTH explicit suffixes (i32/u32/i64/u64/i128/u128),
+        // the suffix must match the fixed-width `default_suffix` hint
+        // (or `default_suffix` must be None). This rejects `1u32` against
+        // the Int category (which passes `Some(Suffix::I32)`) so the
+        // user-facing `Int::parse("1u32").is_err()` test holds —
+        // closes test_int_parse_rejects_u32_suffix and test_uint32_bitwise.
+        // The BigInt-default path (`default_suffix == Some(BigInt)`) is
+        // not constrained: BigInt is a "any-precision" type, and fixed-width
+        // explicit suffixes naturally narrow to that fixed type.
+        if !matches!(s, Suffix::BigInt) {
+            if let Some(ref hint) = default_suffix {
+                if !matches!(hint, Suffix::BigInt) && s != *hint {
+                    return Err(());
+                }
             }
         }
         return try_fit_type(&big, &s).ok_or(());

@@ -1696,6 +1696,28 @@ impl SemanticBuilder {
         matches!(self.stack.back(), Some(ActionArg::Term { .. }))
     }
 
+    /// D8 fix (2026-05-13): return the `type_name` string of the topmost
+    /// `ActionArg::Term` on the main stack, if any.
+    ///
+    /// Used by the WPDS walker's `GroupingClosePreservingInner`
+    /// resolution to identify the actual inner-expression RESULT
+    /// category, which may differ from the popped CategoryEntry's
+    /// OPERAND category in cross-cat infix patterns (e.g.,
+    /// `LtFloat: Float "<" Float : Bool` — operand cat is `Float`
+    /// but result cat is `Bool`).
+    ///
+    /// Reads from `self.stack` (the main arg stack), NOT
+    /// `active_arg_stack` routing — at `GroupingClosePreservingInner`
+    /// resolution time the inner expression's action has already
+    /// fired and pushed its result onto the main stack (no open
+    /// optional scopes can be active at `)`-close time).
+    pub fn top_term_type_name(&self) -> Option<&'static str> {
+        match self.stack.back() {
+            Some(ActionArg::Term { type_name, .. }) => Some(*type_name),
+            _ => None,
+        }
+    }
+
     /// Push a raw token onto the stack.
     pub fn push_token(&mut self, kind: TokenKind, text: String, pos: usize) {
         self.push_arg_internal(ActionArg::Token { kind, text, pos });

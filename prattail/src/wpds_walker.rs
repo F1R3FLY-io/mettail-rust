@@ -196,6 +196,27 @@ pub trait WpdsStepEngine<W: Semiring> {
         let _ = (result_src_idx, rule_idx, slot_idx);
         None
     }
+
+    /// D8 fix (2026-05-13): map a Rust `std::any::type_name::<T>()`
+    /// string to the category `src_idx` for `T`.
+    ///
+    /// Used by the walker's `GroupingClosePreservingInner` resolution
+    /// (in `apply_pop_body_to_cursor`) to derive the inner
+    /// expression's RESULT cat from the cursor builder's top-Term
+    /// `type_name`, rather than the popped `CategoryEntry`'s cat
+    /// (which carries the OPERAND cat in cross-cat infix patterns
+    /// such as `LtFloat: Float "<" Float : Bool` — and is wrong
+    /// post-`)`).
+    ///
+    /// The default returns `None` for engines that don't expose
+    /// category types (test mocks, `IdleEngine`). Per-language codegen
+    /// emits a match over the language's category enum types AND the
+    /// native payload types (e.g. `i64`, `bool`, `f64`, `String`) for
+    /// `![native] as Cat` declarations.
+    fn cat_of_type_name(&self, name: &str) -> Option<u16> {
+        let _ = name;
+        None
+    }
 }
 
 /// One step of action returned by a [`WpdsStepEngine`].
@@ -5970,12 +5991,49 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             }
         }
         self.multiply_cursor_weight(cursor, weight);
+        // D8 fix (2026-05-13): resolve `GroupingClosePreservingInner`'s
+        // `inner_cat_src_idx` from the cursor builder's top-Term
+        // `type_name` instead of trusting the popped CategoryEntry's
+        // OPERAND cat. The engine emits `u16::MAX` as a sentinel
+        // meaning "walker resolves from builder top" (the engine has
+        // no builder access at `step()` time).
+        //
+        // Why: for cross-cat infix patterns (e.g.,
+        // `LtFloat: Float "<" Float : Bool`), the popped CE's cat is
+        // the OPERAND cat (Float), but the inner expression's RESULT
+        // is the RESULT cat (Bool); the post-`)` InfixLoop must
+        // dispatch in the RESULT cat's table for the outer operator
+        // to match.
+        //
+        // Fallback: if the builder top isn't a Term or the engine's
+        // `cat_of_type_name` returns `None`, fall back to the popped
+        // CategoryEntry's cat (preserves pre-D8 behavior for engines
+        // that don't override the trait default — test mocks).
+        let resolved_new_state = match new_state {
+            WpdsState::GroupingClosePreservingInner {
+                inner_cat_src_idx,
+            } if inner_cat_src_idx == u16::MAX => {
+                let resolved = cursor
+                    .builder
+                    .top_term_type_name()
+                    .and_then(|tn| self.engine.cat_of_type_name(tn))
+                    .unwrap_or_else(|| {
+                        popped_symbol
+                            .map(|s| s.category_src_idx)
+                            .unwrap_or(0u16)
+                    });
+                WpdsState::GroupingClosePreservingInner {
+                    inner_cat_src_idx: resolved,
+                }
+            }
+            other => other,
+        };
         // Phase 5.5 (2026-05-12): preserve Error state if emit_fire_action's
         // eager fire set it (arity underflow). Without this guard, the
         // unconditional `set_cursor_inner_state(cursor, new_state)` would
         // overwrite the Error with the ConsumeAndPop's planned next_state.
         if !cursor.inner_state.is_terminal() {
-            self.set_cursor_inner_state(cursor, new_state);
+            self.set_cursor_inner_state(cursor, resolved_new_state);
         }
     }
 

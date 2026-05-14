@@ -157,6 +157,11 @@ pub(crate) fn emit_engine_impl_full(
     // lookahead-conditional GroupingClosePreservingInner branch.
     let category_recognizes_token_dispatch =
         emit_category_recognizes_token_dispatch(categories);
+    // D8 fix (2026-05-13): per-language `type_name → cat_src_idx`
+    // lookup body, consumed by the walker's
+    // `GroupingClosePreservingInner` sentinel resolution.
+    let cat_of_type_name_body =
+        emit_cat_of_type_name(language, categories);
 
     quote! {
         impl mettail_prattail::wpds_walker::WpdsStepEngine<
@@ -434,8 +439,26 @@ pub(crate) fn emit_engine_impl_full(
                                             let next_tok = tokens.peek_text(_pos + 1).unwrap_or("");
                                             let inner_matches: bool = #category_recognizes_token_dispatch;
                                             if inner_matches {
+                                                // D8 fix (2026-05-13): emit sentinel
+                                                // `u16::MAX`. The walker resolves the
+                                                // ACTUAL inner-expression RESULT cat
+                                                // by reading `cursor.builder
+                                                // .top_term_type_name()` and calling
+                                                // `self.engine.cat_of_type_name(...)`.
+                                                // Using the popped CE's cat here is
+                                                // wrong for cross-cat infix patterns
+                                                // (e.g.,
+                                                // `LtFloat: Float "<" Float : Bool` —
+                                                // operand=Float, result=Bool). The
+                                                // engine has no builder access at
+                                                // `step()` time; the walker does the
+                                                // late-bind. Note: `inner_cat` is
+                                                // still used above by
+                                                // `category_recognizes_token_dispatch`
+                                                // for the post-`)` lookahead gate.
+                                                let _ = inner_cat;
                                                 WpdsState::GroupingClosePreservingInner {
-                                                    inner_cat_src_idx: inner_cat,
+                                                    inner_cat_src_idx: u16::MAX,
                                                 }
                                             } else {
                                                 WpdsState::Unwinding
@@ -1409,6 +1432,70 @@ pub(crate) fn emit_engine_impl_full(
                 // cursor.collection_stack[acc_id].len() parity.
                 #kv_separator_for_collection_lookup
             }
+
+            fn cat_of_type_name(&self, name: &str) -> Option<u16> {
+                // D8 fix (2026-05-13): map a Rust
+                // `std::any::type_name::<T>()` string to the category
+                // `src_idx` for `T`. Used by the walker's
+                // `GroupingClosePreservingInner` resolution. The
+                // emitted body covers both the wrapped enum form
+                // (e.g. `mettail_languages::calculator::Bool`) and
+                // the native payload form (e.g. `i64`, `bool`,
+                // `f64`, `String`) for `![native] as Cat` categories
+                // so both `push_term::<Cat>` and
+                // `push_term::<NativeTy>` resolve correctly.
+                #cat_of_type_name_body
+            }
+        }
+    }
+}
+
+/// D8 fix (2026-05-13): emit the body of
+/// `WpdsStepEngine::cat_of_type_name(name: &str) -> Option<u16>`.
+///
+/// Maps Rust `type_name` strings to the category's `src_idx`. Two
+/// forms emitted per category:
+///   1. Wrapped enum:   `std::any::type_name::<Cat>()`  (e.g.,
+///      `mettail_languages::calculator::Bool`).
+///   2. Native payload: `std::any::type_name::<NativeTy>()` when
+///      the category declares `![native_ty] as Cat`.
+///
+/// The walker's `GroupingClosePreservingInner` resolution reads
+/// `cursor.builder.top_term_type_name()` (the type_name of the
+/// last-pushed `ActionArg::Term`) and calls this method to derive
+/// the RESULT category of the inner expression.
+fn emit_cat_of_type_name(
+    language: &LanguageDef,
+    categories: &[String],
+) -> TokenStream {
+    let mut arms: Vec<TokenStream> = Vec::with_capacity(categories.len() * 2);
+    for (i, cat_name) in categories.iter().enumerate() {
+        let i_u16 = i as u16;
+        let cat_ident: Ident = syn::parse_str(cat_name)
+            .expect("category name is a valid Rust identifier");
+        arms.push(quote! {
+            if name == std::any::type_name::<#cat_ident>() {
+                return Some(#i_u16);
+            }
+        });
+        if let Some(lang_type) = language
+            .types
+            .iter()
+            .find(|t| t.name.to_string() == *cat_name)
+        {
+            if let Some(native_ty) = &lang_type.native_type {
+                arms.push(quote! {
+                    if name == std::any::type_name::<#native_ty>() {
+                        return Some(#i_u16);
+                    }
+                });
+            }
+        }
+    }
+    quote! {
+        {
+            #(#arms)*
+            None
         }
     }
 }
