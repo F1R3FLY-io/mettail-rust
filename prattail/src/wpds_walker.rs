@@ -61,7 +61,7 @@ use im::OrdSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::automata::semiring::Semiring;
+use crate::automata::semiring::SemiringRef;
 use crate::automata::TokenKind;
 use crate::gss::{WpdsGss, WpdsGssNode};
 use crate::recovery::RecoveryConfig;
@@ -85,7 +85,7 @@ use crate::wpds_runtime::{
 /// parameter so it can peek the input. `action_for` is the per-language
 /// semantic-action lookup — default empty so engines that don't need
 /// semantic actions (e.g., `IdleEngine` for tests) don't have to supply one.
-pub trait WpdsStepEngine<W: Semiring> {
+pub trait WpdsStepEngine<W: SemiringRef> {
     /// Decide the next action given the current state, configuration,
     /// and input.
     fn step(
@@ -223,7 +223,7 @@ pub trait WpdsStepEngine<W: Semiring> {
 ///
 /// Operations are exhaustive: walker selects exactly one per `Step`.
 #[derive(Debug, Clone)]
-pub enum WpdsStepAction<W: Semiring> {
+pub enum WpdsStepAction<W: SemiringRef> {
     /// Move the FSM into a new state without touching the GSS.
     Advance(WpdsState),
     /// B8 / Issue C (2026-05-09): Same as Advance, but logs a single
@@ -407,7 +407,7 @@ pub enum WpdsStepAction<W: Semiring> {
 /// at their own pace. The walker tracks state, GSS, cursor position, and
 /// cumulative weight; it consults the [`WpdsStepEngine`] for per-language
 /// decisions.
-pub struct WpdsWalker<W: Semiring, E: WpdsStepEngine<W>> {
+pub struct WpdsWalker<W: SemiringRef, E: WpdsStepEngine<W>> {
     state: WpdsState,
     gss: WpdsGss<W>,
     pos: usize,
@@ -518,7 +518,7 @@ pub const STRICT_PENDING_OPS_LIMIT: usize = 1_000_000;
 ///   `BinderRule { rule_idx, body_src_idx, … }`). Distinct across branches —
 ///   this is why `Fork` needs `Vec<ForkBranch>` rather than a shared `new_state`.
 #[derive(Clone)]
-pub struct ForkBranch<W: Semiring> {
+pub struct ForkBranch<W: SemiringRef> {
     pub symbol: StackSymbolV2,
     pub weight: W,
     pub new_state: WpdsState,
@@ -546,7 +546,7 @@ pub struct ForkBranch<W: Semiring> {
 // `SemanticBuilder::is_accepting_terminal()`; broken-cursor filtering
 // happens at `cursor_resolution_check :: Drop` on `WpdsState::Error`.
 
-impl<W: Semiring> ForkBranch<W> {
+impl<W: SemiringRef> ForkBranch<W> {
     /// Stage 3.12 / Class A.i (2026-05-01): default constructor for
     /// branches with the standard `Push` action_kind. All 8 pre-Stage-3.12
     /// emit sites use this — the new `action_kind` field is opaque to
@@ -791,7 +791,7 @@ pub enum ForkActionKind {
     },
 }
 
-impl<W: Semiring> std::fmt::Debug for ForkBranch<W>
+impl<W: SemiringRef> std::fmt::Debug for ForkBranch<W>
 where
     W: std::fmt::Debug,
 {
@@ -814,7 +814,7 @@ where
 /// [`BuilderDelta`]s representing walker-driven mutations to the live
 /// `SemanticBuilder` that must be deferred until a winning branch is
 /// chosen. Each cursor's deltas are replayed during `commit_winner`.
-pub struct BranchCursor<W: Semiring> {
+pub struct BranchCursor<W: SemiringRef> {
     /// GSS-tip node id for this branch (matches the corresponding entry
     /// in `WpdsState::AmbiguityFanout { branches }`).
     pub node: crate::gss::GssNodeId,
@@ -959,7 +959,7 @@ pub struct BranchCursor<W: Semiring> {
     // suffices to distinguish alt timelines.
 }
 
-impl<W: Semiring> std::fmt::Debug for BranchCursor<W>
+impl<W: SemiringRef> std::fmt::Debug for BranchCursor<W>
 where
     W: std::fmt::Debug,
 {
@@ -978,7 +978,7 @@ where
     }
 }
 
-impl<W: Semiring + Clone> Clone for BranchCursor<W> {
+impl<W: SemiringRef> Clone for BranchCursor<W> {
     fn clone(&self) -> Self {
         // Stage 3.6 / ι Phase 1 (2026-05-01): BranchCursor::clone is now
         // TOTAL across all field shapes:
@@ -1011,7 +1011,7 @@ impl<W: Semiring + Clone> Clone for BranchCursor<W> {
     }
 }
 
-impl<W: Semiring + Clone> BranchCursor<W> {
+impl<W: SemiringRef> BranchCursor<W> {
     /// Stage 3.10 / ι Phase 5 (2026-05-01): construct a fresh cursor that
     /// mirrors the live walker's collection-stack depth via empty
     /// placeholders.
@@ -1505,14 +1505,14 @@ impl std::fmt::Debug for BuilderDelta {
 /// - `Resolved` — cursor reached a "branch-done" state (either
 ///   `Accepted`, an outer-loop state like `InfixLoop`, or `Pop`'ed past
 ///   top-of-stack). Candidate winner; final `pos`/`weight` are decisive.
-pub enum CursorOutcome<W: Semiring> {
+pub enum CursorOutcome<W: SemiringRef> {
     Drop,
     Alive,
     ForkInto(Vec<BranchCursor<W>>),
     Resolved,
 }
 
-impl<W: Semiring> std::fmt::Debug for CursorOutcome<W>
+impl<W: SemiringRef> std::fmt::Debug for CursorOutcome<W>
 where
     W: std::fmt::Debug,
 {
@@ -1544,7 +1544,7 @@ where
 ///
 /// These four deltas are NOT used by any non-recovery emitter — the
 /// detection is robust against accidental conflation.
-fn is_recovery_fork<W: Semiring>(branches: &[ForkBranch<W>]) -> bool {
+fn is_recovery_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
     branches.iter().any(|b| {
         matches!(
             &b.action_kind,
@@ -1573,7 +1573,7 @@ fn is_recovery_fork<W: Semiring>(branches: &[ForkBranch<W>]) -> bool {
 /// re-fire the same recovery dispatch at the same configuration,
 /// producing an infinite loop the visited-set defense would catch but
 /// at the cost of a wasted depth increment.
-fn forward_progress_or_insert<W: Semiring>(branch: &ForkBranch<W>, base_pos: usize) -> bool {
+fn forward_progress_or_insert<W: SemiringRef>(branch: &ForkBranch<W>, base_pos: usize) -> bool {
     let advances = match &branch.new_state {
         WpdsState::PrefixDispatch { pos, .. } => *pos > base_pos,
         // Non-PrefixDispatch new_states (rare; recovery_dispatch only
@@ -1602,7 +1602,7 @@ fn forward_progress_or_insert<W: Semiring>(branch: &ForkBranch<W>, base_pos: usi
 /// `engine_impl.rs`'s codegen, so this is normally unreachable. The
 /// caller falls back to bumping `recovery_depth` without a visited
 /// entry in that case (the cap still bites).
-fn extract_recovery_dispatch_config<W: Semiring>(
+fn extract_recovery_dispatch_config<W: SemiringRef>(
     cursor: &BranchCursor<W>,
     gss: &WpdsGss<W>,
 ) -> Option<(usize, u16, u8)> {
@@ -1648,7 +1648,7 @@ fn extract_recovery_dispatch_config<W: Semiring>(
 /// to apply the visited-dispatch cycle check; see `BranchCursor::
 /// visited_dispatch` and the GLL descriptor-uniqueness rationale
 /// (Scott & Johnstone 2010).
-fn is_projection_fork<W: Semiring>(branches: &[ForkBranch<W>]) -> bool {
+fn is_projection_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
     !branches.is_empty()
         && branches.iter().all(|b| {
             matches!(&b.new_state, WpdsState::CrossCatDelegate { .. })
@@ -1664,7 +1664,7 @@ fn is_projection_fork<W: Semiring>(branches: &[ForkBranch<W>]) -> bool {
 ///
 /// Identical body to `extract_recovery_dispatch_config` — kept separate
 /// so future refactors can vary one without affecting the other.
-fn extract_dispatch_config<W: Semiring>(
+fn extract_dispatch_config<W: SemiringRef>(
     cursor: &BranchCursor<W>,
     gss: &WpdsGss<W>,
 ) -> Option<(usize, u16, u8)> {
@@ -1679,7 +1679,7 @@ fn extract_dispatch_config<W: Semiring>(
     }
 }
 
-impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
+impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Construct a fresh walker in `Ready { min_bp }` state.
     ///
     /// Stage 3.9 / ι Phase 4 (2026-05-01): seeds the singleton cursor in
@@ -1694,14 +1694,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         let initial_cursor = BranchCursor::seed_from_live(
             0,
             0,
-            W::one(),
+            W::one_ref(),
             initial_state.clone(),
         );
         WpdsWalker {
             state: initial_state,
             gss: WpdsGss::new(),
             pos: 0,
-            weight: W::one(),
+            weight: W::one_ref(),
             engine,
             top_node: None,
             beam_size: None,
@@ -1745,14 +1745,14 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         let initial_cursor = BranchCursor::seed_from_live(
             top_id,
             0,
-            W::one(),
+            W::one_ref(),
             initial_state.clone(),
         );
         WpdsWalker {
             state: initial_state,
             gss,
             pos: 0,
-            weight: W::one(),
+            weight: W::one_ref(),
             engine,
             top_node: Some(top_id),
             beam_size: None,
@@ -1783,7 +1783,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     pos: config.pos,
                     symbol: *symbol,
                 }),
-                Some(prev) => gss.push_symbol(prev, *symbol, config.pos, W::one()),
+                Some(prev) => gss.push_symbol(prev, *symbol, config.pos, W::one_ref()),
             };
             top_node = Some(new_id);
         }
@@ -1822,7 +1822,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         self.state = initial_state.clone();
         self.gss = WpdsGss::new();
         self.pos = 0;
-        self.weight = W::one();
+        self.weight = W::one_ref();
         self.top_node = None;
         self.builder = SemanticBuilder::new();
         self.deterministic = true;
@@ -1830,7 +1830,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         self.branch_cursors = vec![BranchCursor::seed_from_live(
             0,
             0,
-            W::one(),
+            W::one_ref(),
             initial_state,
         )];
         // Stage 6 G6+ (2026-05-02): reset trace step counter.
@@ -2062,7 +2062,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             pos: self.pos,
             state: self.state.clone(),
             stack,
-            weight: self.weight,
+            weight: self.weight.clone(),
         }
     }
 
@@ -2120,7 +2120,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             }
             WpdsEvent::BranchResolved { winner, weight } => {
                 let from = self.state.clone();
-                self.weight = self.weight.times(&weight);
+                self.weight = self.weight.times_ref(&weight);
                 self.top_node = Some(winner);
                 let new_state = WpdsState::InfixLoop {
                     cur_bp: match from {
@@ -2531,7 +2531,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 let mut best_weight = self.branch_cursors[best_idx].weight.clone();
                 for &idx in &accepting_indices[1..] {
                     let candidate = &self.branch_cursors[idx].weight;
-                    let merged = best_weight.plus(candidate);
+                    let merged = best_weight.plus_ref(candidate);
                     if merged != best_weight {
                         best_idx = idx;
                         best_weight = merged;
@@ -2550,7 +2550,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     .iter()
                     .filter(|&&idx| {
                         let w = &self.branch_cursors[idx].weight;
-                        w.plus(&best_weight) == *w && best_weight.plus(w) == best_weight
+                        w.plus_ref(&best_weight) == *w && best_weight.plus_ref(w) == best_weight
                     })
                     .count();
                 let weight = best_weight.clone();
@@ -2780,7 +2780,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 self.branch_cursors.push(BranchCursor {
                     node: self.top_node.unwrap_or(0),
                     pos: self.pos,
-                    weight: W::one(),
+                    weight: W::one_ref(),
                     inner_state: self.state.clone(),
                     recovery_deltas: Vec::new(),
                     // Stage 3.12 Fix 2(ii) (2026-05-02): restored singleton
@@ -2928,7 +2928,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // Handles CollectionMarker (id alloc + bp patch + arg push)
                 // AND OptionalGroupAt(1) (scope open).
                 self.emit_push_side_effects(cursor, &mut symbol);
-                let _ = self.cursor_gss_push(cursor, symbol, cursor.pos, weight);
+                let _ = self.cursor_gss_push(cursor, symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -2954,7 +2954,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::Replace { symbol, weight, new_state } => {
-                let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight);
+                let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -2983,7 +2983,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // Stage 3.9 / ι Phase 4 (2026-05-01): centralized Push-time
                 // side effects (CollectionMarker + OptionalGroupAt(1)).
                 self.emit_push_side_effects(cursor, &mut symbol);
-                let _ = self.cursor_gss_push(cursor, symbol, cursor.pos, weight);
+                let _ = self.cursor_gss_push(cursor, symbol, cursor.pos, weight.clone());
                 self.advance_cursor_pos(cursor, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
@@ -3003,7 +3003,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 self.cursor_resolution_check(cursor)
             }
             WpdsStepAction::ConsumeAndReplace { symbol, weight, new_state } => {
-                let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight);
+                let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight.clone());
                 self.advance_cursor_pos(cursor, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
@@ -3023,7 +3023,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     let pos = cursor.pos;
                     self.emit_push_ident(cursor, text, pos);
                 }
-                let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight);
+                let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight.clone());
                 self.advance_cursor_pos(cursor, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
@@ -3035,7 +3035,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 weight,
                 new_state,
             } => {
-                let _ = self.cursor_gss_replace_top(cursor, replace_symbol, cursor.pos, weight);
+                let _ = self.cursor_gss_replace_top(cursor, replace_symbol, cursor.pos, weight.clone());
                 // B9 / Class 2 (2026-05-08): apply emit_push_side_effects
                 // BEFORE pushing the symbol — for CollectionMarker, this
                 // allocates an accumulator id and patches symbol.bp =
@@ -3047,7 +3047,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // the Push arm at line ~2998 and Fork arms at ~3390.
                 let mut push_symbol = push_symbol;
                 self.emit_push_side_effects(cursor, &mut push_symbol);
-                let _ = self.cursor_gss_push(cursor, push_symbol, cursor.pos, weight);
+                let _ = self.cursor_gss_push(cursor, push_symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -3073,7 +3073,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                     }
                     Err(_msg) => return CursorOutcome::Drop,
                 }
-                let _ = self.cursor_gss_replace_top(cursor, replace_symbol, cursor.pos, weight);
+                let _ = self.cursor_gss_replace_top(cursor, replace_symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -3283,7 +3283,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times(&branch.weight),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3336,7 +3336,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times(&branch.weight),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3401,7 +3401,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times(&branch.weight),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3440,7 +3440,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times(&branch.weight),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3472,7 +3472,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times(&branch.weight),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3537,7 +3537,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times(&branch.weight),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3581,7 +3581,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times(&branch.weight),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3626,7 +3626,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times(&branch.weight),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3685,7 +3685,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: next_pos,
-                                weight: cursor.weight.times(&branch.weight),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3745,7 +3745,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times(&branch.weight),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3806,7 +3806,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times(&branch.weight),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -3837,7 +3837,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times(&branch.weight),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -3885,7 +3885,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times(&branch.weight),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -3916,7 +3916,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times(&branch.weight),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -3969,7 +3969,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times(&branch.weight),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4016,7 +4016,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times(&branch.weight),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4071,7 +4071,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times(&branch.weight),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4130,7 +4130,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times(&branch.weight),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4171,7 +4171,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times(&branch.weight),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4211,7 +4211,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times(&branch.weight),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4657,7 +4657,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 }
                 std::collections::hash_map::Entry::Occupied(o) => {
                     let idx = *o.get();
-                    let combined = merged[idx].weight.plus(&cursor.weight);
+                    let combined = merged[idx].weight.plus_ref(&cursor.weight);
                     let weight_strict_win = combined != merged[idx].weight;
                     let weight_tied = !weight_strict_win
                         && combined == cursor.weight;
@@ -4781,7 +4781,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             for &idx in &idxs[1..] {
                 let merged = self.branch_cursors[best_idx]
                     .weight
-                    .plus(&self.branch_cursors[idx].weight);
+                    .plus_ref(&self.branch_cursors[idx].weight);
                 if merged != self.branch_cursors[best_idx].weight {
                     best_idx = idx;
                 } else if merged == self.branch_cursors[idx].weight
@@ -4802,7 +4802,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
             // `cursor_resolution_check :: Drop` BEFORE subsumption. By
             // construction, all cursors here are "consistent" — the
             // promotion and broken-sibling drop are unreachable.
-            let best_w = self.branch_cursors[best_idx].weight;
+            let best_w = self.branch_cursors[best_idx].weight.clone();
             let best_p = self.branch_cursors[best_idx].source_priority;
             for &idx in idxs {
                 if idx == best_idx {
@@ -4821,7 +4821,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                 // key, we keep both — only STRICT dominance is grounds for
                 // drop). Source-priority guard: `best_p <= c.source_priority`
                 // prevents reversing the existing source-order tiebreak.
-                let merged = best_w.plus(&c.weight);
+                let merged = best_w.plus_ref(&c.weight);
                 let strictly_dominates = merged == best_w
                     && merged != c.weight;
                 if strictly_dominates && best_p <= c.source_priority {
@@ -5116,7 +5116,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         }
         self.top_node = Some(winner.node);
         self.pos = winner.pos;
-        self.weight = self.weight.times(&winner.weight);
+        self.weight = self.weight.times_ref(&winner.weight);
         self.state = winner.inner_state.clone();
         // Stage 3.9 / ι Phase 4 (2026-05-01): write singleton back per L4.
         // Cleared recovery_deltas — already replayed onto live builder above.
@@ -5186,7 +5186,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         // comparator. Keeps source-order for ties (matching
         // `pick_lex_min_resolved`'s tie-break semantics).
         self.branch_cursors.sort_by(|a, b| {
-            let merged = a.weight.plus(&b.weight);
+            let merged = a.weight.plus_ref(&b.weight);
             // a wins iff a.plus(b) == a (a is the lex-smaller).
             // On `a == b`, both equal merged → Ordering::Equal.
             let a_wins = merged == a.weight;
@@ -5640,9 +5640,9 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 
     #[inline(always)]
     fn multiply_cursor_weight(&mut self, cursor: &mut BranchCursor<W>, w: &W) {
-        cursor.weight = cursor.weight.times(w);
+        cursor.weight = cursor.weight.times_ref(w);
         if self.deterministic {
-            self.weight = self.weight.times(w);
+            self.weight = self.weight.times_ref(w);
         }
     }
 
@@ -6048,7 +6048,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
         //      engine.cat_of_type_name).
         //   5. builder cat differs from new top's cat.
         //
-        // Uses W::one() so the cursor weight isn't perturbed.
+        // Uses W::one_ref() so the cursor weight isn't perturbed.
         //
         // Why ONLY for Return: same-cat infix Pops (popped.cat ==
         // pred.cat) trivially pass gate 5 as a no-op; cross-cat prefix
@@ -6085,7 +6085,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 cursor,
                                 new_sym,
                                 cursor.pos,
-                                W::one(),
+                                W::one_ref(),
                             );
                         }
                     }
@@ -6241,7 +6241,7 @@ pub use crate::wpds_runtime::WpdsControl as WalkerControl;
 /// Useful as a placeholder before Stage 6's codegen lands.
 pub struct IdleEngine;
 
-impl<W: Semiring> WpdsStepEngine<W> for IdleEngine {
+impl<W: SemiringRef> WpdsStepEngine<W> for IdleEngine {
     fn step(
         &self,
         _state: &WpdsState,
@@ -6270,7 +6270,7 @@ impl<W: Semiring> WpdsStepEngine<W> for IdleEngine {
 /// Generic-typed (no trait objects). [`NullConsumer`] monomorphizes to a
 /// no-op the optimizer eliminates entirely. Observed-callback overhead is
 /// only paid when a non-trivial consumer is attached.
-pub trait WalkerConsumer<W: Semiring> {
+pub trait WalkerConsumer<W: SemiringRef> {
     /// Called after each event the walker processes.
     ///
     /// Return value directs the walker's next action:
@@ -6294,7 +6294,7 @@ pub trait WalkerConsumer<W: Semiring> {
 /// Use when no tracing or control is required (batch parsing).
 pub struct NullConsumer;
 
-impl<W: Semiring> WalkerConsumer<W> for NullConsumer {
+impl<W: SemiringRef> WalkerConsumer<W> for NullConsumer {
     #[inline(always)]
     fn on_event(&mut self, _event: &WpdsEvent<W>, _state: &WpdsState) -> WpdsControl {
         WpdsControl::Continue
@@ -6326,7 +6326,7 @@ pub enum WpdsEventTag {
 }
 
 impl WpdsEventTag {
-    fn of<W: Semiring>(event: &WpdsEvent<W>) -> Self {
+    fn of<W: SemiringRef>(event: &WpdsEvent<W>) -> Self {
         match event {
             WpdsEvent::Step => WpdsEventTag::Step,
             WpdsEvent::TokenConsumed { .. } => WpdsEventTag::TokenConsumed,
@@ -6365,7 +6365,7 @@ pub enum CursorDropReason {
 /// (recovery_deltas contents, collection_stack contents) — only
 /// their lengths. ~80 bytes flat (depends on W size + WpdsState).
 #[derive(Debug, Clone)]
-pub struct CursorSnapshot<W: Semiring> {
+pub struct CursorSnapshot<W: SemiringRef> {
     pub idx: usize,
     pub pos: usize,
     pub state: WpdsState,
@@ -6378,7 +6378,7 @@ pub struct CursorSnapshot<W: Semiring> {
 
 /// Per-step cursor census produced after `step_fanout` + `merge_equivalent_cursors`.
 #[derive(Debug, Clone)]
-pub struct StepSnapshot<W: Semiring> {
+pub struct StepSnapshot<W: SemiringRef> {
     pub step_index: usize,
     pub cursor_count: usize,
     pub walker_state: WpdsState,
@@ -6392,7 +6392,7 @@ pub struct StepSnapshot<W: Semiring> {
 /// Separate from `WalkerConsumer` so existing LSP/DAP/REPL consumers
 /// don't need to handle cursor-level micro-detail. Default impls are
 /// no-ops; `NullCursorObserver` monomorphizes away to zero cost.
-pub trait CursorObserver<W: Semiring> {
+pub trait CursorObserver<W: SemiringRef> {
     /// Called from `step_fanout` after the merge pass with a flat census.
     #[inline(always)]
     fn on_step_panorama(&mut self, _snapshot: &StepSnapshot<W>) {}
@@ -6412,18 +6412,18 @@ pub trait CursorObserver<W: Semiring> {
 
 /// Zero-cost no-op observer.
 pub struct NullCursorObserver;
-impl<W: Semiring> CursorObserver<W> for NullCursorObserver {}
+impl<W: SemiringRef> CursorObserver<W> for NullCursorObserver {}
 
 /// Tracing consumer: records every event tag and resulting state.
 ///
 /// Useful for DAP step-recording, REPL history, post-mortem analysis.
-pub struct TracingConsumer<W: Semiring> {
+pub struct TracingConsumer<W: SemiringRef> {
     pub events: Vec<(WpdsEventTag, WpdsState)>,
     pub checkpoints: Vec<WpdsConfiguration<W>>,
     pub final_state: Option<WpdsState>,
 }
 
-impl<W: Semiring> TracingConsumer<W> {
+impl<W: SemiringRef> TracingConsumer<W> {
     pub fn new() -> Self {
         TracingConsumer {
             events: Vec::new(),
@@ -6433,13 +6433,13 @@ impl<W: Semiring> TracingConsumer<W> {
     }
 }
 
-impl<W: Semiring> Default for TracingConsumer<W> {
+impl<W: SemiringRef> Default for TracingConsumer<W> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<W: Semiring> WalkerConsumer<W> for TracingConsumer<W> {
+impl<W: SemiringRef> WalkerConsumer<W> for TracingConsumer<W> {
     fn on_event(&mut self, event: &WpdsEvent<W>, state: &WpdsState) -> WpdsControl {
         self.events.push((WpdsEventTag::of(event), state.clone()));
         WpdsControl::Continue
@@ -6468,7 +6468,7 @@ impl<W: Semiring> WalkerConsumer<W> for TracingConsumer<W> {
 /// - `forks`: every (parent_idx, children_count) fork.
 /// - `max_cursor_count`: peak observed cursor count.
 /// - `final_state`: walker terminal state.
-pub struct RichTracingConsumer<W: Semiring> {
+pub struct RichTracingConsumer<W: SemiringRef> {
     pub events: Vec<(WpdsEventTag, WpdsState)>,
     pub steps: Vec<StepSnapshot<W>>,
     pub merges: Vec<(usize, usize)>,
@@ -6478,7 +6478,7 @@ pub struct RichTracingConsumer<W: Semiring> {
     pub final_state: Option<WpdsState>,
 }
 
-impl<W: Semiring> RichTracingConsumer<W> {
+impl<W: SemiringRef> RichTracingConsumer<W> {
     pub fn new() -> Self {
         RichTracingConsumer {
             events: Vec::new(),
@@ -6492,13 +6492,13 @@ impl<W: Semiring> RichTracingConsumer<W> {
     }
 }
 
-impl<W: Semiring> Default for RichTracingConsumer<W> {
+impl<W: SemiringRef> Default for RichTracingConsumer<W> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<W: Semiring> WalkerConsumer<W> for RichTracingConsumer<W> {
+impl<W: SemiringRef> WalkerConsumer<W> for RichTracingConsumer<W> {
     fn on_event(&mut self, event: &WpdsEvent<W>, state: &WpdsState) -> WpdsControl {
         self.events.push((WpdsEventTag::of(event), state.clone()));
         WpdsControl::Continue
@@ -6509,7 +6509,7 @@ impl<W: Semiring> WalkerConsumer<W> for RichTracingConsumer<W> {
     }
 }
 
-impl<W: Semiring> CursorObserver<W> for RichTracingConsumer<W> {
+impl<W: SemiringRef> CursorObserver<W> for RichTracingConsumer<W> {
     fn on_step_panorama(&mut self, snapshot: &StepSnapshot<W>) {
         if snapshot.cursor_count > self.max_cursor_count {
             self.max_cursor_count = snapshot.cursor_count;
@@ -6591,7 +6591,7 @@ impl EnvTracingConsumer {
     }
 }
 
-impl<W: Semiring> WalkerConsumer<W> for EnvTracingConsumer {
+impl<W: SemiringRef> WalkerConsumer<W> for EnvTracingConsumer {
     fn on_event(&mut self, event: &WpdsEvent<W>, state: &WpdsState) -> WpdsControl {
         if (self.enabled & TRACE_STEPS) != 0 {
             eprintln!(
@@ -6606,7 +6606,7 @@ impl<W: Semiring> WalkerConsumer<W> for EnvTracingConsumer {
     }
 }
 
-impl<W: Semiring + std::fmt::Debug> CursorObserver<W> for EnvTracingConsumer {
+impl<W: SemiringRef + std::fmt::Debug> CursorObserver<W> for EnvTracingConsumer {
     fn on_step_panorama(&mut self, snapshot: &StepSnapshot<W>) {
         if (self.enabled & TRACE_CURSORS) != 0 {
             eprintln!(
@@ -6667,7 +6667,7 @@ impl AbortAfterConsumer {
     }
 }
 
-impl<W: Semiring> WalkerConsumer<W> for AbortAfterConsumer {
+impl<W: SemiringRef> WalkerConsumer<W> for AbortAfterConsumer {
     fn on_event(&mut self, _event: &WpdsEvent<W>, _state: &WpdsState) -> WpdsControl {
         self.count += 1;
         if self.count >= self.limit {
@@ -6687,13 +6687,13 @@ impl<W: Semiring> WalkerConsumer<W> for AbortAfterConsumer {
 /// caller's source. Prevents stale-pointer reuse in pathological cases
 /// (e.g. walker stored in a long-lived consumer struct, source borrowed
 /// per-parse).
-impl<W: Semiring, E: WpdsStepEngine<W>> Drop for WpdsWalker<W, E> {
+impl<W: SemiringRef, E: WpdsStepEngine<W>> Drop for WpdsWalker<W, E> {
     fn drop(&mut self) {
         self.mutable_token_source = None;
     }
 }
 
-impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
+impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
     /// Drive the walker reactively with a [`WalkerConsumer`] attached.
     ///
     /// Each iteration:
@@ -6859,6 +6859,7 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
 mod tests {
     use super::*;
     use crate::automata::lex_weight::LexicographicWeight;
+    use crate::automata::semiring::Semiring;
     use crate::automata::TokenKind;
     use std::cell::RefCell;
 
@@ -7594,7 +7595,7 @@ mod tests {
         pub recorded: usize,
     }
 
-    impl<W: Semiring> WalkerConsumer<W> for CheckpointEveryEvent {
+    impl<W: SemiringRef> WalkerConsumer<W> for CheckpointEveryEvent {
         fn on_event(&mut self, _event: &WpdsEvent<W>, _state: &WpdsState) -> WpdsControl {
             WpdsControl::Checkpoint
         }
@@ -7622,7 +7623,7 @@ mod tests {
         pub paused: bool,
     }
 
-    impl<W: Semiring> WalkerConsumer<W> for PauseOnFirst {
+    impl<W: SemiringRef> WalkerConsumer<W> for PauseOnFirst {
         fn on_event(&mut self, _event: &WpdsEvent<W>, _state: &WpdsState) -> WpdsControl {
             if !self.paused {
                 self.paused = true;

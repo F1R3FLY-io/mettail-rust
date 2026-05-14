@@ -46,7 +46,7 @@ use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::automata::semiring::Semiring;
+use crate::automata::semiring::SemiringRef;
 use crate::automata::TokenKind;
 use crate::gss::GssNodeId;
 
@@ -634,7 +634,7 @@ impl WpdsState {
 /// emit ambiguity warning + commit earliest source-ordered branch +
 /// return `AcceptedAmbiguous`.
 #[derive(Debug)]
-pub enum WpdsResolveResult<W: Semiring> {
+pub enum WpdsResolveResult<W: SemiringRef> {
     /// Single Accepted configuration at EOI.
     Accepted {
         weight: W,
@@ -684,7 +684,7 @@ impl std::error::Error for WpdsMaxStepsExceeded {}
 /// weights. The `LexicographicWeight` of Stage 2 will be the canonical
 /// instantiation; until then any [`Semiring`] suffices.
 #[derive(Debug, Clone)]
-pub enum WpdsEvent<W: Semiring> {
+pub enum WpdsEvent<W: SemiringRef> {
     /// Advance one transition. The default driver pulse.
     Step,
     /// A token was consumed at the given position.
@@ -730,7 +730,7 @@ pub enum CheckpointReason {
 
 /// Output of one [`WpdsState`] × [`WpdsEvent`] transition.
 #[derive(Debug, Clone)]
-pub enum WpdsTransition<W: Semiring> {
+pub enum WpdsTransition<W: SemiringRef> {
     /// `Inspect` event; no state change.
     NoChange,
     /// State changed; optional trace entry recorded.
@@ -750,7 +750,7 @@ pub enum WpdsTransition<W: Semiring> {
 /// `BTreeMap<usize, WpdsConfiguration<LexicographicWeight>>` for its
 /// checkpoint cache.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WpdsConfiguration<W: Semiring> {
+pub struct WpdsConfiguration<W: SemiringRef> {
     /// Token position at the time of snapshot.
     pub pos: usize,
     /// State at the time of snapshot.
@@ -2298,7 +2298,7 @@ impl fmt::Debug for SemanticBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::automata::semiring::TropicalWeight;
+    use crate::automata::semiring::{Semiring, TropicalWeight};
     use crate::lexer_types::{LexAlternative, LexEntry, LexStream};
 
     fn ascii_alt(text: &str, end: usize, weight: f64) -> LexAlternative {

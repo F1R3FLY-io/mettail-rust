@@ -34,7 +34,7 @@
 
 use std::collections::HashMap;
 
-use crate::automata::semiring::Semiring;
+use crate::automata::semiring::SemiringRef;
 use crate::wpds_runtime::StackSymbolV2;
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -368,7 +368,7 @@ pub struct WpdsGssNode {
 
 /// An edge in the typed GSS, weighted by an arbitrary [`Semiring`].
 #[derive(Debug, Clone)]
-pub struct WpdsGssEdge<W: Semiring> {
+pub struct WpdsGssEdge<W: SemiringRef> {
     /// Successor node (the frame *below* on the stack).
     pub target: GssNodeId,
     /// Edge weight (e.g., [`crate::automata::lex_weight::LexicographicWeight`]).
@@ -381,14 +381,14 @@ pub struct WpdsGssEdge<W: Semiring> {
 /// but with typed symbols and weights, plus WPDS-specific stack operations
 /// (`push_symbol`, `pop_symbol`, `replace_top`).
 #[derive(Debug, Clone)]
-pub struct WpdsGss<W: Semiring> {
+pub struct WpdsGss<W: SemiringRef> {
     nodes: Vec<WpdsGssNode>,
     edges: HashMap<GssNodeId, Vec<WpdsGssEdge<W>>>,
     frontier: Vec<GssNodeId>,
     node_index: HashMap<WpdsGssNode, GssNodeId>,
 }
 
-impl<W: Semiring> WpdsGss<W> {
+impl<W: SemiringRef> WpdsGss<W> {
     /// Create an empty typed GSS.
     pub fn new() -> Self {
         WpdsGss {
@@ -432,7 +432,7 @@ impl<W: Semiring> WpdsGss<W> {
         let edges = self.edges.entry(source).or_default();
         for (idx, existing) in edges.iter_mut().enumerate() {
             if existing.target == target {
-                existing.weight = existing.weight.plus(&weight);
+                existing.weight = existing.weight.plus_ref(&weight);
                 return pack_edge_id(source, idx);
             }
         }
@@ -627,7 +627,7 @@ impl<W: Semiring> WpdsGss<W> {
         let preds: Vec<(GssNodeId, W)> = self
             .edges_from(frontier_node)
             .iter()
-            .map(|e| (e.target, weight.times(&e.weight)))
+            .map(|e| (e.target, weight.times_ref(&e.weight)))
             .collect();
         let cursor_target = cursor_incoming_edge.and_then(|e| self.edge_target(e));
         let mut matching_edge_id: Option<GssEdgeId> = None;
@@ -722,7 +722,7 @@ impl<W: Semiring> WpdsGss<W> {
     }
 }
 
-impl<W: Semiring> Default for WpdsGss<W> {
+impl<W: SemiringRef> Default for WpdsGss<W> {
     fn default() -> Self {
         Self::new()
     }
