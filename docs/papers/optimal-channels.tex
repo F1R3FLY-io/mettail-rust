@@ -225,6 +225,31 @@ such that $\mathit{vars}(R) \subseteq \mathit{vars}(L)$. A
 asserting that, in any context where the inner rewrites are
 applicable, the outer pattern reduces to the outer right-hand side.
 
+\paragraph{Binders.}
+A function symbol $f \in \mathbb{F}$ of arity $n$ may be designated a
+\emph{binder} at one or more argument positions
+$\beta_{f} \subseteq \{1, \ldots, n\}$. Under the GSLT semantics
+of~\S\ref{ssec:gslt}, a binding argument at position $i \in \beta_{f}$
+has type $P \Rightarrow P$ via the internal hom of $\mathcal{C}$
+rather than $P$; the canonical reading is HOAS in the host calculus.
+For position-based reasoning we \emph{open} such a binder by
+introducing a fresh free name: in $f(t_{1}, \ldots, t_{n})$ with
+$i \in \beta_{f}$ the subterm at $p \cdot i$ is the opened body
+\[
+  t|_{p \cdot i} \;=\; t_{i}(z_{p \cdot i}),
+\]
+where $z_{p \cdot i}$ is a free name canonically associated with the
+position $p \cdot i$. The $z_{p \cdot i}$ are pairwise distinct and
+distinct from any variable in $V$ occurring in the surrounding term;
+the term is determined only up to $\alpha$-renaming of those names.
+The fresh free names are \emph{leaves}: $\dom(z_{p}) = \{\epsilon\}$
+and $\hd(z_{p})$ is undefined, exactly as for variables in $V$.
+The formulae for $\dom$, $\edges$, $t|_{p}$, and $\hd$ above extend
+by the same recursion through opened bodies, and a presentation may
+omit any first-order $\mathit{var}$ constructor: object-language
+variables \emph{are} the host calculus's free names introduced at
+binder openings.
+
 \subsection{Graph-structured lambda theories}\label{ssec:gslt}
 
 We adopt the semantic definition of a graph-structured lambda theory
@@ -463,6 +488,21 @@ $L(s)$. The output function records completed reductions:
        f(x_{1}, \ldots, x_{n}) @\, L(s) \hookrightarrow \mathit{ma} \in s,\;
        x_{1}, \ldots, x_{n} \in V \,\}.
 \]
+
+\paragraph{Reading a binder symbol.}
+When $f$ is a binder with binding positions $\beta_{f}$
+(\S\ref{sec:prelim}), the derivative formulae above apply unchanged:
+$\reduce$, $\deriv$, and $\eta$ are stated entirely in terms of
+position arithmetic and metavariable identification, neither of which
+distinguishes binding from non-binding arguments. The only operational
+difference is that successor configurations based at $p \cdot i$ for
+$i \in \beta_{f}$ inspect symbols of the opened body
+$t_{i}(z_{p \cdot i})$, with the fresh free name $z_{p \cdot i}$
+acting as a leaf for any subsequent reads (no head symbol, no
+derivative spawn). Configuration trees below a binder therefore have
+the same shape as configuration trees below an ordinary function
+symbol; $\alpha$-equivalence of the fresh names is invariant of the
+construction.
 
 \paragraph{Partitioning by dependency; lifting by greatest common prefix.}
 The naive choice $\delta(s, f) = \{(\deriv(s, f), \epsilon)\}$ has
@@ -950,10 +990,11 @@ the object language and the target language coincide.
 
 \paragraph{The GSLT.}
 Take the function symbols $\mathit{app}$ (arity~2) and $\mathit{lam}$
-(arity~1, body-binding). Variables of the object language are
-represented by a single function symbol $\mathit{var}$ (arity~1, name
-position) which we suppress where it would only clutter notation. The
-reduction theory has one principal rule and one contextual rule:
+(arity~1, with binding position~1 in the sense of the binder apparatus
+of \S\ref{sec:prelim}); object-language variables \emph{are} the host
+calculus's free names introduced when the binder is opened, so no
+separate $\mathit{var}$ constructor is needed. The reduction theory
+has one principal rule and one contextual rule:
 \begin{align*}
   (\beta) \quad
     & \mathit{app}(\mathit{lam}(M), N) \;\rew\; M[N/x], \\
@@ -967,10 +1008,11 @@ position and not under a $\mathit{lam}$.
 
 The pattern set for the set automaton is
 $\Lhs = \{\,\mathit{app}(\mathit{lam}(M), N)\,\}$ --- a single LHS of
-depth two. We treat the bound-variable apparatus of $M$ and the
-substitution $M[N/x]$ as orthogonal to the channel calculation: they
-are realised by whatever metaprogramming primitive the host
-implementation provides, and do not figure in the automaton.
+depth two. The metavariable $M$ binds to the opened body
+$F(z_{1})$ of a matched $\mathit{lam}(F)$; the rewrite RHS
+$M[N/x]$ is then the host-level application $F(N)$. These
+substitution details are orthogonal to the channel calculation and
+do not figure in the automaton.
 
 \paragraph{The set automaton.}
 Tracing the construction of \S\ref{ssec:set-automata}:
