@@ -1174,9 +1174,13 @@ fn emit_cross_cat_prefix_unary_arm(
                 weight: LexicographicWeight::from_cost(
                     0.0, #category_src_idx, #rule_idx,
                 ),
+                // D-strings fix (2026-05-13): cross-cat prefix-unary
+                // sub-parse starts at the source-cat's own minimum BP
+                // (fresh-operand semantics — the wrapped content is a
+                // complete operand, not a Pratt-RHS).
                 new_state: WpdsState::CrossCatDelegate {
                     source_src_idx: #source_src_idx,
-                    outer_bp: _outer_bp,
+                    inner_cur_bp: 0,
                 },
                 capture_token: false,
             };
@@ -1372,6 +1376,10 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                         // marker and route to CrossCatDelegate so the
                         // source-cat sub-parse fires; on return, the
                         // projection's action wraps the source term.
+                        // D-strings fix (2026-05-13): inner_cur_bp = 0
+                        // (fresh-operand semantics — Pass 2a projection
+                        // is at the start of a fresh operand, no
+                        // enclosing Pratt precedence to enforce).
                         return WpdsStepAction::Push {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
@@ -1381,7 +1389,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             ),
                             new_state: WpdsState::CrossCatDelegate {
                                 source_src_idx: #source_src_idx,
-                                outer_bp: _outer_bp,
+                                inner_cur_bp: 0,
                             },
                         };
                     }
@@ -1401,6 +1409,10 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 let source_src_idx = *source_src_idx;
                 quote! {
                     #pat if #guard => {
+                        // D-strings fix (2026-05-13): inner_cur_bp = 0
+                        // (Pass 2c implicit cast is at the start of a
+                        // fresh operand; no enclosing Pratt precedence
+                        // to enforce inside the sub-parse).
                         return WpdsStepAction::Push {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
@@ -1411,7 +1423,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             ),
                             new_state: WpdsState::CrossCatDelegate {
                                 source_src_idx: #source_src_idx,
-                                outer_bp: _outer_bp,
+                                inner_cur_bp: 0,
                             },
                         };
                     }
@@ -1474,9 +1486,12 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                 mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
                                 #category_src_idx, #rule_idx,
                             ),
+                            // D-strings fix (2026-05-13): inner_cur_bp = 0
+                            // (Pass 2a projection multi-branch case —
+                            // fresh-operand semantics).
                             new_state: WpdsState::CrossCatDelegate {
                                 source_src_idx: #src_idx,
-                                outer_bp: _outer_bp,
+                                inner_cur_bp: 0,
                             },
                             action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
                         }
@@ -1501,9 +1516,12 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                 mettail_prattail::automata::lex_weight::BP_TIER_PASS2C_SYNTHESIZED,
                                 #category_src_idx, #rule_idx,
                             ),
+                            // D-strings fix (2026-05-13): inner_cur_bp = 0
+                            // (Pass 2c implicit-cast multi-branch case —
+                            // fresh-operand semantics).
                             new_state: WpdsState::CrossCatDelegate {
                                 source_src_idx: #src_idx,
-                                outer_bp: _outer_bp,
+                                inner_cur_bp: 0,
                             },
                             action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
                         }

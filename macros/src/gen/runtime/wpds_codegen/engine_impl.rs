@@ -919,9 +919,16 @@ pub(crate) fn emit_engine_impl_full(
                             if l_bp >= *cur_bp {
                                 let new_state =
                                     if result_src != state_cat_src_idx {
+                                        // D-strings fix (2026-05-13): pass r_bp
+                                        // as the sub-parse's `inner_cur_bp` so
+                                        // the cross-cat operand sub-parse
+                                        // enforces the outer Pratt precedence
+                                        // (e.g. `Str < Str : Bool` at r_bp=7
+                                        // prevents `==` at l_bp=2 from leaking
+                                        // into the RHS sub-parse).
                                         WpdsState::CrossCatDelegate {
                                             source_src_idx: state_cat_src_idx,
-                                            outer_bp: r_bp,
+                                            inner_cur_bp: r_bp,
                                         }
                                     } else {
                                         WpdsState::PrefixDispatch {
@@ -1279,7 +1286,7 @@ pub(crate) fn emit_engine_impl_full(
                     }
                     WpdsState::CrossCatDelegate {
                         source_src_idx,
-                        outer_bp: _outer_bp,
+                        inner_cur_bp,
                     } => {
                         // Stage 1.1: cross-cat projection delegation.
                         // Push a CategoryEntry for the source category;
@@ -1291,22 +1298,25 @@ pub(crate) fn emit_engine_impl_full(
                         // top → its wrap-action fires, wrapping the
                         // source Term as `Cat::Wrapper(Box::new(t))`.
                         //
-                        // Plan C Fix 1.2 (led_test cluster, 2026-05-11):
-                        // `cur_bp: 0` (not `*outer_bp`). BPs are per-category
-                        // Pratt scales; cross-cat sub-parser should start at
-                        // its own minimum BP so all of its own operators are
-                        // visible. The outer_bp is preserved on the wrapping
-                        // `Return(outer_cat, CastRule, bp=Some(outer_bp))`
-                        // symbol below this CategoryEntry — when that Return
-                        // is later popped, the standard Return-pop path at
-                        // `Unwinding-Return` correctly restores
-                        // `InfixLoop { cur_bp: outer_bp }`.
+                        // D-strings fix (2026-05-13): use `*inner_cur_bp`
+                        // (set by the emission site) as the sub-parse's
+                        // cur_bp, NOT a hardcoded 0. For cross-cat infix
+                        // RHS dispatch (`engine_impl.rs:920-925`), the
+                        // emitter passes `r_bp` so the sub-parse rejects
+                        // lower-precedence operators leaking in from the
+                        // enclosing Pratt context. For PrefixDispatch
+                        // CrossCatProjection/ImplicitCast/CrossCatPrefixUnary
+                        // arms, the emitter passes 0 (fresh-operand
+                        // semantics). The outer cur_bp is restored via the
+                        // wrapping `Return(..., bp=Some(outer_cur_bp))`
+                        // symbol when that Return is later popped, not via
+                        // this state.
                         WpdsStepAction::Push {
                             symbol: StackSymbolV2::category_entry(*source_src_idx),
                             weight: LexicographicWeight::one(),
                             new_state: WpdsState::PrefixDispatch {
                                 pos: _pos,
-                                cur_bp: 0,
+                                cur_bp: *inner_cur_bp,
                             },
                         }
                     }

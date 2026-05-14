@@ -552,8 +552,25 @@ pub enum WpdsState {
     CrossCatDelegate {
         /// Source category index — what we're about to parse.
         source_src_idx: u16,
-        /// Outer Pratt cur_bp to restore after the delegation completes.
-        outer_bp: u8,
+        /// Precedence floor for the sub-parse's `PrefixDispatch`/`InfixLoop`.
+        ///
+        /// Set per-emission-context:
+        /// - InfixLoop cross-cat infix dispatch (`engine_impl.rs:920-925`)
+        ///   sets this to the operator's `r_bp` so the cross-cat operand
+        ///   sub-parse respects the outer Pratt precedence (e.g.
+        ///   `LtStr: Str < Str : Bool` with r_bp=7 prevents `==` at l_bp=2
+        ///   from leaking into the RHS sub-parse).
+        /// - PrefixDispatch CrossCatProjection/ImplicitCast/CrossCatPrefixUnary
+        ///   arms set this to `0` because they're at the start of a fresh
+        ///   operand (no enclosing Pratt precedence to enforce inside the
+        ///   sub-parse).
+        ///
+        /// Renamed from `outer_bp` 2026-05-13 (D-strings fix). The prior
+        /// semantics — "the outer Pratt cur_bp to restore after delegation"
+        /// — was an obsolete description: the outer cur_bp is restored via
+        /// the wrapping Return symbol's `bp` field at Return-pop time, not
+        /// via this state. This field is now the SUB-PARSE's cur_bp.
+        inner_cur_bp: u8,
     },
     /// Multiple GSS branches active simultaneously; awaiting resolution.
     /// The `branches: Vec<GssNodeId>` field lists the GSS-tip node ids of
