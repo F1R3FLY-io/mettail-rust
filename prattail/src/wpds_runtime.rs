@@ -2470,6 +2470,86 @@ impl crate::automata::derivation_weight::DerivationCombine for DerivationSnapsho
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// M11.3 (2026-05-14): codegen weight-construction helpers
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// The codegen lifts walker `W` from `LexicographicWeight` to
+// `DerivationWeight<LexicographicWeight, DerivationSnapshot>` (M11.4). Every
+// `LexicographicWeight::from_cost(...)` emit site in the codegen wraps the
+// resulting weight in a singleton `DerivationWeight` carrying the unit
+// derivation snapshot (the walker's Fork-arm sites inject the parent's
+// real snapshot via `with_snapshot` at apply time — see M11.5).
+//
+// These helpers live in `wpds_runtime` (not `automata::derivation_weight`)
+// because they specialize on `DerivationSnapshot` — keeping the algebra
+// crate (`automata::derivation_weight`) `DerivationSnapshot`-agnostic.
+
+/// Construct a `DerivationWeight` carrying a single `LexicographicWeight`
+/// with `lex_alt_idx = 0` (the default — no lex ambiguity at this site).
+///
+/// The derivation component is `DerivationSnapshot::unit()` — codegen has
+/// no cursor scope. Walker Fork-arm sites inject the parent's real
+/// snapshot via `with_snapshot` before merging into the child cursor's
+/// accumulated weight.
+#[inline]
+pub fn lex_w(
+    cost: f64,
+    src_idx: u16,
+    rule_idx: u16,
+) -> crate::automata::derivation_weight::DerivationWeight<
+    crate::automata::lex_weight::LexicographicWeight,
+    DerivationSnapshot,
+> {
+    use crate::automata::derivation_weight::{DerivationCombine, DerivationWeight};
+    use crate::automata::lex_weight::LexicographicWeight;
+    DerivationWeight::singleton(
+        LexicographicWeight::from_cost(cost, src_idx, rule_idx),
+        DerivationSnapshot::unit(),
+    )
+}
+
+/// Construct a `DerivationWeight` carrying a single `LexicographicWeight`
+/// with explicit `lex_alt_idx`. Used by lex-Fork emission paths where a
+/// lex DAG position has multiple `TokenKind` alternatives.
+///
+/// See [`lex_w`] for the derivation-component semantics.
+#[inline]
+pub fn lex_w_alt(
+    cost: f64,
+    src_idx: u16,
+    rule_idx: u16,
+    lex_alt_idx: u16,
+) -> crate::automata::derivation_weight::DerivationWeight<
+    crate::automata::lex_weight::LexicographicWeight,
+    DerivationSnapshot,
+> {
+    use crate::automata::derivation_weight::{DerivationCombine, DerivationWeight};
+    use crate::automata::lex_weight::LexicographicWeight;
+    DerivationWeight::singleton(
+        LexicographicWeight::from_cost_with_lex(cost, src_idx, rule_idx, lex_alt_idx),
+        DerivationSnapshot::unit(),
+    )
+}
+
+/// Construct the multiplicative identity for the codegen's W:
+/// `DerivationWeight::one_ref()` — a singleton multiset with
+/// `LexicographicWeight::one()` and `DerivationSnapshot::unit()`.
+///
+/// Equivalent to `DerivationWeight::one_ref()` but exported as a
+/// terse helper for codegen ergonomics. Imported via `use
+/// mettail_prattail::wpds_runtime::lex_one;` in the emitted step()
+/// body.
+#[inline]
+pub fn lex_one() -> crate::automata::derivation_weight::DerivationWeight<
+    crate::automata::lex_weight::LexicographicWeight,
+    DerivationSnapshot,
+> {
+    use crate::automata::derivation_weight::DerivationWeight;
+    use crate::automata::semiring::SemiringRef;
+    DerivationWeight::one_ref()
+}
+
 impl fmt::Debug for SemanticBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SemanticBuilder")
