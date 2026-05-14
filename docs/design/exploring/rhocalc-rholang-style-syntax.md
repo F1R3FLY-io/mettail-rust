@@ -105,7 +105,12 @@ PPar . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc;
 `Map` overrides the default collection delimiters:
 
 ```rust
-![HashMap<Proc, Proc>] as Map [ "{", "}", ",", ":" ]
+![HashMap<Proc, Proc>] as Map {
+    open_parts: ["{"],
+    close_parts: ["}"],
+    sep: ",",
+    key_val_sep: ":",
+}
 ```
 
 This produces literal forms `{}`, `{k: v}`, `{k₁: v₁, k₂: v₂, …}`. We also
@@ -153,7 +158,7 @@ instead of the old `for(@map(1:x, 3:4) <- c)`.
 ### 3.6 List & Bag method-call sugar
 
 `List` already uses the Rholang-style `[a, b, c]` literal (via the
-collection-delimiter override `![Vec<Proc>] as List ["[", "]", ","]`); no
+collection-delimiter override using a braced dictionary (`open_parts`, `close_parts`, `sep`, and for Map `key_val_sep`); no
 literal change is needed in Phase 2. `Bag` keeps its rhocalc-only `#{a|b|…}#`
 spelling — Rholang has no bag type — but gains a method-call surface for
 consistency with `Map`/`List`.

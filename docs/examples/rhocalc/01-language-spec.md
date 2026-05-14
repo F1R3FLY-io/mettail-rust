@@ -124,7 +124,12 @@ types are `Vec(T)`, `HashBag(T)`, and `HashSet(T)`.
 `Map` overrides the default `map(k:v)` delimiters to Rholang-style braces:
 
 ```rust
-![HashMap<Proc, Proc>] as Map [ "{", "}", ",", ":" ]
+![HashMap<Proc, Proc>] as Map {
+    open_parts: ["{"],
+    close_parts: ["}"],
+    sep: ",",
+    key_val_sep: ":",
+}
 ```
 
 producing `{}`, `{k: v}`, `{k₁: v₁, k₂: v₂, …}`. An explicit `Map()` alias

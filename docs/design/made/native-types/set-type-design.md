@@ -9,7 +9,7 @@
 
 **Goal:** First-class **Set** category in RhoCalc with Rholang-style surface syntax and method sugar.
 
-**Scope:** `![mettail_runtime::HashSetLit<Proc>] as Set` in `language! { types { … } }`. Default literal delimiters are `Set(`, `)`, `,` (`CollectionCategory::set_defaults()`). `Set()` is an explicit empty-set alias. Rhocalc **Bag** (`#{…}#`) remains the multiset / parallel-composition surface with no Rholang counterpart.
+**Scope:** `![mettail_runtime::HashSetLit<Proc>] as Set` in `language! { types { … } }`. Default literal delimiters are `Set` + `(`, `)`, `,` (`CollectionCategory::set_defaults()` as `open_parts` / `close_parts`). `Set()` is the empty set literal via the same `SetLit` rule as nonempty sets. Rhocalc **Bag** (`#{…}#`) remains the multiset / parallel-composition surface with no Rholang counterpart.
 
 **Non-goals:** partial collection patterns, changing Bag syntax to Rholang `Set`. Surface `.toByteArray()` is specified in [rhocalc-collection-wire.md](./rhocalc-collection-wire.md).
 

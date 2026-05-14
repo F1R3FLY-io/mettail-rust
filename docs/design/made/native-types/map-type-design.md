@@ -53,10 +53,15 @@ Examples: `list()`, `bag(1, 1, 2)`, `map(a:1, b:2)` (empty and non-empty).
 
 To align rhocalc's surface syntax with [Rholang](https://rholang.io), the
 `Map` type declaration in `languages/src/rhocalc.rs` overrides the default
-delimiters via `as Map [ "{", "}", ",", ":" ]`:
+delimiters via a braced dictionary (`open_parts`, `close_parts`, `sep`, `key_val_sep`):
 
 ```rust
-![HashMap<Proc, Proc>] as Map [ "{", "}", ",", ":" ]
+![HashMap<Proc, Proc>] as Map {
+    open_parts: ["{"],
+    close_parts: ["}"],
+    sep: ",",
+    key_val_sep: ":",
+}
 ```
 
 Resulting literal forms: `{}` (empty), `{k: v}`, `{k₁: v₁, k₂: v₂}`. An
@@ -74,16 +79,16 @@ the canonical Rholang-style form. See
 
 ### 3.2 Delimiter Model
 
-`CollectionDelimiters` has `open`, `close`, `sep`. Map requires a fourth: `key_val_sep`.
+`CollectionDelimiters` has `open_parts`, `close_parts`, `sep`, and for Map `key_val_sep`. Each string in `open_parts` / `close_parts` is a separate lexer terminal, so optional whitespace may appear between adjacent segments (e.g. `Set (`).
 
 | Field | List | Bag | Map |
 |-------|------|-----|-----|
-| open | `list(` | `bag(` | `map(` |
-| close | `)` | `)` | `)` |
+| open_parts | `["list", "("]` | `["bag", "("]` | `["map", "("]` |
+| close_parts | `[")"]` | `[")"]` | `[")"]` |
 | sep | `,` (element separator) | `,` (element separator) | `,` (entry separator) |
 | key_val_sep | N/A | N/A | `:` |
 
-**Decision:** Add `key_val_sep: Option<String>` to `CollectionDelimiters`. Default `":"` for Map; `None` for List/Bag. Parsing and codegen branch on `key_val_sep.is_some()`.
+**Decision:** `key_val_sep: Option<String>` on `CollectionDelimiters`. Default `":"` for Map; `None` for List/Bag/Set. Parsing and codegen branch on `key_val_sep.is_some()`.
 
 ---
 
@@ -172,7 +177,7 @@ Generated languages use a **Map** enum with **`MapLit`** payload (e.g. `Map::Map
 
 ## 7. Delimiter Conflicts
 
-With keyword-prefixed defaults (`list(`, `bag(`, `map(`), collections are lexically distinct. No conflict with PPar (`{`, `}`) or other constructs. Languages may override defaults via custom delimiters in the type declaration (e.g. `as Bag [ "#{", "}#", "|" ]` for RhoCalc).
+With keyword-prefixed defaults (`list(`, `bag(`, `map(`), collections are lexically distinct. No conflict with PPar (`{`, `}`) or other constructs. Languages may override defaults via a braced delimiter dictionary in the type declaration (see RhoCalc `Bag` / `Map` / `List` in `languages/src/rhocalc.rs`).
 
 ---
 

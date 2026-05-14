@@ -16,7 +16,7 @@
 // - Map literals use brace+colon: `{1:2, 3:4}` (or `Map()` for empty).
 // - Set literals use `Set(1, 2, 3)` / `Set()`; `m.keys()` returns a `Set`.
 // - Map methods: `m.get(k)`, `m.set(k,v)`, `m.contains(k)`, `m.delete(k)`, `m.union(n)`.
-//   `values` and `len` remain prefix-form for now.
+//   `values` remains prefix-form for now; collection sizes use `.size()` / `.length()`.
 
 // =============================================================================
 // Basic communication
@@ -107,5 +107,5 @@ exec Map().set(1, 10).set(2, 20)
 exec {1: 10}.contains(1)
 exec {1: 10, 2: 20}.delete(1)
 exec {1: 10}.union({2: 20})
-exec len(Map())
+exec Map().size()
 exec keys({1: 10, 2: 20})
