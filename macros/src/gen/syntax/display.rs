@@ -75,8 +75,8 @@ fn generate_display_impl(
         use syn::LitStr;
         match ck {
             CollectionCategory::List(d) => {
-                let open = LitStr::new(&d.open, Span::call_site());
-                let close = LitStr::new(&d.close, Span::call_site());
+                let open = LitStr::new(&d.open_display(), Span::call_site());
+                let close = LitStr::new(&d.close_display(), Span::call_site());
                 let sep = LitStr::new(&d.sep, Span::call_site());
                 let lit_label = syn::Ident::new("ListLit", Span::call_site());
                 match_arms.push(quote! {
@@ -92,8 +92,8 @@ fn generate_display_impl(
                 });
             },
             CollectionCategory::Bag(d) => {
-                let open = LitStr::new(&d.open, Span::call_site());
-                let close = LitStr::new(&d.close, Span::call_site());
+                let open = LitStr::new(&d.open_display(), Span::call_site());
+                let close = LitStr::new(&d.close_display(), Span::call_site());
                 let sep = LitStr::new(&d.sep, Span::call_site());
                 let lit_label = syn::Ident::new("BagLit", Span::call_site());
                 match_arms.push(quote! {
@@ -112,8 +112,8 @@ fn generate_display_impl(
                 });
             },
             CollectionCategory::Map(d) => {
-                let open = LitStr::new(&d.open, Span::call_site());
-                let close = LitStr::new(&d.close, Span::call_site());
+                let open = LitStr::new(&d.open_display(), Span::call_site());
+                let close = LitStr::new(&d.close_display(), Span::call_site());
                 let sep = LitStr::new(&d.sep, Span::call_site());
                 let key_val_sep =
                     LitStr::new(d.key_val_sep.as_deref().unwrap_or(":"), Span::call_site());
@@ -134,8 +134,8 @@ fn generate_display_impl(
                 });
             },
             CollectionCategory::Set(d) => {
-                let open = LitStr::new(&d.open, Span::call_site());
-                let close = LitStr::new(&d.close, Span::call_site());
+                let open = LitStr::new(&d.open_display(), Span::call_site());
+                let close = LitStr::new(&d.close_display(), Span::call_site());
                 let sep = LitStr::new(&d.sep, Span::call_site());
                 let lit_label = syn::Ident::new("SetLit", Span::call_site());
                 match_arms.push(quote! {

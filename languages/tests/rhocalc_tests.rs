@@ -1381,8 +1381,8 @@ mod native_ops {
         }
 
         #[test]
-        fn len() {
-            assert_reduces_to(r#"len("hello")"#, "5");
+        fn length_method() {
+            assert_reduces_to(r#""hello".length()"#, "5");
         }
     }
 
@@ -1411,13 +1411,6 @@ mod native_ops {
         //
         // Bag has no Rholang counterpart, so the literal stays `#{a|b|…}#`,
         // but the method surface mirrors Map/List for a uniform feel.
-
-        #[test]
-        fn bag_size_extends_len() {
-            // Underlying `Len` is extended to dispatch over `CastBag`
-            // (size = sum of element multiplicities, normalised).
-            assert_reduces_to("len(#{1|2|2}#)", "3");
-        }
 
         #[test]
         fn bag_size_method() {
@@ -1455,14 +1448,6 @@ mod native_ops {
 
     mod list {
         use super::*;
-
-        // Smoke test for the existing prefix forms (kept as the canonical AST
-        // builtins that the method sugars below fold to).
-
-        #[test]
-        fn list_len_prefix() {
-            assert_reduces_to("len([1, 2, 3])", "3");
-        }
 
         #[test]
         fn list_at_prefix() {
@@ -1514,13 +1499,13 @@ mod native_ops {
         // Method-call sugars below fold to these same constructors.
 
         #[test]
-        fn map_len_empty() {
-            assert_reduces_to("len(Map())", "0");
+        fn map_size_empty() {
+            assert_reduces_to("Map().size()", "0");
         }
 
         #[test]
-        fn map_len_one() {
-            assert_reduces_to("len({1:2})", "1");
+        fn map_size_one() {
+            assert_reduces_to("{1:2}.size()", "1");
         }
 
         #[test]
@@ -1559,8 +1544,8 @@ mod native_ops {
         }
 
         #[test]
-        fn map_keys_prefix() {
-            assert_reduces_to("len(keys({1:10, 2:20}))", "2");
+        fn map_keys_size() {
+            assert_reduces_to("keys({1:10, 2:20}).size()", "2");
         }
 
         #[test]
@@ -1570,7 +1555,7 @@ mod native_ops {
 
         #[test]
         fn map_delete_method() {
-            assert_reduces_to("len({1:10, 2:20}.delete(1))", "1");
+            assert_reduces_to("{1:10, 2:20}.delete(1).size()", "1");
             assert_reduces_to("{1:10, 2:20}.delete(1).get(2)", "20");
         }
 
@@ -1597,7 +1582,7 @@ mod native_ops {
 
         #[test]
         fn map_keys_method() {
-            assert_reduces_to("len({1:10, 2:20}.keys())", "2");
+            assert_reduces_to("{1:10, 2:20}.keys().size()", "2");
         }
 
         #[test]
@@ -1615,8 +1600,13 @@ mod native_ops {
         use super::*;
 
         #[test]
-        fn set_len_prefix() {
-            assert_reduces_to("len(Set(1, 2, 3))", "3");
+        fn set_size_literal() {
+            assert_reduces_to("Set(1, 2, 3).size()", "3");
+        }
+
+        #[test]
+        fn set_literal_allows_space_before_paren() {
+            assert_reduces_to("Set (1, 2, 3).size()", "3");
         }
 
         #[test]
