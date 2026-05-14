@@ -635,15 +635,19 @@ pub enum ForkActionKind {
     /// text }` onto its pending ops. Replay (commit_winner) drives the
     /// MutableMultiTokenSource to commit the alt at parse time.
     ///
-    /// L-substrate Piece #5b (2026-05-13): `end_byte` added so the
-    /// walker's apply can populate `cursor.pending_lex_alts` with the
-    /// alt's byte boundary, enabling the per-cursor `CursorViewSource`
-    /// to project the correct downstream tokenization for this alt.
+    /// M5 (2026-05-13): `next_pos` replaces the prior `end_byte` field.
+    /// The walker's apply uses `next_pos` directly to set the child
+    /// cursor's `pos`. For LATTICE sources (`LatticeTokenSource`),
+    /// `next_pos` is the alt's DAG `target_node`; for LINEAR sources
+    /// (the default), `next_pos = cursor.pos + 1`. Encoding the alt's
+    /// downstream position in the cursor's `pos` eliminates the need
+    /// for per-cursor sidecar state (the `pending_lex_alts` BTreeMap
+    /// deleted in M4).
     LexAlt {
         alt_idx: u16,
         kind: TokenKind,
         text: String,
-        end_byte: usize,
+        next_pos: usize,
     },
 
     /// Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ, 2026-05-05) — atomic
@@ -3669,11 +3673,18 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
-                        ForkActionKind::LexAlt { alt_idx, kind, text, end_byte } => {
+                        ForkActionKind::LexAlt { alt_idx, kind, text, next_pos } => {
                             let mut sym = branch.symbol;
+                            // M5 (2026-05-13): set child's pos to the alt's
+                            // `next_pos` directly. For LatticeTokenSource,
+                            // this is the alt's DAG `target_node`; for
+                            // linear sources it falls back to `pos + 1`
+                            // via the WpdsTokenSource trait's default.
+                            // Either way, the cursor's `pos` alone encodes
+                            // the alt's downstream timeline.
                             let mut child = BranchCursor {
                                 node: cursor.node,
-                                pos: pos_after,
+                                pos: next_pos,
                                 weight: cursor.weight.times(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
@@ -3697,20 +3708,10 @@ impl<W: Semiring, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
                             };
-                            // M4 (2026-05-13): `pending_lex_alts.insert(...)`
-                            // DELETED. Per-cursor alt-override storage was
-                            // the sidecar violating WPDS stack purity.
-                            // Replaced by LatticeTokenSource (M3) — the
-                            // child's `pos: usize` (DAG node-id, set via
-                            // M5's `next_pos`) suffices to identify the
-                            // alt's timeline. `end_byte` is retained on
-                            // the LexAlt action for now (M5 reworks to
-                            // `next_pos`).
-                            let _ = end_byte;
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             child.recovery_deltas.push(
                                 BuilderDelta::CommitLexAlternative {
-                                    pos: child.pos,
+                                    pos: cursor.pos,
                                     alt_idx,
                                     kind,
                                     text,

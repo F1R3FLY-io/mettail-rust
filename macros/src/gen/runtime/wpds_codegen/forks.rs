@@ -168,6 +168,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 // apply_action::Fork dispatch logs
                 // BuilderDelta::CommitLexAlternative with the right
                 // arguments.
+                //
                 // L-substrate (2026-05-13): `(alt_idx + 1) as u16` so
                 // the first secondary alt gets `lex_alt_idx = 1` — the
                 // primary cursor (fall-through, no Fork branch)
@@ -175,20 +176,31 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 // tying primary-cost cursors prefer the canonical
                 // longest-match (lex_alt_idx=0) over secondaries
                 // (lex_alt_idx>=1) via LexicographicWeight::lex_cmp.
+                //
+                // M5 (2026-05-13): `next_pos` replaces `end_byte`. The
+                // walker's apply uses `next_pos` to set the child's
+                // `cursor.pos` directly. For LatticeTokenSource this is
+                // the alt's DAG `target_node`; for linear sources the
+                // trait default returns `pos + 1`. Calling
+                // `tokens.next_pos(*pos, alt_idx + 1)` runs through the
+                // active source's impl — correct in both cases.
+                let alt_next_pos = tokens
+                    .next_pos(*pos, alt_idx + 1)
+                    .unwrap_or(*pos + 1);
                 __branches.push(mettail_prattail::wpds_walker::ForkBranch {
                     symbol: StackSymbolV2::category_entry(primary_src),
                     weight: LexicographicWeight::from_cost_with_lex(
                         0.0, primary_src, 0, (alt_idx + 1) as u16,
                     ),
                     new_state: WpdsState::PrefixDispatch {
-                        pos: *pos,
+                        pos: alt_next_pos,
                         cur_bp: *cur_bp,
                     },
                     action_kind: mettail_prattail::wpds_walker::ForkActionKind::LexAlt {
                         alt_idx: (alt_idx + 1) as u16,
                         kind: alt.kind.clone(),
                         text: alt.text.to_string(),
-                        end_byte: alt.end_byte,
+                        next_pos: alt_next_pos,
                     },
                 });
             }
