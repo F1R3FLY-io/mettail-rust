@@ -732,6 +732,163 @@ pub fn lex_lattice_core<'a, T: Clone>(
     }
 }
 
+/// L-substrate Piece #1 (2026-05-13): multi-accept DFA scanner producing a
+/// `LexStream` with multi-LENGTH alternatives per byte position.
+///
+/// Unlike `lex_lattice_core` (which only reports SAME-END-BYTE ambiguity),
+/// this function records EVERY accepting state visited along the DFA walk
+/// — so input `-3` produces `entries[0].alternatives = [Integer(-3)@end=2,
+/// Minus@end=1]` (longest first). The walker's PrefixDispatch lex-Fork
+/// emission consumes these to spawn parallel cursors.
+///
+/// The PRIMARY timeline (the longest-match path) populates the rest of
+/// `entries[1..]`. Secondary (shorter-match) timelines are NOT materialized
+/// here — they're re-lexed on demand at Fork-commit time by
+/// `MutableMultiTokenSource::commit_alternative`.
+///
+/// The `token_to_kind` callback converts the language-specific `Token<'a>`
+/// (returned by `accept_alternatives`) to the kind-only `TokenKind`
+/// carried by `LexAlternative`.
+///
+/// Returns the populated `LexStream` and the post-EOF `Position`.
+pub fn lex_stream_core<'a, T: Clone>(
+    input: &'a str,
+    file_id: Option<u32>,
+    char_class: &[u8; 256],
+    dfa_next: impl Fn(u32, u8) -> u32,
+    is_accepting: impl Fn(u32) -> bool,
+    accept_alternatives: impl Fn(u32, &'a str) -> Vec<(T, f64)>,
+    token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
+) -> Result<(crate::lexer_types::LexStream, Position), String> {
+    use crate::automata::semiring::TropicalWeight;
+    use crate::lexer_types::{LexAlternative, LexEntry, LexStream};
+
+    let _ = file_id;
+    let bytes = input.as_bytes();
+    let mut pos: usize = 0;
+    let mut line: usize = 0;
+    let mut col: usize = 0;
+    let mut stream = LexStream::new();
+    stream.entries.reserve(input.len() / 2);
+
+    while pos < bytes.len() {
+        {
+            let result = skip_whitespace_simd(bytes, pos, line, col);
+            pos = result.pos;
+            line = result.line;
+            col = result.col;
+        }
+        while pos < bytes.len() && bytes[pos] >= 0x80 {
+            match decode_char_at(input, pos) {
+                Some((ch, ch_len)) if ch.is_whitespace() => {
+                    col += 1;
+                    pos += ch_len;
+                }
+                _ => break,
+            }
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+
+        let start = pos;
+        let mut walk_pos = pos;
+        let mut walk_line = line;
+        let mut walk_col = col;
+        let mut state: u32 = 0;
+        // Record EVERY accepting state visited along the walk —
+        // (accept_state, end_byte, end_line, end_col).
+        let mut accepts: Vec<(u32, usize, usize, usize)> = Vec::new();
+
+        if is_accepting(0) {
+            accepts.push((0, walk_pos, walk_line, walk_col));
+        }
+
+        while walk_pos < bytes.len() {
+            let class = char_class[bytes[walk_pos] as usize];
+            let next = dfa_next(state, class);
+            if next == u32::MAX {
+                break;
+            }
+            state = next;
+            if bytes[walk_pos] == b'\n' {
+                walk_line += 1;
+                walk_col = 0;
+            } else if bytes[walk_pos] & 0xC0 != 0x80 {
+                walk_col += 1;
+            }
+            walk_pos += 1;
+            if is_accepting(state) {
+                accepts.push((state, walk_pos, walk_line, walk_col));
+            }
+        }
+
+        if accepts.is_empty() {
+            let (ch, _ch_len) = decode_char_at(input, start).unwrap_or(('\u{FFFD}', 1));
+            let msg = format!(
+                "{}:{}: unexpected character '{}'",
+                line + 1,
+                col + 1,
+                ch.escape_debug(),
+            );
+            return Err(msg);
+        }
+
+        // Build alternatives from ALL accepts. Longest-first ordering for
+        // primary canonical (`lex_alt_idx == 0` per
+        // `LexicographicWeight::lex_cmp`). Same-end-byte alternatives
+        // (from accept_alternatives) are emitted in their existing
+        // priority order (best weight first).
+        let mut alternatives: Vec<LexAlternative> = Vec::with_capacity(accepts.len() * 2);
+        for &(accept_state, accept_end, _, _) in accepts.iter().rev() {
+            let alt_text = &input[start..accept_end];
+            let alt_tokens = accept_alternatives(accept_state, alt_text);
+            for (token, weight) in alt_tokens {
+                let kind = token_to_kind(&token);
+                alternatives.push(LexAlternative {
+                    kind,
+                    text: alt_text.to_string(),
+                    end_byte: accept_end,
+                    weight: TropicalWeight::new(weight),
+                });
+            }
+        }
+
+        if alternatives.is_empty() {
+            // No token produced at any visited accept state (e.g., all
+            // accepts were whitespace-only). Advance one byte and
+            // continue; otherwise we'd loop forever.
+            // The longest accept advanced walk_pos; consume it.
+            let (longest_state, longest_end, longest_line, longest_col) =
+                *accepts.last().expect("accepts non-empty above");
+            let _ = longest_state;
+            pos = longest_end;
+            line = longest_line;
+            col = longest_col;
+            continue;
+        }
+
+        // Advance to the longest accept's end position (canonical primary).
+        let (_, longest_end, longest_line, longest_col) =
+            *accepts.last().expect("accepts non-empty above");
+        pos = longest_end;
+        line = longest_line;
+        col = longest_col;
+
+        stream.entries.push(LexEntry {
+            byte_start: start,
+            alternatives,
+        });
+    }
+
+    let eof_pos = Position {
+        byte_offset: pos,
+        line,
+        column: col,
+    };
+    Ok((stream, eof_pos))
+}
+
 #[inline(always)]
 pub fn is_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\r')

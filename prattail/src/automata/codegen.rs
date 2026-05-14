@@ -1095,6 +1095,12 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
     // B3: Lattice-aware lexing with multi-accept alternatives
     write_accept_alternatives(buf, dfa, custom_tokens);
     write_lex_lattice_via_core(buf);
+    // L-substrate Piece #4 (2026-05-13): emit `lex_stream()` that returns a
+    // `LexStream` carrying multi-LENGTH alternatives per byte position. Used
+    // by the lex-fork PrefixDispatch routing in `parse_via_wpds` when the
+    // input contains lex ambiguity (e.g., `-3` lexes as both `Integer(-3)`
+    // and `[Minus, Integer(3)]`).
+    write_lex_stream_via_core(buf);
 }
 
 /// AL02: Write a hybrid direct-coded + compressed lexer to a string buffer.
@@ -1211,6 +1217,12 @@ fn write_hybrid_lexer(
     // B3: Lattice-aware lexing with multi-accept alternatives
     write_accept_alternatives(buf, dfa, custom_tokens);
     write_lex_lattice_via_core(buf);
+    // L-substrate Piece #4 (2026-05-13): emit `lex_stream()` that returns a
+    // `LexStream` carrying multi-LENGTH alternatives per byte position. Used
+    // by the lex-fork PrefixDispatch routing in `parse_via_wpds` when the
+    // input contains lex ambiguity (e.g., `-3` lexes as both `Integer(-3)`
+    // and `[Minus, Integer(3)]`).
+    write_lex_stream_via_core(buf);
 }
 
 /// Write `lex()`/`lex_with_file_id()` that delegate to `mettail_prattail::runtime_types::lex_core()`.
@@ -1479,6 +1491,40 @@ fn write_lex_lattice_via_core(buf: &mut String) {
          } \
          lattice => Ok((lattice, eof_range)) \
          } }",
+    );
+}
+
+/// L-substrate Piece #4 (2026-05-13): emit `lex_stream()` that delegates to
+/// `mettail_prattail::runtime_types::lex_stream_core()`.
+///
+/// Returns `LexStream` carrying multi-LENGTH alternatives per byte position.
+/// For an input like `-3`, the DFA's `-?\d+` Integer regex shares a leading
+/// state with the `-` Minus regex, so the scanner visits TWO accepting
+/// states along the walk: `Minus@end=1` and `Integer@end=2`. Both are
+/// emitted as `LexAlternative`s in `entries[0]`, longest-first.
+///
+/// The Eof entry is appended after the input is fully consumed, so
+/// `entries.len()` equals the number of tokens (including Eof).
+fn write_lex_stream_via_core(buf: &mut String) {
+    buf.push_str(
+        "pub fn lex_stream<'a>(input: &'a str) \
+         -> Result<mettail_prattail::lexer_types::LexStream, String> { \
+         lex_stream_with_file_id(input, None) \
+         }\n\
+         pub fn lex_stream_with_file_id<'a>(input: &'a str, file_id: Option<u32>) \
+         -> Result<mettail_prattail::lexer_types::LexStream, String> { \
+         let (mut stream, eof_pos) = mettail_prattail::runtime_types::lex_stream_core( \
+         input, file_id, &CHAR_CLASS, dfa_next, is_accepting_state, accept_alternatives, token_to_kind)?; \
+         stream.entries.push(mettail_prattail::lexer_types::LexEntry { \
+             byte_start: eof_pos.byte_offset, \
+             alternatives: vec![mettail_prattail::lexer_types::LexAlternative { \
+                 kind: mettail_prattail::automata::TokenKind::Eof, \
+                 text: String::new(), \
+                 end_byte: eof_pos.byte_offset, \
+                 weight: mettail_prattail::automata::semiring::TropicalWeight::new(0.0), \
+             }], \
+         }); \
+         Ok(stream) }",
     );
 }
 
@@ -2275,6 +2321,12 @@ fn write_comb_driven_lexer(
     // B3: Lattice-aware lexing with multi-accept alternatives
     write_accept_alternatives(buf, dfa, custom_tokens);
     write_lex_lattice_via_core(buf);
+    // L-substrate Piece #4 (2026-05-13): emit `lex_stream()` that returns a
+    // `LexStream` carrying multi-LENGTH alternatives per byte position. Used
+    // by the lex-fork PrefixDispatch routing in `parse_via_wpds` when the
+    // input contains lex ambiguity (e.g., `-3` lexes as both `Integer(-3)`
+    // and `[Minus, Integer(3)]`).
+    write_lex_stream_via_core(buf);
 }
 
 /// Write a complete bitmap-compressed lexer to a string buffer.
@@ -2332,6 +2384,12 @@ fn write_bitmap_driven_lexer(
     // B3: Lattice-aware lexing with multi-accept alternatives
     write_accept_alternatives(buf, dfa, custom_tokens);
     write_lex_lattice_via_core(buf);
+    // L-substrate Piece #4 (2026-05-13): emit `lex_stream()` that returns a
+    // `LexStream` carrying multi-LENGTH alternatives per byte position. Used
+    // by the lex-fork PrefixDispatch routing in `parse_via_wpds` when the
+    // input contains lex ambiguity (e.g., `-3` lexes as both `Integer(-3)`
+    // and `[Minus, Integer(3)]`).
+    write_lex_stream_via_core(buf);
 }
 
 
