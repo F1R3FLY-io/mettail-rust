@@ -167,7 +167,17 @@ pub(crate) fn emit_engine_impl_full(
     let lex_fork_dispatch =
         super::forks::emit_lex_fork_at_prefix_dispatch(primary_src_idx);
 
+    // M6c.2 (2026-05-14): per-grammar `lex_alt_rule_for` free fn.
+    // Used by the lex-Fork emitter (M6c.3) to bind alts to atomic-
+    // literal rules. Emitted as a sibling of the engine impl so the
+    // codegen output uses a single match expression with all
+    // (cat, kind) entries.
+    let lex_alt_rule_for_fn =
+        super::kind_dispatch::emit_lex_alt_rule_for_fn(language, per_cat);
+
     quote! {
+        #lex_alt_rule_for_fn
+
         impl mettail_prattail::wpds_walker::WpdsStepEngine<
             mettail_prattail::automata::lex_weight::LexicographicWeight,
         > for #engine_ident

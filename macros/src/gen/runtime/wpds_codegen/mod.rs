@@ -60,6 +60,10 @@ pub mod facade;
 /// `WpdsStepAction::Fork` per `feedback_use_wpds_disambiguation_not_heuristics.md`.
 pub mod forks;
 pub mod infix;
+/// M6c.2 (2026-05-14): per-grammar `lex_alt_rule_for(cat, kind)` codegen.
+/// Used by the lex-Fork emitter to bind alternative tokens to atomic-
+/// literal rules before forking.
+pub mod kind_dispatch;
 pub mod prefix;
 pub mod recovery;
 pub mod refinement;
