@@ -660,6 +660,83 @@ pub enum ForkActionKind {
         rule_idx: u16,
     },
 
+    /// M6c.6.4 (2026-05-14) — unary prefix operator lex-Fork branch.
+    /// Mirrors the standard `WpdsStepAction::ConsumeAndPush` shape
+    /// emitted by the generated PrefixDispatch arm for `Fixed("-")`-like
+    /// triggers in a same-cat unary prefix rule (e.g., `Neg`):
+    /// symbol = `rule_at(cat, rule_idx, slot=1, Some(*cur_bp))` (NO
+    /// `with_kind_return`); `new_state = BinderRule { result_src_idx,
+    /// rule_idx, body_src_idx, outer_bp = *cur_bp }`; `capture_token:
+    /// false` (trigger not stored on builder; operand sub-parse
+    /// produces the AST). Walker apply: allocate child at `cursor.pos`,
+    /// emit_push_side_effects, cursor_gss_push, advance to `next_pos`.
+    /// Activated at M6c.6.4.d; previously stubbed `unreachable!()`.
+    LexAltPrefixOp {
+        alt_idx: u16,
+        trigger: String,
+        rule_idx: u16,
+        body_src_idx: u16,
+        next_pos: usize,
+        outer_bp: u8,
+    },
+
+    /// M6c.6.4 (2026-05-14) — unary postfix operator lex-Fork branch.
+    /// Mirrors the standard postfix tier emit in InfixLoop (e.g.,
+    /// `Fact`): symbol = `rule_at(result_src, rule_idx, slot=0,
+    /// Some(*cur_bp)).with_kind_return()`; `new_state = Unwinding`.
+    /// Operand is already on builder from prior sub-parse; no
+    /// `emit_push_token` for the trigger. Walker apply: allocate child
+    /// at `cursor.pos`, emit_push_side_effects, cursor_gss_push,
+    /// advance to `next_pos`. Activated at M6c.6.4.e.
+    LexAltPostfixOp {
+        alt_idx: u16,
+        trigger: String,
+        rule_idx: u16,
+        next_pos: usize,
+        l_bp: u8,
+        result_src_idx: u16,
+    },
+
+    /// M6c.6.4 (2026-05-14) — binary infix operator lex-Fork branch.
+    /// Mirrors the standard infix tier emit in InfixLoop (e.g.,
+    /// `AddInt`, cross-cat `EqInt`): symbol = `rule_at(result_src,
+    /// rule_idx, slot=0, Some(*cur_bp)).with_kind_return()`.
+    /// `new_state` chosen by apply arm:
+    /// - Same-cat (`result_src_idx == source_cat_src_idx`):
+    ///   `PrefixDispatch { pos: next_pos, cur_bp: r_bp }`.
+    /// - Cross-cat (`result_src_idx != source_cat_src_idx`):
+    ///   `CrossCatDelegate { source_src_idx: source_cat_src_idx,
+    ///   inner_cur_bp: r_bp }`.
+    /// Activated at M6c.6.4.e.
+    LexAltInfixOp {
+        alt_idx: u16,
+        trigger: String,
+        rule_idx: u16,
+        next_pos: usize,
+        l_bp: u8,
+        r_bp: u8,
+        result_src_idx: u16,
+        source_cat_src_idx: u16,
+    },
+
+    /// M6c.6.4 (2026-05-14) — mixfix first-trigger lex-Fork branch.
+    /// Mirrors the standard mixfix tier emit in InfixLoop (e.g.,
+    /// `Tern`'s `?` trigger): symbol = `mixfix_marker(result_src,
+    /// rule_idx, 0)` (NOT `rule_at`); `new_state = PrefixDispatch {
+    /// pos: next_pos, cur_bp: 0 }`. Subsequent triggers (e.g., `:` of
+    /// Tern) handled deterministically by `MixfixLiteralRun` state
+    /// machine — OUT OF SCOPE for M6c.6.4 (tracked as M6c.6.5 if a
+    /// grammar exercises internal-trigger multi-LENGTH).
+    /// Activated at M6c.6.4.e.
+    LexAltMixfixOp {
+        alt_idx: u16,
+        trigger: String,
+        rule_idx: u16,
+        next_pos: usize,
+        l_bp: u8,
+        result_src_idx: u16,
+    },
+
     /// Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ, 2026-05-05) — atomic
     /// literal multi-arm Fork branch. Mirrors `WpdsStepAction::ConsumeAndPush
     /// { capture_token: true }`: emit_push_token captures the literal text
@@ -3783,6 +3860,41 @@ impl<W: SemiringRef, E: WpdsStepEngine<W>> WpdsWalker<W, E> {
                             child.pos = next_pos;
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        }
+
+                        ForkActionKind::LexAltPrefixOp { .. } => {
+                            // M6c.6.4.a (2026-05-14): stub. Activated
+                            // at M6c.6.4.d when prefix lex-Fork
+                            // emission is wired in `forks.rs`.
+                            unreachable!(
+                                "M6c.6.4.a: LexAltPrefixOp not yet wired (M6c.6.4.d)"
+                            );
+                        }
+
+                        ForkActionKind::LexAltPostfixOp { .. } => {
+                            // M6c.6.4.a (2026-05-14): stub. Activated
+                            // at M6c.6.4.e when postfix lex-Fork
+                            // emission is wired in
+                            // `emit_lex_fork_at_infix_loop`.
+                            unreachable!(
+                                "M6c.6.4.a: LexAltPostfixOp not yet wired (M6c.6.4.e)"
+                            );
+                        }
+
+                        ForkActionKind::LexAltInfixOp { .. } => {
+                            // M6c.6.4.a (2026-05-14): stub. Activated
+                            // at M6c.6.4.e.
+                            unreachable!(
+                                "M6c.6.4.a: LexAltInfixOp not yet wired (M6c.6.4.e)"
+                            );
+                        }
+
+                        ForkActionKind::LexAltMixfixOp { .. } => {
+                            // M6c.6.4.a (2026-05-14): stub. Activated
+                            // at M6c.6.4.e.
+                            unreachable!(
+                                "M6c.6.4.a: LexAltMixfixOp not yet wired (M6c.6.4.e)"
+                            );
                         }
 
                         ForkActionKind::ConsumeAndCaptureAndPush => {

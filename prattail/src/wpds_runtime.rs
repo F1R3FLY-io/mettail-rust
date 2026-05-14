@@ -891,6 +891,98 @@ pub trait WpdsTokenSource {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// M6c.6.4 (2026-05-14): LexAltRuleInfo + LexForkSite
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// M6c.6.4: the codegen-baked classification of which grammar rule
+/// (if any) consumes a given `TokenKind` at a given dispatch site for
+/// a given category.
+///
+/// The lex-Fork (`emit_lex_fork_at_prefix_dispatch` /
+/// `emit_lex_fork_at_infix_loop`) consults the per-grammar
+/// `lex_alt_rule_for_prefix` / `lex_alt_rule_for_infix` functions
+/// against each alternative kind in the lex DAG at the current
+/// position. A `None` result drops the alt branch (rule-out by
+/// evidence — no rule in this cat consumes this kind at this site).
+/// A `Some(LexAltRuleInfo { rule_idx, kind })` emits a Fork branch
+/// whose shape is determined by `kind`:
+///
+/// - `Atomic`: atomic-literal consumption via `LexAlt` + `with_kind_return`
+///   + `Unwinding` (M6c.3).
+/// - `PrefixOp { body_src_idx }`: unary prefix via `LexAltPrefixOp` +
+///   plain `rule_at(slot=1)` + `BinderRule { body_src_idx, outer_bp }`.
+/// - `PostfixOp { l_bp, result_src_idx }`: unary postfix via
+///   `LexAltPostfixOp` + `rule_at(slot=0).with_kind_return()` + `Unwinding`,
+///   gated by `l_bp >= cur_bp`.
+/// - `InfixOp { l_bp, r_bp, result_src_idx }`: binary infix via
+///   `LexAltInfixOp` + `rule_at(slot=0).with_kind_return()` +
+///   `PrefixDispatch { cur_bp: r_bp }` (same-cat) or
+///   `CrossCatDelegate { inner_cur_bp: r_bp }` (cross-cat).
+/// - `MixfixFirstTrigger { l_bp, result_src_idx }`: mixfix first
+///   trigger via `LexAltMixfixOp` + `mixfix_marker` symbol +
+///   `PrefixDispatch { cur_bp: 0 }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LexAltRuleInfo {
+    /// Per-category rule index (stable indexing matching the
+    /// codegen's per-cat rule Vec).
+    pub rule_idx: u16,
+    /// Shape of the rule + dispatch site, drives the walker apply
+    /// arm choice.
+    pub kind: LexAltRuleKind,
+}
+
+/// M6c.6.4: classification of which lex-Fork branch shape to emit
+/// for a `(cat, kind)` match at a given dispatch site.
+///
+/// See [`LexAltRuleInfo`] for the per-kind dispatch semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LexAltRuleKind {
+    /// Atomic-literal rule (e.g., `NumLit`, `BoolLit`). M6c.3 path.
+    Atomic,
+    /// Same-cat unary prefix rule (e.g., `Neg . a:Int |- "-" a : Int`).
+    /// `body_src_idx` = operand cat index (= cat_src_idx for same-cat).
+    PrefixOp { body_src_idx: u16 },
+    /// Unary postfix rule (e.g., `Fact . a:Int |- a "!" : Int`).
+    /// `l_bp` = left binding power (operand priority gate).
+    /// `result_src_idx` carried for cross-cat-postfix completeness.
+    PostfixOp { l_bp: u8, result_src_idx: u16 },
+    /// Binary infix rule (e.g., `AddInt . a, b:Int |- a "+" b : Int`,
+    /// or cross-cat `EqInt . a, b:Int |- a "==" b : Bool`).
+    /// `l_bp`/`r_bp` are the Pratt binding powers. `result_src_idx`
+    /// differs from `state_cat` for cross-cat infix.
+    InfixOp {
+        l_bp: u8,
+        r_bp: u8,
+        result_src_idx: u16,
+    },
+    /// Mixfix rule's first trigger only (e.g., `Tern . c, t, e:Int |-
+    /// c "?" t ":" e : Int` — only the `?` trigger goes through
+    /// InfixLoop dispatch; subsequent triggers are handled by
+    /// `MixfixLiteralRun` state machine, out of scope for M6c.6.4).
+    MixfixFirstTrigger { l_bp: u8, result_src_idx: u16 },
+}
+
+/// M6c.6.4: dispatch-site discriminator for `lex_alt_rule_for_*`
+/// table lookup. The same `(cat, TokenKind)` pair may bind to
+/// DIFFERENT rules depending on whether the walker is in
+/// PrefixDispatch (looking for atomic literals or prefix
+/// operators) or InfixLoop (looking for postfix/infix/mixfix-first-
+/// trigger operators).
+///
+/// Splitting the lookup by site cleanly resolves cases like
+/// `Fixed("-")`: at PrefixDispatch it binds to the cat's unary `Neg`
+/// rule; at InfixLoop it binds to the cat's binary `SubInt` rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LexForkSite {
+    /// Dispatch happens in `WpdsState::PrefixDispatch`. Atomic
+    /// literals + unary prefix operators are valid here.
+    PrefixDispatch,
+    /// Dispatch happens in `WpdsState::InfixLoop`. Unary postfix +
+    /// binary infix + mixfix-first-trigger operators are valid here.
+    InfixLoop,
+}
+
 // M4 (2026-05-13): `LexOverride` and `CursorViewSource` DELETED.
 // These were the per-cursor sidecar mechanism for lex-alternative
 // commitment (commits 3290e05 + ed53ea3). Under the WPDS-stack-purity
