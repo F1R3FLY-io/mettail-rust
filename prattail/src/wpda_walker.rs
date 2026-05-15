@@ -493,6 +493,25 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// See `~/.claude/plans/option-c-sppf-on-wpda.md` §1, §2.
     #[allow(dead_code)] // C3 wires the first emit-helper writer; C6 wires the first reader.
     sppf: crate::sppf::Sppf,
+    /// Option C / C3: SPPF-side collection slots. One inner Vec per
+    /// `emit_start_collection` call; `emit_splice_into_collection(id)`
+    /// pops the top of the current cursor's `sppf_stack` and appends to
+    /// `sppf_collection_arena[id]`. Realization resolves a
+    /// `SppfNode::CollectionId { id }` leaf by reading from this arena.
+    ///
+    /// Append-only — slots never freed mid-parse. `restore_to_checkpoint`
+    /// truncates via the matching `WpdaConfiguration` field added in C13.
+    #[allow(dead_code)]
+    sppf_collection_arena: Vec<Vec<crate::sppf::SppfId>>,
+    /// Option C / C3: SPPF-side predicate payload arena.
+    /// `emit_push_predicate` interns the `Arc<dyn Any + Send + Sync>` here
+    /// and pushes a `SppfNode::Predicate { handle }` leaf. Realization
+    /// clones the Arc when constructing the user-visible
+    /// `ActionArg::Predicate`.
+    ///
+    /// Append-only.
+    #[allow(dead_code)]
+    sppf_predicate_arena: Vec<Arc<dyn Any + Send + Sync>>,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -1068,6 +1087,12 @@ pub struct BranchCursor<W: SemiringRef> {
     ///
     /// See `~/.claude/plans/option-c-sppf-on-wpda.md` §2.1.
     pub sppf_stack: Vec<crate::sppf::SppfId>,
+    /// Option C / C3: per-cursor record of `sppf_stack` length snapshots
+    /// at each `emit_start_optional_scope` call. On
+    /// `emit_finalize_optional_scope_present`, the topmost mark is popped
+    /// and `sppf_stack[mark..]` becomes the children of a freshly-interned
+    /// Packing tagged with the optional-present rule_idx sentinel.
+    pub optional_scope_marks: Vec<usize>,
     // M4 (2026-05-13): `pending_lex_alts` field DELETED. Per-cursor lex-
     // alternative state violated WPDS stack purity (the multiset grew
     // monotonically with no pop counterpart, and was excluded from
@@ -1125,6 +1150,7 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             visited_dispatch: self.visited_dispatch.clone(),
             builder: Arc::clone(&self.builder),
             sppf_stack: self.sppf_stack.clone(),
+            optional_scope_marks: self.optional_scope_marks.clone(),
         }
     }
 }
@@ -1203,6 +1229,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             builder: Arc::new(SemanticBuilder::new()),
             // Option C / C2: seed cursor's SPPF stack is empty (no reduces yet).
             sppf_stack: Vec::new(),
+            optional_scope_marks: Vec::new(),
         }
     }
 
@@ -1254,6 +1281,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // which is bounded by a small constant; cheaper than the
             // Arc::clone above on the builder Arc bump cost basis.
             sppf_stack: parent.sppf_stack.clone(),
+            optional_scope_marks: parent.optional_scope_marks.clone(),
         }
     }
 }
@@ -1867,6 +1895,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             recovery_config: RecoveryConfig::default(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
+            sppf_collection_arena: Vec::new(),
+            sppf_predicate_arena: Vec::new(),
         }
     }
 
@@ -1920,6 +1950,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             recovery_config: RecoveryConfig::default(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
+            sppf_collection_arena: Vec::new(),
+            sppf_predicate_arena: Vec::new(),
         }
     }
 
@@ -1968,6 +2000,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             recovery_config: RecoveryConfig::default(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
+            sppf_collection_arena: Vec::new(),
+            sppf_predicate_arena: Vec::new(),
         }
     }
 
@@ -2390,6 +2424,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                     // SppfId from `self.committed_sppf_root` (added in C6),
                     // not from a cursor's stack.
                     sppf_stack: Vec::new(),
+                    optional_scope_marks: Vec::new(),
                 }];
                 self.state = new_state.clone();
                 let trace = WpdaTraceEntry {
@@ -3127,6 +3162,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                     // stack. The drop discards the failed cursor's tree
                     // construction; the deterministic-mode singleton resets.
                     sppf_stack: Vec::new(),
+                    optional_scope_marks: Vec::new(),
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -3640,6 +3676,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -3694,6 +3731,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
                             };
                             // nondeterministic mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -3759,6 +3797,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -3800,6 +3839,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
                             };
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
@@ -3834,6 +3874,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -3901,6 +3942,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3947,6 +3989,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3994,6 +4037,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             // Phase 5.5 (2026-05-12): eagerly apply effect
@@ -4079,6 +4123,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
                             };
                             // Capture the alt's token text at child.pos
                             // (the original byte position, before
@@ -4152,6 +4197,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
                             };
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let pos_now = child.pos;
@@ -4236,6 +4282,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -5542,6 +5589,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             // Option C / C2: preserve winner's SPPF stack so subsequent
             // reduces continue building on top of the committed history.
             sppf_stack: winner.sppf_stack,
+            optional_scope_marks: winner.optional_scope_marks,
         }];
     }
 
@@ -5810,11 +5858,27 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
         text: String,
         pos: usize,
     ) {
+        // C3 dual-mode: intern a Terminal in the SPPF arena alongside the
+        // existing builder push. Text is preserved if non-empty.
+        let text_opt = if text.is_empty() { None } else { Some(text.as_str()) };
+        let sid = self.sppf.intern_terminal(
+            kind.clone(),
+            crate::sppf::PosOrSynth::Real(pos as u32),
+            text_opt,
+        );
+        cursor.sppf_stack.push(sid);
         Arc::make_mut(&mut cursor.builder).push_token(kind, text, pos);
     }
 
     #[inline(always)]
     fn emit_push_ident(&mut self, cursor: &mut BranchCursor<W>, name: String, pos: usize) {
+        // C3 dual-mode: SPPF terminal with TokenKind::Ident + the name text.
+        let sid = self.sppf.intern_terminal(
+            TokenKind::Ident,
+            crate::sppf::PosOrSynth::Real(pos as u32),
+            Some(name.as_str()),
+        );
+        cursor.sppf_stack.push(sid);
         Arc::make_mut(&mut cursor.builder).push_ident(name, pos);
     }
 
@@ -5824,16 +5888,29 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
         cursor: &mut BranchCursor<W>,
         pred: Arc<dyn Any + Send + Sync>,
     ) {
+        // C3 dual-mode: intern the predicate Arc in the walker-side arena
+        // and push a Predicate leaf onto the cursor's sppf_stack.
+        let handle = self.sppf_predicate_arena.len() as u32;
+        self.sppf_predicate_arena.push(Arc::clone(&pred));
+        let sid = self.sppf.intern_predicate(handle);
+        cursor.sppf_stack.push(sid);
         Arc::make_mut(&mut cursor.builder).push_predicate_arc(pred);
     }
 
     #[inline(always)]
     fn emit_start_binder_scope(&mut self, cursor: &mut BranchCursor<W>, names: Vec<String>) {
+        // C3 dual-mode: binder scopes do not contribute to the SPPF tree
+        // shape (they're metadata for capture-resolution at realization
+        // time). The walker-side binder state lives in cursor.builder for
+        // dual-mode through C8; the SPPF-side resolver consults the
+        // realization-time scope context built bottom-up from BinderIdent
+        // terminals. No SPPF op required here.
         Arc::make_mut(&mut cursor.builder).start_binder_scope(names);
     }
 
     #[inline(always)]
     fn emit_extend_binder_scope(&mut self, cursor: &mut BranchCursor<W>, name: String) {
+        // C3 dual-mode: same as emit_start_binder_scope — metadata only.
         Arc::make_mut(&mut cursor.builder).extend_binder_scope(name);
     }
 
@@ -5854,6 +5931,19 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
         // On arity underflow during the eager fire, set BOTH cursor.inner_state
         // AND walker state to Error so the cursor aborts cleanly via
         // cursor_resolution_check :: Drop on the next step.
+
+        // C3 dual-mode: capture symbol identity for SPPF, look up arity
+        // BEFORE firing (the entry table is invariant; arity is the same
+        // pre- and post-action).
+        let cat_src_idx = symbol.category_src_idx;
+        let rule_idx = symbol.rule_index_in_category as u32;
+        let hi_pos = cursor.pos as u32;
+        let arity = self
+            .engine
+            .action_for(cat_src_idx, symbol.rule_index_in_category)
+            .map(|e| e.arity as usize)
+            .unwrap_or(0);
+
         let builder_mut = Arc::make_mut(&mut cursor.builder);
         if let Some(message) =
             Self::fire_action_for_on_builder(&self.engine, builder_mut, symbol)
@@ -5861,6 +5951,31 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             let err = WpdaState::Error { message };
             cursor.inner_state = err.clone();
             self.state = err;
+            return;
+        }
+
+        // SPPF mirror: pop arity children from sppf_stack, intern Packing,
+        // intern Symbol(cat_src_idx, lo, hi), link, push Symbol id.
+        // Pre-condition for soundness: cursor.sppf_stack.len() >= arity.
+        // Defensive: if the cursor's SPPF stack is short of arity (which
+        // can happen during dual-mode bootstrap on collection-using or
+        // optional-scope-using rules that haven't fully mirrored), skip
+        // the SPPF op rather than panic — the builder side is correct
+        // and tests pass; SPPF gaps will be filled by C4-C5.
+        if cursor.sppf_stack.len() >= arity {
+            let split_at = cursor.sppf_stack.len() - arity;
+            let children: Vec<crate::sppf::SppfId> =
+                cursor.sppf_stack.drain(split_at..).collect();
+            // lo_pos: leftmost child's span_lo, or fall back to hi_pos if
+            // arity == 0 (epsilon-like reduce).
+            let lo_pos = children
+                .first()
+                .and_then(|&c| self.sppf.span_lo(c))
+                .unwrap_or(hi_pos);
+            let packing_id = self.sppf.intern_packing(rule_idx, children);
+            let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
+            self.sppf.link_packing_to_symbol(symbol_id, packing_id);
+            cursor.sppf_stack.push(symbol_id);
         }
     }
 
@@ -5892,22 +6007,48 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
         // Phase 5.6-tail-G (2026-05-12): cursor.collection_stack mirror
         // push deleted — cursor.builder.collection_stack carries the
         // authoritative slot state.
-        Arc::make_mut(&mut cursor.builder).start_collection()
+        let id = Arc::make_mut(&mut cursor.builder).start_collection();
+        // C3 dual-mode: ensure the SPPF-side collection arena has a slot at
+        // this id. The builder's allocator monotonically returns ids 0, 1, 2,
+        // ... — we mirror by extending when the id exceeds current length.
+        while self.sppf_collection_arena.len() <= id as usize {
+            self.sppf_collection_arena.push(Vec::new());
+        }
+        // If the slot was previously used (e.g. earlier reduce in same parse),
+        // reset it — the builder reuses ids by start_collection re-allocation
+        // semantics; the SPPF mirror must match.
+        self.sppf_collection_arena[id as usize].clear();
+        id
     }
 
     #[inline(always)]
     fn emit_push_collection_id(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
+        // C3 dual-mode: push a CollectionId placeholder onto sppf_stack so
+        // the fire_action arity check matches builder.stack arity.
+        let sid = self.sppf.intern_collection_id(id as u32);
+        cursor.sppf_stack.push(sid);
         Arc::make_mut(&mut cursor.builder).push_collection_id(id);
     }
 
     #[inline(always)]
     fn emit_splice_into_collection(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
+        // C3 dual-mode: pop top of sppf_stack, append to the SPPF-side
+        // collection slot. Mirrors builder.push_to_collection.
+        if (id as usize) < self.sppf_collection_arena.len() {
+            if let Some(top) = cursor.sppf_stack.pop() {
+                self.sppf_collection_arena[id as usize].push(top);
+            }
+        }
         // push_to_collection silently no-ops on out-of-bounds id.
         Arc::make_mut(&mut cursor.builder).push_to_collection(id);
     }
 
     #[inline(always)]
     fn emit_start_optional_scope(&mut self, cursor: &mut BranchCursor<W>) {
+        // C3 dual-mode: record the sppf_stack length at scope-open so
+        // emit_finalize_optional_scope_present can collect everything
+        // pushed since this point.
+        cursor.optional_scope_marks.push(cursor.sppf_stack.len());
         Arc::make_mut(&mut cursor.builder).start_optional_scope();
     }
 
@@ -6009,13 +6150,35 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
         }
     }
 
+    /// Sentinel rule_idx for the synthetic Packing that wraps the contents
+    /// of a present optional group. Distinct from any real `rule_idx`
+    /// because user rules occupy `0..u32::MAX - 1`. The realization pass
+    /// recognizes this sentinel and produces `Some(...)` for the user AST.
+    const OPTIONAL_PRESENT_RULE_IDX: u32 = u32::MAX - 1;
+
     #[inline(always)]
     fn emit_finalize_optional_scope_present(&mut self, cursor: &mut BranchCursor<W>) {
+        // C3 dual-mode: pop the topmost optional_scope_mark, collect
+        // sppf_stack contents pushed since the mark into a Packing tagged
+        // with OPTIONAL_PRESENT_RULE_IDX, push the resulting Packing id.
+        if let Some(mark) = cursor.optional_scope_marks.pop() {
+            if mark <= cursor.sppf_stack.len() {
+                let children: Vec<crate::sppf::SppfId> =
+                    cursor.sppf_stack.drain(mark..).collect();
+                let packing_id = self
+                    .sppf
+                    .intern_packing(Self::OPTIONAL_PRESENT_RULE_IDX, children);
+                cursor.sppf_stack.push(packing_id);
+            }
+        }
         Arc::make_mut(&mut cursor.builder).finalize_optional_scope_present();
     }
 
     #[inline(always)]
     fn emit_push_optional_absent(&mut self, cursor: &mut BranchCursor<W>) {
+        // C3 dual-mode: push an OptAbsent leaf onto sppf_stack.
+        let sid = self.sppf.intern_opt_absent(cursor.pos as u32);
+        cursor.sppf_stack.push(sid);
         Arc::make_mut(&mut cursor.builder).push_optional_absent();
     }
 

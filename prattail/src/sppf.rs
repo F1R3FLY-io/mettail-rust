@@ -123,8 +123,14 @@ pub enum SppfNode {
     /// of derivations attached to a Symbol grows via the side table
     /// `Sppf::symbol_packings`, never by mutating this struct.
     Symbol {
-        /// `(cat_src_idx << 16) | rule_idx`, packed into one u32 so dedup keys
-        /// fit in a single machine word.
+        /// Category identifier — typically `cat_src_idx as u32`. MUST be
+        /// shared across all derivations of the same non-terminal: that's
+        /// what makes Symbol-dedup the ambiguity-collapse mechanism (two
+        /// cursors reducing different rules of the same Cat at the same
+        /// span MUST collapse to the same Symbol id, with their distinct
+        /// derivations recorded as separate Packings linked via
+        /// `Sppf::symbol_packings`). Rule-specific information lives in
+        /// `Packing.rule_idx`, never in this tag.
         non_terminal_tag: u32,
         /// Input span start (inclusive).
         lo_pos: u32,
@@ -147,6 +153,33 @@ pub enum SppfNode {
     Epsilon {
         /// The position at which this epsilon was recognized.
         pos: u32,
+    },
+
+    /// Placeholder for a collection slot's identity argument. Pushed by
+    /// `emit_push_collection_id` to mirror the builder's
+    /// `ActionArg::CollectionId`. The realization pass resolves it by
+    /// looking up `walker.sppf_collection_arena[id]` (which holds the
+    /// SppfIds collected via `emit_splice_into_collection`).
+    CollectionId {
+        /// Index into `WpdaWalker::sppf_collection_arena`.
+        id: u32,
+    },
+
+    /// Marker for "this optional group was not filled." Distinct from
+    /// `Epsilon` because optional-absent has well-defined semantics at
+    /// realization (the user AST gets `None`, not "skipped").
+    OptAbsent {
+        /// The position at which the optional group was opened.
+        pos: u32,
+    },
+
+    /// Opaque predicate-arg payload pushed by `emit_push_predicate`. The
+    /// payload Arc is owned by the walker's `predicate_arena`; this node
+    /// references it by index. The realization pass clones the Arc when
+    /// constructing the user-visible `ActionArg::Predicate(arc)`.
+    Predicate {
+        /// Index into `WpdaWalker::sppf_predicate_arena`.
+        handle: u32,
     },
 }
 
@@ -189,6 +222,9 @@ pub struct Sppf {
     dedup_symbol: FxHashMap<(u32, u32, u32), SppfId>,
     dedup_packing: FxHashMap<(u32, u64), SppfId>,
     dedup_epsilon: FxHashMap<u32, SppfId>,
+    dedup_collection_id: FxHashMap<u32, SppfId>,
+    dedup_opt_absent: FxHashMap<u32, SppfId>,
+    dedup_predicate: FxHashMap<u32, SppfId>,
 
     // Derived indices — strictly rebuildable from `symbol_packings`. Rebuilt
     // on checkpoint restore.
@@ -278,6 +314,41 @@ impl Sppf {
         id
     }
 
+    /// Intern a `CollectionId` placeholder pointing at slot `id` in the
+    /// walker's `sppf_collection_arena`. Dedup'd by `id` — two cursors
+    /// referring to the same collection slot share the placeholder node.
+    pub fn intern_collection_id(&mut self, id: u32) -> SppfId {
+        if let Some(&sid) = self.dedup_collection_id.get(&id) {
+            return sid;
+        }
+        let sid = self.nodes.len() as SppfId;
+        self.nodes.push(SppfNode::CollectionId { id });
+        self.dedup_collection_id.insert(id, sid);
+        sid
+    }
+
+    /// Intern an `OptAbsent` leaf at the given position. Dedup'd by `pos`.
+    pub fn intern_opt_absent(&mut self, pos: u32) -> SppfId {
+        if let Some(&id) = self.dedup_opt_absent.get(&pos) {
+            return id;
+        }
+        let id = self.nodes.len() as SppfId;
+        self.nodes.push(SppfNode::OptAbsent { pos });
+        self.dedup_opt_absent.insert(pos, id);
+        id
+    }
+
+    /// Intern a `Predicate` payload reference. Dedup'd by `handle`.
+    pub fn intern_predicate(&mut self, handle: u32) -> SppfId {
+        if let Some(&id) = self.dedup_predicate.get(&handle) {
+            return id;
+        }
+        let id = self.nodes.len() as SppfId;
+        self.nodes.push(SppfNode::Predicate { handle });
+        self.dedup_predicate.insert(handle, id);
+        id
+    }
+
     /// Link a Packing to a Symbol. Idempotent (O(1) check). The link is
     /// appended to `symbol_packings` only if not already present.
     ///
@@ -345,6 +416,60 @@ impl Sppf {
         self.symbol_packings.len()
     }
 
+    /// Return the input-span lower bound (inclusive) covered by `id`.
+    ///
+    /// Recurses through Packings to their leftmost child until it hits a
+    /// Terminal / Symbol / Epsilon (whose `lo_pos` is intrinsic). Returns
+    /// `None` if `id` is out-of-range or the node has no determinable
+    /// position (e.g., a `Packing` with no children, which the walker
+    /// should not emit but is defensively handled).
+    ///
+    /// Complexity: O(leftmost-spine-depth); typically <10 hops.
+    pub fn span_lo(&self, id: SppfId) -> Option<u32> {
+        let mut cur = id;
+        loop {
+            match self.node(cur)? {
+                SppfNode::Terminal { pos, .. } => {
+                    return Some(match pos {
+                        PosOrSynth::Real(p) | PosOrSynth::Synthesized(p) => *p,
+                    });
+                }
+                SppfNode::Symbol { lo_pos, .. } => return Some(*lo_pos),
+                SppfNode::Epsilon { pos } => return Some(*pos),
+                SppfNode::OptAbsent { pos } => return Some(*pos),
+                SppfNode::Packing { children, .. } => {
+                    cur = *children.first()?;
+                }
+                // CollectionId and Predicate are walker-arena references
+                // without an intrinsic span; treat as position-less.
+                SppfNode::CollectionId { .. } | SppfNode::Predicate { .. } => return None,
+            }
+        }
+    }
+
+    /// Return the input-span upper bound (exclusive) covered by `id`.
+    pub fn span_hi(&self, id: SppfId) -> Option<u32> {
+        let mut cur = id;
+        loop {
+            match self.node(cur)? {
+                SppfNode::Terminal { pos, .. } => {
+                    // Terminals span exactly one token: hi = pos + 1.
+                    let p = match pos {
+                        PosOrSynth::Real(p) | PosOrSynth::Synthesized(p) => *p,
+                    };
+                    return Some(p + 1);
+                }
+                SppfNode::Symbol { hi_pos, .. } => return Some(*hi_pos),
+                SppfNode::Epsilon { pos } => return Some(*pos),
+                SppfNode::OptAbsent { pos } => return Some(*pos),
+                SppfNode::Packing { children, .. } => {
+                    cur = *children.last()?;
+                }
+                SppfNode::CollectionId { .. } | SppfNode::Predicate { .. } => return None,
+            }
+        }
+    }
+
     /// Iterator over all `(symbol_id, packing_id)` links, in insertion order.
     pub fn iter_links(&self) -> impl Iterator<Item = (SppfId, SppfId)> + '_ {
         self.symbol_packings.iter().copied()
@@ -396,6 +521,9 @@ impl Sppf {
         self.dedup_symbol.retain(|_, &mut id| id < n);
         self.dedup_packing.retain(|_, &mut id| id < n);
         self.dedup_epsilon.retain(|_, &mut id| id < n);
+        self.dedup_collection_id.retain(|_, &mut id| id < n);
+        self.dedup_opt_absent.retain(|_, &mut id| id < n);
+        self.dedup_predicate.retain(|_, &mut id| id < n);
 
         // 3. Rebuild derived indices from the (now-truncated) symbol_packings.
         self.link_dedup.clear();

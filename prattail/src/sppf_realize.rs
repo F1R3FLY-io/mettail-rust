@@ -68,6 +68,25 @@ pub trait ActionResolver {
     /// The slice of children matches the order they were interned into the
     /// `Packing.children` Vec.
     fn resolve_packing(&self, rule_idx: u32, children: &[Self::Out]) -> Self::Out;
+
+    /// Resolve a `CollectionId` placeholder by materializing the collection
+    /// contents. The walker-side `sppf_collection_arena` lookup happens
+    /// inside the resolver impl (which has access to the walker context).
+    /// Default impl panics; concrete walker-aware resolvers override.
+    fn resolve_collection_id(&self, id: u32) -> Self::Out {
+        panic!("ActionResolver::resolve_collection_id called with id={} but resolver does not support collections", id);
+    }
+
+    /// Resolve an `OptAbsent` leaf — the user AST gets a "None" value.
+    fn resolve_opt_absent(&self, _pos: u32) -> Self::Out {
+        panic!("ActionResolver::resolve_opt_absent called but resolver does not support optional groups");
+    }
+
+    /// Resolve a `Predicate` payload reference. The handle is into the
+    /// walker's `sppf_predicate_arena`.
+    fn resolve_predicate(&self, handle: u32) -> Self::Out {
+        panic!("ActionResolver::resolve_predicate called with handle={} but resolver does not support predicates", handle);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -141,7 +160,11 @@ pub fn realize_into<R: ActionResolver>(
                 stack.push((id, Phase::Leave));
                 // Push children dependencies onto the stack.
                 match sppf.node(id) {
-                    Some(SppfNode::Terminal { .. }) | Some(SppfNode::Epsilon { .. }) => {
+                    Some(SppfNode::Terminal { .. })
+                    | Some(SppfNode::Epsilon { .. })
+                    | Some(SppfNode::CollectionId { .. })
+                    | Some(SppfNode::OptAbsent { .. })
+                    | Some(SppfNode::Predicate { .. }) => {
                         // No children.
                     }
                     Some(SppfNode::Symbol { .. }) => {
@@ -176,6 +199,15 @@ pub fn realize_into<R: ActionResolver>(
                     }
                     Some(SppfNode::Epsilon { pos }) => {
                         vec![resolver.resolve_epsilon(*pos)]
+                    }
+                    Some(SppfNode::CollectionId { id: cid }) => {
+                        vec![resolver.resolve_collection_id(*cid)]
+                    }
+                    Some(SppfNode::OptAbsent { pos }) => {
+                        vec![resolver.resolve_opt_absent(*pos)]
+                    }
+                    Some(SppfNode::Predicate { handle }) => {
+                        vec![resolver.resolve_predicate(*handle)]
                     }
                     Some(SppfNode::Symbol { .. }) => {
                         // Concatenate all packings' realizations.
