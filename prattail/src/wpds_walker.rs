@@ -2599,21 +2599,51 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 position: max_dead_pos,
             },
             1 => {
+                // M11.5 (2026-05-14): even when ONE cursor is accepting, its
+                // weight.entries multiset may carry MULTIPLE derivations from
+                // prior merges (each entry's snapshot has a distinct AST).
+                // Iterate the multiset like the multi-cursor branch below to
+                // surface all derivations. Falls back to cursor.builder for
+                // mock W (no snapshot semantics).
                 let winner_idx = accepting_indices[0];
-                let weight = self.branch_cursors[winner_idx].weight.clone();
+                let winner_weight = self.branch_cursors[winner_idx].weight.clone();
+                let snapshots = crate::wpds_runtime::SnapshotWeight::entries_snapshots(
+                    &self.branch_cursors[winner_idx].weight,
+                );
                 self.commit_winner_at_eoi(winner_idx);
-                let term = self.builder.take_dyn_result();
-                match term {
-                    Some(t) => WpdsResolveResult::Accepted {
-                        weights: vec![weight],
-                        terms: vec![t],
-                    },
-                    None => WpdsResolveResult::ParseError {
-                        message: "winner committed but builder result was empty"
+                if snapshots.is_empty() {
+                    // Mock W path — pre-M11.5 behavior.
+                    let term = self.builder.take_dyn_result();
+                    return match term {
+                        Some(t) => WpdsResolveResult::Accepted {
+                            weights: vec![winner_weight],
+                            terms: vec![t],
+                        },
+                        None => WpdsResolveResult::ParseError {
+                            message: "winner committed but builder result was empty"
+                                .to_string(),
+                            position: self.pos,
+                        },
+                    };
+                }
+                let mut weights: Vec<W> = Vec::with_capacity(snapshots.len());
+                let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> =
+                    Vec::with_capacity(snapshots.len());
+                for snap_arc in snapshots {
+                    let mut snap_builder: SemanticBuilder = (*snap_arc).clone();
+                    if let Some(t) = snap_builder.take_dyn_result() {
+                        weights.push(winner_weight.clone());
+                        terms.push(t);
+                    }
+                }
+                if weights.is_empty() {
+                    return WpdsResolveResult::ParseError {
+                        message: "winner committed but multiset snapshots had no extractable terms"
                             .to_string(),
                         position: self.pos,
-                    },
+                    };
                 }
+                WpdsResolveResult::Accepted { weights, terms }
             }
             _ => {
                 // M7c (2026-05-13): preserve all Accepted derivations as
@@ -3416,12 +3446,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3474,12 +3499,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3544,12 +3564,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3588,12 +3603,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3625,12 +3635,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3695,12 +3700,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3744,12 +3744,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3794,12 +3789,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3895,12 +3885,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: cursor.pos,
-                                weight: cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -3971,12 +3956,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: cursor.pos,
-                                weight: cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -4045,12 +4025,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
-                                weight: cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                weight: cursor.weight.times_ref(&branch.weight),
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
@@ -4111,12 +4086,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4147,12 +4117,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4200,12 +4165,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4236,12 +4196,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4294,12 +4249,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4346,12 +4296,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4406,12 +4351,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4470,12 +4410,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4516,12 +4451,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4561,12 +4491,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             let mut child = BranchCursor::fork_child(
                                 cursor,
                                 pos_after,
-                                cursor.weight.times_ref(
-    &crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
-        branch.weight.clone(),
-        &cursor.builder,
-    ),
-),
+                                cursor.weight.times_ref(&branch.weight),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -5018,7 +4943,28 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 }
                 std::collections::hash_map::Entry::Occupied(o) => {
                     let idx = *o.get();
-                    let combined = merged[idx].weight.plus_ref(&cursor.weight);
+                    // M11.5 (2026-05-14): inject each cursor's CURRENT builder
+                    // snapshot into its weight entries BEFORE the plus_ref
+                    // multiset union, so both cursors' ASTs are preserved in
+                    // the combined multiset. At merge time, cursor.builder
+                    // reflects the cursor's evolved state (post-Fork-arm
+                    // mutations, post-action firing) — distinct from the
+                    // sibling's builder if the cursors are observationally
+                    // equivalent on (state, gss_node, pos, ...) but
+                    // operationally distinct (different ASTs).
+                    //
+                    // Pre-M11.5 the snapshot capture was at Fork-arm time,
+                    // which captured the PRE-fork parent state (identical for
+                    // all siblings, useless for distinguishing them at merge).
+                    let existing_w_snap = crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
+                        merged[idx].weight.clone(),
+                        &merged[idx].builder,
+                    );
+                    let cursor_w_snap = crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
+                        cursor.weight.clone(),
+                        &cursor.builder,
+                    );
+                    let combined = existing_w_snap.plus_ref(&cursor_w_snap);
                     let weight_strict_win = combined != merged[idx].weight;
                     let weight_tied = !weight_strict_win
                         && combined == cursor.weight;
