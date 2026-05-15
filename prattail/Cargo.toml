@@ -47,6 +47,10 @@ num_cpus = { version = "1" }
 num-bigint = "0.4"
 num-rational = { version = "0.4", features = ["num-bigint-std"] }
 num-traits = "0.2"
+# Option C / C1 (2026-05-15): SPPF deduplication requires a deterministic
+# hasher so dedup_packing keys are content-stable across runs and reparse
+# sessions (see plan §11.5 invariant I3). Standard `RandomState` is excluded.
+rustc-hash = "2"
 # T4 SIGUSR1 hang-dump (optional under `hang-dump` feature).
 signal-hook = { version = "0.3", optional = true }
 parking_lot = { version = "0.12", optional = true }

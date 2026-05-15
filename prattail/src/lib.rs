@@ -103,6 +103,18 @@ pub mod wpda_walker;
 /// integration. Stage 5 of W7 plan v5.1.
 pub mod wpda_session;
 
+/// Shared Packed Parse Forest (SPPF) — the ambiguity-preserving parse-forest
+/// data structure. Option C (2026-05-15); see
+/// `~/.claude/plans/option-c-sppf-on-wpda.md`. Replaces the M11 multiset
+/// `DerivationWeight<W, Arc<SemanticBuilder>>` snapshot machinery with a
+/// canonical Scott-Johnstone GLL SPPF.
+pub mod sppf;
+
+/// SPPF → user-AST realization. Walks a forest from a root, invoking an
+/// `ActionResolver` per Packing to materialize AST values. Fans out over
+/// multiple Packings linked to the same Symbol to preserve ambiguity.
+pub mod sppf_realize;
+
 // Stage 10.3 (2026-05-04): `pub mod parity` (Model A + Model B golden ASTs)
 // DELETED. Zero in-tree consumers; parity tests had become tautological
 // post-Stage-10b's parse_preserving_vars Walker rewrite.
