@@ -66,7 +66,7 @@ use crate::automata::TokenKind;
 use crate::gss::{WpdaGss, WpdaGssNode};
 use crate::recovery::RecoveryConfig;
 use crate::wpda_runtime::{
-    ActionEntry, SemanticBuilder, StackSymbolV2,
+    ActionArg, ActionEntry, SemanticBuilder, StackSymbolV2,
     SymbolKind, WpdaConfiguration, WpdaControl, WpdaEvent, WpdaMaxStepsExceeded,
     WpdaMutableTokenSource, WpdaResolveResult, WpdaState, WpdaTokenSource, WpdaTraceEntry,
     WpdaTransition,
@@ -2941,6 +2941,393 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 WpdaResolveResult::Accepted { weights, terms, roots }
             }
         }
+    }
+
+    /// Option C / C7 (2026-05-15): Realize the user AST from a Shared
+    /// Packed Parse Forest root.
+    ///
+    /// Walks the SPPF from `root`, invoking each `Packing`'s
+    /// `action_fn` via a fresh `SemanticBuilder` to materialize the
+    /// user-AST. Returns a `Vec` of realized terms — one per derivation
+    /// alternative (cartesian product over ambiguous packings).
+    ///
+    /// `limit` bounds the realization size: realization halts once
+    /// `limit` distinct terms have been produced. `None` is unbounded.
+    /// Per plan §4.3, the default cap is 64 to bound exponential AST
+    /// counts on adversarial inputs.
+    ///
+    /// Realization is the canonical Tomita/Scott-Johnstone post-pass:
+    /// the SPPF was built during parse, the user-AST is one
+    /// materialization of it. Side-effecting `action_fn`s are forbidden
+    /// (plan §10.1) because realization may invoke a given action
+    /// multiple times across ambiguous derivations.
+    pub fn realize_root_to_terms(
+        &self,
+        root: crate::sppf::SppfId,
+        limit: Option<usize>,
+    ) -> Vec<Arc<dyn Any + Send + Sync>> {
+        if root == crate::sppf::SPPF_ID_NONE {
+            return Vec::new();
+        }
+        let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<ActionArg>> =
+            std::collections::HashMap::new();
+        // Bottom-up realization via explicit work-stack to avoid host-stack
+        // recursion on deep parses (per project mandate). Two phases per
+        // node id: Enter pushes children to be visited; Leave combines
+        // results.
+        enum Phase {
+            Enter,
+            Leave,
+        }
+        let mut stack: Vec<(crate::sppf::SppfId, Phase)> = vec![(root, Phase::Enter)];
+        while let Some((id, phase)) = stack.pop() {
+            if memo.contains_key(&id) {
+                continue;
+            }
+            match phase {
+                Phase::Enter => {
+                    stack.push((id, Phase::Leave));
+                    match self.sppf.node(id) {
+                        Some(crate::sppf::SppfNode::Symbol { .. }) => {
+                            for &p in self.sppf.packings_of(id) {
+                                if !memo.contains_key(&p) {
+                                    stack.push((p, Phase::Enter));
+                                }
+                            }
+                        }
+                        Some(crate::sppf::SppfNode::Packing { children, .. }) => {
+                            for &c in children {
+                                if !memo.contains_key(&c) {
+                                    stack.push((c, Phase::Enter));
+                                }
+                            }
+                        }
+                        Some(crate::sppf::SppfNode::CollectionId { id: cid }) => {
+                            // Recursively realize each collected SppfId so
+                            // the Collection arg's contents are materialized.
+                            if let Some(items) = self.sppf_collection_arena.get(*cid as usize) {
+                                for &item in items {
+                                    if !memo.contains_key(&item) {
+                                        stack.push((item, Phase::Enter));
+                                    }
+                                }
+                            }
+                        }
+                        Some(_) | None => {
+                            // Leaves (Terminal, Epsilon, OptAbsent, Predicate)
+                            // have no children to traverse.
+                        }
+                    }
+                }
+                Phase::Leave => {
+                    let realized = self.realize_node_leave(id, &memo, limit);
+                    memo.insert(id, realized);
+                }
+            }
+        }
+        // Extract Arc<dyn Any> from each ActionArg::Term in the root's
+        // realization. Other ActionArg variants at the root level indicate
+        // a structural mismatch (the root should always be a Term).
+        memo.remove(&root)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|arg| match arg {
+                ActionArg::Term { value, .. } => Some(value),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Internal helper: combine an SPPF node's children realizations
+    /// into the node's own realization. Invoked at the Phase::Leave
+    /// step of `realize_root_to_terms`.
+    fn realize_node_leave(
+        &self,
+        id: crate::sppf::SppfId,
+        memo: &std::collections::HashMap<crate::sppf::SppfId, Vec<ActionArg>>,
+        limit: Option<usize>,
+    ) -> Vec<ActionArg> {
+        match self.sppf.node(id) {
+            Some(crate::sppf::SppfNode::Terminal {
+                token_kind,
+                text_handle,
+                pos,
+            }) => {
+                let text = self.sppf.text(*text_handle).to_string();
+                let pos_usize = match pos {
+                    crate::sppf::PosOrSynth::Real(p) | crate::sppf::PosOrSynth::Synthesized(p) => {
+                        *p as usize
+                    }
+                };
+                // Ident terminals become ActionArg::Ident; other tokens
+                // become ActionArg::Token.
+                let arg = match token_kind {
+                    TokenKind::Ident => ActionArg::Ident {
+                        name: text,
+                        pos: pos_usize,
+                    },
+                    other => ActionArg::Token {
+                        kind: other.clone(),
+                        text,
+                        pos: pos_usize,
+                    },
+                };
+                vec![arg]
+            }
+            Some(crate::sppf::SppfNode::Epsilon { .. }) => {
+                // Epsilon contributes nothing observable to the action's
+                // input — but realization still needs an entry per
+                // derivation. We yield Optional(None) as a neutral marker;
+                // typical grammars don't reduce on Epsilon directly.
+                vec![ActionArg::Optional(None)]
+            }
+            Some(crate::sppf::SppfNode::OptAbsent { .. }) => {
+                vec![ActionArg::Optional(None)]
+            }
+            Some(crate::sppf::SppfNode::Predicate { handle }) => {
+                if let Some(p) = self.sppf_predicate_arena.get(*handle as usize) {
+                    vec![ActionArg::Predicate(Arc::clone(p))]
+                } else {
+                    Vec::new()
+                }
+            }
+            Some(crate::sppf::SppfNode::CollectionId { id: cid }) => {
+                // The CollectionId placeholder is consumed by the action
+                // alongside the collected items. The realization yields
+                // ActionArg::CollectionId(cid); the parent Packing's
+                // action_fn call will see this and (in the generated
+                // collection-finalize action) drain the collected items
+                // from the builder's collection_stack.
+                //
+                // The collected items are populated in the synthetic
+                // realization builder before the action_fn call (see
+                // realize_packing_call).
+                vec![ActionArg::CollectionId(*cid as u8)]
+            }
+            Some(crate::sppf::SppfNode::Symbol { .. }) => {
+                // Concat all packings' realizations.
+                let mut out: Vec<ActionArg> = Vec::new();
+                for &p in self.sppf.packings_of(id) {
+                    if let Some(p_results) = memo.get(&p) {
+                        for arg in p_results {
+                            if let Some(cap) = limit {
+                                if out.len() >= cap {
+                                    return out;
+                                }
+                            }
+                            out.push(arg.clone());
+                        }
+                    }
+                }
+                out
+            }
+            Some(crate::sppf::SppfNode::Packing { rule_idx, children }) => {
+                self.realize_packing_call(*rule_idx, children, memo, limit)
+            }
+            None => Vec::new(),
+        }
+    }
+
+    /// Cartesian-product the children's realized ActionArgs, then call
+    /// the rule's `action_fn` per combo to produce a Vec of realized
+    /// Term args.
+    fn realize_packing_call(
+        &self,
+        rule_idx: u32,
+        children: &[crate::sppf::SppfId],
+        memo: &std::collections::HashMap<crate::sppf::SppfId, Vec<ActionArg>>,
+        limit: Option<usize>,
+    ) -> Vec<ActionArg> {
+        // OPTIONAL_PRESENT_RULE_IDX sentinel: synthetic packing emitted
+        // by emit_finalize_optional_scope_present. Wrap children's args
+        // into ActionArg::Optional(Some(...)).
+        if rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX {
+            // Cartesian product over children; each combo becomes one
+            // Optional(Some(args)).
+            let mut combos: Vec<Vec<ActionArg>> = vec![Vec::with_capacity(children.len())];
+            for &c in children {
+                let child_results = match memo.get(&c) {
+                    Some(v) => v,
+                    None => return Vec::new(),
+                };
+                let mut next: Vec<Vec<ActionArg>> =
+                    Vec::with_capacity(combos.len().saturating_mul(child_results.len().max(1)));
+                for combo in &combos {
+                    for arg in child_results {
+                        let mut ext = combo.clone();
+                        ext.push(arg.clone());
+                        next.push(ext);
+                        if let Some(cap) = limit {
+                            if next.len() >= cap {
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(cap) = limit {
+                        if next.len() >= cap {
+                            break;
+                        }
+                    }
+                }
+                combos = next;
+            }
+            return combos
+                .into_iter()
+                .map(|args| ActionArg::Optional(Some(args)))
+                .collect();
+        }
+        // Real rule. We need to look up the action via the engine, but the
+        // engine's action_for is indexed by (cat_src_idx, rule_idx_within_cat).
+        // Our `rule_idx` here is the engine's rule_idx_within_cat directly
+        // (emit_fire_action passes symbol.rule_index_in_category as u32).
+        // The cat_src_idx is implicit in the parent Symbol — but at this
+        // call site we don't have the parent context. We scan all cats:
+        // the packing's rule_idx + arity-match disambiguates in practice
+        // (the engine.action_for tables are sparse). This is correct but
+        // O(num_cats); future C7+ optimization can precompute a global
+        // (rule_idx → cat_src_idx) map at engine setup time.
+        let arity = children.len();
+        let mut cat_src_idx: Option<u16> = None;
+        for cs in 0..1024u16 {
+            if let Some(e) = self.engine.action_for(cs, rule_idx as u16) {
+                if e.arity as usize == arity {
+                    cat_src_idx = Some(cs);
+                    break;
+                }
+            }
+        }
+        let cat = match cat_src_idx {
+            Some(c) => c,
+            None => return Vec::new(), // No matching action — realization stub.
+        };
+        let action_entry = self.engine.action_for(cat, rule_idx as u16);
+        let action_fn = match action_entry {
+            Some(e) => e.action_fn,
+            None => return Vec::new(),
+        };
+
+        // Cartesian product over children's realized args.
+        let mut combos: Vec<Vec<ActionArg>> = vec![Vec::with_capacity(arity)];
+        for &c in children {
+            let child_results = match memo.get(&c) {
+                Some(v) => v,
+                None => return Vec::new(),
+            };
+            let mut next: Vec<Vec<ActionArg>> =
+                Vec::with_capacity(combos.len().saturating_mul(child_results.len().max(1)));
+            for combo in &combos {
+                for arg in child_results {
+                    let mut ext = combo.clone();
+                    ext.push(arg.clone());
+                    next.push(ext);
+                    if let Some(cap) = limit {
+                        if next.len() >= cap {
+                            break;
+                        }
+                    }
+                }
+                if let Some(cap) = limit {
+                    if next.len() >= cap {
+                        break;
+                    }
+                }
+            }
+            combos = next;
+        }
+
+        // For each combo: build a fresh SemanticBuilder, push args, fire
+        // action, capture top.
+        let mut out: Vec<ActionArg> = Vec::with_capacity(combos.len());
+        for args in combos {
+            let mut sb = SemanticBuilder::new();
+            // Push args one-by-one. The push semantics must match what
+            // the walker's emit-helpers would have done so the action's
+            // pop_args call shape is preserved.
+            for arg in &args {
+                match arg {
+                    ActionArg::Token { kind, text, pos } => {
+                        sb.push_token(kind.clone(), text.clone(), *pos);
+                    }
+                    ActionArg::Ident { name, pos } => {
+                        sb.push_ident(name.clone(), *pos);
+                    }
+                    ActionArg::Term { value, .. } => {
+                        // Push as a Term arg; the action_fn pop_args
+                        // sees this as ActionArg::Term.
+                        sb.push_term_arc(Arc::clone(value));
+                    }
+                    ActionArg::CollectionId(id) => {
+                        // Open and populate the collection slot the
+                        // CollectionId references, then push the
+                        // CollectionId arg. action_fn will pop_args and
+                        // drain the collection.
+                        let slot_id = sb.start_collection();
+                        debug_assert_eq!(
+                            slot_id, *id,
+                            "realize_root_to_terms: collection id mismatch"
+                        );
+                        if let Some(items) = self.sppf_collection_arena.get(*id as usize) {
+                            // Each item is realized as an ActionArg::Term
+                            // in `memo`; push them onto sb so
+                            // push_to_collection drains correctly.
+                            for &item in items {
+                                if let Some(item_realized) = memo.get(&item) {
+                                    if let Some(item_arg) = item_realized.first() {
+                                        match item_arg {
+                                            ActionArg::Term { value, .. } => {
+                                                sb.push_term_arc(Arc::clone(value));
+                                                sb.push_to_collection(*id);
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        sb.push_collection_id(*id);
+                    }
+                    ActionArg::Predicate(p) => {
+                        sb.push_predicate_arc(Arc::clone(p));
+                    }
+                    ActionArg::Optional(_) | ActionArg::Collection { .. } | ActionArg::BinderScope(_) => {
+                        // BinderScope / Collection / Optional arrive via
+                        // dedicated push pathways in the walker. For
+                        // realization, push as the corresponding direct
+                        // ActionArg via a small helper that bypasses
+                        // typed-push.
+                        // BinderScope/Collection should rarely appear at
+                        // child positions in normal grammars; emit them
+                        // via push_raw_arg as a safety fallback.
+                        sb.push_raw_arg(arg.clone());
+                    }
+                }
+            }
+            // Fire the action with the args. action_fn pops the args
+            // and pushes one Term back.
+            let pre_len = sb.len();
+            let popped = sb.pop_args(arity);
+            (action_fn)(&mut sb, popped);
+            let post_len = sb.len();
+            if post_len == pre_len - arity + 1 {
+                if let Some(t) = sb.take_dyn_result() {
+                    // The realized term's type_name is set by the
+                    // action's push_term; we approximate via "Cat" name
+                    // tag derived from the cat_src_idx. The downstream
+                    // facade downcasts via Arc::downcast::<Cat> so the
+                    // tag is for debug only.
+                    out.push(ActionArg::Term {
+                        value: t,
+                        type_name: "RealizedTerm",
+                    });
+                }
+            }
+            if let Some(cap) = limit {
+                if out.len() >= cap {
+                    return out;
+                }
+            }
+        }
+        out
     }
 
     /// Stage 3.5b (2026-05-01): cursor-level "is this an accepting

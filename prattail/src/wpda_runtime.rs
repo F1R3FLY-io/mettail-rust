@@ -2140,6 +2140,25 @@ impl SemanticBuilder {
         });
     }
 
+    /// Option C / C7 (2026-05-15): push an already-`Arc`'d Term arg.
+    /// Used by `WpdaWalker::realize_root_to_terms` to thread realized
+    /// child terms into a fresh `SemanticBuilder` before calling
+    /// `action_fn`. The `type_name` is preserved as a debug tag only
+    /// (downcasting at the facade keys on the concrete `Cat` type).
+    pub fn push_term_arc(&mut self, value: Arc<dyn Any + Send + Sync>) {
+        self.push_arg_internal(ActionArg::Term {
+            value,
+            type_name: "RealizedTerm",
+        });
+    }
+
+    /// Option C / C7: push a raw `ActionArg` directly. Used during
+    /// realization to forward already-constructed args (e.g.
+    /// `Optional`, `BinderScope`) without re-wrapping.
+    pub fn push_raw_arg(&mut self, arg: ActionArg) {
+        self.push_arg_internal(arg);
+    }
+
     /// Push a completed collection (already of the language's native
     /// collection type, e.g., `HashBag<Proc>` or `Vec<Int>`).
     ///
