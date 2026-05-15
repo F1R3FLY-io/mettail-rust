@@ -2569,6 +2569,101 @@ impl From<crate::automata::lex_weight::LexicographicWeight>
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// M11.5 (2026-05-14): SnapshotWeight trait — inject parent cursor's builder
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// At each Fork-arm site in the walker (`apply_action_to_cursor`), the child
+// cursor's accumulated weight must carry the PARENT cursor's `Arc<SemanticBuilder>`
+// snapshot. Codegen emits Fork branches as singleton DerivationWeights with
+// `DerivationSnapshot::unit()` (no cursor scope at codegen time). The walker
+// patches each entry with the parent snapshot BEFORE composing into the child:
+//
+//   child.weight = parent.weight ⊗ (branch.weight with_snapshot parent_snapshot)
+//
+// The merge step (`merge_equivalent_cursors`) then composes via multiset union
+// (`plus_ref` = concat), preserving DISTINCT parent snapshots when two cursors
+// at the same ConfigKey carry different historical AST roots. At EOI
+// resolution, the multi-cursor branch (`resolve_at_end_of_input`) iterates
+// each cursor's `weight.entries` and extracts a term per snapshot via
+// `snapshot.0.clone().take_dyn_result()` — surfacing all derivations.
+//
+// **Why a trait, not an inherent method**: the walker is generic over `W:
+// SemiringRef`. Production walkers use `W = DerivationWeight<LexicographicWeight,
+// DerivationSnapshot>` (the only W with real snapshot semantics). Walker
+// internal mock tests (`wpds_walker.rs:tests`, `wpds_session.rs`) pin
+// `W = LexicographicWeight` — a Copy/no-snapshot weight. The trait provides a
+// uniform API: `with_builder_snapshot` is a real injection on
+// `DerivationWeight`, a no-op on `LexicographicWeight`.
+
+/// M11.5 (2026-05-14): inject the parent cursor's `Arc<SemanticBuilder>`
+/// snapshot into a weight value, and expose per-entry snapshots for EOI
+/// multi-result extraction. Called by the walker's Fork-arm sites and by
+/// `resolve_at_end_of_input`.
+pub trait SnapshotWeight: crate::automata::semiring::SemiringRef {
+    /// Replace each entry's derivation component with a snapshot wrapping
+    /// the supplied `builder` Arc (cloned for sharing). For weights with
+    /// no snapshot semantics (e.g., raw `LexicographicWeight`), this is
+    /// the identity function.
+    fn with_builder_snapshot(self, builder: &std::sync::Arc<SemanticBuilder>) -> Self;
+
+    /// Return each entry's snapshot as an `Arc<SemanticBuilder>` clone.
+    /// For multi-entry weights (production `DerivationWeight`), this is
+    /// the multiset of historical snapshots captured at merge time. For
+    /// no-snapshot weights, returns an empty vector (caller falls back
+    /// to the cursor's own `builder`).
+    fn entries_snapshots(&self) -> Vec<std::sync::Arc<SemanticBuilder>>;
+}
+
+/// Production impl: replace each multiset entry's `DerivationSnapshot::unit()`
+/// (codegen-emitted) with a snapshot of the parent's builder via
+/// `DerivationSnapshot::from_arc(Arc::clone(builder))`. Delegates to the
+/// M11.1-added `DerivationWeight::with_snapshot` helper.
+impl SnapshotWeight
+    for crate::automata::derivation_weight::DerivationWeight<
+        crate::automata::lex_weight::LexicographicWeight,
+        DerivationSnapshot,
+    >
+{
+    fn with_builder_snapshot(self, builder: &std::sync::Arc<SemanticBuilder>) -> Self {
+        let snap = DerivationSnapshot::from_arc(std::sync::Arc::clone(builder));
+        self.with_snapshot(snap)
+    }
+
+    fn entries_snapshots(&self) -> Vec<std::sync::Arc<SemanticBuilder>> {
+        self.entries
+            .iter()
+            .map(|(_, snap)| std::sync::Arc::clone(&snap.0))
+            .collect()
+    }
+}
+
+/// No-op impl for raw `LexicographicWeight` — used by walker-internal mock
+/// tests. The mock W has no snapshot semantics so the builder is ignored
+/// and the weight returns unchanged. `entries_snapshots` returns empty;
+/// the walker's EOI extractor falls back to `cursor.builder`.
+impl SnapshotWeight for crate::automata::lex_weight::LexicographicWeight {
+    fn with_builder_snapshot(self, _builder: &std::sync::Arc<SemanticBuilder>) -> Self {
+        self
+    }
+
+    fn entries_snapshots(&self) -> Vec<std::sync::Arc<SemanticBuilder>> {
+        Vec::new()
+    }
+}
+
+/// No-op impl for `TropicalWeight` — used by some walker unit tests that
+/// instantiate the walker with a plain tropical semiring.
+impl SnapshotWeight for crate::automata::semiring::TropicalWeight {
+    fn with_builder_snapshot(self, _builder: &std::sync::Arc<SemanticBuilder>) -> Self {
+        self
+    }
+
+    fn entries_snapshots(&self) -> Vec<std::sync::Arc<SemanticBuilder>> {
+        Vec::new()
+    }
+}
+
 impl fmt::Debug for SemanticBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SemanticBuilder")

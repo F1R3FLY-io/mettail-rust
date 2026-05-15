@@ -52,7 +52,7 @@ pub enum ReparseError {
     EngineFailed(String),
 }
 
-impl<W: Semiring> WpdsIncrementalSession<W> {
+impl<W: Semiring + crate::wpds_runtime::SnapshotWeight> WpdsIncrementalSession<W> {
     /// Create a new session with the given checkpoint interval.
     ///
     /// `checkpoint_interval = 1` means snapshot every token (sub-microsecond
@@ -173,7 +173,7 @@ impl<W: Semiring> WpdsIncrementalSession<W> {
     }
 }
 
-impl<W: Semiring> Default for WpdsIncrementalSession<W> {
+impl<W: Semiring + crate::wpds_runtime::SnapshotWeight> Default for WpdsIncrementalSession<W> {
     fn default() -> Self {
         Self::new(1)
     }
