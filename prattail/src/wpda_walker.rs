@@ -5146,6 +5146,37 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
     ///
     /// **Tie-break**: when `cursor.weight.plus(&existing.weight) ==
     /// existing.weight`, the existing entry wins (preserves source-order).
+    /// Collapse cursors at the same `ConfigKey` (state, gss_node, pos,
+    /// incoming_edge, collection_depth) by `Semiring::plus_ref`. Lex-min
+    /// + `source_priority` selects the surviving cursor's operational
+    /// state (recovery_deltas, builder, incoming_edge_stack, etc.).
+    ///
+    /// ## SPPF interaction (Option C / C5)
+    ///
+    /// Under Option C, the SPPF (`self.sppf`) is the structural record of
+    /// every reduce. By Symbol-dedup (sppf.rs:1.4), all derivations of
+    /// `(non_terminal, lo, hi)` collapse to the same SppfId. As a
+    /// consequence: **at every `ConfigKey`-equivalent merge, the two
+    /// cursors' sppf_stack tops point at the SAME SppfId**.
+    ///
+    /// Proof sketch (per plan §2.4):
+    /// - Same `pos` ⇒ same input prefix consumed ⇒ same Terminal/Symbol
+    ///   pushed by the most recent emit-helper.
+    /// - `intern_terminal` dedups by `(kind, pos)`; `intern_symbol` dedups
+    ///   by `(nt_tag, lo, hi)`; `intern_packing` dedups by
+    ///   `(rule_idx, children_hash)`. Any two cursors that pushed
+    ///   structurally-identical content at the same position get the
+    ///   same SppfId.
+    /// - Exception: `intern_predicate` and `intern_collection_id`
+    ///   placeholders are walker-arena-keyed, not content-keyed. Cursors
+    ///   that independently constructed predicate/collection state at the
+    ///   same ConfigKey may have differing SppfIds for those leaves.
+    ///   Predicate dedup is a follow-up improvement (post-C12); the
+    ///   current C5 invariant is "tops of the same SPPF NodeKind match."
+    ///
+    /// Merge does NO SPPF work — Symbol-dedup at reduce time has already
+    /// preserved all ambiguity. The winning cursor's sppf_stack carries
+    /// forward; the loser's references the same shared SppfIds.
     fn merge_equivalent_cursors(&mut self) {
         if self.branch_cursors.len() < 2 {
             return;
@@ -5235,6 +5266,32 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                              configuration must have matching collection-stack \
                              depths (operational state shape)"
                         );
+                        // Option C / C5: SPPF integrity check — every
+                        // SppfId on either cursor's sppf_stack must be a
+                        // valid arena index. This is true by construction
+                        // (intern_* methods return valid ids) but guards
+                        // against future emit-helper bugs that mishandle
+                        // sentinel ids.
+                        #[cfg(debug_assertions)]
+                        {
+                            let sppf_len = self.sppf.len() as u32;
+                            for &sid in &cursor.sppf_stack {
+                                debug_assert!(
+                                    sid < sppf_len,
+                                    "merge_equivalent_cursors: cursor.sppf_stack \
+                                     contains stale SppfId {} (sppf.len() = {})",
+                                    sid, sppf_len
+                                );
+                            }
+                            for &sid in &merged[idx].sppf_stack {
+                                debug_assert!(
+                                    sid < sppf_len,
+                                    "merge_equivalent_cursors: winner.sppf_stack \
+                                     contains stale SppfId {} (sppf.len() = {})",
+                                    sid, sppf_len
+                                );
+                            }
+                        }
                         let mut replacement = cursor;
                         replacement.weight = combined;
                         merged[idx] = replacement;
