@@ -342,6 +342,9 @@ The `RUSTFLAGS` environment variable overrides `rustflags` in `.cargo/config.tom
 | `error: linker 'clang' not found` | clang not installed | Install clang (`sudo apt install clang`) |
 | `cannot find -lmold` or mold linker error | mold not installed | Install mold or comment out linker lines |
 | `error[E0463]: can't find crate for 'cranelift'` | cranelift component missing | Run `rustup component add rustc-codegen-cranelift-preview` |
+| `Gxhash requires aes and neon intrinsics` (Linux aarch64) | `pathmap` → `gxhash` needs compile-time `target-feature` flags; `.cargo/config.toml` had no `[target.aarch64-unknown-linux-gnu]` section | Pull latest config (adds `+aes,+neon`) or set `RUSTFLAGS="-C target-feature=+aes,+neon"`; avoid `target-cpu=native` in shared setups |
+| `invalid linker name in argument '-fuse-ld=mold'` (Linux aarch64) | mold/clang not installed but config requested them | Use latest `.cargo/config.toml` (aarch64 uses default linker); or `sudo apt install mold clang` and uncomment optional mold lines |
+| `thread '…' has overflowed its stack` during `cargo test` | Ascent/rhocalc on default 2 MiB test stacks; worse on aarch64 or low-RAM hosts | Pull latest config (`RUST_MIN_STACK` in `.cargo/config.toml`); or `RUST_MIN_STACK=8388608 cargo test -- --test-threads=1` |
 | `No such file or directory` during codegen | Concurrent cargo builds sharing target dir | Kill stray `cargo`/`rustc` processes |
 
 ---

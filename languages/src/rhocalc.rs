@@ -12,8 +12,8 @@ pub(crate) mod pathmap;
 pub(crate) mod receive;
 pub(crate) mod runtime;
 mod type_inference;
-pub(crate) mod zipper;
 pub(crate) mod wire;
+pub(crate) mod zipper;
 
 language! {
     name: RhoCalc,
