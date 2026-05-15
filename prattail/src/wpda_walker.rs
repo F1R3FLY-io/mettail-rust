@@ -480,6 +480,19 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// `RecoveryConfig::default()`; callers may override via
     /// `with_recovery_config` for per-grammar tuning.
     recovery_config: RecoveryConfig,
+    /// Option C / C2 (2026-05-15): the walker-owned Shared Packed Parse
+    /// Forest arena. Cursors carry `SppfId` handles into this arena rather
+    /// than per-cursor AST builders; the arena is the central, shared,
+    /// append-only structural record of every reduce.
+    ///
+    /// Dual-mode through C2-C8: present alongside the existing
+    /// `SemanticBuilder` infrastructure. C3-C5 add emit-helper writes to
+    /// this arena; C6 wires it into the resolve path; C9 removes the
+    /// `builder` field once the SPPF is the sole AST source.
+    ///
+    /// See `~/.claude/plans/option-c-sppf-on-wpda.md` §1, §2.
+    #[allow(dead_code)] // C3 wires the first emit-helper writer; C6 wires the first reader.
+    sppf: crate::sppf::Sppf,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -1042,6 +1055,19 @@ pub struct BranchCursor<W: SemiringRef> {
     /// `merge_equivalent_cursors`, identical to how `recovery_deltas`
     /// + `collection_stack` are kept today.
     pub builder: Arc<SemanticBuilder>,
+    /// Option C / C2 (2026-05-15): per-cursor SPPF working-stack. Replaces
+    /// the SemanticBuilder argument-stack as the structural record of which
+    /// SPPF subtrees have been constructed so far in this cursor. Cursors
+    /// share the walker's central `Sppf` arena (by SppfId); cloning the
+    /// stack is O(N) in the stack depth (small), not O(N) in builder
+    /// content (large).
+    ///
+    /// Dual-mode through C2-C8: the field is populated alongside the
+    /// SemanticBuilder mutations (no behavior change). The C8+ removal of
+    /// `builder` makes this the sole structural-history field.
+    ///
+    /// See `~/.claude/plans/option-c-sppf-on-wpda.md` §2.1.
+    pub sppf_stack: Vec<crate::sppf::SppfId>,
     // M4 (2026-05-13): `pending_lex_alts` field DELETED. Per-cursor lex-
     // alternative state violated WPDS stack purity (the multiset grew
     // monotonically with no pop counterpart, and was excluded from
@@ -1098,6 +1124,7 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             visited_recovery: self.visited_recovery.clone(),
             visited_dispatch: self.visited_dispatch.clone(),
             builder: Arc::clone(&self.builder),
+            sppf_stack: self.sppf_stack.clone(),
         }
     }
 }
@@ -1174,6 +1201,8 @@ impl<W: SemiringRef> BranchCursor<W> {
             // `SemanticBuilder::new()` in lockstep, so the two stay
             // structurally identical at construction time.
             builder: Arc::new(SemanticBuilder::new()),
+            // Option C / C2: seed cursor's SPPF stack is empty (no reduces yet).
+            sppf_stack: Vec::new(),
         }
     }
 
@@ -1220,6 +1249,11 @@ impl<W: SemiringRef> BranchCursor<W> {
             // single-most-important reason the field exists: Fork
             // fanout cost becomes constant per child.
             builder: Arc::clone(&parent.builder),
+            // Option C / C2: Fork-children inherit the parent's SPPF
+            // construction history. Clone is O(depth-of-current-rule),
+            // which is bounded by a small constant; cheaper than the
+            // Arc::clone above on the builder Arc bump cost basis.
+            sppf_stack: parent.sppf_stack.clone(),
         }
     }
 }
@@ -1831,6 +1865,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             mutable_token_source: None,
             _mutable_source_lifetime: PhantomData,
             recovery_config: RecoveryConfig::default(),
+            // Option C / C2: fresh empty SPPF arena.
+            sppf: crate::sppf::Sppf::new(),
         }
     }
 
@@ -1882,6 +1918,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             mutable_token_source: None,
             _mutable_source_lifetime: PhantomData,
             recovery_config: RecoveryConfig::default(),
+            // Option C / C2: fresh empty SPPF arena.
+            sppf: crate::sppf::Sppf::new(),
         }
     }
 
@@ -1928,6 +1966,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             mutable_token_source: None,
             _mutable_source_lifetime: PhantomData,
             recovery_config: RecoveryConfig::default(),
+            // Option C / C2: fresh empty SPPF arena.
+            sppf: crate::sppf::Sppf::new(),
         }
     }
 
@@ -2345,6 +2385,11 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                     // already captured the winning branch's effects
                     // via commit_winner journal replay.
                     builder: Arc::new(SemanticBuilder::new()),
+                    // Option C / C2: post-resolution singleton starts with
+                    // empty SPPF stack. Realization at EOI reads the root
+                    // SppfId from `self.committed_sppf_root` (added in C6),
+                    // not from a cursor's stack.
+                    sppf_stack: Vec::new(),
                 }];
                 self.state = new_state.clone();
                 let trace = WpdaTraceEntry {
@@ -3078,6 +3123,10 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                     // flow through `self.builder` (deterministic mode); the
                     // cursor's Arc is a future anchor (5.3+).
                     builder: Arc::new(SemanticBuilder::new()),
+                    // Option C / C2: post-Drop reset starts with empty SPPF
+                    // stack. The drop discards the failed cursor's tree
+                    // construction; the deterministic-mode singleton resets.
+                    sppf_stack: Vec::new(),
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -3589,6 +3638,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                sppf_stack: cursor.sppf_stack.clone(),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -3641,6 +3692,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                sppf_stack: cursor.sppf_stack.clone(),
                             };
                             // nondeterministic mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -3704,6 +3757,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                sppf_stack: cursor.sppf_stack.clone(),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -3743,6 +3798,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                sppf_stack: cursor.sppf_stack.clone(),
                             };
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
@@ -3775,6 +3832,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                sppf_stack: cursor.sppf_stack.clone(),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -3840,6 +3899,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                sppf_stack: cursor.sppf_stack.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3884,6 +3945,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                sppf_stack: cursor.sppf_stack.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -3929,6 +3992,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                sppf_stack: cursor.sppf_stack.clone(),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             // Phase 5.5 (2026-05-12): eagerly apply effect
@@ -4012,6 +4077,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
                                 builder: Arc::clone(&cursor.builder),
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                sppf_stack: cursor.sppf_stack.clone(),
                             };
                             // Capture the alt's token text at child.pos
                             // (the original byte position, before
@@ -4083,6 +4150,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 visited_recovery: cursor.visited_recovery.clone(),
                                 visited_dispatch: cursor.visited_dispatch.clone(),
                                 builder: Arc::clone(&cursor.builder),
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                sppf_stack: cursor.sppf_stack.clone(),
                             };
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let pos_now = child.pos;
@@ -4165,6 +4234,8 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 builder: Arc::clone(&cursor.builder),
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                sppf_stack: cursor.sppf_stack.clone(),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -5468,6 +5539,9 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             // vis behavior — the live mutation surface is still
             // `self.builder`, journaled deltas replay against it above.
             builder: winner.builder,
+            // Option C / C2: preserve winner's SPPF stack so subsequent
+            // reduces continue building on top of the committed history.
+            sppf_stack: winner.sppf_stack,
         }];
     }
 
