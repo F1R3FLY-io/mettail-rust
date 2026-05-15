@@ -2,7 +2,7 @@
 //!
 //! The synthetic `RefinementSmoke` grammar declares
 //! `PosInt = { x: Int | x > 0 }`. The `language!` macro emits a
-//! `register_refinements()` function (per `wpds_codegen::refinement`)
+//! `register_refinements()` function (per `wpda_codegen::refinement`)
 //! that registers the closure with the runtime registry; calling
 //! `evaluate_refinement_predicate("PosInt", &v)` then evaluates the
 //! lowered closure body against `v`.

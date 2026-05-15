@@ -2148,7 +2148,7 @@ fn assoc_mixedmath_mulint_left() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn wpds_mixedmath_not_true() {
+fn wpda_mixedmath_not_true() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::Not(Box::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
@@ -2160,7 +2160,7 @@ fn wpds_mixedmath_not_true() {
 }
 
 #[test]
-fn wpds_mixedmath_not_false() {
+fn wpda_mixedmath_not_false() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::Not(Box::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
@@ -2172,7 +2172,7 @@ fn wpds_mixedmath_not_false() {
 }
 
 #[test]
-fn wpds_mixedmath_and_true_true() {
+fn wpda_mixedmath_and_true_true() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
@@ -2184,7 +2184,7 @@ fn wpds_mixedmath_and_true_true() {
 }
 
 #[test]
-fn wpds_mixedmath_and_true_false() {
+fn wpda_mixedmath_and_true_false() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
@@ -2196,7 +2196,7 @@ fn wpds_mixedmath_and_true_false() {
 }
 
 #[test]
-fn wpds_mixedmath_and_false_true() {
+fn wpda_mixedmath_and_false_true() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
@@ -2208,7 +2208,7 @@ fn wpds_mixedmath_and_false_true() {
 }
 
 #[test]
-fn wpds_mixedmath_and_false_false() {
+fn wpda_mixedmath_and_false_false() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
@@ -2220,7 +2220,7 @@ fn wpds_mixedmath_and_false_false() {
 }
 
 #[test]
-fn wpds_mixedmath_or_true_true() {
+fn wpda_mixedmath_or_true_true() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
@@ -2232,7 +2232,7 @@ fn wpds_mixedmath_or_true_true() {
 }
 
 #[test]
-fn wpds_mixedmath_or_true_false() {
+fn wpda_mixedmath_or_true_false() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
@@ -2244,7 +2244,7 @@ fn wpds_mixedmath_or_true_false() {
 }
 
 #[test]
-fn wpds_mixedmath_or_false_true() {
+fn wpda_mixedmath_or_false_true() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
@@ -2256,7 +2256,7 @@ fn wpds_mixedmath_or_false_true() {
 }
 
 #[test]
-fn wpds_mixedmath_or_false_false() {
+fn wpda_mixedmath_or_false_false() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
@@ -2268,7 +2268,7 @@ fn wpds_mixedmath_or_false_false() {
 }
 
 #[test]
-fn wpds_mixedmath_neg_0() {
+fn wpda_mixedmath_neg_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Neg(Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -2280,7 +2280,7 @@ fn wpds_mixedmath_neg_0() {
 }
 
 #[test]
-fn wpds_mixedmath_neg_1() {
+fn wpda_mixedmath_neg_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Neg(Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -2292,7 +2292,7 @@ fn wpds_mixedmath_neg_1() {
 }
 
 #[test]
-fn wpds_mixedmath_neg_2() {
+fn wpda_mixedmath_neg_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Neg(Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -2304,7 +2304,7 @@ fn wpds_mixedmath_neg_2() {
 }
 
 #[test]
-fn wpds_mixedmath_neg_3() {
+fn wpda_mixedmath_neg_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Neg(Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -2316,7 +2316,7 @@ fn wpds_mixedmath_neg_3() {
 }
 
 #[test]
-fn wpds_mixedmath_neg_5() {
+fn wpda_mixedmath_neg_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Neg(Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -2328,7 +2328,7 @@ fn wpds_mixedmath_neg_5() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_0_0() {
+fn wpda_mixedmath_addint_0_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -2340,7 +2340,7 @@ fn wpds_mixedmath_addint_0_0() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_0_1() {
+fn wpda_mixedmath_addint_0_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -2352,7 +2352,7 @@ fn wpds_mixedmath_addint_0_1() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_0_2() {
+fn wpda_mixedmath_addint_0_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -2364,7 +2364,7 @@ fn wpds_mixedmath_addint_0_2() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_0_3() {
+fn wpda_mixedmath_addint_0_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -2376,7 +2376,7 @@ fn wpds_mixedmath_addint_0_3() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_0_5() {
+fn wpda_mixedmath_addint_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -2388,7 +2388,7 @@ fn wpds_mixedmath_addint_0_5() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_1_0() {
+fn wpda_mixedmath_addint_1_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -2400,7 +2400,7 @@ fn wpds_mixedmath_addint_1_0() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_1_1() {
+fn wpda_mixedmath_addint_1_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -2412,7 +2412,7 @@ fn wpds_mixedmath_addint_1_1() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_1_2() {
+fn wpda_mixedmath_addint_1_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -2424,7 +2424,7 @@ fn wpds_mixedmath_addint_1_2() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_1_3() {
+fn wpda_mixedmath_addint_1_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -2436,7 +2436,7 @@ fn wpds_mixedmath_addint_1_3() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_1_5() {
+fn wpda_mixedmath_addint_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -2448,7 +2448,7 @@ fn wpds_mixedmath_addint_1_5() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_2_0() {
+fn wpda_mixedmath_addint_2_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -2460,7 +2460,7 @@ fn wpds_mixedmath_addint_2_0() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_2_1() {
+fn wpda_mixedmath_addint_2_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -2472,7 +2472,7 @@ fn wpds_mixedmath_addint_2_1() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_2_2() {
+fn wpda_mixedmath_addint_2_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -2484,7 +2484,7 @@ fn wpds_mixedmath_addint_2_2() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_2_3() {
+fn wpda_mixedmath_addint_2_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -2496,7 +2496,7 @@ fn wpds_mixedmath_addint_2_3() {
 }
 
 #[test]
-fn wpds_mixedmath_addint_2_5() {
+fn wpda_mixedmath_addint_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);

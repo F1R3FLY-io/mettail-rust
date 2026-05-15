@@ -46,7 +46,7 @@ use super::subst::{collect_category_variants, FieldInfo, VariantKind};
 /// `StrToInt`, `BigintCast`, `BigratCast`, `ProcToBool`, `ProcToStr`, etc.
 ///
 /// Byte-identical to Pass 2c's emission gate in
-/// `macros/src/gen/runtime/wpds_codegen/prefix.rs:1041+`, ensuring the marked
+/// `macros/src/gen/runtime/wpda_codegen/prefix.rs:1041+`, ensuring the marked
 /// rule set is exactly the rules Pass 2c synthesizes implicit-cast arms for.
 fn is_cross_cat_unary_cast(rule: &mettail_ast::grammar::GrammarRule) -> bool {
     let Some(tc) = rule.term_context.as_ref() else { return false; };
@@ -78,7 +78,7 @@ pub fn generate_parse_alt_filter_methods(language: &LanguageDef) -> TokenStream 
     // where `Y != X` (e.g., Calculator's `IntToBool`, `BoolToFloat`,
     // `BigintCast`, `BigratCast`, `ProcToBool`, `ProcToStr`, etc.).
     //
-    // Pass 2c (wpds_codegen/prefix.rs:1041+) emits implicit-cast Fork
+    // Pass 2c (wpda_codegen/prefix.rs:1041+) emits implicit-cast Fork
     // branches in the result category's prefix dispatch for FIRST(source)
     // tokens. These are REQUIRED for internal cross-cat sub-parses inside
     // single-cat `Cat::parse` (e.g., LtBool's RHS in `int(false > b < -N)`

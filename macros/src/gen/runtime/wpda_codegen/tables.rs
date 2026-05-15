@@ -1,6 +1,6 @@
 //! Category and rule-index static tables.
 //!
-//! These are emitted per-language by `generate_wpds_engine_module` and
+//! These are emitted per-language by `generate_wpda_engine_module` and
 //! establish the stable `(src_idx, rule_idx)` mapping used throughout the
 //! WPDS engine's `LexicographicWeight` for tiebreak ordering.
 
@@ -9,7 +9,7 @@ use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::quote;
 
-/// Emit the `WPDS_CATEGORIES: &[&str]` table entries (without the outer
+/// Emit the `WPDA_CATEGORIES: &[&str]` table entries (without the outer
 /// `&[...]` brackets — caller wraps).
 pub(crate) fn emit_category_table(categories: &[String]) -> TokenStream {
     let entries = categories.iter().map(|c| quote! { #c, });

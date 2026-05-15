@@ -4,7 +4,7 @@
 //! grammar (in `macros/src/ast/`) and the emitted parser code. They
 //! describe each rule's structure in a form suitable for analyses
 //! (`rd_analysis`, `classify`, `wfst`, `lint`, `ebnf`, `decision_tree`,
-//! `prediction`) and Walker codegen (`macros/src/gen/runtime/wpds_codegen/`).
+//! `prediction`) and Walker codegen (`macros/src/gen/runtime/wpda_codegen/`).
 //!
 //! Pure data — no emitter functions, no thread-locals, no `use` of
 //! `automata`/`wfst`/`prediction`/etc. Walker codegen consumes them via

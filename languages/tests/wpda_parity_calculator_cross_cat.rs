@@ -11,7 +11,7 @@
 //! 6. Unwinding pops the cross-cat ProcInt Return, fires wrap-action,
 //!    pushes Proc::ProcInt(Box::new(Int::NumLit(42))).
 
-use mettail_languages::calculator::{parse_Bool_via_wpds, parse_Proc_via_wpds, Bool, Int, Proc};
+use mettail_languages::calculator::{parse_Bool_via_wpda, parse_Proc_via_wpda, Bool, Int, Proc};
 use mettail_prattail::automata::TokenKind;
 
 #[test]
@@ -19,7 +19,7 @@ fn wpds_parse_procint_from_int_literal() {
     let kinds = vec![TokenKind::IntegerLit("Int".to_string())];
     let texts = vec!["42"];
     let mut pos = 0usize;
-    let result = parse_Proc_via_wpds(&kinds, &texts, &mut pos, 0);
+    let result = parse_Proc_via_wpda(&kinds, &texts, &mut pos, 0);
     match &result {
         Ok(Proc::ProcInt(boxed_int)) => {
             match boxed_int.as_ref() {
@@ -43,7 +43,7 @@ fn wpds_parse_eqint_cross_cat_infix() {
     ];
     let texts = vec!["1", "==", "2"];
     let mut pos = 0usize;
-    let result = parse_Bool_via_wpds(&kinds, &texts, &mut pos, 0);
+    let result = parse_Bool_via_wpda(&kinds, &texts, &mut pos, 0);
     match &result {
         Ok(Bool::EqInt(a, b)) => {
             assert!(matches!(a.as_ref(), Int::NumLit(1)));

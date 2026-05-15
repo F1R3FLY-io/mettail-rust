@@ -1,4 +1,4 @@
-//! `parse_<Cat>_via_wpds` facade emission.
+//! `parse_<Cat>_via_wpda` facade emission.
 //!
 //! Emits per-category wrapper functions that drive the WPDS walker to
 //! saturation on a `TokenKind` slice and extract the resulting AST term.
@@ -6,12 +6,12 @@
 //! ## Signature
 //!
 //! ```ignore
-//! pub fn parse_<Cat>_via_wpds(
+//! pub fn parse_<Cat>_via_wpda(
 //!     kinds: &[TokenKind],
 //!     texts: &[&str],
 //!     pos: &mut usize,
 //!     min_bp: u8,
-//! ) -> Result<<Cat>, WpdsParseError>
+//! ) -> Result<<Cat>, WpdaParseError>
 //! ```
 //!
 //! The caller is responsible for tokenizing the source input. Parity-test
@@ -21,7 +21,7 @@
 //! ## Recovery
 //!
 //! TODAY: an outer skip-to-sync retry loop (lines 78-145 below) wraps the
-//! walker. On `WpdsState::Error`, the loop advances `pos` past the offending
+//! walker. On `WpdaState::Error`, the loop advances `pos` past the offending
 //! token until a sync delimiter (`)`, `}`, `]`, `;`, `,`) is found, re-seeds
 //! the walker, and retries up to MAX_RECOVERY_ROUNDS times.
 //!
@@ -35,8 +35,8 @@ use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-/// Emit per-category `parse_<Cat>_via_wpds` wrappers plus the shared
-/// `WpdsParseError` type.
+/// Emit per-category `parse_<Cat>_via_wpda` wrappers plus the shared
+/// `WpdaParseError` type.
 pub(crate) fn emit_parse_fns(
     language: &LanguageDef,
     categories: &[String],
@@ -45,15 +45,15 @@ pub(crate) fn emit_parse_fns(
     let mut fns = Vec::new();
     for (cat_src_idx, cat_name) in categories.iter().enumerate() {
         let cat_ident = format_ident!("{}", cat_name);
-        let fn_name = format_ident!("parse_{}_via_wpds", cat_name);
-        let recovering_fn_name = format_ident!("parse_{}_via_wpds_recovering", cat_name);
-        let with_weight_fn_name = format_ident!("parse_{}_via_wpds_with_weight", cat_name);
+        let fn_name = format_ident!("parse_{}_via_wpda", cat_name);
+        let recovering_fn_name = format_ident!("parse_{}_via_wpda_recovering", cat_name);
+        let with_weight_fn_name = format_ident!("parse_{}_via_wpda_with_weight", cat_name);
         // M8 (2026-05-14): multi-result entry points. `_all_with_source`
-        // takes `&dyn WpdsTokenSource` (slice OR lattice) and returns
-        // every accepted term from the walker's `WpdsResolveResult::Accepted`
+        // takes `&dyn WpdaTokenSource` (slice OR lattice) and returns
+        // every accepted term from the walker's `WpdaResolveResult::Accepted`
         // vec. `_all` is a `SliceTokenSource` wrapper for backward compat.
-        let all_with_source_fn_name = format_ident!("parse_{}_via_wpds_all_with_source", cat_name);
-        let all_fn_name = format_ident!("parse_{}_via_wpds_all", cat_name);
+        let all_with_source_fn_name = format_ident!("parse_{}_via_wpda_all_with_source", cat_name);
+        let all_fn_name = format_ident!("parse_{}_via_wpda_all", cat_name);
         let cat_src_idx_u16 = cat_src_idx as u16;
         fns.push(quote! {
             /// WPDS-runtime parser for the `#cat_ident` category.
@@ -66,13 +66,13 @@ pub(crate) fn emit_parse_fns(
             /// On `ParseFailed`, the returned error carries every recovery
             /// attempt (including the final failure) in `attempts`. For
             /// successful parses where recovery rounds were applied, use
-            /// `parse_<Cat>_via_wpds_recovering` to inspect the trail.
+            /// `parse_<Cat>_via_wpda_recovering` to inspect the trail.
             pub fn #fn_name(
                 kinds: &[mettail_prattail::automata::TokenKind],
                 texts: &[&str],
                 pos: &mut usize,
                 min_bp: u8,
-            ) -> Result<#cat_ident, WpdsParseError> {
+            ) -> Result<#cat_ident, WpdaParseError> {
                 let (result, _attempts) = #recovering_fn_name(kinds, texts, pos, min_bp);
                 result
             }
@@ -85,8 +85,8 @@ pub(crate) fn emit_parse_fns(
             ///
             /// Does NOT apply recovery — a clean accept yields
             /// `Ok((term, weight))`; any non-Accepted termination yields
-            /// `Err(WpdsParseError)` without retries. Use
-            /// `parse_<Cat>_via_wpds_recovering` when sync-token skip
+            /// `Err(WpdaParseError)` without retries. Use
+            /// `parse_<Cat>_via_wpda_recovering` when sync-token skip
             /// recovery is desired.
             pub fn #with_weight_fn_name(
                 kinds: &[mettail_prattail::automata::TokenKind],
@@ -98,13 +98,13 @@ pub(crate) fn emit_parse_fns(
                     #cat_ident,
                     mettail_prattail::automata::derivation_weight::DerivationWeight<
                         mettail_prattail::automata::lex_weight::LexicographicWeight,
-                        mettail_prattail::wpds_runtime::DerivationSnapshot,
+                        mettail_prattail::wpda_runtime::DerivationSnapshot,
                     >,
                 ),
-                WpdsParseError,
+                WpdaParseError,
             > {
-                use mettail_prattail::wpds_runtime::WpdsResolveResult;
-                use mettail_prattail::wpds_walker::WpdsWalker;
+                use mettail_prattail::wpda_runtime::WpdaResolveResult;
+                use mettail_prattail::wpda_walker::WpdaWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
                 // M11.6b (D5 semver, 2026-05-14): public return type now
                 // exposes the full `DerivationWeight<...>` multiset rather
@@ -116,79 +116,79 @@ pub(crate) fn emit_parse_fns(
                 // `.first_inner().cloned().unwrap_or_else(|| ::one())`
                 // when they need the scalar).
                 use mettail_prattail::automata::derivation_weight::DerivationWeight;
-                use mettail_prattail::wpds_runtime::DerivationSnapshot;
+                use mettail_prattail::wpda_runtime::DerivationSnapshot;
                 use mettail_prattail::automata::semiring::SemiringRef;
                 type DW = DerivationWeight<LexicographicWeight, DerivationSnapshot>;
                 // Stage 6 G6+ (2026-05-02): default 1M; PRATTAIL_MAX_STEPS env
                 // var overrides via run_to_end_of_input_env_aware.
                 const MAX_STEPS: usize = 1_000_000;
-                let mut walker = WpdsWalker::<DW, _>::new_for_category(
+                let mut walker = WpdaWalker::<DW, _>::new_for_category(
                     #engine_ident::default(),
                     #cat_src_idx_u16,
                     min_bp,
                 );
-                let src = mettail_prattail::wpds_runtime::SliceTokenSource::with_texts(
+                let src = mettail_prattail::wpda_runtime::SliceTokenSource::with_texts(
                     kinds, texts,
                 );
                 match walker.run_to_end_of_input_env_aware(MAX_STEPS, &src) {
                     Ok(()) => match walker.resolve_at_end_of_input(&src) {
-                        WpdsResolveResult::Accepted { weights, terms } => {
+                        WpdaResolveResult::Accepted { weights, terms } => {
                             *pos = walker.position();
                             // Pick first term + its associated DerivationWeight
                             // for backward-compat single-result return. Callers
                             // that want all derivations should use
-                            // `parse_<Cat>_via_wpds_all_with_source`.
+                            // `parse_<Cat>_via_wpda_all_with_source`.
                             let term = terms
                                 .into_iter()
                                 .next()
-                                .ok_or(WpdsParseError::EmptyResult)?;
+                                .ok_or(WpdaParseError::EmptyResult)?;
                             let dw = weights
                                 .into_iter()
                                 .next()
-                                .ok_or(WpdsParseError::EmptyResult)?;
+                                .ok_or(WpdaParseError::EmptyResult)?;
                             let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                .map_err(|_| WpdsParseError::EmptyResult)?;
+                                .map_err(|_| WpdaParseError::EmptyResult)?;
                             let typed = std::sync::Arc::try_unwrap(arc)
                                 .unwrap_or_else(|arc| (*arc).clone());
                             Ok((typed, dw))
                         }
-                        WpdsResolveResult::ParseError { message, position } => {
-                            Err(WpdsParseError::ParseFailed {
+                        WpdaResolveResult::ParseError { message, position } => {
+                            Err(WpdaParseError::ParseFailed {
                                 message,
                                 position,
                                 attempts: Vec::new(),
                             })
                         }
-                        WpdsResolveResult::MaxStepsExceeded { position } => {
-                            Err(WpdsParseError::Incomplete { position })
+                        WpdaResolveResult::MaxStepsExceeded { position } => {
+                            Err(WpdaParseError::Incomplete { position })
                         }
-                        WpdsResolveResult::AmbiguityBudget { budget, actual, position } => {
-                            Err(WpdsParseError::AmbiguityBudget { budget, actual, position })
+                        WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position })
                         }
                     },
-                    Err(exceeded) => Err(WpdsParseError::Incomplete {
+                    Err(exceeded) => Err(WpdaParseError::Incomplete {
                         position: exceeded.position,
                     }),
                 }
             }
 
             /// M8 (2026-05-14): multi-result WPDS parser that takes any
-            /// `WpdsTokenSource` impl (slice OR lattice). Returns every
-            /// term the walker's `WpdsResolveResult::Accepted` carries —
+            /// `WpdaTokenSource` impl (slice OR lattice). Returns every
+            /// term the walker's `WpdaResolveResult::Accepted` carries —
             /// the ambiguity-preserving final state. Use this when you
             /// need to surface ALL parses for downstream disambiguation
             /// at the eval layer (run_ascent_typed's Ambiguous-flatten),
             /// or via `Cat::parse_all`.
             ///
-            /// `parse_<Cat>_via_wpds_all_with_source` is the source-generic
-            /// entry; `parse_<Cat>_via_wpds_all` wraps it with a
+            /// `parse_<Cat>_via_wpda_all_with_source` is the source-generic
+            /// entry; `parse_<Cat>_via_wpda_all` wraps it with a
             /// `SliceTokenSource` for slice callers.
             ///
             /// Does NOT apply recovery — a clean accept yields
             /// `Ok((terms, weights))`; non-Accepted termination yields
-            /// `Err(WpdsParseError)`.
+            /// `Err(WpdaParseError)`.
             pub fn #all_with_source_fn_name(
-                source: &dyn mettail_prattail::wpds_runtime::WpdsTokenSource,
+                source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
                 pos: &mut usize,
                 min_bp: u8,
             ) -> Result<
@@ -196,34 +196,34 @@ pub(crate) fn emit_parse_fns(
                     Vec<#cat_ident>,
                     Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
                 ),
-                WpdsParseError,
+                WpdaParseError,
             > {
-                use mettail_prattail::wpds_runtime::WpdsResolveResult;
-                use mettail_prattail::wpds_walker::WpdsWalker;
+                use mettail_prattail::wpda_runtime::WpdaResolveResult;
+                use mettail_prattail::wpda_walker::WpdaWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
                 // M11.4 (2026-05-14): walker W = DerivationWeight; project
                 // each cursor's multiset back to a single LexicographicWeight
                 // for backward-compat public signature.
                 use mettail_prattail::automata::derivation_weight::DerivationWeight;
-                use mettail_prattail::wpds_runtime::DerivationSnapshot;
+                use mettail_prattail::wpda_runtime::DerivationSnapshot;
                 type DW = DerivationWeight<LexicographicWeight, DerivationSnapshot>;
                 const MAX_STEPS: usize = 1_000_000;
-                let mut walker = WpdsWalker::<DW, _>::new_for_category(
+                let mut walker = WpdaWalker::<DW, _>::new_for_category(
                     #engine_ident::default(),
                     #cat_src_idx_u16,
                     min_bp,
                 );
                 match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
                     Ok(()) => match walker.resolve_at_end_of_input(source) {
-                        WpdsResolveResult::Accepted { weights, terms } => {
+                        WpdaResolveResult::Accepted { weights, terms } => {
                             *pos = walker.position();
                             if terms.is_empty() {
-                                return Err(WpdsParseError::EmptyResult);
+                                return Err(WpdaParseError::EmptyResult);
                             }
                             let mut typed_terms: Vec<#cat_ident> = Vec::with_capacity(terms.len());
                             for term in terms {
                                 let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                    .map_err(|_| WpdsParseError::EmptyResult)?;
+                                    .map_err(|_| WpdaParseError::EmptyResult)?;
                                 let typed = std::sync::Arc::try_unwrap(arc)
                                     .unwrap_or_else(|arc| (*arc).clone());
                                 typed_terms.push(typed);
@@ -242,21 +242,21 @@ pub(crate) fn emit_parse_fns(
                                 .collect();
                             Ok((typed_terms, projected_weights))
                         }
-                        WpdsResolveResult::ParseError { message, position } => {
-                            Err(WpdsParseError::ParseFailed {
+                        WpdaResolveResult::ParseError { message, position } => {
+                            Err(WpdaParseError::ParseFailed {
                                 message,
                                 position,
                                 attempts: Vec::new(),
                             })
                         }
-                        WpdsResolveResult::MaxStepsExceeded { position } => {
-                            Err(WpdsParseError::Incomplete { position })
+                        WpdaResolveResult::MaxStepsExceeded { position } => {
+                            Err(WpdaParseError::Incomplete { position })
                         }
-                        WpdsResolveResult::AmbiguityBudget { budget, actual, position } => {
-                            Err(WpdsParseError::AmbiguityBudget { budget, actual, position })
+                        WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position })
                         }
                     },
-                    Err(exceeded) => Err(WpdsParseError::Incomplete {
+                    Err(exceeded) => Err(WpdaParseError::Incomplete {
                         position: exceeded.position,
                     }),
                 }
@@ -264,7 +264,7 @@ pub(crate) fn emit_parse_fns(
 
             /// M8 wrapper: slice-source convenience for callers that
             /// already have `kinds` + `texts` Vecs. Routes through
-            /// `parse_<Cat>_via_wpds_all_with_source` with a
+            /// `parse_<Cat>_via_wpda_all_with_source` with a
             /// `SliceTokenSource`.
             pub fn #all_fn_name(
                 kinds: &[mettail_prattail::automata::TokenKind],
@@ -276,9 +276,9 @@ pub(crate) fn emit_parse_fns(
                     Vec<#cat_ident>,
                     Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
                 ),
-                WpdsParseError,
+                WpdaParseError,
             > {
-                let src = mettail_prattail::wpds_runtime::SliceTokenSource::with_texts(
+                let src = mettail_prattail::wpda_runtime::SliceTokenSource::with_texts(
                     kinds, texts,
                 );
                 #all_with_source_fn_name(&src, pos, min_bp)
@@ -286,7 +286,7 @@ pub(crate) fn emit_parse_fns(
 
             /// WPDS-runtime parser variant that exposes the recovery trail
             /// alongside the parse result. Returns
-            /// `(Result<#cat_ident, WpdsParseError>, Vec<RecoveryAttempt>)`:
+            /// `(Result<#cat_ident, WpdaParseError>, Vec<RecoveryAttempt>)`:
             /// - `Ok` with empty `attempts`: clean parse, no recovery.
             /// - `Ok` with non-empty `attempts`: parse succeeded but the
             ///   walker dispatched recovery one or more times along the
@@ -310,31 +310,31 @@ pub(crate) fn emit_parse_fns(
                 texts: &[&str],
                 pos: &mut usize,
                 min_bp: u8,
-            ) -> (Result<#cat_ident, WpdsParseError>, Vec<RecoveryAttempt>) {
-                use mettail_prattail::wpds_runtime::WpdsResolveResult;
-                use mettail_prattail::wpds_walker::WpdsWalker;
+            ) -> (Result<#cat_ident, WpdaParseError>, Vec<RecoveryAttempt>) {
+                use mettail_prattail::wpda_runtime::WpdaResolveResult;
+                use mettail_prattail::wpda_walker::WpdaWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
                 // M11.4 (2026-05-14): walker W lifted to DerivationWeight.
                 use mettail_prattail::automata::derivation_weight::DerivationWeight;
-                use mettail_prattail::wpds_runtime::DerivationSnapshot;
+                use mettail_prattail::wpda_runtime::DerivationSnapshot;
                 type DW = DerivationWeight<LexicographicWeight, DerivationSnapshot>;
 
                 // Stage 6 G6+ (2026-05-02): default 1M; PRATTAIL_MAX_STEPS env
                 // var overrides via run_to_end_of_input_env_aware.
                 const MAX_STEPS: usize = 1_000_000;
-                let mut walker = WpdsWalker::<DW, _>::new_for_category(
+                let mut walker = WpdaWalker::<DW, _>::new_for_category(
                     #engine_ident::default(),
                     #cat_src_idx_u16,
                     min_bp,
                 );
-                let src = mettail_prattail::wpds_runtime::SliceTokenSource::with_texts(
+                let src = mettail_prattail::wpda_runtime::SliceTokenSource::with_texts(
                     kinds, texts,
                 );
                 let resolve = match walker.run_to_end_of_input_env_aware(MAX_STEPS, &src) {
                     Ok(()) => walker.resolve_at_end_of_input(&src),
                     Err(exceeded) => {
                         return (
-                            Err(WpdsParseError::Incomplete {
+                            Err(WpdaParseError::Incomplete {
                                 position: exceeded.position,
                             }),
                             Vec::new(),
@@ -376,7 +376,7 @@ pub(crate) fn emit_parse_fns(
                     })
                     .collect();
                 match resolve {
-                    WpdsResolveResult::Accepted { terms, .. } => {
+                    WpdaResolveResult::Accepted { terms, .. } => {
                         *pos = walker.position();
                         // M7c (2026-05-13): pick the first term for
                         // backward-compat (M8 returns AmbiguousResult).
@@ -384,25 +384,25 @@ pub(crate) fn emit_parse_fns(
                             Some(term) => std::sync::Arc::downcast::<#cat_ident>(term)
                                 .map(|arc| std::sync::Arc::try_unwrap(arc)
                                     .unwrap_or_else(|arc| (*arc).clone()))
-                                .map_err(|_| WpdsParseError::EmptyResult),
-                            None => Err(WpdsParseError::EmptyResult),
+                                .map_err(|_| WpdaParseError::EmptyResult),
+                            None => Err(WpdaParseError::EmptyResult),
                         };
                         (result, attempts)
                     }
-                    WpdsResolveResult::ParseError { message, position } => {
-                        let err = WpdsParseError::ParseFailed {
+                    WpdaResolveResult::ParseError { message, position } => {
+                        let err = WpdaParseError::ParseFailed {
                             message,
                             position,
                             attempts: attempts.clone(),
                         };
                         (Err(err), attempts)
                     }
-                    WpdsResolveResult::MaxStepsExceeded { position } => {
-                        (Err(WpdsParseError::Incomplete { position }), attempts)
+                    WpdaResolveResult::MaxStepsExceeded { position } => {
+                        (Err(WpdaParseError::Incomplete { position }), attempts)
                     }
-                    WpdsResolveResult::AmbiguityBudget { budget, actual, position } => {
+                    WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
                         (
-                            Err(WpdsParseError::AmbiguityBudget { budget, actual, position }),
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position }),
                             attempts,
                         )
                     }
@@ -418,7 +418,7 @@ pub(crate) fn emit_parse_fns(
         /// exhausted without finding a sync token).
         #[derive(Debug, Clone)]
         pub struct RecoveryAttempt {
-            /// Diagnostic message from the walker's `WpdsState::Error`.
+            /// Diagnostic message from the walker's `WpdaState::Error`.
             pub message: std::string::String,
             /// Token position where the error surfaced.
             pub position: usize,
@@ -427,19 +427,19 @@ pub(crate) fn emit_parse_fns(
             pub recovery: Option<std::string::String>,
         }
 
-        /// Error returned by `parse_<Cat>_via_wpds` wrappers when the walker
+        /// Error returned by `parse_<Cat>_via_wpda` wrappers when the walker
         /// terminates in a non-accepting state.
         ///
         /// `ParseFailed` carries the final-error fields plus the full
         /// recovery-attempt trail, so consumers don't need to re-run the
         /// recovering variant to inspect what was tried.
         #[derive(Debug, Clone)]
-        pub enum WpdsParseError {
+        pub enum WpdaParseError {
             /// Walker accepted, but the builder's term stack was empty —
             /// indicates a codegen bug (every successful parse should push
             /// exactly one term).
             EmptyResult,
-            /// Walker entered `WpdsState::Error` with a diagnostic message.
+            /// Walker entered `WpdaState::Error` with a diagnostic message.
             /// `attempts` records every recovery round (including the
             /// terminating one).
             ParseFailed {
@@ -465,13 +465,13 @@ pub(crate) fn emit_parse_fns(
             },
         }
 
-        impl std::fmt::Display for WpdsParseError {
+        impl std::fmt::Display for WpdaParseError {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 match self {
-                    WpdsParseError::EmptyResult => {
+                    WpdaParseError::EmptyResult => {
                         write!(f, "wpds parser produced no result")
                     }
-                    WpdsParseError::ParseFailed { message, position, attempts } => {
+                    WpdaParseError::ParseFailed { message, position, attempts } => {
                         if attempts.len() <= 1 {
                             write!(f, "wpds parse failed at position {}: {}", position, message)
                         } else {
@@ -484,10 +484,10 @@ pub(crate) fn emit_parse_fns(
                             )
                         }
                     }
-                    WpdsParseError::Incomplete { position } => {
+                    WpdaParseError::Incomplete { position } => {
                         write!(f, "wpds parse incomplete at position {}", position)
                     }
-                    WpdsParseError::AmbiguityBudget { budget, actual, position } => {
+                    WpdaParseError::AmbiguityBudget { budget, actual, position } => {
                         write!(
                             f,
                             "wpds parse aborted at position {}: ambiguity budget {} exceeded by frontier of {} cursors",
@@ -498,7 +498,7 @@ pub(crate) fn emit_parse_fns(
             }
         }
 
-        impl std::error::Error for WpdsParseError {}
+        impl std::error::Error for WpdaParseError {}
 
         #(#fns)*
     }

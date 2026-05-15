@@ -1,6 +1,6 @@
-//! Emits the per-language `impl WpdsStepEngine` body.
+//! Emits the per-language `impl WpdaEngine` body.
 //!
-//! Covers all WpdsState dispatch: Ready → PrefixDispatch seed, prefix arms
+//! Covers all WpdaState dispatch: Ready → PrefixDispatch seed, prefix arms
 //! per atomic/binder/cross-cat rule, InfixLoop with Pratt BP, CollectionLoop
 //! for sep/close, BinderRule per-position dispatch, CrossCatDelegate for
 //! cross-cat projections, Unwinding for Pop chains, terminal Accepted/Error.
@@ -14,7 +14,7 @@ use quote::quote;
 
 use super::{prefix, semantic_actions};
 
-/// Emit the `impl WpdsStepEngine<LexicographicWeight> for <engine_ident>`
+/// Emit the `impl WpdaEngine<LexicographicWeight> for <engine_ident>`
 /// block, including Phase A.2 prefix-dispatch arms and the `action_for`
 /// semantic action lookup.
 ///
@@ -163,7 +163,7 @@ pub(crate) fn emit_engine_impl_full(
     let cat_of_type_name_body =
         emit_cat_of_type_name(language, categories);
     // L-substrate Piece #6 (2026-05-13): lex-fork dispatch block,
-    // emitted at the top of the WpdsState::PrefixDispatch arm.
+    // emitted at the top of the WpdaState::PrefixDispatch arm.
     let lex_fork_dispatch =
         super::forks::emit_lex_fork_at_prefix_dispatch(primary_src_idx);
 
@@ -178,35 +178,35 @@ pub(crate) fn emit_engine_impl_full(
     quote! {
         #lex_alt_rule_for_fn
 
-        impl mettail_prattail::wpds_walker::WpdsStepEngine<
+        impl mettail_prattail::wpda_walker::WpdaEngine<
             mettail_prattail::automata::derivation_weight::DerivationWeight<
                 mettail_prattail::automata::lex_weight::LexicographicWeight,
-                mettail_prattail::wpds_runtime::DerivationSnapshot,
+                mettail_prattail::wpda_runtime::DerivationSnapshot,
             >,
         > for #engine_ident
         {
             fn step(
                 &self,
-                state: &mettail_prattail::wpds_runtime::WpdsState,
-                _gss: &mettail_prattail::gss::WpdsGss<
+                state: &mettail_prattail::wpda_runtime::WpdaState,
+                _gss: &mettail_prattail::gss::WpdaGss<
                     mettail_prattail::automata::derivation_weight::DerivationWeight<
                         mettail_prattail::automata::lex_weight::LexicographicWeight,
-                        mettail_prattail::wpds_runtime::DerivationSnapshot,
+                        mettail_prattail::wpda_runtime::DerivationSnapshot,
                     >,
                 >,
-                frontier_top: Option<&mettail_prattail::gss::WpdsGssNode>,
+                frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
                 _pos: usize,
-                tokens: &dyn mettail_prattail::wpds_runtime::WpdsTokenSource,
-            ) -> mettail_prattail::wpds_walker::WpdsStepAction<
+                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+            ) -> mettail_prattail::wpda_walker::WpdaStepAction<
                 mettail_prattail::automata::derivation_weight::DerivationWeight<
                     mettail_prattail::automata::lex_weight::LexicographicWeight,
-                    mettail_prattail::wpds_runtime::DerivationSnapshot,
+                    mettail_prattail::wpda_runtime::DerivationSnapshot,
                 >,
             > {
-                use mettail_prattail::wpds_runtime::{
-                    StackSymbolV2, WpdsState,
+                use mettail_prattail::wpda_runtime::{
+                    StackSymbolV2, WpdaState,
                 };
-                use mettail_prattail::wpds_walker::WpdsStepAction;
+                use mettail_prattail::wpda_walker::WpdaStepAction;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
                 use mettail_prattail::automata::semiring::Semiring;
                 // M11.4 (2026-05-14): codegen weight constructors lifted to
@@ -215,9 +215,9 @@ pub(crate) fn emit_engine_impl_full(
                 // Walker Fork-arm sites (M11.5) inject the parent cursor's
                 // real snapshot via with_snapshot before merging into the
                 // child's accumulated weight.
-                use mettail_prattail::wpds_runtime::{lex_w, lex_w_alt, lex_one};
+                use mettail_prattail::wpda_runtime::{lex_w, lex_w_alt, lex_one};
                 use mettail_prattail::automata::derivation_weight::DerivationWeight;
-                use mettail_prattail::wpds_runtime::DerivationSnapshot;
+                use mettail_prattail::wpda_runtime::DerivationSnapshot;
                 // Local alias for the walker's W type — used at
                 // ForkBranch<_> annotation sites where the inner type is
                 // awkward to spell inline.
@@ -225,18 +225,18 @@ pub(crate) fn emit_engine_impl_full(
                 type __DwW = DerivationWeight<LexicographicWeight, DerivationSnapshot>;
 
                 match state {
-                    WpdsState::Ready { min_bp } => {
+                    WpdaState::Ready { min_bp } => {
                         let primary = StackSymbolV2::category_entry(#primary_src_idx);
-                        WpdsStepAction::Push {
+                        WpdaStepAction::Push {
                             symbol: primary,
                             weight: lex_w(0.0, #primary_src_idx, 0),
-                            new_state: WpdsState::PrefixDispatch {
+                            new_state: WpdaState::PrefixDispatch {
                                 pos: 0,
                                 cur_bp: *min_bp,
                             },
                         }
                     }
-                    WpdsState::PrefixDispatch { pos, cur_bp } => {
+                    WpdaState::PrefixDispatch { pos, cur_bp } => {
                         // L-substrate Piece #6 (2026-05-13): lex-fork
                         // dispatch BEFORE any other PrefixDispatch
                         // logic. Emits a Fork over `peek_alternatives(*pos)`
@@ -264,14 +264,14 @@ pub(crate) fn emit_engine_impl_full(
                         // branch_idx 1; weight 0.0 < SKIP_BIAS).
                         //
                         // Walker companion: the apply_action::Fork dispatch
-                        // (wpds_walker.rs:2188) transfers the live builder's
+                        // (wpda_walker.rs:2188) transfers the live builder's
                         // open collection_stack to the parent cursor on
                         // Lazy→Strict promotion, fixing the LIFO invariant
                         // for empty cross-cat collections (Hack #7's hot
                         // path). See `feedback_use_wpds_disambiguation_not_heuristics.md`.
                         if let Some(node) = frontier_top {
                             if node.symbol.kind
-                                == mettail_prattail::wpds_runtime::SymbolKind::CollectionMarker
+                                == mettail_prattail::wpda_runtime::SymbolKind::CollectionMarker
                             {
                                 let result_src_idx = node.symbol.category_src_idx;
                                 let rule_idx = node.symbol.rule_index_in_category;
@@ -300,20 +300,20 @@ pub(crate) fn emit_engine_impl_full(
                                     .unwrap_or(false);
                                 if token_is_close || needs_redirect {
                                     let mut __branches: Vec<
-                                        mettail_prattail::wpds_walker::ForkBranch<
+                                        mettail_prattail::wpda_walker::ForkBranch<
                                             __DwW,
                                         >,
                                     > = Vec::with_capacity(2);
                                     if token_is_close {
                                         __branches.push(
-                                            mettail_prattail::wpds_walker::ForkBranch {
+                                            mettail_prattail::wpda_walker::ForkBranch {
                                                 symbol: StackSymbolV2::category_entry(0),
                                                 weight: lex_w(
                                                     0.0, result_src_idx, rule_idx,
                                                 ),
-                                                new_state: WpdsState::Unwinding,
+                                                new_state: WpdaState::Unwinding,
                                                 action_kind:
-                                                    mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndPop,
+                                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPop,
                                             },
                                         );
                                     }
@@ -321,7 +321,7 @@ pub(crate) fn emit_engine_impl_full(
                                         let element_src_idx =
                                             element_src_lookup.unwrap();
                                         __branches.push(
-                                            mettail_prattail::wpds_walker::ForkBranch {
+                                            mettail_prattail::wpda_walker::ForkBranch {
                                                 symbol: StackSymbolV2::category_entry(
                                                     element_src_idx,
                                                 ),
@@ -329,16 +329,16 @@ pub(crate) fn emit_engine_impl_full(
                                                     mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                                     result_src_idx, rule_idx,
                                                 ),
-                                                new_state: WpdsState::PrefixDispatch {
+                                                new_state: WpdaState::PrefixDispatch {
                                                     pos: *pos,
                                                     cur_bp: *cur_bp,
                                                 },
                                                 action_kind:
-                                                    mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                                    mettail_prattail::wpda_walker::ForkActionKind::Push,
                                             },
                                         );
                                     }
-                                    return WpdsStepAction::Fork {
+                                    return WpdaStepAction::Fork {
                                         branches: __branches,
                                         consume_trigger: false,
                                     };
@@ -410,7 +410,7 @@ pub(crate) fn emit_engine_impl_full(
                                             infra,
                                         )
                                     }
-                                    None => WpdsStepAction::Error(format!(
+                                    None => WpdaStepAction::Error(format!(
                                         "no recovery infra for category src_idx {} at pos {} — \
                                          codegen invariant violated (recovery_infra_for is exhaustive)",
                                         state_cat_src_idx, *pos,
@@ -419,10 +419,10 @@ pub(crate) fn emit_engine_impl_full(
                             }
                         }
                     }
-                    WpdsState::Unwinding => {
+                    WpdaState::Unwinding => {
                         if let Some(node) = frontier_top {
                             match node.symbol.kind {
-                                mettail_prattail::wpds_runtime::SymbolKind::Return => {
+                                mettail_prattail::wpda_runtime::SymbolKind::Return => {
                                     // After a Return pop, transition to InfixLoop
                                     // with cur_bp = the bp encoded in the popped
                                     // symbol. The Return's bp was set at
@@ -441,12 +441,12 @@ pub(crate) fn emit_engine_impl_full(
                                         "Return symbol invariant: bp must be Some(outer_bp) \
                                          set at the originating ConsumeAndPush site"
                                     );
-                                    WpdsStepAction::Pop {
+                                    WpdaStepAction::Pop {
                                         weight: lex_one(),
-                                        new_state: WpdsState::InfixLoop { cur_bp: outer_bp },
+                                        new_state: WpdaState::InfixLoop { cur_bp: outer_bp },
                                     }
                                 }
-                                mettail_prattail::wpds_runtime::SymbolKind::CategoryEntry => {
+                                mettail_prattail::wpda_runtime::SymbolKind::CategoryEntry => {
                                     // Plan C Fix 1.3 (led_test cluster, 2026-05-11):
                                     // CE-over-CE detection for cross-cat
                                     // anonymous-delegation return path.
@@ -464,7 +464,7 @@ pub(crate) fn emit_engine_impl_full(
                                         .and_then(|pid| _gss.node(pid))
                                         .map(|pn| pn.symbol.kind);
                                     let new_state = match pred_kind {
-                                        Some(mettail_prattail::wpds_runtime::SymbolKind::CategoryEntry) => {
+                                        Some(mettail_prattail::wpda_runtime::SymbolKind::CategoryEntry) => {
                                             // Plan C 1.3: returning from inner-cat
                                             // sub-parse to outer cat. Re-enter
                                             // InfixLoop so the outer cat's infix
@@ -472,9 +472,9 @@ pub(crate) fn emit_engine_impl_full(
                                             // because predecessor-is-CE implies
                                             // no infix recursion was active at
                                             // the outer level.
-                                            WpdsState::InfixLoop { cur_bp: 0 }
+                                            WpdaState::InfixLoop { cur_bp: 0 }
                                         }
-                                        Some(mettail_prattail::wpds_runtime::SymbolKind::GroupingMarker)
+                                        Some(mettail_prattail::wpda_runtime::SymbolKind::GroupingMarker)
                                             if tokens.peek_text(_pos) == Some(")") => {
                                             // Plan A: cross-cat-LHS sub-parse
                                             // inside parens is about to close.
@@ -509,14 +509,14 @@ pub(crate) fn emit_engine_impl_full(
                                                 // `category_recognizes_token_dispatch`
                                                 // for the post-`)` lookahead gate.
                                                 let _ = inner_cat;
-                                                WpdsState::GroupingClosePreservingInner {
+                                                WpdaState::GroupingClosePreservingInner {
                                                     inner_cat_src_idx: u16::MAX,
                                                 }
                                             } else {
-                                                WpdsState::Unwinding
+                                                WpdaState::Unwinding
                                             }
                                         }
-                                        _ => WpdsState::Unwinding,
+                                        _ => WpdaState::Unwinding,
                                     };
                                     // Phase 5 fix: when no special transition
                                     // applies, pop CategoryEntry but stay in
@@ -525,12 +525,12 @@ pub(crate) fn emit_engine_impl_full(
                                     // collection marker). When the GSS is fully
                                     // unwound, frontier_top is None and the
                                     // outer Unwinding arm emits Accept.
-                                    WpdsStepAction::Pop {
+                                    WpdaStepAction::Pop {
                                         weight: lex_one(),
                                         new_state,
                                     }
                                 }
-                                mettail_prattail::wpds_runtime::SymbolKind::CollectionMarker => {
+                                mettail_prattail::wpda_runtime::SymbolKind::CollectionMarker => {
                                     // Phase 4: just unwound to a marker (i.e., an
                                     // element just returned). Transition to
                                     // CollectionLoop to dispatch on close/sep.
@@ -561,9 +561,9 @@ pub(crate) fn emit_engine_impl_full(
                                     if self.is_class3_collection_per_slot(
                                         result_src_idx, rule_idx, slot_idx_for_class3,
                                     ) {
-                                        return WpdsStepAction::Pop {
+                                        return WpdaStepAction::Pop {
                                             weight: lex_one(),
-                                            new_state: WpdsState::Unwinding,
+                                            new_state: WpdaState::Unwinding,
                                         };
                                     }
                                     // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
@@ -603,7 +603,7 @@ pub(crate) fn emit_engine_impl_full(
                                     // 0 survives and dispatch routes
                                     // through the existing 3-branch
                                     // Fork (close / sep / bare-element).
-                                    WpdsStepAction::Advance(WpdsState::CollectionLoop {
+                                    WpdaStepAction::Advance(WpdaState::CollectionLoop {
                                         result_src_idx,
                                         rule_idx,
                                         element_src_idx,
@@ -613,7 +613,7 @@ pub(crate) fn emit_engine_impl_full(
                                         kv_phase: 0u8,
                                     })
                                 }
-                                mettail_prattail::wpds_runtime::SymbolKind::RuleAt(position) => {
+                                mettail_prattail::wpda_runtime::SymbolKind::RuleAt(position) => {
                                     // Phase 5 + Stage 4: a multi-step rule's
                                     // marker is on top after a sub-parse
                                     // returned. Transition into BinderRule for
@@ -657,14 +657,14 @@ pub(crate) fn emit_engine_impl_full(
                                     // category from the rule's syntax
                                     // pattern at codegen time.
                                     let _ = position;
-                                    WpdsStepAction::Advance(WpdsState::BinderRule {
+                                    WpdaStepAction::Advance(WpdaState::BinderRule {
                                         result_src_idx,
                                         rule_idx,
                                         body_src_idx: 0u16,
                                         outer_bp,
                                     })
                                 }
-                                mettail_prattail::wpds_runtime::SymbolKind::GroupingMarker => {
+                                mettail_prattail::wpda_runtime::SymbolKind::GroupingMarker => {
                                     // B7 Pattern 2: inner expression of a
                                     // grouping just returned. Demand the
                                     // closing `)`, ConsumeAndPop the marker,
@@ -685,19 +685,19 @@ pub(crate) fn emit_engine_impl_full(
                                          Some(outer_bp) — saved cur_bp at the open paren"
                                     );
                                     match tokens.peek_text(_pos) {
-                                        Some(")") => WpdsStepAction::ConsumeAndPop {
+                                        Some(")") => WpdaStepAction::ConsumeAndPop {
                                             weight: lex_one(),
-                                            new_state: WpdsState::InfixLoop {
+                                            new_state: WpdaState::InfixLoop {
                                                 cur_bp: outer_bp,
                                             },
                                         },
-                                        other => WpdsStepAction::Error(format!(
+                                        other => WpdaStepAction::Error(format!(
                                             "expected `)` to close grouping at pos {}, found {:?}",
                                             _pos, other
                                         )),
                                     }
                                 }
-                                mettail_prattail::wpds_runtime::SymbolKind::MixfixMarker => {
+                                mettail_prattail::wpda_runtime::SymbolKind::MixfixMarker => {
                                     // B7 Pattern 1: inner operand just returned
                                     // to the mixfix marker. Read marker.bp =
                                     // index of just-completed inner operand,
@@ -730,7 +730,7 @@ pub(crate) fn emit_engine_impl_full(
                                         result_src_idx, rule_idx,
                                     ) {
                                         Some(n) => n,
-                                        None => return WpdsStepAction::Error(format!(
+                                        None => return WpdaStepAction::Error(format!(
                                             "mixfix_parts_len(result={}, rule={}) returned None — \
                                              codegen invariant violated: every MixfixMarker symbol \
                                              must have a mixfix-parts table entry",
@@ -749,7 +749,7 @@ pub(crate) fn emit_engine_impl_full(
                                     // Postfix-mixfix shapes (POutput-class)
                                     // with multi-element preceding/following
                                     // are dispatched via the new
-                                    // WpdsState::MixfixLiteralRun state machine
+                                    // WpdaState::MixfixLiteralRun state machine
                                     // (see arm below).
                                     // L12 follow-up B6 step 3 (2026-05-07):
                                     // route to MixfixLiteralRun to walk
@@ -772,8 +772,8 @@ pub(crate) fn emit_engine_impl_full(
                                     // arm if a future grammar requires it.
                                     let _ = parts_len;  // suppress unused warning
                                     let _ = mixfix_part;  // path used in arm below
-                                    return WpdsStepAction::Advance(
-                                        WpdsState::MixfixLiteralRun {
+                                    return WpdaStepAction::Advance(
+                                        WpdaState::MixfixLiteralRun {
                                             result_src_idx,
                                             rule_idx,
                                             completed_idx,
@@ -782,7 +782,7 @@ pub(crate) fn emit_engine_impl_full(
                                         },
                                     );
                                 }
-                                mettail_prattail::wpds_runtime::SymbolKind::OptionalGroupAt(sub_pos) => {
+                                mettail_prattail::wpda_runtime::SymbolKind::OptionalGroupAt(sub_pos) => {
                                     // Opt-Group: inner ParamParse / Literal /
                                     // BinderIdent / GuardSlot just returned to
                                     // the optional-group marker.
@@ -809,7 +809,7 @@ pub(crate) fn emit_engine_impl_full(
                                         // marker_pos correctly.
                                         let (marker_pos, next_pos, body_src_idx): (u8, u8, u16) =
                                             #binderlist_inner_metadata;
-                                        let new_state = WpdsState::BinderListLoop {
+                                        let new_state = WpdaState::BinderListLoop {
                                             result_src_idx,
                                             rule_idx,
                                             body_src_idx,
@@ -826,15 +826,15 @@ pub(crate) fn emit_engine_impl_full(
                                         let splice_id: Option<u8> =
                                             #binderlist_inner_post_splice_lookup;
                                         if let Some(id) = splice_id {
-                                            return WpdsStepAction::AdvanceWithEffect {
+                                            return WpdaStepAction::AdvanceWithEffect {
                                                 new_state,
-                                                effect: mettail_prattail::wpds_walker::BuilderDelta::SpliceIntoCollection { id },
+                                                effect: mettail_prattail::wpda_walker::BuilderDelta::SpliceIntoCollection { id },
                                             };
                                         }
-                                        return WpdsStepAction::Advance(new_state);
+                                        return WpdaStepAction::Advance(new_state);
                                     }
-                                    return WpdsStepAction::Advance(
-                                        WpdsState::OptionalGroup {
+                                    return WpdaStepAction::Advance(
+                                        WpdaState::OptionalGroup {
                                             result_src_idx,
                                             rule_idx,
                                             group_idx: 0,
@@ -843,7 +843,7 @@ pub(crate) fn emit_engine_impl_full(
                                         },
                                     );
                                 }
-                                other => WpdsStepAction::Error(format!(
+                                other => WpdaStepAction::Error(format!(
                                     "Unwinding: unrecognized symbol kind {:?} at pos {} \
                                      (expected CollectionMarker / RuleAt / GroupingMarker / \
                                      MixfixMarker / OptionalGroupAt) — codegen invariant violated",
@@ -851,10 +851,10 @@ pub(crate) fn emit_engine_impl_full(
                                 )),
                             }
                         } else {
-                            WpdsStepAction::Accept
+                            WpdaStepAction::Accept
                         }
                     }
-                    WpdsState::InfixLoop { cur_bp } => {
+                    WpdaState::InfixLoop { cur_bp } => {
                         // Phase 4/5/B7: if frontier_top is a marker symbol
                         // for a mid-rule context, skip infix dispatch and
                         // fall through to Unwinding. Each marker has its
@@ -894,15 +894,15 @@ pub(crate) fn emit_engine_impl_full(
                         // separator/operand transition.
                         if let Some(node) = frontier_top {
                             match node.symbol.kind {
-                                mettail_prattail::wpds_runtime::SymbolKind::RuleAt(_)
-                                | mettail_prattail::wpds_runtime::SymbolKind::OptionalGroupAt(_) => {
+                                mettail_prattail::wpda_runtime::SymbolKind::RuleAt(_)
+                                | mettail_prattail::wpda_runtime::SymbolKind::OptionalGroupAt(_) => {
                                     // Opt-Group: an OptionalGroupAt marker
                                     // indicates we're mid-group; defer to
                                     // Unwinding so the OptionalGroup state
                                     // resumes at the recorded sub_pos.
-                                    return WpdsStepAction::Advance(WpdsState::Unwinding);
+                                    return WpdaStepAction::Advance(WpdaState::Unwinding);
                                 }
-                                mettail_prattail::wpds_runtime::SymbolKind::CollectionMarker => {
+                                mettail_prattail::wpda_runtime::SymbolKind::CollectionMarker => {
                                     // Plan B (F5 close/sep filter, 2026-05-11):
                                     // when frontier_top is CollectionMarker, only
                                     // proceed with infix/postfix/mixfix dispatch
@@ -932,7 +932,7 @@ pub(crate) fn emit_engine_impl_full(
                                     if let Some((close, sep)) = close_sep {
                                         let token_text = tokens.peek_text(_pos).unwrap_or("");
                                         if token_text == close || token_text == sep {
-                                            return WpdsStepAction::Advance(WpdsState::Unwinding);
+                                            return WpdaStepAction::Advance(WpdaState::Unwinding);
                                         }
                                     }
                                     // Otherwise fall through to infix dispatch
@@ -959,7 +959,7 @@ pub(crate) fn emit_engine_impl_full(
                         let _ = token_text;
 
                         let mut __cands: Vec<
-                            mettail_prattail::wpds_walker::ForkBranch<
+                            mettail_prattail::wpda_walker::ForkBranch<
                                 __DwW,
                             >,
                         > = Vec::new();
@@ -978,18 +978,18 @@ pub(crate) fn emit_engine_impl_full(
                                         // (e.g. `Str < Str : Bool` at r_bp=7
                                         // prevents `==` at l_bp=2 from leaking
                                         // into the RHS sub-parse).
-                                        WpdsState::CrossCatDelegate {
+                                        WpdaState::CrossCatDelegate {
                                             source_src_idx: state_cat_src_idx,
                                             inner_cur_bp: r_bp,
                                         }
                                     } else {
-                                        WpdsState::PrefixDispatch {
+                                        WpdaState::PrefixDispatch {
                                             pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
                                             cur_bp: r_bp,
                                         }
                                     };
                                 __cands.push(
-                                    mettail_prattail::wpds_walker::ForkBranch {
+                                    mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::rule_at(
                                             result_src, rule_idx, 0, Some(*cur_bp),
                                         )
@@ -1000,7 +1000,7 @@ pub(crate) fn emit_engine_impl_full(
                                         ),
                                         new_state,
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                            mettail_prattail::wpda_walker::ForkActionKind::Push,
                                     },
                                 );
                             }
@@ -1022,7 +1022,7 @@ pub(crate) fn emit_engine_impl_full(
                         {
                             if l_bp >= *cur_bp {
                                 __cands.push(
-                                    mettail_prattail::wpds_walker::ForkBranch {
+                                    mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::rule_at(
                                             result_src, rule_idx, 0, Some(*cur_bp),
                                         )
@@ -1031,9 +1031,9 @@ pub(crate) fn emit_engine_impl_full(
                                             mettail_prattail::automata::lex_weight::BP_TIER_POSTFIX,
                                             result_src, rule_idx,
                                         ),
-                                        new_state: WpdsState::Unwinding,
+                                        new_state: WpdaState::Unwinding,
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                            mettail_prattail::wpda_walker::ForkActionKind::Push,
                                     },
                                 );
                             }
@@ -1045,7 +1045,7 @@ pub(crate) fn emit_engine_impl_full(
                         {
                             if l_bp >= *cur_bp {
                                 __cands.push(
-                                    mettail_prattail::wpds_walker::ForkBranch {
+                                    mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::mixfix_marker(
                                             result_src, rule_idx, 0,
                                         ),
@@ -1053,12 +1053,12 @@ pub(crate) fn emit_engine_impl_full(
                                             mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
                                             result_src, rule_idx,
                                         ),
-                                        new_state: WpdsState::PrefixDispatch {
+                                        new_state: WpdaState::PrefixDispatch {
                                             pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
                                             cur_bp: 0,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                            mettail_prattail::wpda_walker::ForkActionKind::Push,
                                     },
                                 );
                             }
@@ -1067,7 +1067,7 @@ pub(crate) fn emit_engine_impl_full(
                         match __cands.len() {
                             0 => {
                                 // No tier matched — fall through to Unwinding.
-                                WpdsStepAction::Advance(WpdsState::Unwinding)
+                                WpdaStepAction::Advance(WpdaState::Unwinding)
                             }
                             1 => {
                                 // Singleton fast-path: only one tier matched,
@@ -1076,7 +1076,7 @@ pub(crate) fn emit_engine_impl_full(
                                 // (typical case — only one operator at any
                                 // given (token, l_bp >= cur_bp) pair).
                                 let b = __cands.into_iter().next().unwrap();
-                                WpdsStepAction::ConsumeAndPush {
+                                WpdaStepAction::ConsumeAndPush {
                                     symbol: b.symbol,
                                     weight: b.weight,
                                     new_state: b.new_state,
@@ -1088,14 +1088,14 @@ pub(crate) fn emit_engine_impl_full(
                                 // postfix sharing a token at the same
                                 // l_bp >= cur_bp) — emit a Fork. Lex-min
                                 // picks the lower BP tier on ties.
-                                WpdsStepAction::Fork {
+                                WpdaStepAction::Fork {
                                     branches: __cands,
                                     consume_trigger: true,
                                 }
                             }
                         }
                     }
-                    WpdsState::CollectionLoop {
+                    WpdaState::CollectionLoop {
                         result_src_idx,
                         rule_idx,
                         element_src_idx: _element_src_idx,
@@ -1112,7 +1112,7 @@ pub(crate) fn emit_engine_impl_full(
                         // for HashMap 3-phase dispatch.
                         #collection_loop_body
                     }
-                    WpdsState::MixfixContinuation {
+                    WpdaState::MixfixContinuation {
                         result_src_idx,
                         rule_idx,
                         completed_idx,
@@ -1133,7 +1133,7 @@ pub(crate) fn emit_engine_impl_full(
                         // MixfixLiteralRun (when needed).
                         match mixfix_part(*result_src_idx, *rule_idx, *completed_idx) {
                             Some((operand_src_idx, _preceding, _following)) => {
-                                WpdsStepAction::ReplaceAndPush {
+                                WpdaStepAction::ReplaceAndPush {
                                     replace_symbol: StackSymbolV2::mixfix_marker(
                                         *result_src_idx,
                                         *rule_idx,
@@ -1143,19 +1143,19 @@ pub(crate) fn emit_engine_impl_full(
                                         operand_src_idx,
                                     ),
                                     weight: lex_one(),
-                                    new_state: WpdsState::PrefixDispatch {
+                                    new_state: WpdaState::PrefixDispatch {
                                         pos: _pos,
                                         cur_bp: 0,
                                     },
                                 }
                             }
-                            None => WpdsStepAction::Error(format!(
+                            None => WpdaStepAction::Error(format!(
                                 "mixfix part {} not found for (result={}, rule={})",
                                 completed_idx, result_src_idx, rule_idx
                             )),
                         }
                     }
-                    WpdsState::MixfixLiteralRun {
+                    WpdaState::MixfixLiteralRun {
                         result_src_idx,
                         rule_idx,
                         completed_idx,
@@ -1175,7 +1175,7 @@ pub(crate) fn emit_engine_impl_full(
                             *result_src_idx, *rule_idx,
                         ) {
                             Some(n) => n,
-                            None => return WpdsStepAction::Error(format!(
+                            None => return WpdaStepAction::Error(format!(
                                 "mixfix_parts_len(result={}, rule={}) returned None — \
                                  codegen invariant violated",
                                 result_src_idx, rule_idx,
@@ -1186,14 +1186,14 @@ pub(crate) fn emit_engine_impl_full(
                                 if (*sub_pos as usize) < following.len() {
                                     // Consume following[sub_pos].
                                     let _expected = following[*sub_pos as usize];
-                                    WpdsStepAction::ConsumeAndReplace {
+                                    WpdaStepAction::ConsumeAndReplace {
                                         symbol: StackSymbolV2::mixfix_marker(
                                             *result_src_idx,
                                             *rule_idx,
                                             *completed_idx,
                                         ),
                                         weight: lex_one(),
-                                        new_state: WpdsState::MixfixLiteralRun {
+                                        new_state: WpdaState::MixfixLiteralRun {
                                             result_src_idx: *result_src_idx,
                                             rule_idx: *rule_idx,
                                             completed_idx: *completed_idx,
@@ -1203,15 +1203,15 @@ pub(crate) fn emit_engine_impl_full(
                                     }
                                 } else if *completed_idx + 1 == parts_len {
                                     // Last operand done; Pop the marker.
-                                    WpdsStepAction::Pop {
+                                    WpdaStepAction::Pop {
                                         weight: lex_one(),
-                                        new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                                        new_state: WpdaState::InfixLoop { cur_bp: 0 },
                                     }
                                 } else {
                                     // Transition to kind=1 to consume
                                     // preceding_terminals of the next operand.
-                                    WpdsStepAction::Advance(
-                                        WpdsState::MixfixLiteralRun {
+                                    WpdaStepAction::Advance(
+                                        WpdaState::MixfixLiteralRun {
                                             result_src_idx: *result_src_idx,
                                             rule_idx: *rule_idx,
                                             completed_idx: *completed_idx,
@@ -1229,14 +1229,14 @@ pub(crate) fn emit_engine_impl_full(
                                     Some((operand_src_idx, preceding, _following)) => {
                                         if (*sub_pos as usize) < preceding.len() {
                                             let _expected = preceding[*sub_pos as usize];
-                                            WpdsStepAction::ConsumeAndReplace {
+                                            WpdaStepAction::ConsumeAndReplace {
                                                 symbol: StackSymbolV2::mixfix_marker(
                                                     *result_src_idx,
                                                     *rule_idx,
                                                     *completed_idx,
                                                 ),
                                                 weight: lex_one(),
-                                                new_state: WpdsState::MixfixLiteralRun {
+                                                new_state: WpdaState::MixfixLiteralRun {
                                                     result_src_idx: *result_src_idx,
                                                     rule_idx: *rule_idx,
                                                     completed_idx: *completed_idx,
@@ -1247,7 +1247,7 @@ pub(crate) fn emit_engine_impl_full(
                                         } else {
                                             // All literals consumed; push the next
                                             // operand's CategoryEntry.
-                                            WpdsStepAction::ReplaceAndPush {
+                                            WpdaStepAction::ReplaceAndPush {
                                                 replace_symbol: StackSymbolV2::mixfix_marker(
                                                     *result_src_idx,
                                                     *rule_idx,
@@ -1257,27 +1257,27 @@ pub(crate) fn emit_engine_impl_full(
                                                     operand_src_idx,
                                                 ),
                                                 weight: lex_one(),
-                                                new_state: WpdsState::PrefixDispatch {
+                                                new_state: WpdaState::PrefixDispatch {
                                                     pos: _pos,
                                                     cur_bp: 0,
                                                 },
                                             }
                                         }
                                     }
-                                    None => WpdsStepAction::Error(format!(
+                                    None => WpdaStepAction::Error(format!(
                                         "mixfix part {} not found for (result={}, rule={})",
                                         completed_idx + 1, result_src_idx, rule_idx,
                                     )),
                                 }
                             }
-                            _ => WpdsStepAction::Error(format!(
+                            _ => WpdaStepAction::Error(format!(
                                 "MixfixLiteralRun: invalid kind={} or missing part \
                                  for (result={}, rule={}, completed_idx={})",
                                 kind, result_src_idx, rule_idx, completed_idx,
                             )),
                         }
                     }
-                    WpdsState::CollectionOpenParen {
+                    WpdaState::CollectionOpenParen {
                         result_src_idx,
                         rule_idx,
                         element_src_idx,
@@ -1299,20 +1299,20 @@ pub(crate) fn emit_engine_impl_full(
                         //       per-category prefix dispatch.
                         let _ = (result_src_idx, rule_idx, element_src_idx, outer_bp);
                         match tokens.peek_text(_pos) {
-                            Some("(") => WpdsStepAction::Consume {
+                            Some("(") => WpdaStepAction::Consume {
                                 weight: lex_one(),
-                                new_state: WpdsState::PrefixDispatch {
+                                new_state: WpdaState::PrefixDispatch {
                                     pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
                                     cur_bp: 0,
                                 },
                             },
-                            other => WpdsStepAction::Error(format!(
+                            other => WpdaStepAction::Error(format!(
                                 "expected `(` after collection-open keyword at pos {}, found {:?}",
                                 _pos, other
                             )),
                         }
                     }
-                    WpdsState::BinderRule {
+                    WpdaState::BinderRule {
                         result_src_idx,
                         rule_idx,
                         body_src_idx: _body_src_idx,
@@ -1321,7 +1321,7 @@ pub(crate) fn emit_engine_impl_full(
                         // Phase 5: per-position dispatch for binder rules.
                         #binder_rule_body
                     }
-                    WpdsState::BinderListLoop {
+                    WpdaState::BinderListLoop {
                         result_src_idx,
                         rule_idx,
                         body_src_idx,
@@ -1336,7 +1336,7 @@ pub(crate) fn emit_engine_impl_full(
                         // rules dispatch at sub_pos=0 only.
                         #binder_list_loop_body
                     }
-                    WpdsState::CrossCatDelegate {
+                    WpdaState::CrossCatDelegate {
                         source_src_idx,
                         inner_cur_bp,
                     } => {
@@ -1363,21 +1363,21 @@ pub(crate) fn emit_engine_impl_full(
                         // wrapping `Return(..., bp=Some(outer_cur_bp))`
                         // symbol when that Return is later popped, not via
                         // this state.
-                        WpdsStepAction::Push {
+                        WpdaStepAction::Push {
                             symbol: StackSymbolV2::category_entry(*source_src_idx),
                             weight: lex_one(),
-                            new_state: WpdsState::PrefixDispatch {
+                            new_state: WpdaState::PrefixDispatch {
                                 pos: _pos,
                                 cur_bp: *inner_cur_bp,
                             },
                         }
                     }
-                    WpdsState::AmbiguityFanout { .. } => unreachable!(
+                    WpdaState::AmbiguityFanout { .. } => unreachable!(
                         "engine.step called with AmbiguityFanout — walker drives \
                          this state via step_fanout, not the engine. Reaching \
-                         this arm signals a routing bug in WpdsWalker::run_to_*."
+                         this arm signals a routing bug in WpdaWalker::run_to_*."
                     ),
-                    WpdsState::OptionalGroup {
+                    WpdaState::OptionalGroup {
                         result_src_idx,
                         rule_idx,
                         group_idx,
@@ -1389,14 +1389,14 @@ pub(crate) fn emit_engine_impl_full(
                         // take-or-skip; sub_pos>0 walks inner positions; the
                         // final sub_pos finalizes via OptGroupFinalize.
                         // For grammars without `#opt(...)`, the
-                        // `optional_group_body` collapses to `WpdsStepAction::Idle`
+                        // `optional_group_body` collapses to `WpdaStepAction::Idle`
                         // and the destructured fields are unused. Suppress the
                         // unused-variable warnings via explicit no-op binds —
                         // these compile to nothing in optimized builds.
                         let _ = (result_src_idx, rule_idx, group_idx, sub_pos, outer_bp);
                         #optional_group_body
                     }
-                    WpdsState::GroupingClosePreservingInner { inner_cat_src_idx } => {
+                    WpdaState::GroupingClosePreservingInner { inner_cat_src_idx } => {
                         // Plan A (paren+postfix redesign, 2026-05-11):
                         // top is now the GroupingMarker (the inner CategoryEntry
                         // was just popped via the Unwinding-CategoryEntry
@@ -1410,18 +1410,18 @@ pub(crate) fn emit_engine_impl_full(
                         // the codegen invariant in StackSymbolV2::grouping_marker).
                         // Restore that BP for the post-`)` InfixLoop.
                         if let Some(node) = frontier_top {
-                            if node.symbol.kind == mettail_prattail::wpds_runtime::SymbolKind::GroupingMarker {
+                            if node.symbol.kind == mettail_prattail::wpda_runtime::SymbolKind::GroupingMarker {
                                 let outer_bp = node.symbol.bp.expect(
                                     "GroupingMarker invariant: bp must be Some(outer_bp) — \
                                      saved cur_bp at the open paren"
                                 );
                                 return match tokens.peek_text(_pos) {
-                                    Some(")") => WpdsStepAction::ConsumeAndReplace {
+                                    Some(")") => WpdaStepAction::ConsumeAndReplace {
                                         symbol: StackSymbolV2::category_entry(*inner_cat_src_idx),
                                         weight: lex_one(),
-                                        new_state: WpdsState::InfixLoop { cur_bp: outer_bp },
+                                        new_state: WpdaState::InfixLoop { cur_bp: outer_bp },
                                     },
-                                    other => WpdsStepAction::Error(format!(
+                                    other => WpdaStepAction::Error(format!(
                                         "GroupingClosePreservingInner: expected `)` to close \
                                          grouping (preserving inner cat={}) at pos {}, found {:?}",
                                         inner_cat_src_idx, _pos, other,
@@ -1429,15 +1429,15 @@ pub(crate) fn emit_engine_impl_full(
                                 };
                             }
                         }
-                        WpdsStepAction::Error(format!(
+                        WpdaStepAction::Error(format!(
                             "GroupingClosePreservingInner: expected GroupingMarker on top at \
                              pos {}, found {:?}",
                             _pos,
                             frontier_top.map(|n| n.symbol.kind),
                         ))
                     }
-                    WpdsState::Saturating { .. } => WpdsStepAction::Idle,
-                    WpdsState::Accepted | WpdsState::Error { .. } => WpdsStepAction::Idle,
+                    WpdaState::Saturating { .. } => WpdaStepAction::Idle,
+                    WpdaState::Accepted | WpdaState::Error { .. } => WpdaStepAction::Idle,
                 }
             }
 
@@ -1445,7 +1445,7 @@ pub(crate) fn emit_engine_impl_full(
                 &self,
                 src_idx: u16,
                 rule_idx: u16,
-            ) -> Option<&mettail_prattail::wpds_runtime::ActionEntry> {
+            ) -> Option<&mettail_prattail::wpda_runtime::ActionEntry> {
                 #action_for_body
             }
 
@@ -1490,7 +1490,7 @@ pub(crate) fn emit_engine_impl_full(
                 // literal) for HashMap collection slots and `None`
                 // for Vec/HashBag/HashSet slots or unknown tuples.
                 // Consumed by the walker's `set_cursor_inner_state`
-                // to patch `WpdsState::CollectionLoop.kv_phase` from
+                // to patch `WpdaState::CollectionLoop.kv_phase` from
                 // cursor.collection_stack[acc_id].len() parity.
                 #kv_separator_for_collection_lookup
             }
@@ -1513,7 +1513,7 @@ pub(crate) fn emit_engine_impl_full(
 }
 
 /// D8 fix (2026-05-13): emit the body of
-/// `WpdsStepEngine::cat_of_type_name(name: &str) -> Option<u16>`.
+/// `WpdaEngine::cat_of_type_name(name: &str) -> Option<u16>`.
 ///
 /// Maps Rust `type_name` strings to the category's `src_idx`. Two
 /// forms emitted per category:

@@ -1394,7 +1394,7 @@ pub fn recommended_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCa
 /// Boolean gates for each optimization pass, derived from cost-benefit analysis.
 ///
 /// The pipeline populates this from `recommended_optimizations()` and threads it
-/// into Walker codegen (`wpds_codegen/*`). Each gate controls
+/// into Walker codegen (`wpda_codegen/*`). Each gate controls
 /// whether the corresponding codegen optimization is emitted. When a gate is
 /// `false`, the codegen falls back to the default (unoptimized) path for that
 /// optimization, avoiding code bloat and compile overhead for grammars that

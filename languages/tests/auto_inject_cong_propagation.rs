@@ -2,7 +2,7 @@
 //!
 //! Verifies that auto-injected cast wrappers propagate inner reductions
 //! through the synthetic congruence rule emitted by
-//! `wpds_codegen/auto_inject.rs::make_injection_cong_rule`.
+//! `wpda_codegen/auto_inject.rs::make_injection_cong_rule`.
 //!
 //! Pre-3.13e: `auto_inject.rs::emit_auto_injection_rules` emitted only
 //! the `<Source>To<Target>` term constructor; no congruence rewrite was

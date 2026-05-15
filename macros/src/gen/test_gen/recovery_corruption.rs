@@ -3,7 +3,7 @@
 //! W7 Stage 9 (plan v5.1). Exercises the WPDS walker's resilience to
 //! malformed events and corrupted GSS configurations: pop on empty stack,
 //! fork into zero branches, branch resolution to non-existent winners,
-//! etc. The walker should reach `WpdsState::Error` cleanly rather than
+//! etc. The walker should reach `WpdaState::Error` cleanly rather than
 //! panicking or silently misbehaving.
 
 use mettail_ast::language::LanguageDef;
@@ -18,11 +18,11 @@ pub fn generate_recovery_corruption_section(language: &LanguageDef) -> TokenStre
         #![allow(non_snake_case, unused_imports, dead_code)]
         //! Auto-generated recovery / corruption tests for #lang_name.
 
-        use mettail_prattail::wpds_runtime::{
-            StackSymbolV2, WpdsConfiguration, WpdsControl, WpdsEvent, WpdsState,
+        use mettail_prattail::wpda_runtime::{
+            StackSymbolV2, WpdaConfiguration, WpdaControl, WpdaEvent, WpdaState,
         };
-        use mettail_prattail::wpds_walker::{
-            IdleEngine, NullConsumer, WalkerConsumer, WpdsStepEngine, WpdsWalker,
+        use mettail_prattail::wpda_walker::{
+            IdleEngine, NullConsumer, WalkerConsumer, WpdaEngine, WpdaWalker,
         };
         use mettail_prattail::automata::lex_weight::LexicographicWeight;
 
@@ -40,16 +40,16 @@ fn baseline_tests(lang_name: &str) -> TokenStream {
             #[test]
             fn #name() {
                 // Walker must absorb terminal-state events without panicking.
-                let mut w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
+                let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
                 // Inject a TokenConsumed advance from an unsuspecting position;
                 // walker should record the new position without crashing.
-                let _ = w.process_event(WpdsEvent::TokenConsumed {
+                let _ = w.process_event(WpdaEvent::TokenConsumed {
                     pos: #pos,
                     token: mettail_prattail::automata::TokenKind::Ident,
                 });
                 assert_eq!(w.position(), #pos);
                 // Inspect after the corruption-style event must yield NoChange.
-                let _ = w.process_event(WpdsEvent::Inspect);
+                let _ = w.process_event(WpdaEvent::Inspect);
                 assert!(!w.state().is_terminal());
             }
         }

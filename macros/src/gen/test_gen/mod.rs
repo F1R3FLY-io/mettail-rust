@@ -40,7 +40,7 @@ pub mod recovery_corruption;
 pub mod ambiguity_exposure;
 // Stage 10.1 (2026-05-04): parity test generator deleted.
 // Pre-Stage-10b parity tests compared `Cat::parse(input)` (trampoline) vs
-// `parse_<Cat>_via_wpds(...)` (WPDS facade); both routes are now Walker-driven
+// `parse_<Cat>_via_wpda(...)` (WPDS facade); both routes are now Walker-driven
 // after Stage 10b's parse_preserving_vars rewrite. Tests became tautological.
 
 use mettail_ast::language::LanguageDef;

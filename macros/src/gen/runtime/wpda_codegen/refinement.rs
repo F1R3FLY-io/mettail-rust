@@ -14,7 +14,7 @@
 //!    `evaluate_refinement_predicate(name, &candidate)`. On `false`, skip
 //!    the push (RT01 diagnostic emission is the responsibility of the action
 //!    site — currently the action body just refrains from pushing, which
-//!    surfaces as `WpdsParseError::EmptyResult`).
+//!    surfaces as `WpdaParseError::EmptyResult`).
 //!
 //! ## Lowering model
 //!

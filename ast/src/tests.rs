@@ -1230,7 +1230,7 @@ mod tests {
     /// `Token::BigInt(&'a str)` variant carries the full lexeme so that
     /// arbitrary-precision literals like `32478132567813256718n` are
     /// preserved losslessly. This invariant is load-bearing: the WPDS
-    /// backend at `wpds_codegen/prefix.rs:1129-1190` and the trampoline
+    /// backend at `wpda_codegen/prefix.rs:1129-1190` and the trampoline
     /// at `trampoline.rs:5266-5288` BOTH dispatch on `Token::BigInt(text)`
     /// for category `BigInt` and call `parse_int_lit(text, None)` to
     /// reconstruct the full-precision value. See the comment at

@@ -4,7 +4,7 @@
 //! compiles and runtime semantics work end-to-end:
 //! - Construction: `ChooseMaybe(Box::new(PZero), Some(vec![PZero, PZero]))`
 //! - Clone, Debug, PartialEq, Hash all work via derived/iterative codegen.
-//! - Display roundtrip through parse_via_wpds works for both None and Some.
+//! - Display roundtrip through parse_via_wpda works for both None and Some.
 
 use mettail_languages::class2optsmoke::Proc;
 
@@ -68,8 +68,8 @@ fn choosemaybe_some_hash_consistent_with_eq() {
 }
 
 #[test]
-fn choosemaybe_parse_none_via_wpds() {
-    let result = Proc::parse_via_wpds("choose 0")
+fn choosemaybe_parse_none_via_wpda() {
+    let result = Proc::parse_via_wpda("choose 0")
         .expect("'choose 0' parses");
     match &result {
         Proc::ChooseMaybe(_a, q) => {
@@ -81,7 +81,7 @@ fn choosemaybe_parse_none_via_wpds() {
 
 // Phase 4 #3 (2026-05-12): the Some parsing path of *opt(SimpleCollection)
 // is not yet wired end-to-end through WPDS. The parse-side runtime work
-// (macros/src/gen/runtime/wpds_codegen/binder.rs) handles the Optional
+// (macros/src/gen/runtime/wpda_codegen/binder.rs) handles the Optional
 // extractor's CollectionDrain inner arm and the None case, but the
 // CollectionLoop sub-parse inside the optional group doesn't currently
 // fire to populate elements. Once that's wired, the test below should
@@ -91,8 +91,8 @@ fn choosemaybe_parse_none_via_wpds() {
 // tests above).
 //
 // #[test]
-// fn choosemaybe_parse_some_via_wpds() {
-//     let result = Proc::parse_via_wpds("choose 0 with ( 0 | 0 )")
+// fn choosemaybe_parse_some_via_wpda() {
+//     let result = Proc::parse_via_wpda("choose 0 with ( 0 | 0 )")
 //         .expect("'choose 0 with ( 0 | 0 )' parses");
 //     match &result {
 //         Proc::ChooseMaybe(_a, q) => match q {

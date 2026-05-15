@@ -16,7 +16,7 @@ use mettail_languages::class2multi::Proc;
 
 #[test]
 fn pred1_both_empty() {
-    let result = Proc::parse_via_wpds("pair ( ) ( )")
+    let result = Proc::parse_via_wpda("pair ( ) ( )")
         .expect("empty-empty Pair parses");
     match &result {
         Proc::Pair(xs, ys) => {
@@ -29,7 +29,7 @@ fn pred1_both_empty() {
 
 #[test]
 fn pred2_first_singleton() {
-    let result = Proc::parse_via_wpds("pair ( 0 ) ( )")
+    let result = Proc::parse_via_wpda("pair ( 0 ) ( )")
         .expect("singleton-empty Pair parses");
     match &result {
         Proc::Pair(xs, ys) => {
@@ -43,7 +43,7 @@ fn pred2_first_singleton() {
 
 #[test]
 fn pred3_second_singleton() {
-    let result = Proc::parse_via_wpds("pair ( ) ( 0 )")
+    let result = Proc::parse_via_wpda("pair ( ) ( 0 )")
         .expect("empty-singleton Pair parses");
     match &result {
         Proc::Pair(xs, ys) => {
@@ -57,7 +57,7 @@ fn pred3_second_singleton() {
 
 #[test]
 fn pred4_both_nonempty() {
-    let result = Proc::parse_via_wpds("pair ( 0 | 0 ) ( 0 )")
+    let result = Proc::parse_via_wpda("pair ( 0 | 0 ) ( 0 )")
         .expect("nonempty-nonempty Pair parses");
     match &result {
         Proc::Pair(xs, ys) => {

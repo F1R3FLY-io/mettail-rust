@@ -20,7 +20,7 @@ pub mod cross_category_tests;
 pub mod algebraic_property_tests;
 pub mod wfst_guided;
 pub mod precedence_assoc_tests;
-pub mod wpds_guided;
+pub mod wpda_guided;
 pub mod type_preservation;
 
 use mettail_ast::grammar::{GrammarRule, SyntaxExpr};
@@ -202,7 +202,7 @@ pub fn generate_operational_tests(
     // Phase 5: WPDS path coverage + type preservation
     // ═════════════════════════════════════════════════════════
 
-    let wpds_cases = wpds_guided::generate_wpds_guided_tests(
+    let wpda_cases = wpda_guided::generate_wpda_guided_tests(
         language,
         pipeline,
         &ambiguous_prefix_rules,
@@ -246,7 +246,7 @@ pub fn generate_operational_tests(
     let algebraic_cases = dedup(algebraic_cases);
     let wfst_cases = dedup(wfst_cases);
     let prec_cases = dedup(prec_cases);
-    let wpds_cases = dedup(wpds_cases);
+    let wpda_cases = dedup(wpda_cases);
     let type_pres_cases = dedup(type_pres_cases);
 
     // ═════════════════════════════════════════════════════════
@@ -260,7 +260,7 @@ pub fn generate_operational_tests(
         + algebraic_cases.len()
         + wfst_cases.len()
         + prec_cases.len()
-        + wpds_cases.len()
+        + wpda_cases.len()
         + type_pres_cases.len();
 
     let mut out = String::with_capacity(total_tests * 600 + 4096);
@@ -269,7 +269,7 @@ pub fn generate_operational_tests(
     out.push_str(&wfst_guided::generate_wfst_coverage_comment(language, pipeline));
 
     // WPDS coverage plan comment
-    out.push_str(&wpds_guided::generate_wpds_coverage_comment(language, pipeline));
+    out.push_str(&wpda_guided::generate_wpda_coverage_comment(language, pipeline));
 
     // Phase 1: Basic eval tests
     if !phase1_cases.is_empty() {
@@ -328,11 +328,11 @@ pub fn generate_operational_tests(
     }
 
     // Phase 5a: WPDS-guided tests
-    if !wpds_cases.is_empty() {
+    if !wpda_cases.is_empty() {
         out.push_str("// ═══════════════════════════════════════════════════════════\n");
         out.push_str("// Phase 5a: WPDS-guided path coverage tests\n");
         out.push_str("// ═══════════════════════════════════════════════════════════\n\n");
-        out.push_str(&expr_string_gen::generate_all_tests(&wpds_cases));
+        out.push_str(&expr_string_gen::generate_all_tests(&wpda_cases));
     }
 
     // Phase 5b: Type preservation tests
@@ -354,7 +354,7 @@ pub fn generate_operational_tests(
         algebraic_cases.len(),
         wfst_cases.len(),
         prec_cases.len(),
-        wpds_cases.len(),
+        wpda_cases.len(),
         type_pres_cases.len(),
     ));
 

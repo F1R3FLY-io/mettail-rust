@@ -2331,7 +2331,7 @@ fn assoc_ledtest_mulnum_left() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn wpds_ledtest_negnum_0() {
+fn wpda_ledtest_negnum_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::NegNum(Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -2343,7 +2343,7 @@ fn wpds_ledtest_negnum_0() {
 }
 
 #[test]
-fn wpds_ledtest_negnum_1() {
+fn wpda_ledtest_negnum_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::NegNum(Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -2355,7 +2355,7 @@ fn wpds_ledtest_negnum_1() {
 }
 
 #[test]
-fn wpds_ledtest_negnum_2() {
+fn wpda_ledtest_negnum_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::NegNum(Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -2367,7 +2367,7 @@ fn wpds_ledtest_negnum_2() {
 }
 
 #[test]
-fn wpds_ledtest_negnum_3() {
+fn wpda_ledtest_negnum_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::NegNum(Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -2379,7 +2379,7 @@ fn wpds_ledtest_negnum_3() {
 }
 
 #[test]
-fn wpds_ledtest_negnum_5() {
+fn wpda_ledtest_negnum_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::NegNum(Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -2391,7 +2391,7 @@ fn wpds_ledtest_negnum_5() {
 }
 
 #[test]
-fn wpds_ledtest_addnum_0_0() {
+fn wpda_ledtest_addnum_0_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -2403,7 +2403,7 @@ fn wpds_ledtest_addnum_0_0() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_0_0() {
+fn wpda_ledtest_eqnum_0_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -2415,7 +2415,7 @@ fn wpds_ledtest_eqnum_0_0() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_0_1() {
+fn wpda_ledtest_eqnum_0_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -2427,7 +2427,7 @@ fn wpds_ledtest_eqnum_0_1() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_0_2() {
+fn wpda_ledtest_eqnum_0_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -2439,7 +2439,7 @@ fn wpds_ledtest_eqnum_0_2() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_0_3() {
+fn wpda_ledtest_eqnum_0_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -2451,7 +2451,7 @@ fn wpds_ledtest_eqnum_0_3() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_0_5() {
+fn wpda_ledtest_eqnum_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -2463,7 +2463,7 @@ fn wpds_ledtest_eqnum_0_5() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_1_0() {
+fn wpda_ledtest_eqnum_1_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -2475,7 +2475,7 @@ fn wpds_ledtest_eqnum_1_0() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_1_1() {
+fn wpda_ledtest_eqnum_1_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -2487,7 +2487,7 @@ fn wpds_ledtest_eqnum_1_1() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_1_2() {
+fn wpda_ledtest_eqnum_1_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -2499,7 +2499,7 @@ fn wpds_ledtest_eqnum_1_2() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_1_3() {
+fn wpda_ledtest_eqnum_1_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -2511,7 +2511,7 @@ fn wpds_ledtest_eqnum_1_3() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_1_5() {
+fn wpda_ledtest_eqnum_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -2523,7 +2523,7 @@ fn wpds_ledtest_eqnum_1_5() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_2_0() {
+fn wpda_ledtest_eqnum_2_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -2535,7 +2535,7 @@ fn wpds_ledtest_eqnum_2_0() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_2_1() {
+fn wpda_ledtest_eqnum_2_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -2547,7 +2547,7 @@ fn wpds_ledtest_eqnum_2_1() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_2_2() {
+fn wpda_ledtest_eqnum_2_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -2559,7 +2559,7 @@ fn wpds_ledtest_eqnum_2_2() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_2_3() {
+fn wpda_ledtest_eqnum_2_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -2571,7 +2571,7 @@ fn wpds_ledtest_eqnum_2_3() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_2_5() {
+fn wpda_ledtest_eqnum_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -2583,7 +2583,7 @@ fn wpds_ledtest_eqnum_2_5() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_3_0() {
+fn wpda_ledtest_eqnum_3_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -2595,7 +2595,7 @@ fn wpds_ledtest_eqnum_3_0() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_3_1() {
+fn wpda_ledtest_eqnum_3_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -2607,7 +2607,7 @@ fn wpds_ledtest_eqnum_3_1() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_3_2() {
+fn wpda_ledtest_eqnum_3_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -2619,7 +2619,7 @@ fn wpds_ledtest_eqnum_3_2() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_3_3() {
+fn wpda_ledtest_eqnum_3_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -2631,7 +2631,7 @@ fn wpds_ledtest_eqnum_3_3() {
 }
 
 #[test]
-fn wpds_ledtest_eqnum_3_5() {
+fn wpda_ledtest_eqnum_3_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -2643,7 +2643,7 @@ fn wpds_ledtest_eqnum_3_5() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_0_0() {
+fn wpda_ledtest_nenum_0_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -2655,7 +2655,7 @@ fn wpds_ledtest_nenum_0_0() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_0_1() {
+fn wpda_ledtest_nenum_0_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -2667,7 +2667,7 @@ fn wpds_ledtest_nenum_0_1() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_0_2() {
+fn wpda_ledtest_nenum_0_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -2679,7 +2679,7 @@ fn wpds_ledtest_nenum_0_2() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_0_3() {
+fn wpda_ledtest_nenum_0_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -2691,7 +2691,7 @@ fn wpds_ledtest_nenum_0_3() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_0_5() {
+fn wpda_ledtest_nenum_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -2703,7 +2703,7 @@ fn wpds_ledtest_nenum_0_5() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_1_0() {
+fn wpda_ledtest_nenum_1_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -2715,7 +2715,7 @@ fn wpds_ledtest_nenum_1_0() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_1_1() {
+fn wpda_ledtest_nenum_1_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -2727,7 +2727,7 @@ fn wpds_ledtest_nenum_1_1() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_1_2() {
+fn wpda_ledtest_nenum_1_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -2739,7 +2739,7 @@ fn wpds_ledtest_nenum_1_2() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_1_3() {
+fn wpda_ledtest_nenum_1_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -2751,7 +2751,7 @@ fn wpds_ledtest_nenum_1_3() {
 }
 
 #[test]
-fn wpds_ledtest_nenum_1_5() {
+fn wpda_ledtest_nenum_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);

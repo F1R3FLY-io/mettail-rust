@@ -5821,7 +5821,7 @@ fn wfst_rhocalc_dispatch_mod_eval() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn wpds_rhocalc_intbinproc_pzero_0() {
+fn wpda_rhocalc_intbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
@@ -5833,7 +5833,7 @@ fn wpds_rhocalc_intbinproc_pzero_0() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_pzero_1() {
+fn wpda_rhocalc_intbinproc_pzero_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
@@ -5845,7 +5845,7 @@ fn wpds_rhocalc_intbinproc_pzero_1() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_pzero_2() {
+fn wpda_rhocalc_intbinproc_pzero_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
@@ -5857,7 +5857,7 @@ fn wpds_rhocalc_intbinproc_pzero_2() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_pzero_3() {
+fn wpda_rhocalc_intbinproc_pzero_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
@@ -5869,7 +5869,7 @@ fn wpds_rhocalc_intbinproc_pzero_3() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_pzero_5() {
+fn wpda_rhocalc_intbinproc_pzero_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
@@ -5881,7 +5881,7 @@ fn wpds_rhocalc_intbinproc_pzero_5() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_err_0() {
+fn wpda_rhocalc_intbinproc_err_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
@@ -5893,7 +5893,7 @@ fn wpds_rhocalc_intbinproc_err_0() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_err_1() {
+fn wpda_rhocalc_intbinproc_err_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
@@ -5905,7 +5905,7 @@ fn wpds_rhocalc_intbinproc_err_1() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_err_2() {
+fn wpda_rhocalc_intbinproc_err_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
@@ -5917,7 +5917,7 @@ fn wpds_rhocalc_intbinproc_err_2() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_err_3() {
+fn wpda_rhocalc_intbinproc_err_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
@@ -5929,7 +5929,7 @@ fn wpds_rhocalc_intbinproc_err_3() {
 }
 
 #[test]
-fn wpds_rhocalc_intbinproc_err_5() {
+fn wpda_rhocalc_intbinproc_err_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
@@ -5941,7 +5941,7 @@ fn wpds_rhocalc_intbinproc_err_5() {
 }
 
 #[test]
-fn wpds_rhocalc_uintbinproc_pzero_0() {
+fn wpda_rhocalc_uintbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
@@ -5953,7 +5953,7 @@ fn wpds_rhocalc_uintbinproc_pzero_0() {
 }
 
 #[test]
-fn wpds_rhocalc_negint_0() {
+fn wpda_rhocalc_negint_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::NegInt(Box::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
@@ -5965,7 +5965,7 @@ fn wpds_rhocalc_negint_0() {
 }
 
 #[test]
-fn wpds_rhocalc_negint_1() {
+fn wpda_rhocalc_negint_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::NegInt(Box::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
@@ -5977,7 +5977,7 @@ fn wpds_rhocalc_negint_1() {
 }
 
 #[test]
-fn wpds_rhocalc_negint_2() {
+fn wpda_rhocalc_negint_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::NegInt(Box::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
@@ -5989,7 +5989,7 @@ fn wpds_rhocalc_negint_2() {
 }
 
 #[test]
-fn wpds_rhocalc_negint_3() {
+fn wpda_rhocalc_negint_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::NegInt(Box::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);

@@ -50,7 +50,7 @@ pub mod lexer_types;
 pub mod pipeline;
 // Stage 10.5b conclusion (2026-05-05): `pub mod pratt` DELETED (file deleted,
 // ~2,172 LoC). Trampoline-side Pratt parser emitter; superseded by Walker
-// codegen at `macros/src/gen/runtime/wpds_codegen/{prefix,infix,binder}.rs`.
+// codegen at `macros/src/gen/runtime/wpda_codegen/{prefix,infix,binder}.rs`.
 pub mod prediction;
 pub mod rd_analysis;
 // Stage 10.5b conclusion (2026-05-05): `pub mod recursive` DELETED (file
@@ -63,7 +63,7 @@ pub mod token_id;
 // The Walker (WPDS) is the surviving parser backend. All recovery infrastructure
 // (BRACKET_STATE_<cat>, LAST_ERROR_POS_<cat>, RUNNING_WEIGHT_<CAT>,
 // PARENT_WEIGHT_<CAT>, frame_kind_of_<cat>, running_weight_<cat>) migrated to
-// `macros/src/gen/runtime/wpds_codegen/recovery.rs::emit_recovery_module`.
+// `macros/src/gen/runtime/wpda_codegen/recovery.rs::emit_recovery_module`.
 //
 // Stage 10.4 (2026-05-04): `pub mod unified_trampoline` DELETED. Walker
 // subsumes the multi-category mutual-recursion CPS dispatch via per-cursor
@@ -90,18 +90,18 @@ pub mod tensor;
 pub mod transducer;
 pub mod wpds;
 
-/// WPDS runtime: reactive FSM types (`WpdsState`/`Event`/`Transition`),
-/// integer-indexed `StackSymbolV2`, and `WpdsControl` directives.
+/// WPDS runtime: reactive FSM types (`WpdaState`/`Event`/`Transition`),
+/// integer-indexed `StackSymbolV2`, and `WpdaControl` directives.
 /// Stage 1 of W7 plan v5.1 — see `prattail/docs/design/wpds-migration-survey.md`.
-pub mod wpds_runtime;
+pub mod wpda_runtime;
 
 /// WPDS walker: pure reactive FSM (`State × Event → Transition`) driving
 /// the runtime parser. Stage 4 of W7 plan v5.1.
-pub mod wpds_walker;
+pub mod wpda_walker;
 
 /// WPDS incremental parsing session: checkpoint cache + reparse for LSP
 /// integration. Stage 5 of W7 plan v5.1.
-pub mod wpds_session;
+pub mod wpda_session;
 
 // Stage 10.3 (2026-05-04): `pub mod parity` (Model A + Model B golden ASTs)
 // DELETED. Zero in-tree consumers; parity tests had become tautological
@@ -798,7 +798,7 @@ pub struct RuleSpec {
     pub source_location: Option<SourceLocation>,
     /// Stage 3.13b (2026-05-01): provenance flag distinguishing user-written
     /// rules (false) from synthetic auto-injection rules emitted by
-    /// `macros/src/gen/runtime/wpds_codegen/auto_inject.rs::make_injection_rule`
+    /// `macros/src/gen/runtime/wpda_codegen/auto_inject.rs::make_injection_rule`
     /// (true). Used by:
     /// - Stage 3.13c routing filter (`pipeline.rs:1316`) to exclude synthetic
     ///   rules from legacy unified-trampoline cast_rules.

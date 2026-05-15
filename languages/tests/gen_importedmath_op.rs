@@ -1291,7 +1291,7 @@ fn assoc_importedmath_div_left() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn wpds_importedmath_add_0_0() {
+fn wpda_importedmath_add_0_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -1303,7 +1303,7 @@ fn wpds_importedmath_add_0_0() {
 }
 
 #[test]
-fn wpds_importedmath_add_0_1() {
+fn wpda_importedmath_add_0_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -1315,7 +1315,7 @@ fn wpds_importedmath_add_0_1() {
 }
 
 #[test]
-fn wpds_importedmath_add_0_2() {
+fn wpda_importedmath_add_0_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -1327,7 +1327,7 @@ fn wpds_importedmath_add_0_2() {
 }
 
 #[test]
-fn wpds_importedmath_add_0_3() {
+fn wpda_importedmath_add_0_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -1339,7 +1339,7 @@ fn wpds_importedmath_add_0_3() {
 }
 
 #[test]
-fn wpds_importedmath_add_0_5() {
+fn wpda_importedmath_add_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -1351,7 +1351,7 @@ fn wpds_importedmath_add_0_5() {
 }
 
 #[test]
-fn wpds_importedmath_add_1_0() {
+fn wpda_importedmath_add_1_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -1363,7 +1363,7 @@ fn wpds_importedmath_add_1_0() {
 }
 
 #[test]
-fn wpds_importedmath_add_1_1() {
+fn wpda_importedmath_add_1_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -1375,7 +1375,7 @@ fn wpds_importedmath_add_1_1() {
 }
 
 #[test]
-fn wpds_importedmath_add_1_2() {
+fn wpda_importedmath_add_1_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -1387,7 +1387,7 @@ fn wpds_importedmath_add_1_2() {
 }
 
 #[test]
-fn wpds_importedmath_add_1_3() {
+fn wpda_importedmath_add_1_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -1399,7 +1399,7 @@ fn wpds_importedmath_add_1_3() {
 }
 
 #[test]
-fn wpds_importedmath_add_1_5() {
+fn wpda_importedmath_add_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -1411,7 +1411,7 @@ fn wpds_importedmath_add_1_5() {
 }
 
 #[test]
-fn wpds_importedmath_add_2_0() {
+fn wpda_importedmath_add_2_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -1423,7 +1423,7 @@ fn wpds_importedmath_add_2_0() {
 }
 
 #[test]
-fn wpds_importedmath_add_2_1() {
+fn wpda_importedmath_add_2_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -1435,7 +1435,7 @@ fn wpds_importedmath_add_2_1() {
 }
 
 #[test]
-fn wpds_importedmath_add_2_2() {
+fn wpda_importedmath_add_2_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -1447,7 +1447,7 @@ fn wpds_importedmath_add_2_2() {
 }
 
 #[test]
-fn wpds_importedmath_add_2_3() {
+fn wpda_importedmath_add_2_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -1459,7 +1459,7 @@ fn wpds_importedmath_add_2_3() {
 }
 
 #[test]
-fn wpds_importedmath_add_2_5() {
+fn wpda_importedmath_add_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -1471,7 +1471,7 @@ fn wpds_importedmath_add_2_5() {
 }
 
 #[test]
-fn wpds_importedmath_add_3_0() {
+fn wpda_importedmath_add_3_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -1483,7 +1483,7 @@ fn wpds_importedmath_add_3_0() {
 }
 
 #[test]
-fn wpds_importedmath_add_3_1() {
+fn wpda_importedmath_add_3_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -1495,7 +1495,7 @@ fn wpds_importedmath_add_3_1() {
 }
 
 #[test]
-fn wpds_importedmath_add_3_2() {
+fn wpda_importedmath_add_3_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -1507,7 +1507,7 @@ fn wpds_importedmath_add_3_2() {
 }
 
 #[test]
-fn wpds_importedmath_add_3_3() {
+fn wpda_importedmath_add_3_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -1519,7 +1519,7 @@ fn wpds_importedmath_add_3_3() {
 }
 
 #[test]
-fn wpds_importedmath_add_3_5() {
+fn wpda_importedmath_add_3_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -1531,7 +1531,7 @@ fn wpds_importedmath_add_3_5() {
 }
 
 #[test]
-fn wpds_importedmath_sub_0_0() {
+fn wpda_importedmath_sub_0_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -1543,7 +1543,7 @@ fn wpds_importedmath_sub_0_0() {
 }
 
 #[test]
-fn wpds_importedmath_sub_0_1() {
+fn wpda_importedmath_sub_0_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -1555,7 +1555,7 @@ fn wpds_importedmath_sub_0_1() {
 }
 
 #[test]
-fn wpds_importedmath_sub_0_2() {
+fn wpda_importedmath_sub_0_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -1567,7 +1567,7 @@ fn wpds_importedmath_sub_0_2() {
 }
 
 #[test]
-fn wpds_importedmath_sub_0_3() {
+fn wpda_importedmath_sub_0_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -1579,7 +1579,7 @@ fn wpds_importedmath_sub_0_3() {
 }
 
 #[test]
-fn wpds_importedmath_sub_0_5() {
+fn wpda_importedmath_sub_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -1591,7 +1591,7 @@ fn wpds_importedmath_sub_0_5() {
 }
 
 #[test]
-fn wpds_importedmath_sub_1_0() {
+fn wpda_importedmath_sub_1_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -1603,7 +1603,7 @@ fn wpds_importedmath_sub_1_0() {
 }
 
 #[test]
-fn wpds_importedmath_sub_1_1() {
+fn wpda_importedmath_sub_1_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -1615,7 +1615,7 @@ fn wpds_importedmath_sub_1_1() {
 }
 
 #[test]
-fn wpds_importedmath_sub_1_2() {
+fn wpda_importedmath_sub_1_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -1627,7 +1627,7 @@ fn wpds_importedmath_sub_1_2() {
 }
 
 #[test]
-fn wpds_importedmath_sub_1_3() {
+fn wpda_importedmath_sub_1_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -1639,7 +1639,7 @@ fn wpds_importedmath_sub_1_3() {
 }
 
 #[test]
-fn wpds_importedmath_sub_1_5() {
+fn wpda_importedmath_sub_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -1651,7 +1651,7 @@ fn wpds_importedmath_sub_1_5() {
 }
 
 #[test]
-fn wpds_importedmath_sub_2_0() {
+fn wpda_importedmath_sub_2_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -1663,7 +1663,7 @@ fn wpds_importedmath_sub_2_0() {
 }
 
 #[test]
-fn wpds_importedmath_sub_2_1() {
+fn wpda_importedmath_sub_2_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -1675,7 +1675,7 @@ fn wpds_importedmath_sub_2_1() {
 }
 
 #[test]
-fn wpds_importedmath_sub_2_2() {
+fn wpda_importedmath_sub_2_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -1687,7 +1687,7 @@ fn wpds_importedmath_sub_2_2() {
 }
 
 #[test]
-fn wpds_importedmath_sub_2_3() {
+fn wpda_importedmath_sub_2_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -1699,7 +1699,7 @@ fn wpds_importedmath_sub_2_3() {
 }
 
 #[test]
-fn wpds_importedmath_sub_2_5() {
+fn wpda_importedmath_sub_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -1711,7 +1711,7 @@ fn wpds_importedmath_sub_2_5() {
 }
 
 #[test]
-fn wpds_importedmath_sub_3_0() {
+fn wpda_importedmath_sub_3_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -1723,7 +1723,7 @@ fn wpds_importedmath_sub_3_0() {
 }
 
 #[test]
-fn wpds_importedmath_sub_3_1() {
+fn wpda_importedmath_sub_3_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -1735,7 +1735,7 @@ fn wpds_importedmath_sub_3_1() {
 }
 
 #[test]
-fn wpds_importedmath_sub_3_2() {
+fn wpda_importedmath_sub_3_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -1747,7 +1747,7 @@ fn wpds_importedmath_sub_3_2() {
 }
 
 #[test]
-fn wpds_importedmath_sub_3_3() {
+fn wpda_importedmath_sub_3_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -1759,7 +1759,7 @@ fn wpds_importedmath_sub_3_3() {
 }
 
 #[test]
-fn wpds_importedmath_sub_3_5() {
+fn wpda_importedmath_sub_3_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);

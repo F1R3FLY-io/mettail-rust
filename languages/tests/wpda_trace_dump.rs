@@ -12,7 +12,7 @@
 
 use mettail_languages::optsmoke::{Bool, Int};
 use mettail_prattail::automata::lex_weight::LexicographicWeight;
-use mettail_prattail::wpds_walker::RichTracingConsumer;
+use mettail_prattail::wpda_walker::RichTracingConsumer;
 
 #[test]
 fn diagnose_display_int_abuts_else_keyword_separated() {

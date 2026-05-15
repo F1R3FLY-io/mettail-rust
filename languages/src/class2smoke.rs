@@ -4,9 +4,9 @@
 //! Vec-typed collection param parsed via `Sep` over a separator. The
 //! minimal-composition design routes the binder rule's collection slot
 //! through a `CollectionMarker` push + `is_binder_internal_collection`
-//! FireAction-suppression — reusing the existing `WpdsState::CollectionLoop`
+//! FireAction-suppression — reusing the existing `WpdaState::CollectionLoop`
 //! apparatus rather than introducing a specialized
-//! `WpdsState::BinderSimpleCollectionLoop`.
+//! `WpdaState::BinderSimpleCollectionLoop`.
 //!
 //! The `Choose` rule is structurally analogous to a guarded-choice
 //! operator: a tag `a:Proc` followed by a parenthesized

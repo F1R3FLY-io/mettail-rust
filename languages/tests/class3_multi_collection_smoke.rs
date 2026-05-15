@@ -22,7 +22,7 @@ use mettail_languages::class3multi::Proc;
 
 #[test]
 fn pred1_all_empty() {
-    let result = Proc::parse_via_wpds("with [ ] ( ) . { 0 }")
+    let result = Proc::parse_via_wpda("with [ ] ( ) . { 0 }")
         .expect("empty-tags empty-names TaggedInputs parses");
     match &result {
         Proc::TaggedInputs(tags, ns, _scope) => {
@@ -35,7 +35,7 @@ fn pred1_all_empty() {
 
 #[test]
 fn pred2_nonempty_tags_empty_binders() {
-    let result = Proc::parse_via_wpds("with [ 0 ; 0 ] ( ) . { 0 }")
+    let result = Proc::parse_via_wpda("with [ 0 ; 0 ] ( ) . { 0 }")
         .expect("nonempty-tags empty-names TaggedInputs parses");
     match &result {
         Proc::TaggedInputs(tags, ns, _scope) => {
@@ -51,7 +51,7 @@ fn pred2_nonempty_tags_empty_binders() {
 
 #[test]
 fn pred3_empty_tags_single_binder() {
-    let result = Proc::parse_via_wpds("with [ ] ( @(0) ? x ) . { 0 }")
+    let result = Proc::parse_via_wpda("with [ ] ( @(0) ? x ) . { 0 }")
         .expect("empty-tags single-name TaggedInputs parses");
     match &result {
         Proc::TaggedInputs(tags, ns, _scope) => {
@@ -64,7 +64,7 @@ fn pred3_empty_tags_single_binder() {
 
 #[test]
 fn pred4_both_nonempty() {
-    let result = Proc::parse_via_wpds("with [ 0 ] ( @(0) ? x ) . { 0 }")
+    let result = Proc::parse_via_wpda("with [ 0 ] ( @(0) ? x ) . { 0 }")
         .expect("nonempty TaggedInputs parses");
     match &result {
         Proc::TaggedInputs(tags, ns, _scope) => {

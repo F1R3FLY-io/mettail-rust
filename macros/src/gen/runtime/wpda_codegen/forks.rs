@@ -2,7 +2,7 @@
 //! 2026-05-05).
 //!
 //! Replaces deterministic peek-and-decide patterns in WPDS codegen with
-//! `WpdsStepAction::Fork` over multiple branches, letting lex-min disambiguate
+//! `WpdaStepAction::Fork` over multiple branches, letting lex-min disambiguate
 //! per `feedback_use_wpds_disambiguation_not_heuristics.md`. Branches are
 //! emitted unconditionally; the walker prunes branches whose subsequent steps
 //! fail (matching the existing F7 multi-rule binder, F8 cross-cat projection,
@@ -27,7 +27,7 @@
 //!   inter-tier ordering on weight ties.
 //! - **Cursor explosion mitigation.** Each Fork emission grows the cursor
 //!   count by N; nested call sites multiply. The walker's
-//!   `beam_size: Option<usize>` (already shipped at `wpds_walker.rs:289`)
+//!   `beam_size: Option<usize>` (already shipped at `wpda_walker.rs:289`)
 //!   defaults to `Some(64)` when Cluster 3 lands.
 //! - **Unconditional branch emission.** Following the F7/F8/A.i pattern,
 //!   branches are pushed into the Fork unconditionally; per-branch runtime
@@ -73,7 +73,7 @@ pub(crate) struct FirstSetBranch {
     pub rule_idx: u16,
     /// `StackSymbolV2` expression to push onto the GSS for this branch.
     pub symbol: TokenStream,
-    /// `WpdsState` expression for the branch's `new_state`.
+    /// `WpdaState` expression for the branch's `new_state`.
     pub new_state: TokenStream,
     /// `ForkActionKind` expression. Default for most Cluster 1 branches:
     /// `ForkActionKind::Push`.
@@ -82,7 +82,7 @@ pub(crate) struct FirstSetBranch {
 
 // ─────── Cluster 1 helper ────────────────────────────────────────────────
 
-/// Cluster 1 helper. Emits a `WpdsStepAction::Fork` over the given branches
+/// Cluster 1 helper. Emits a `WpdaStepAction::Fork` over the given branches
 /// with `consume_trigger` semantics specified by the caller. Following the
 /// F7/F8/A.i pattern, branches are emitted unconditionally — the walker
 /// prunes branches whose subsequent steps fail.
@@ -90,7 +90,7 @@ pub(crate) struct FirstSetBranch {
 /// Source-order tiebreak: branches are emitted in the same order as
 /// `branches` parameter; per-branch `rule_idx` weight component gives
 /// lower-index branches lex-min preference on tier-bias ties (see
-/// `wpds_walker.rs::ForkBranch.weight`).
+/// `wpda_walker.rs::ForkBranch.weight`).
 ///
 /// **Cursor-explosion mitigation.** When `branches.len() >= 2`, the emit
 /// site grows the cursor count by N; nested call sites multiply. The
@@ -111,7 +111,7 @@ pub(crate) fn emit_first_set_fork(
             let action_kind = &b.action_kind;
             let _name = b.name;
             quote! {
-                mettail_prattail::wpds_walker::ForkBranch {
+                mettail_prattail::wpda_walker::ForkBranch {
                     symbol: #symbol,
                     weight: lex_w(#bias, #src, #rule),
                     new_state: #new_state,
@@ -122,7 +122,7 @@ pub(crate) fn emit_first_set_fork(
         .collect();
 
     quote! {
-        WpdsStepAction::Fork {
+        WpdaStepAction::Fork {
             branches: vec![ #( #branch_exprs ),* ],
             consume_trigger: #consume_trigger,
         }
@@ -133,7 +133,7 @@ pub(crate) fn emit_first_set_fork(
 
 /// Cluster 2 #12 — emit a lex-Fork at PrefixDispatch top.
 ///
-/// Wires `WpdsTokenSource::peek_alternatives(*pos)` into a Fork whose
+/// Wires `WpdaTokenSource::peek_alternatives(*pos)` into a Fork whose
 /// branches each commit one lex alternative. Each branch's weight is
 /// `from_cost_with_lex(0.0, src, rule, alt_idx)` so lex-min over alt_idx
 /// preserves source-order tiebreak. Walker's existing
@@ -174,7 +174,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             let primary_src = frontier_top
                 .map(|n| n.symbol.category_src_idx)
                 .unwrap_or(primary_src_for_fork);
-            let mut __branches: Vec<mettail_prattail::wpds_walker::ForkBranch<
+            let mut __branches: Vec<mettail_prattail::wpda_walker::ForkBranch<
                 __DwW,
             >> = Vec::with_capacity(alts.len() + 1);
             // M6c.8.5 (2026-05-14): track whether the primary alt
@@ -200,19 +200,19 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                     lex_alt_rule_for_prefix(primary_src, &primary_kind)
                 {
                     match info.kind {
-                        mettail_prattail::wpds_runtime::LexAltRuleKind::Atomic => {
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic => {
                             let primary_text = tokens.peek_text(*pos).unwrap_or("").to_string();
                             let primary_next_pos = tokens.next_pos(*pos, 0).unwrap_or(*pos + 1);
                             let sym = StackSymbolV2::rule_at(
                                 primary_src, info.rule_idx, 0u8, Some(*cur_bp),
                             ).with_kind_return();
-                            __branches.push(mettail_prattail::wpds_walker::ForkBranch {
+                            __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
                                 weight: lex_w_alt(
                                     0.0, primary_src, info.rule_idx, 0u16,
                                 ),
-                                new_state: WpdsState::Unwinding,
-                                action_kind: mettail_prattail::wpds_walker::ForkActionKind::LexAlt {
+                                new_state: WpdaState::Unwinding,
+                                action_kind: mettail_prattail::wpda_walker::ForkActionKind::LexAlt {
                                     alt_idx: 0u16,
                                     kind: primary_kind.clone(),
                                     text: primary_text,
@@ -222,7 +222,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             });
                             __primary_survived = true;
                         }
-                        mettail_prattail::wpds_runtime::LexAltRuleKind::PrefixOp {
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::PrefixOp {
                             body_src_idx,
                         } => {
                             let primary_text = tokens.peek_text(*pos).unwrap_or("").to_string();
@@ -233,19 +233,19 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             let sym = StackSymbolV2::rule_at(
                                 primary_src, info.rule_idx, 1u8, Some(*cur_bp),
                             );
-                            __branches.push(mettail_prattail::wpds_walker::ForkBranch {
+                            __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
                                 weight: lex_w_alt(
                                     0.0, primary_src, info.rule_idx, 0u16,
                                 ),
-                                new_state: WpdsState::BinderRule {
+                                new_state: WpdaState::BinderRule {
                                     result_src_idx: primary_src,
                                     rule_idx: info.rule_idx,
                                     body_src_idx,
                                     outer_bp: *cur_bp,
                                 },
                                 action_kind:
-                                    mettail_prattail::wpds_walker::ForkActionKind::LexAltPrefixOp {
+                                    mettail_prattail::wpda_walker::ForkActionKind::LexAltPrefixOp {
                                         alt_idx: 0u16,
                                         trigger: primary_text,
                                         rule_idx: info.rule_idx,
@@ -268,20 +268,20 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 let alt_idx = (sec_idx + 1) as u16;
                 if let Some(info) = lex_alt_rule_for_prefix(primary_src, &alt.kind) {
                     match info.kind {
-                        mettail_prattail::wpds_runtime::LexAltRuleKind::Atomic => {
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic => {
                             let alt_next_pos = tokens
                                 .next_pos(*pos, sec_idx + 1)
                                 .unwrap_or(*pos + 1);
                             let sym = StackSymbolV2::rule_at(
                                 primary_src, info.rule_idx, 0u8, Some(*cur_bp),
                             ).with_kind_return();
-                            __branches.push(mettail_prattail::wpds_walker::ForkBranch {
+                            __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
                                 weight: lex_w_alt(
                                     0.0, primary_src, info.rule_idx, alt_idx,
                                 ),
-                                new_state: WpdsState::Unwinding,
-                                action_kind: mettail_prattail::wpds_walker::ForkActionKind::LexAlt {
+                                new_state: WpdaState::Unwinding,
+                                action_kind: mettail_prattail::wpda_walker::ForkActionKind::LexAlt {
                                     alt_idx,
                                     kind: alt.kind.clone(),
                                     text: alt.text.to_string(),
@@ -290,7 +290,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                 },
                             });
                         }
-                        mettail_prattail::wpds_runtime::LexAltRuleKind::PrefixOp {
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::PrefixOp {
                             body_src_idx,
                         } => {
                             let alt_next_pos = tokens
@@ -299,19 +299,19 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             let sym = StackSymbolV2::rule_at(
                                 primary_src, info.rule_idx, 1u8, Some(*cur_bp),
                             );
-                            __branches.push(mettail_prattail::wpds_walker::ForkBranch {
+                            __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
                                 weight: lex_w_alt(
                                     0.0, primary_src, info.rule_idx, alt_idx,
                                 ),
-                                new_state: WpdsState::BinderRule {
+                                new_state: WpdaState::BinderRule {
                                     result_src_idx: primary_src,
                                     rule_idx: info.rule_idx,
                                     body_src_idx,
                                     outer_bp: *cur_bp,
                                 },
                                 action_kind:
-                                    mettail_prattail::wpds_walker::ForkActionKind::LexAltPrefixOp {
+                                    mettail_prattail::wpda_walker::ForkActionKind::LexAltPrefixOp {
                                         alt_idx,
                                         trigger: alt.text.to_string(),
                                         rule_idx: info.rule_idx,
@@ -337,7 +337,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 __branches.is_empty()
                     || (__branches.len() == 1 && __primary_survived);
             if !__fall_through {
-                return WpdsStepAction::Fork {
+                return WpdaStepAction::Fork {
                     branches: __branches,
                     consume_trigger: false,
                 };
@@ -361,9 +361,9 @@ mod tests {
                 result_src_idx: 1,
                 rule_idx: 0,
                 symbol: quote! { StackSymbolV2::category_entry(1) },
-                new_state: quote! { WpdsState::Unwinding },
+                new_state: quote! { WpdaState::Unwinding },
                 action_kind: quote! {
-                    mettail_prattail::wpds_walker::ForkActionKind::CollectionClose
+                    mettail_prattail::wpda_walker::ForkActionKind::CollectionClose
                 },
             },
             FirstSetBranch {
@@ -372,8 +372,8 @@ mod tests {
                 result_src_idx: 1,
                 rule_idx: 1,
                 symbol: quote! { StackSymbolV2::category_entry(1) },
-                new_state: quote! { WpdsState::PrefixDispatch { pos: *pos + 1, cur_bp: 0 } },
-                action_kind: quote! { mettail_prattail::wpds_walker::ForkActionKind::Push },
+                new_state: quote! { WpdaState::PrefixDispatch { pos: *pos + 1, cur_bp: 0 } },
+                action_kind: quote! { mettail_prattail::wpda_walker::ForkActionKind::Push },
             },
             FirstSetBranch {
                 name: "ident",
@@ -381,13 +381,13 @@ mod tests {
                 result_src_idx: 1,
                 rule_idx: 2,
                 symbol: quote! { StackSymbolV2::category_entry(1) },
-                new_state: quote! { WpdsState::PrefixDispatch { pos: *pos, cur_bp: 0 } },
-                action_kind: quote! { mettail_prattail::wpds_walker::ForkActionKind::Push },
+                new_state: quote! { WpdaState::PrefixDispatch { pos: *pos, cur_bp: 0 } },
+                action_kind: quote! { mettail_prattail::wpda_walker::ForkActionKind::Push },
             },
         ];
         let ts = emit_first_set_fork(&branches, true);
         let s = ts.to_string();
-        assert!(s.contains("WpdsStepAction :: Fork"), "missing Fork arm: {}", s);
+        assert!(s.contains("WpdaStepAction :: Fork"), "missing Fork arm: {}", s);
         assert!(s.contains("CollectionClose"), "missing CollectionClose: {}", s);
         assert!(s.contains("from_cost"), "missing from_cost weight: {}", s);
         // 3 branches => 3 ForkBranch literals.
@@ -402,12 +402,12 @@ mod tests {
             result_src_idx: 0,
             rule_idx: 0,
             symbol: quote! { StackSymbolV2::category_entry(0) },
-            new_state: quote! { WpdsState::Accepted },
-            action_kind: quote! { mettail_prattail::wpds_walker::ForkActionKind::Push },
+            new_state: quote! { WpdaState::Accepted },
+            action_kind: quote! { mettail_prattail::wpda_walker::ForkActionKind::Push },
         }];
         let ts = emit_first_set_fork(&branches, false);
         let s = ts.to_string();
-        assert!(s.contains("WpdsStepAction :: Fork"));
+        assert!(s.contains("WpdaStepAction :: Fork"));
         assert_eq!(s.matches("ForkBranch").count(), 1);
         assert!(s.contains("consume_trigger : false"));
     }

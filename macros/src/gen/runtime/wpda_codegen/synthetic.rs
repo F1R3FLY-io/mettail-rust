@@ -12,7 +12,7 @@
 //! as `AtomicShape::LiteralPatterned` in `prefix.rs::classify_atomic`.
 //!
 //! Synthetic rules receive stable `rule_idx` values that appear in the
-//! emitted `WPDS_RULES` table alongside user-written rules. Callers
+//! emitted `WPDA_RULES` table alongside user-written rules. Callers
 //! (`emit_rule_table`, `emit_prefix_arms_for_category`, `emit_action_for_body`)
 //! consume the combined `user + synthetic` list so every downstream emission
 //! stays consistent.
@@ -316,7 +316,7 @@ pub(crate) fn build_per_category_rules(
     //    `target/generated/<lang>/ast.rs` emits dollar-application
     //    handlers ($cat(f, x) → binary; $$cat(f, x1, ..., xN) → variadic)
     //    for every (home, dom) category pair, but the WPDS engine
-    //    emitted by `wpds_codegen/` had no corresponding dispatch arm.
+    //    emitted by `wpda_codegen/` had no corresponding dispatch arm.
     //    We close the gap by synthesizing matching judgement-style
     //    GrammarRules so the standard classify_binder / classify_collection
     //    paths emit prefix arms uniformly.

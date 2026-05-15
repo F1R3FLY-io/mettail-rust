@@ -17,8 +17,8 @@ pub fn generate_binder_shadowing_section(language: &LanguageDef) -> TokenStream 
         #![allow(non_snake_case, unused_imports, dead_code)]
         //! Auto-generated binder shadowing tests for #lang_name.
 
-        use mettail_prattail::wpds_runtime::{StackSymbolV2, WpdsState};
-        use mettail_prattail::gss::{WpdsGss, WpdsGssNode};
+        use mettail_prattail::wpda_runtime::{StackSymbolV2, WpdaState};
+        use mettail_prattail::gss::{WpdaGss, WpdaGssNode};
         use mettail_prattail::automata::lex_weight::LexicographicWeight;
 
         #baseline
@@ -38,8 +38,8 @@ fn baseline_tests(lang_name: &str) -> TokenStream {
                 // A GSS chain of nested binder frames preserves position
                 // identity across pushes — required for alpha-equivalence
                 // tracking under ambiguity branching.
-                let mut g: WpdsGss<LexicographicWeight> = WpdsGss::new();
-                let root = g.get_or_create_node(WpdsGssNode {
+                let mut g: WpdaGss<LexicographicWeight> = WpdaGss::new();
+                let root = g.get_or_create_node(WpdaGssNode {
                     pos: 0,
                     symbol: StackSymbolV2::category_entry(0),
                 });

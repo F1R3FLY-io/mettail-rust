@@ -189,7 +189,7 @@ pub enum BinderPosition {
     GuardSlot,
     /// Opt-Group (2026-04-29): `Op(Opt { inner })` — recursive
     /// optional-group lowering. The engine transitions into
-    /// `WpdsState::OptionalGroup { sub_pos: 0 }`; on entry it peeks
+    /// `WpdaState::OptionalGroup { sub_pos: 0 }`; on entry it peeks
     /// the FIRST-set of `inner_positions[0]` to decide whether to take
     /// the group (push inner args + advance into group) or skip (push
     /// `ActionArg::Optional(None)` + advance past group). The
@@ -1017,7 +1017,7 @@ pub(crate) fn lookup_src_idx(name: &str, categories: &[String]) -> Option<u16> {
 /// **Multi-rule trigger disambiguation via Fork (F7):** when multiple rules
 /// in the same result category share the same trigger keyword (e.g.,
 /// Calculator's five `bool(arg)` cast rules with `arg` of different
-/// categories), the arm emits `WpdsStepAction::Fork` with one branch per
+/// categories), the arm emits `WpdaStepAction::Fork` with one branch per
 /// rule. The walker fans out N `BranchCursor`s and `step_fanout` drives
 /// each independently until lex-min selects the surviving branch.
 ///
@@ -1093,14 +1093,14 @@ pub(crate) fn emit_binder_prefix_arms(
             arms.push(quote! {
                 Some(mettail_prattail::automata::TokenKind::Fixed(__trigger))
                     if __trigger == #trigger && state_cat_src_idx == #result_src_idx => {
-                    return WpdsStepAction::ConsumeAndPush {
+                    return WpdaStepAction::ConsumeAndPush {
                         symbol: StackSymbolV2::rule_at(
                             #result_src_idx, #rule_idx, 1u8, Some(_outer_bp),
                         ),
                         weight: lex_w(
                             0.0, #result_src_idx, #rule_idx,
                         ),
-                        new_state: WpdsState::BinderRule {
+                        new_state: WpdaState::BinderRule {
                             result_src_idx: #result_src_idx,
                             rule_idx: #rule_idx,
                             body_src_idx: #body_src_idx,
@@ -1124,21 +1124,21 @@ pub(crate) fn emit_binder_prefix_arms(
                     None => result_src_idx,
                 };
                 quote! {
-                    mettail_prattail::wpds_walker::ForkBranch {
+                    mettail_prattail::wpda_walker::ForkBranch {
                         symbol: StackSymbolV2::rule_at(
                             #result_src_idx, #rule_idx, 1u8, Some(_outer_bp),
                         ),
                         weight: lex_w(
                             0.0, #result_src_idx, #rule_idx,
                         ),
-                        new_state: WpdsState::BinderRule {
+                        new_state: WpdaState::BinderRule {
                             result_src_idx: #result_src_idx,
                             rule_idx: #rule_idx,
                             body_src_idx: #body_src_idx,
                             outer_bp: _outer_bp,
                         },
                         // Stage 3.12 / Class A.i (2026-05-01): default Push action.
-                        action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
+                        action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
                     }
                 }
             })
@@ -1147,7 +1147,7 @@ pub(crate) fn emit_binder_prefix_arms(
         arms.push(quote! {
             Some(mettail_prattail::automata::TokenKind::Fixed(__trigger))
                 if __trigger == #trigger && state_cat_src_idx == #result_src_idx => {
-                return WpdsStepAction::Fork {
+                return WpdaStepAction::Fork {
                     branches: vec![ #( #branches ),* ],
                     consume_trigger: true,
                 };
@@ -1157,7 +1157,7 @@ pub(crate) fn emit_binder_prefix_arms(
     quote! { #(#arms)* }
 }
 
-/// Phase 5: emit the body of `WpdsState::BinderRule`. Reads the marker's
+/// Phase 5: emit the body of `WpdaState::BinderRule`. Reads the marker's
 /// `RuleAt(position)` from frontier_top, dispatches per-rule-per-position.
 ///
 /// Stage 3.27d (G-PREFIX-BP, 2026-04-30): `prefix_bp_map` carries the
@@ -1188,9 +1188,9 @@ pub(crate) fn emit_binder_rule_body(
             let final_pos = (shape.positions.len() + 1) as u8;
             arms.push(quote! {
                 (#result_src_idx, #rule_idx, #final_pos) => {
-                    return WpdsStepAction::Pop {
+                    return WpdaStepAction::Pop {
                         weight: lex_one(),
-                        new_state: WpdsState::InfixLoop {
+                        new_state: WpdaState::InfixLoop {
                             cur_bp: *outer_bp,
                         },
                     };
@@ -1208,20 +1208,20 @@ pub(crate) fn emit_binder_rule_body(
                             // == #text guard runs inside the walker,
                             // failure produces no child (cursor dies via
                             // step_fanout's empty-children pathway).
-                            return WpdsStepAction::Fork {
-                                branches: vec![mettail_prattail::wpds_walker::ForkBranch {
+                            return WpdaStepAction::Fork {
+                                branches: vec![mettail_prattail::wpda_walker::ForkBranch {
                                     symbol: StackSymbolV2::rule_at(
                                         #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
                                     ),
                                     weight: lex_one(),
-                                    new_state: WpdsState::BinderRule {
+                                    new_state: WpdaState::BinderRule {
                                         result_src_idx: #result_src_idx,
                                         rule_idx: #rule_idx,
                                         body_src_idx: *_body_src_idx,
                                         outer_bp: *outer_bp,
                                     },
                                     action_kind:
-                                        mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplace {
+                                        mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
                                             expected_text: #text.to_string(),
                                         },
                                 }],
@@ -1242,7 +1242,7 @@ pub(crate) fn emit_binder_rule_body(
                         // emits no dispatch arm; if a future change
                         // re-introduces a top-level BinderIdent, the
                         // walker will surface it via the catch-all
-                        // `_ => WpdsStepAction::Idle` and the parse
+                        // `_ => WpdaStepAction::Idle` and the parse
                         // will stall, which is loud enough to debug.
                     },
                     BinderPosition::BinderListLoop {
@@ -1285,25 +1285,25 @@ pub(crate) fn emit_binder_rule_body(
                         if !*allow_empty && !*allow_multi && collection_param_cat.is_none() {
                             quote! {
                                 (#result_src_idx, #rule_idx, #pos) => {
-                                    return WpdsStepAction::Fork {
+                                    return WpdaStepAction::Fork {
                                         branches: vec![
-                                            mettail_prattail::wpds_walker::ForkBranch {
+                                            mettail_prattail::wpda_walker::ForkBranch {
                                                 symbol: StackSymbolV2::rule_at(
                                                     #result_src_idx, #rule_idx,
                                                     #next_pos, Some(*outer_bp),
                                                 ),
                                                 weight: lex_one(),
-                                                new_state: WpdsState::BinderRule {
+                                                new_state: WpdaState::BinderRule {
                                                     result_src_idx: #result_src_idx,
                                                     rule_idx: #rule_idx,
                                                     body_src_idx: *_body_src_idx,
                                                     outer_bp: *outer_bp,
                                                 },
                                                 action_kind:
-                                                    mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
+                                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
                                                         start_scope: true,
                                                         effect:
-                                                            mettail_prattail::wpds_walker::BuilderDelta::EndBinderScope,
+                                                            mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
                                                     },
                                             },
                                         ],
@@ -1315,7 +1315,7 @@ pub(crate) fn emit_binder_rule_body(
                             quote! {
                                 (#result_src_idx, #rule_idx, #pos) => {
                                     let _ = tokens.peek_text(_pos);
-                                    return WpdsStepAction::Fork {
+                                    return WpdaStepAction::Fork {
                                         branches: vec![
                                             // BRANCH 1: empty close — Class 3
                                             // multi-effect: log
@@ -1326,7 +1326,7 @@ pub(crate) fn emit_binder_rule_body(
                                             // terminal action's arity-3
                                             // expectation [CollectionId,
                                             // BinderScope, Term<Proc>].
-                                            mettail_prattail::wpds_walker::ForkBranch {
+                                            mettail_prattail::wpda_walker::ForkBranch {
                                                 symbol: StackSymbolV2::rule_at(
                                                     #result_src_idx, #rule_idx,
                                                     #next_pos, Some(*outer_bp),
@@ -1334,17 +1334,17 @@ pub(crate) fn emit_binder_rule_body(
                                                 weight: lex_w(
                                                     0.0, #result_src_idx, #rule_idx,
                                                 ),
-                                                new_state: WpdsState::BinderRule {
+                                                new_state: WpdaState::BinderRule {
                                                     result_src_idx: #result_src_idx,
                                                     rule_idx: #rule_idx,
                                                     body_src_idx: *_body_src_idx,
                                                     outer_bp: *outer_bp,
                                                 },
                                                 action_kind:
-                                                    mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
+                                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
                                                         expected_text: #close.to_string(),
                                                         effects: vec![
-                                                            mettail_prattail::wpds_walker::BuilderDelta::StartCollection,
+                                                            mettail_prattail::wpda_walker::BuilderDelta::StartCollection,
                                                             // Phase 4 #2 (2026-05-12): use the
                                                             // BinderListLoop's `slot_idx` (was
                                                             // hardcoded 0u8). In the no-outer-
@@ -1357,14 +1357,14 @@ pub(crate) fn emit_binder_rule_body(
                                                             // (which is 1 if a sibling Class-2
                                                             // SimpleCollection at slot 0
                                                             // occupied accumulator 0 first).
-                                                            mettail_prattail::wpds_walker::BuilderDelta::PushCollectionId { id: #slot_idx },
-                                                            mettail_prattail::wpds_walker::BuilderDelta::StartBinderScope {
+                                                            mettail_prattail::wpda_walker::BuilderDelta::PushCollectionId { id: #slot_idx },
+                                                            mettail_prattail::wpda_walker::BuilderDelta::StartBinderScope {
                                                                 names: Vec::new(),
                                                             },
                                                             // B8 / Issue C followup: close the
                                                             // empty scope so BinderScope arg
                                                             // is pushed before the body parse.
-                                                            mettail_prattail::wpds_walker::BuilderDelta::EndBinderScope,
+                                                            mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
                                                         ],
                                                     },
                                             },
@@ -1387,7 +1387,7 @@ pub(crate) fn emit_binder_rule_body(
                                             // `is_class3_collection_per_slot`
                                             // distinguishes this Class-3 slot
                                             // from Class-2 sibling slots.
-                                            mettail_prattail::wpds_walker::ForkBranch {
+                                            mettail_prattail::wpda_walker::ForkBranch {
                                                 symbol: StackSymbolV2::collection_marker(
                                                     #result_src_idx, #rule_idx, #slot_idx,
                                                 ),
@@ -1395,7 +1395,7 @@ pub(crate) fn emit_binder_rule_body(
                                                     mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                                     #result_src_idx, #rule_idx,
                                                 ),
-                                                new_state: WpdsState::BinderListLoop {
+                                                new_state: WpdaState::BinderListLoop {
                                                     result_src_idx: #result_src_idx,
                                                     rule_idx: #rule_idx,
                                                     body_src_idx: *_body_src_idx,
@@ -1405,7 +1405,7 @@ pub(crate) fn emit_binder_rule_body(
                                                     sub_pos: 0u8,
                                                 },
                                                 action_kind:
-                                                    mettail_prattail::wpds_walker::ForkActionKind::ReplaceAndPush {
+                                                    mettail_prattail::wpda_walker::ForkActionKind::ReplaceAndPush {
                                                         replace_symbol: StackSymbolV2::rule_at(
                                                             #result_src_idx, #rule_idx,
                                                             #next_pos, Some(*outer_bp),
@@ -1438,10 +1438,10 @@ pub(crate) fn emit_binder_rule_body(
                                 // contributing to BinderListLoop's exponential
                                 // cursor explosion on multi-binder grammars.
                                 let _ = tokens.peek_text(_pos);
-                                return WpdsStepAction::Fork {
+                                return WpdaStepAction::Fork {
                                     branches: vec![
                                         // BRANCH 1: empty close — GuardedConsumeAndReplaceWithEffect
-                                        mettail_prattail::wpds_walker::ForkBranch {
+                                        mettail_prattail::wpda_walker::ForkBranch {
                                             symbol: StackSymbolV2::rule_at(
                                                 #result_src_idx, #rule_idx,
                                                 #next_pos, Some(*outer_bp),
@@ -1449,7 +1449,7 @@ pub(crate) fn emit_binder_rule_body(
                                             weight: lex_w(
                                                 0.0, #result_src_idx, #rule_idx,
                                             ),
-                                            new_state: WpdsState::BinderRule {
+                                            new_state: WpdaState::BinderRule {
                                                 result_src_idx: #result_src_idx,
                                                 rule_idx: #rule_idx,
                                                 body_src_idx: *_body_src_idx,
@@ -1461,13 +1461,13 @@ pub(crate) fn emit_binder_rule_body(
                                                 // bootstrap MUST also close
                                                 // the scope so the action's
                                                 // BinderScope arg is pushed.
-                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
+                                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
                                                     expected_text: #close.to_string(),
                                                     effects: vec![
-                                                        mettail_prattail::wpds_walker::BuilderDelta::StartBinderScope {
+                                                        mettail_prattail::wpda_walker::BuilderDelta::StartBinderScope {
                                                             names: Vec::new(),
                                                         },
-                                                        mettail_prattail::wpds_walker::BuilderDelta::EndBinderScope,
+                                                        mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
                                                     ],
                                                 },
                                         },
@@ -1483,7 +1483,7 @@ pub(crate) fn emit_binder_rule_body(
                                         // binder rules continue to use the
                                         // legacy GuardedConsumeIdentAndReplace
                                         // at their direct BinderIdent arm.
-                                        mettail_prattail::wpds_walker::ForkBranch {
+                                        mettail_prattail::wpda_walker::ForkBranch {
                                             symbol: StackSymbolV2::rule_at(
                                                 #result_src_idx, #rule_idx,
                                                 #pos, Some(*outer_bp),
@@ -1492,7 +1492,7 @@ pub(crate) fn emit_binder_rule_body(
                                                 mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                                 #result_src_idx, #rule_idx,
                                             ),
-                                            new_state: WpdsState::BinderListLoop {
+                                            new_state: WpdaState::BinderListLoop {
                                                 result_src_idx: #result_src_idx,
                                                 rule_idx: #rule_idx,
                                                 body_src_idx: *_body_src_idx,
@@ -1502,7 +1502,7 @@ pub(crate) fn emit_binder_rule_body(
                                                 sub_pos: 0u8,
                                             },
                                             action_kind:
-                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
+                                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
                                                     start_scope: true,
                                                 },
                                         },
@@ -1529,13 +1529,13 @@ pub(crate) fn emit_binder_rule_body(
                                     // sub-parse returns, Unwinding-RuleAt sees
                                     // the post-param position. THEN push
                                     // CategoryEntry on top of the new marker.
-                                    return WpdsStepAction::ReplaceAndPush {
+                                    return WpdaStepAction::ReplaceAndPush {
                                         replace_symbol: StackSymbolV2::rule_at(
                                             #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
                                         ),
                                         push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
                                         weight: lex_one(),
-                                        new_state: WpdsState::PrefixDispatch {
+                                        new_state: WpdaState::PrefixDispatch {
                                             pos: _pos,
                                             cur_bp: #cur_bp_lit,
                                         },
@@ -1577,7 +1577,7 @@ pub(crate) fn emit_binder_rule_body(
                                 let slot_idx = info.slot_idx;
                                 quote! {
                                     (#result_src_idx, #rule_idx, #pos) => {
-                                        return WpdsStepAction::ReplaceAndPush {
+                                        return WpdaStepAction::ReplaceAndPush {
                                             replace_symbol: StackSymbolV2::rule_at(
                                                 #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
                                             ),
@@ -1585,7 +1585,7 @@ pub(crate) fn emit_binder_rule_body(
                                                 #result_src_idx, #rule_idx, #slot_idx,
                                             ),
                                             weight: lex_one(),
-                                            new_state: WpdsState::PrefixDispatch {
+                                            new_state: WpdaState::PrefixDispatch {
                                                 pos: _pos,
                                                 cur_bp: 0u8,
                                             },
@@ -1600,12 +1600,12 @@ pub(crate) fn emit_binder_rule_body(
                             // Phase 6: parse predicate inline. Walker
                             // invokes parse_predicate_from_tokens, pushes
                             // ActionArg::Predicate, advances pos.
-                            return WpdsStepAction::ParsePredicate {
+                            return WpdaStepAction::ParsePredicate {
                                 replace_symbol: StackSymbolV2::rule_at(
                                     #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
                                 ),
                                 weight: lex_one(),
-                                new_state: WpdsState::BinderRule {
+                                new_state: WpdaState::BinderRule {
                                     result_src_idx: #result_src_idx,
                                     rule_idx: #rule_idx,
                                     body_src_idx: *_body_src_idx,
@@ -1626,8 +1626,8 @@ pub(crate) fn emit_binder_rule_body(
                         let group_idx_byte = *group_idx;
                         quote! {
                             (#result_src_idx, #rule_idx, #pos) => {
-                                return WpdsStepAction::Advance(
-                                    WpdsState::OptionalGroup {
+                                return WpdaStepAction::Advance(
+                                    WpdaState::OptionalGroup {
                                         result_src_idx: #result_src_idx,
                                         rule_idx: #rule_idx,
                                         group_idx: #group_idx_byte,
@@ -1644,13 +1644,13 @@ pub(crate) fn emit_binder_rule_body(
         }
     }
     if arms.is_empty() {
-        return quote! { WpdsStepAction::Idle };
+        return quote! { WpdaStepAction::Idle };
     }
     quote! {
         {
             let position: u8 = match frontier_top.map(|n| n.symbol.kind) {
-                Some(mettail_prattail::wpds_runtime::SymbolKind::RuleAt(p)) => p,
-                _ => return WpdsStepAction::Idle,
+                Some(mettail_prattail::wpda_runtime::SymbolKind::RuleAt(p)) => p,
+                _ => return WpdaStepAction::Idle,
             };
             // The empty-list branch needs to push an empty BinderList arg
             // representing zero binders. Use a closure-based local helper.
@@ -1658,7 +1658,7 @@ pub(crate) fn emit_binder_rule_body(
             let b_pre_finalize_empty_list = || ();
             match (*result_src_idx, *rule_idx, position) {
                 #(#arms)*
-                _ => WpdsStepAction::Idle,
+                _ => WpdaStepAction::Idle,
             }
         }
     }
@@ -1933,7 +1933,7 @@ pub(crate) fn emit_binderlist_inner_metadata(per_cat: &[Vec<GrammarRule>]) -> To
     }
 }
 
-/// Phase 5b + B8 (2026-05-08): emit the body of `WpdsState::BinderListLoop`.
+/// Phase 5b + B8 (2026-05-08): emit the body of `WpdaState::BinderListLoop`.
 /// The state body dispatches on `(result_src_idx, rule_idx, sub_pos)`.
 ///
 /// PNew-style rules (inner_positions=[BinderIdent], collection_param_cat=
@@ -2006,10 +2006,10 @@ pub(crate) fn emit_binder_list_loop_body(
                             // pathway raises `Error("all fork branches
                             // dropped")` cleanly.
                             let _ = tokens.peek_text(_pos);
-                            return WpdsStepAction::Fork {
+                            return WpdaStepAction::Fork {
                                 branches: vec![
                                     // BRANCH 1: close — GuardedConsumeAndReplace
-                                    mettail_prattail::wpds_walker::ForkBranch {
+                                    mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::rule_at(
                                             #result_src_idx, #rule_idx,
                                             #next_pos, Some(*outer_bp),
@@ -2017,7 +2017,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                         weight: lex_w(
                                             0.0, #result_src_idx, #rule_idx,
                                         ),
-                                        new_state: WpdsState::BinderRule {
+                                        new_state: WpdaState::BinderRule {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
                                             body_src_idx: *body_src_idx,
@@ -2028,19 +2028,19 @@ pub(crate) fn emit_binder_list_loop_body(
                                             // (2026-05-09): close the open
                                             // BinderScope so action's
                                             // BinderScope arg is pushed.
-                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplaceWithEffect {
+                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithEffect {
                                                 expected_text: #close.to_string(),
                                                 effect:
-                                                    mettail_prattail::wpds_walker::BuilderDelta::EndBinderScope,
+                                                    mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
                                             },
                                     },
                                     // BRANCH 2: sep — GuardedConsume
-                                    mettail_prattail::wpds_walker::ForkBranch {
+                                    mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::category_entry(0),
                                         weight: lex_w(
                                             0.0, #result_src_idx, #rule_idx,
                                         ),
-                                        new_state: WpdsState::BinderListLoop {
+                                        new_state: WpdaState::BinderListLoop {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
                                             body_src_idx: *body_src_idx,
@@ -2050,7 +2050,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                             sub_pos: 0u8,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsume {
+                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsume {
                                                 expected_text: #separator.to_string(),
                                             },
                                     },
@@ -2064,7 +2064,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                     // captured ident leaks as ActionArg::
                                     // Ident on the args stack and the
                                     // scope's names list stays at length 1.
-                                    mettail_prattail::wpds_walker::ForkBranch {
+                                    mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::rule_at(
                                             #result_src_idx, #rule_idx,
                                             *marker_pos, Some(*outer_bp),
@@ -2073,7 +2073,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                             mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                             #result_src_idx, #rule_idx,
                                         ),
-                                        new_state: WpdsState::BinderListLoop {
+                                        new_state: WpdaState::BinderListLoop {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
                                             body_src_idx: *body_src_idx,
@@ -2083,7 +2083,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                             sub_pos: 0u8,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
+                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
                                                 start_scope: false,
                                             },
                                     },
@@ -2104,7 +2104,7 @@ pub(crate) fn emit_binder_list_loop_body(
                         arms.push(quote! {
                             (#result_src_idx, #rule_idx, 0u8) => {
                                 let _ = tokens.peek_text(_pos);
-                                return WpdsStepAction::Fork {
+                                return WpdaStepAction::Fork {
                                     branches: vec![
                                         // BRANCH 1: close → finish loop.
                                         // B8 / Issue C followup (2026-05-09):
@@ -2118,26 +2118,26 @@ pub(crate) fn emit_binder_list_loop_body(
                                         // (placed by ReplaceAndPush at
                                         // bootstrap), state=Unwinding.
                                         // Unwinding-RuleAt routes to BinderRule.
-                                        mettail_prattail::wpds_walker::ForkBranch {
+                                        mettail_prattail::wpda_walker::ForkBranch {
                                             symbol: StackSymbolV2::category_entry(0),
                                             weight: lex_w(
                                                 0.0, #result_src_idx, #rule_idx,
                                             ),
-                                            new_state: WpdsState::Unwinding,
+                                            new_state: WpdaState::Unwinding,
                                             action_kind:
-                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndPopWithEffect {
+                                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndPopWithEffect {
                                                     expected_text: #close.to_string(),
                                                     effect:
-                                                        mettail_prattail::wpds_walker::BuilderDelta::EndBinderScope,
+                                                        mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
                                                 },
                                         },
                                         // BRANCH 2: sep → next iteration.
-                                        mettail_prattail::wpds_walker::ForkBranch {
+                                        mettail_prattail::wpda_walker::ForkBranch {
                                             symbol: StackSymbolV2::category_entry(0),
                                             weight: lex_w(
                                                 0.0, #result_src_idx, #rule_idx,
                                             ),
-                                            new_state: WpdsState::BinderListLoop {
+                                            new_state: WpdaState::BinderListLoop {
                                                 result_src_idx: #result_src_idx,
                                                 rule_idx: #rule_idx,
                                                 body_src_idx: *body_src_idx,
@@ -2147,7 +2147,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                 sub_pos: 0u8,
                                             },
                                             action_kind:
-                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsume {
+                                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsume {
                                                     expected_text: #separator.to_string(),
                                                 },
                                         },
@@ -2156,7 +2156,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                         // and transition to sub_pos:1 where
                                         // the inner walk takes over. No
                                         // token consumed at this branch.
-                                        mettail_prattail::wpds_walker::ForkBranch {
+                                        mettail_prattail::wpda_walker::ForkBranch {
                                             symbol: StackSymbolV2::optional_group_at(
                                                 #result_src_idx, #rule_idx,
                                                 1u8, *outer_bp,
@@ -2165,7 +2165,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                 mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                                 #result_src_idx, #rule_idx,
                                             ),
-                                            new_state: WpdsState::BinderListLoop {
+                                            new_state: WpdaState::BinderListLoop {
                                                 result_src_idx: #result_src_idx,
                                                 rule_idx: #rule_idx,
                                                 body_src_idx: *body_src_idx,
@@ -2175,7 +2175,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                 sub_pos: 1u8,
                                             },
                                             action_kind:
-                                                mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                                mettail_prattail::wpda_walker::ForkActionKind::Push,
                                         },
                                     ],
                                     consume_trigger: false,
@@ -2192,9 +2192,9 @@ pub(crate) fn emit_binder_list_loop_body(
                                     let txt = text.clone();
                                     quote! {
                                         (#result_src_idx, #rule_idx, #cur_sp) => {
-                                            return WpdsStepAction::Fork {
+                                            return WpdaStepAction::Fork {
                                                 branches: vec![
-                                                    mettail_prattail::wpds_walker::ForkBranch {
+                                                    mettail_prattail::wpda_walker::ForkBranch {
                                                         symbol: StackSymbolV2::optional_group_at(
                                                             #result_src_idx, #rule_idx,
                                                             #next_sp, *outer_bp,
@@ -2202,7 +2202,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                         weight: lex_w(
                                                             0.0, #result_src_idx, #rule_idx,
                                                         ),
-                                                        new_state: WpdsState::BinderListLoop {
+                                                        new_state: WpdaState::BinderListLoop {
                                                             result_src_idx: #result_src_idx,
                                                             rule_idx: #rule_idx,
                                                             body_src_idx: *body_src_idx,
@@ -2212,7 +2212,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                             sub_pos: #next_sp,
                                                         },
                                                         action_kind:
-                                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplace {
+                                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
                                                                 expected_text: #txt.to_string(),
                                                             },
                                                     },
@@ -2243,14 +2243,14 @@ pub(crate) fn emit_binder_list_loop_body(
                                         // cleanly.
                                         quote! {
                                             (#result_src_idx, #rule_idx, #cur_sp) => {
-                                                return WpdsStepAction::Fork {
+                                                return WpdaStepAction::Fork {
                                                     branches: vec![
-                                                        mettail_prattail::wpds_walker::ForkBranch {
+                                                        mettail_prattail::wpda_walker::ForkBranch {
                                                             symbol: StackSymbolV2::category_entry(0),
                                                             weight: lex_w(
                                                                 0.0, #result_src_idx, #rule_idx,
                                                             ),
-                                                            new_state: WpdsState::BinderListLoop {
+                                                            new_state: WpdaState::BinderListLoop {
                                                                 result_src_idx: #result_src_idx,
                                                                 rule_idx: #rule_idx,
                                                                 body_src_idx: *body_src_idx,
@@ -2260,7 +2260,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                                 sub_pos: 0u8,
                                                             },
                                                             action_kind:
-                                                                mettail_prattail::wpds_walker::ForkActionKind::ConsumeIdentAndPop {
+                                                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeIdentAndPop {
                                                                     start_scope: false,
                                                                 },
                                                         },
@@ -2272,9 +2272,9 @@ pub(crate) fn emit_binder_list_loop_body(
                                     } else {
                                         quote! {
                                             (#result_src_idx, #rule_idx, #cur_sp) => {
-                                                return WpdsStepAction::Fork {
+                                                return WpdaStepAction::Fork {
                                                     branches: vec![
-                                                        mettail_prattail::wpds_walker::ForkBranch {
+                                                        mettail_prattail::wpda_walker::ForkBranch {
                                                             symbol: StackSymbolV2::optional_group_at(
                                                                 #result_src_idx, #rule_idx,
                                                                 #next_sp, *outer_bp,
@@ -2282,7 +2282,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                             weight: lex_w(
                                                                 0.0, #result_src_idx, #rule_idx,
                                                             ),
-                                                            new_state: WpdsState::BinderListLoop {
+                                                            new_state: WpdaState::BinderListLoop {
                                                                 result_src_idx: #result_src_idx,
                                                                 rule_idx: #rule_idx,
                                                                 body_src_idx: *body_src_idx,
@@ -2292,7 +2292,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                                 sub_pos: #next_sp,
                                                             },
                                                             action_kind:
-                                                                mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
+                                                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
                                                                     start_scope: false,
                                                                 },
                                                         },
@@ -2326,14 +2326,14 @@ pub(crate) fn emit_binder_list_loop_body(
                                     let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
                                     quote! {
                                         (#result_src_idx, #rule_idx, #cur_sp) => {
-                                            return WpdsStepAction::ReplaceAndPush {
+                                            return WpdaStepAction::ReplaceAndPush {
                                                 replace_symbol: StackSymbolV2::optional_group_at(
                                                     #result_src_idx, #rule_idx,
                                                     #next_sp, *outer_bp,
                                                 ),
                                                 push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
                                                 weight: lex_one(),
-                                                new_state: WpdsState::PrefixDispatch {
+                                                new_state: WpdaState::PrefixDispatch {
                                                     pos: _pos,
                                                     cur_bp: 0u8,
                                                 },
@@ -2357,7 +2357,7 @@ pub(crate) fn emit_binder_list_loop_body(
         }
     }
     if arms.is_empty() {
-        return quote! { WpdsStepAction::Idle };
+        return quote! { WpdaStepAction::Idle };
     }
     quote! {
         {
@@ -2366,13 +2366,13 @@ pub(crate) fn emit_binder_list_loop_body(
             // hard-coded literals, this is safe.
             match (*result_src_idx, *rule_idx, *sub_pos) {
                 #(#arms)*
-                _ => WpdsStepAction::Idle,
+                _ => WpdaStepAction::Idle,
             }
         }
     }
 }
 
-/// Opt-Group (2026-04-29): emit the body of `WpdsState::OptionalGroup`.
+/// Opt-Group (2026-04-29): emit the body of `WpdaState::OptionalGroup`.
 /// Dispatches on `(*result_src_idx, *rule_idx, *group_idx, *sub_pos)` to:
 ///   - sub_pos == 0: peek FIRST set, emit `Push(OptionalGroupAt(1))` (take)
 ///     or `OptGroupAbsent` (skip).
@@ -2438,31 +2438,31 @@ pub(crate) fn emit_optional_group_body(
                 arms.push(quote! {
                     (#result_src_idx, #rule_idx, #group_idx_byte, 0u8) => {
                         // Stage 3.12 / Class A.i (2026-05-01): Opt-Group Fork.
-                        return WpdsStepAction::Fork {
+                        return WpdaStepAction::Fork {
                             branches: vec![
                                 // TAKE branch (push OptionalGroupAt(1) →
                                 // walker auto-opens optional scope via
                                 // emit_push_side_effects).
-                                mettail_prattail::wpds_walker::ForkBranch {
+                                mettail_prattail::wpda_walker::ForkBranch {
                                     symbol: StackSymbolV2::optional_group_at(
                                         #result_src_idx, #rule_idx, 1u8, *outer_bp,
                                     ),
                                     weight: lex_w(
                                         0.0, #result_src_idx, #rule_idx,
                                     ),
-                                    new_state: WpdsState::OptionalGroup {
+                                    new_state: WpdaState::OptionalGroup {
                                         result_src_idx: #result_src_idx,
                                         rule_idx: #rule_idx,
                                         group_idx: #group_idx_byte,
                                         sub_pos: 1,
                                         outer_bp: *outer_bp,
                                     },
-                                    action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                    action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
                                 },
                                 // SKIP branch (mirror OptGroupAbsent: log
                                 // PushOptionalAbsent + pop outer RuleAt +
                                 // push advanced outer RuleAt).
-                                mettail_prattail::wpds_walker::ForkBranch {
+                                mettail_prattail::wpda_walker::ForkBranch {
                                     // `symbol` is unused for OptGroupAbsent
                                     // action_kind — the cursor-side Fork
                                     // arm uses `replace_symbol` from
@@ -2473,13 +2473,13 @@ pub(crate) fn emit_optional_group_body(
                                         mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                         #result_src_idx, #rule_idx,
                                     ),
-                                    new_state: WpdsState::BinderRule {
+                                    new_state: WpdaState::BinderRule {
                                         result_src_idx: #result_src_idx,
                                         rule_idx: #rule_idx,
                                         body_src_idx: #result_src_idx,
                                         outer_bp: *outer_bp,
                                     },
-                                    action_kind: mettail_prattail::wpds_walker::ForkActionKind::OptGroupAbsent {
+                                    action_kind: mettail_prattail::wpda_walker::ForkActionKind::OptGroupAbsent {
                                         replace_symbol: StackSymbolV2::rule_at(
                                             #result_src_idx, #rule_idx,
                                             #outer_next_pos_byte, Some(*outer_bp),
@@ -2502,13 +2502,13 @@ pub(crate) fn emit_optional_group_body(
                                 // Stage 3.20 / L12 Commit F (2026-05-06):
                                 // Cluster 1 hack #4 closure (opt-group
                                 // inner mirror of site #5).
-                                return WpdsStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpds_walker::ForkBranch {
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::optional_group_at(
                                             #result_src_idx, #rule_idx, #next_sp, *outer_bp,
                                         ),
                                         weight: lex_one(),
-                                        new_state: WpdsState::OptionalGroup {
+                                        new_state: WpdaState::OptionalGroup {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
                                             group_idx: #group_idx_byte,
@@ -2516,7 +2516,7 @@ pub(crate) fn emit_optional_group_body(
                                             outer_bp: *outer_bp,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeAndReplace {
+                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
                                                 expected_text: #text.to_string(),
                                             },
                                     }],
@@ -2529,13 +2529,13 @@ pub(crate) fn emit_optional_group_body(
                             match collection {
                                 None => quote! {
                                     (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
-                                        return WpdsStepAction::ReplaceAndPush {
+                                        return WpdaStepAction::ReplaceAndPush {
                                             replace_symbol: StackSymbolV2::optional_group_at(
                                                 #result_src_idx, #rule_idx, #next_sp, *outer_bp,
                                             ),
                                             push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
                                             weight: lex_one(),
-                                            new_state: WpdsState::PrefixDispatch {
+                                            new_state: WpdaState::PrefixDispatch {
                                                 pos: _pos,
                                                 // Stage 3.27d (G-PREFIX-BP, 2026-04-30):
                                                 // opt-group inner ParamParse always uses
@@ -2566,7 +2566,7 @@ pub(crate) fn emit_optional_group_body(
                                     let slot_idx = info.slot_idx;
                                     quote! {
                                         (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
-                                            return WpdsStepAction::ReplaceAndPush {
+                                            return WpdaStepAction::ReplaceAndPush {
                                                 replace_symbol: StackSymbolV2::optional_group_at(
                                                     #result_src_idx, #rule_idx, #next_sp, *outer_bp,
                                                 ),
@@ -2574,7 +2574,7 @@ pub(crate) fn emit_optional_group_body(
                                                     #result_src_idx, #rule_idx, #slot_idx,
                                                 ),
                                                 weight: lex_one(),
-                                                new_state: WpdsState::PrefixDispatch {
+                                                new_state: WpdaState::PrefixDispatch {
                                                     pos: _pos,
                                                     cur_bp: 0u8,
                                                 },
@@ -2589,13 +2589,13 @@ pub(crate) fn emit_optional_group_body(
                                 // Stage 3.20 / L12 Commit F (2026-05-06):
                                 // Cluster 1 4th hack closure (opt-group
                                 // inner mirror of site #6).
-                                return WpdsStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpds_walker::ForkBranch {
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::optional_group_at(
                                             #result_src_idx, #rule_idx, #next_sp, *outer_bp,
                                         ),
                                         weight: lex_one(),
-                                        new_state: WpdsState::OptionalGroup {
+                                        new_state: WpdaState::OptionalGroup {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
                                             group_idx: #group_idx_byte,
@@ -2603,7 +2603,7 @@ pub(crate) fn emit_optional_group_body(
                                             outer_bp: *outer_bp,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
+                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
                                                 start_scope: true,
                                             },
                                     }],
@@ -2613,12 +2613,12 @@ pub(crate) fn emit_optional_group_body(
                         },
                         BinderPosition::GuardSlot => quote! {
                             (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
-                                return WpdsStepAction::ParsePredicate {
+                                return WpdaStepAction::ParsePredicate {
                                     replace_symbol: StackSymbolV2::optional_group_at(
                                         #result_src_idx, #rule_idx, #next_sp, *outer_bp,
                                     ),
                                     weight: lex_one(),
-                                    new_state: WpdsState::OptionalGroup {
+                                    new_state: WpdaState::OptionalGroup {
                                         result_src_idx: #result_src_idx,
                                         rule_idx: #rule_idx,
                                         group_idx: #group_idx_byte,
@@ -2643,13 +2643,13 @@ pub(crate) fn emit_optional_group_body(
                 // sub_pos == final_sub_pos: finalize.
                 arms.push(quote! {
                     (#result_src_idx, #rule_idx, #group_idx_byte, #final_sub_pos) => {
-                        return WpdsStepAction::OptGroupFinalize {
+                        return WpdaStepAction::OptGroupFinalize {
                             replace_symbol: StackSymbolV2::rule_at(
                                 #result_src_idx, #rule_idx,
                                 #outer_next_pos_byte, Some(*outer_bp),
                             ),
                             weight: lex_one(),
-                            new_state: WpdsState::BinderRule {
+                            new_state: WpdaState::BinderRule {
                                 result_src_idx: #result_src_idx,
                                 rule_idx: #rule_idx,
                                 body_src_idx: #result_src_idx,
@@ -2663,13 +2663,13 @@ pub(crate) fn emit_optional_group_body(
     }
 
     if arms.is_empty() {
-        return quote! { WpdsStepAction::Idle };
+        return quote! { WpdaStepAction::Idle };
     }
     quote! {
         {
             match (*result_src_idx, *rule_idx, *group_idx, *sub_pos) {
                 #(#arms)*
-                _ => WpdsStepAction::Idle,
+                _ => WpdaStepAction::Idle,
             }
         }
     }
@@ -2698,7 +2698,7 @@ pub(crate) fn emit_binder_action_entry(
             .unwrap_or(0)
     };
     let result_cat_idx = lookup_cat_idx(&shape.result_cat);
-    // ANY_CAT = u16::MAX; matches mettail_prattail::wpds_runtime::ANY_CAT
+    // ANY_CAT = u16::MAX; matches mettail_prattail::wpda_runtime::ANY_CAT
     // (this is in macros code so we can't reference the runtime constant
     // by path; we emit `&[ANY_CAT]` literally in the generated code).
     let any_cat_value: u16 = u16::MAX;
@@ -2755,7 +2755,7 @@ pub(crate) fn emit_binder_action_entry(
                 // Box::new(body))))`.
                 extracts.push(quote! {
                     let #var = match iter.next() {
-                        Some(mettail_prattail::wpds_runtime::ActionArg::BinderScope(h)) => {
+                        Some(mettail_prattail::wpda_runtime::ActionArg::BinderScope(h)) => {
                             match h.names.into_iter().next() {
                                 Some(name) => name,
                                 None => return,
@@ -2795,7 +2795,7 @@ pub(crate) fn emit_binder_action_entry(
             ActionArgKind::BinderList => {
                 extracts.push(quote! {
                     let #var = match iter.next() {
-                        Some(mettail_prattail::wpds_runtime::ActionArg::BinderScope(h)) => h.names,
+                        Some(mettail_prattail::wpda_runtime::ActionArg::BinderScope(h)) => h.names,
                         _ => return,
                     };
                 });
@@ -2877,7 +2877,7 @@ pub(crate) fn emit_binder_action_entry(
                             let #inner_var: Option<String> =
                                 match #opt_var.as_mut() {
                                     Some(inner_iter) => match inner_iter.next() {
-                                        Some(mettail_prattail::wpds_runtime::ActionArg::Ident { name, .. }) => Some(name),
+                                        Some(mettail_prattail::wpda_runtime::ActionArg::Ident { name, .. }) => Some(name),
                                         _ => None,
                                     },
                                     None => None,
@@ -2895,7 +2895,7 @@ pub(crate) fn emit_binder_action_entry(
                             let #inner_var: Option<Vec<String>> =
                                 match #opt_var.as_mut() {
                                     Some(inner_iter) => match inner_iter.next() {
-                                        Some(mettail_prattail::wpds_runtime::ActionArg::BinderScope(h)) => Some(h.names),
+                                        Some(mettail_prattail::wpda_runtime::ActionArg::BinderScope(h)) => Some(h.names),
                                         _ => None,
                                     },
                                     None => None,
@@ -3021,7 +3021,7 @@ pub(crate) fn emit_binder_action_entry(
                     inner_ext.push(extract_inner);
                 }
                 extracts.push(quote! {
-                    let mut #opt_var: Option<std::vec::IntoIter<mettail_prattail::wpds_runtime::ActionArg>> =
+                    let mut #opt_var: Option<std::vec::IntoIter<mettail_prattail::wpda_runtime::ActionArg>> =
                         match iter.next() {
                             Some(arg) => arg.into_optional()
                                 .flatten()
@@ -3145,8 +3145,8 @@ pub(crate) fn emit_binder_action_entry(
     };
 
     let action_fn = quote! {
-        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+        |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
             let mut iter = args.into_iter();
             #(#extracts)*
             #construct
@@ -3154,8 +3154,8 @@ pub(crate) fn emit_binder_action_entry(
     };
     Some(quote! {
         (#src_idx, #rule_idx) => {
-            static ENTRY: mettail_prattail::wpds_runtime::ActionEntry =
-                mettail_prattail::wpds_runtime::ActionEntry {
+            static ENTRY: mettail_prattail::wpda_runtime::ActionEntry =
+                mettail_prattail::wpda_runtime::ActionEntry {
                     action_fn: #action_fn,
                     arity: #arity,
                     expected_input_cats: #expected_input_cats_ts,

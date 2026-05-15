@@ -19,7 +19,7 @@ use mettail_ast::compose::ComposeDef;
 use mettail_ast::language::LanguageDef;
 use mettail_ast::merge::{apply_extends, apply_includes, apply_mixins};
 use mettail_ast::validation::validate_language;
-use gen::runtime::wpds_codegen::generate_wpds_engine_module;
+use gen::runtime::wpda_codegen::generate_wpda_engine_module;
 use gen::{
     generate_all, generate_blockly_definitions, generate_language_impl, generate_metadata,
     write_blockly_blocks, write_blockly_categories,
@@ -70,7 +70,7 @@ pub fn language(input: TokenStream) -> TokenStream {
     // BEFORE downstream codegen (so synthetic rules participate in
     // FIRST/FOLLOW, BP analysis, lint, etc. byte-identically to
     // user-written rules). User-defined injections are skip-listed via
-    // shape match. See `macros/src/gen/runtime/wpds_codegen/auto_inject.rs`.
+    // shape match. See `macros/src/gen/runtime/wpda_codegen/auto_inject.rs`.
     //
     // Stage 3.13e (2026-05-01): also append synthetic congruence rewrites
     // (`<Source>To<Target>Cong . | S ~> T |- (<Source>To<Target> S) ~>
@@ -80,7 +80,7 @@ pub fn language(input: TokenStream) -> TokenStream {
     // reductions but never surface them — affecting 214/1331 calc_op +
     // 148/532 rho_op tests.
     let auto_inject_output =
-        crate::gen::runtime::wpds_codegen::auto_inject::emit_auto_injection_rules(&language_def);
+        crate::gen::runtime::wpda_codegen::auto_inject::emit_auto_injection_rules(&language_def);
     language_def.terms.extend(auto_inject_output.terms);
     language_def.rewrites.extend(auto_inject_output.rewrites);
 
@@ -153,12 +153,12 @@ pub fn language(input: TokenStream) -> TokenStream {
     stage!("generate_language_impl.done");
 
     // W7 Stage 6: WPDS-runtime engine for the language.
-    // Emits a `<Lang>WpdsEngine` struct and `WpdsStepEngine` impl. Walker
+    // Emits a `<Lang>WpdaEngine` struct and `WpdaEngine` impl. Walker
     // (WPDS) is the sole parser backend post-Stage-10. See
     // `prattail/docs/design/wpds-migration-survey.md`.
-    stage!("generate_wpds_engine_module.start");
-    let wpds_engine_code = generate_wpds_engine_module(&language_def);
-    stage!("generate_wpds_engine_module.done");
+    stage!("generate_wpda_engine_module.start");
+    let wpda_engine_code = generate_wpda_engine_module(&language_def);
+    stage!("generate_wpda_engine_module.done");
 
     // Generate test file for cargo test / cargo nextest integration.
     // Gated by `options { emit_tests: true }` (default: true).
@@ -213,7 +213,7 @@ pub fn language(input: TokenStream) -> TokenStream {
     let ascent_include = spill_and_include(&lang_name, "ascent", ascent_code);
     let metadata_include = spill_and_include(&lang_name, "metadata", metadata_code);
     let language_include = spill_and_include(&lang_name, "language", language_code);
-    let wpds_include = spill_and_include(&lang_name, "wpds", wpds_engine_code);
+    let wpda_include = spill_and_include(&lang_name, "wpda", wpda_engine_code);
     let strategies_include = spill_and_include(&lang_name, "strategies", public_strategies);
 
     let combined = quote::quote! {
@@ -222,7 +222,7 @@ pub fn language(input: TokenStream) -> TokenStream {
         #ascent_include
         #metadata_include
         #language_include
-        #wpds_include
+        #wpda_include
 
         /// Public proptest strategies for generating random well-formed terms.
         ///

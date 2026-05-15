@@ -8,7 +8,7 @@
 //!
 //! These types are stand-alone data carriers: they don't depend on the
 //! WPDS runtime or parser — they're consumed by the lex-Fork emission
-//! path (L6) and the walker's `WpdsTokenSource` extension (L4).
+//! path (L6) and the walker's `WpdaTokenSource` extension (L4).
 //!
 //! ## No shipped grammar exercises lex ambiguity today
 //!
@@ -174,7 +174,7 @@ pub struct LexDagNode {
 /// with different `end_byte`s; non-ambiguous positions are chains.
 ///
 /// The walker's `LatticeTokenSource` (M3) wraps a `LexDag` and exposes
-/// it through the `WpdsTokenSource` trait — the cursor's `pos: usize`
+/// it through the `WpdaTokenSource` trait — the cursor's `pos: usize`
 /// becomes a DAG node-id, and `next_pos(pos, alt_idx)` returns the
 /// target node of the chosen alt. This replaces the `pending_lex_alts`
 /// sidecar (commits `3290e05` / `ed53ea3`) with a WPDS-stack-pure

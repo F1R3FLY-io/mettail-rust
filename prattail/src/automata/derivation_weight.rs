@@ -253,9 +253,9 @@ impl<W: fmt::Debug, D: fmt::Debug> fmt::Debug for DerivationWeight<W, D> {
 /// **`is_unit()`**: true when the builder has no pushed args / collections.
 /// The check uses `is_accepting_terminal` (already O(1) via field reads).
 ///
-/// Lives in `wpds_runtime.rs` to avoid a circular dep between
-/// `automata::derivation_weight` and `wpds_runtime::SemanticBuilder`.
-/// See `wpds_runtime.rs::impl DerivationCombine for Arc<SemanticBuilder>`.
+/// Lives in `wpda_runtime.rs` to avoid a circular dep between
+/// `automata::derivation_weight` and `wpda_runtime::SemanticBuilder`.
+/// See `wpda_runtime.rs::impl DerivationCombine for Arc<SemanticBuilder>`.
 
 #[cfg(test)]
 mod tests {

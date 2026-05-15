@@ -1,14 +1,14 @@
 //! WPDS incremental parsing session.
 //!
-//! Stage 5 of W7 plan v5.1. Provides [`WpdsIncrementalSession`], the
+//! Stage 5 of W7 plan v5.1. Provides [`WpdaIncrementalSession`], the
 //! load-bearing affordance for LSP `textDocument/didChange` integration
 //! per survey contracts (R8)–(R14):
 //!
 //! - On file open, the LSP server seeds the session with checkpoints
-//!   recorded as the walker advances (use [`WpdsIncrementalSession::record_checkpoint`]).
+//!   recorded as the walker advances (use [`WpdaIncrementalSession::record_checkpoint`]).
 //! - On edit at position `p`, the server calls
-//!   [`WpdsIncrementalSession::invalidate_after`] then
-//!   [`WpdsIncrementalSession::reparse`].
+//!   [`WpdaIncrementalSession::invalidate_after`] then
+//!   [`WpdaIncrementalSession::reparse`].
 //! - The session locates the nearest checkpoint at-or-before `p`, resumes
 //!   a fresh walker from that configuration, and drives until convergence
 //!   (state + stack match) or the engine terminates.
@@ -27,23 +27,23 @@
 use std::collections::BTreeMap;
 
 use crate::automata::semiring::Semiring;
-use crate::wpds_runtime::{WpdsConfiguration, WpdsState};
-use crate::wpds_walker::{WpdsStepEngine, WpdsWalker};
+use crate::wpda_runtime::{WpdaConfiguration, WpdaState};
+use crate::wpda_walker::{WpdaEngine, WpdaWalker};
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WpdsIncrementalSession
+// WpdaIncrementalSession
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Per-buffer checkpoint cache supporting incremental reparse.
 ///
 /// Generic over the weight semiring `W`. Typical instantiation:
-/// `WpdsIncrementalSession<LexicographicWeight>`.
-pub struct WpdsIncrementalSession<W: Semiring> {
+/// `WpdaIncrementalSession<LexicographicWeight>`.
+pub struct WpdaIncrementalSession<W: Semiring> {
     checkpoint_interval: usize,
-    checkpoints: BTreeMap<usize, WpdsConfiguration<W>>,
+    checkpoints: BTreeMap<usize, WpdaConfiguration<W>>,
 }
 
-/// Error returned by [`WpdsIncrementalSession::reparse`].
+/// Error returned by [`WpdaIncrementalSession::reparse`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReparseError {
     /// No checkpoint exists at or before the requested position.
@@ -52,13 +52,13 @@ pub enum ReparseError {
     EngineFailed(String),
 }
 
-impl<W: Semiring + crate::wpds_runtime::SnapshotWeight> WpdsIncrementalSession<W> {
+impl<W: Semiring + crate::wpda_runtime::SnapshotWeight> WpdaIncrementalSession<W> {
     /// Create a new session with the given checkpoint interval.
     ///
     /// `checkpoint_interval = 1` means snapshot every token (sub-microsecond
     /// edits, ~400 KB/file). Higher intervals trade reparse speed for memory.
     pub fn new(checkpoint_interval: usize) -> Self {
-        WpdsIncrementalSession {
+        WpdaIncrementalSession {
             checkpoint_interval: checkpoint_interval.max(1),
             checkpoints: BTreeMap::new(),
         }
@@ -78,7 +78,7 @@ impl<W: Semiring + crate::wpds_runtime::SnapshotWeight> WpdsIncrementalSession<W
     ///
     /// Existing checkpoint at `pos` is overwritten. Caller is responsible
     /// for honoring `checkpoint_interval` (the session does not gate).
-    pub fn record_checkpoint(&mut self, pos: usize, config: WpdsConfiguration<W>) {
+    pub fn record_checkpoint(&mut self, pos: usize, config: WpdaConfiguration<W>) {
         self.checkpoints.insert(pos, config);
     }
 
@@ -88,7 +88,7 @@ impl<W: Semiring + crate::wpds_runtime::SnapshotWeight> WpdsIncrementalSession<W
     pub fn checkpoint_at_or_before(
         &self,
         pos: usize,
-    ) -> Option<(usize, &WpdsConfiguration<W>)> {
+    ) -> Option<(usize, &WpdaConfiguration<W>)> {
         self.checkpoints
             .range(..=pos)
             .next_back()
@@ -126,7 +126,7 @@ impl<W: Semiring + crate::wpds_runtime::SnapshotWeight> WpdsIncrementalSession<W
     }
 
     /// Iterator over all checkpoints in position order.
-    pub fn iter(&self) -> impl Iterator<Item = (&usize, &WpdsConfiguration<W>)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&usize, &WpdaConfiguration<W>)> {
         self.checkpoints.iter()
     }
 
@@ -135,7 +135,7 @@ impl<W: Semiring + crate::wpds_runtime::SnapshotWeight> WpdsIncrementalSession<W
     ///
     /// Per survey contract R10. Equivalent to `cek.rs::is_convergent` but
     /// for WPDS configurations.
-    pub fn is_convergent(a: &WpdsConfiguration<W>, b: &WpdsConfiguration<W>) -> bool {
+    pub fn is_convergent(a: &WpdaConfiguration<W>, b: &WpdaConfiguration<W>) -> bool {
         a.state == b.state && a.stack == b.stack && a.pos == b.pos
     }
 
@@ -149,23 +149,23 @@ impl<W: Semiring + crate::wpds_runtime::SnapshotWeight> WpdsIncrementalSession<W
     ///
     /// Returns the walker's final state on success, or [`ReparseError`].
     ///
-    /// Phase A.1: requires a `tokens: &dyn WpdsTokenSource` so the engine's
+    /// Phase A.1: requires a `tokens: &dyn WpdaTokenSource` so the engine's
     /// `step()` can peek the input during the reparse.
-    pub fn reparse<E: WpdsStepEngine<W>>(
+    pub fn reparse<E: WpdaEngine<W>>(
         &self,
         edit_pos: usize,
         engine: E,
         max_steps: usize,
-        tokens: &dyn crate::wpds_runtime::WpdsTokenSource,
-    ) -> Result<WpdsState, ReparseError> {
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
+    ) -> Result<WpdaState, ReparseError> {
         let (cp_pos, cp_config) = self
             .checkpoint_at_or_before(edit_pos)
             .ok_or(ReparseError::NoCheckpoint)?;
-        let mut walker = WpdsWalker::seeded_from(engine, cp_config.clone());
+        let mut walker = WpdaWalker::seeded_from(engine, cp_config.clone());
         let _ = cp_pos;
         let final_state = walker.run_to_completion(max_steps, tokens);
         match final_state {
-            WpdsState::Error { ref message } => {
+            WpdaState::Error { ref message } => {
                 Err(ReparseError::EngineFailed(message.clone()))
             }
             other => Ok(other),
@@ -173,7 +173,7 @@ impl<W: Semiring + crate::wpds_runtime::SnapshotWeight> WpdsIncrementalSession<W
     }
 }
 
-impl<W: Semiring + crate::wpds_runtime::SnapshotWeight> Default for WpdsIncrementalSession<W> {
+impl<W: Semiring + crate::wpda_runtime::SnapshotWeight> Default for WpdaIncrementalSession<W> {
     fn default() -> Self {
         Self::new(1)
     }
@@ -187,9 +187,9 @@ impl<W: Semiring + crate::wpds_runtime::SnapshotWeight> Default for WpdsIncremen
 mod tests {
     use super::*;
     use crate::automata::lex_weight::LexicographicWeight;
-    use crate::wpds_runtime::{SliceTokenSource, StackSymbolV2, WpdsState, WpdsTokenSource};
-    use crate::wpds_walker::{IdleEngine, WpdsStepAction, WpdsStepEngine};
-    use crate::gss::{WpdsGss, WpdsGssNode};
+    use crate::wpda_runtime::{SliceTokenSource, StackSymbolV2, WpdaState, WpdaTokenSource};
+    use crate::wpda_walker::{IdleEngine, WpdaStepAction, WpdaEngine};
+    use crate::gss::{WpdaGss, WpdaGssNode};
     use crate::automata::TokenKind;
     use std::cell::RefCell;
 
@@ -203,8 +203,8 @@ mod tests {
         LexicographicWeight::from_cost(c, s, r)
     }
 
-    fn cfg(pos: usize, state: WpdsState, stack_depth: usize) -> WpdsConfiguration<LexicographicWeight> {
-        WpdsConfiguration {
+    fn cfg(pos: usize, state: WpdaState, stack_depth: usize) -> WpdaConfiguration<LexicographicWeight> {
+        WpdaConfiguration {
             pos,
             state,
             stack: (0..stack_depth as u16)
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn new_session_is_empty() {
-        let s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
+        let s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
         assert_eq!(s.checkpoint_interval(), 1);
         assert!(s.is_empty());
         assert_eq!(s.checkpoint_count(), 0);
@@ -225,24 +225,24 @@ mod tests {
     #[test]
     fn checkpoint_interval_min_one() {
         // Zero interval is clamped to 1.
-        let s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(0);
+        let s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(0);
         assert_eq!(s.checkpoint_interval(), 1);
     }
 
     #[test]
     fn record_checkpoint_increases_count() {
-        let mut s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
-        s.record_checkpoint(0, cfg(0, WpdsState::Ready { min_bp: 0 }, 1));
-        s.record_checkpoint(5, cfg(5, WpdsState::PrefixDispatch { pos: 5, cur_bp: 0 }, 2));
+        let mut s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
+        s.record_checkpoint(0, cfg(0, WpdaState::Ready { min_bp: 0 }, 1));
+        s.record_checkpoint(5, cfg(5, WpdaState::PrefixDispatch { pos: 5, cur_bp: 0 }, 2));
         assert_eq!(s.checkpoint_count(), 2);
     }
 
     #[test]
     fn checkpoint_at_or_before_finds_latest() {
-        let mut s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
-        s.record_checkpoint(0, cfg(0, WpdsState::Ready { min_bp: 0 }, 1));
-        s.record_checkpoint(5, cfg(5, WpdsState::PrefixDispatch { pos: 5, cur_bp: 0 }, 2));
-        s.record_checkpoint(10, cfg(10, WpdsState::InfixLoop { cur_bp: 7 }, 3));
+        let mut s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
+        s.record_checkpoint(0, cfg(0, WpdaState::Ready { min_bp: 0 }, 1));
+        s.record_checkpoint(5, cfg(5, WpdaState::PrefixDispatch { pos: 5, cur_bp: 0 }, 2));
+        s.record_checkpoint(10, cfg(10, WpdaState::InfixLoop { cur_bp: 7 }, 3));
 
         let (p, c) = s.checkpoint_at_or_before(10).expect("found at exact match");
         assert_eq!(p, 10);
@@ -257,17 +257,17 @@ mod tests {
 
     #[test]
     fn checkpoint_at_or_before_none_for_low_position() {
-        let mut s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
-        s.record_checkpoint(5, cfg(5, WpdsState::Ready { min_bp: 0 }, 1));
+        let mut s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
+        s.record_checkpoint(5, cfg(5, WpdaState::Ready { min_bp: 0 }, 1));
         assert!(s.checkpoint_at_or_before(0).is_none());
         assert!(s.checkpoint_at_or_before(4).is_none());
     }
 
     #[test]
     fn invalidate_after_drops_downstream_only() {
-        let mut s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
+        let mut s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
         for p in [0, 5, 10, 15, 20] {
-            s.record_checkpoint(p, cfg(p, WpdsState::Ready { min_bp: 0 }, 1));
+            s.record_checkpoint(p, cfg(p, WpdaState::Ready { min_bp: 0 }, 1));
         }
         s.invalidate_after(10);
         // Checkpoints at 0, 5, 10 should remain; 15, 20 dropped.
@@ -280,9 +280,9 @@ mod tests {
 
     #[test]
     fn invalidate_after_zero_keeps_checkpoint_at_zero() {
-        let mut s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
-        s.record_checkpoint(0, cfg(0, WpdsState::Ready { min_bp: 0 }, 1));
-        s.record_checkpoint(5, cfg(5, WpdsState::Ready { min_bp: 0 }, 1));
+        let mut s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
+        s.record_checkpoint(0, cfg(0, WpdaState::Ready { min_bp: 0 }, 1));
+        s.record_checkpoint(5, cfg(5, WpdaState::Ready { min_bp: 0 }, 1));
         s.invalidate_after(0);
         assert!(s.checkpoint_at_or_before(0).is_some());
         assert_eq!(s.checkpoint_count(), 1);
@@ -290,9 +290,9 @@ mod tests {
 
     #[test]
     fn clear_drops_all() {
-        let mut s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
+        let mut s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
         for p in 0..10 {
-            s.record_checkpoint(p, cfg(p, WpdsState::Ready { min_bp: 0 }, 1));
+            s.record_checkpoint(p, cfg(p, WpdaState::Ready { min_bp: 0 }, 1));
         }
         s.clear();
         assert!(s.is_empty());
@@ -301,36 +301,36 @@ mod tests {
 
     #[test]
     fn is_convergent_matches_identical_configs() {
-        let a: WpdsConfiguration<LexicographicWeight> = cfg(5, WpdsState::Ready { min_bp: 0 }, 2);
+        let a: WpdaConfiguration<LexicographicWeight> = cfg(5, WpdaState::Ready { min_bp: 0 }, 2);
         let b = a.clone();
-        assert!(WpdsIncrementalSession::is_convergent(&a, &b));
+        assert!(WpdaIncrementalSession::is_convergent(&a, &b));
     }
 
     #[test]
     fn is_convergent_rejects_different_state() {
-        let a: WpdsConfiguration<LexicographicWeight> = cfg(5, WpdsState::Ready { min_bp: 0 }, 2);
-        let b: WpdsConfiguration<LexicographicWeight> =
-            cfg(5, WpdsState::PrefixDispatch { pos: 5, cur_bp: 0 }, 2);
-        assert!(!WpdsIncrementalSession::is_convergent(&a, &b));
+        let a: WpdaConfiguration<LexicographicWeight> = cfg(5, WpdaState::Ready { min_bp: 0 }, 2);
+        let b: WpdaConfiguration<LexicographicWeight> =
+            cfg(5, WpdaState::PrefixDispatch { pos: 5, cur_bp: 0 }, 2);
+        assert!(!WpdaIncrementalSession::is_convergent(&a, &b));
     }
 
     #[test]
     fn is_convergent_rejects_different_stack() {
-        let a: WpdsConfiguration<LexicographicWeight> = cfg(5, WpdsState::Ready { min_bp: 0 }, 2);
-        let b: WpdsConfiguration<LexicographicWeight> = cfg(5, WpdsState::Ready { min_bp: 0 }, 3);
-        assert!(!WpdsIncrementalSession::is_convergent(&a, &b));
+        let a: WpdaConfiguration<LexicographicWeight> = cfg(5, WpdaState::Ready { min_bp: 0 }, 2);
+        let b: WpdaConfiguration<LexicographicWeight> = cfg(5, WpdaState::Ready { min_bp: 0 }, 3);
+        assert!(!WpdaIncrementalSession::is_convergent(&a, &b));
     }
 
     #[test]
     fn is_convergent_rejects_different_position() {
-        let a: WpdsConfiguration<LexicographicWeight> = cfg(5, WpdsState::Ready { min_bp: 0 }, 2);
-        let b: WpdsConfiguration<LexicographicWeight> = cfg(7, WpdsState::Ready { min_bp: 0 }, 2);
-        assert!(!WpdsIncrementalSession::is_convergent(&a, &b));
+        let a: WpdaConfiguration<LexicographicWeight> = cfg(5, WpdaState::Ready { min_bp: 0 }, 2);
+        let b: WpdaConfiguration<LexicographicWeight> = cfg(7, WpdaState::Ready { min_bp: 0 }, 2);
+        assert!(!WpdaIncrementalSession::is_convergent(&a, &b));
     }
 
     #[test]
     fn reparse_with_no_checkpoints_returns_no_checkpoint() {
-        let s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
+        let s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
         let r = s.reparse(10, IdleEngine, 100, &empty_tokens());
         assert_eq!(r, Err(ReparseError::NoCheckpoint));
     }
@@ -339,41 +339,41 @@ mod tests {
     fn reparse_resumes_from_checkpoint() {
         // Engine that immediately accepts.
         struct AcceptEngine;
-        impl WpdsStepEngine<LexicographicWeight> for AcceptEngine {
+        impl WpdaEngine<LexicographicWeight> for AcceptEngine {
             fn step(
                 &self,
-                _state: &WpdsState,
-                _gss: &WpdsGss<LexicographicWeight>,
-                _frontier_top: Option<&WpdsGssNode>,
+                _state: &WpdaState,
+                _gss: &WpdaGss<LexicographicWeight>,
+                _frontier_top: Option<&WpdaGssNode>,
                 _pos: usize,
-                _tokens: &dyn WpdsTokenSource,
-            ) -> WpdsStepAction<LexicographicWeight> {
-                WpdsStepAction::Accept
+                _tokens: &dyn WpdaTokenSource,
+            ) -> WpdaStepAction<LexicographicWeight> {
+                WpdaStepAction::Accept
             }
         }
-        let mut s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
-        s.record_checkpoint(5, cfg(5, WpdsState::Ready { min_bp: 0 }, 0));
+        let mut s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
+        s.record_checkpoint(5, cfg(5, WpdaState::Ready { min_bp: 0 }, 0));
         let r = s.reparse(8, AcceptEngine, 100, &empty_tokens());
-        assert_eq!(r, Ok(WpdsState::Accepted));
+        assert_eq!(r, Ok(WpdaState::Accepted));
     }
 
     #[test]
     fn reparse_propagates_engine_error() {
         struct ErrorEngine;
-        impl WpdsStepEngine<LexicographicWeight> for ErrorEngine {
+        impl WpdaEngine<LexicographicWeight> for ErrorEngine {
             fn step(
                 &self,
-                _state: &WpdsState,
-                _gss: &WpdsGss<LexicographicWeight>,
-                _frontier_top: Option<&WpdsGssNode>,
+                _state: &WpdaState,
+                _gss: &WpdaGss<LexicographicWeight>,
+                _frontier_top: Option<&WpdaGssNode>,
                 _pos: usize,
-                _tokens: &dyn WpdsTokenSource,
-            ) -> WpdsStepAction<LexicographicWeight> {
-                WpdsStepAction::Error("simulated".to_string())
+                _tokens: &dyn WpdaTokenSource,
+            ) -> WpdaStepAction<LexicographicWeight> {
+                WpdaStepAction::Error("simulated".to_string())
             }
         }
-        let mut s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
-        s.record_checkpoint(0, cfg(0, WpdsState::Ready { min_bp: 0 }, 0));
+        let mut s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
+        s.record_checkpoint(0, cfg(0, WpdaState::Ready { min_bp: 0 }, 0));
         let r = s.reparse(0, ErrorEngine, 100, &empty_tokens());
         match r {
             Err(ReparseError::EngineFailed(msg)) => assert_eq!(msg, "simulated"),
@@ -383,9 +383,9 @@ mod tests {
 
     #[test]
     fn iter_returns_checkpoints_in_order() {
-        let mut s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
+        let mut s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
         for p in [10, 0, 5, 3, 7] {
-            s.record_checkpoint(p, cfg(p, WpdsState::Ready { min_bp: 0 }, 1));
+            s.record_checkpoint(p, cfg(p, WpdaState::Ready { min_bp: 0 }, 1));
         }
         let positions: Vec<usize> = s.iter().map(|(p, _)| *p).collect();
         assert_eq!(positions, vec![0, 3, 5, 7, 10]);
@@ -396,21 +396,21 @@ mod tests {
         counter: RefCell<usize>,
         n: usize,
     }
-    impl WpdsStepEngine<LexicographicWeight> for AdvanceThenAccept {
+    impl WpdaEngine<LexicographicWeight> for AdvanceThenAccept {
         fn step(
             &self,
-            _state: &WpdsState,
-            _gss: &WpdsGss<LexicographicWeight>,
-            _frontier_top: Option<&WpdsGssNode>,
+            _state: &WpdaState,
+            _gss: &WpdaGss<LexicographicWeight>,
+            _frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
-            _tokens: &dyn WpdsTokenSource,
-        ) -> WpdsStepAction<LexicographicWeight> {
+            _tokens: &dyn WpdaTokenSource,
+        ) -> WpdaStepAction<LexicographicWeight> {
             let mut c = self.counter.borrow_mut();
             if *c >= self.n {
-                WpdsStepAction::Accept
+                WpdaStepAction::Accept
             } else {
                 *c += 1;
-                WpdsStepAction::Advance(WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 })
+                WpdaStepAction::Advance(WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 })
             }
         }
     }
@@ -421,19 +421,19 @@ mod tests {
             counter: RefCell::new(0),
             n: 3,
         };
-        let mut s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
-        s.record_checkpoint(0, cfg(0, WpdsState::Ready { min_bp: 0 }, 0));
+        let mut s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
+        s.record_checkpoint(0, cfg(0, WpdaState::Ready { min_bp: 0 }, 0));
         let r = s.reparse(0, engine, 100, &empty_tokens());
-        assert_eq!(r, Ok(WpdsState::Accepted));
+        assert_eq!(r, Ok(WpdaState::Accepted));
     }
 
     #[test]
     fn typical_lsp_flow() {
         // Simulate: open file → record 10 checkpoints → user edits at pos 5 →
         // invalidate_after(5) → reparse from nearest checkpoint.
-        let mut s: WpdsIncrementalSession<LexicographicWeight> = WpdsIncrementalSession::new(1);
+        let mut s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
         for p in 0..10 {
-            s.record_checkpoint(p, cfg(p, WpdsState::Ready { min_bp: 0 }, 1));
+            s.record_checkpoint(p, cfg(p, WpdaState::Ready { min_bp: 0 }, 1));
         }
         assert_eq!(s.checkpoint_count(), 10);
 
@@ -444,19 +444,19 @@ mod tests {
 
         // Reparse from checkpoint at 5.
         struct AcceptOnce;
-        impl WpdsStepEngine<LexicographicWeight> for AcceptOnce {
+        impl WpdaEngine<LexicographicWeight> for AcceptOnce {
             fn step(
                 &self,
-                _state: &WpdsState,
-                _gss: &WpdsGss<LexicographicWeight>,
-                _frontier_top: Option<&WpdsGssNode>,
+                _state: &WpdaState,
+                _gss: &WpdaGss<LexicographicWeight>,
+                _frontier_top: Option<&WpdaGssNode>,
                 _pos: usize,
-                _tokens: &dyn WpdsTokenSource,
-            ) -> WpdsStepAction<LexicographicWeight> {
-                WpdsStepAction::Accept
+                _tokens: &dyn WpdaTokenSource,
+            ) -> WpdaStepAction<LexicographicWeight> {
+                WpdaStepAction::Accept
             }
         }
         let r = s.reparse(8, AcceptOnce, 100, &empty_tokens());
-        assert_eq!(r, Ok(WpdsState::Accepted));
+        assert_eq!(r, Ok(WpdaState::Accepted));
     }
 }

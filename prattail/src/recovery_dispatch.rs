@@ -9,7 +9,7 @@
 //! functions. Each branch carries a `LexicographicWeight` for lex-min
 //! tiebreak; the winning branch's `BuilderDelta::RecoveryEvent` /
 //! `SubstituteToken` / `InsertToken` deltas replay onto the walker's
-//! `recovery_events` and `WpdsMutableTokenSource` at commit_winner time.
+//! `recovery_events` and `WpdaMutableTokenSource` at commit_winner time.
 //!
 //! Per `feedback_use_wpds_disambiguation_not_heuristics.md`: every
 //! recovery decision is made by Fork + lex-min, never by ad-hoc
@@ -18,16 +18,16 @@
 use crate::automata::TokenKind;
 use crate::automata::lex_weight::LexicographicWeight;
 use crate::automata::semiring::SemiringRef;
-use crate::gss::WpdsGss;
+use crate::gss::WpdaGss;
 use crate::recovery::{
     FrameKind, RecoveryConfig, RecoveryContext, RecoveryWfst, RepairAction,
     viterbi_multi_step,
 };
 use crate::token_id::{TokenId, TokenIdMap};
-use crate::gss::WpdsGssNode;
-use crate::wpds_runtime::{StackSymbolV2, SymbolKind, WpdsState, WpdsTokenSource};
-use crate::wpds_walker::{
-    BuilderDelta, ForkActionKind, ForkBranch, WpdsStepAction,
+use crate::gss::WpdaGssNode;
+use crate::wpda_runtime::{StackSymbolV2, SymbolKind, WpdaState, WpdaTokenSource};
+use crate::wpda_walker::{
+    BuilderDelta, ForkActionKind, ForkBranch, WpdaStepAction,
 };
 use std::collections::BTreeSet;
 
@@ -53,8 +53,8 @@ pub struct RecoveryInfra {
 /// `build_recovery_context` to seed the RecoveryContext's
 /// depth/frame_kind/bracket fields.
 pub struct WalkerRuntimeView<'a, W: SemiringRef> {
-    pub gss: &'a WpdsGss<W>,
-    pub frontier_top: Option<&'a WpdsGssNode>,
+    pub gss: &'a WpdaGss<W>,
+    pub frontier_top: Option<&'a WpdaGssNode>,
     pub pos: usize,
     pub state_cat_src_idx: u16,
     pub cur_bp: u8,
@@ -63,8 +63,8 @@ pub struct WalkerRuntimeView<'a, W: SemiringRef> {
 impl<'a, W: SemiringRef> WalkerRuntimeView<'a, W> {
     /// Construct from engine_impl.rs::step parameters.
     pub fn new(
-        gss: &'a WpdsGss<W>,
-        frontier_top: Option<&'a WpdsGssNode>,
+        gss: &'a WpdaGss<W>,
+        frontier_top: Option<&'a WpdaGssNode>,
         pos: usize,
         state_cat_src_idx: u16,
         cur_bp: u8,
@@ -84,7 +84,7 @@ impl<'a, W: SemiringRef> WalkerRuntimeView<'a, W> {
     /// for zero-bracket counts).
     pub fn build_recovery_context(
         &self,
-        _tokens: &dyn WpdsTokenSource,
+        _tokens: &dyn WpdaTokenSource,
     ) -> RecoveryContext {
         let depth = self.gss.frontier_size();
         let frame_kind = derive_frame_kind(self.frontier_top);
@@ -100,7 +100,7 @@ impl<'a, W: SemiringRef> WalkerRuntimeView<'a, W> {
     }
 }
 
-fn derive_frame_kind(frontier_top: Option<&WpdsGssNode>) -> FrameKind {
+fn derive_frame_kind(frontier_top: Option<&WpdaGssNode>) -> FrameKind {
     match frontier_top {
         None => FrameKind::Other,
         Some(node) => match node.symbol.kind {
@@ -176,7 +176,7 @@ pub fn build_recovery_infra_for_category(
 
 /// Project peek'd tokens [pos..len) into TokenIds for recovery analysis.
 fn project_tokens_to_ids(
-    tokens: &dyn WpdsTokenSource,
+    tokens: &dyn WpdaTokenSource,
     pos: usize,
     token_id_map: &TokenIdMap,
 ) -> Vec<TokenId> {
@@ -201,14 +201,14 @@ fn project_tokens_to_ids(
 }
 
 /// Top-level entry: emit a Fork of recovery branches at PrefixDispatch
-/// dead-end. Returns `WpdsStepAction::Fork { branches }` if any recovery
-/// is viable; returns `WpdsStepAction::Error(msg)` if recovery cannot
+/// dead-end. Returns `WpdaStepAction::Fork { branches }` if any recovery
+/// is viable; returns `WpdaStepAction::Error(msg)` if recovery cannot
 /// proceed. NEVER returns `Idle` — Idle here would loop.
 pub fn emit_recovery_fork<W>(
     runtime_view: WalkerRuntimeView<'_, W>,
-    tokens: &dyn WpdsTokenSource,
+    tokens: &dyn WpdaTokenSource,
     infra: &RecoveryInfra,
-) -> WpdsStepAction<W>
+) -> WpdaStepAction<W>
 where
     W: SemiringRef + Clone + From<LexicographicWeight>,
 {
@@ -267,7 +267,7 @@ where
         // Genuinely no recovery available — surface the original parse
         // error rather than continuing in an undefined state.
         let token_text = tokens.peek_text(pos).unwrap_or("<eof>");
-        return WpdsStepAction::Error(format!(
+        return WpdaStepAction::Error(format!(
             "no recovery available at pos {}: unexpected token {:?}",
             pos, token_text
         ));
@@ -287,7 +287,7 @@ where
     let pre_count = branches.len();
     branches.retain(|b| {
         let advances = match &b.new_state {
-            WpdsState::PrefixDispatch { pos: bp, .. } => *bp > pos,
+            WpdaState::PrefixDispatch { pos: bp, .. } => *bp > pos,
             _ => true,
         };
         advances
@@ -299,7 +299,7 @@ where
             )
     });
     if branches.is_empty() {
-        return WpdsStepAction::Error(format!(
+        return WpdaStepAction::Error(format!(
             "all {} recovery branches at pos {} violate forward-progress \
              invariant — bounded recovery refusing to dispatch",
             pre_count, pos,
@@ -307,7 +307,7 @@ where
     }
 
     branches.truncate(RECOVERY_FORK_MAX_BRANCHES);
-    WpdsStepAction::Fork {
+    WpdaStepAction::Fork {
         branches,
         consume_trigger: false,
     }
@@ -356,7 +356,7 @@ where
             Some(ForkBranch {
                 symbol: StackSymbolV2::category_entry(state_cat_src_idx),
                 weight,
-                new_state: WpdsState::PrefixDispatch {
+                new_state: WpdaState::PrefixDispatch {
                     pos: base_pos + result.new_pos,
                     cur_bp,
                 },
@@ -374,7 +374,7 @@ where
             Some(ForkBranch {
                 symbol: StackSymbolV2::category_entry(state_cat_src_idx),
                 weight,
-                new_state: WpdsState::PrefixDispatch {
+                new_state: WpdaState::PrefixDispatch {
                     pos: base_pos + result.new_pos,
                     cur_bp,
                 },
@@ -394,7 +394,7 @@ where
             Some(ForkBranch {
                 symbol: StackSymbolV2::category_entry(state_cat_src_idx),
                 weight,
-                new_state: WpdsState::PrefixDispatch {
+                new_state: WpdaState::PrefixDispatch {
                     pos: base_pos,
                     cur_bp,
                 },
@@ -414,7 +414,7 @@ where
             Some(ForkBranch {
                 symbol: StackSymbolV2::category_entry(state_cat_src_idx),
                 weight,
-                new_state: WpdsState::PrefixDispatch {
+                new_state: WpdaState::PrefixDispatch {
                     pos: base_pos + 1,
                     cur_bp,
                 },
@@ -462,7 +462,7 @@ where
     Some(ForkBranch {
         symbol: StackSymbolV2::category_entry(state_cat_src_idx),
         weight,
-        new_state: WpdsState::PrefixDispatch {
+        new_state: WpdaState::PrefixDispatch {
             pos: base_pos + final_pos,
             cur_bp,
         },

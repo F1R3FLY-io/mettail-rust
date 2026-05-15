@@ -2,12 +2,12 @@
 //!
 //! Stage 1 of W7 plan v5.1 (originally) — extended by Stage 6 Phase A.1 with
 //! semantic-action machinery (`SemanticBuilder`, `ActionArg`, `ActionEntry`,
-//! `WpdsTokenSource`, `BinderHandle`) that the codegen and walker share.
+//! `WpdaTokenSource`, `BinderHandle`) that the codegen and walker share.
 //!
 //! ## 📌 Long-term recovery note (visible here, in survey, and in Stage 10 audit)
 //!
 //! Recovery is currently wired at the **wrapper level** (see
-//! `parse_<Cat>_via_wpds`): when the walker terminates in `WpdsState::Error`,
+//! `parse_<Cat>_via_wpda`): when the walker terminates in `WpdaState::Error`,
 //! the wrapper invokes `mettail_prattail::recovery::find_best_recovery` (the
 //! existing WFST-based min-cost repair) and retries. This is pragmatic but
 //! not ideal.
@@ -24,9 +24,9 @@
 //!
 //! ## Reactive contract
 //!
-//! `WpdsState × WpdsEvent → WpdsTransition` (pure function), per the
+//! `WpdaState × WpdaEvent → WpdaTransition` (pure function), per the
 //! MeTTaTron-style mandate. External consumers (LSP/DAP/REPL/nREPL) drive
-//! `WpdsWalker::process_event` (Stage 4) at their own pace; the
+//! `WpdaWalker::process_event` (Stage 4) at their own pace; the
 //! `WalkerConsumer` trait (Stage 5) is the secondary side-effect callback.
 //!
 //! ## Relation to the offline-analysis WPDS
@@ -102,7 +102,7 @@ pub enum SymbolKind {
     /// identify the parent rule. `bp` carries the OUTER rule's outer_bp
     /// (so the parent BinderRule's outer_bp is recoverable on group exit).
     /// On Unwinding when this is on top, the engine transitions to
-    /// `WpdsState::OptionalGroup { sub_pos: payload }`.
+    /// `WpdaState::OptionalGroup { sub_pos: payload }`.
     OptionalGroupAt(u8),
 }
 
@@ -194,7 +194,7 @@ impl StackSymbolV2 {
 
     /// B7 Pattern 2: construct a grouping-marker symbol. `outer_bp` is
     /// the saved Pratt cur_bp at the open `(`; on close `)`, the engine
-    /// transitions to `WpdsState::InfixLoop { cur_bp: outer_bp }` so
+    /// transitions to `WpdaState::InfixLoop { cur_bp: outer_bp }` so
     /// surrounding operators continue at the original precedence level.
     pub fn grouping_marker(result_src_idx: u16, outer_bp: u8) -> Self {
         StackSymbolV2 {
@@ -322,14 +322,14 @@ impl fmt::Display for StackSymbolV2 {
 /// the two WPDS-specific states (`AmbiguityFanout`, `Saturating`) needed for
 /// branching parses. Plus the standard terminal states.
 ///
-/// External consumers inspect this via [`WpdsWalker::state`] (Stage 4).
+/// External consumers inspect this via [`WpdaWalker::state`] (Stage 4).
 ///
 /// Stage 3.5b (2026-05-01): adds `Hash` derive so cursor configurations
 /// `(state, gss_node_id, pos)` can be the key for `merge_equivalent_cursors`
 /// — the WPDS ⊕-merging step that collapses paths reaching the same
 /// configuration via `Semiring::plus`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum WpdsState {
+pub enum WpdaState {
     /// Initial state at category entry; parser awaits its first event.
     Ready { min_bp: u8 },
     /// Matching on the current token to choose a prefix rule.
@@ -576,12 +576,12 @@ pub enum WpdsState {
     /// The `branches: Vec<GssNodeId>` field lists the GSS-tip node ids of
     /// every live branch. Per-branch micro-state (pos, weight, inner
     /// state) is stored out-of-band on the walker as
-    /// `WpdsWalker::branch_cursors: Vec<BranchCursor<W>>` parallel to
+    /// `WpdaWalker::branch_cursors: Vec<BranchCursor<W>>` parallel to
     /// this vector — the i-th `branches` entry corresponds to the i-th
-    /// `branch_cursors` entry. The reason for the split is that `WpdsState`
+    /// `branch_cursors` entry. The reason for the split is that `WpdaState`
     /// is non-generic but per-branch weight requires the walker's `W`
     /// parameter; storing weights inside the state enum would force
-    /// `WpdsState` to be generic and cascade through every consumer.
+    /// `WpdaState` to be generic and cascade through every consumer.
     AmbiguityFanout { branches: Vec<GssNodeId> },
     /// WPDS poststar/prestar saturation in progress; `delta_size` frontier size.
     Saturating { delta_size: usize },
@@ -613,14 +613,14 @@ pub enum WpdsState {
     Error { message: String },
 }
 
-impl WpdsState {
+impl WpdaState {
     /// Whether this state is terminal (Accepted or Error).
     pub fn is_terminal(&self) -> bool {
-        matches!(self, WpdsState::Accepted | WpdsState::Error { .. })
+        matches!(self, WpdaState::Accepted | WpdaState::Error { .. })
     }
 }
 
-/// Stage 3.5b (2026-05-01): the result of `WpdsWalker::resolve_at_end_of_input`,
+/// Stage 3.5b (2026-05-01): the result of `WpdaWalker::resolve_at_end_of_input`,
 /// the WPDS-correct end-of-stream resolution path. Replaces the prior
 /// mid-stream `commit_winner` semantics where the Walker would commit any
 /// time `branch_cursors` collapsed to one alive cursor — that was
@@ -634,7 +634,7 @@ impl WpdsState {
 /// emit ambiguity warning + commit earliest source-ordered branch +
 /// return `AcceptedAmbiguous`.
 #[derive(Debug)]
-pub enum WpdsResolveResult<W: SemiringRef> {
+pub enum WpdaResolveResult<W: SemiringRef> {
     /// M7c (2026-05-13): one or more Accepted configurations at EOI.
     ///
     /// `weights` and `terms` are parallel vectors of length ≥ 1; index
@@ -681,7 +681,7 @@ pub enum WpdsResolveResult<W: SemiringRef> {
 
 /// M11.7 (2026-05-14): cursor-count bounding policy for the walker.
 ///
-/// Replaces the M11.4-era `WpdsWalker::beam_size: Option<usize>` field
+/// Replaces the M11.4-era `WpdaWalker::beam_size: Option<usize>` field
 /// with an explicit enum that makes the THREE possible bounding modes
 /// (unbounded / beam pruning / ambiguity budget) mutually exclusive at
 /// the type level — impossible to set both `BeamSize` and
@@ -699,13 +699,13 @@ pub enum WpdsResolveResult<W: SemiringRef> {
 ///   mandate-compliant cursor-count bounding.
 /// - `AmbiguityBudget(n)`: hard-cap the frontier size at `n` cursors. If
 ///   the frontier would exceed `n`, the walker emits a structured
-///   `WpdsResolveResult::AmbiguityBudget` error rather than silently
+///   `WpdaResolveResult::AmbiguityBudget` error rather than silently
 ///   dropping cursors. Caller can detect the overflow and react (relax
 ///   budget, switch strategy, surface to user). Mandate-compliant: no
 ///   weight-based pick-one; the error is the evidence.
 ///
 /// **Mutual exclusion**: the enum constructor enforces that exactly one
-/// mode is active at a time. `WpdsWalker::with_bounding_mode(mode)`
+/// mode is active at a time. `WpdaWalker::with_bounding_mode(mode)`
 /// replaces the prior `with_beam_size(k)` API; the legacy methods are
 /// retained as thin shims (`with_beam_size(k)` →
 /// `with_bounding_mode(CursorBoundingMode::BeamSize(k))`).
@@ -730,16 +730,16 @@ impl Default for CursorBoundingMode {
     }
 }
 
-/// Stage 3.5b (2026-05-01): error returned by `WpdsWalker::run_to_end_of_input`
+/// Stage 3.5b (2026-05-01): error returned by `WpdaWalker::run_to_end_of_input`
 /// when the driver exhausts its `max_steps` budget before reaching EOI
 /// or a terminal state. Caller may extend the budget and resume by
 /// calling `run_to_end_of_input` again with a larger `max_steps`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WpdsMaxStepsExceeded {
+pub struct WpdaMaxStepsExceeded {
     pub position: usize,
 }
 
-impl std::fmt::Display for WpdsMaxStepsExceeded {
+impl std::fmt::Display for WpdaMaxStepsExceeded {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -749,7 +749,7 @@ impl std::fmt::Display for WpdsMaxStepsExceeded {
     }
 }
 
-impl std::error::Error for WpdsMaxStepsExceeded {}
+impl std::error::Error for WpdaMaxStepsExceeded {}
 
 /// Events that drive the reactive FSM forward.
 ///
@@ -757,7 +757,7 @@ impl std::error::Error for WpdsMaxStepsExceeded {}
 /// weights. The `LexicographicWeight` of Stage 2 will be the canonical
 /// instantiation; until then any [`Semiring`] suffices.
 #[derive(Debug, Clone)]
-pub enum WpdsEvent<W: SemiringRef> {
+pub enum WpdaEvent<W: SemiringRef> {
     /// Advance one transition. The default driver pulse.
     Step,
     /// A token was consumed at the given position.
@@ -787,7 +787,7 @@ pub enum WpdsEvent<W: SemiringRef> {
 
 /// Reason a checkpoint is being recorded.
 ///
-/// Used by `WpdsIncrementalSession` (Stage 5) to decide which checkpoints to
+/// Used by `WpdaIncrementalSession` (Stage 5) to decide which checkpoints to
 /// retain when memory pressure rises.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CheckpointReason {
@@ -797,37 +797,37 @@ pub enum CheckpointReason {
     NaturalBoundary,
     /// Consumer requested via `WalkerConsumer::on_event` returning `Checkpoint`.
     ConsumerRequest,
-    /// Pre-pause snapshot before halting (paired with `WpdsControl::Pause`).
+    /// Pre-pause snapshot before halting (paired with `WpdaControl::Pause`).
     PrePause,
 }
 
-/// Output of one [`WpdsState`] × [`WpdsEvent`] transition.
+/// Output of one [`WpdaState`] × [`WpdaEvent`] transition.
 #[derive(Debug, Clone)]
-pub enum WpdsTransition<W: SemiringRef> {
+pub enum WpdaTransition<W: SemiringRef> {
     /// `Inspect` event; no state change.
     NoChange,
     /// State changed; optional trace entry recorded.
     Transition {
-        new_state: WpdsState,
-        trace: Option<WpdsTraceEntry>,
+        new_state: WpdaState,
+        trace: Option<WpdaTraceEntry>,
     },
     /// Checkpoint recorded at the current configuration.
-    Checkpoint { config: WpdsConfiguration<W> },
+    Checkpoint { config: WpdaConfiguration<W> },
     /// Parse complete; result is available via the walker.
-    Done { state: WpdsState },
+    Done { state: WpdaState },
 }
 
 /// A WPDS configuration snapshot suitable for checkpointing or replay.
 ///
-/// Generic over weight type `W`. Stage 5's `WpdsIncrementalSession` uses
-/// `BTreeMap<usize, WpdsConfiguration<LexicographicWeight>>` for its
+/// Generic over weight type `W`. Stage 5's `WpdaIncrementalSession` uses
+/// `BTreeMap<usize, WpdaConfiguration<LexicographicWeight>>` for its
 /// checkpoint cache.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WpdsConfiguration<W: SemiringRef> {
+pub struct WpdaConfiguration<W: SemiringRef> {
     /// Token position at the time of snapshot.
     pub pos: usize,
     /// State at the time of snapshot.
-    pub state: WpdsState,
+    pub state: WpdaState,
     /// Stack contents bottom-to-top.
     pub stack: Vec<StackSymbolV2>,
     /// Cumulative weight from start to this configuration.
@@ -840,19 +840,19 @@ pub struct WpdsConfiguration<W: SemiringRef> {
 /// when running under `cfg(debug_assertions)`. Otherwise transitions emit
 /// `None` and incur no allocation.
 #[derive(Debug, Clone)]
-pub struct WpdsTraceEntry {
+pub struct WpdaTraceEntry {
     /// Position when the transition fired.
     pub pos: usize,
     /// State before the transition.
-    pub from_state: WpdsState,
+    pub from_state: WpdaState,
     /// State after the transition.
-    pub to_state: WpdsState,
+    pub to_state: WpdaState,
     /// Stack depth after the transition.
     pub stack_depth: usize,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Control directives (M6: WpdsControl::Pause exists per Rholang §13.1)
+// Control directives (M6: WpdaControl::Pause exists per Rholang §13.1)
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Control directive returned by a [`WalkerConsumer`] (Stage 5) after each
@@ -862,7 +862,7 @@ pub struct WpdsTraceEntry {
 /// Mirrors `CekControl` from the surveyed `cek.rs` API and adds the `Pause`
 /// variant promised by `docs/design/made/rholang-target/design.md` §13.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WpdsControl {
+pub enum WpdaControl {
     /// Proceed to the next transition.
     Continue,
     /// Record a checkpoint, then continue.
@@ -880,12 +880,12 @@ pub enum WpdsControl {
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Read-only window onto the token stream that the WPDS engine can peek
-/// during `WpdsStepEngine::step`.
+/// during `WpdaEngine::step`.
 ///
 /// The walker holds a reference to a concrete impl during a parse session
-/// (via `WpdsWalker::attach_token_source`). The engine's `step()` peeks
+/// (via `WpdaWalker::attach_token_source`). The engine's `step()` peeks
 /// the next token to decide BP gating, cross-cat dispatch, etc.
-pub trait WpdsTokenSource {
+pub trait WpdaTokenSource {
     /// Token at `pos`, or `None` if `pos >= len()`.
     fn peek_kind(&self, pos: usize) -> Option<TokenKind>;
     /// Text slice of the token at `pos`, if known.
@@ -1045,10 +1045,10 @@ pub enum LexAltRuleKind {
 /// rule; at InfixLoop it binds to the cat's binary `SubInt` rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LexForkSite {
-    /// Dispatch happens in `WpdsState::PrefixDispatch`. Atomic
+    /// Dispatch happens in `WpdaState::PrefixDispatch`. Atomic
     /// literals + unary prefix operators are valid here.
     PrefixDispatch,
-    /// Dispatch happens in `WpdsState::InfixLoop`. Unary postfix +
+    /// Dispatch happens in `WpdaState::InfixLoop`. Unary postfix +
     /// binary infix + mixfix-first-trigger operators are valid here.
     InfixLoop,
 }
@@ -1075,7 +1075,7 @@ pub enum LexForkSite {
 /// All methods return `(token_pos_start, token_pos_end)` indicating which
 /// token positions were rewritten — the walker uses this to invalidate
 /// any in-flight state that depends on those positions.
-pub trait WpdsMutableTokenSource: WpdsTokenSource {
+pub trait WpdaMutableTokenSource: WpdaTokenSource {
     /// Replace the byte range `[byte_start..byte_end)` with `new_bytes`,
     /// then re-lex from the affected position. Returns the new
     /// `(token_pos_start, token_pos_end)` range that was rewritten.
@@ -1154,7 +1154,7 @@ pub trait WpdsMutableTokenSource: WpdsTokenSource {
     }
 }
 
-/// L10 (2026-04-28): a `WpdsMutableTokenSource` that wraps a
+/// L10 (2026-04-28): a `WpdaMutableTokenSource` that wraps a
 /// [`MultiTokenSource`] and a re-lex callback.
 ///
 /// The callback `lex_fn` is the per-grammar lexer (typically a generated
@@ -1197,7 +1197,7 @@ where
     }
 }
 
-impl<L> WpdsTokenSource for MutableMultiTokenSource<L>
+impl<L> WpdaTokenSource for MutableMultiTokenSource<L>
 where
     L: Fn(&str) -> Result<crate::lexer_types::LexStream, std::string::String>,
 {
@@ -1222,7 +1222,7 @@ where
     }
 }
 
-impl<L> WpdsMutableTokenSource for MutableMultiTokenSource<L>
+impl<L> WpdaMutableTokenSource for MutableMultiTokenSource<L>
 where
     L: Fn(&str) -> Result<crate::lexer_types::LexStream, std::string::String>,
 {
@@ -1335,10 +1335,10 @@ where
     }
 }
 
-/// A slice-backed `WpdsTokenSource` for tests and simple batch consumers.
+/// A slice-backed `WpdaTokenSource` for tests and simple batch consumers.
 ///
 /// Holds a slice of `TokenKind` plus an optional parallel slice of text
-/// strings. Production consumers may implement `WpdsTokenSource` directly
+/// strings. Production consumers may implement `WpdaTokenSource` directly
 /// over their own richer token types.
 pub struct SliceTokenSource<'a> {
     kinds: &'a [TokenKind],
@@ -1355,7 +1355,7 @@ impl<'a> SliceTokenSource<'a> {
     }
 }
 
-impl<'a> WpdsTokenSource for SliceTokenSource<'a> {
+impl<'a> WpdaTokenSource for SliceTokenSource<'a> {
     fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
         self.kinds.get(pos).cloned()
     }
@@ -1367,7 +1367,7 @@ impl<'a> WpdsTokenSource for SliceTokenSource<'a> {
     }
 }
 
-/// L4 (2026-04-28): a `WpdsTokenSource` backed by a [`LexStream`].
+/// L4 (2026-04-28): a `WpdaTokenSource` backed by a [`LexStream`].
 ///
 /// Each entry carries one or more alternatives; the primary (lowest-weight)
 /// alternative is exposed via `peek_kind`/`peek_text`, and the remaining
@@ -1407,7 +1407,7 @@ impl MultiTokenSource {
     }
 }
 
-impl WpdsTokenSource for MultiTokenSource {
+impl WpdaTokenSource for MultiTokenSource {
     fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
         self.primary_kinds.get(pos).cloned()
     }
@@ -1438,10 +1438,10 @@ impl WpdsTokenSource for MultiTokenSource {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// LatticeTokenSource — M3 (2026-05-13): WpdsTokenSource over a LexDag
+// LatticeTokenSource — M3 (2026-05-13): WpdaTokenSource over a LexDag
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// A `WpdsTokenSource` backed by a [`crate::lexer_types::LexDag`].
+/// A `WpdaTokenSource` backed by a [`crate::lexer_types::LexDag`].
 ///
 /// The cursor's `pos: usize` is interpreted as a **DAG node-id** (not a
 /// flat token index). `peek_kind(pos)` returns the kind of the primary
@@ -1532,7 +1532,7 @@ impl LatticeTokenSource {
     }
 }
 
-impl WpdsTokenSource for LatticeTokenSource {
+impl WpdaTokenSource for LatticeTokenSource {
     fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
         self.primary_kinds.get(pos).cloned()
     }
@@ -1629,7 +1629,7 @@ impl BinderHandle {
 ///
 /// Walker packs this when popping a `SymbolKind::Return` symbol; engine
 /// looks up the corresponding `ActionEntry` via
-/// [`WpdsStepEngine::action_for`].
+/// [`WpdaEngine::action_for`].
 pub type ActionId = u32;
 
 /// Pack a category's source index and a rule's within-category index
@@ -1656,7 +1656,7 @@ pub const fn unpack_action_id(id: ActionId) -> (u16, u16) {
 /// `Box<dyn Any + Send>`) so `ActionArg` derives `Clone`. This unblocks
 /// `BranchCursor::clone` for cursors with populated `collection_stack`
 /// accumulators (the pre-3.6 `debug_assert!` panic at line 416 of
-/// `wpds_walker.rs` is no longer needed). AST types are `Clone` (manual
+/// `wpda_walker.rs` is no longer needed). AST types are `Clone` (manual
 /// impls via `iterative_clone.rs`); primitives are `Clone`. Accessors
 /// `into_term::<T>` / `into_collection::<T>` / `into_predicate::<T>`
 /// gain a `T: Clone` bound so they can deep-clone out of the Arc when
@@ -1849,7 +1849,7 @@ pub type SemanticActionFn = fn(&mut SemanticBuilder, args: Vec<ActionArg>);
 ///
 /// B13c / Candidate H (2026-05-08): extended with per-arg expected-input
 /// category indices and the action's output category. Used by
-/// `cursor_will_produce_term` (in `wpds_walker.rs`) to dry-run the
+/// `cursor_will_produce_term` (in `wpda_walker.rs`) to dry-run the
 /// FireAction sequence on a cursor's `recovery_deltas` and decide
 /// whether the cursor would produce a valid Term term at EOI commit.
 /// Cursors whose dry-run lands on empty/underflow/type-mismatched
@@ -2062,7 +2062,7 @@ impl SemanticBuilder {
     /// `ActionArg::Term` on the main stack with no open optional scopes
     /// (the normal Accepted shape).
     ///
-    /// Used by `WpdsWalker::is_accepting_config` to filter cursors whose
+    /// Used by `WpdaWalker::is_accepting_config` to filter cursors whose
     /// live state would not yield a single Term at `take_dyn_result`.
     /// Replaces the pre-5.6-tail `cursor_will_produce_term` dry-run that
     /// simulated the same property against `recovery_deltas`; under
@@ -2275,9 +2275,9 @@ impl SemanticBuilder {
     }
 
     /// Stage 3.5b (2026-05-01): type-erased variant of `take_result` used by
-    /// `WpdsWalker::resolve_at_end_of_input`. The walker is generic over
+    /// `WpdaWalker::resolve_at_end_of_input`. The walker is generic over
     /// the semiring W but does not know the parsed term type T at the
-    /// resolution surface — `WpdsResolveResult` carries the term as
+    /// resolution surface — `WpdaResolveResult` carries the term as
     /// `Arc<dyn Any + Send + Sync>` (post-Stage-3.6) and downstream callers
     /// downcast.
     pub fn take_dyn_result(&mut self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
@@ -2332,7 +2332,7 @@ impl SemanticBuilder {
     /// Without the pop, slot accumulation grows unboundedly across nested
     /// collection finalizes and breaks the `adopt_collection_stack`
     /// invariant at fanout boundaries (see Class C panic at
-    /// `wpds_runtime.rs::adopt_collection_stack`). LIFO invariant: every
+    /// `wpda_runtime.rs::adopt_collection_stack`). LIFO invariant: every
     /// `drain_collection(id)` call should match the top of the stack
     /// because grammars can only close collections in the reverse order
     /// they opened (the close-delim of an inner collection always
@@ -2551,7 +2551,7 @@ impl crate::automata::derivation_weight::DerivationCombine for DerivationSnapsho
 // derivation snapshot (the walker's Fork-arm sites inject the parent's
 // real snapshot via `with_snapshot` at apply time — see M11.5).
 //
-// These helpers live in `wpds_runtime` (not `automata::derivation_weight`)
+// These helpers live in `wpda_runtime` (not `automata::derivation_weight`)
 // because they specialize on `DerivationSnapshot` — keeping the algebra
 // crate (`automata::derivation_weight`) `DerivationSnapshot`-agnostic.
 
@@ -2608,7 +2608,7 @@ pub fn lex_w_alt(
 ///
 /// Equivalent to `DerivationWeight::one_ref()` but exported as a
 /// terse helper for codegen ergonomics. Imported via `use
-/// mettail_prattail::wpds_runtime::lex_one;` in the emitted step()
+/// mettail_prattail::wpda_runtime::lex_one;` in the emitted step()
 /// body.
 #[inline]
 pub fn lex_one() -> crate::automata::derivation_weight::DerivationWeight<
@@ -2661,7 +2661,7 @@ impl From<crate::automata::lex_weight::LexicographicWeight>
 // **Why a trait, not an inherent method**: the walker is generic over `W:
 // SemiringRef`. Production walkers use `W = DerivationWeight<LexicographicWeight,
 // DerivationSnapshot>` (the only W with real snapshot semantics). Walker
-// internal mock tests (`wpds_walker.rs:tests`, `wpds_session.rs`) pin
+// internal mock tests (`wpda_walker.rs:tests`, `wpda_session.rs`) pin
 // `W = LexicographicWeight` — a Copy/no-snapshot weight. The trait provides a
 // uniform API: `with_builder_snapshot` is a real injection on
 // `DerivationWeight`, a no-op on `LexicographicWeight`.
@@ -2889,65 +2889,65 @@ mod tests {
 
     #[test]
     fn wpds_state_terminal_classification() {
-        assert!(WpdsState::Accepted.is_terminal());
-        assert!(WpdsState::Error { message: "x".into() }.is_terminal());
-        assert!(!WpdsState::Ready { min_bp: 0 }.is_terminal());
-        assert!(!WpdsState::Unwinding.is_terminal());
-        assert!(!WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 }.is_terminal());
+        assert!(WpdaState::Accepted.is_terminal());
+        assert!(WpdaState::Error { message: "x".into() }.is_terminal());
+        assert!(!WpdaState::Ready { min_bp: 0 }.is_terminal());
+        assert!(!WpdaState::Unwinding.is_terminal());
+        assert!(!WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 }.is_terminal());
     }
 
     #[test]
     fn wpds_event_constructible_with_tropical_weight() {
-        let _step: WpdsEvent<TropicalWeight> = WpdsEvent::Step;
-        let _tok: WpdsEvent<TropicalWeight> = WpdsEvent::TokenConsumed {
+        let _step: WpdaEvent<TropicalWeight> = WpdaEvent::Step;
+        let _tok: WpdaEvent<TropicalWeight> = WpdaEvent::TokenConsumed {
             pos: 0,
             token: TokenKind::Ident,
         };
-        let _fork: WpdsEvent<TropicalWeight> = WpdsEvent::BranchForked {
+        let _fork: WpdaEvent<TropicalWeight> = WpdaEvent::BranchForked {
             parent: 0,
             children: vec![1, 2],
         };
-        let _resolved: WpdsEvent<TropicalWeight> = WpdsEvent::BranchResolved {
+        let _resolved: WpdaEvent<TropicalWeight> = WpdaEvent::BranchResolved {
             winner: 1,
             weight: TropicalWeight::one(),
         };
-        let _action: WpdsEvent<TropicalWeight> = WpdsEvent::SemanticActionFired {
+        let _action: WpdaEvent<TropicalWeight> = WpdaEvent::SemanticActionFired {
             action_id: 7,
             args: vec![0, 1],
         };
-        let _cp: WpdsEvent<TropicalWeight> = WpdsEvent::Checkpoint {
+        let _cp: WpdaEvent<TropicalWeight> = WpdaEvent::Checkpoint {
             reason: CheckpointReason::NaturalBoundary,
         };
-        let _ins: WpdsEvent<TropicalWeight> = WpdsEvent::Inspect;
+        let _ins: WpdaEvent<TropicalWeight> = WpdaEvent::Inspect;
     }
 
     #[test]
     fn wpds_transition_variants_constructible() {
-        let _no: WpdsTransition<TropicalWeight> = WpdsTransition::NoChange;
-        let _t: WpdsTransition<TropicalWeight> = WpdsTransition::Transition {
-            new_state: WpdsState::Accepted,
+        let _no: WpdaTransition<TropicalWeight> = WpdaTransition::NoChange;
+        let _t: WpdaTransition<TropicalWeight> = WpdaTransition::Transition {
+            new_state: WpdaState::Accepted,
             trace: None,
         };
-        let _cp: WpdsTransition<TropicalWeight> = WpdsTransition::Checkpoint {
-            config: WpdsConfiguration {
+        let _cp: WpdaTransition<TropicalWeight> = WpdaTransition::Checkpoint {
+            config: WpdaConfiguration {
                 pos: 5,
-                state: WpdsState::Ready { min_bp: 0 },
+                state: WpdaState::Ready { min_bp: 0 },
                 stack: vec![StackSymbolV2::category_entry(0)],
                 weight: TropicalWeight::one(),
             },
         };
-        let _done: WpdsTransition<TropicalWeight> = WpdsTransition::Done {
-            state: WpdsState::Accepted,
+        let _done: WpdaTransition<TropicalWeight> = WpdaTransition::Done {
+            state: WpdaState::Accepted,
         };
     }
 
     #[test]
     fn wpds_control_pause_exists() {
-        // M6: WpdsControl::Pause must exist for Rholang §13.1 compatibility.
-        let _c = WpdsControl::Continue;
-        let _h = WpdsControl::Checkpoint;
-        let _a = WpdsControl::Abort;
-        let _p = WpdsControl::Pause;
+        // M6: WpdaControl::Pause must exist for Rholang §13.1 compatibility.
+        let _c = WpdaControl::Continue;
+        let _h = WpdaControl::Checkpoint;
+        let _a = WpdaControl::Abort;
+        let _p = WpdaControl::Pause;
     }
 
     #[test]
@@ -2971,9 +2971,9 @@ mod tests {
 
     #[test]
     fn wpds_configuration_round_trip_clone_eq() {
-        let cfg: WpdsConfiguration<TropicalWeight> = WpdsConfiguration {
+        let cfg: WpdaConfiguration<TropicalWeight> = WpdaConfiguration {
             pos: 42,
-            state: WpdsState::InfixLoop { cur_bp: 7 },
+            state: WpdaState::InfixLoop { cur_bp: 7 },
             stack: vec![
                 StackSymbolV2::category_entry(0),
                 StackSymbolV2::rule_at(0, 3, 1, Some(7)),
@@ -2986,11 +2986,11 @@ mod tests {
 
     #[test]
     fn wpds_state_ambiguity_fanout_holds_branches() {
-        let s = WpdsState::AmbiguityFanout {
+        let s = WpdaState::AmbiguityFanout {
             branches: vec![10, 20, 30],
         };
         match s {
-            WpdsState::AmbiguityFanout { branches } => {
+            WpdaState::AmbiguityFanout { branches } => {
                 assert_eq!(branches, vec![10u32, 20u32, 30u32]);
             }
             _ => panic!("expected AmbiguityFanout"),

@@ -14,7 +14,7 @@
 //!   (RuleAt) → Advance(Unwinding). Unwinding-RuleAt → Pop, fire action
 //!   (which builds Term::Lam(Scope::new(Binder, body))).
 
-use mettail_languages::lambda::{parse_Term_via_wpds, Term};
+use mettail_languages::lambda::{parse_Term_via_wpda, Term};
 use mettail_prattail::automata::TokenKind;
 
 #[test]
@@ -28,7 +28,7 @@ fn wpds_parse_lam_identity() {
     ];
     let texts: Vec<&str> = vec!["lam ", "x", ".", "x"];
     let mut pos = 0usize;
-    let result = parse_Term_via_wpds(&kinds, &texts, &mut pos, 0);
+    let result = parse_Term_via_wpda(&kinds, &texts, &mut pos, 0);
     match &result {
         Ok(term @ Term::Lam(_)) => {
             let displayed = format!("{}", term);
@@ -55,7 +55,7 @@ fn wpds_parse_lam_with_distinct_binder_and_body() {
     ];
     let texts: Vec<&str> = vec!["lam ", "x", ".", "y"];
     let mut pos = 0usize;
-    let result = parse_Term_via_wpds(&kinds, &texts, &mut pos, 0);
+    let result = parse_Term_via_wpda(&kinds, &texts, &mut pos, 0);
     match &result {
         Ok(Term::Lam(_)) => {}
         other => panic!("expected Ok(Term::Lam(...)), got {:?}", other),

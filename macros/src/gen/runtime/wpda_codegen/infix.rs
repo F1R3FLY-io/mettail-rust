@@ -154,7 +154,7 @@ fn classify_judgement(
 
     // L12 follow-up B6 step 3 (2026-05-07) — Class 1 MIXFIX-LHS-PARAM:
     // classify_postfix_mixfix is now ACTIVE in the dispatch chain. The
-    // walker-side `WpdsState::MixfixLiteralRun` (added in this same
+    // walker-side `WpdaState::MixfixLiteralRun` (added in this same
     // commit) walks the postfix-mixfix per-part literal sequences via
     // per-iteration ConsumeAndReplace.
     if simples.len() >= 2 && syntax_pattern.len() >= 3 {

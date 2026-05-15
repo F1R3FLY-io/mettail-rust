@@ -32,7 +32,7 @@ pub fn generate_cross_cat_ambiguity_section(language: &LanguageDef) -> TokenStre
 
         use mettail_prattail::automata::lex_weight::LexicographicWeight;
         use mettail_prattail::automata::semiring::Semiring;
-        use mettail_prattail::wpds_runtime::{StackSymbolV2, WpdsState};
+        use mettail_prattail::wpda_runtime::{StackSymbolV2, WpdaState};
 
         #baseline
     }

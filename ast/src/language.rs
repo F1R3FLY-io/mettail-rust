@@ -744,7 +744,7 @@ pub struct RewriteRule {
     pub right: Pattern,
     /// Stage 3.13e (2026-05-01): provenance flag distinguishing user-written
     /// rewrites (false) from synthetic congruence rules emitted by
-    /// `wpds_codegen/auto_inject.rs::make_injection_cong_rule` for
+    /// `wpda_codegen/auto_inject.rs::make_injection_cong_rule` for
     /// auto-injected `<Source>To<Target>` cast constructors. Mirrors
     /// `GrammarRule.is_auto_injected` (Stage 3.13b). Used by future
     /// W05-rewrite-analog lints to distinguish synthetic-induced ambiguity

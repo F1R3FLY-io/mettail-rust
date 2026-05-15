@@ -10,7 +10,7 @@
 //!
 //! - **Async-signal-safe handler**: `signal-hook` flips an `AtomicBool` only.
 //! - **Daemon thread**: polls every 50ms; performs all I/O outside signal context.
-//! - **Walker publishes**: `wpds_walker::run_to_saturation` writes a
+//! - **Walker publishes**: `wpda_walker::run_to_saturation` writes a
 //!   [`HangSnapshot`] into [`SNAPSHOT_SLOT`] at the top of every iteration.
 //! - **Watcher reads**: non-blocking `try_lock` on the slot. Snapshots are
 //!   `Arc`-shared so the watcher can dump without holding the lock.

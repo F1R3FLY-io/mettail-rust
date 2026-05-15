@@ -61,7 +61,7 @@ pub struct CollectionShape {
 ///   default form from `synthetic.rs` where `synthetic.rs` splits `"list("` into
 ///   `["list", "("]` so the lexer (which tokenizes whitespace between tokens)
 ///   sees them as two separate `Fixed` tokens. The engine consumes both before
-///   pushing the marker via `WpdsState::CollectionOpenParen`.
+///   pushing the marker via `WpdaState::CollectionOpenParen`.
 ///
 /// `language` is consulted to look up the `pair_separator` for Map collections —
 /// `LangType::collection_kind = Some(CollectionCategory::Map(d))` carries
@@ -189,7 +189,7 @@ pub(crate) fn emit_collection_prefix_arms(
             // form, or `"{"` for explicit-delimited 3-element rules).
             // For 4-element forms (`has_synth_paren = true`), the next
             // token is `Fixed("(")` which the engine consumes via
-            // `WpdsState::CollectionOpenParen` BEFORE entering the
+            // `WpdaState::CollectionOpenParen` BEFORE entering the
             // first-element parse. For 3-element forms, the prefix arm
             // transitions directly to `PrefixDispatch`.
             let open_token = &shape.open_token;
@@ -201,7 +201,7 @@ pub(crate) fn emit_collection_prefix_arms(
             };
             let new_state = if shape.has_synth_paren {
                 quote! {
-                    WpdsState::CollectionOpenParen {
+                    WpdaState::CollectionOpenParen {
                         result_src_idx: #result_src_idx,
                         rule_idx: #rule_idx,
                         element_src_idx: #element_src,
@@ -210,7 +210,7 @@ pub(crate) fn emit_collection_prefix_arms(
                 }
             } else {
                 quote! {
-                    WpdsState::PrefixDispatch {
+                    WpdaState::PrefixDispatch {
                         pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                         cur_bp: 0,
                     }
@@ -219,7 +219,7 @@ pub(crate) fn emit_collection_prefix_arms(
             arms.push(quote! {
                 Some(mettail_prattail::automata::TokenKind::Fixed(__open))
                     if __open == #open_token && state_cat_src_idx == #result_src_idx => {
-                    return WpdsStepAction::ConsumeAndPush {
+                    return WpdaStepAction::ConsumeAndPush {
                         symbol: StackSymbolV2::collection_marker(
                             #result_src_idx, #rule_idx, 0,
                         ),
@@ -236,7 +236,7 @@ pub(crate) fn emit_collection_prefix_arms(
     quote! { #(#arms)* }
 }
 
-/// Phase 4: emit the body of `WpdsState::CollectionLoop`. Looks up the
+/// Phase 4: emit the body of `WpdaState::CollectionLoop`. Looks up the
 /// close + separator for the marker's `(result_src_idx, rule_idx)`, then
 /// dispatches: token == close → `ConsumeAndPop` (fires finalize); token
 /// == sep → `Consume` → `PrefixDispatch{cur_bp:0}` to parse next element;
@@ -309,7 +309,7 @@ pub(crate) fn emit_collection_loop_arm(
         }
     }
     if lookup_arms.is_empty() {
-        return quote! { WpdsStepAction::Idle };
+        return quote! { WpdaStepAction::Idle };
     }
     quote! {
         {
@@ -350,37 +350,37 @@ pub(crate) fn emit_collection_loop_arm(
                             // following Unwinding step will diverge from a clean
                             // close-context) drop via cursor_resolution_check at
                             // commit_winner time.
-                            WpdsStepAction::Fork {
+                            WpdaStepAction::Fork {
                                 branches: vec![
                                     // BRANCH 1: close — ConsumeAndPop into Unwinding.
-                                    mettail_prattail::wpds_walker::ForkBranch {
+                                    mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::category_entry(0),
                                         weight: lex_w(
                                             0.0, *result_src_idx, *rule_idx,
                                         ),
-                                        new_state: WpdsState::Unwinding,
+                                        new_state: WpdaState::Unwinding,
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndPop,
+                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPop,
                                     },
                                     // BRANCH 2: sep — Consume token, return to
                                     // PrefixDispatch for next element.
-                                    mettail_prattail::wpds_walker::ForkBranch {
+                                    mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::category_entry(0),
                                         weight: lex_w(
                                             0.0, *result_src_idx, *rule_idx,
                                         ),
-                                        new_state: WpdsState::PrefixDispatch {
+                                        new_state: WpdaState::PrefixDispatch {
                                             pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
                                             cur_bp: 0,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::Consume,
+                                            mettail_prattail::wpda_walker::ForkActionKind::Consume,
                                     },
                                     // BRANCH 3: bare-element (G3 support) —
                                     // Push CategoryEntry(element_src) onto GSS,
                                     // dispatch element parse without consuming
                                     // a separator first.
-                                    mettail_prattail::wpds_walker::ForkBranch {
+                                    mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::category_entry(
                                             element_src_idx,
                                         ),
@@ -388,12 +388,12 @@ pub(crate) fn emit_collection_loop_arm(
                                             mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                             *result_src_idx, *rule_idx,
                                         ),
-                                        new_state: WpdsState::PrefixDispatch {
+                                        new_state: WpdaState::PrefixDispatch {
                                             pos: _pos,
                                             cur_bp: 0,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpds_walker::ForkActionKind::Push,
+                                            mettail_prattail::wpda_walker::ForkActionKind::Push,
                                     },
                                 ],
                                 // Each branch's action_kind encodes its own
@@ -410,7 +410,7 @@ pub(crate) fn emit_collection_loop_arm(
                             match kv_sep {
                                 Some(expected_kv_sep) => {
                                     if token_text == expected_kv_sep {
-                                        WpdsStepAction::Consume {
+                                        WpdaStepAction::Consume {
                                             weight: lex_w(
                                                 0.0, *result_src_idx, *rule_idx,
                                             ),
@@ -421,7 +421,7 @@ pub(crate) fn emit_collection_loop_arm(
                                             // the walker's parity-patch
                                             // only overrides kv_phase==0,
                                             // so this `2` survives.
-                                            new_state: WpdsState::CollectionLoop {
+                                            new_state: WpdaState::CollectionLoop {
                                                 result_src_idx: *result_src_idx,
                                                 rule_idx: *rule_idx,
                                                 element_src_idx: *_element_src_idx,
@@ -432,7 +432,7 @@ pub(crate) fn emit_collection_loop_arm(
                                             },
                                         }
                                     } else {
-                                        WpdsStepAction::Error(format!(
+                                        WpdaStepAction::Error(format!(
                                             "expected key/value separator `{}` after \
                                              HashMap key at pos {}, found {:?}",
                                             expected_kv_sep, _pos, token_text,
@@ -444,7 +444,7 @@ pub(crate) fn emit_collection_loop_arm(
                                     // slot has no kv_sep — invariant
                                     // violation (parity-patch should not
                                     // have set kv_phase=1 for non-HashMap).
-                                    WpdsStepAction::Error(format!(
+                                    WpdaStepAction::Error(format!(
                                         "kv_phase=1 reached at (src={}, rule={}, slot={}) \
                                          but slot has no key/value separator — invariant \
                                          violation",
@@ -462,24 +462,24 @@ pub(crate) fn emit_collection_loop_arm(
                             // (CollectionLoop with engine-emitted kv_phase=0)
                             // gets parity-patched to phase 0 since the
                             // slot's len is now even.
-                            WpdsStepAction::Push {
+                            WpdaStepAction::Push {
                                 symbol: StackSymbolV2::category_entry(element_src_idx),
                                 weight: lex_w(
                                     0.0, *result_src_idx, *rule_idx,
                                 ),
-                                new_state: WpdsState::PrefixDispatch {
+                                new_state: WpdaState::PrefixDispatch {
                                     pos: _pos,
                                     cur_bp: 0,
                                 },
                             }
                         }
-                        other => WpdsStepAction::Error(format!(
+                        other => WpdaStepAction::Error(format!(
                             "invalid kv_phase {} at (src={}, rule={}, slot={})",
                             other, *result_src_idx, *rule_idx, *slot_idx,
                         )),
                     }
                 }
-                None => WpdsStepAction::Idle,
+                None => WpdaStepAction::Idle,
             }
         }
     }
@@ -487,8 +487,8 @@ pub(crate) fn emit_collection_loop_arm(
 
 /// Phase 4: emit a per-language lookup that maps `(result_src_idx, rule_idx)`
 /// of a `CollectionMarker` symbol to its `element_src_idx`. Used by the
-/// `WpdsState::Unwinding` arm when transitioning from CollectionMarker top
-/// to `WpdsState::CollectionLoop`.
+/// `WpdaState::Unwinding` arm when transitioning from CollectionMarker top
+/// to `WpdaState::CollectionLoop`.
 pub(crate) fn emit_collection_element_src_lookup(
     language: &mettail_ast::language::LanguageDef,
     categories: &[String],
@@ -547,7 +547,7 @@ pub(crate) fn emit_collection_element_src_lookup(
 }
 
 /// Phase 4: emit a per-language lookup that maps `(result_src_idx, rule_idx)`
-/// to the close-delimiter literal. Used by `WpdsState::PrefixDispatch`'s
+/// to the close-delimiter literal. Used by `WpdaState::PrefixDispatch`'s
 /// empty-collection bootstrap: when frontier_top is a `CollectionMarker`
 /// and the next token equals the close delim, the empty-collection path
 /// fires `ConsumeAndPop` instead of falling through to element dispatch.
@@ -610,7 +610,7 @@ pub(crate) fn emit_collection_close_lookup(
 
 /// Plan B (F5 close/sep filter, 2026-05-11): per-language lookup that maps
 /// `(result_src_idx, rule_idx)` of a CollectionMarker to BOTH the close
-/// delimiter and the separator. Used by `WpdsState::InfixLoop` (in
+/// delimiter and the separator. Used by `WpdaState::InfixLoop` (in
 /// `engine_impl.rs`) to skip infix dispatch when frontier_top is
 /// CollectionMarker AND the next token is the collection's close or
 /// separator — avoiding spurious Fork branches that diverge on
@@ -676,13 +676,13 @@ fn lookup_element_src_idx(element_cat: &str, categories: &[String]) -> Option<u1
 }
 
 /// Phase 4 #5b (2026-05-12): emit the body of
-/// `WpdsStepEngine::kv_separator_for_collection`. Returns the per-
+/// `WpdaEngine::kv_separator_for_collection`. Returns the per-
 /// (result_src_idx, rule_idx, slot_idx) lookup that yields
 /// `Some(":")` (or user-overridden literal) for HashMap collection
 /// slots and `None` for Vec/HashBag/HashSet slots or unknown tuples.
 ///
 /// Used by the walker's `set_cursor_inner_state` to detect HashMap
-/// slots and patch `WpdsState::CollectionLoop.kv_phase` based on
+/// slots and patch `WpdaState::CollectionLoop.kv_phase` based on
 /// `cursor.collection_stack[acc_id].len()` parity.
 pub(crate) fn emit_kv_separator_for_collection(
     language: &mettail_ast::language::LanguageDef,

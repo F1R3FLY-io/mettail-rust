@@ -35,7 +35,7 @@ use mettail_languages::class2hashmapsmoke::Proc;
 #[test]
 fn pred1_empty_map() {
     let result =
-        Proc::parse_via_wpds("chooseMap 0 ( )").expect("'chooseMap 0 ( )' parses");
+        Proc::parse_via_wpda("chooseMap 0 ( )").expect("'chooseMap 0 ( )' parses");
     match &result {
         Proc::ChooseMap(_a, ms) => {
             assert_eq!(ms.len(), 0, "ms should be empty");
@@ -46,7 +46,7 @@ fn pred1_empty_map() {
 
 #[test]
 fn pred2_singleton_pair() {
-    let result = Proc::parse_via_wpds("chooseMap 0 ( 0 : 0 )")
+    let result = Proc::parse_via_wpda("chooseMap 0 ( 0 : 0 )")
         .expect("'chooseMap 0 ( 0 : 0 )' parses");
     match &result {
         Proc::ChooseMap(_a, ms) => {
@@ -58,7 +58,7 @@ fn pred2_singleton_pair() {
 
 #[test]
 fn pred3_two_pairs() {
-    let result = Proc::parse_via_wpds("chooseMap 0 ( 0 : 0 , 0 : 0 )")
+    let result = Proc::parse_via_wpda("chooseMap 0 ( 0 : 0 , 0 : 0 )")
         .expect("'chooseMap 0 ( 0 : 0 , 0 : 0 )' parses");
     match &result {
         Proc::ChooseMap(_a, ms) => {

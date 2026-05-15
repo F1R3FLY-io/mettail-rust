@@ -16,7 +16,7 @@ pub fn generate_pratt_bp_boundaries_section(language: &LanguageDef) -> TokenStre
         #![allow(non_snake_case, unused_imports, dead_code)]
         //! Auto-generated Pratt BP boundary tests for #lang_name.
 
-        use mettail_prattail::wpds_runtime::{StackSymbolV2, SymbolKind, WpdsState};
+        use mettail_prattail::wpda_runtime::{StackSymbolV2, SymbolKind, WpdaState};
 
         #baseline
     }

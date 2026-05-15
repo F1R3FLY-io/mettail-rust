@@ -2,7 +2,7 @@
 //!
 //! Phase A.2 of Stage 6 plan v2. For each category, this module walks the
 //! category's rule list and emits per-rule arms in the engine's
-//! `WpdsState::PrefixDispatch` match. Atomic-literal rules emit a
+//! `WpdaState::PrefixDispatch` match. Atomic-literal rules emit a
 //! `ConsumeAndPush(Return)` action so the walker captures the token,
 //! advances pos, and transitions into `Unwinding` — where the Return
 //! frame's pop fires the semantic action.
@@ -698,17 +698,17 @@ fn collect_first_set(
 /// For every parseable category, emit:
 /// ```text
 /// Some(TokenKind::Fixed(__open)) if __open == "(" && state_cat_src_idx == #c_src => {
-///     return WpdsStepAction::ConsumeAndPush {
+///     return WpdaStepAction::ConsumeAndPush {
 ///         symbol: StackSymbolV2::grouping_marker(#c_src, *cur_bp),
 ///         weight: lex_one(),
-///         new_state: WpdsState::PrefixDispatch { pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1), cur_bp: 0 },
+///         new_state: WpdaState::PrefixDispatch { pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1), cur_bp: 0 },
 ///         capture_token: false,
 ///     };
 /// }
 /// ```
 ///
 /// Grouping is transparent: no AST node, no action, just a precedence
-/// reset. The `GroupingMarker` (wpds_runtime.rs `SymbolKind::GroupingMarker`)
+/// reset. The `GroupingMarker` (wpda_runtime.rs `SymbolKind::GroupingMarker`)
 /// carries the saved outer `cur_bp` in its `bp` field; on `)` consumption
 /// in the Unwinding-GroupingMarker arm, the engine resumes
 /// `InfixLoop { cur_bp: marker.bp }`.
@@ -717,7 +717,7 @@ fn collect_first_set(
 /// every shipped grammar gains paren grouping without per-grammar work.
 /// Conflict-safe: `(` only enters PrefixDispatch as a standalone token
 /// when no in-flight collection consumes it (collection rules consume
-/// their open delim's `(` via `WpdsState::CollectionOpenParen`, not
+/// their open delim's `(` via `WpdaState::CollectionOpenParen`, not
 /// PrefixDispatch).
 pub fn emit_grouping_arms(categories: &[String]) -> TokenStream {
     let mut arms = Vec::new();
@@ -726,12 +726,12 @@ pub fn emit_grouping_arms(categories: &[String]) -> TokenStream {
         arms.push(quote! {
             Some(mettail_prattail::automata::TokenKind::Fixed(__open))
                 if __open == "(" && state_cat_src_idx == #result_src_idx => {
-                return WpdsStepAction::ConsumeAndPush {
+                return WpdaStepAction::ConsumeAndPush {
                     symbol: StackSymbolV2::grouping_marker(
                         #result_src_idx, *cur_bp,
                     ),
                     weight: lex_one(),
-                    new_state: WpdsState::PrefixDispatch {
+                    new_state: WpdaState::PrefixDispatch {
                         pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                         cur_bp: 0,
                     },
@@ -748,7 +748,7 @@ pub fn emit_grouping_arms(categories: &[String]) -> TokenStream {
 /// rule whose first trigger is `"("`. For categories with no `(`-binder,
 /// this degenerates to the simple grouping arm (byte-identical to
 /// `emit_grouping_arms`). For categories like Lambda's `Term` that have
-/// a paren-triggered App rule, this emits a `WpdsStepAction::Fork` over
+/// a paren-triggered App rule, this emits a `WpdaStepAction::Fork` over
 /// {grouping_branch, binder_rule_branches...} so lex-min disambiguates
 /// per `feedback_use_wpds_disambiguation_not_heuristics.md`. The grouping
 /// branch uses `lex_one()` (max src/rule indices) so
@@ -786,12 +786,12 @@ pub fn emit_paren_dispatch_arms(
             arms.push(quote! {
                 Some(mettail_prattail::automata::TokenKind::Fixed(__open))
                     if __open == "(" && state_cat_src_idx == #result_src_idx => {
-                    return WpdsStepAction::ConsumeAndPush {
+                    return WpdaStepAction::ConsumeAndPush {
                         symbol: StackSymbolV2::grouping_marker(
                             #result_src_idx, *cur_bp,
                         ),
                         weight: lex_one(),
-                        new_state: WpdsState::PrefixDispatch {
+                        new_state: WpdaState::PrefixDispatch {
                             pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                             cur_bp: 0,
                         },
@@ -807,16 +807,16 @@ pub fn emit_paren_dispatch_arms(
         // Branch 0: grouping. Uses one() (max src/rule via u16::MAX) so
         // any concrete binder rule beats it on lex-min ties.
         branches.push(quote! {
-            mettail_prattail::wpds_walker::ForkBranch {
+            mettail_prattail::wpda_walker::ForkBranch {
                 symbol: StackSymbolV2::grouping_marker(
                     #result_src_idx, *cur_bp,
                 ),
                 weight: lex_one(),
-                new_state: WpdsState::PrefixDispatch {
+                new_state: WpdaState::PrefixDispatch {
                     pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                     cur_bp: 0,
                 },
-                action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
+                action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
             }
         });
         // Branches 1..N: each binder rule with `(` trigger.
@@ -828,27 +828,27 @@ pub fn emit_paren_dispatch_arms(
             };
             let rule_idx_lit = *rule_idx;
             branches.push(quote! {
-                mettail_prattail::wpds_walker::ForkBranch {
+                mettail_prattail::wpda_walker::ForkBranch {
                     symbol: StackSymbolV2::rule_at(
                         #result_src_idx, #rule_idx_lit, 1u8, Some(_outer_bp),
                     ),
                     weight: lex_w(
                         0.0, #result_src_idx, #rule_idx_lit,
                     ),
-                    new_state: WpdsState::BinderRule {
+                    new_state: WpdaState::BinderRule {
                         result_src_idx: #result_src_idx,
                         rule_idx: #rule_idx_lit,
                         body_src_idx: #body_src_idx,
                         outer_bp: _outer_bp,
                     },
-                    action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
+                    action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
                 }
             });
         }
         arms.push(quote! {
             Some(mettail_prattail::automata::TokenKind::Fixed(__open))
                 if __open == "(" && state_cat_src_idx == #result_src_idx => {
-                return WpdsStepAction::Fork {
+                return WpdaStepAction::Fork {
                     branches: vec![ #( #branches ),* ],
                     consume_trigger: true,
                 };
@@ -995,7 +995,7 @@ pub fn emit_prefix_arms_for_category(
     // With two passes, atomic arms always precede cross-cat arms in the
     // generated match, so the home-category bare-Integer arm wins by
     // first-match-wins semantics. Rule_idx is preserved (no per_cat
-    // reordering), so generated WPDS_RULES tables and stack-symbol payloads
+    // reordering), so generated WPDA_RULES tables and stack-symbol payloads
     // remain unchanged.
     //
     // F8 fix (2026-04-28): cross-cat projection emission was per-rule with
@@ -1212,7 +1212,7 @@ fn emit_cross_cat_prefix_unary_arm(
         Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
             if __kw == #trigger && state_cat_src_idx == #category_src_idx => {
             // Consume trigger, push Return marker, delegate to source.
-            return WpdsStepAction::ConsumeAndPush {
+            return WpdaStepAction::ConsumeAndPush {
                 symbol: StackSymbolV2::rule_at(
                     #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                 ).with_kind_return(),
@@ -1223,7 +1223,7 @@ fn emit_cross_cat_prefix_unary_arm(
                 // sub-parse starts at the source-cat's own minimum BP
                 // (fresh-operand semantics — the wrapped content is a
                 // complete operand, not a Pratt-RHS).
-                new_state: WpdsState::CrossCatDelegate {
+                new_state: WpdaState::CrossCatDelegate {
                     source_src_idx: #source_src_idx,
                     inner_cur_bp: 0,
                 },
@@ -1404,10 +1404,10 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                         // GSS via the wrapping context (Return symbol on a
                         // pending RuleAt or the original CategoryEntry), so
                         // it restores correctly when this sub-parse unwinds.
-                        return WpdsStepAction::Push {
+                        return WpdaStepAction::Push {
                             symbol: StackSymbolV2::category_entry(#source_src_idx),
                             weight: lex_one(),
-                            new_state: WpdsState::PrefixDispatch {
+                            new_state: WpdaState::PrefixDispatch {
                                 pos: *pos,
                                 cur_bp: 0,
                             },
@@ -1433,14 +1433,14 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                         // (fresh-operand semantics — Pass 2a projection
                         // is at the start of a fresh operand, no
                         // enclosing Pratt precedence to enforce).
-                        return WpdsStepAction::Push {
+                        return WpdaStepAction::Push {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
                             weight: lex_w(
                                 0.0, #category_src_idx, #rule_idx,
                             ),
-                            new_state: WpdsState::CrossCatDelegate {
+                            new_state: WpdaState::CrossCatDelegate {
                                 source_src_idx: #source_src_idx,
                                 inner_cur_bp: 0,
                             },
@@ -1466,7 +1466,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                         // (Pass 2c implicit cast is at the start of a
                         // fresh operand; no enclosing Pratt precedence
                         // to enforce inside the sub-parse).
-                        return WpdsStepAction::Push {
+                        return WpdaStepAction::Push {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
@@ -1474,7 +1474,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                 mettail_prattail::automata::lex_weight::BP_TIER_PASS2C_SYNTHESIZED,
                                 #category_src_idx, #rule_idx,
                             ),
-                            new_state: WpdsState::CrossCatDelegate {
+                            new_state: WpdaState::CrossCatDelegate {
                                 source_src_idx: #source_src_idx,
                                 inner_cur_bp: 0,
                             },
@@ -1491,7 +1491,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 UnifiedDescriptor::CrossCatLhs { source_src_idx } => {
                     let src_idx = *source_src_idx;
                     quote! {
-                        mettail_prattail::wpds_walker::ForkBranch {
+                        mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::category_entry(#src_idx),
                             weight: lex_w(
                                 mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
@@ -1500,11 +1500,11 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             // Plan C Fix 1.4 (led_test cluster, 2026-05-11):
                             // `cur_bp: 0` for the same reason as the singleton
                             // CrossCatLhs arm above.
-                            new_state: WpdsState::PrefixDispatch {
+                            new_state: WpdaState::PrefixDispatch {
                                 pos: *pos,
                                 cur_bp: 0,
                             },
-                            action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
+                            action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
                         }
                     }
                 }
@@ -1512,15 +1512,15 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                     let rule_idx = desc.rule_idx;
                     let csi = desc.category_src_idx;
                     quote! {
-                        mettail_prattail::wpds_walker::ForkBranch {
+                        mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
                                 #csi, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
                             weight: lex_w(
                                 0.0, #csi, #rule_idx,
                             ),
-                            new_state: WpdsState::Unwinding,
-                            action_kind: mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndCaptureAndPush,
+                            new_state: WpdaState::Unwinding,
+                            action_kind: mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndCaptureAndPush,
                         }
                     }
                 }
@@ -1531,7 +1531,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                     let rule_idx = *rule_idx;
                     let src_idx = *source_src_idx;
                     quote! {
-                        mettail_prattail::wpds_walker::ForkBranch {
+                        mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
@@ -1542,11 +1542,11 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             // D-strings fix (2026-05-13): inner_cur_bp = 0
                             // (Pass 2a projection multi-branch case —
                             // fresh-operand semantics).
-                            new_state: WpdsState::CrossCatDelegate {
+                            new_state: WpdaState::CrossCatDelegate {
                                 source_src_idx: #src_idx,
                                 inner_cur_bp: 0,
                             },
-                            action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
+                            action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
                         }
                     }
                 }
@@ -1561,7 +1561,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                     let rule_idx = *rule_idx;
                     let src_idx = *source_src_idx;
                     quote! {
-                        mettail_prattail::wpds_walker::ForkBranch {
+                        mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
@@ -1572,11 +1572,11 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             // D-strings fix (2026-05-13): inner_cur_bp = 0
                             // (Pass 2c implicit-cast multi-branch case —
                             // fresh-operand semantics).
-                            new_state: WpdsState::CrossCatDelegate {
+                            new_state: WpdaState::CrossCatDelegate {
                                 source_src_idx: #src_idx,
                                 inner_cur_bp: 0,
                             },
-                            action_kind: mettail_prattail::wpds_walker::ForkActionKind::Push,
+                            action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
                         }
                     }
                 }
@@ -1584,7 +1584,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
             .collect();
         quote! {
             #pat if #guard => {
-                return WpdsStepAction::Fork {
+                return WpdaStepAction::Fork {
                     branches: vec![ #( #branches ),* ],
                     consume_trigger: false,
                 };
@@ -1604,12 +1604,12 @@ fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
     };
     quote! {
         #pat if #guard => {
-            return WpdsStepAction::ConsumeAndPush {
+            return WpdaStepAction::ConsumeAndPush {
                 symbol: StackSymbolV2::rule_at(
                     #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                 ).with_kind_return(),
                 weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                new_state: WpdsState::Unwinding,
+                new_state: WpdaState::Unwinding,
                 capture_token: true,
             };
         }
@@ -1632,19 +1632,19 @@ fn emit_atomic_arm_fork(descs: &[PrefixArmDescriptor]) -> TokenStream {
         let rule_idx = d.rule_idx;
         let csi = d.category_src_idx;
         quote! {
-            mettail_prattail::wpds_walker::ForkBranch {
+            mettail_prattail::wpda_walker::ForkBranch {
                 symbol: StackSymbolV2::rule_at(
                     #csi, #rule_idx, 0, Some(_outer_bp),
                 ).with_kind_return(),
                 weight: lex_w(0.0, #csi, #rule_idx),
-                new_state: WpdsState::Unwinding,
-                action_kind: mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndCaptureAndPush,
+                new_state: WpdaState::Unwinding,
+                action_kind: mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndCaptureAndPush,
             }
         }
     }).collect();
     quote! {
         #pat if #guard => {
-            return WpdsStepAction::Fork {
+            return WpdaStepAction::Fork {
                 branches: vec![ #( #branches ),* ],
                 consume_trigger: false,
             };
@@ -1725,12 +1725,12 @@ fn emit_atomic_arms(
             };
             quote! {
                 #token_pattern if #guard => {
-                    return WpdsStepAction::ConsumeAndPush {
+                    return WpdaStepAction::ConsumeAndPush {
                         symbol: StackSymbolV2::rule_at(
                             #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                         ).with_kind_return(),
                         weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                        new_state: WpdsState::Unwinding,
+                        new_state: WpdaState::Unwinding,
                         // Atomic literal: token is pushed to the builder so the
                         // Pop(Return) action can consume it as ActionArg::Token.
                         capture_token: true,

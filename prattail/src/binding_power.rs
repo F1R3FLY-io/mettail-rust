@@ -294,7 +294,7 @@ impl Default for BindingPowerTable {
 /// **Consumers:**
 /// - `prattail/src/pipeline.rs::generate_parser` — RDRuleInfo emission
 /// - `macros/src/gen/syntax/display.rs::build_bp_lookup` — Display paren elision
-/// - `macros/src/gen/runtime/wpds_codegen/binder.rs:708,1004` — WPDS ParamParse arms
+/// - `macros/src/gen/runtime/wpda_codegen/binder.rs:708,1004` — WPDS ParamParse arms
 ///   (Stage 3.27d G-PREFIX-BP installs `cur_bp = compute_prefix_bp(...)` here)
 pub const PREFIX_BP_OFFSET: u8 = 2;
 

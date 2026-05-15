@@ -152,7 +152,7 @@ fn ast_pinputsopttagged_with_names_constructs_and_clones() {
 
 #[test]
 fn pred1_opt_skipped_empty_names_via_wpds() {
-    let result = Proc::parse_via_wpds("( ) . { 0 }")
+    let result = Proc::parse_via_wpda("( ) . { 0 }")
         .expect("'( ) . { 0 }' parses");
     match &result {
         Proc::PInputsOptTagged(ns, qs, _scope) => {
@@ -168,7 +168,7 @@ fn pred1_opt_skipped_empty_names_via_wpds() {
 
 #[test]
 fn pred2_opt_skipped_single_binder_via_wpds() {
-    let result = Proc::parse_via_wpds("( @(0) ? x ) . { 0 }")
+    let result = Proc::parse_via_wpda("( @(0) ? x ) . { 0 }")
         .expect("'( @(0) ? x ) . { 0 }' parses");
     match &result {
         Proc::PInputsOptTagged(ns, qs, _scope) => {
@@ -193,7 +193,7 @@ fn pred2_opt_skipped_single_binder_via_wpds() {
 //
 // #[test]
 // fn pred3_opt_taken_empty_inner_via_wpds() {
-//     let result = Proc::parse_via_wpds("( ) . { 0 } with [ ]")
+//     let result = Proc::parse_via_wpda("( ) . { 0 } with [ ]")
 //         .expect("'( ) . { 0 } with [ ]' parses");
 //     match &result {
 //         Proc::PInputsOptTagged(ns, qs, _scope) => {
@@ -212,7 +212,7 @@ fn pred2_opt_skipped_single_binder_via_wpds() {
 //
 // #[test]
 // fn pred4_opt_taken_nonempty_via_wpds() {
-//     let result = Proc::parse_via_wpds("( @(0) ? x ) . { 0 } with [ 0 ]")
+//     let result = Proc::parse_via_wpda("( @(0) ? x ) . { 0 } with [ 0 ]")
 //         .expect("'( @(0) ? x ) . { 0 } with [ 0 ]' parses");
 //     match &result {
 //         Proc::PInputsOptTagged(ns, qs, _scope) => {

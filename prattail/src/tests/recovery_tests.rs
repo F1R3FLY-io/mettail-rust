@@ -129,13 +129,13 @@ fn test_sync_predicate_includes_structural_delimiters() {
 // ── Recovering parser generation ──
 
 // Stage 10.5r migration (2026-05-04): the following 3 tests MOVED to
-// macros/src/gen/runtime/wpds_codegen/mod.rs::tests:
+// macros/src/gen/runtime/wpda_codegen/mod.rs::tests:
 //   * test_generated_code_contains_recovering_parser → walker_emits_recovering_parser
 //   * test_recovering_parser_takes_errors_param → walker_recovering_parser_signature_uses_recovery_attempt (combined)
 //   * test_recovering_parser_returns_option → walker_recovering_parser_signature_uses_recovery_attempt (combined)
 //
-// Walker now emits `parse_<Cat>_via_wpds_recovering` returning
-// `(Result<Cat, WpdsParseError>, Vec<RecoveryAttempt>)` — different signature
+// Walker now emits `parse_<Cat>_via_wpda_recovering` returning
+// `(Result<Cat, WpdaParseError>, Vec<RecoveryAttempt>)` — different signature
 // from the trampoline's Option-based recovering parser. New tests assert
 // against the Walker emission directly.
 
@@ -167,10 +167,10 @@ fn test_multi_category_generates_separate_sync_predicates() {
     assert!(code_str.contains("is_sync_Bool"), "should generate sync predicate for Bool");
 
     // Stage 10.5 (2026-05-04): `parse_<Cat>_recovering` was emitted by trampoline.
-    // Walker (WPDS) emits `parse_<Cat>_via_wpds_recovering` from `wpds_codegen/facade.rs`
+    // Walker (WPDS) emits `parse_<Cat>_via_wpda_recovering` from `wpda_codegen/facade.rs`
     // — invisible to `generate_parser(spec)` because Walker codegen lives downstream
     // in the macros crate. Walker-side assertion lives in
-    // `macros/src/gen/runtime/wpds_codegen/tests/*` (post-Stage-10.5r-d move).
+    // `macros/src/gen/runtime/wpda_codegen/tests/*` (post-Stage-10.5r-d move).
 }
 
 // ── Recovering led loop uses sync ──
@@ -207,12 +207,12 @@ fn _disabled_test_generated_code_contains_recovery_beam_width() {
 // ── Error cascade prevention (Sprint 15) ──
 
 // Stage 10.5r migration (2026-05-04): cascade prevention + incremental
-// bracket tracking tests MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests:
+// bracket tracking tests MOVED to macros/src/gen/runtime/wpda_codegen/mod.rs::tests:
 //   * test_generated_code_contains_cascade_prevention → walker_emits_cascade_prevention_thread_local
 //   * test_generated_recovery_uses_incremental_bracket_tracking → walker_emits_bracket_state_per_category
 //
 // LAST_ERROR_POS_<cat> and BRACKET_STATE_<cat> thread-locals are now emitted
-// by wpds_codegen/recovery.rs::emit_recovery_module. Identifier names preserved.
+// by wpda_codegen/recovery.rs::emit_recovery_module. Identifier names preserved.
 
 // ── RepairAction::describe() produces human-readable messages ──
 
@@ -268,8 +268,8 @@ fn test_repair_action_describe() {
 // ── Generated code uses RecoveryApplied ──
 
 // Stage 10.5r migration (2026-05-04): RecoveryApplied test MOVED to
-// macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
-// (Walker uses WpdsParseError::ParseFailed { attempts: Vec<RecoveryAttempt> } —
+// macros/src/gen/runtime/wpda_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
+// (Walker uses WpdaParseError::ParseFailed { attempts: Vec<RecoveryAttempt> } —
 // the macro-side Cat::parse_recovering wrapper translates to ParseError variants).
 
 // Stage 10.5r-d (2026-05-05): the following tests DELETED — they assert
@@ -296,9 +296,9 @@ fn test_generated_code_contains_token_to_id() {
 // the dead generate_wfst_recovery_fn emitter chain.
 
 // Stage 10.5r migration (2026-05-04): frame_kind_helper test MOVED to
-// macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_frame_kind_helper_per_category
+// macros/src/gen/runtime/wpda_codegen/mod.rs::tests::walker_emits_frame_kind_helper_per_category
 // (frame_kind_of_<cat> per-category wrappers + shared frame_kind_of_wpds
-// emitted by wpds_codegen/recovery.rs::emit_recovery_module).
+// emitted by wpda_codegen/recovery.rs::emit_recovery_module).
 
 // Stage 10.5r-d (2026-05-05): test_recovery_uses_frame_kind_multipliers
 // and test_generated_recovery_uses_viterbi_multi_step DELETED — they

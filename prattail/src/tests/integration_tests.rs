@@ -89,11 +89,11 @@ fn test_generate_parser_produces_code() {
     let code_str = code.to_string();
 
     // Stage 10.5 (2026-05-04): pipeline.rs no longer emits parser proper —
-    // Walker (WPDS) emits `parse_<Cat>_via_wpds` from `wpds_codegen/facade.rs`
+    // Walker (WPDS) emits `parse_<Cat>_via_wpda` from `wpda_codegen/facade.rs`
     // which lives in the macros crate (downstream of pipeline). pipeline.rs
     // emission is now: lexer + sync predicates + recovery infra.
     // Walker-side codegen string assertions live in
-    // `macros/src/gen/runtime/wpds_codegen/tests/*` (post-10.5r-d).
+    // `macros/src/gen/runtime/wpda_codegen/tests/*` (post-10.5r-d).
 
     // Should contain lexer components
     assert!(code_str.contains("Token"), "should contain Token enum");
@@ -122,8 +122,8 @@ fn test_generate_parser_code_size() {
 }
 
 // Stage 10.5r migration (2026-05-04): `test_generate_parser_two_categories`
-// MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_parse_via_wpds_per_category
-// (Walker emits parse_<Cat>_via_wpds; the test asserts against Walker codegen output
+// MOVED to macros/src/gen/runtime/wpda_codegen/mod.rs::tests::walker_emits_parse_via_wpda_per_category
+// (Walker emits parse_<Cat>_via_wpda; the test asserts against Walker codegen output
 // which lives in the macros crate, downstream of prattail).
 
 #[test]
@@ -170,8 +170,8 @@ fn test_generate_parser_with_unary_prefix() {
     // variant — implementation detail, not a feature. Walker uses WPDS stack
     // states keyed by (rule_idx, position), no named per-rule frame variants.
     // The unary-prefix FEATURE survives in Walker via `prefix_bp_<cat>` from
-    // `wpds_codegen/binder.rs` and Reduce-edge construction. Walker-side
-    // assertion lives in `macros/src/gen/runtime/wpds_codegen/tests/*`.
+    // `wpda_codegen/binder.rs` and Reduce-edge construction. Walker-side
+    // assertion lives in `macros/src/gen/runtime/wpda_codegen/tests/*`.
     // Pipeline still emits the Minus Token (lexer side).
     assert!(code_str.contains("Minus"), "should contain Minus token handling");
 }
@@ -211,8 +211,8 @@ fn test_generate_parser_with_optional() {
     // Stage 10.5 (2026-05-04): `RD_IfExpr_0` was a trampoline frame-enum variant
     // for the inlined IfExpr continuation — implementation detail, not a feature.
     // Walker's WPDS rule table represents this as `(rule_idx, position)` stack
-    // states (see `wpds_codegen/tables.rs`). The Optional-syntax FEATURE survives
-    // via Walker emission and is asserted in `macros/src/gen/runtime/wpds_codegen/tests/*`.
+    // states (see `wpda_codegen/tables.rs`). The Optional-syntax FEATURE survives
+    // via Walker emission and is asserted in `macros/src/gen/runtime/wpda_codegen/tests/*`.
     // Pipeline still emits the KwIf Token (lexer side).
     assert!(
         code_str.contains("KwIf"),
@@ -221,7 +221,7 @@ fn test_generate_parser_with_optional() {
 }
 
 // Stage 10.5r migration (2026-05-04): the following 3 tests MOVED to
-// macros/src/gen/runtime/wpds_codegen/mod.rs::tests:
+// macros/src/gen/runtime/wpda_codegen/mod.rs::tests:
 //   * test_generate_parser_with_right_associativity → walker_smoke_test_calc_shaped_grammar
 //     (right-assoc encoded in Walker BP table; Caret token still in lexer)
 //   * test_generate_parser_with_postfix → walker_smoke_test_calc_shaped_grammar
@@ -551,7 +551,7 @@ mod wfst_lexer_weight_tests {
     // emitter; eliminated together with that chain.
 
     // Stage 10.5r migration (2026-05-04): the following 5 tests MOVED to
-    // macros/src/gen/runtime/wpds_codegen/mod.rs::tests:
+    // macros/src/gen/runtime/wpda_codegen/mod.rs::tests:
     //   * test_b4_running_weight_initialized_on_parse → walker_emits_running_and_parent_weight_thread_locals
     //   * test_b4_running_weight_accessor_is_public → walker_emits_running_weight_accessor
     //   * test_b4_running_weight_accessor_returns_f64 → walker_emits_running_weight_accessor (asserts -> f64)
@@ -560,7 +560,7 @@ mod wfst_lexer_weight_tests {
     //
     // RUNNING_WEIGHT_<CAT>, PARENT_WEIGHT_<CAT> thread-locals + the
     // `running_weight_<cat>() -> f64` accessor with `inherited` local are
-    // now emitted by `wpds_codegen/recovery.rs::emit_recovery_module`.
+    // now emitted by `wpda_codegen/recovery.rs::emit_recovery_module`.
 
     // ══════════════════════════════════════════════════════════════════════
     // A4: WFST-guided NFA cold path splitting — codegen verification
@@ -718,7 +718,7 @@ mod wfst_lexer_weight_tests {
     // end-of-input via resolve_at_end_of_input. Position-aware ranking, if needed,
     // is encoded in LexicographicWeight secondary fields — not testable via emitted-
     // code substring. Behavioral tests for ambiguous-parse position ranking should
-    // live at the runtime layer (e.g., languages/tests/wpds_walker.rs).
+    // live at the runtime layer (e.g., languages/tests/wpda_walker.rs).
 
     #[test]
     fn test_b6_prediction_wfst_from_flat_constructor() {

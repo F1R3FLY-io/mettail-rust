@@ -1,9 +1,9 @@
 //! Opt-Group synthetic test grammar (2026-04-29).
 //!
 //! Exercises `*opt(...)` syntax in syntax patterns + term contexts — the
-//! WPDS engine's `WpdsState::OptionalGroup` state, the new
+//! WPDS engine's `WpdaState::OptionalGroup` state, the new
 //! `SymbolKind::OptionalGroupAt(u8)` marker, the
-//! `WpdsStepAction::OptGroupAbsent` / `WpdsStepAction::OptGroupFinalize`
+//! `WpdaStepAction::OptGroupAbsent` / `WpdaStepAction::OptGroupFinalize`
 //! actions, the `SemanticBuilder.optional_stack`, and the
 //! `ActionArg::Optional(Option<Vec<ActionArg>>)` runtime arg.
 //!

@@ -1097,7 +1097,7 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
     write_lex_lattice_via_core(buf);
     // L-substrate Piece #4 (2026-05-13): emit `lex_stream()` that returns a
     // `LexStream` carrying multi-LENGTH alternatives per byte position. Used
-    // by the lex-fork PrefixDispatch routing in `parse_via_wpds` when the
+    // by the lex-fork PrefixDispatch routing in `parse_via_wpda` when the
     // input contains lex ambiguity (e.g., `-3` lexes as both `Integer(-3)`
     // and `[Minus, Integer(3)]`).
     write_lex_stream_via_core(buf);
@@ -1177,7 +1177,7 @@ fn write_hybrid_lexer(
     // is purely cosmetic — each arm's selector (`state_idx`) is unique
     // across the set, so reordering is provably semantics-preserving
     // under Rust `match` rules. Mirrors the same pattern at
-    // `wpds_codegen/auto_inject.rs:181` ("Sort kinds for deterministic
+    // `wpda_codegen/auto_inject.rs:181` ("Sort kinds for deterministic
     // emission order across runs").
     let mut sorted_hot: Vec<usize> = hot_states.iter().copied().collect();
     sorted_hot.sort_unstable();
@@ -1219,7 +1219,7 @@ fn write_hybrid_lexer(
     write_lex_lattice_via_core(buf);
     // L-substrate Piece #4 (2026-05-13): emit `lex_stream()` that returns a
     // `LexStream` carrying multi-LENGTH alternatives per byte position. Used
-    // by the lex-fork PrefixDispatch routing in `parse_via_wpds` when the
+    // by the lex-fork PrefixDispatch routing in `parse_via_wpda` when the
     // input contains lex ambiguity (e.g., `-3` lexes as both `Integer(-3)`
     // and `[Minus, Integer(3)]`).
     write_lex_stream_via_core(buf);
@@ -2328,7 +2328,7 @@ fn write_comb_driven_lexer(
     write_lex_lattice_via_core(buf);
     // L-substrate Piece #4 (2026-05-13): emit `lex_stream()` that returns a
     // `LexStream` carrying multi-LENGTH alternatives per byte position. Used
-    // by the lex-fork PrefixDispatch routing in `parse_via_wpds` when the
+    // by the lex-fork PrefixDispatch routing in `parse_via_wpda` when the
     // input contains lex ambiguity (e.g., `-3` lexes as both `Integer(-3)`
     // and `[Minus, Integer(3)]`).
     write_lex_stream_via_core(buf);
@@ -2391,7 +2391,7 @@ fn write_bitmap_driven_lexer(
     write_lex_lattice_via_core(buf);
     // L-substrate Piece #4 (2026-05-13): emit `lex_stream()` that returns a
     // `LexStream` carrying multi-LENGTH alternatives per byte position. Used
-    // by the lex-fork PrefixDispatch routing in `parse_via_wpds` when the
+    // by the lex-fork PrefixDispatch routing in `parse_via_wpda` when the
     // input contains lex ambiguity (e.g., `-3` lexes as both `Integer(-3)`
     // and `[Minus, Integer(3)]`).
     write_lex_stream_via_core(buf);

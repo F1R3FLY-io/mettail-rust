@@ -96,7 +96,7 @@ pub fn emit_lex_alt_rule_for_fn(
         fn lex_alt_rule_for_prefix(
             cat_src_idx: u16,
             kind: &mettail_prattail::automata::TokenKind,
-        ) -> Option<mettail_prattail::wpds_runtime::LexAltRuleInfo> {
+        ) -> Option<mettail_prattail::wpda_runtime::LexAltRuleInfo> {
             match (cat_src_idx, kind) {
                 #( #prefix_arms )*
                 _ => None,
@@ -116,7 +116,7 @@ pub fn emit_lex_alt_rule_for_fn(
         fn lex_alt_rule_for_infix(
             cat_src_idx: u16,
             kind: &mettail_prattail::automata::TokenKind,
-        ) -> Option<mettail_prattail::wpds_runtime::LexAltRuleInfo> {
+        ) -> Option<mettail_prattail::wpda_runtime::LexAltRuleInfo> {
             match (cat_src_idx, kind) {
                 #( #infix_arms )*
                 _ => None,
@@ -146,9 +146,9 @@ fn emit_arms_for_shape(
     let push_simple_atomic = |k: TokenStream, arms: &mut Vec<TokenStream>| {
         arms.push(quote! {
             (#cat_src_idx, #k) => Some(
-                mettail_prattail::wpds_runtime::LexAltRuleInfo {
+                mettail_prattail::wpda_runtime::LexAltRuleInfo {
                     rule_idx: #rule_idx,
-                    kind: mettail_prattail::wpds_runtime::LexAltRuleKind::Atomic,
+                    kind: mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic,
                 }
             ),
         });
@@ -158,9 +158,9 @@ fn emit_arms_for_shape(
     let push_payload_eq_atomic = |k: TokenStream, expected: &str, arms: &mut Vec<TokenStream>| {
         arms.push(quote! {
             (#cat_src_idx, #k) if __cat == #expected => Some(
-                mettail_prattail::wpds_runtime::LexAltRuleInfo {
+                mettail_prattail::wpda_runtime::LexAltRuleInfo {
                     rule_idx: #rule_idx,
-                    kind: mettail_prattail::wpds_runtime::LexAltRuleKind::Atomic,
+                    kind: mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic,
                 }
             ),
         });
@@ -356,9 +356,9 @@ fn emit_arms_for_shape(
             prefix_arms.push(quote! {
                 (#cat_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
                     if __t == #trigger_lit => Some(
-                        mettail_prattail::wpds_runtime::LexAltRuleInfo {
+                        mettail_prattail::wpda_runtime::LexAltRuleInfo {
                             rule_idx: #rule_idx,
-                            kind: mettail_prattail::wpds_runtime::LexAltRuleKind::PrefixOp {
+                            kind: mettail_prattail::wpda_runtime::LexAltRuleKind::PrefixOp {
                                 body_src_idx: #body_src_idx,
                             },
                         }

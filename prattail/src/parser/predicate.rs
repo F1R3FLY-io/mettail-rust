@@ -1,8 +1,8 @@
 //! Phase 6: walker-driven predicate parsing.
 //!
-//! Thin adapter that lets the WPDS walker's `WpdsStepAction::ParsePredicate`
+//! Thin adapter that lets the WPDS walker's `WpdaStepAction::ParsePredicate`
 //! handler invoke the canonical language-generic Pratt parser
-//! (`predicate_pratt`) over a `WpdsTokenSource`. Returns
+//! (`predicate_pratt`) over a `WpdaTokenSource`. Returns
 //! `mettail_prattail::behavioral_pred::BehavioralPred` directly — no
 //! intermediate AST conversion (the prior `PrattailPred` duplicate was
 //! deleted during the F.0-sibling break, 2026-04-26).
@@ -16,7 +16,7 @@ use crate::behavioral_pred::BehavioralPred;
 use crate::parser::predicate_pratt::{
     parse_predicate_from_str, PredicateParserConfig, TerminatorToken,
 };
-use crate::wpds_runtime::WpdsTokenSource;
+use crate::wpda_runtime::WpdaTokenSource;
 
 /// Phase 6: parse a predicate from `tokens` starting at `start`. Returns
 /// `(predicate, new_pos)` on success.
@@ -29,7 +29,7 @@ use crate::wpds_runtime::WpdsTokenSource;
 /// Stops at the first default-terminator token at depth 0
 /// (`)`, `}`, `,`, `;`, `]`).
 pub fn parse_predicate_via_token_source(
-    tokens: &dyn WpdsTokenSource,
+    tokens: &dyn WpdaTokenSource,
     start: usize,
 ) -> Result<(BehavioralPred, usize), String> {
     // Collect tokens up to the first default terminator (at depth 0)
@@ -81,7 +81,7 @@ fn is_default_terminator(kind: Option<&TokenKind>, text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wpds_runtime::SliceTokenSource;
+    use crate::wpda_runtime::SliceTokenSource;
 
     fn build_tokens(words: &[&str]) -> (Vec<TokenKind>, Vec<String>) {
         let kinds: Vec<TokenKind> = words

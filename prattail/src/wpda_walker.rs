@@ -1,6 +1,6 @@
 //! WPDS walker: reactive FSM driving the runtime parser.
 //!
-//! Stage 4 of W7 plan v5.1. Implements [`WpdsWalker`], the pure
+//! Stage 4 of W7 plan v5.1. Implements [`WpdaWalker`], the pure
 //! `State × Event → Transition` driver per the survey contract M1
 //! (`prattail/docs/design/wpds-migration-survey.md` §4).
 //!
@@ -9,37 +9,37 @@
 //! ```text
 //!   External consumer
 //!         │
-//!         │ WpdsEvent
+//!         │ WpdaEvent
 //!         ▼
 //!   ┌─────────────────────────────┐
-//!   │ WpdsWalker<W, E>            │
-//!   │   state: WpdsState          │  ← inspectable
-//!   │   gss:   WpdsGss<W>         │  ← branching substrate (Stage 3)
+//!   │ WpdaWalker<W, E>            │
+//!   │   state: WpdaState          │  ← inspectable
+//!   │   gss:   WpdaGss<W>         │  ← branching substrate (Stage 3)
 //!   │   pos:   usize              │  ← input cursor
 //!   │   weight: W                 │  ← cumulative path weight
 //!   │   engine: E (StepEngine)    │  ← provides per-language rule logic
 //!   └─────────────────────────────┘
 //!         │
-//!         │ WpdsTransition
+//!         │ WpdaTransition
 //!         ▼
 //!   External consumer (acts on transition / records trace)
 //! ```
 //!
 //! The walker is **pure** in the sense that `process_event` produces a
-//! `WpdsTransition` describing what changed; it does not perform I/O,
+//! `WpdaTransition` describing what changed; it does not perform I/O,
 //! call observers (those are Stage 5's `WalkerConsumer`), or otherwise
 //! interact with the world. External consumers drive the loop.
 //!
 //! ## Step engine separation
 //!
-//! Per-language rule logic lives behind the [`WpdsStepEngine`] trait. The
+//! Per-language rule logic lives behind the [`WpdaEngine`] trait. The
 //! walker calls into the engine once per `Step` event to ask "given the
 //! current state and stack, what should I do next?" Stage 6's codegen
-//! emits a concrete `WpdsStepEngine` per language. Tests use [`MockEngine`].
+//! emits a concrete `WpdaEngine` per language. Tests use [`MockEngine`].
 //!
 //! ## Beam pruning
 //!
-//! Optional via [`WpdsWalker::with_beam_size`]. When set, after each
+//! Optional via [`WpdaWalker::with_beam_size`]. When set, after each
 //! transition the walker prunes the GSS frontier to the K best branches
 //! by weight (lex-min on [`crate::automata::lex_weight::LexicographicWeight`]).
 //! Off by default — preserves correctness at the cost of memory.
@@ -48,8 +48,8 @@
 //!
 //! Per WPDS poststar semantics, a single `Step` event may trigger a chain
 //! of derived transitions (push followed by automatic intra-cat advances).
-//! [`WpdsWalker::run_to_saturation`] drives `Step` events until the
-//! engine returns [`WpdsStepAction::Idle`] (nothing more to derive).
+//! [`WpdaWalker::run_to_saturation`] drives `Step` events until the
+//! engine returns [`WpdaStepAction::Idle`] (nothing more to derive).
 
 use std::any::Any;
 // Phase 5.7 (2026-05-12): persistent OrdSet for cursor visited sets.
@@ -63,13 +63,13 @@ use std::sync::Arc;
 
 use crate::automata::semiring::SemiringRef;
 use crate::automata::TokenKind;
-use crate::gss::{WpdsGss, WpdsGssNode};
+use crate::gss::{WpdaGss, WpdaGssNode};
 use crate::recovery::RecoveryConfig;
-use crate::wpds_runtime::{
+use crate::wpda_runtime::{
     ActionEntry, SemanticBuilder, StackSymbolV2,
-    SymbolKind, WpdsConfiguration, WpdsControl, WpdsEvent, WpdsMaxStepsExceeded,
-    WpdsMutableTokenSource, WpdsResolveResult, WpdsState, WpdsTokenSource, WpdsTraceEntry,
-    WpdsTransition,
+    SymbolKind, WpdaConfiguration, WpdaControl, WpdaEvent, WpdaMaxStepsExceeded,
+    WpdaMutableTokenSource, WpdaResolveResult, WpdaState, WpdaTokenSource, WpdaTraceEntry,
+    WpdaTransition,
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -78,24 +78,24 @@ use crate::wpds_runtime::{
 
 /// Per-language rule logic queried by the walker on each `Step` event.
 ///
-/// Stage 6's codegen emits a concrete `WpdsStepEngine` per `language!`
+/// Stage 6's codegen emits a concrete `WpdaEngine` per `language!`
 /// declaration. Tests in this module use [`ScriptedEngine`].
 ///
-/// Phase A.1 extension: `step` gains a `tokens: &dyn WpdsTokenSource`
+/// Phase A.1 extension: `step` gains a `tokens: &dyn WpdaTokenSource`
 /// parameter so it can peek the input. `action_for` is the per-language
 /// semantic-action lookup — default empty so engines that don't need
 /// semantic actions (e.g., `IdleEngine` for tests) don't have to supply one.
-pub trait WpdsStepEngine<W: SemiringRef> {
+pub trait WpdaEngine<W: SemiringRef> {
     /// Decide the next action given the current state, configuration,
     /// and input.
     fn step(
         &self,
-        state: &WpdsState,
-        gss: &WpdsGss<W>,
-        frontier_top: Option<&WpdsGssNode>,
+        state: &WpdaState,
+        gss: &WpdaGss<W>,
+        frontier_top: Option<&WpdaGssNode>,
         pos: usize,
-        tokens: &dyn WpdsTokenSource,
-    ) -> WpdsStepAction<W>;
+        tokens: &dyn WpdaTokenSource,
+    ) -> WpdaStepAction<W>;
 
     /// Look up the semantic action attached to a `(src_idx, rule_idx)` pair.
     ///
@@ -176,7 +176,7 @@ pub trait WpdsStepEngine<W: SemiringRef> {
     /// slots, or `None` for Vec/HashBag/HashSet slots and unknown
     /// (src, rule, slot) tuples.
     ///
-    /// When `Some(_)`, the walker patches `WpdsState::CollectionLoop.kv_phase`
+    /// When `Some(_)`, the walker patches `WpdaState::CollectionLoop.kv_phase`
     /// at transition time based on `cursor.collection_stack[acc_id].len()`
     /// parity:
     /// - len % 2 == 1 (odd, just parsed a key) → `kv_phase = 1` (expect `:`)
@@ -219,13 +219,13 @@ pub trait WpdsStepEngine<W: SemiringRef> {
     }
 }
 
-/// One step of action returned by a [`WpdsStepEngine`].
+/// One step of action returned by a [`WpdaEngine`].
 ///
 /// Operations are exhaustive: walker selects exactly one per `Step`.
 #[derive(Debug, Clone)]
-pub enum WpdsStepAction<W: SemiringRef> {
+pub enum WpdaStepAction<W: SemiringRef> {
     /// Move the FSM into a new state without touching the GSS.
-    Advance(WpdsState),
+    Advance(WpdaState),
     /// B8 / Issue C (2026-05-09): Same as Advance, but logs a single
     /// BuilderDelta effect to the cursor's recovery_deltas before
     /// the state transition. Used by the Unwinding-OptionalGroupAt arm
@@ -234,29 +234,29 @@ pub enum WpdsStepAction<W: SemiringRef> {
     /// Mirrors `Advance` for non-effect-bearing transitions and
     /// avoids a new state machine.
     AdvanceWithEffect {
-        new_state: WpdsState,
+        new_state: WpdaState,
         effect: BuilderDelta,
     },
     /// WPDS push: emit a new symbol on top of the frontier, link to current top.
     Push {
         symbol: StackSymbolV2,
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
     },
     /// WPDS pop: drop the frontier top, follow the predecessor edge.
     Pop {
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
     },
     /// WPDS replace: swap the top symbol for another (intracategory step).
     Replace {
         symbol: StackSymbolV2,
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
     },
     /// Fork into multiple branches; each becomes an independent frontier
     /// with its own per-branch target state. The walker constructs one
-    /// [`BranchCursor`] per branch and transitions to `WpdsState::AmbiguityFanout`;
+    /// [`BranchCursor`] per branch and transitions to `WpdaState::AmbiguityFanout`;
     /// `step_fanout` then drives each cursor independently until lex-min
     /// selects the surviving branch.
     ///
@@ -293,7 +293,7 @@ pub enum WpdsStepAction<W: SemiringRef> {
     ConsumeAndPush {
         symbol: StackSymbolV2,
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
         capture_token: bool,
     },
     /// Phase 4: consume the current token (advance `pos` by 1), pop the
@@ -303,7 +303,7 @@ pub enum WpdsStepAction<W: SemiringRef> {
     /// `CollectionMarker`, and fire the finalize action.
     ConsumeAndPop {
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
     },
     /// Phase 4: consume the current token (advance `pos` by 1) without
     /// touching the stack, then transition to `new_state`. Used by the
@@ -311,7 +311,7 @@ pub enum WpdsStepAction<W: SemiringRef> {
     /// `PrefixDispatch` to parse the next element.
     Consume {
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
     },
     /// Phase 5: consume the current `Ident` token (advance `pos` by 1),
     /// push it as `ActionArg::Ident` to the builder, and replace the GSS
@@ -322,7 +322,7 @@ pub enum WpdsStepAction<W: SemiringRef> {
     ConsumeIdentAndReplace {
         symbol: StackSymbolV2,
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
         start_scope: bool,
     },
     /// Phase 5: consume the current token (advance `pos` by 1) and
@@ -333,7 +333,7 @@ pub enum WpdsStepAction<W: SemiringRef> {
     ConsumeAndReplace {
         symbol: StackSymbolV2,
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
     },
     /// Phase 5b: replace the GSS top with `replace_symbol`, then push
     /// `push_symbol` on top. Used by `ParamParse` slot dispatch to
@@ -345,7 +345,7 @@ pub enum WpdsStepAction<W: SemiringRef> {
         replace_symbol: StackSymbolV2,
         push_symbol: StackSymbolV2,
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
     },
     /// Phase 6: parse a predicate inline via
     /// `mettail_runtime::parser::predicate::parse_predicate_from_tokens`.
@@ -355,7 +355,7 @@ pub enum WpdsStepAction<W: SemiringRef> {
     ParsePredicate {
         replace_symbol: StackSymbolV2,
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
     },
     /// Opt-Group (2026-04-29): skip path. The OptionalGroup state at
     /// sub_pos=0 peeked the FIRST set and found no match. Walker:
@@ -369,7 +369,7 @@ pub enum WpdsStepAction<W: SemiringRef> {
     OptGroupAbsent {
         replace_symbol: StackSymbolV2,
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
     },
     /// Opt-Group (2026-04-29): take-path finalize. The OptionalGroup state
     /// at sub_pos = inner.len()+1 has walked all inner positions. Walker:
@@ -387,29 +387,29 @@ pub enum WpdsStepAction<W: SemiringRef> {
     OptGroupFinalize {
         replace_symbol: StackSymbolV2,
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
     },
     /// Parse complete.
     Accept,
-    /// Parse failed; message is propagated as `WpdsState::Error { message }`.
+    /// Parse failed; message is propagated as `WpdaState::Error { message }`.
     Error(String),
     /// Engine has no opinion at this state. Walker emits `NoChange`.
     Idle,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WpdsWalker
+// WpdaWalker
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Pure reactive FSM driving WPDS-based parsing.
 ///
-/// External consumers (LSP/DAP/REPL/nREPL) drive [`WpdsWalker::process_event`]
+/// External consumers (LSP/DAP/REPL/nREPL) drive [`WpdaWalker::process_event`]
 /// at their own pace. The walker tracks state, GSS, cursor position, and
-/// cumulative weight; it consults the [`WpdsStepEngine`] for per-language
+/// cumulative weight; it consults the [`WpdaEngine`] for per-language
 /// decisions.
-pub struct WpdsWalker<W: SemiringRef, E: WpdsStepEngine<W>> {
-    state: WpdsState,
-    gss: WpdsGss<W>,
+pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
+    state: WpdaState,
+    gss: WpdaGss<W>,
     pos: usize,
     weight: W,
     engine: E,
@@ -420,13 +420,13 @@ pub struct WpdsWalker<W: SemiringRef, E: WpdsStepEngine<W>> {
     /// `BeamSize(k)` (legacy beam pruning, mandate-violating escape hatch)
     /// or `AmbiguityBudget(n)` (structured-error overflow,
     /// mandate-compliant). See `CursorBoundingMode` docs for details.
-    bounding_mode: crate::wpds_runtime::CursorBoundingMode,
+    bounding_mode: crate::wpda_runtime::CursorBoundingMode,
     /// Phase A.1: walker-owned accumulator for captured parse artifacts
     /// (tokens, identifiers, sub-terms). Semantic actions consume from
     /// and push back to this builder.
     builder: SemanticBuilder,
     /// "No Fork has happened yet" flag — `true` at construction; set
-    /// `false` at the first `WpdsStepAction::Fork`; never reset within
+    /// `false` at the first `WpdaStepAction::Fork`; never reset within
     /// a parse (only `reset()` flips it back to `true`).
     ///
     /// The 4 mode-agnostic helpers (advance_cursor_pos,
@@ -440,7 +440,7 @@ pub struct WpdsWalker<W: SemiringRef, E: WpdsStepEngine<W>> {
     /// `commit_winner` installs a winner.
     deterministic: bool,
     /// Stage 7+ Fork plan, step 2: per-branch micro-state during
-    /// `WpdsState::AmbiguityFanout`. Each entry is a `BranchCursor` that
+    /// `WpdaState::AmbiguityFanout`. Each entry is a `BranchCursor` that
     /// pairs a GSS-tip node id with the branch's own `pos`, accumulated
     /// `weight`, and `inner_state` (the post-Fork target state for that
     /// branch).
@@ -470,7 +470,7 @@ pub struct WpdsWalker<W: SemiringRef, E: WpdsStepEngine<W>> {
     /// the slot defensively. None by default; replay paths
     /// (SubstituteToken/InsertToken/CommitLexAlternative) surface a clean
     /// Error if the slot is None when they fire — no graceful-degradation.
-    mutable_token_source: Option<*mut dyn WpdsMutableTokenSource>,
+    mutable_token_source: Option<*mut dyn WpdaMutableTokenSource>,
     /// Phantom data marker for the lifetime-erased mutable source slot.
     _mutable_source_lifetime: PhantomData<()>,
     /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): walker-owned
@@ -488,14 +488,14 @@ pub struct WpdsWalker<W: SemiringRef, E: WpdsStepEngine<W>> {
 // in pending_builder_ops, replayed at commit_winner). The names
 // inverted standard CS terminology (lazy meant immediate; strict meant
 // deferred). The actual signal — "no Fork has happened yet" — is now
-// a monotone bool `WpdsWalker.deterministic` (true while no Fork has
+// a monotone bool `WpdaWalker.deterministic` (true while no Fork has
 // happened — the walker is on a single parse path; false once a Fork
 // has transitioned it into nondeterministic mode where multiple cursors
 // explore grammar ambiguity in parallel, GLR/GLL-style).
 
 /// Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard for nondeterministic-mode
 /// cursors. If any cursor's `recovery_deltas` exceeds this length,
-/// the walker transitions to `WpdsState::Error` instead of continuing
+/// the walker transitions to `WpdaState::Error` instead of continuing
 /// to accumulate. Prevents pathological grammars from consuming
 /// unbounded memory in delta logs.
 ///
@@ -505,7 +505,7 @@ pub struct WpdsWalker<W: SemiringRef, E: WpdsStepEngine<W>> {
 /// that re-emits the same Fork) trip this guard immediately.
 pub const STRICT_PENDING_OPS_LIMIT: usize = 1_000_000;
 
-/// One branch of a [`WpdsStepAction::Fork`] action. Codegen emits a
+/// One branch of a [`WpdaStepAction::Fork`] action. Codegen emits a
 /// `Vec<ForkBranch<W>>` when a parser-side ambiguity needs WPDS-driven
 /// disambiguation (binder multi-rule, cross-cat projection sharing a
 /// FIRST token, etc.). Each branch carries everything the walker needs
@@ -525,7 +525,7 @@ pub const STRICT_PENDING_OPS_LIMIT: usize = 1_000_000;
 pub struct ForkBranch<W: SemiringRef> {
     pub symbol: StackSymbolV2,
     pub weight: W,
-    pub new_state: WpdsState,
+    pub new_state: WpdaState,
     /// Stage 3.12 / Class A.i (2026-05-01): per-branch action discriminator.
     /// `Push` (default) gives the existing semantics — push the symbol onto
     /// the cursor's GSS chain. `OptGroupAbsent { replace_symbol }` directs
@@ -548,14 +548,14 @@ pub struct ForkBranch<W: SemiringRef> {
 // cursor's live `builder` IS the authoritative state — there is no
 // pending-delta journal to dry-run. EOI gate goes via
 // `SemanticBuilder::is_accepting_terminal()`; broken-cursor filtering
-// happens at `cursor_resolution_check :: Drop` on `WpdsState::Error`.
+// happens at `cursor_resolution_check :: Drop` on `WpdaState::Error`.
 
 impl<W: SemiringRef> ForkBranch<W> {
     /// Stage 3.12 / Class A.i (2026-05-01): default constructor for
     /// branches with the standard `Push` action_kind. All 8 pre-Stage-3.12
     /// emit sites use this — the new `action_kind` field is opaque to
     /// existing callers.
-    pub fn push(symbol: StackSymbolV2, weight: W, new_state: WpdsState) -> Self {
+    pub fn push(symbol: StackSymbolV2, weight: W, new_state: WpdaState) -> Self {
         ForkBranch {
             symbol,
             weight,
@@ -573,10 +573,10 @@ impl<W: SemiringRef> ForkBranch<W> {
 /// branch (which needs pop+push+log, not just push).
 ///
 /// Stage 3.16 unified-framework (Commit 2 / Mechanism γ, 2026-05-05):
-/// payload-carrying action variants that mirror the existing `WpdsStepAction`
-/// operations. Each variant carries the EXACT payload of its WpdsStepAction
+/// payload-carrying action variants that mirror the existing `WpdaStepAction`
+/// operations. Each variant carries the EXACT payload of its WpdaStepAction
 /// counterpart (e.g. `ConsumeAndReplace { symbol, new_state }` mirrors
-/// `WpdsStepAction::ConsumeAndReplace`). Walker's `apply_action::Fork`
+/// `WpdaStepAction::ConsumeAndReplace`). Walker's `apply_action::Fork`
 /// dispatches on `action_kind` to perform the corresponding cursor mutation,
 /// avoiding the sentinel-pop overhead of a "Push-only" Fork model and
 /// generalizing to ALL future grammars with deliberate ambiguity at any
@@ -602,29 +602,29 @@ pub enum ForkActionKind {
     OptGroupAbsent { replace_symbol: StackSymbolV2 },
 
     /// Stage 3.16 (Cluster 1) — Replace top-of-GSS with `branch.symbol` and
-    /// consume one token. Mirrors `WpdsStepAction::ConsumeAndReplace`.
+    /// consume one token. Mirrors `WpdaStepAction::ConsumeAndReplace`.
     /// Fork must emit `consume_trigger: false` because this action consumes
     /// intrinsically.
     ConsumeAndReplace,
 
     /// Stage 3.16 (Cluster 1) — Consume one token, no GSS change. Mirrors
-    /// `WpdsStepAction::Consume`. Fork must emit `consume_trigger: false`.
+    /// `WpdaStepAction::Consume`. Fork must emit `consume_trigger: false`.
     Consume,
 
     /// Stage 3.16 (Cluster 1) — Consume identifier token: optionally start
     /// binder scope, push ident name to builder, then replace top-of-GSS
-    /// with `branch.symbol`. Mirrors `WpdsStepAction::ConsumeIdentAndReplace`.
+    /// with `branch.symbol`. Mirrors `WpdaStepAction::ConsumeIdentAndReplace`.
     /// Fork must emit `consume_trigger: false`.
     ConsumeIdentAndReplace { start_scope: bool },
 
     /// Stage 3.16 (Cluster 1) — Pop top-of-GSS frame, transition to
     /// `branch.new_state`. Used for mixfix last-operand elision (G2).
-    /// Mirrors `WpdsStepAction::Pop`. Fork must emit `consume_trigger: false`.
+    /// Mirrors `WpdaStepAction::Pop`. Fork must emit `consume_trigger: false`.
     Pop,
 
     /// Stage 3.16 (Cluster 1) — Consume token AND pop top-of-GSS frame.
     /// Used for empty-collection close branches. Mirrors
-    /// `WpdsStepAction::ConsumeAndPop`. Fork must emit `consume_trigger: false`.
+    /// `WpdaStepAction::ConsumeAndPop`. Fork must emit `consume_trigger: false`.
     ConsumeAndPop,
 
     /// Stage 3.16 (Cluster 1) — Consume token + replace top-of-GSS, but ALSO
@@ -665,7 +665,7 @@ pub enum ForkActionKind {
     },
 
     /// M6c.6.4 (2026-05-14) — unary prefix operator lex-Fork branch.
-    /// Mirrors the standard `WpdsStepAction::ConsumeAndPush` shape
+    /// Mirrors the standard `WpdaStepAction::ConsumeAndPush` shape
     /// emitted by the generated PrefixDispatch arm for `Fixed("-")`-like
     /// triggers in a same-cat unary prefix rule (e.g., `Neg`):
     /// symbol = `rule_at(cat, rule_idx, slot=1, Some(*cur_bp))` (NO
@@ -742,7 +742,7 @@ pub enum ForkActionKind {
     },
 
     /// Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ, 2026-05-05) — atomic
-    /// literal multi-arm Fork branch. Mirrors `WpdsStepAction::ConsumeAndPush
+    /// literal multi-arm Fork branch. Mirrors `WpdaStepAction::ConsumeAndPush
     /// { capture_token: true }`: emit_push_token captures the literal text
     /// onto the cursor's recovery_deltas/live builder, then push the
     /// `branch.symbol` (the rule's Return marker) onto the GSS, then advance
@@ -753,14 +753,14 @@ pub enum ForkActionKind {
     ConsumeAndCaptureAndPush,
 
     /// Stage 3.20 / L12 Commit F (2026-05-06) — Cluster 1/6 hacks #4 & #5
-    /// closure. Mirrors `WpdsStepAction::ConsumeAndReplace` but gated on
+    /// closure. Mirrors `WpdaStepAction::ConsumeAndReplace` but gated on
     /// a `peek_text == expected_text` equality check. Walker's
     /// `apply_action_to_cursor::Fork` arm reads the peek'd text at
     /// `pos_after`; on match, allocates the child like
     /// `ForkActionKind::ConsumeAndReplace`; on miss, skips child
     /// allocation entirely (no cursor pushed). When this is the only
     /// surviving branch in the Fork, `step_fanout`'s empty-children
-    /// check raises `WpdsState::Error { message: "all fork branches
+    /// check raises `WpdaState::Error { message: "all fork branches
     /// dropped" }` — same surface as the legacy eq-or-error pathway,
     /// but routed through uniform Fork+lex-min plumbing per
     /// `feedback_use_wpds_disambiguation_not_heuristics.md`. Behavioral
@@ -769,7 +769,7 @@ pub enum ForkActionKind {
     GuardedConsumeAndReplace { expected_text: String },
 
     /// Stage 3.20 / L12 Commit F (2026-05-06) — Cluster 1/6 hacks #6 & 4th
-    /// closure. Mirrors `WpdsStepAction::ConsumeIdentAndReplace` but
+    /// closure. Mirrors `WpdaStepAction::ConsumeIdentAndReplace` but
     /// gated on a `peek_kind == TokenKind::Ident` check. Pass → behaves
     /// identically to `ConsumeIdentAndReplace { start_scope }`. Fail →
     /// no child allocated. See `GuardedConsumeAndReplace` for the
@@ -777,7 +777,7 @@ pub enum ForkActionKind {
     GuardedConsumeIdentAndReplace { start_scope: bool },
 
     /// L12 follow-up B2 (2026-05-07) — closure for BinderListLoop's
-    /// separator branch. Mirrors `WpdsStepAction::Consume` but gated on
+    /// separator branch. Mirrors `WpdaStepAction::Consume` but gated on
     /// a `peek_text == expected_text` check. Pass → consume one token,
     /// no GSS change. Fail → no child allocated. Replaces the
     /// previously-unguarded `Consume` branch in BinderListLoop's
@@ -788,7 +788,7 @@ pub enum ForkActionKind {
 
     /// L12 follow-up B2 (2026-05-07) — closure for BinderListLoop
     /// bootstrap empty-list branch. Mirrors
-    /// `WpdsStepAction::ConsumeAndReplace` plus a pre-replace
+    /// `WpdaStepAction::ConsumeAndReplace` plus a pre-replace
     /// `BuilderDelta` effect (typically
     /// `BuilderDelta::StartBinderScope { names: vec![] }`), gated on
     /// `peek_text == expected_text`. Pass → log effect to
@@ -817,7 +817,7 @@ pub enum ForkActionKind {
     /// B8 / Issue C followup (2026-05-09): Class 3 non-empty bootstrap
     /// variant. Replaces the top symbol with `replace_symbol`, then
     /// pushes `branch.symbol` on top — mirroring engine-level
-    /// `WpdsStepAction::ReplaceAndPush` semantics inside a Fork branch.
+    /// `WpdaStepAction::ReplaceAndPush` semantics inside a Fork branch.
     /// No token consumed. Used by Class 3 BinderListLoop's non-empty
     /// bootstrap to (a) replace the outer RuleAt(rule, marker_pos)
     /// with RuleAt(rule, next_pos) so the post-loop unwind lands at
@@ -896,7 +896,7 @@ where
 }
 
 /// Stage 7+ Fork plan, step 2: per-branch micro-state during
-/// `WpdsState::AmbiguityFanout`. Stored on `WpdsWalker::branch_cursors`
+/// `WpdaState::AmbiguityFanout`. Stored on `WpdaWalker::branch_cursors`
 /// parallel to the `Vec<GssNodeId>` in the state itself. Each cursor
 /// carries the branch's GSS tip, current input position, accumulated
 /// weight, the per-branch target state, and a pending-builder-op log.
@@ -907,7 +907,7 @@ where
 /// chosen. Each cursor's deltas are replayed during `commit_winner`.
 pub struct BranchCursor<W: SemiringRef> {
     /// GSS-tip node id for this branch (matches the corresponding entry
-    /// in `WpdsState::AmbiguityFanout { branches }`).
+    /// in `WpdaState::AmbiguityFanout { branches }`).
     pub node: crate::gss::GssNodeId,
     /// Per-branch input position. Branches may diverge in `pos` because
     /// their first action (e.g., the Fork's `new_state` PrefixDispatch
@@ -920,7 +920,7 @@ pub struct BranchCursor<W: SemiringRef> {
     /// becomes each branch's initial `inner_state`; subsequent
     /// `step_fanout` calls dispatch on this state and overwrite it with
     /// the branch's post-step state.
-    pub inner_state: WpdsState,
+    pub inner_state: WpdaState,
     /// Step 3 (Fork plan F4): deferred builder mutations. The walker logs
     /// per-cursor builder ops here during `apply_action_to_cursor` instead
     /// of mutating the live `SemanticBuilder`. On `commit_winner` the
@@ -1018,7 +1018,7 @@ pub struct BranchCursor<W: SemiringRef> {
     // It memoized `cursor_committed_ops_consistent`, which is also
     // deleted — the B13d-R/Resolution-R consistency override is
     // unreachable under always-eager Arc::make_mut (broken cursors
-    // surface as `WpdsState::Error` and are dropped by
+    // surface as `WpdaState::Error` and are dropped by
     // `cursor_resolution_check`).
     /// Phase 5.2 (2026-05-12): per-cursor `Arc`-shared `SemanticBuilder`.
     /// Future anchor for the persistent-builder redesign — the runtime
@@ -1113,7 +1113,7 @@ impl<W: SemiringRef> BranchCursor<W> {
     /// with collections open in
     /// the live builder, the children cursors had no awareness of those
     /// collections — subsequent splice deltas could underflow at replay
-    /// (`pop_args` panic at `wpds_runtime.rs:1518`).
+    /// (`pop_args` panic at `wpda_runtime.rs:1518`).
     ///
     /// Post-Phase-4, the dual-mutation surface is gone; the live builder
     /// and cursor[0] stay in lockstep in deterministic mode via mode-aware helpers.
@@ -1127,11 +1127,11 @@ impl<W: SemiringRef> BranchCursor<W> {
     ///
     /// `seed_from_live` makes this explicit. Constructs a cursor with
     /// `K` empty `Vec<ActionArg>` placeholders in `collection_stack`,
-    /// where `K = live_collection_stack_depth`. Used by WpdsWalker
+    /// where `K = live_collection_stack_depth`. Used by WpdaWalker
     /// constructors and the deterministic→nondeterministic transition (Fork) to ensure
     /// the always-non-empty + always-aligned cursor invariant.
     ///
-    /// Replaces three inlined constructions in `WpdsWalker::{new,
+    /// Replaces three inlined constructions in `WpdaWalker::{new,
     /// new_for_category, seeded_from}` — single source of truth.
     // Phase 5.6-tail-G (2026-05-12): `live_collection_stack_depth` parameter
     // dropped. Pre-tail it was used to seed the deleted collection_stack
@@ -1142,7 +1142,7 @@ impl<W: SemiringRef> BranchCursor<W> {
         node: crate::gss::GssNodeId,
         pos: usize,
         weight: W,
-        inner_state: WpdsState,
+        inner_state: WpdaState,
     ) -> Self {
         BranchCursor {
             node,
@@ -1194,7 +1194,7 @@ impl<W: SemiringRef> BranchCursor<W> {
         parent: &Self,
         pos: usize,
         weight: W,
-        new_state: WpdsState,
+        new_state: WpdaState,
         source_priority: u32,
     ) -> Self {
         BranchCursor {
@@ -1243,9 +1243,9 @@ impl<W: SemiringRef> BranchCursor<W> {
 /// operational state — kept from the lex-min winner, not part of the key.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ConfigKey {
-    /// Cursor's per-branch FSM state. `WpdsState: Hash` derive added in
-    /// Stage 3.5b (`wpds_runtime.rs:326`).
-    state: WpdsState,
+    /// Cursor's per-branch FSM state. `WpdaState: Hash` derive added in
+    /// Stage 3.5b (`wpda_runtime.rs:326`).
+    state: WpdaState,
     /// GSS-tip node id. The GSS dedups by `(pos, symbol)`, so equality
     /// here = stack-tip equality only (NOT full stack-suffix equality).
     node: crate::gss::GssNodeId,
@@ -1287,7 +1287,7 @@ struct ConfigKey {
 /// Step 3 (Fork plan F4): deferred mutation of the live
 /// `SemanticBuilder` performed during a Fork branch's evaluation.
 ///
-/// During `WpdsState::AmbiguityFanout`, the walker cannot apply walker-
+/// During `WpdaState::AmbiguityFanout`, the walker cannot apply walker-
 /// driven builder side-effects (token captures, ident captures, predicate
 /// pushes, binder-scope opens, action firings) directly to the live
 /// builder — doing so would corrupt the builder state for losing
@@ -1314,9 +1314,9 @@ struct ConfigKey {
 /// Stage 3.20 / L12 (Commit 4, 2026-05-06): WPDS-edge recovery event.
 /// Each `BuilderDelta::RecoveryEvent`, `SubstituteToken`, `InsertToken`,
 /// or `CommitLexAlternative` delta replayed at commit_winner time pushes
-/// a `RecoveryEvent` onto `WpdsWalker::recovery_events`. The walker's
+/// a `RecoveryEvent` onto `WpdaWalker::recovery_events`. The walker's
 /// `recovery_trace()` accessor exposes this for diagnostic + recovery-
-/// attempt-surface consumers (facade.rs's `parse_<Cat>_via_wpds_recovering`
+/// attempt-surface consumers (facade.rs's `parse_<Cat>_via_wpda_recovering`
 /// maps each event into a `RecoveryAttempt`).
 #[derive(Clone, Debug)]
 pub struct RecoveryEvent {
@@ -1387,7 +1387,7 @@ impl RecoveryEvent {
 }
 
 /// BuilderDelta — payload variants for `cursor.recovery_deltas` AND for
-/// `WpdsStepAction::AdvanceWithEffect` / `ForkActionKind::*WithEffect(s)`
+/// `WpdaStepAction::AdvanceWithEffect` / `ForkActionKind::*WithEffect(s)`
 /// effect payloads.
 ///
 /// Phase 5.6-tail-E (2026-05-12): 9 dead variants deleted (PushToken,
@@ -1398,7 +1398,7 @@ impl RecoveryEvent {
 /// they never reach the journal. The 5 codegen-emitted "effect" variants
 /// (StartBinderScope, EndBinderScope, StartCollection, PushCollectionId,
 /// SpliceIntoCollection) are still active because codegen wraps them in
-/// `*WithEffect`/`*WithMultipleEffects` payloads on `ForkBranch`/`WpdsStepAction`.
+/// `*WithEffect`/`*WithMultipleEffects` payloads on `ForkBranch`/`WpdaStepAction`.
 /// Those flow through `apply_effect_to_builder` on the cursor.builder side;
 /// they no longer reach `cursor.recovery_deltas` (5.6-tail-D gated them).
 ///
@@ -1621,7 +1621,7 @@ where
 }
 
 /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): detect whether a
-/// `WpdsStepAction::Fork` was emitted by `recovery_dispatch::emit_recovery_fork`
+/// `WpdaStepAction::Fork` was emitted by `recovery_dispatch::emit_recovery_fork`
 /// (vs. a regular ambiguity Fork from binder / lex-alt / multi-rule etc.).
 ///
 /// A recovery Fork is identified by having at least one branch whose
@@ -1636,7 +1636,7 @@ where
 /// These four deltas are NOT used by any non-recovery emitter — the
 /// detection is robust against accidental conflation.
 /// M11.7 (2026-05-14): decode the `AMBIGUITY_BUDGET_EXCEEDED:` sentinel
-/// `WpdsState::Error` message emitted by `maybe_prune_frontier`.
+/// `WpdaState::Error` message emitted by `maybe_prune_frontier`.
 ///
 /// Returns `Some((budget, actual, position))` if the message has the
 /// sentinel shape; `None` otherwise (a regular parse-failed error).
@@ -1691,7 +1691,7 @@ fn is_recovery_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
 /// at the cost of a wasted depth increment.
 fn forward_progress_or_insert<W: SemiringRef>(branch: &ForkBranch<W>, base_pos: usize) -> bool {
     let advances = match &branch.new_state {
-        WpdsState::PrefixDispatch { pos, .. } => *pos > base_pos,
+        WpdaState::PrefixDispatch { pos, .. } => *pos > base_pos,
         // Non-PrefixDispatch new_states (rare; recovery_dispatch only
         // emits PrefixDispatch but be defensive) are conservatively
         // allowed — they leave the dead-end loop by virtue of state
@@ -1720,9 +1720,9 @@ fn forward_progress_or_insert<W: SemiringRef>(branch: &ForkBranch<W>, base_pos: 
 /// entry in that case (the cap still bites).
 fn extract_recovery_dispatch_config<W: SemiringRef>(
     cursor: &BranchCursor<W>,
-    gss: &WpdsGss<W>,
+    gss: &WpdaGss<W>,
 ) -> Option<(usize, u16, u8)> {
-    if let WpdsState::PrefixDispatch { pos, cur_bp } = &cursor.inner_state {
+    if let WpdaState::PrefixDispatch { pos, cur_bp } = &cursor.inner_state {
         let cat_src = gss
             .node(cursor.node)
             .map(|n| n.symbol.category_src_idx)
@@ -1735,7 +1735,7 @@ fn extract_recovery_dispatch_config<W: SemiringRef>(
 
 /// B12 / Candidate E (2026-05-07), tightened by B13 (2026-05-07): a
 /// *pure projection Fork* is a non-recovery Fork in which **every**
-/// branch transitions to `WpdsState::CrossCatDelegate { .. }`. Mixed
+/// branch transitions to `WpdaState::CrossCatDelegate { .. }`. Mixed
 /// buckets (atomic + projection, or cross-cat-LHS + projection)
 /// are EXEMPT from the cycle defense — their atomic / LHS arms are
 /// productive parse paths that B12 must not shadow via `visited_
@@ -1755,7 +1755,7 @@ fn extract_recovery_dispatch_config<W: SemiringRef>(
 ///
 /// LedTest's cycle bound is preserved via the **Push-arm** check at
 /// `apply_action_to_cursor::Push` (line ~2572), which fires on
-/// singleton-projection emissions (`WpdsStepAction::Push { new_state:
+/// singleton-projection emissions (`WpdaStepAction::Push { new_state:
 /// CrossCatDelegate { .. } }`) regardless of this predicate. The
 /// Fork-arm check is the secondary line of defense for cases where
 /// a cycle traverses a multi-descriptor pure-projection bucket.
@@ -1767,7 +1767,7 @@ fn extract_recovery_dispatch_config<W: SemiringRef>(
 fn is_projection_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
     !branches.is_empty()
         && branches.iter().all(|b| {
-            matches!(&b.new_state, WpdsState::CrossCatDelegate { .. })
+            matches!(&b.new_state, WpdaState::CrossCatDelegate { .. })
         })
 }
 
@@ -1782,9 +1782,9 @@ fn is_projection_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
 /// so future refactors can vary one without affecting the other.
 fn extract_dispatch_config<W: SemiringRef>(
     cursor: &BranchCursor<W>,
-    gss: &WpdsGss<W>,
+    gss: &WpdaGss<W>,
 ) -> Option<(usize, u16, u8)> {
-    if let WpdsState::PrefixDispatch { pos, cur_bp } = &cursor.inner_state {
+    if let WpdaState::PrefixDispatch { pos, cur_bp } = &cursor.inner_state {
         let cat_src = gss
             .node(cursor.node)
             .map(|n| n.symbol.category_src_idx)
@@ -1795,8 +1795,8 @@ fn extract_dispatch_config<W: SemiringRef>(
     }
 }
 
-impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
-    WpdsWalker<W, E>
+impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
+    WpdaWalker<W, E>
 {
     /// Construct a fresh walker in `Ready { min_bp }` state.
     ///
@@ -1804,7 +1804,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// deterministic mode. Subsequent mutations route through `apply_action_to_cursor`
     /// against `branch_cursors[0]` via the always-cursor dispatcher.
     pub fn new(engine: E, initial_min_bp: u8) -> Self {
-        let initial_state = WpdsState::Ready { min_bp: initial_min_bp };
+        let initial_state = WpdaState::Ready { min_bp: initial_min_bp };
         // Stage 3.10 / ι Phase 5 (2026-05-01): seed via `seed_from_live`.
         // Sentinel node 0 — no GSS node yet; `cursor_gss_push` allocates
         // a CategoryEntry(0) root on first push when `cursor.node == 0`.
@@ -1815,14 +1815,14 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             W::one_ref(),
             initial_state.clone(),
         );
-        WpdsWalker {
+        WpdaWalker {
             state: initial_state,
-            gss: WpdsGss::new(),
+            gss: WpdaGss::new(),
             pos: 0,
             weight: W::one_ref(),
             engine,
             top_node: None,
-            bounding_mode: crate::wpds_runtime::CursorBoundingMode::Unbounded,
+            bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
             builder: SemanticBuilder::new(),
             deterministic: true,
             branch_cursors: vec![initial_cursor],
@@ -1840,10 +1840,10 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// min_bp }` — bypassing the default `Ready → Push(primary) →
     /// PrefixDispatch` path that the no-category `new` constructor takes.
     ///
-    /// Used by `parse_<Cat>_via_wpds` facades to start parsing at any
+    /// Used by `parse_<Cat>_via_wpda` facades to start parsing at any
     /// category (not just the primary).
     pub fn new_for_category(engine: E, cat_src_idx: u16, initial_min_bp: u8) -> Self {
-        let mut gss: WpdsGss<W> = WpdsGss::new();
+        let mut gss: WpdaGss<W> = WpdaGss::new();
         // Push the target category as the sole frame. Phase 5 fix: do NOT
         // create a separate "bottom" node first — `get_or_create_node`
         // deduplicates on `(pos, symbol)`, so a `bottom` of `(0, CE(0))` and
@@ -1851,11 +1851,11 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         // `cat_src_idx == 0`, yielding a self-loop. Instead, the top frame
         // has no predecessor — the walker treats `top_node = None` after
         // pop as the terminal-Accept signal.
-        let top_id = gss.get_or_create_node(WpdsGssNode {
+        let top_id = gss.get_or_create_node(WpdaGssNode {
             pos: 0,
             symbol: StackSymbolV2::category_entry(cat_src_idx),
         });
-        let initial_state = WpdsState::PrefixDispatch {
+        let initial_state = WpdaState::PrefixDispatch {
             pos: 0,
             cur_bp: initial_min_bp,
         };
@@ -1866,14 +1866,14 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             W::one_ref(),
             initial_state.clone(),
         );
-        WpdsWalker {
+        WpdaWalker {
             state: initial_state,
             gss,
             pos: 0,
             weight: W::one_ref(),
             engine,
             top_node: Some(top_id),
-            bounding_mode: crate::wpds_runtime::CursorBoundingMode::Unbounded,
+            bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
             builder: SemanticBuilder::new(),
             deterministic: true,
             branch_cursors: vec![initial_cursor],
@@ -1885,19 +1885,19 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         }
     }
 
-    /// Construct a walker pre-seeded from a saved [`WpdsConfiguration`].
+    /// Construct a walker pre-seeded from a saved [`WpdaConfiguration`].
     ///
-    /// Used by [`crate::wpds_session::WpdsIncrementalSession::reparse`] to
+    /// Used by [`crate::wpda_session::WpdaIncrementalSession::reparse`] to
     /// resume execution from a checkpoint. Reconstructs the GSS as a linear
     /// chain matching the saved stack (bottom-to-top).
-    pub fn seeded_from(engine: E, config: WpdsConfiguration<W>) -> Self {
-        let mut gss: WpdsGss<W> = WpdsGss::new();
+    pub fn seeded_from(engine: E, config: WpdaConfiguration<W>) -> Self {
+        let mut gss: WpdaGss<W> = WpdaGss::new();
         let mut top_node: Option<crate::gss::GssNodeId> = None;
         // Stack is stored bottom-to-top; rebuild GSS in that order with
         // each new symbol pushing onto the previous top.
         for symbol in config.stack.iter() {
             let new_id = match top_node {
-                None => gss.get_or_create_node(WpdsGssNode {
+                None => gss.get_or_create_node(WpdaGssNode {
                     pos: config.pos,
                     symbol: *symbol,
                 }),
@@ -1912,14 +1912,14 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             config.weight.clone(),
             config.state.clone(),
         );
-        WpdsWalker {
+        WpdaWalker {
             state: config.state,
             gss,
             pos: config.pos,
             weight: config.weight,
             engine,
             top_node,
-            bounding_mode: crate::wpds_runtime::CursorBoundingMode::Unbounded,
+            bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
             builder: SemanticBuilder::new(),
             deterministic: true,
             branch_cursors: vec![initial_cursor],
@@ -1936,9 +1936,9 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// Preserves the engine and beam_size; everything else is
     /// reinitialized to construction defaults.
     pub fn reset(&mut self, initial_min_bp: u8) {
-        let initial_state = WpdsState::Ready { min_bp: initial_min_bp };
+        let initial_state = WpdaState::Ready { min_bp: initial_min_bp };
         self.state = initial_state.clone();
-        self.gss = WpdsGss::new();
+        self.gss = WpdaGss::new();
         self.pos = 0;
         self.weight = W::one_ref();
         self.top_node = None;
@@ -1962,7 +1962,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     }
 
     /// Read-only access to the deterministic-parse flag. Returns `true`
-    /// when no `WpdsStepAction::Fork` has been processed yet (the walker
+    /// when no `WpdaStepAction::Fork` has been processed yet (the walker
     /// is operating on a single parse path); `false` once any Fork has
     /// transitioned the walker into nondeterministic mode (multiple
     /// parallel cursors exploring grammar ambiguity, in the GLR/GLL
@@ -1982,7 +1982,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// WPDS-edge recovery event trace. Each entry corresponds to one
     /// `BuilderDelta::RecoveryEvent` / `SubstituteToken` / `InsertToken` /
     /// `CommitLexAlternative` delta replayed at commit_winner time.
-    /// Wrapper consumers (e.g. `parse_<Cat>_via_wpds_recovering`) map each
+    /// Wrapper consumers (e.g. `parse_<Cat>_via_wpda_recovering`) map each
     /// entry into a `RecoveryAttempt` for surfacing to the user.
     pub fn recovery_trace(&self) -> &[RecoveryEvent] {
         &self.recovery_events
@@ -1993,23 +1993,23 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// (SubstituteToken / InsertToken / CommitLexAlternative deltas
     /// replayed at commit_winner time call this source).
     ///
-    /// SAFETY: the walker stores `source as *mut dyn WpdsMutableTokenSource`
+    /// SAFETY: the walker stores `source as *mut dyn WpdaMutableTokenSource`
     /// to avoid cascading `'a` through the struct. The caller MUST keep
     /// `source` alive until `clear_mutable_token_source()` or `reset()`
-    /// is called. The Drop impl on WpdsWalker clears the slot defensively.
+    /// is called. The Drop impl on WpdaWalker clears the slot defensively.
     /// The lifetime of the trait object is erased via raw-pointer cast +
     /// transmute to satisfy the struct's `'static` field type — the
     /// caller-managed contract above is the load-bearing safety invariant.
     pub fn set_mutable_token_source<'src>(
         &mut self,
-        source: &'src mut dyn WpdsMutableTokenSource,
+        source: &'src mut dyn WpdaMutableTokenSource,
     ) {
         // Erase the source's `'src` lifetime to fit the struct's
         // lifetime-free pointer slot. Sound under the documented SAFETY
         // contract: the caller must keep the source alive until the
         // walker clears the slot via clear_mutable_token_source/reset/Drop.
-        let raw: *mut (dyn WpdsMutableTokenSource + 'src) = source as *mut _;
-        let erased: *mut (dyn WpdsMutableTokenSource + 'static) =
+        let raw: *mut (dyn WpdaMutableTokenSource + 'src) = source as *mut _;
+        let erased: *mut (dyn WpdaMutableTokenSource + 'static) =
             unsafe { std::mem::transmute(raw) };
         self.mutable_token_source = Some(erased);
     }
@@ -2116,20 +2116,20 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// (`CursorBoundingMode::BeamSize(k)`). Mutually exclusive with
     /// `with_ambiguity_budget` — setting one replaces the other.
     pub fn with_beam_size(mut self, k: usize) -> Self {
-        self.bounding_mode = crate::wpds_runtime::CursorBoundingMode::BeamSize(k);
+        self.bounding_mode = crate::wpda_runtime::CursorBoundingMode::BeamSize(k);
         self
     }
 
     /// M11.7 (2026-05-14): enable mandate-compliant cursor-count
     /// bounding. When the live frontier would exceed `n` cursors, the
-    /// walker transitions to `WpdsState::Error` and the resolve step
-    /// returns `WpdsResolveResult::AmbiguityBudget { budget, actual,
+    /// walker transitions to `WpdaState::Error` and the resolve step
+    /// returns `WpdaResolveResult::AmbiguityBudget { budget, actual,
     /// position }` rather than silently dropping cursors.
     ///
     /// Mutually exclusive with [`Self::with_beam_size`] — setting one
     /// replaces the other.
     pub fn with_ambiguity_budget(mut self, n: usize) -> Self {
-        self.bounding_mode = crate::wpds_runtime::CursorBoundingMode::AmbiguityBudget(n);
+        self.bounding_mode = crate::wpda_runtime::CursorBoundingMode::AmbiguityBudget(n);
         self
     }
 
@@ -2137,14 +2137,14 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// any prior bounding mode. Mutually-exclusive by construction.
     pub fn with_bounding_mode(
         mut self,
-        mode: crate::wpds_runtime::CursorBoundingMode,
+        mode: crate::wpda_runtime::CursorBoundingMode,
     ) -> Self {
         self.bounding_mode = mode;
         self
     }
 
     /// Read-only access to the current state.
-    pub fn state(&self) -> &WpdsState {
+    pub fn state(&self) -> &WpdaState {
         &self.state
     }
 
@@ -2173,13 +2173,13 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// the other.
     pub fn set_beam_size(&mut self, k: Option<usize>) {
         self.bounding_mode = match k {
-            Some(n) => crate::wpds_runtime::CursorBoundingMode::BeamSize(n),
-            None => crate::wpds_runtime::CursorBoundingMode::Unbounded,
+            Some(n) => crate::wpda_runtime::CursorBoundingMode::BeamSize(n),
+            None => crate::wpda_runtime::CursorBoundingMode::Unbounded,
         };
     }
 
     /// M11.7 (2026-05-14): set the cursor-bounding mode in-place.
-    pub fn set_bounding_mode(&mut self, mode: crate::wpds_runtime::CursorBoundingMode) {
+    pub fn set_bounding_mode(&mut self, mode: crate::wpda_runtime::CursorBoundingMode) {
         self.bounding_mode = mode;
     }
 
@@ -2188,7 +2188,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     }
 
     /// Read-only access to the GSS.
-    pub fn gss(&self) -> &WpdsGss<W> {
+    pub fn gss(&self) -> &WpdaGss<W> {
         &self.gss
     }
 
@@ -2213,19 +2213,19 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// (including `AmbiguityBudget`).
     pub fn beam_size(&self) -> Option<usize> {
         match self.bounding_mode {
-            crate::wpds_runtime::CursorBoundingMode::BeamSize(k) => Some(k),
+            crate::wpda_runtime::CursorBoundingMode::BeamSize(k) => Some(k),
             _ => None,
         }
     }
 
     /// M11.7 (2026-05-14): read the full cursor-bounding mode (one of
     /// `Unbounded`, `BeamSize(k)`, or `AmbiguityBudget(n)`).
-    pub fn bounding_mode(&self) -> crate::wpds_runtime::CursorBoundingMode {
+    pub fn bounding_mode(&self) -> crate::wpda_runtime::CursorBoundingMode {
         self.bounding_mode
     }
 
     /// Snapshot the current configuration for checkpointing.
-    pub fn current_configuration(&self) -> WpdsConfiguration<W> {
+    pub fn current_configuration(&self) -> WpdaConfiguration<W> {
         // Reconstruct stack from GSS top by walking predecessors.
         let mut stack = Vec::new();
         let mut cursor = self.top_node;
@@ -2237,7 +2237,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         }
         // Stack was built top-to-bottom; reverse for bottom-to-top convention.
         stack.reverse();
-        WpdsConfiguration {
+        WpdaConfiguration {
             pos: self.pos,
             state: self.state.clone(),
             stack,
@@ -2248,62 +2248,62 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     // ─── Reactive driver ────────────────────────────────────────────────────
 
     /// Pure transition function: apply `event` to the current configuration
-    /// and return the resulting [`WpdsTransition`].
+    /// and return the resulting [`WpdaTransition`].
     ///
     /// This is the **primary external API** per survey mandate M1. External
     /// consumers (LSP/DAP/REPL/nREPL) drive parsing by calling this in a loop.
     ///
-    /// Phase A.1: takes a `tokens: &dyn WpdsTokenSource` parameter so the
-    /// engine's `step()` can peek the input during `WpdsEvent::Step`.
+    /// Phase A.1: takes a `tokens: &dyn WpdaTokenSource` parameter so the
+    /// engine's `step()` can peek the input during `WpdaEvent::Step`.
     pub fn process_event(
         &mut self,
-        event: WpdsEvent<W>,
-        tokens: &dyn WpdsTokenSource,
-    ) -> WpdsTransition<W> {
+        event: WpdaEvent<W>,
+        tokens: &dyn WpdaTokenSource,
+    ) -> WpdaTransition<W> {
         // Terminal states absorb events without further action.
         if self.state.is_terminal() {
-            return WpdsTransition::NoChange;
+            return WpdaTransition::NoChange;
         }
         match event {
-            WpdsEvent::Inspect => WpdsTransition::NoChange,
-            WpdsEvent::Step => self.handle_step(tokens),
-            WpdsEvent::TokenConsumed { pos, .. } => {
+            WpdaEvent::Inspect => WpdaTransition::NoChange,
+            WpdaEvent::Step => self.handle_step(tokens),
+            WpdaEvent::TokenConsumed { pos, .. } => {
                 let from = self.state.clone();
                 self.pos = pos;
                 self.maybe_prune_frontier();
-                let trace = WpdsTraceEntry {
+                let trace = WpdaTraceEntry {
                     pos,
                     from_state: from.clone(),
                     to_state: from.clone(),
                     stack_depth: self.gss.frontier_size(),
                 };
-                WpdsTransition::Transition {
+                WpdaTransition::Transition {
                     new_state: from,
                     trace: Some(trace),
                 }
             }
-            WpdsEvent::BranchForked { children, .. } => {
+            WpdaEvent::BranchForked { children, .. } => {
                 let from = self.state.clone();
-                let new_state = WpdsState::AmbiguityFanout {
+                let new_state = WpdaState::AmbiguityFanout {
                     branches: children.clone(),
                 };
                 self.state = new_state.clone();
                 self.maybe_prune_frontier();
-                let trace = WpdsTraceEntry {
+                let trace = WpdaTraceEntry {
                     pos: self.pos,
                     from_state: from,
                     to_state: new_state.clone(),
                     stack_depth: self.gss.frontier_size(),
                 };
-                WpdsTransition::Transition { new_state, trace: Some(trace) }
+                WpdaTransition::Transition { new_state, trace: Some(trace) }
             }
-            WpdsEvent::BranchResolved { winner, weight } => {
+            WpdaEvent::BranchResolved { winner, weight } => {
                 let from = self.state.clone();
                 self.weight = self.weight.times_ref(&weight);
                 self.top_node = Some(winner);
-                let new_state = WpdsState::InfixLoop {
+                let new_state = WpdaState::InfixLoop {
                     cur_bp: match from {
-                        WpdsState::AmbiguityFanout { .. } => 0,
+                        WpdaState::AmbiguityFanout { .. } => 0,
                         _ => 0,
                     },
                 };
@@ -2347,30 +2347,30 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                     builder: Arc::new(SemanticBuilder::new()),
                 }];
                 self.state = new_state.clone();
-                let trace = WpdsTraceEntry {
+                let trace = WpdaTraceEntry {
                     pos: self.pos,
                     from_state: from,
                     to_state: new_state.clone(),
                     stack_depth: self.gss.frontier_size(),
                 };
-                WpdsTransition::Transition { new_state, trace: Some(trace) }
+                WpdaTransition::Transition { new_state, trace: Some(trace) }
             }
-            WpdsEvent::SemanticActionFired { .. } => {
+            WpdaEvent::SemanticActionFired { .. } => {
                 // Walker records the firing in its trace; no state change.
-                let trace = WpdsTraceEntry {
+                let trace = WpdaTraceEntry {
                     pos: self.pos,
                     from_state: self.state.clone(),
                     to_state: self.state.clone(),
                     stack_depth: self.gss.frontier_size(),
                 };
-                WpdsTransition::Transition {
+                WpdaTransition::Transition {
                     new_state: self.state.clone(),
                     trace: Some(trace),
                 }
             }
-            WpdsEvent::Checkpoint { reason: _ } => {
+            WpdaEvent::Checkpoint { reason: _ } => {
                 let config = self.current_configuration();
-                WpdsTransition::Checkpoint { config }
+                WpdaTransition::Checkpoint { config }
             }
         }
     }
@@ -2384,13 +2384,13 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     pub fn run_to_completion(
         &mut self,
         max_steps: usize,
-        tokens: &dyn WpdsTokenSource,
-    ) -> WpdsState {
+        tokens: &dyn WpdaTokenSource,
+    ) -> WpdaState {
         for _ in 0..max_steps {
             if self.state.is_terminal() {
                 break;
             }
-            let _ = self.process_event(WpdsEvent::Step, tokens);
+            let _ = self.process_event(WpdaEvent::Step, tokens);
         }
         self.state.clone()
     }
@@ -2402,8 +2402,8 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     pub fn run_to_saturation(
         &mut self,
         max_steps: usize,
-        tokens: &dyn WpdsTokenSource,
-    ) -> WpdsState
+        tokens: &dyn WpdaTokenSource,
+    ) -> WpdaState
     where
         W: 'static + std::fmt::Debug,
     {
@@ -2420,7 +2420,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             // BranchCursor via step_fanout rather than asking the engine
             // about the AmbiguityFanout state itself (engine returns Idle
             // for that state).
-            if matches!(self.state, WpdsState::AmbiguityFanout { .. }) {
+            if matches!(self.state, WpdaState::AmbiguityFanout { .. }) {
                 let prev_state = self.state.clone();
                 self.step_fanout(tokens);
                 if self.state == prev_state {
@@ -2441,7 +2441,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 self.pos,
                 tokens,
             );
-            if matches!(action, WpdsStepAction::Idle) {
+            if matches!(action, WpdaStepAction::Idle) {
                 // B6 (2026-04-28): make stalls explicit. The engine has
                 // nothing more to derive at this configuration. If the
                 // walker is in a non-terminal state, this is a stall —
@@ -2450,7 +2450,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 // when it actually got stuck). Terminal states
                 // (Accepted/Error) are normal exits.
                 if !self.state.is_terminal() {
-                    self.state = WpdsState::Error {
+                    self.state = WpdaState::Error {
                         message: format!(
                             "engine returned Idle in non-terminal state {:?} at pos {}",
                             self.state, self.pos,
@@ -2486,8 +2486,8 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     pub fn run_to_end_of_input(
         &mut self,
         max_steps: usize,
-        tokens: &dyn WpdsTokenSource,
-    ) -> Result<(), WpdsMaxStepsExceeded>
+        tokens: &dyn WpdaTokenSource,
+    ) -> Result<(), WpdaMaxStepsExceeded>
     where
         W: 'static + std::fmt::Debug,
     {
@@ -2500,7 +2500,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             if self.state.is_terminal() {
                 return Ok(());
             }
-            if matches!(self.state, WpdsState::AmbiguityFanout { .. }) {
+            if matches!(self.state, WpdaState::AmbiguityFanout { .. }) {
                 // Snapshot pre-step cursor identities (`(node, pos,
                 // weight, inner_state)`) so we can detect whether any
                 // cursor actually progressed. Mid-stream the cursor set
@@ -2513,7 +2513,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 // weight or delta-log size was still changing wouldn't trigger
                 // progress_made, but the parse continued for max_steps. Now
                 // both axes are tracked.
-                let prev_fingerprint: Vec<(crate::gss::GssNodeId, usize, WpdsState, W, usize)> =
+                let prev_fingerprint: Vec<(crate::gss::GssNodeId, usize, WpdaState, W, usize)> =
                     self
                         .branch_cursors
                         .iter()
@@ -2561,16 +2561,16 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 self.pos,
                 tokens,
             );
-            if matches!(action, WpdsStepAction::Idle) {
+            if matches!(action, WpdaStepAction::Idle) {
                 if self.pos >= tokens.len() {
                     // Stage 3.5b: EOI Idle in live mode is a parked
                     // result, not Error. Caller invokes
                     // `resolve_at_end_of_input` next which will
-                    // synthesize the appropriate WpdsResolveResult.
+                    // synthesize the appropriate WpdaResolveResult.
                     return Ok(());
                 }
                 if !self.state.is_terminal() {
-                    self.state = WpdsState::Error {
+                    self.state = WpdaState::Error {
                         message: format!(
                             "engine returned Idle in non-terminal state {:?} at pos {}",
                             self.state, self.pos,
@@ -2581,7 +2581,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             }
             self.apply_action(action, tokens);
         }
-        Err(WpdsMaxStepsExceeded {
+        Err(WpdaMaxStepsExceeded {
             position: self.pos,
         })
     }
@@ -2589,7 +2589,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// Stage 3.5b (2026-05-01): WPDS-correct end-of-input resolution.
     ///
     /// Inspects the post-`run_to_end_of_input` configuration and produces
-    /// a `WpdsResolveResult<W>`. The decision tree:
+    /// a `WpdaResolveResult<W>`. The decision tree:
     ///
     /// 1. **Live mode (deterministic, singleton branch_cursors)**:
     ///    - `state == Accepted`: the live builder already holds the result;
@@ -2609,8 +2609,8 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     ///      `AcceptedAmbiguous`.
     pub fn resolve_at_end_of_input(
         &mut self,
-        tokens: &dyn WpdsTokenSource,
-    ) -> WpdsResolveResult<W>
+        tokens: &dyn WpdaTokenSource,
+    ) -> WpdaResolveResult<W>
     where
         W: 'static,
     {
@@ -2628,7 +2628,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         // and the wrapper handling trailing tokens via recovery. The
         // positional gate is left unimplemented at this site; the
         // wrapper's post-resolution `pos < tokens.len()` check (in
-        // codegen-emitted parse_<Cat>_via_wpds) handles TrailingTokens
+        // codegen-emitted parse_<Cat>_via_wpda) handles TrailingTokens
         // correctly.
         if self.deterministic {
             // Install singleton cursor's builder.
@@ -2636,40 +2636,40 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 self.builder = (*cursor.builder).clone();
             }
             return match self.state.clone() {
-                WpdsState::Accepted => {
+                WpdaState::Accepted => {
                     let term = self.builder.take_dyn_result();
                     let weight = self.weight.clone();
                     match term {
-                        Some(t) => WpdsResolveResult::Accepted {
+                        Some(t) => WpdaResolveResult::Accepted {
                             weights: vec![weight],
                             terms: vec![t],
                         },
-                        None => WpdsResolveResult::ParseError {
+                        None => WpdaResolveResult::ParseError {
                             message: "walker accepted but builder result was empty".to_string(),
                             position: self.pos,
                         },
                     }
                 }
-                WpdsState::Error { message } => {
+                WpdaState::Error { message } => {
                     // M11.7 (2026-05-14): decode the AMBIGUITY_BUDGET_EXCEEDED
                     // sentinel emitted by `maybe_prune_frontier` and surface
                     // as a structured `AmbiguityBudget` resolve result.
                     if let Some((budget, actual, position)) =
                         parse_ambiguity_budget_sentinel(&message)
                     {
-                        WpdsResolveResult::AmbiguityBudget {
+                        WpdaResolveResult::AmbiguityBudget {
                             budget,
                             actual,
                             position,
                         }
                     } else {
-                        WpdsResolveResult::ParseError {
+                        WpdaResolveResult::ParseError {
                             message,
                             position: self.pos,
                         }
                     }
                 }
-                other => WpdsResolveResult::ParseError {
+                other => WpdaResolveResult::ParseError {
                     message: format!("incomplete parse in state {:?}", other),
                     position: self.pos,
                 },
@@ -2677,11 +2677,11 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         }
         // Fanout mode: also decode the AMBIGUITY_BUDGET_EXCEEDED sentinel
         // BEFORE the per-cursor accepting/dead classification.
-        if let WpdsState::Error { ref message } = self.state {
+        if let WpdaState::Error { ref message } = self.state {
             if let Some((budget, actual, position)) =
                 parse_ambiguity_budget_sentinel(message)
             {
-                return WpdsResolveResult::AmbiguityBudget {
+                return WpdaResolveResult::AmbiguityBudget {
                     budget,
                     actual,
                     position,
@@ -2712,7 +2712,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             .max()
             .unwrap_or(self.pos);
         match accepting_indices.len() {
-            0 => WpdsResolveResult::ParseError {
+            0 => WpdaResolveResult::ParseError {
                 message: "no accepting branch reached end of input".to_string(),
                 position: max_dead_pos,
             },
@@ -2725,7 +2725,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 // mock W (no snapshot semantics).
                 let winner_idx = accepting_indices[0];
                 let winner_weight = self.branch_cursors[winner_idx].weight.clone();
-                let snapshots = crate::wpds_runtime::SnapshotWeight::entries_snapshots(
+                let snapshots = crate::wpda_runtime::SnapshotWeight::entries_snapshots(
                     &self.branch_cursors[winner_idx].weight,
                 );
                 self.commit_winner_at_eoi(winner_idx);
@@ -2733,11 +2733,11 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                     // Mock W path — pre-M11.5 behavior.
                     let term = self.builder.take_dyn_result();
                     return match term {
-                        Some(t) => WpdsResolveResult::Accepted {
+                        Some(t) => WpdaResolveResult::Accepted {
                             weights: vec![winner_weight],
                             terms: vec![t],
                         },
-                        None => WpdsResolveResult::ParseError {
+                        None => WpdaResolveResult::ParseError {
                             message: "winner committed but builder result was empty"
                                 .to_string(),
                             position: self.pos,
@@ -2755,13 +2755,13 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                     }
                 }
                 if weights.is_empty() {
-                    return WpdsResolveResult::ParseError {
+                    return WpdaResolveResult::ParseError {
                         message: "winner committed but multiset snapshots had no extractable terms"
                             .to_string(),
                         position: self.pos,
                     };
                 }
-                WpdsResolveResult::Accepted { weights, terms }
+                WpdaResolveResult::Accepted { weights, terms }
             }
             _ => {
                 // M7c (2026-05-13): preserve all Accepted derivations as
@@ -2781,7 +2781,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 for &idx in &accepting_indices {
                     let cursor_weight = self.branch_cursors[idx].weight.clone();
                     let snapshots =
-                        crate::wpds_runtime::SnapshotWeight::entries_snapshots(
+                        crate::wpda_runtime::SnapshotWeight::entries_snapshots(
                             &self.branch_cursors[idx].weight,
                         );
                     if snapshots.is_empty() {
@@ -2817,13 +2817,13 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 let winner_idx = accepting_indices[0];
                 self.commit_winner_at_eoi(winner_idx);
                 if weights.is_empty() {
-                    return WpdsResolveResult::ParseError {
+                    return WpdaResolveResult::ParseError {
                         message: "accepting cursors had no extractable terms"
                             .to_string(),
                         position: self.pos,
                     };
                 }
-                WpdsResolveResult::Accepted { weights, terms }
+                WpdaResolveResult::Accepted { weights, terms }
             }
         }
     }
@@ -2832,7 +2832,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// configuration?" classifier.
     ///
     /// A cursor at EOI is accepting iff:
-    /// - `inner_state == Accepted` (engine emitted `WpdsStepAction::Accept`), OR
+    /// - `inner_state == Accepted` (engine emitted `WpdaStepAction::Accept`), OR
     /// - `inner_state == InfixLoop` AND no further infix operator can
     ///   bind (engine returned Idle on the next step → cursor parked
     ///   here as Resolved), OR
@@ -2848,7 +2848,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         // with a direct shape check on `cursor.builder`. Under always-
         // eager Arc::make_mut (Phase 5.3+), the live builder IS the
         // authoritative state — broken FireActions transition the cursor
-        // to `WpdsState::Error` at eager-fire time and are filtered by
+        // to `WpdaState::Error` at eager-fire time and are filtered by
         // `cursor_resolution_check :: Drop`. The remaining condition is
         // simply "does cursor.builder hold exactly one Term arg?" — the
         // EOI gate that `take_dyn_result` would consult at commit.
@@ -2856,9 +2856,9 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             return false;
         }
         match &cursor.inner_state {
-            WpdsState::Accepted => true,
-            WpdsState::InfixLoop { .. } => true,
-            WpdsState::Unwinding => {
+            WpdaState::Accepted => true,
+            WpdaState::InfixLoop { .. } => true,
+            WpdaState::Unwinding => {
                 // Unwinding-at-EOI is accepting iff the GSS top has no
                 // more symbols to pop — i.e., we've reached the original
                 // entry frame, or popped past it (cursor.node == GSS_NODE_NONE
@@ -2884,9 +2884,9 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// The pre-3.12 EOI check `pos >= tokens.len()` only worked in the
     /// pre-tail deterministic-mode short-circuit in `resolve_at_end_of_input`.
     /// Forked mode now matches the same "trailing EOF is OK" contract
-    /// that `parse_<Cat>::parse_via_wpds` uses on its outer `pos` check.
+    /// that `parse_<Cat>::parse_via_wpda` uses on its outer `pos` check.
     #[inline]
-    fn is_logical_eoi(&self, pos: usize, tokens: &dyn WpdsTokenSource) -> bool {
+    fn is_logical_eoi(&self, pos: usize, tokens: &dyn WpdaTokenSource) -> bool {
         // M6c.8.4 (2026-05-14): cursor is at EOI iff `pos` equals the
         // canonical EOF sentinel index OR is past the slice's flat
         // length.
@@ -2930,30 +2930,30 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
 
     // ─── Internal step handler ──────────────────────────────────────────────
 
-    fn handle_step(&mut self, tokens: &dyn WpdsTokenSource) -> WpdsTransition<W> {
+    fn handle_step(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaTransition<W> {
         // Stage 6 G6+ (2026-05-02): bump trace step counter once per Step.
         self.step_counter = self.step_counter.wrapping_add(1);
         let from = self.state.clone();
         // Step 3 (Fork plan F6): when in AmbiguityFanout, drive cursors
         // via step_fanout rather than the per-state engine.step (engine
         // returns Idle for AmbiguityFanout).
-        if matches!(self.state, WpdsState::AmbiguityFanout { .. }) {
+        if matches!(self.state, WpdaState::AmbiguityFanout { .. }) {
             self.step_fanout(tokens);
             if self.state == from {
-                return WpdsTransition::NoChange;
+                return WpdaTransition::NoChange;
             }
-            let trace = WpdsTraceEntry {
+            let trace = WpdaTraceEntry {
                 pos: self.pos,
                 from_state: from,
                 to_state: self.state.clone(),
                 stack_depth: self.gss.frontier_size(),
             };
             if self.state.is_terminal() {
-                return WpdsTransition::Done {
+                return WpdaTransition::Done {
                     state: self.state.clone(),
                 };
             }
-            return WpdsTransition::Transition {
+            return WpdaTransition::Transition {
                 new_state: self.state.clone(),
                 trace: Some(trace),
             };
@@ -2969,36 +2969,36 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             self.pos,
             tokens,
         );
-        if matches!(action, WpdsStepAction::Idle) {
-            return WpdsTransition::NoChange;
+        if matches!(action, WpdaStepAction::Idle) {
+            return WpdaTransition::NoChange;
         }
         self.apply_action(action, tokens);
         if self.state == from {
             // No state change but engine wasn't Idle — trace it as a
             // configuration change without a state transition.
-            let trace = WpdsTraceEntry {
+            let trace = WpdaTraceEntry {
                 pos: self.pos,
                 from_state: from.clone(),
                 to_state: from.clone(),
                 stack_depth: self.gss.frontier_size(),
             };
-            return WpdsTransition::Transition {
+            return WpdaTransition::Transition {
                 new_state: from,
                 trace: Some(trace),
             };
         }
-        let trace = WpdsTraceEntry {
+        let trace = WpdaTraceEntry {
             pos: self.pos,
             from_state: from,
             to_state: self.state.clone(),
             stack_depth: self.gss.frontier_size(),
         };
         if self.state.is_terminal() {
-            return WpdsTransition::Done {
+            return WpdaTransition::Done {
                 state: self.state.clone(),
             };
         }
-        WpdsTransition::Transition {
+        WpdaTransition::Transition {
             new_state: self.state.clone(),
             trace: Some(trace),
         }
@@ -3026,7 +3026,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// - `Resolved`:  reinstate (parked at EOI for resolve_at_end_of_input).
     /// - `ForkInto`:  replace branch_cursors with children, set state to
     ///                AmbiguityFanout. `self.deterministic` flips to false.
-    fn apply_action(&mut self, action: WpdsStepAction<W>, tokens: &dyn WpdsTokenSource) {
+    fn apply_action(&mut self, action: WpdaStepAction<W>, tokens: &dyn WpdaTokenSource) {
         // Phase 5.6-tail-B (2026-05-12): pre-tail this called
         // `debug_flush_lazy_invariant()` to assert L1 (deterministic mode implies
         // singleton cursor with empty recovery_deltas). Deleted with
@@ -3116,7 +3116,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 let branch_ids: Vec<crate::gss::GssNodeId> =
                     children.iter().map(|c| c.node).collect();
                 self.branch_cursors = children;
-                self.state = WpdsState::AmbiguityFanout { branches: branch_ids };
+                self.state = WpdaState::AmbiguityFanout { branches: branch_ids };
                 self.maybe_prune_frontier();
             }
         }
@@ -3129,19 +3129,19 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     ///
     /// Returns a [`CursorOutcome`] describing whether the cursor is dead,
     /// alive, forked, or resolved (candidate winner). See module docs for
-    /// the detailed mapping per `WpdsStepAction` variant.
+    /// the detailed mapping per `WpdaStepAction` variant.
     fn apply_action_to_cursor(
         &mut self,
         cursor: &mut BranchCursor<W>,
-        action: WpdsStepAction<W>,
-        tokens: &dyn WpdsTokenSource,
+        action: WpdaStepAction<W>,
+        tokens: &dyn WpdaTokenSource,
     ) -> CursorOutcome<W> {
         match action {
-            WpdsStepAction::Advance(s) => {
+            WpdaStepAction::Advance(s) => {
                 self.set_cursor_inner_state(cursor, s);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::AdvanceWithEffect { new_state, effect } => {
+            WpdaStepAction::AdvanceWithEffect { new_state, effect } => {
                 // B8 / Issue C (2026-05-09): log effect to pending ops,
                 // invalidate consistency memo, then advance state.
                 // Phase 5.5 (2026-05-12): eagerly apply effect to
@@ -3164,10 +3164,10 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::Push { mut symbol, weight, new_state } => {
+            WpdaStepAction::Push { mut symbol, weight, new_state } => {
                 // B12 / Candidate E (2026-05-07): cross-cat projection
                 // cycle defense for SINGLETON projection arms. Singleton
-                // bucket emits `WpdsStepAction::Push` (not Fork) when only
+                // bucket emits `WpdaStepAction::Push` (not Fork) when only
                 // one descriptor matches a (pat, guard) — see
                 // `prefix.rs::emit_unified_arm` UnifiedDescriptor::
                 // CrossCatProjection branch's singleton emission. This
@@ -3178,7 +3178,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 // cur_bp), drop. Otherwise insert into visited_dispatch
                 // before transitioning so the next projection at the same
                 // configuration on this cursor's path is caught.
-                if matches!(&new_state, WpdsState::CrossCatDelegate { .. }) {
+                if matches!(&new_state, WpdaState::CrossCatDelegate { .. }) {
                     if let Some(key) = extract_dispatch_config(cursor, &self.gss) {
                         if cursor.visited_dispatch.contains(&key) {
                             let msg = format!(
@@ -3190,7 +3190,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             );
                             self.set_cursor_inner_state(
                                 cursor,
-                                WpdsState::Error { message: msg },
+                                WpdaState::Error { message: msg },
                             );
                             return CursorOutcome::Drop;
                         }
@@ -3207,7 +3207,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::Pop { weight, new_state } => {
+            WpdaStepAction::Pop { weight, new_state } => {
                 // Stage 3.12.6 (2026-05-02): single-predecessor pop via
                 // the cursor's recorded `incoming_edge_stack`. The
                 // cursor follows the edge it pushed, so pop is
@@ -3227,19 +3227,19 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 );
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::Replace { symbol, weight, new_state } => {
+            WpdaStepAction::Replace { symbol, weight, new_state } => {
                 let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::Consume { weight, new_state } => {
+            WpdaStepAction::Consume { weight, new_state } => {
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::ConsumeAndPush {
+            WpdaStepAction::ConsumeAndPush {
                 mut symbol,
                 weight,
                 new_state,
@@ -3263,7 +3263,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::ConsumeAndPop { weight, new_state } => {
+            WpdaStepAction::ConsumeAndPop { weight, new_state } => {
                 // Stage 3.12.6 (2026-05-02): single-predecessor pop via
                 // edge-id (see Pop arm). Consume token first, then pop
                 // along the cursor's recorded path.
@@ -3276,14 +3276,14 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 );
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::ConsumeAndReplace { symbol, weight, new_state } => {
+            WpdaStepAction::ConsumeAndReplace { symbol, weight, new_state } => {
                 let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight.clone());
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::ConsumeIdentAndReplace {
+            WpdaStepAction::ConsumeIdentAndReplace {
                 symbol,
                 weight,
                 new_state,
@@ -3303,7 +3303,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::ReplaceAndPush {
+            WpdaStepAction::ReplaceAndPush {
                 replace_symbol,
                 push_symbol,
                 weight,
@@ -3326,7 +3326,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::ParsePredicate {
+            WpdaStepAction::ParsePredicate {
                 replace_symbol,
                 weight,
                 new_state,
@@ -3352,7 +3352,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::Fork { mut branches, consume_trigger } => {
+            WpdaStepAction::Fork { mut branches, consume_trigger } => {
                 // Phase 5.6-tail-C (2026-05-12): Hack #7 prologue + Phase 5.5
                 // cursor.builder refresh DELETED.
                 //
@@ -3403,7 +3403,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                         );
                         self.set_cursor_inner_state(
                             cursor,
-                            WpdsState::Error { message: msg },
+                            WpdaState::Error { message: msg },
                         );
                         return CursorOutcome::Drop;
                     }
@@ -3416,7 +3416,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             );
                             self.set_cursor_inner_state(
                                 cursor,
-                                WpdsState::Error { message: msg },
+                                WpdaState::Error { message: msg },
                             );
                             return CursorOutcome::Drop;
                         }
@@ -3432,7 +3432,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                         );
                         self.set_cursor_inner_state(
                             cursor,
-                            WpdsState::Error { message: msg },
+                            WpdaState::Error { message: msg },
                         );
                         return CursorOutcome::Drop;
                     }
@@ -3487,7 +3487,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                         );
                         self.set_cursor_inner_state(
                             cursor,
-                            WpdsState::Error { message: msg },
+                            WpdaState::Error { message: msg },
                         );
                         return CursorOutcome::Drop;
                     }
@@ -3517,7 +3517,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                     // descriptor uniqueness). Productive non-projection
                     // siblings in the same Fork are unaffected.
                     let is_cross_cat_delegate_branch =
-                        matches!(&branch.new_state, WpdsState::CrossCatDelegate { .. });
+                        matches!(&branch.new_state, WpdaState::CrossCatDelegate { .. });
                     if !is_recovery
                         && parent_in_visited
                         && is_cross_cat_delegate_branch
@@ -3652,7 +3652,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                                 // GSS underflow: synthesize CategoryEntry(0)
                                 // sentinel so the subsequent push has a
                                 // valid predecessor.
-                                let sentinel = self.gss.get_or_create_node(WpdsGssNode {
+                                let sentinel = self.gss.get_or_create_node(WpdaGssNode {
                                     pos: child.pos,
                                     symbol: StackSymbolV2::category_entry(0),
                                 });
@@ -3673,7 +3673,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
 
                         // Stage 3.16 (Cluster 1, Mechanism γ, 2026-05-05) —
                         // payload-carrying action variants. Each arm mirrors
-                        // its WpdsStepAction counterpart's apply_action body.
+                        // its WpdaStepAction counterpart's apply_action body.
                         // Fork emits these with `consume_trigger: false`
                         // because each variant intrinsically encodes its own
                         // consume semantics; the per-branch consume happens
@@ -3790,7 +3790,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             // BinderHandle to binder_scopes, but the action body's
                             // Ident-typed parameter expects ActionArg::Ident on
                             // the arg stack regardless of start_scope. Mirrors the
-                            // canonical WpdsStepAction::ConsumeIdentAndReplace arm
+                            // canonical WpdaStepAction::ConsumeIdentAndReplace arm
                             // at line ~2521. Pre-fix: when start_scope=true, the
                             // else branch never ran, so emit_push_ident was
                             // skipped → action body's Ident parameter missing →
@@ -4049,7 +4049,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             //   1. Allocate child at `cursor.pos` (NOT
                             //      advanced yet — `next_pos` advancement
                             //      happens AFTER the GSS push, mirroring
-                            //      `WpdsStepAction::ConsumeAndPush`'s
+                            //      `WpdaStepAction::ConsumeAndPush`'s
                             //      `advance_cursor_pos` after `cursor_gss_push`).
                             //   2. NO `emit_push_token` — the prefix
                             //      trigger is consumed but not captured
@@ -4129,7 +4129,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                         ForkActionKind::ConsumeAndCaptureAndPush => {
                             // Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ,
                             // 2026-05-05): atomic literal multi-arm Fork
-                            // branch. Mirrors WpdsStepAction::ConsumeAndPush
+                            // branch. Mirrors WpdaStepAction::ConsumeAndPush
                             // with capture_token=true (prefix.rs Pass-1
                             // emission). Captures the trigger token onto the
                             // builder (live or pending depending on mode),
@@ -4246,7 +4246,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             // L12 follow-up (B1, 2026-05-07): emit_push_ident MUST
                             // run unconditionally — see twin fix at line ~2920 in
                             // the in-Fork ConsumeIdentAndReplace arm. Mirrors
-                            // canonical WpdsStepAction::ConsumeIdentAndReplace at
+                            // canonical WpdaStepAction::ConsumeIdentAndReplace at
                             // line ~2521.
                             if start_scope {
                                 self.emit_start_binder_scope(
@@ -4690,24 +4690,24 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 }
                 CursorOutcome::ForkInto(children)
             }
-            WpdsStepAction::Accept => {
+            WpdaStepAction::Accept => {
                 // Stage 3.5b (2026-05-01): mirror live apply_action::Accept
                 // by transitioning cursor.inner_state to Accepted.
                 // Stage 3.9 / ι Phase 4 (2026-05-01): use helper so live
                 // walker self.state is mirrored to Accepted in deterministic mode.
-                self.set_cursor_inner_state(cursor, WpdsState::Accepted);
+                self.set_cursor_inner_state(cursor, WpdaState::Accepted);
                 CursorOutcome::Resolved
             }
-            WpdsStepAction::Error(message) => {
+            WpdaStepAction::Error(message) => {
                 // Stage 3.9 / ι Phase 4 (2026-05-01): mirror live state via
                 // helper so deterministic-mode self.state becomes Error too.
                 self.set_cursor_inner_state(
                     cursor,
-                    WpdsState::Error { message },
+                    WpdaState::Error { message },
                 );
                 CursorOutcome::Drop
             }
-            WpdsStepAction::OptGroupAbsent {
+            WpdaStepAction::OptGroupAbsent {
                 replace_symbol,
                 weight,
                 new_state,
@@ -4735,7 +4735,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                     // GSS underflow — synthesize a CategoryEntry sentinel at
                     // pos for the cursor. Update cursor.node directly so the
                     // subsequent cursor_gss_push lands on it.
-                    let sentinel = self.gss.get_or_create_node(WpdsGssNode {
+                    let sentinel = self.gss.get_or_create_node(WpdaGssNode {
                         pos: cursor.pos,
                         symbol: StackSymbolV2::category_entry(0),
                     });
@@ -4749,7 +4749,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::OptGroupFinalize {
+            WpdaStepAction::OptGroupFinalize {
                 replace_symbol,
                 weight,
                 new_state,
@@ -4773,7 +4773,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                     None
                 };
                 if after_outer_pop.is_none() {
-                    let sentinel = self.gss.get_or_create_node(WpdsGssNode {
+                    let sentinel = self.gss.get_or_create_node(WpdaGssNode {
                         pos: cursor.pos,
                         symbol: StackSymbolV2::category_entry(0),
                     });
@@ -4787,7 +4787,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdsStepAction::Idle => {
+            WpdaStepAction::Idle => {
                 // Stage 3.5b (2026-05-01): WPDS-correct EOI parking.
                 //
                 // Pre-3.5b: any Idle cursor was Dropped to avoid infinite
@@ -4826,9 +4826,9 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 let at_eoi = self.is_logical_eoi(cursor.pos, tokens);
                 let resolved_shape = matches!(
                     cursor.inner_state,
-                    WpdsState::InfixLoop { .. }
-                        | WpdsState::Accepted
-                        | WpdsState::Unwinding
+                    WpdaState::InfixLoop { .. }
+                        | WpdaState::Accepted
+                        | WpdaState::Unwinding
                 );
                 if (at_eoi && resolved_shape) || popped_past_root {
                     CursorOutcome::Resolved
@@ -4851,14 +4851,14 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         // Phase 5.5 (2026-05-12): cursors that hit Error state mid-step
         // (e.g., emit_fire_action's eager fire underflow) are Dropped so
         // step_fanout's all-dropped path can surface "Error" to the walker.
-        if matches!(cursor.inner_state, WpdsState::Error { .. }) {
+        if matches!(cursor.inner_state, WpdaState::Error { .. }) {
             return CursorOutcome::Drop;
         }
         if matches!(
             cursor.inner_state,
-            WpdsState::InfixLoop { .. }
-                | WpdsState::Accepted
-                | WpdsState::Unwinding
+            WpdaState::InfixLoop { .. }
+                | WpdaState::Accepted
+                | WpdaState::Unwinding
         ) {
             CursorOutcome::Resolved
         } else {
@@ -4866,7 +4866,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         }
     }
 
-    /// Step 3 (Fork plan F6): per-step driver for `WpdsState::AmbiguityFanout`.
+    /// Step 3 (Fork plan F6): per-step driver for `WpdaState::AmbiguityFanout`.
     ///
     /// Iterates each `BranchCursor`, queries the engine for an action against
     /// the cursor's per-branch state, applies the action via
@@ -4880,9 +4880,9 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// - **Case 4: still-Alive cursors remain** → keep iterating in the
     ///   `branch_cursors` vec; walker stays in `AmbiguityFanout`.
     ///
-    /// Returns the new `WpdsState` after this micro-step (which may still
+    /// Returns the new `WpdaState` after this micro-step (which may still
     /// be `AmbiguityFanout` if Case 4 fires).
-    fn step_fanout(&mut self, tokens: &dyn WpdsTokenSource) -> WpdsState {
+    fn step_fanout(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaState {
         let mut new_cursors: Vec<BranchCursor<W>> = Vec::with_capacity(self.branch_cursors.len());
         // Track which entries in `new_cursors` are Resolved.
         let mut resolved_indices: Vec<usize> = Vec::new();
@@ -4908,7 +4908,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             // out, preserving the offending cursor so resolve_at_end_of_input
             // returns ParseError with a diagnostic.
             if cursor.recovery_deltas.len() > STRICT_PENDING_OPS_LIMIT {
-                self.state = WpdsState::Error {
+                self.state = WpdaState::Error {
                     message: format!(
                         "ι Phase 6 runaway guard: cursor recovery_deltas \
                          exceeded STRICT_PENDING_OPS_LIMIT ({} > {})",
@@ -4927,7 +4927,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 // with: (1) `vec![take, skip]` codegen at binder.rs:973-980,
                 // (2) `LexicographicWeight::plus` returning `*self` on equality
                 // at lex_weight.rs:345-348, and (3) `pick_lex_min_resolved`'s
-                // earlier-index-wins tiebreak at wpds_walker.rs:2570-2592,
+                // earlier-index-wins tiebreak at wpda_walker.rs:2570-2592,
                 // this ordering yields right-associative dangling-else for
                 // Opt-Group Forks. Reordering or replacing with `insert`/`push`
                 // breaks the invariant.
@@ -4983,7 +4983,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
 
         if self.branch_cursors.is_empty() {
             // CASE 1: all branches dropped.
-            let s = WpdsState::Error {
+            let s = WpdaState::Error {
                 message: "all fork branches dropped".to_string(),
             };
             self.state = s.clone();
@@ -5003,7 +5003,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         // (called by the parse facade after `run_to_end_of_input`), not here.
         let frontier: Vec<crate::gss::GssNodeId> =
             self.branch_cursors.iter().map(|c| c.node).collect();
-        let s = WpdsState::AmbiguityFanout { branches: frontier };
+        let s = WpdaState::AmbiguityFanout { branches: frontier };
         self.state = s.clone();
         s
     }
@@ -5022,8 +5022,8 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// HashMap lookup. In unambiguous grammars n ≤ 1; in ambiguous,
     /// merging caps n polynomially vs the pre-3.5b exponential.
     ///
-    /// **Hash safety**: `WpdsState` derives `Hash` (Stage 3.5b
-    /// `wpds_runtime.rs:326`); all variant payloads are `Hash`-able
+    /// **Hash safety**: `WpdaState` derives `Hash` (Stage 3.5b
+    /// `wpda_runtime.rs:326`); all variant payloads are `Hash`-able
     /// (u8/u16/usize/String/Vec<u32>).
     ///
     /// **Tie-break**: when `cursor.weight.plus(&existing.weight) ==
@@ -5074,11 +5074,11 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                     // Pre-M11.5 the snapshot capture was at Fork-arm time,
                     // which captured the PRE-fork parent state (identical for
                     // all siblings, useless for distinguishing them at merge).
-                    let existing_w_snap = crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
+                    let existing_w_snap = crate::wpda_runtime::SnapshotWeight::with_builder_snapshot(
                         merged[idx].weight.clone(),
                         &merged[idx].builder,
                     );
-                    let cursor_w_snap = crate::wpds_runtime::SnapshotWeight::with_builder_snapshot(
+                    let cursor_w_snap = crate::wpda_runtime::SnapshotWeight::with_builder_snapshot(
                         cursor.weight.clone(),
                         &cursor.builder,
                     );
@@ -5100,7 +5100,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                     // (`cursor_committed_ops_consistent` dry-run on the
                     // cursor's recovery_deltas). Under always-eager
                     // Arc::make_mut (Phase 5.3+), broken cursors transition
-                    // to `WpdsState::Error` at eager-fire time and are
+                    // to `WpdaState::Error` at eager-fire time and are
                     // filtered by `cursor_resolution_check :: Drop`. By the
                     // time a cursor reaches `merge_equivalent_cursors`, it
                     // is by construction "consistent" (its cursor.builder
@@ -5266,7 +5266,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 }
                 BuilderDelta::SubstituteToken { pos, kind, text } => {
                     // Stage 3.20 / L12 (Commit B, 2026-05-06): live replay.
-                    // Mutates the token source via WpdsMutableTokenSource::
+                    // Mutates the token source via WpdaMutableTokenSource::
                     // substitute_token AND records the recovery event. If
                     // no mutable source is threaded, panic loudly — per
                     // `feedback_no_stubs_timebombs.md`, "applied: false"
@@ -5316,7 +5316,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                     let raw = self.mutable_token_source.expect(
                         "BuilderDelta::CommitLexAlternative replayed without \
                          a mutable token source — Hack #12 lex-fork emission \
-                         requires WpdsMutableTokenSource threading",
+                         requires WpdaMutableTokenSource threading",
                     );
                     let src = unsafe { &mut *raw };
                     src.commit_alternative(pos, alt_idx)
@@ -5479,9 +5479,9 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     ///   cursors beyond the top-`k` by lex-min weight without evidence.
     ///   Use only as an adversarial-input escape hatch.
     /// - `AmbiguityBudget(n)`: if `branch_cursors.len() > n`, transition
-    ///   the walker to `WpdsState::Error` with an "AMBIGUITY_BUDGET_EXCEEDED:"
+    ///   the walker to `WpdaState::Error` with an "AMBIGUITY_BUDGET_EXCEEDED:"
     ///   sentinel prefix the resolve step decodes into
-    ///   `WpdsResolveResult::AmbiguityBudget`. Mandate-compliant: no
+    ///   `WpdaResolveResult::AmbiguityBudget`. Mandate-compliant: no
     ///   silent dropping; caller observes the structured error and reacts.
     ///
     /// Called from `step_fanout` after the per-cursor step pass so the
@@ -5489,8 +5489,8 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// iteration.
     fn maybe_prune_frontier(&mut self) {
         match self.bounding_mode {
-            crate::wpds_runtime::CursorBoundingMode::Unbounded => {}
-            crate::wpds_runtime::CursorBoundingMode::BeamSize(k) => {
+            crate::wpda_runtime::CursorBoundingMode::Unbounded => {}
+            crate::wpda_runtime::CursorBoundingMode::BeamSize(k) => {
                 if self.branch_cursors.len() <= k {
                     return;
                 }
@@ -5514,7 +5514,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 });
                 self.branch_cursors.truncate(k);
             }
-            crate::wpds_runtime::CursorBoundingMode::AmbiguityBudget(n) => {
+            crate::wpda_runtime::CursorBoundingMode::AmbiguityBudget(n) => {
                 let actual = self.branch_cursors.len();
                 if actual <= n {
                     return;
@@ -5522,9 +5522,9 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 // Mandate-compliant overflow: transition the walker to an
                 // Error state encoding the budget violation in the sentinel-
                 // prefixed message. `resolve_at_end_of_input` decodes the
-                // sentinel and returns `WpdsResolveResult::AmbiguityBudget
+                // sentinel and returns `WpdaResolveResult::AmbiguityBudget
                 // { budget, actual, position }`.
-                self.state = WpdsState::Error {
+                self.state = WpdaState::Error {
                     message: format!(
                         "AMBIGUITY_BUDGET_EXCEEDED: budget={} actual={} position={}",
                         n, actual, self.pos,
@@ -5649,10 +5649,10 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 // The check: builder.len() must increase by exactly 1
                 // (gain 1 from push, lose `arity` from pop_args). If not, the
                 // action silent-failed → return Err so the walker transitions
-                // the cursor to `WpdsState::Error` and drops it.
+                // the cursor to `WpdaState::Error` and drops it.
                 //
                 // Invariant verified across all action emitters in
-                // `macros/src/gen/runtime/wpds_codegen/semantic_actions.rs`
+                // `macros/src/gen/runtime/wpda_codegen/semantic_actions.rs`
                 // and generated artifacts: every action_fn ends with
                 // `b.push_term::<...>(...)` on success. No action legitimately
                 // pushes 0 or 2+ terms.
@@ -5784,7 +5784,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         if let Some(message) =
             Self::fire_action_for_on_builder(&self.engine, builder_mut, symbol)
         {
-            let err = WpdsState::Error { message };
+            let err = WpdaState::Error { message };
             cursor.inner_state = err.clone();
             self.state = err;
         }
@@ -5838,8 +5838,8 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     }
 
     /// Stage 3.9 / ι Phase 4 (2026-05-01): centralized Push-time symbol-
-    /// kind side effects. Both `WpdsStepAction::Push` and
-    /// `WpdsStepAction::ConsumeAndPush` arms call this BEFORE
+    /// kind side effects. Both `WpdaStepAction::Push` and
+    /// `WpdaStepAction::ConsumeAndPush` arms call this BEFORE
     /// `cursor_gss_push` to handle implicit operations driven by the
     /// pushed symbol's `kind`.
     ///
@@ -5980,7 +5980,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     fn advance_cursor_pos(
         &mut self,
         cursor: &mut BranchCursor<W>,
-        tokens: &dyn WpdsTokenSource,
+        tokens: &dyn WpdaTokenSource,
         n: usize,
     ) {
         debug_assert_eq!(n, 1, "advance_cursor_pos n > 1 not yet supported");
@@ -5992,11 +5992,11 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     }
 
     /// M6c.6.1 helper: advance a child cursor by one step via the
-    /// source's `next_pos`. Used at 14 sites in the `WpdsStepAction::Fork`
+    /// source's `next_pos`. Used at 14 sites in the `WpdaStepAction::Fork`
     /// apply arm to replace `child.pos += 1` (which silently desynced
     /// from lattice DAGs with non-sequential primary edges).
     #[inline(always)]
-    fn child_next_pos(tokens: &dyn WpdsTokenSource, pos: usize) -> usize {
+    fn child_next_pos(tokens: &dyn WpdaTokenSource, pos: usize) -> usize {
         tokens.next_pos(pos, 0).unwrap_or(pos + 1)
     }
 
@@ -6009,7 +6009,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     }
 
     #[inline(always)]
-    fn set_cursor_inner_state(&mut self, cursor: &mut BranchCursor<W>, state: WpdsState) {
+    fn set_cursor_inner_state(&mut self, cursor: &mut BranchCursor<W>, state: WpdaState) {
         // Phase 4 #5b (2026-05-12): when transitioning to CollectionLoop,
         // patch `kv_phase` for HashMap collection slots based on the
         // cursor's `collection_stack[acc_id].len()` parity. The engine's
@@ -6042,7 +6042,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         // this: only override when the engine's emitted `kv_phase == 0`,
         // leaving 1/2 alone.
         let patched_state = match &state {
-            WpdsState::CollectionLoop {
+            WpdaState::CollectionLoop {
                 result_src_idx,
                 rule_idx,
                 element_src_idx,
@@ -6068,7 +6068,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             .builder
                             .collection_slot_len(acc_id_usize);
                         let new_kv_phase: u8 = if slot_len % 2 == 1 { 1 } else { 0 };
-                        WpdsState::CollectionLoop {
+                        WpdaState::CollectionLoop {
                             result_src_idx: *result_src_idx,
                             rule_idx: *rule_idx,
                             element_src_idx: *element_src_idx,
@@ -6108,7 +6108,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         let predecessor = if (cursor.node == 0 && self.gss.node(0).is_none())
             || cursor.node == crate::gss::GSS_NODE_NONE
         {
-            let root = self.gss.get_or_create_node(WpdsGssNode {
+            let root = self.gss.get_or_create_node(WpdaGssNode {
                 pos: cursor.pos,
                 symbol: StackSymbolV2::category_entry(0),
             });
@@ -6156,8 +6156,8 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         pred_id: crate::gss::GssNodeId,
         popped_symbol: Option<StackSymbolV2>,
         weight: &W,
-        new_state: WpdsState,
-        tokens: &dyn crate::wpds_runtime::WpdsTokenSource,
+        new_state: WpdaState,
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
     ) {
         // Set cursor's GSS top to the predecessor (or sentinel).
         cursor.node = pred_id;
@@ -6367,7 +6367,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             // CursorViewSource wrap deleted — alt identity
                             // lives in the shared LatticeTokenSource (M3).
                             let test_action = self.engine.step(
-                                &WpdsState::InfixLoop { cur_bp: 0 },
+                                &WpdaState::InfixLoop { cur_bp: 0 },
                                 &self.gss,
                                 frontier_snap.as_ref(),
                                 cursor.pos,
@@ -6375,7 +6375,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             );
                             matches!(
                                 test_action,
-                                WpdsStepAction::Advance(WpdsState::Unwinding),
+                                WpdaStepAction::Advance(WpdaState::Unwinding),
                             )
                         }
                         None => false,
@@ -6474,7 +6474,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         // CategoryEntry's cat (preserves pre-D8 behavior for engines
         // that don't override the trait default — test mocks).
         let resolved_new_state = match new_state {
-            WpdsState::GroupingClosePreservingInner {
+            WpdaState::GroupingClosePreservingInner {
                 inner_cat_src_idx,
             } if inner_cat_src_idx == u16::MAX => {
                 let resolved = cursor
@@ -6486,7 +6486,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                             .map(|s| s.category_src_idx)
                             .unwrap_or(0u16)
                     });
-                WpdsState::GroupingClosePreservingInner {
+                WpdaState::GroupingClosePreservingInner {
                     inner_cat_src_idx: resolved,
                 }
             }
@@ -6557,7 +6557,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         let target = if (cursor.node == 0 && self.gss.node(0).is_none())
             || cursor.node == crate::gss::GSS_NODE_NONE
         {
-            let root = self.gss.get_or_create_node(WpdsGssNode {
+            let root = self.gss.get_or_create_node(WpdaGssNode {
                 pos: cursor.pos,
                 symbol: StackSymbolV2::category_entry(0),
             });
@@ -6592,27 +6592,27 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WpdsControl helper (re-export for external consumers)
+// WpdaControl helper (re-export for external consumers)
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Re-exported [`WpdsControl`] for convenience.
-pub use crate::wpds_runtime::WpdsControl as WalkerControl;
+/// Re-exported [`WpdaControl`] for convenience.
+pub use crate::wpda_runtime::WpdaControl as WalkerControl;
 
-/// A no-op step engine that always returns [`WpdsStepAction::Idle`].
+/// A no-op step engine that always returns [`WpdaStepAction::Idle`].
 ///
 /// Useful as a placeholder before Stage 6's codegen lands.
 pub struct IdleEngine;
 
-impl<W: SemiringRef> WpdsStepEngine<W> for IdleEngine {
+impl<W: SemiringRef> WpdaEngine<W> for IdleEngine {
     fn step(
         &self,
-        _state: &WpdsState,
-        _gss: &WpdsGss<W>,
-        _frontier_top: Option<&WpdsGssNode>,
+        _state: &WpdaState,
+        _gss: &WpdaGss<W>,
+        _frontier_top: Option<&WpdaGssNode>,
         _pos: usize,
-        _tokens: &dyn WpdsTokenSource,
-    ) -> WpdsStepAction<W> {
-        WpdsStepAction::Idle
+        _tokens: &dyn WpdaTokenSource,
+    ) -> WpdaStepAction<W> {
+        WpdaStepAction::Idle
     }
 }
 
@@ -6620,7 +6620,7 @@ impl<W: SemiringRef> WpdsStepEngine<W> for IdleEngine {
 // WalkerConsumer trait (Stage 5: M2 — observer is SECONDARY contract)
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Callback interface attached to a [`WpdsWalker`] for side-effect interception.
+/// Callback interface attached to a [`WpdaWalker`] for side-effect interception.
 ///
 /// Per the survey contract M2 (`prattail/docs/design/wpds-migration-survey.md`),
 /// the observer is the **secondary** contract; primary is `process_event`.
@@ -6640,15 +6640,15 @@ pub trait WalkerConsumer<W: SemiringRef> {
     /// - `Checkpoint`: snapshot current configuration, then continue
     /// - `Abort`: halt evaluation; walker enters Error state
     /// - `Pause`: suspend awaiting external resumption (DAP/REPL)
-    fn on_event(&mut self, event: &WpdsEvent<W>, state: &WpdsState) -> WpdsControl;
+    fn on_event(&mut self, event: &WpdaEvent<W>, state: &WpdaState) -> WpdaControl;
 
     /// Called when a Checkpoint transition is emitted.
     #[inline(always)]
-    fn on_checkpoint(&mut self, _config: &WpdsConfiguration<W>) {}
+    fn on_checkpoint(&mut self, _config: &WpdaConfiguration<W>) {}
 
     /// Called once when the walker reaches a terminal state.
     #[inline(always)]
-    fn on_complete(&mut self, _state: &WpdsState) {}
+    fn on_complete(&mut self, _state: &WpdaState) {}
 }
 
 /// Zero-cost no-op consumer — monomorphizes away.
@@ -6658,8 +6658,8 @@ pub struct NullConsumer;
 
 impl<W: SemiringRef> WalkerConsumer<W> for NullConsumer {
     #[inline(always)]
-    fn on_event(&mut self, _event: &WpdsEvent<W>, _state: &WpdsState) -> WpdsControl {
-        WpdsControl::Continue
+    fn on_event(&mut self, _event: &WpdaEvent<W>, _state: &WpdaState) -> WpdaControl {
+        WpdaControl::Continue
     }
 }
 
@@ -6669,7 +6669,7 @@ impl<W: SemiringRef> WalkerConsumer<W> for NullConsumer {
 /// (master plan §5), `CursorPanorama` (cursor census after step_fanout),
 /// and `BranchMerged` (cursor merge by `merge_equivalent_cursors`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WpdsEventTag {
+pub enum WpdaEventTag {
     Step,
     TokenConsumed,
     BranchForked,
@@ -6687,16 +6687,16 @@ pub enum WpdsEventTag {
     BranchMerged,
 }
 
-impl WpdsEventTag {
-    fn of<W: SemiringRef>(event: &WpdsEvent<W>) -> Self {
+impl WpdaEventTag {
+    fn of<W: SemiringRef>(event: &WpdaEvent<W>) -> Self {
         match event {
-            WpdsEvent::Step => WpdsEventTag::Step,
-            WpdsEvent::TokenConsumed { .. } => WpdsEventTag::TokenConsumed,
-            WpdsEvent::BranchForked { .. } => WpdsEventTag::BranchForked,
-            WpdsEvent::BranchResolved { .. } => WpdsEventTag::BranchResolved,
-            WpdsEvent::SemanticActionFired { .. } => WpdsEventTag::SemanticActionFired,
-            WpdsEvent::Checkpoint { .. } => WpdsEventTag::Checkpoint,
-            WpdsEvent::Inspect => WpdsEventTag::Inspect,
+            WpdaEvent::Step => WpdaEventTag::Step,
+            WpdaEvent::TokenConsumed { .. } => WpdaEventTag::TokenConsumed,
+            WpdaEvent::BranchForked { .. } => WpdaEventTag::BranchForked,
+            WpdaEvent::BranchResolved { .. } => WpdaEventTag::BranchResolved,
+            WpdaEvent::SemanticActionFired { .. } => WpdaEventTag::SemanticActionFired,
+            WpdaEvent::Checkpoint { .. } => WpdaEventTag::Checkpoint,
+            WpdaEvent::Inspect => WpdaEventTag::Inspect,
         }
     }
 }
@@ -6725,12 +6725,12 @@ pub enum CursorDropReason {
 
 /// A flat per-cursor snapshot for tracing/dump. Excludes heavy fields
 /// (recovery_deltas contents, collection_stack contents) — only
-/// their lengths. ~80 bytes flat (depends on W size + WpdsState).
+/// their lengths. ~80 bytes flat (depends on W size + WpdaState).
 #[derive(Debug, Clone)]
 pub struct CursorSnapshot<W: SemiringRef> {
     pub idx: usize,
     pub pos: usize,
-    pub state: WpdsState,
+    pub state: WpdaState,
     pub gss_node_id: crate::gss::GssNodeId,
     pub weight: W,
     pub source_priority: u32,
@@ -6743,7 +6743,7 @@ pub struct CursorSnapshot<W: SemiringRef> {
 pub struct StepSnapshot<W: SemiringRef> {
     pub step_index: usize,
     pub cursor_count: usize,
-    pub walker_state: WpdsState,
+    pub walker_state: WpdaState,
     pub walker_pos: usize,
     pub gss_node_count: usize,
     pub cursors: Vec<CursorSnapshot<W>>,
@@ -6780,9 +6780,9 @@ impl<W: SemiringRef> CursorObserver<W> for NullCursorObserver {}
 ///
 /// Useful for DAP step-recording, REPL history, post-mortem analysis.
 pub struct TracingConsumer<W: SemiringRef> {
-    pub events: Vec<(WpdsEventTag, WpdsState)>,
-    pub checkpoints: Vec<WpdsConfiguration<W>>,
-    pub final_state: Option<WpdsState>,
+    pub events: Vec<(WpdaEventTag, WpdaState)>,
+    pub checkpoints: Vec<WpdaConfiguration<W>>,
+    pub final_state: Option<WpdaState>,
 }
 
 impl<W: SemiringRef> TracingConsumer<W> {
@@ -6802,16 +6802,16 @@ impl<W: SemiringRef> Default for TracingConsumer<W> {
 }
 
 impl<W: SemiringRef> WalkerConsumer<W> for TracingConsumer<W> {
-    fn on_event(&mut self, event: &WpdsEvent<W>, state: &WpdsState) -> WpdsControl {
-        self.events.push((WpdsEventTag::of(event), state.clone()));
-        WpdsControl::Continue
+    fn on_event(&mut self, event: &WpdaEvent<W>, state: &WpdaState) -> WpdaControl {
+        self.events.push((WpdaEventTag::of(event), state.clone()));
+        WpdaControl::Continue
     }
 
-    fn on_checkpoint(&mut self, config: &WpdsConfiguration<W>) {
+    fn on_checkpoint(&mut self, config: &WpdaConfiguration<W>) {
         self.checkpoints.push(config.clone());
     }
 
-    fn on_complete(&mut self, state: &WpdsState) {
+    fn on_complete(&mut self, state: &WpdaState) {
         self.final_state = Some(state.clone());
     }
 }
@@ -6823,7 +6823,7 @@ impl<W: SemiringRef> WalkerConsumer<W> for TracingConsumer<W> {
 /// Combined consumer + cursor observer suitable for hang diagnosis.
 ///
 /// Records:
-/// - `events`: every WpdsEventTag/state pair (like TracingConsumer).
+/// - `events`: every WpdaEventTag/state pair (like TracingConsumer).
 /// - `steps`: per-step cursor census from `step_fanout`.
 /// - `merges`: every (winner_idx, loser_idx) merge pair.
 /// - `drops`: every (idx, reason) drop pair.
@@ -6831,13 +6831,13 @@ impl<W: SemiringRef> WalkerConsumer<W> for TracingConsumer<W> {
 /// - `max_cursor_count`: peak observed cursor count.
 /// - `final_state`: walker terminal state.
 pub struct RichTracingConsumer<W: SemiringRef> {
-    pub events: Vec<(WpdsEventTag, WpdsState)>,
+    pub events: Vec<(WpdaEventTag, WpdaState)>,
     pub steps: Vec<StepSnapshot<W>>,
     pub merges: Vec<(usize, usize)>,
     pub drops: Vec<(usize, CursorDropReason)>,
     pub forks: Vec<(usize, usize)>,
     pub max_cursor_count: usize,
-    pub final_state: Option<WpdsState>,
+    pub final_state: Option<WpdaState>,
 }
 
 impl<W: SemiringRef> RichTracingConsumer<W> {
@@ -6861,12 +6861,12 @@ impl<W: SemiringRef> Default for RichTracingConsumer<W> {
 }
 
 impl<W: SemiringRef> WalkerConsumer<W> for RichTracingConsumer<W> {
-    fn on_event(&mut self, event: &WpdsEvent<W>, state: &WpdsState) -> WpdsControl {
-        self.events.push((WpdsEventTag::of(event), state.clone()));
-        WpdsControl::Continue
+    fn on_event(&mut self, event: &WpdaEvent<W>, state: &WpdaState) -> WpdaControl {
+        self.events.push((WpdaEventTag::of(event), state.clone()));
+        WpdaControl::Continue
     }
 
-    fn on_complete(&mut self, state: &WpdsState) {
+    fn on_complete(&mut self, state: &WpdaState) {
         self.final_state = Some(state.clone());
     }
 }
@@ -6954,17 +6954,17 @@ impl EnvTracingConsumer {
 }
 
 impl<W: SemiringRef> WalkerConsumer<W> for EnvTracingConsumer {
-    fn on_event(&mut self, event: &WpdsEvent<W>, state: &WpdsState) -> WpdsControl {
+    fn on_event(&mut self, event: &WpdaEvent<W>, state: &WpdaState) -> WpdaControl {
         if (self.enabled & TRACE_STEPS) != 0 {
             eprintln!(
                 "[wpds-trace] step={} tag={:?} state={:?}",
                 self.step_index,
-                WpdsEventTag::of(event),
+                WpdaEventTag::of(event),
                 state
             );
         }
         self.step_index += 1;
-        WpdsControl::Continue
+        WpdaControl::Continue
     }
 }
 
@@ -7030,18 +7030,18 @@ impl AbortAfterConsumer {
 }
 
 impl<W: SemiringRef> WalkerConsumer<W> for AbortAfterConsumer {
-    fn on_event(&mut self, _event: &WpdsEvent<W>, _state: &WpdsState) -> WpdsControl {
+    fn on_event(&mut self, _event: &WpdaEvent<W>, _state: &WpdaState) -> WpdaControl {
         self.count += 1;
         if self.count >= self.limit {
-            WpdsControl::Abort
+            WpdaControl::Abort
         } else {
-            WpdsControl::Continue
+            WpdaControl::Continue
         }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WpdsWalker::run_with_consumer
+// WpdaWalker::run_with_consumer
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Stage 3.20 / L12 (Commit A, 2026-05-06): defensive Drop impl that
@@ -7049,22 +7049,22 @@ impl<W: SemiringRef> WalkerConsumer<W> for AbortAfterConsumer {
 /// caller's source. Prevents stale-pointer reuse in pathological cases
 /// (e.g. walker stored in a long-lived consumer struct, source borrowed
 /// per-parse).
-impl<W: SemiringRef, E: WpdsStepEngine<W>> Drop for WpdsWalker<W, E> {
+impl<W: SemiringRef, E: WpdaEngine<W>> Drop for WpdaWalker<W, E> {
     fn drop(&mut self) {
         self.mutable_token_source = None;
     }
 }
 
-impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
-    WpdsWalker<W, E>
+impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
+    WpdaWalker<W, E>
 {
     /// Drive the walker reactively with a [`WalkerConsumer`] attached.
     ///
     /// Each iteration:
-    /// 1. Process `WpdsEvent::Step` (driving the FSM via the engine).
+    /// 1. Process `WpdaEvent::Step` (driving the FSM via the engine).
     /// 2. If transition was `Checkpoint`, notify `consumer.on_checkpoint`.
     /// 3. Notify `consumer.on_event(Step, current_state)`.
-    /// 4. Honor consumer's `WpdsControl` directive.
+    /// 4. Honor consumer's `WpdaControl` directive.
     ///
     /// Terminates when state is terminal, max_steps exceeded, consumer aborts,
     /// or consumer pauses. Calls `consumer.on_complete(&final_state)` exactly
@@ -7073,32 +7073,32 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         &mut self,
         consumer: &mut C,
         max_steps: usize,
-        tokens: &dyn WpdsTokenSource,
-    ) -> WpdsState {
+        tokens: &dyn WpdaTokenSource,
+    ) -> WpdaState {
         for _ in 0..max_steps {
             if self.state.is_terminal() {
                 consumer.on_complete(&self.state);
                 return self.state.clone();
             }
-            let event = WpdsEvent::Step;
+            let event = WpdaEvent::Step;
             let transition = self.process_event(event.clone(), tokens);
-            if let WpdsTransition::Checkpoint { ref config } = transition {
+            if let WpdaTransition::Checkpoint { ref config } = transition {
                 consumer.on_checkpoint(config);
             }
             match consumer.on_event(&event, &self.state) {
-                WpdsControl::Continue => {}
-                WpdsControl::Checkpoint => {
+                WpdaControl::Continue => {}
+                WpdaControl::Checkpoint => {
                     let config = self.current_configuration();
                     consumer.on_checkpoint(&config);
                 }
-                WpdsControl::Abort => {
-                    self.state = WpdsState::Error {
+                WpdaControl::Abort => {
+                    self.state = WpdaState::Error {
                         message: "consumer aborted".to_string(),
                     };
                     consumer.on_complete(&self.state);
                     return self.state.clone();
                 }
-                WpdsControl::Pause => {
+                WpdaControl::Pause => {
                     // Caller resumes by calling run_with_consumer again later.
                     return self.state.clone();
                 }
@@ -7116,13 +7116,13 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// installs `EnvTracingConsumer` as both `WalkerConsumer` and
     /// `CursorObserver` (writes diagnostic lines to stderr).
     ///
-    /// Returns the same `Result<(), WpdsMaxStepsExceeded>` as
+    /// Returns the same `Result<(), WpdaMaxStepsExceeded>` as
     /// `run_to_end_of_input`; codegen call sites can swap directly.
     pub fn run_to_end_of_input_env_aware(
         &mut self,
         default_max_steps: usize,
-        tokens: &dyn WpdsTokenSource,
-    ) -> Result<(), WpdsMaxStepsExceeded>
+        tokens: &dyn WpdaTokenSource,
+    ) -> Result<(), WpdaMaxStepsExceeded>
     where
         W: 'static + std::fmt::Debug,
     {
@@ -7140,7 +7140,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             if final_state.is_terminal() {
                 Ok(())
             } else {
-                Err(WpdsMaxStepsExceeded { position: self.pos })
+                Err(WpdaMaxStepsExceeded { position: self.pos })
             }
         } else {
             self.run_to_end_of_input(max_steps, tokens)
@@ -7170,8 +7170,8 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         &mut self,
         consumer: &mut C,
         max_steps: usize,
-        tokens: &dyn WpdsTokenSource,
-    ) -> WpdsState
+        tokens: &dyn WpdaTokenSource,
+    ) -> WpdaState
     where
         C: WalkerConsumer<W> + CursorObserver<W>,
         W: 'static + std::fmt::Debug,
@@ -7184,28 +7184,28 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                 <C as WalkerConsumer<W>>::on_complete(consumer, &self.state);
                 return self.state.clone();
             }
-            let event = WpdsEvent::Step;
+            let event = WpdaEvent::Step;
             let transition = self.process_event(event.clone(), tokens);
-            if let WpdsTransition::Checkpoint { ref config } = transition {
+            if let WpdaTransition::Checkpoint { ref config } = transition {
                 <C as WalkerConsumer<W>>::on_checkpoint(consumer, config);
             }
             // Stage 6 G6+ (2026-05-02): per-step cursor census.
             let snapshot = self.current_snapshot();
             <C as CursorObserver<W>>::on_step_panorama(consumer, &snapshot);
             match <C as WalkerConsumer<W>>::on_event(consumer, &event, &self.state) {
-                WpdsControl::Continue => {}
-                WpdsControl::Checkpoint => {
+                WpdaControl::Continue => {}
+                WpdaControl::Checkpoint => {
                     let config = self.current_configuration();
                     <C as WalkerConsumer<W>>::on_checkpoint(consumer, &config);
                 }
-                WpdsControl::Abort => {
-                    self.state = WpdsState::Error {
+                WpdaControl::Abort => {
+                    self.state = WpdaState::Error {
                         message: "consumer aborted".to_string(),
                     };
                     <C as WalkerConsumer<W>>::on_complete(consumer, &self.state);
                     return self.state.clone();
                 }
-                WpdsControl::Pause => {
+                WpdaControl::Pause => {
                     return self.state.clone();
                 }
             }
@@ -7233,45 +7233,45 @@ mod tests {
 
     /// Test engine driven by a programmable script of actions.
     struct ScriptedEngine {
-        script: RefCell<Vec<WpdsStepAction<LexicographicWeight>>>,
+        script: RefCell<Vec<WpdaStepAction<LexicographicWeight>>>,
     }
 
     impl ScriptedEngine {
-        fn new(actions: Vec<WpdsStepAction<LexicographicWeight>>) -> Self {
+        fn new(actions: Vec<WpdaStepAction<LexicographicWeight>>) -> Self {
             ScriptedEngine {
                 script: RefCell::new(actions),
             }
         }
     }
 
-    impl WpdsStepEngine<LexicographicWeight> for ScriptedEngine {
+    impl WpdaEngine<LexicographicWeight> for ScriptedEngine {
         fn step(
             &self,
-            _state: &WpdsState,
-            _gss: &WpdsGss<LexicographicWeight>,
-            _frontier_top: Option<&WpdsGssNode>,
+            _state: &WpdaState,
+            _gss: &WpdaGss<LexicographicWeight>,
+            _frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
-            _tokens: &dyn WpdsTokenSource,
-        ) -> WpdsStepAction<LexicographicWeight> {
+            _tokens: &dyn WpdaTokenSource,
+        ) -> WpdaStepAction<LexicographicWeight> {
             self.script
                 .borrow_mut()
                 .pop()
-                .unwrap_or(WpdsStepAction::Idle)
+                .unwrap_or(WpdaStepAction::Idle)
         }
     }
 
     /// Empty token source used by tests that don't inspect input.
-    fn empty_tokens() -> crate::wpds_runtime::SliceTokenSource<'static> {
+    fn empty_tokens() -> crate::wpda_runtime::SliceTokenSource<'static> {
         static EMPTY: [TokenKind; 0] = [];
-        crate::wpds_runtime::SliceTokenSource::new(&EMPTY)
+        crate::wpda_runtime::SliceTokenSource::new(&EMPTY)
     }
 
     // ─── Shape tests ────────────────────────────────────────────────────────
 
     #[test]
     fn walker_starts_in_ready_state() {
-        let w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
-        assert_eq!(*w.state(), WpdsState::Ready { min_bp: 0 });
+        let w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+        assert_eq!(*w.state(), WpdaState::Ready { min_bp: 0 });
         assert_eq!(w.position(), 0);
         assert!(w.gss().is_empty());
         assert_eq!(w.beam_size(), None);
@@ -7279,63 +7279,63 @@ mod tests {
 
     #[test]
     fn walker_with_beam_size_records_bound() {
-        let w: WpdsWalker<LexicographicWeight, _> =
-            WpdsWalker::new(IdleEngine, 0).with_beam_size(8);
+        let w: WpdaWalker<LexicographicWeight, _> =
+            WpdaWalker::new(IdleEngine, 0).with_beam_size(8);
         assert_eq!(w.beam_size(), Some(8));
     }
 
     #[test]
     fn process_event_inspect_yields_no_change() {
-        let mut w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
-        let t = w.process_event(WpdsEvent::Inspect, &empty_tokens());
-        assert!(matches!(t, WpdsTransition::NoChange));
+        let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+        let t = w.process_event(WpdaEvent::Inspect, &empty_tokens());
+        assert!(matches!(t, WpdaTransition::NoChange));
     }
 
     #[test]
     fn process_event_step_with_idle_engine_yields_no_change() {
-        let mut w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
-        let t = w.process_event(WpdsEvent::Step, &empty_tokens());
-        assert!(matches!(t, WpdsTransition::NoChange));
+        let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+        let t = w.process_event(WpdaEvent::Step, &empty_tokens());
+        assert!(matches!(t, WpdaTransition::NoChange));
     }
 
     #[test]
     fn process_event_step_advances_state_via_engine() {
         // Script (popped from end): Advance(PrefixDispatch) only — fires once.
-        let engine = ScriptedEngine::new(vec![WpdsStepAction::Advance(
-            WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+        let engine = ScriptedEngine::new(vec![WpdaStepAction::Advance(
+            WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
         )]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let t = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let mut w = WpdaWalker::new(engine, 0);
+        let t = w.process_event(WpdaEvent::Step, &empty_tokens());
         match t {
-            WpdsTransition::Transition { new_state, .. } => {
-                assert_eq!(new_state, WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 });
+            WpdaTransition::Transition { new_state, .. } => {
+                assert_eq!(new_state, WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 });
             }
             other => panic!("expected Transition, got {:?}", other),
         }
-        assert_eq!(*w.state(), WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 });
+        assert_eq!(*w.state(), WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 });
     }
 
     #[test]
     fn process_event_token_consumed_advances_position() {
-        let mut w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
-        let t = w.process_event(WpdsEvent::TokenConsumed {
+        let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+        let t = w.process_event(WpdaEvent::TokenConsumed {
             pos: 5,
             token: TokenKind::Ident,
         }, &empty_tokens());
-        assert!(matches!(t, WpdsTransition::Transition { .. }));
+        assert!(matches!(t, WpdaTransition::Transition { .. }));
         assert_eq!(w.position(), 5);
     }
 
     #[test]
     fn process_event_branch_forked_enters_ambiguity_fanout() {
-        let mut w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
-        let t = w.process_event(WpdsEvent::BranchForked {
+        let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+        let t = w.process_event(WpdaEvent::BranchForked {
             parent: 0,
             children: vec![1, 2, 3],
         }, &empty_tokens());
-        assert!(matches!(t, WpdsTransition::Transition { .. }));
+        assert!(matches!(t, WpdaTransition::Transition { .. }));
         match w.state() {
-            WpdsState::AmbiguityFanout { branches } => {
+            WpdaState::AmbiguityFanout { branches } => {
                 assert_eq!(branches, &vec![1u32, 2u32, 3u32]);
             }
             other => panic!("expected AmbiguityFanout, got {:?}", other),
@@ -7344,18 +7344,18 @@ mod tests {
 
     #[test]
     fn process_event_branch_resolved_exits_ambiguity_fanout() {
-        let mut w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
-        let _ = w.process_event(WpdsEvent::BranchForked {
+        let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+        let _ = w.process_event(WpdaEvent::BranchForked {
             parent: 0,
             children: vec![1, 2],
         }, &empty_tokens());
-        let t = w.process_event(WpdsEvent::BranchResolved {
+        let t = w.process_event(WpdaEvent::BranchResolved {
             winner: 1,
             weight: lex(2.5, 3, 4),
         }, &empty_tokens());
-        assert!(matches!(t, WpdsTransition::Transition { .. }));
+        assert!(matches!(t, WpdaTransition::Transition { .. }));
         match w.state() {
-            WpdsState::InfixLoop { .. } => {}
+            WpdaState::InfixLoop { .. } => {}
             other => panic!("expected InfixLoop after resolution, got {:?}", other),
         }
         // Cumulative weight should reflect the resolved branch.
@@ -7366,24 +7366,24 @@ mod tests {
 
     #[test]
     fn process_event_semantic_action_fired_records_trace() {
-        let mut w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
-        let t = w.process_event(WpdsEvent::SemanticActionFired {
+        let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+        let t = w.process_event(WpdaEvent::SemanticActionFired {
             action_id: 42,
             args: vec![0, 1, 2],
         }, &empty_tokens());
-        assert!(matches!(t, WpdsTransition::Transition { trace: Some(_), .. }));
+        assert!(matches!(t, WpdaTransition::Transition { trace: Some(_), .. }));
     }
 
     #[test]
     fn process_event_checkpoint_emits_checkpoint_transition() {
-        let mut w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
-        let t = w.process_event(WpdsEvent::Checkpoint {
-            reason: crate::wpds_runtime::CheckpointReason::NaturalBoundary,
+        let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+        let t = w.process_event(WpdaEvent::Checkpoint {
+            reason: crate::wpda_runtime::CheckpointReason::NaturalBoundary,
         }, &empty_tokens());
         match t {
-            WpdsTransition::Checkpoint { config } => {
+            WpdaTransition::Checkpoint { config } => {
                 assert_eq!(config.pos, 0);
-                assert_eq!(config.state, WpdsState::Ready { min_bp: 0 });
+                assert_eq!(config.state, WpdaState::Ready { min_bp: 0 });
             }
             other => panic!("expected Checkpoint, got {:?}", other),
         }
@@ -7391,25 +7391,25 @@ mod tests {
 
     #[test]
     fn terminal_state_absorbs_events_without_change() {
-        let engine = ScriptedEngine::new(vec![WpdsStepAction::Accept]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let t1 = w.process_event(WpdsEvent::Step, &empty_tokens());
-        assert!(matches!(t1, WpdsTransition::Done { .. }));
-        assert_eq!(*w.state(), WpdsState::Accepted);
+        let engine = ScriptedEngine::new(vec![WpdaStepAction::Accept]);
+        let mut w = WpdaWalker::new(engine, 0);
+        let t1 = w.process_event(WpdaEvent::Step, &empty_tokens());
+        assert!(matches!(t1, WpdaTransition::Done { .. }));
+        assert_eq!(*w.state(), WpdaState::Accepted);
         // Further events yield NoChange.
-        let t2 = w.process_event(WpdsEvent::Step, &empty_tokens());
-        assert!(matches!(t2, WpdsTransition::NoChange));
-        let t3 = w.process_event(WpdsEvent::Inspect, &empty_tokens());
-        assert!(matches!(t3, WpdsTransition::NoChange));
+        let t2 = w.process_event(WpdaEvent::Step, &empty_tokens());
+        assert!(matches!(t2, WpdaTransition::NoChange));
+        let t3 = w.process_event(WpdaEvent::Inspect, &empty_tokens());
+        assert!(matches!(t3, WpdaTransition::NoChange));
     }
 
     #[test]
     fn step_action_error_transitions_to_error_state() {
-        let engine = ScriptedEngine::new(vec![WpdsStepAction::Error("bad parse".to_string())]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let engine = ScriptedEngine::new(vec![WpdaStepAction::Error("bad parse".to_string())]);
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         match w.state() {
-            WpdsState::Error { message } => assert_eq!(message, "bad parse"),
+            WpdaState::Error { message } => assert_eq!(message, "bad parse"),
             other => panic!("expected Error state, got {:?}", other),
         }
     }
@@ -7417,13 +7417,13 @@ mod tests {
     #[test]
     fn step_action_push_grows_gss_and_updates_weight() {
         // Push action emits a new symbol on top of an entry frame.
-        let engine = ScriptedEngine::new(vec![WpdsStepAction::Push {
+        let engine = ScriptedEngine::new(vec![WpdaStepAction::Push {
             symbol: StackSymbolV2::rule_at(0, 1, 0, Some(7)),
             weight: lex(2.0, 0, 1),
-            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 7 },
+            new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 7 },
         }]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         // GSS now has at least the entry node + the pushed node.
         assert!(w.gss().node_count() >= 2);
         assert!((w.weight().primary.0 - 2.0).abs() < 1e-9);
@@ -7433,21 +7433,21 @@ mod tests {
     fn step_action_replace_keeps_predecessor() {
         let engine = ScriptedEngine::new(vec![
             // Last popped first: replace runs second, push runs first.
-            WpdsStepAction::Replace {
+            WpdaStepAction::Replace {
                 symbol: StackSymbolV2::rule_at(0, 0, 1, None),
                 weight: lex(0.5, 0, 0),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                 weight: lex(1.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push
         let initial_count = w.gss().node_count();
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Replace
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Replace
         // Replace adds a new node (replace_top creates rather than mutates).
         assert!(w.gss().node_count() > initial_count);
     }
@@ -7455,35 +7455,35 @@ mod tests {
     #[test]
     fn step_action_fork_enters_ambiguity_fanout() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
             },
             // Setup: push entry first.
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         match w.state() {
-            WpdsState::AmbiguityFanout { branches } => {
+            WpdaState::AmbiguityFanout { branches } => {
                 assert_eq!(branches.len(), 2);
             }
             other => panic!("expected AmbiguityFanout after Fork, got {:?}", other),
@@ -7513,53 +7513,53 @@ mod tests {
             // Lex-min winner: cursor[0] (rule_idx=0).
             // B6 (2026-04-28): script must end in Accept (or Error) — the
             // walker now surfaces Idle-in-non-terminal-state as Error.
-            WpdsStepAction::Accept,
-            WpdsStepAction::Pop {
+            WpdaStepAction::Accept,
+            WpdaStepAction::Pop {
                 weight: lex(1.0, 0, 0),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
-            WpdsStepAction::Pop {
+            WpdaStepAction::Pop {
                 weight: lex(1.0, 0, 1),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
-            WpdsStepAction::Pop {
+            WpdaStepAction::Pop {
                 weight: lex(1.0, 0, 2),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
             // Initial Fork.
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 2, 0, None),
                         weight: lex(1.0, 0, 2),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
             },
             // Setup: push entry first.
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         // Stage 3.5b (2026-05-01): WPDS-correct EOI resolution. The
         // walker drives cursors until parked, then resolves to the
         // lex-min winner at end-of-input (vs the prior mid-stream commit
@@ -7576,7 +7576,7 @@ mod tests {
         // (Accepted in this scripted test) and self.weight via times.
         assert_eq!(
             *w.state(),
-            WpdsState::Accepted,
+            WpdaState::Accepted,
             "post-resolve walker state must be Accepted",
         );
         let final_weight = w.weight();
@@ -7601,51 +7601,51 @@ mod tests {
     #[test]
     fn fork_per_branch_new_state_routes_to_distinct_states() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 7 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 7 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
-                        new_state: WpdsState::InfixLoop { cur_bp: 13 },
+                        new_state: WpdaState::InfixLoop { cur_bp: 13 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 2, 0, None),
                         weight: lex(1.0, 0, 2),
-                        new_state: WpdsState::Unwinding,
+                        new_state: WpdaState::Unwinding,
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 3);
         // Each cursor's inner_state must be its own branch's new_state.
         match &cursors[0].inner_state {
-            &WpdsState::PrefixDispatch { cur_bp, .. } => assert_eq!(cur_bp, 7),
+            &WpdaState::PrefixDispatch { cur_bp, .. } => assert_eq!(cur_bp, 7),
             other => panic!("cursor[0]: expected PrefixDispatch{{cur_bp:7}}, got {:?}", other),
         }
         match &cursors[1].inner_state {
-            &WpdsState::InfixLoop { cur_bp } => assert_eq!(cur_bp, 13),
+            &WpdaState::InfixLoop { cur_bp } => assert_eq!(cur_bp, 13),
             other => panic!("cursor[1]: expected InfixLoop{{cur_bp:13}}, got {:?}", other),
         }
         match &cursors[2].inner_state {
-            WpdsState::Unwinding => {},
+            WpdaState::Unwinding => {},
             other => panic!("cursor[2]: expected Unwinding, got {:?}", other),
         }
     }
@@ -7655,33 +7655,33 @@ mod tests {
     #[test]
     fn fork_consume_trigger_advances_pos_once_for_all_cursors() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: true,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
         assert_eq!(w.position(), 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork (consumes trigger)
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork (consumes trigger)
         assert_eq!(w.position(), 1, "consume_trigger should advance walker pos by 1");
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 2);
@@ -7693,46 +7693,46 @@ mod tests {
     #[test]
     fn fork_all_branches_drop_yields_error() {
         // Three branches all immediately Error → step_fanout enters
-        // WpdsState::Error("all fork branches dropped").
+        // WpdaState::Error("all fork branches dropped").
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Error("branch a failed".into()),
-            WpdsStepAction::Error("branch b failed".into()),
-            WpdsStepAction::Error("branch c failed".into()),
-            WpdsStepAction::Fork {
+            WpdaStepAction::Error("branch a failed".into()),
+            WpdaStepAction::Error("branch b failed".into()),
+            WpdaStepAction::Error("branch c failed".into()),
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 2, 0, None),
                         weight: lex(1.0, 0, 2),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         let final_state = w.run_to_saturation(100, &empty_tokens());
         match final_state {
-            WpdsState::Error { ref message } => {
+            WpdaState::Error { ref message } => {
                 assert!(
                     message.contains("all fork branches dropped"),
                     "expected 'all fork branches dropped' message, got: {}",
@@ -7751,42 +7751,42 @@ mod tests {
         // B6 (2026-04-28): script must terminate in Accept; the walker
         // surfaces Idle-in-non-terminal-state as Error.
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Advance(WpdsState::InfixLoop { cur_bp: 0 }),
-            WpdsStepAction::Advance(WpdsState::InfixLoop { cur_bp: 0 }),
-            WpdsStepAction::Advance(WpdsState::InfixLoop { cur_bp: 0 }),
-            WpdsStepAction::Fork {
+            WpdaStepAction::Accept,
+            WpdaStepAction::Advance(WpdaState::InfixLoop { cur_bp: 0 }),
+            WpdaStepAction::Advance(WpdaState::InfixLoop { cur_bp: 0 }),
+            WpdaStepAction::Advance(WpdaState::InfixLoop { cur_bp: 0 }),
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(0.5, 0, 0),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(0.5, 0, 1),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 2, 0, None),
                         weight: lex(0.5, 0, 2),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         // Stage 3.5b (2026-05-01): use new EOI-aware resolution API.
         // Synthetic test (no Term push) — resolve returns ParseError
         // but commit_winner_at_eoi DID fire and set walker.state from
@@ -7794,7 +7794,7 @@ mod tests {
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps not exceeded");
         let _ = w.resolve_at_end_of_input(&empty_tokens());
-        assert_eq!(*w.state(), WpdsState::Accepted);
+        assert_eq!(*w.state(), WpdaState::Accepted);
         let final_weight = w.weight();
         // Advance does not modify weight; winner's weight is its branch weight only.
         assert_eq!(final_weight.rule_idx, 0);
@@ -7805,24 +7805,24 @@ mod tests {
     fn run_to_completion_terminates_at_accept() {
         // Engine emits 3 advances then accepts.
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Advance(WpdsState::Unwinding),
-            WpdsStepAction::Advance(WpdsState::InfixLoop { cur_bp: 0 }),
-            WpdsStepAction::Advance(WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 }),
+            WpdaStepAction::Accept,
+            WpdaStepAction::Advance(WpdaState::Unwinding),
+            WpdaStepAction::Advance(WpdaState::InfixLoop { cur_bp: 0 }),
+            WpdaStepAction::Advance(WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 }),
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
+        let mut w = WpdaWalker::new(engine, 0);
         let final_state = w.run_to_completion(100, &empty_tokens());
-        assert_eq!(final_state, WpdsState::Accepted);
+        assert_eq!(final_state, WpdaState::Accepted);
     }
 
     #[test]
     fn run_to_completion_respects_max_steps() {
         // Engine never accepts; run_to_completion bails after max_steps.
         let engine = ScriptedEngine::new(vec![]); // returns Idle
-        let mut w = WpdsWalker::new(engine, 0);
+        let mut w = WpdaWalker::new(engine, 0);
         let final_state = w.run_to_completion(10, &empty_tokens());
         // Idle from the engine yields NoChange; we stay in Ready.
-        assert_eq!(final_state, WpdsState::Ready { min_bp: 0 });
+        assert_eq!(final_state, WpdaState::Ready { min_bp: 0 });
     }
 
     #[test]
@@ -7832,12 +7832,12 @@ mod tests {
         // silently exiting (which would let callers think parse "completed"
         // when it actually got stuck mid-derivation).
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Advance(WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 }),
+            WpdaStepAction::Advance(WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 }),
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
+        let mut w = WpdaWalker::new(engine, 0);
         let s = w.run_to_saturation(100, &empty_tokens());
         match s {
-            WpdsState::Error { ref message } => {
+            WpdaState::Error { ref message } => {
                 assert!(
                     message.contains("Idle in non-terminal state"),
                     "expected stall-Error message; got: {}",
@@ -7851,27 +7851,27 @@ mod tests {
     #[test]
     fn run_to_saturation_terminates_at_accept_within_limit() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Advance(WpdsState::InfixLoop { cur_bp: 0 }),
+            WpdaStepAction::Accept,
+            WpdaStepAction::Advance(WpdaState::InfixLoop { cur_bp: 0 }),
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
+        let mut w = WpdaWalker::new(engine, 0);
         let s = w.run_to_saturation(10, &empty_tokens());
-        assert_eq!(s, WpdsState::Accepted);
+        assert_eq!(s, WpdaState::Accepted);
     }
 
     #[test]
     fn current_configuration_snapshot_captures_position_and_weight() {
-        let engine = ScriptedEngine::new(vec![WpdsStepAction::Push {
+        let engine = ScriptedEngine::new(vec![WpdaStepAction::Push {
             symbol: StackSymbolV2::rule_at(0, 0, 0, None),
             weight: lex(3.5, 1, 2),
-            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
         }]);
-        let mut w = WpdsWalker::new(engine, 7);
-        let _ = w.process_event(WpdsEvent::TokenConsumed {
+        let mut w = WpdaWalker::new(engine, 7);
+        let _ = w.process_event(WpdaEvent::TokenConsumed {
             pos: 4,
             token: TokenKind::Ident,
         }, &empty_tokens());
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         let cfg = w.current_configuration();
         assert_eq!(cfg.pos, 4);
         assert!((cfg.weight.primary.0 - 3.5).abs() < 1e-9);
@@ -7893,43 +7893,43 @@ mod tests {
     #[test]
     fn null_consumer_always_continues() {
         let mut c = NullConsumer;
-        let event: WpdsEvent<LexicographicWeight> = WpdsEvent::Step;
+        let event: WpdaEvent<LexicographicWeight> = WpdaEvent::Step;
         let r = <NullConsumer as WalkerConsumer<LexicographicWeight>>::on_event(
             &mut c,
             &event,
-            &WpdsState::Ready { min_bp: 0 },
+            &WpdaState::Ready { min_bp: 0 },
         );
-        assert_eq!(r, WpdsControl::Continue);
+        assert_eq!(r, WpdaControl::Continue);
     }
 
     #[test]
     fn tracing_consumer_records_events_and_final_state() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Advance(WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 }),
+            WpdaStepAction::Accept,
+            WpdaStepAction::Advance(WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 }),
         ]);
-        let mut walker = WpdsWalker::new(engine, 0);
+        let mut walker = WpdaWalker::new(engine, 0);
         let mut consumer: TracingConsumer<LexicographicWeight> = TracingConsumer::new();
         let final_state = walker.run_with_consumer(&mut consumer, 100, &empty_tokens());
-        assert_eq!(final_state, WpdsState::Accepted);
+        assert_eq!(final_state, WpdaState::Accepted);
         assert!(!consumer.events.is_empty());
-        assert_eq!(consumer.final_state, Some(WpdsState::Accepted));
+        assert_eq!(consumer.final_state, Some(WpdaState::Accepted));
         // First recorded event should be the Step that drove from Ready.
-        assert_eq!(consumer.events[0].0, WpdsEventTag::Step);
+        assert_eq!(consumer.events[0].0, WpdaEventTag::Step);
     }
 
     #[test]
     fn abort_after_consumer_halts_after_n_events() {
         let engine = ScriptedEngine::new(
             (0..50)
-                .map(|i| WpdsStepAction::Advance(WpdsState::PrefixDispatch { pos: i, cur_bp: 0 }))
+                .map(|i| WpdaStepAction::Advance(WpdaState::PrefixDispatch { pos: i, cur_bp: 0 }))
                 .collect(),
         );
-        let mut walker: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(engine, 0);
+        let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(engine, 0);
         let mut consumer = AbortAfterConsumer::new(3);
         let final_state = walker.run_with_consumer(&mut consumer, 100, &empty_tokens());
         match final_state {
-            WpdsState::Error { message } => assert_eq!(message, "consumer aborted"),
+            WpdaState::Error { message } => assert_eq!(message, "consumer aborted"),
             other => panic!("expected Error state from abort, got {:?}", other),
         }
         assert_eq!(consumer.count, 3);
@@ -7937,21 +7937,21 @@ mod tests {
 
     #[test]
     fn run_with_consumer_calls_on_complete_at_terminal() {
-        let engine = ScriptedEngine::new(vec![WpdsStepAction::Accept]);
-        let mut walker = WpdsWalker::new(engine, 0);
+        let engine = ScriptedEngine::new(vec![WpdaStepAction::Accept]);
+        let mut walker = WpdaWalker::new(engine, 0);
         let mut consumer: TracingConsumer<LexicographicWeight> = TracingConsumer::new();
         let _ = walker.run_with_consumer(&mut consumer, 100, &empty_tokens());
-        assert_eq!(consumer.final_state, Some(WpdsState::Accepted));
+        assert_eq!(consumer.final_state, Some(WpdaState::Accepted));
     }
 
     #[test]
     fn run_with_consumer_max_steps_reached_calls_on_complete() {
         // Engine never accepts; consumer should still receive on_complete.
         let engine = ScriptedEngine::new(vec![]);
-        let mut walker: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(engine, 0);
+        let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(engine, 0);
         let mut consumer: TracingConsumer<LexicographicWeight> = TracingConsumer::new();
         let _ = walker.run_with_consumer(&mut consumer, 5, &empty_tokens());
-        assert_eq!(consumer.final_state, Some(WpdsState::Ready { min_bp: 0 }));
+        assert_eq!(consumer.final_state, Some(WpdaState::Ready { min_bp: 0 }));
     }
 
     /// A consumer that requests Checkpoint on every event.
@@ -7960,10 +7960,10 @@ mod tests {
     }
 
     impl<W: SemiringRef> WalkerConsumer<W> for CheckpointEveryEvent {
-        fn on_event(&mut self, _event: &WpdsEvent<W>, _state: &WpdsState) -> WpdsControl {
-            WpdsControl::Checkpoint
+        fn on_event(&mut self, _event: &WpdaEvent<W>, _state: &WpdaState) -> WpdaControl {
+            WpdaControl::Checkpoint
         }
-        fn on_checkpoint(&mut self, _config: &WpdsConfiguration<W>) {
+        fn on_checkpoint(&mut self, _config: &WpdaConfiguration<W>) {
             self.recorded += 1;
         }
     }
@@ -7971,11 +7971,11 @@ mod tests {
     #[test]
     fn checkpoint_consumer_records_per_step() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Advance(WpdsState::InfixLoop { cur_bp: 0 }),
-            WpdsStepAction::Advance(WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 }),
+            WpdaStepAction::Accept,
+            WpdaStepAction::Advance(WpdaState::InfixLoop { cur_bp: 0 }),
+            WpdaStepAction::Advance(WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 }),
         ]);
-        let mut walker: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(engine, 0);
+        let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(engine, 0);
         let mut consumer = CheckpointEveryEvent { recorded: 0 };
         let _ = walker.run_with_consumer(&mut consumer, 100, &empty_tokens());
         // At least one checkpoint should be recorded per non-terminal step.
@@ -7988,12 +7988,12 @@ mod tests {
     }
 
     impl<W: SemiringRef> WalkerConsumer<W> for PauseOnFirst {
-        fn on_event(&mut self, _event: &WpdsEvent<W>, _state: &WpdsState) -> WpdsControl {
+        fn on_event(&mut self, _event: &WpdaEvent<W>, _state: &WpdaState) -> WpdaControl {
             if !self.paused {
                 self.paused = true;
-                WpdsControl::Pause
+                WpdaControl::Pause
             } else {
-                WpdsControl::Continue
+                WpdaControl::Continue
             }
         }
     }
@@ -8001,10 +8001,10 @@ mod tests {
     #[test]
     fn pause_consumer_stops_walker_without_completion() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Advance(WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 }),
+            WpdaStepAction::Accept,
+            WpdaStepAction::Advance(WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 }),
         ]);
-        let mut walker: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(engine, 0);
+        let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(engine, 0);
         let mut consumer = PauseOnFirst { paused: false };
         let s = walker.run_with_consumer(&mut consumer, 100, &empty_tokens());
         // Pause should leave walker in non-terminal state, ready for resumption.
@@ -8024,50 +8024,50 @@ mod tests {
     /// - `Unwinding` + no frontier → `Accept`
     struct AtomicIntEngine;
 
-    impl WpdsStepEngine<LexicographicWeight> for AtomicIntEngine {
+    impl WpdaEngine<LexicographicWeight> for AtomicIntEngine {
         fn step(
             &self,
-            state: &WpdsState,
-            _gss: &WpdsGss<LexicographicWeight>,
-            frontier_top: Option<&WpdsGssNode>,
+            state: &WpdaState,
+            _gss: &WpdaGss<LexicographicWeight>,
+            frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
-            tokens: &dyn WpdsTokenSource,
-        ) -> WpdsStepAction<LexicographicWeight> {
+            tokens: &dyn WpdaTokenSource,
+        ) -> WpdaStepAction<LexicographicWeight> {
             match state {
-                WpdsState::Ready { min_bp } => WpdsStepAction::Push {
+                WpdaState::Ready { min_bp } => WpdaStepAction::Push {
                     symbol: StackSymbolV2::category_entry(0),
                     weight: LexicographicWeight::from_cost(0.0, 0, 0),
-                    new_state: WpdsState::PrefixDispatch {
+                    new_state: WpdaState::PrefixDispatch {
                         pos: 0,
                         cur_bp: *min_bp,
                     },
                 },
-                WpdsState::PrefixDispatch { pos, cur_bp } => {
+                WpdaState::PrefixDispatch { pos, cur_bp } => {
                     if let Some(TokenKind::Integer) = tokens.peek_kind(*pos) {
-                        WpdsStepAction::ConsumeAndPush {
+                        WpdaStepAction::ConsumeAndPush {
                             symbol: StackSymbolV2::rule_at(0, 0, 0, None)
                                 .with_kind_return(),
                             weight: LexicographicWeight::from_cost(0.0, 0, 0),
-                            new_state: WpdsState::Unwinding,
+                            new_state: WpdaState::Unwinding,
                             capture_token: true,
                         }
                     } else {
                         let _ = cur_bp;
-                        WpdsStepAction::Error("expected Integer".into())
+                        WpdaStepAction::Error("expected Integer".into())
                     }
                 }
-                WpdsState::Unwinding => match frontier_top.map(|n| n.symbol.kind) {
-                    Some(SymbolKind::Return) => WpdsStepAction::Pop {
+                WpdaState::Unwinding => match frontier_top.map(|n| n.symbol.kind) {
+                    Some(SymbolKind::Return) => WpdaStepAction::Pop {
                         weight: LexicographicWeight::one(),
-                        new_state: WpdsState::Unwinding,
+                        new_state: WpdaState::Unwinding,
                     },
-                    Some(SymbolKind::CategoryEntry) => WpdsStepAction::Pop {
+                    Some(SymbolKind::CategoryEntry) => WpdaStepAction::Pop {
                         weight: LexicographicWeight::one(),
-                        new_state: WpdsState::Accepted,
+                        new_state: WpdaState::Accepted,
                     },
-                    _ => WpdsStepAction::Idle,
+                    _ => WpdaStepAction::Idle,
                 },
-                _ => WpdsStepAction::Idle,
+                _ => WpdaStepAction::Idle,
             }
         }
 
@@ -8082,7 +8082,7 @@ mod tests {
             static ACTION: ActionEntry = ActionEntry {
                 action_fn: int_lit_action,
                 arity: 1,
-                expected_input_cats: &[crate::wpds_runtime::ANY_CAT],
+                expected_input_cats: &[crate::wpda_runtime::ANY_CAT],
                 output_cat: 0,
             };
             if src_idx == 0 && rule_idx == 0 {
@@ -8093,17 +8093,17 @@ mod tests {
         }
     }
 
-    use crate::wpds_runtime::{ActionArg, ActionEntry, SemanticBuilder, SliceTokenSource};
+    use crate::wpda_runtime::{ActionArg, ActionEntry, SemanticBuilder, SliceTokenSource};
 
     #[test]
     fn atomic_int_literal_parses_end_to_end() {
         let tokens = [TokenKind::Integer];
         let texts = ["42"];
         let token_src = SliceTokenSource::with_texts(&tokens, &texts);
-        let mut walker: WpdsWalker<LexicographicWeight, _> =
-            WpdsWalker::new(AtomicIntEngine, 0);
+        let mut walker: WpdaWalker<LexicographicWeight, _> =
+            WpdaWalker::new(AtomicIntEngine, 0);
         let final_state = walker.run_to_saturation(50, &token_src);
-        assert_eq!(final_state, WpdsState::Accepted, "walker reaches Accepted");
+        assert_eq!(final_state, WpdaState::Accepted, "walker reaches Accepted");
         // The semantic action should have left i64(42) on the builder.
         let result: Option<i64> = walker.builder_mut().take_result();
         assert_eq!(result, Some(42));
@@ -8116,11 +8116,11 @@ mod tests {
         let tokens = [TokenKind::Ident];
         let texts = ["foo"];
         let token_src = SliceTokenSource::with_texts(&tokens, &texts);
-        let mut walker: WpdsWalker<LexicographicWeight, _> =
-            WpdsWalker::new(AtomicIntEngine, 0);
+        let mut walker: WpdaWalker<LexicographicWeight, _> =
+            WpdaWalker::new(AtomicIntEngine, 0);
         let final_state = walker.run_to_saturation(50, &token_src);
         match final_state {
-            WpdsState::Error { message } => assert!(message.contains("expected Integer")),
+            WpdaState::Error { message } => assert!(message.contains("expected Integer")),
             other => panic!("expected Error, got {:?}", other),
         }
     }
@@ -8141,30 +8141,30 @@ mod tests {
     /// `(1,0)` is the collection-finalize rule (arity 1, drains accumulator
     /// 0 and pushes Term<usize> with the drained count).
     struct CollAwareScriptedEngine {
-        script: RefCell<Vec<WpdsStepAction<LexicographicWeight>>>,
+        script: RefCell<Vec<WpdaStepAction<LexicographicWeight>>>,
     }
 
     impl CollAwareScriptedEngine {
-        fn new(actions: Vec<WpdsStepAction<LexicographicWeight>>) -> Self {
+        fn new(actions: Vec<WpdaStepAction<LexicographicWeight>>) -> Self {
             Self { script: RefCell::new(actions) }
         }
     }
 
     fn coll_elem_action(
-        b: &mut crate::wpds_runtime::SemanticBuilder,
-        _args: Vec<crate::wpds_runtime::ActionArg>,
+        b: &mut crate::wpda_runtime::SemanticBuilder,
+        _args: Vec<crate::wpda_runtime::ActionArg>,
     ) {
         b.push_term::<i64>(7);
     }
 
     fn coll_finalize_action(
-        b: &mut crate::wpds_runtime::SemanticBuilder,
-        args: Vec<crate::wpds_runtime::ActionArg>,
+        b: &mut crate::wpda_runtime::SemanticBuilder,
+        args: Vec<crate::wpda_runtime::ActionArg>,
     ) {
         let id = args
             .first()
             .and_then(|a| match a {
-                crate::wpds_runtime::ActionArg::CollectionId(id) => Some(*id),
+                crate::wpda_runtime::ActionArg::CollectionId(id) => Some(*id),
                 _ => None,
             })
             .unwrap_or(0);
@@ -8182,20 +8182,20 @@ mod tests {
     static COLL_FINALIZE_ENTRY: ActionEntry = ActionEntry {
         action_fn: coll_finalize_action,
         arity: 1,
-        expected_input_cats: &[crate::wpds_runtime::ANY_CAT],
+        expected_input_cats: &[crate::wpda_runtime::ANY_CAT],
         output_cat: 0,
     };
 
-    impl WpdsStepEngine<LexicographicWeight> for CollAwareScriptedEngine {
+    impl WpdaEngine<LexicographicWeight> for CollAwareScriptedEngine {
         fn step(
             &self,
-            _state: &WpdsState,
-            _gss: &WpdsGss<LexicographicWeight>,
-            _frontier_top: Option<&WpdsGssNode>,
+            _state: &WpdaState,
+            _gss: &WpdaGss<LexicographicWeight>,
+            _frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
-            _tokens: &dyn WpdsTokenSource,
-        ) -> WpdsStepAction<LexicographicWeight> {
-            self.script.borrow_mut().pop().unwrap_or(WpdsStepAction::Idle)
+            _tokens: &dyn WpdaTokenSource,
+        ) -> WpdaStepAction<LexicographicWeight> {
+            self.script.borrow_mut().pop().unwrap_or(WpdaStepAction::Idle)
         }
         fn action_for(&self, src_idx: u16, rule_idx: u16) -> Option<&ActionEntry> {
             match (src_idx, rule_idx) {
@@ -8216,88 +8216,88 @@ mod tests {
         let engine = ScriptedEngine::new(vec![
             // B6: terminate cleanly via Accept after the surviving cursor's
             // commit_winner reaches InfixLoop.
-            WpdsStepAction::Accept,
+            WpdaStepAction::Accept,
             // Pops for 4 grandchildren (LIFO: last popped first).
-            WpdsStepAction::Pop {
+            WpdaStepAction::Pop {
                 weight: lex(1.0, 0, 3),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
-            WpdsStepAction::Pop {
+            WpdaStepAction::Pop {
                 weight: lex(1.0, 0, 2),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
-            WpdsStepAction::Pop {
+            WpdaStepAction::Pop {
                 weight: lex(1.0, 0, 1),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
-            WpdsStepAction::Pop {
+            WpdaStepAction::Pop {
                 weight: lex(1.0, 0, 0),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
             // Inner Fork for outer cursor B.
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 2, 0, None),
                         weight: lex(1.0, 0, 2),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 3, 0, None),
                         weight: lex(1.0, 0, 3),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
             },
             // Inner Fork for outer cursor A.
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
             },
             // Outer Fork.
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(0.0, 0, 0),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(0.0, 0, 1),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
             },
             // Setup: push entry.
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // entry
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // outer Fork
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // entry
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // outer Fork
         // Stage 3.5b (2026-05-01): nested Fork lex-min winner is now
         // selected at end-of-input via resolve_at_end_of_input.
         // Synthetic test (no Term push) — resolve returns ParseError
@@ -8305,7 +8305,7 @@ mod tests {
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps not exceeded");
         let _ = w.resolve_at_end_of_input(&empty_tokens());
-        assert_eq!(*w.state(), WpdsState::Accepted);
+        assert_eq!(*w.state(), WpdaState::Accepted);
         assert_eq!(
             w.weight().rule_idx, 0,
             "expected lex-min grandchild (rule_idx=0) to win",
@@ -8322,14 +8322,14 @@ mod tests {
         let coll_marker = StackSymbolV2::collection_marker(1, 0, 0);
         let engine = CollAwareScriptedEngine::new(vec![
             // B6: terminate cleanly via Accept after the Pop reaches InfixLoop.
-            WpdsStepAction::Accept,
+            WpdaStepAction::Accept,
             // Step 3: ConsumeAndPop CollectionMarker -> InfixLoop (Resolved).
             // Cursor pops the marker, logs FireAction(coll_marker_symbol),
             // SpliceIntoCollection (no-op since pred is CategoryEntry, not
             // a marker — actually no splice here).
-            WpdsStepAction::ConsumeAndPop {
+            WpdaStepAction::ConsumeAndPop {
                 weight: lex(1.0, 1, 0),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
             // Step 2: Fork branch's first action — Push(CollectionMarker).
             //
@@ -8346,37 +8346,37 @@ mod tests {
             // Restructure: outer Fork pushes a non-marker symbol, branch
             // transitions to PrefixDispatch, engine emits Push(CollectionMarker)
             // — this exercises apply_action_to_cursor::Push's marker arm.
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: coll_marker,
                 weight: lex(0.0, 1, 0),
-                new_state: WpdsState::Unwinding,
+                new_state: WpdaState::Unwinding,
             },
             // Step 1: Single-branch Fork.
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                    new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                     action_kind: ForkActionKind::Push,
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // entry
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // entry
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         // Stage 3.5b (2026-05-01): the finalize action's Term result
-        // surfaces via WpdsResolveResult::Accepted, not via builder.take_result.
+        // surfaces via WpdaResolveResult::Accepted, not via builder.take_result.
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps not exceeded");
         let result = w.resolve_at_end_of_input(&empty_tokens());
         match result {
-            WpdsResolveResult::Accepted { terms, .. } => {
+            WpdaResolveResult::Accepted { terms, .. } => {
                 let term = terms.into_iter().next().expect("≥1 term required");
                 let val = *term
                     .downcast::<usize>()
@@ -8395,57 +8395,57 @@ mod tests {
         let coll_marker = StackSymbolV2::collection_marker(1, 0, 0);
         let engine = CollAwareScriptedEngine::new(vec![
             // Step 4: pops for 2 grandchildren (LIFO).
-            WpdsStepAction::ConsumeAndPop {
+            WpdaStepAction::ConsumeAndPop {
                 weight: lex(1.0, 1, 0),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
-            WpdsStepAction::ConsumeAndPop {
+            WpdaStepAction::ConsumeAndPop {
                 weight: lex(1.0, 1, 0),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
             // Step 3: outer cursor's inner Fork (after collection open).
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
             },
             // Step 2: outer cursor opens collection.
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: coll_marker,
                 weight: lex(0.0, 1, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
             // Step 1: outer Fork (single branch to focus the test).
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                    new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                     action_kind: ForkActionKind::Push,
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // entry
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // outer Fork
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // entry
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // outer Fork
         // Stage 3.5b (2026-05-01): drive — must NOT panic on
         // collection_stack debug_assert during the nested Fork's clone
         // path. (The cursor opened a collection but accumulator 0 is
@@ -8466,7 +8466,7 @@ mod tests {
         // assert; the resolve outcome is then ancillary.
         let result = w.resolve_at_end_of_input(&empty_tokens());
         assert!(
-            matches!(result, WpdsResolveResult::ParseError { .. }),
+            matches!(result, WpdaResolveResult::ParseError { .. }),
             "B13d-R rejects no-Term cursors; expected ParseError; got {:?}",
             result,
         );
@@ -8495,60 +8495,60 @@ mod tests {
     fn losing_branch_with_deltas_no_live_side_effect() {
         let token_kinds = [TokenKind::Integer];
         let token_texts = ["42"];
-        let token_src = crate::wpds_runtime::SliceTokenSource::with_texts(
+        let token_src = crate::wpda_runtime::SliceTokenSource::with_texts(
             &token_kinds,
             &token_texts,
         );
         let engine = ScriptedEngine::new(vec![
             // Pops for 2 cursors (LIFO).
-            WpdsStepAction::Pop {
+            WpdaStepAction::Pop {
                 weight: lex(1.0, 0, 1),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
-            WpdsStepAction::Pop {
+            WpdaStepAction::Pop {
                 weight: lex(1.0, 0, 0),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
             // ConsumeAndPush for cursor B (capture_token: true → logs PushToken).
-            WpdsStepAction::ConsumeAndPush {
+            WpdaStepAction::ConsumeAndPush {
                 symbol: StackSymbolV2::rule_at(0, 1, 0, None).with_kind_return(),
                 weight: lex(1.0, 0, 1),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                 capture_token: true,
             },
             // ConsumeAndPush for cursor A (winner).
-            WpdsStepAction::ConsumeAndPush {
+            WpdaStepAction::ConsumeAndPush {
                 symbol: StackSymbolV2::rule_at(0, 0, 0, None).with_kind_return(),
                 weight: lex(1.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                 capture_token: true,
             },
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(0.0, 0, 0),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(0.0, 0, 1),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &token_src); // entry
-        let _ = w.process_event(WpdsEvent::Step, &token_src); // Fork
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &token_src); // entry
+        let _ = w.process_event(WpdaEvent::Step, &token_src); // Fork
         // Drive until parked at EOI. Both cursors reach pos=1=EOI in
         // InfixLoop after their Pop.
         w.run_to_end_of_input(100, &token_src).expect("max_steps");
@@ -8597,11 +8597,11 @@ mod tests {
     #[test]
     fn commit_winner_state_overwrite_on_action_arity_underflow() {
         struct ArityBugScriptedEngine {
-            script: RefCell<Vec<WpdsStepAction<LexicographicWeight>>>,
+            script: RefCell<Vec<WpdaStepAction<LexicographicWeight>>>,
         }
         fn underflow_action(
-            _b: &mut crate::wpds_runtime::SemanticBuilder,
-            _args: Vec<crate::wpds_runtime::ActionArg>,
+            _b: &mut crate::wpda_runtime::SemanticBuilder,
+            _args: Vec<crate::wpda_runtime::ActionArg>,
         ) {
             // Unreachable: pop_args(arity=5) underflows on empty builder
             // BEFORE we get here, setting state = Error.
@@ -8610,27 +8610,27 @@ mod tests {
             action_fn: underflow_action,
             arity: 5,
             expected_input_cats: &[
-                crate::wpds_runtime::ANY_CAT,
-                crate::wpds_runtime::ANY_CAT,
-                crate::wpds_runtime::ANY_CAT,
-                crate::wpds_runtime::ANY_CAT,
-                crate::wpds_runtime::ANY_CAT,
+                crate::wpda_runtime::ANY_CAT,
+                crate::wpda_runtime::ANY_CAT,
+                crate::wpda_runtime::ANY_CAT,
+                crate::wpda_runtime::ANY_CAT,
+                crate::wpda_runtime::ANY_CAT,
             ],
             output_cat: 0,
         };
-        impl WpdsStepEngine<LexicographicWeight> for ArityBugScriptedEngine {
+        impl WpdaEngine<LexicographicWeight> for ArityBugScriptedEngine {
             fn step(
                 &self,
-                _state: &WpdsState,
-                _gss: &WpdsGss<LexicographicWeight>,
-                _frontier_top: Option<&WpdsGssNode>,
+                _state: &WpdaState,
+                _gss: &WpdaGss<LexicographicWeight>,
+                _frontier_top: Option<&WpdaGssNode>,
                 _pos: usize,
-                _tokens: &dyn WpdsTokenSource,
-            ) -> WpdsStepAction<LexicographicWeight> {
+                _tokens: &dyn WpdaTokenSource,
+            ) -> WpdaStepAction<LexicographicWeight> {
                 self.script
                     .borrow_mut()
                     .pop()
-                    .unwrap_or(WpdsStepAction::Idle)
+                    .unwrap_or(WpdaStepAction::Idle)
             }
             fn action_for(&self, src_idx: u16, rule_idx: u16) -> Option<&ActionEntry> {
                 if src_idx == 0 && rule_idx == 0 {
@@ -8645,38 +8645,38 @@ mod tests {
                 // Pop the Return symbol → cursor logs FireAction. On replay,
                 // fire_action_for sees arity=5 against empty builder → sets
                 // state = Error.
-                WpdsStepAction::Pop {
+                WpdaStepAction::Pop {
                     weight: lex(1.0, 0, 0),
-                    new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                    new_state: WpdaState::InfixLoop { cur_bp: 0 },
                 },
-                WpdsStepAction::Fork {
+                WpdaStepAction::Fork {
                     branches: vec![ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None).with_kind_return(),
                         weight: lex(1.0, 0, 0),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     }],
                     consume_trigger: false,
                 },
-                WpdsStepAction::Push {
+                WpdaStepAction::Push {
                     symbol: StackSymbolV2::category_entry(0),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                    new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                 },
             ]),
         };
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // entry
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // entry
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         // Phase 5.5 (2026-05-12): emit_fire_action now eagerly fires the
         // action_fn on cursor.builder during the Pop step. The arity
         // underflow detected in fire_action_for_on_builder sets
-        // walker.state = WpdsState::Error directly (rather than waiting
+        // walker.state = WpdaState::Error directly (rather than waiting
         // for commit_winner replay). Capture state BEFORE the subsequent
         // run_to_end_of_input/resolve loop, which may transition the
         // walker through dead-cursor cleanup and overwrite the live
         // state with a recovery value.
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Pop with underflow
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Pop with underflow
         let post_pop_state = w.state().clone();
         // resolve_at_end_of_input still runs to ensure no spurious
         // Accepted, but the Error invariant is checked at the Pop step.
@@ -8694,7 +8694,7 @@ mod tests {
         //   gets Dropped, leaving no active cursors — propagated by
         //   step_fanout).
         match post_pop_state {
-            WpdsState::Error { ref message } => {
+            WpdaState::Error { ref message } => {
                 assert!(
                     message.contains("arity") || message.contains("under")
                         || message.contains("dropped"),
@@ -8727,7 +8727,7 @@ mod tests {
     /// Initial state: deterministic, singleton cursor, no recovery deltas.
     #[test]
     fn phase4_deterministic_admission_holds_after_construction() {
-        let w: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(IdleEngine, 0);
+        let w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
         assert!(w.deterministic(), "starts deterministic");
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1, "singleton cursor at construction");
@@ -8741,34 +8741,34 @@ mod tests {
     #[test]
     fn phase4_first_fork_promotes_to_forked() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                         weight: lex(1.0, 0, 0),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(0, 1, 0, None),
                         weight: lex(1.0, 0, 1),
-                        new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                        new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
+        let mut w = WpdaWalker::new(engine, 0);
         assert!(w.deterministic(), "starts deterministic");
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push entry
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
         assert!(w.deterministic(), "still deterministic after non-Fork");
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         assert!(!w.deterministic(), "flipped to nondeterministic on first Fork");
     }
 
@@ -8776,29 +8776,29 @@ mod tests {
     #[test]
     fn phase4_nondeterministic_persists_through_resolution() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Pop {
+            WpdaStepAction::Accept,
+            WpdaStepAction::Pop {
                 weight: lex(1.0, 0, 0),
-                new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                    new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                     action_kind: ForkActionKind::Push,
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         assert!(!w.deterministic());
         // Drive cursors to resolution.
         w.run_to_end_of_input(100, &empty_tokens())
@@ -8811,28 +8811,28 @@ mod tests {
     #[test]
     fn phase4_reset_returns_to_deterministic() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::rule_at(0, 0, 0, None),
                     weight: lex(1.0, 0, 0),
-                    new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                    new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                     action_kind: ForkActionKind::Push,
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         assert!(!w.deterministic());
         w.reset(0);
         assert!(w.deterministic(), "reset() flips back to deterministic");
-        assert_eq!(*w.state(), WpdsState::Ready { min_bp: 0 });
+        assert_eq!(*w.state(), WpdaState::Ready { min_bp: 0 });
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1, "singleton after reset");
         assert!(cursors[0].recovery_deltas.is_empty());
@@ -8841,20 +8841,20 @@ mod tests {
     /// Terminal state absorbs further actions regardless of deterministic flag.
     #[test]
     fn phase4_terminal_state_is_fork_status_irrelevant() {
-        let engine = ScriptedEngine::new(vec![WpdsStepAction::Accept]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Accept
-        assert_eq!(*w.state(), WpdsState::Accepted);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
-        assert_eq!(*w.state(), WpdsState::Accepted, "terminal absorbs");
+        let engine = ScriptedEngine::new(vec![WpdaStepAction::Accept]);
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Accept
+        assert_eq!(*w.state(), WpdaState::Accepted);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        assert_eq!(*w.state(), WpdaState::Accepted, "terminal absorbs");
     }
 
     /// Unambiguous parse reaches Accepted with no recovery_deltas to replay.
     #[test]
     fn phase4_deterministic_eoi_accept_no_replay_needed() {
-        let engine = ScriptedEngine::new(vec![WpdsStepAction::Accept]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let engine = ScriptedEngine::new(vec![WpdaStepAction::Accept]);
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         assert!(w.deterministic(), "no Fork → still deterministic");
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
@@ -8862,7 +8862,7 @@ mod tests {
             cursors[0].recovery_deltas.is_empty(),
             "no deltas to replay"
         );
-        assert_eq!(*w.state(), WpdsState::Accepted);
+        assert_eq!(*w.state(), WpdaState::Accepted);
     }
 
     /// Stage 3.9 / ι Phase 4 regression-fix test (2026-05-01): a Push of
@@ -8874,14 +8874,14 @@ mod tests {
     /// `OptionalGroupAt(1)` (scope opening) implicit Push-time effects.
     #[test]
     fn push_optional_group_at_one_opens_scope_in_deterministic_mode() {
-        let engine = ScriptedEngine::new(vec![WpdsStepAction::Push {
+        let engine = ScriptedEngine::new(vec![WpdaStepAction::Push {
             symbol: StackSymbolV2::optional_group_at(0, 0, 1, 0),
             weight: lex(0.0, 0, 0),
-            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
         }]);
-        let mut w = WpdsWalker::new(engine, 0);
+        let mut w = WpdaWalker::new(engine, 0);
         assert!(w.deterministic());
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         // Still deterministic (no Fork). Live builder must have an open
         // optional scope so subsequent inner pushes land in the inner Vec.
         assert!(w.deterministic());
@@ -8903,26 +8903,26 @@ mod tests {
     #[test]
     fn push_optional_group_at_one_opens_scope_in_nondeterministic_mode() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::optional_group_at(0, 0, 1, 0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
             // Force nondeterministic mode via a single-branch Fork BEFORE the OptionalGroupAt push.
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::category_entry(0),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                    new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                     action_kind: ForkActionKind::Push,
                 }],
                 consume_trigger: false,
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork → nondeterministic
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork → nondeterministic
         assert!(!w.deterministic());
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push (under fanout)
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push (under fanout)
         // The cursor's builder must show an open optional scope.
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
@@ -8941,13 +8941,13 @@ mod tests {
     /// items and must NOT re-open the scope.
     #[test]
     fn push_optional_group_at_two_does_not_open_scope() {
-        let engine = ScriptedEngine::new(vec![WpdsStepAction::Push {
+        let engine = ScriptedEngine::new(vec![WpdaStepAction::Push {
             symbol: StackSymbolV2::optional_group_at(0, 0, 2, 0),
             weight: lex(0.0, 0, 0),
-            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
         }]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         assert_eq!(
             w.builder().optional_stack_depth(),
             0,
@@ -8961,13 +8961,13 @@ mod tests {
     fn phase4_helper_inlining_does_not_double_emit() {
         // Push a distinct symbol (rule_at) so GSS dedup doesn't collapse
         // the sentinel CategoryEntry(0) root with the pushed symbol.
-        let engine = ScriptedEngine::new(vec![WpdsStepAction::Push {
+        let engine = ScriptedEngine::new(vec![WpdaStepAction::Push {
             symbol: StackSymbolV2::rule_at(0, 1, 0, Some(7)),
             weight: lex(0.0, 0, 0),
-            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
         }]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         // Push grows GSS by ≥2 nodes (CategoryEntry root + pushed entry).
         assert!(w.gss().node_count() >= 2);
         // Unforked: no recovery deltas accumulated (non-recovery
@@ -8998,30 +8998,30 @@ mod tests {
     // ════════════════════════════════════════════════════════════════════════
 
     /// Mechanism γ — `ConsumeAndReplace` fork branch advances pos by 1.
-    /// Mirrors `WpdsStepAction::ConsumeAndReplace` semantics inside Fork.
+    /// Mirrors `WpdaStepAction::ConsumeAndReplace` semantics inside Fork.
     #[test]
     fn fork_action_consume_and_replace_advances_pos() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Fork {
+            WpdaStepAction::Accept,
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::rule_at(0, 0, 1, None),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::Unwinding,
+                    new_state: WpdaState::Unwinding,
                     action_kind: ForkActionKind::ConsumeAndReplace,
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Push
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push
         let pos_before_fork = w.position();
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens()); // Fork
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
         assert_eq!(
@@ -9035,27 +9035,27 @@ mod tests {
     #[test]
     fn fork_action_consume_advances_pos_without_gss_change() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Fork {
+            WpdaStepAction::Accept,
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::category_entry(0),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::Unwinding,
+                    new_state: WpdaState::Unwinding,
                     action_kind: ForkActionKind::Consume,
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         let pos_before = w.position();
         let gss_count_before = w.gss().node_count();
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
         assert_eq!(cursors[0].pos, pos_before + 1, "Consume must advance pos");
@@ -9070,29 +9070,29 @@ mod tests {
     #[test]
     fn fork_action_pop_removes_top_of_gss() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Fork {
+            WpdaStepAction::Accept,
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::category_entry(0),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::InfixLoop { cur_bp: 0 },
+                    new_state: WpdaState::InfixLoop { cur_bp: 0 },
                     action_kind: ForkActionKind::Pop,
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::rule_at(0, 1, 0, Some(7)),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
         assert!(
-            matches!(cursors[0].inner_state, WpdsState::InfixLoop { .. }),
+            matches!(cursors[0].inner_state, WpdaState::InfixLoop { .. }),
             "Pop fork branch must transition to new_state",
         );
     }
@@ -9101,26 +9101,26 @@ mod tests {
     #[test]
     fn fork_action_consume_and_pop_advances_pos_and_pops() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Fork {
+            WpdaStepAction::Accept,
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::category_entry(0),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::Unwinding,
+                    new_state: WpdaState::Unwinding,
                     action_kind: ForkActionKind::ConsumeAndPop,
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::rule_at(0, 1, 0, Some(7)),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         let pos_before = w.position();
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
         assert_eq!(
@@ -9129,7 +9129,7 @@ mod tests {
             "ConsumeAndPop must advance pos by 1",
         );
         assert!(
-            matches!(cursors[0].inner_state, WpdsState::Unwinding),
+            matches!(cursors[0].inner_state, WpdaState::Unwinding),
             "ConsumeAndPop must transition to new_state",
         );
     }
@@ -9148,27 +9148,27 @@ mod tests {
     fn fork_action_consume_and_replace_with_effect_logs_delta() {
         let effect = BuilderDelta::StartBinderScope { names: Vec::new() };
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Fork {
+            WpdaStepAction::Accept,
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::rule_at(0, 0, 1, None),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::Unwinding,
+                    new_state: WpdaState::Unwinding,
                     action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
                         effect: effect.clone(),
                     },
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
         // ConsumeAndReplaceWithEffect's effect applied to cursor.builder
@@ -9199,28 +9199,28 @@ mod tests {
         let texts = ["="];
         let token_src = SliceTokenSource::with_texts(&tokens, &texts);
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Fork {
+            WpdaStepAction::Accept,
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::rule_at(0, 0, 1, None),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::Unwinding,
+                    new_state: WpdaState::Unwinding,
                     action_kind: ForkActionKind::GuardedConsumeAndReplace {
                         expected_text: "=".to_string(),
                     },
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &token_src); // Push
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &token_src); // Push
         let pos_before_fork = w.position();
-        let _ = w.process_event(WpdsEvent::Step, &token_src); // Fork (guard pass)
+        let _ = w.process_event(WpdaEvent::Step, &token_src); // Fork (guard pass)
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1, "guard pass must produce one child");
         assert_eq!(
@@ -9233,7 +9233,7 @@ mod tests {
     /// Stage 3.20 / L12 Commit F (2026-05-06) — `GuardedConsumeAndReplace`
     /// produces no child when `peek_text(pos_after) != expected_text`.
     /// The single-branch Fork's empty `children` collapses via
-    /// `step_fanout`'s empty-cursors check into `WpdsState::Error { message:
+    /// `step_fanout`'s empty-cursors check into `WpdaState::Error { message:
     /// "all fork branches dropped" }` — same surface as the legacy
     /// eq-or-error pathway, but routed through Fork+lex-min.
     #[test]
@@ -9242,29 +9242,29 @@ mod tests {
         let texts = ["X"];
         let token_src = SliceTokenSource::with_texts(&tokens, &texts);
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::rule_at(0, 0, 1, None),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::Unwinding,
+                    new_state: WpdaState::Unwinding,
                     action_kind: ForkActionKind::GuardedConsumeAndReplace {
                         expected_text: "=".to_string(),
                     },
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &token_src); // Push
-        let _ = w.process_event(WpdsEvent::Step, &token_src); // Fork (guard fail)
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &token_src); // Push
+        let _ = w.process_event(WpdaEvent::Step, &token_src); // Fork (guard fail)
         let final_state = w.run_to_saturation(50, &token_src);
         match final_state {
-            WpdsState::Error { message } => assert!(
+            WpdaState::Error { message } => assert!(
                 message.contains("all fork branches dropped")
                     || message.contains("dropped"),
                 "expected 'all fork branches dropped'-style Error, got: {}",
@@ -9287,28 +9287,28 @@ mod tests {
         let texts = ["x"];
         let token_src = SliceTokenSource::with_texts(&tokens, &texts);
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Fork {
+            WpdaStepAction::Accept,
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::rule_at(0, 0, 1, None),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::Unwinding,
+                    new_state: WpdaState::Unwinding,
                     action_kind: ForkActionKind::GuardedConsumeIdentAndReplace {
                         start_scope: false,
                     },
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &token_src); // Push
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &token_src); // Push
         let pos_before = w.position();
-        let _ = w.process_event(WpdsEvent::Step, &token_src); // Fork (guard pass)
+        let _ = w.process_event(WpdaEvent::Step, &token_src); // Fork (guard pass)
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1, "Ident guard pass must produce one child");
         assert_eq!(
@@ -9326,29 +9326,29 @@ mod tests {
         let texts = ["="];
         let token_src = SliceTokenSource::with_texts(&tokens, &texts);
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::rule_at(0, 0, 1, None),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::Unwinding,
+                    new_state: WpdaState::Unwinding,
                     action_kind: ForkActionKind::GuardedConsumeIdentAndReplace {
                         start_scope: false,
                     },
                 }],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &token_src); // Push
-        let _ = w.process_event(WpdsEvent::Step, &token_src); // Fork (guard fail)
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &token_src); // Push
+        let _ = w.process_event(WpdaEvent::Step, &token_src); // Fork (guard fail)
         let final_state = w.run_to_saturation(50, &token_src);
         match final_state {
-            WpdsState::Error { message } => assert!(
+            WpdaState::Error { message } => assert!(
                 message.contains("dropped"),
                 "expected 'all fork branches dropped'-style Error, got: {}",
                 message,
@@ -9371,7 +9371,7 @@ mod tests {
         let guarded_text: ForkBranch<LexicographicWeight> = ForkBranch {
             symbol: StackSymbolV2::category_entry(0),
             weight: lex(0.0, 0, 0),
-            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             action_kind: ForkActionKind::GuardedConsumeAndReplace {
                 expected_text: "=".to_string(),
             },
@@ -9383,7 +9383,7 @@ mod tests {
         let guarded_ident: ForkBranch<LexicographicWeight> = ForkBranch {
             symbol: StackSymbolV2::category_entry(0),
             weight: lex(0.0, 0, 0),
-            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             action_kind: ForkActionKind::GuardedConsumeIdentAndReplace {
                 start_scope: true,
             },
@@ -9401,41 +9401,41 @@ mod tests {
     #[test]
     fn fork_source_order_tiebreak_via_rule_idx() {
         let engine = ScriptedEngine::new(vec![
-            WpdsStepAction::Accept,
+            WpdaStepAction::Accept,
             // Branches have identical primary cost (0.0) and src_idx (5);
             // they differ only in rule_idx. Lex-min tiebreak picks rule 0.
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(5, 0, 0, None),
                         weight: lex(0.0, 5, 0),
-                        new_state: WpdsState::Unwinding,
+                        new_state: WpdaState::Unwinding,
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(5, 1, 0, None),
                         weight: lex(0.0, 5, 1),
-                        new_state: WpdsState::Unwinding,
+                        new_state: WpdaState::Unwinding,
                         action_kind: ForkActionKind::Push,
                     },
                     ForkBranch {
                         symbol: StackSymbolV2::rule_at(5, 2, 0, None),
                         weight: lex(0.0, 5, 2),
-                        new_state: WpdsState::Unwinding,
+                        new_state: WpdaState::Unwinding,
                         action_kind: ForkActionKind::Push,
                     },
                 ],
                 consume_trigger: false,
             },
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
-        let _ = w.process_event(WpdsEvent::Step, &empty_tokens());
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         let cursors = w.branch_cursors_for_test();
         // 3 cursors after Fork; source_priority encodes branch_idx 0/1/2.
         assert_eq!(cursors.len(), 3);
@@ -9476,7 +9476,7 @@ mod tests {
         let recovery_event_branch = ForkBranch {
             symbol: StackSymbolV2::category_entry(0),
             weight: lex(1.0, 0, 0),
-            new_state: WpdsState::PrefixDispatch { pos: 1, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 1, cur_bp: 0 },
             action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
                 effect: BuilderDelta::RecoveryEvent {
                     action_kind: 0,
@@ -9492,7 +9492,7 @@ mod tests {
         let insert_branch = ForkBranch {
             symbol: StackSymbolV2::category_entry(0),
             weight: lex(2.0, 0, 0),
-            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
                 effect: BuilderDelta::InsertToken {
                     pos: 0,
@@ -9508,7 +9508,7 @@ mod tests {
         let plain_push_branch: ForkBranch<LexicographicWeight> = ForkBranch::push(
             StackSymbolV2::category_entry(0),
             lex(0.0, 0, 0),
-            WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
         );
         assert!(
             !is_recovery_fork(&[plain_push_branch]),
@@ -9517,7 +9517,7 @@ mod tests {
         let opt_group_branch = ForkBranch {
             symbol: StackSymbolV2::category_entry(0),
             weight: lex(0.0, 0, 0),
-            new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             action_kind: ForkActionKind::OptGroupAbsent {
                 replace_symbol: StackSymbolV2::category_entry(0),
             },
@@ -9539,7 +9539,7 @@ mod tests {
         let advancing: ForkBranch<LexicographicWeight> = ForkBranch {
             symbol: StackSymbolV2::category_entry(0),
             weight: lex(1.0, 0, 0),
-            new_state: WpdsState::PrefixDispatch { pos: 5, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 5, cur_bp: 0 },
             action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
                 effect: BuilderDelta::RecoveryEvent {
                     action_kind: 1,
@@ -9555,7 +9555,7 @@ mod tests {
         let non_advancing_delete: ForkBranch<LexicographicWeight> = ForkBranch {
             symbol: StackSymbolV2::category_entry(0),
             weight: lex(1.0, 0, 0),
-            new_state: WpdsState::PrefixDispatch { pos: 3, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 3, cur_bp: 0 },
             action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
                 effect: BuilderDelta::RecoveryEvent {
                     action_kind: 1,
@@ -9572,7 +9572,7 @@ mod tests {
         let non_advancing_insert: ForkBranch<LexicographicWeight> = ForkBranch {
             symbol: StackSymbolV2::category_entry(0),
             weight: lex(2.0, 0, 0),
-            new_state: WpdsState::PrefixDispatch { pos: 3, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 3, cur_bp: 0 },
             action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
                 effect: BuilderDelta::InsertToken {
                     pos: 3,
@@ -9605,7 +9605,7 @@ mod tests {
         let recovery_branch = || ForkBranch {
             symbol: StackSymbolV2::category_entry(0),
             weight: lex(1.0, 0, 0),
-            new_state: WpdsState::PrefixDispatch { pos: 1, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: 1, cur_bp: 0 },
             action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
                 effect: BuilderDelta::InsertToken {
                     pos: 0,
@@ -9614,7 +9614,7 @@ mod tests {
                 },
             },
         };
-        let recovery_fork = || WpdsStepAction::Fork {
+        let recovery_fork = || WpdaStepAction::Fork {
             branches: vec![recovery_branch()],
             consume_trigger: false,
         };
@@ -9625,16 +9625,16 @@ mod tests {
             recovery_fork(), // depth 1 → 1 child at depth 2
             recovery_fork(), // depth 2 → 1 child at depth 3 (cap)
             recovery_fork(), // depth 3 → REFUSED, cursor → Error
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
+        let mut w = WpdaWalker::new(engine, 0);
         let final_state = w.run_to_saturation(50, &empty_tokens());
         match final_state {
-            WpdsState::Error { message } => assert!(
+            WpdaState::Error { message } => assert!(
                 message.contains("recovery depth limit")
                     || message.contains("dropped")
                     || message.contains("forward-progress"),
@@ -9678,12 +9678,12 @@ mod tests {
         // Fork twice at the same config. With pos=0 and cat=0 and
         // cur_bp=0, the visited entry inserted by the first dispatch
         // matches the second's lookup config.
-        let non_advancing_recovery = || WpdsStepAction::Fork {
+        let non_advancing_recovery = || WpdaStepAction::Fork {
             branches: vec![ForkBranch {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(1.0, 0, 0),
                 // new_state stays at pos=0 (insertion repair).
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
                 action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
                     effect: BuilderDelta::InsertToken {
                         pos: 0,
@@ -9697,16 +9697,16 @@ mod tests {
         let engine = ScriptedEngine::new(vec![
             non_advancing_recovery(), // first dispatch: visited_recovery gains (0,0,0)
             non_advancing_recovery(), // second dispatch at same config: REFUSED
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
+        let mut w = WpdaWalker::new(engine, 0);
         let final_state = w.run_to_saturation(50, &empty_tokens());
         match final_state {
-            WpdsState::Error { message } => assert!(
+            WpdaState::Error { message } => assert!(
                 message.contains("recovery already attempted")
                     || message.contains("cycle defense")
                     || message.contains("dropped")
@@ -9725,19 +9725,19 @@ mod tests {
     // ════════════════════════════════════════════════════════════════════════
     // Stage 3.20 / L12 Commit G follow-up (2026-05-06): ApplyRecoverySequence
     // delta replay tests. These exercise the commit_winner replay path
-    // (wpds_walker.rs:3845-3944) that Commit B added — verifying that
+    // (wpda_walker.rs:3845-3944) that Commit B added — verifying that
     // multi-step Viterbi recovery sequences (Skip / Delete / Insert /
     // Substitute) replay onto the walker's recovery_events trace in order
     // with correct action_kind discriminators.
     //
     // The replay path requires set_mutable_token_source for the Insert and
     // Substitute primitives. We use MutableMultiTokenSource with a trivial
-    // whitespace-tokenizing fake_lex (mirroring wpds_runtime.rs:1810).
+    // whitespace-tokenizing fake_lex (mirroring wpda_runtime.rs:1810).
     // ════════════════════════════════════════════════════════════════════════
 
     use crate::recovery::RepairAction;
     use crate::token_id::TokenId;
-    use crate::wpds_runtime::MutableMultiTokenSource;
+    use crate::wpda_runtime::MutableMultiTokenSource;
 
     /// Helper: trivial whitespace-tokenizing lexer for replay tests.
     fn fake_lex_for_replay(
@@ -9797,13 +9797,13 @@ mod tests {
         // Accept on next step → commit_winner replays the effect.
         let engine = ScriptedEngine::new(vec![
             // Step 3 (popped first): Accept resolves the cursor at EOI.
-            WpdsStepAction::Accept,
+            WpdaStepAction::Accept,
             // Step 2: Fork emitting a recovery branch carrying the effect.
-            WpdsStepAction::Fork {
+            WpdaStepAction::Fork {
                 branches: vec![ForkBranch {
                     symbol: StackSymbolV2::category_entry(0),
                     weight: lex(0.0, 0, 0),
-                    new_state: WpdsState::Accepted,
+                    new_state: WpdaState::Accepted,
                     action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
                         effect: recovery_effect,
                     },
@@ -9813,13 +9813,13 @@ mod tests {
             // Step 1: Push to seed the GSS with a non-root frame so
             // ConsumeAndReplaceWithEffect's cursor_gss_replace_top has a
             // top to operate on.
-            WpdsStepAction::Push {
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: lex(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]);
-        let mut w = WpdsWalker::new(engine, 0);
+        let mut w = WpdaWalker::new(engine, 0);
         w.set_mutable_token_source(&mut mutable_src);
         // Drive to end-of-input (sets up parked frontier in AmbiguityFanout),
         // then resolve to fire commit_winner_at_eoi which replays the winner's

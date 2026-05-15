@@ -127,7 +127,7 @@ fn int_atom_parses_directly() {
 //       embedding spacing inside the gated WriteString. The tests below
 //       pin the spacing invariant.
 //   (2) Engine-side: nested IfElse with mixed has-else / no-else
-//       branches (dangling-else binding) reaches `WpdsState::Incomplete`
+//       branches (dangling-else binding) reaches `WpdaState::Incomplete`
 //       at end-of-input. Tracked separately if these tests fail.
 
 #[test]

@@ -7,7 +7,7 @@ use mettail_ast::language::{LanguageDef, NativeKind};
 use mettail_ast::types::TypeExpr;
 use crate::gen::native::lossless_coercion::build_lossless_coercion;
 use crate::gen::native::{native_type_to_string, NativeType};
-use crate::gen::runtime::wpds_codegen::builtin_metadata::classify_simple_projection_shape;
+use crate::gen::runtime::wpda_codegen::builtin_metadata::classify_simple_projection_shape;
 use crate::gen::{
     generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
 };

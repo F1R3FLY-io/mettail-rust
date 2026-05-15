@@ -3,7 +3,7 @@
 //! predicates parsed inside `?guard:Guard` slots.
 //!
 //! - `predicate` — the WPDS-walker-driven thin parser used by the
-//!   `WpdsStepAction::ParsePredicate` action handler.
+//!   `WpdaStepAction::ParsePredicate` action handler.
 //! - `predicate_pratt` — the canonical language-generic Pratt-style
 //!   parser, moved from `mettail_runtime::parser::predicate` during the
 //!   F.0-sibling break (Phase 6, 2026-04-26). Runtime re-exports this.

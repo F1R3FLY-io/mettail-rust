@@ -147,7 +147,7 @@ fn emit_action_entry_arm(
     //    a Token / Ident, not a Term).
     //  - Cross-cat-projection / Cross-cat-prefix-unary: single Term slot
     //    of source_cat (the source category's index).
-    let any_cat = quote! { mettail_prattail::wpds_runtime::ANY_CAT };
+    let any_cat = quote! { mettail_prattail::wpda_runtime::ANY_CAT };
     let (action_fn, arity, expected_input_cats) = match shape {
         AtomicShape::LiteralInteger => (
             emit_integer_literal_action(),
@@ -250,8 +250,8 @@ fn emit_action_entry_arm(
     };
     Some(quote! {
         (#src_idx, #rule_idx) => {
-            static ENTRY: mettail_prattail::wpds_runtime::ActionEntry =
-                mettail_prattail::wpds_runtime::ActionEntry {
+            static ENTRY: mettail_prattail::wpda_runtime::ActionEntry =
+                mettail_prattail::wpda_runtime::ActionEntry {
                     action_fn: #action_fn,
                     arity: #arity,
                     expected_input_cats: #expected_input_cats,
@@ -295,7 +295,7 @@ fn emit_literal_patterned_action(
     let payload_type = normalize_payload_type(native_type);
     // B8 (2026-04-28): if `cat_ident` names a refinement type, gate the
     // push on `evaluate_refinement_predicate(name, &v)`. On false, no push
-    // (refinement violation surfaces as `WpdsParseError::EmptyResult` —
+    // (refinement violation surfaces as `WpdaParseError::EmptyResult` —
     // RT01-equivalent diagnostic).
     let push_guard = match refinement_name {
         Some(name) => quote! {
@@ -322,13 +322,13 @@ fn emit_literal_patterned_action(
         },
         None => quote! {
             // No Err variant for this category — preserve legacy silent-fail
-            // (W2 detector at wpds_walker.rs:5281 catches the missing push
+            // (W2 detector at wpda_walker.rs:5281 catches the missing push
             // and transitions the cursor to Error).
         },
     };
     quote! {
-        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+        |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
             let arg = args.into_iter().next();
             let text: &str = arg
                 .as_ref()
@@ -461,8 +461,8 @@ fn emit_native_conversion(native_type: &syn::Type, family: LiteralFamily) -> Tok
 /// payload.
 fn emit_terminal_keyword_action(cat_ident: &Ident, wrapper_variant: &Ident) -> TokenStream {
     quote! {
-        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-         _args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+        |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+         _args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
             b.push_term::<#cat_ident>(#cat_ident::#wrapper_variant);
         }
     }
@@ -478,8 +478,8 @@ fn emit_cross_cat_wrap_action(
 ) -> TokenStream {
     let source_cat_ident = format_ident!("{}", source_cat_name);
     quote! {
-        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+        |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
             let arg = match args.into_iter().next().and_then(|a| a.into_term::<#source_cat_ident>()) {
                 Some(t) => t,
                 None => return,
@@ -494,8 +494,8 @@ fn emit_cross_cat_wrap_action(
 /// `Cat::<TVar>(OrdVar(Var::Free(get_or_create_var(name))))`.
 fn emit_var_rule_action(cat_ident: &Ident, wrapper_variant: &Ident) -> TokenStream {
     quote! {
-        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+        |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
             let arg = args.into_iter().next();
             let name = arg
                 .as_ref()
@@ -537,8 +537,8 @@ fn emit_collection_action_entry(
     //     gives deterministic Hash/Ord required by Ascent relations.)
     let action_fn = match shape.coll_kind {
         CollectionType::Vec => quote! {
-            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
                 let id = match args.into_iter().next().and_then(|a| a.as_collection_id()) {
                     Some(id) => id,
                     None => return,
@@ -552,8 +552,8 @@ fn emit_collection_action_entry(
             }
         },
         CollectionType::HashBag => quote! {
-            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
                 let id = match args.into_iter().next().and_then(|a| a.as_collection_id()) {
                     Some(id) => id,
                     None => return,
@@ -568,8 +568,8 @@ fn emit_collection_action_entry(
             }
         },
         CollectionType::HashSet => quote! {
-            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
                 let id = match args.into_iter().next().and_then(|a| a.as_collection_id()) {
                     Some(id) => id,
                     None => return,
@@ -584,8 +584,8 @@ fn emit_collection_action_entry(
             }
         },
         CollectionType::HashMap => quote! {
-            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
                 let id = match args.into_iter().next().and_then(|a| a.as_collection_id()) {
                     Some(id) => id,
                     None => return,
@@ -620,11 +620,11 @@ fn emit_collection_action_entry(
     // B13c / Candidate H (2026-05-08): collection-finalize takes one
     // CollectionId (not a Term), so input is ANY_CAT. Output is the home
     // category.
-    let any_cat = quote! { mettail_prattail::wpds_runtime::ANY_CAT };
+    let any_cat = quote! { mettail_prattail::wpda_runtime::ANY_CAT };
     Some(quote! {
         (#src_idx, #rule_idx) => {
-            static ENTRY: mettail_prattail::wpds_runtime::ActionEntry =
-                mettail_prattail::wpds_runtime::ActionEntry {
+            static ENTRY: mettail_prattail::wpda_runtime::ActionEntry =
+                mettail_prattail::wpda_runtime::ActionEntry {
                     action_fn: #action_fn,
                     arity: 1u8,
                     expected_input_cats: &[#any_cat],
@@ -693,8 +693,8 @@ fn emit_infix_action_entry(
     let action_fn = if info.is_postfix {
         // Arity-1: pop one operand, construct unary variant.
         quote! {
-            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
                 let mut iter = args.into_iter();
                 let arg0 = match iter.next().and_then(|a| a.into_term::<#operand_cat_ident>()) {
                     Some(v) => v,
@@ -734,8 +734,8 @@ fn emit_infix_action_entry(
             })
             .collect();
         quote! {
-            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
                 let mut iter = args.into_iter();
                 #(#pops)*
                 b.push_term::<#cat_ident>(#cat_ident::#label_ident(#(#names),*));
@@ -744,8 +744,8 @@ fn emit_infix_action_entry(
     } else {
         // Arity-2 binary infix.
         quote! {
-            |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-             args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+            |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
                 let mut iter = args.into_iter();
                 let arg0 = match iter.next().and_then(|a| a.into_term::<#operand_cat_ident>()) {
                     Some(v) => v,
@@ -763,8 +763,8 @@ fn emit_infix_action_entry(
     };
     Some(quote! {
         (#src_idx, #rule_idx) => {
-            static ENTRY: mettail_prattail::wpds_runtime::ActionEntry =
-                mettail_prattail::wpds_runtime::ActionEntry {
+            static ENTRY: mettail_prattail::wpda_runtime::ActionEntry =
+                mettail_prattail::wpda_runtime::ActionEntry {
                     action_fn: #action_fn,
                     arity: #arity,
                     expected_input_cats: #expected_input_cats_ts,
@@ -782,8 +782,8 @@ fn emit_infix_action_entry(
 
 fn emit_integer_literal_action() -> TokenStream {
     quote! {
-        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+        |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
             let arg = args.into_iter().next();
             let text = arg
                 .as_ref()
@@ -807,8 +807,8 @@ fn emit_integer_literal_action() -> TokenStream {
 
 fn emit_boolean_literal_action() -> TokenStream {
     quote! {
-        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+        |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
             let arg = args.into_iter().next();
             let text = arg
                 .as_ref()
@@ -822,8 +822,8 @@ fn emit_boolean_literal_action() -> TokenStream {
 
 fn emit_string_literal_action() -> TokenStream {
     quote! {
-        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+        |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
             let arg = args.into_iter().next();
             let text = arg
                 .as_ref()
@@ -837,8 +837,8 @@ fn emit_string_literal_action() -> TokenStream {
 
 fn emit_float_literal_action() -> TokenStream {
     quote! {
-        |b: &mut mettail_prattail::wpds_runtime::SemanticBuilder,
-         args: Vec<mettail_prattail::wpds_runtime::ActionArg>| {
+        |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+         args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
             let arg = args.into_iter().next();
             let text = arg
                 .as_ref()

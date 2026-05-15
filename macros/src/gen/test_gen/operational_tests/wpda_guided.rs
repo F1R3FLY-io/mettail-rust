@@ -27,7 +27,7 @@ const MAX_WPDS_TESTS: usize = 40;
 /// Allocates test budget proportionally to category weights and prioritizes
 /// frequently-used constructors. Each test constructs a ground term, evaluates
 /// it through the full pipeline, and verifies the result.
-pub fn generate_wpds_guided_tests(
+pub fn generate_wpda_guided_tests(
     language: &LanguageDef,
     pipeline: &PipelineAnalysis,
     ambiguous_prefix_rules: &HashSet<String>,
@@ -112,7 +112,7 @@ pub fn generate_wpds_guided_tests(
                 .unwrap_or_else(|| "w=default".to_string());
 
             let test_name = format!(
-                "wpds_{}_{}_{}",
+                "wpda_{}_{}_{}",
                 lang_name_lower,
                 gt.rule_label.to_lowercase(),
                 super::sanitize_test_name(&gt.display_hint)
@@ -208,7 +208,7 @@ fn compute_category_budgets(
 }
 
 /// Generate the WPDS coverage plan as a comment string.
-pub fn generate_wpds_coverage_comment(
+pub fn generate_wpda_coverage_comment(
     language: &LanguageDef,
     pipeline: &PipelineAnalysis,
 ) -> String {

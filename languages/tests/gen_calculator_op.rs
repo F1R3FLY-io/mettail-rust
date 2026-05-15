@@ -15971,7 +15971,7 @@ fn prec_calculator_paren_override_mulint_bitorint__1___2__bitor_3() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn wpds_calculator_elemlist_default_0() {
+fn wpda_calculator_elemlist_default_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -15983,7 +15983,7 @@ fn wpds_calculator_elemlist_default_0() {
 }
 
 #[test]
-fn wpds_calculator_len_empty() {
+fn wpda_calculator_len_empty() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Len(Box::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
@@ -15995,7 +15995,7 @@ fn wpds_calculator_len_empty() {
 }
 
 #[test]
-fn wpds_calculator_len_a() {
+fn wpda_calculator_len_a() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Len(Box::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
@@ -16007,7 +16007,7 @@ fn wpds_calculator_len_a() {
 }
 
 #[test]
-fn wpds_calculator_len_hello() {
+fn wpda_calculator_len_hello() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Len(Box::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
@@ -16019,7 +16019,7 @@ fn wpds_calculator_len_hello() {
 }
 
 #[test]
-fn wpds_calculator_bitnotuint32_0() {
+fn wpda_calculator_bitnotuint32_0() {
     mettail_runtime::clear_var_cache();
     let input_term = UInt32::BitNotUInt32(Box::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
@@ -16031,7 +16031,7 @@ fn wpds_calculator_bitnotuint32_0() {
 }
 
 #[test]
-fn wpds_calculator_negbigint_default() {
+fn wpda_calculator_negbigint_default() {
     mettail_runtime::clear_var_cache();
     let input_term = BigInt::NegBigInt(Box::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
@@ -16043,7 +16043,7 @@ fn wpds_calculator_negbigint_default() {
 }
 
 #[test]
-fn wpds_calculator_fraction_default_default() {
+fn wpda_calculator_fraction_default_default() {
     mettail_runtime::clear_var_cache();
     let input_term = BigRat::Fraction(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
@@ -16055,7 +16055,7 @@ fn wpds_calculator_fraction_default_default() {
 }
 
 #[test]
-fn wpds_calculator_fraction_default_casterrbigint() {
+fn wpda_calculator_fraction_default_casterrbigint() {
     mettail_runtime::clear_var_cache();
     let input_term = BigRat::Fraction(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
@@ -16067,7 +16067,7 @@ fn wpds_calculator_fraction_default_casterrbigint() {
 }
 
 #[test]
-fn wpds_calculator_negfixed_default() {
+fn wpda_calculator_negfixed_default() {
     mettail_runtime::clear_var_cache();
     let input_term = Fixed::NegFixed(Box::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
@@ -16079,7 +16079,7 @@ fn wpds_calculator_negfixed_default() {
 }
 
 #[test]
-fn wpds_calculator_negfloat_0_0() {
+fn wpda_calculator_negfloat_0_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Float::NegFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
@@ -16091,7 +16091,7 @@ fn wpds_calculator_negfloat_0_0() {
 }
 
 #[test]
-fn wpds_calculator_negfloat_1_0() {
+fn wpda_calculator_negfloat_1_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Float::NegFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
@@ -16103,7 +16103,7 @@ fn wpds_calculator_negfloat_1_0() {
 }
 
 #[test]
-fn wpds_calculator_eqint_0_0() {
+fn wpda_calculator_eqint_0_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -16115,7 +16115,7 @@ fn wpds_calculator_eqint_0_0() {
 }
 
 #[test]
-fn wpds_calculator_eqint_0_1() {
+fn wpda_calculator_eqint_0_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -16127,7 +16127,7 @@ fn wpds_calculator_eqint_0_1() {
 }
 
 #[test]
-fn wpds_calculator_eqint_0_2() {
+fn wpda_calculator_eqint_0_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -16139,7 +16139,7 @@ fn wpds_calculator_eqint_0_2() {
 }
 
 #[test]
-fn wpds_calculator_eqint_0_3() {
+fn wpda_calculator_eqint_0_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -16151,7 +16151,7 @@ fn wpds_calculator_eqint_0_3() {
 }
 
 #[test]
-fn wpds_calculator_eqint_0_5() {
+fn wpda_calculator_eqint_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -16163,7 +16163,7 @@ fn wpds_calculator_eqint_0_5() {
 }
 
 #[test]
-fn wpds_calculator_eqint_1_0() {
+fn wpda_calculator_eqint_1_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -16175,7 +16175,7 @@ fn wpds_calculator_eqint_1_0() {
 }
 
 #[test]
-fn wpds_calculator_eqint_1_1() {
+fn wpda_calculator_eqint_1_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -16187,7 +16187,7 @@ fn wpds_calculator_eqint_1_1() {
 }
 
 #[test]
-fn wpds_calculator_eqint_1_2() {
+fn wpda_calculator_eqint_1_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -16199,7 +16199,7 @@ fn wpds_calculator_eqint_1_2() {
 }
 
 #[test]
-fn wpds_calculator_eqint_1_3() {
+fn wpda_calculator_eqint_1_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -16211,7 +16211,7 @@ fn wpds_calculator_eqint_1_3() {
 }
 
 #[test]
-fn wpds_calculator_eqint_1_5() {
+fn wpda_calculator_eqint_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -16223,7 +16223,7 @@ fn wpds_calculator_eqint_1_5() {
 }
 
 #[test]
-fn wpds_calculator_eqint_2_0() {
+fn wpda_calculator_eqint_2_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -16235,7 +16235,7 @@ fn wpds_calculator_eqint_2_0() {
 }
 
 #[test]
-fn wpds_calculator_eqint_2_1() {
+fn wpda_calculator_eqint_2_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -16247,7 +16247,7 @@ fn wpds_calculator_eqint_2_1() {
 }
 
 #[test]
-fn wpds_calculator_eqint_2_2() {
+fn wpda_calculator_eqint_2_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -16259,7 +16259,7 @@ fn wpds_calculator_eqint_2_2() {
 }
 
 #[test]
-fn wpds_calculator_eqint_2_3() {
+fn wpda_calculator_eqint_2_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -16271,7 +16271,7 @@ fn wpds_calculator_eqint_2_3() {
 }
 
 #[test]
-fn wpds_calculator_eqint_2_5() {
+fn wpda_calculator_eqint_2_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -16283,7 +16283,7 @@ fn wpds_calculator_eqint_2_5() {
 }
 
 #[test]
-fn wpds_calculator_eqint_3_0() {
+fn wpda_calculator_eqint_3_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
@@ -16295,7 +16295,7 @@ fn wpds_calculator_eqint_3_0() {
 }
 
 #[test]
-fn wpds_calculator_eqint_3_1() {
+fn wpda_calculator_eqint_3_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
@@ -16307,7 +16307,7 @@ fn wpds_calculator_eqint_3_1() {
 }
 
 #[test]
-fn wpds_calculator_eqint_3_2() {
+fn wpda_calculator_eqint_3_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
@@ -16319,7 +16319,7 @@ fn wpds_calculator_eqint_3_2() {
 }
 
 #[test]
-fn wpds_calculator_eqint_3_3() {
+fn wpda_calculator_eqint_3_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
@@ -16331,7 +16331,7 @@ fn wpds_calculator_eqint_3_3() {
 }
 
 #[test]
-fn wpds_calculator_eqint_3_5() {
+fn wpda_calculator_eqint_3_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
@@ -16343,7 +16343,7 @@ fn wpds_calculator_eqint_3_5() {
 }
 
 #[test]
-fn wpds_calculator_eqfloat_0_0_0_0() {
+fn wpda_calculator_eqfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
@@ -16355,7 +16355,7 @@ fn wpds_calculator_eqfloat_0_0_0_0() {
 }
 
 #[test]
-fn wpds_calculator_eqfloat_0_0_1_0() {
+fn wpda_calculator_eqfloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
@@ -16367,7 +16367,7 @@ fn wpds_calculator_eqfloat_0_0_1_0() {
 }
 
 #[test]
-fn wpds_calculator_eqfloat_0_0_0_5() {
+fn wpda_calculator_eqfloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
@@ -16379,7 +16379,7 @@ fn wpds_calculator_eqfloat_0_0_0_5() {
 }
 
 #[test]
-fn wpds_calculator_eqfloat_0_0_2_0() {
+fn wpda_calculator_eqfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
@@ -16391,7 +16391,7 @@ fn wpds_calculator_eqfloat_0_0_2_0() {
 }
 
 #[test]
-fn wpds_calculator_concat_empty_empty() {
+fn wpda_calculator_concat_empty_empty() {
     mettail_runtime::clear_var_cache();
     let input_term = Str::Concat(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
@@ -16403,7 +16403,7 @@ fn wpds_calculator_concat_empty_empty() {
 }
 
 #[test]
-fn wpds_calculator_concatlist_default_default() {
+fn wpda_calculator_concatlist_default_default() {
     mettail_runtime::clear_var_cache();
     let input_term = List::ConcatList(Box::new(List::ListLit(Default::default())), Box::new(List::ListLit(Default::default())));
     let input_str = format!("{}", input_term);
@@ -16415,7 +16415,7 @@ fn wpds_calculator_concatlist_default_default() {
 }
 
 #[test]
-fn wpds_calculator_unionbag_default_default() {
+fn wpda_calculator_unionbag_default_default() {
     mettail_runtime::clear_var_cache();
     let input_term = Bag::UnionBag(Box::new(Bag::BagLit(Default::default())), Box::new(Bag::BagLit(Default::default())));
     let input_str = format!("{}", input_term);
@@ -16427,7 +16427,7 @@ fn wpds_calculator_unionbag_default_default() {
 }
 
 #[test]
-fn wpds_calculator_mergemap_default_default() {
+fn wpda_calculator_mergemap_default_default() {
     mettail_runtime::clear_var_cache();
     let input_term = Map::MergeMap(Box::new(Map::MapLit(Default::default())), Box::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);

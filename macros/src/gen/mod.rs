@@ -241,8 +241,8 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
     use quote::{format_ident, quote};
 
     // Determine which categories have a WPDS facade emitted
-    // (`parse_<Cat>_via_wpds`). Mirrors
-    // `wpds_codegen::collect_category_names_with_literals`: any category
+    // (`parse_<Cat>_via_wpda`). Mirrors
+    // `wpda_codegen::collect_category_names_with_literals`: any category
     // appearing in `language.types` is parseable via WPDS — `synthetic.rs`
     // fabricates rules for the cases not covered by user grammar:
     //  - native_type-only → synthetic atomic-literal rule
@@ -253,20 +253,20 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
     // body that uses `compile_error!` is the truly-impossible case — a
     // category not in `language.types` at all (which can't happen because
     // we iterate `language.types` to build the impl).
-    let wpds_categories: std::collections::BTreeSet<String> = language
+    let wpda_categories: std::collections::BTreeSet<String> = language
         .types
         .iter()
         .map(|t| t.name.to_string())
         .collect();
 
-    // `wpds_categories` is the entire `language.types` set — every type
-    // gets a WPDS facade emitted by `wpds_codegen` (synthetic.rs ensures
+    // `wpda_categories` is the entire `language.types` set — every type
+    // gets a WPDS facade emitted by `wpda_codegen` (synthetic.rs ensures
     // even reference-only categories like Ambient's `Name` get a Var rule).
-    // Asserting here keeps the macro/wpds_codegen invariant explicit.
+    // Asserting here keeps the macro/wpda_codegen invariant explicit.
     debug_assert_eq!(
-        wpds_categories.len(),
+        wpda_categories.len(),
         language.types.len(),
-        "wpds_categories must mirror language.types — check wpds_codegen::collect_category_names_with_literals",
+        "wpda_categories must mirror language.types — check wpda_codegen::collect_category_names_with_literals",
     );
 
     let impls: Vec<TokenStream> = language
@@ -276,8 +276,8 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             let cat = &t.name;
             let cat_str = cat.to_string();
             debug_assert!(
-                wpds_categories.contains(&cat_str),
-                "category `{}` missing from wpds_categories",
+                wpda_categories.contains(&cat_str),
+                "category `{}` missing from wpda_categories",
                 cat_str,
             );
             let parse_fn = format_ident!("parse_{}", cat);
@@ -285,7 +285,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
 
             let running_weight_fn = format_ident!("running_weight_{}", cat);
             let _ = running_weight_fn;
-            let with_weight_fn = format_ident!("parse_{}_via_wpds_with_weight", cat);
+            let with_weight_fn = format_ident!("parse_{}_via_wpda_with_weight", cat);
             let wfst_methods = quote! {
                 /// Parse with weight emission: calls `lex_weighted()` to get
                 /// per-token tropical weights, then parses normally via the WPDS
@@ -352,7 +352,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             };
                             Ok((result, confidence))
                         }
-                        Err(WpdsParseError::ParseFailed { message, position, attempts: _ }) => {
+                        Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -369,12 +369,12 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdsParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
+                        Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                             expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
                             range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
                             hint: None,
                         }),
-                        Err(WpdsParseError::Incomplete { position }) => {
+                        Err(WpdaParseError::Incomplete { position }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -391,7 +391,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdsParseError::AmbiguityBudget { budget, actual, position }) => {
+                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -409,20 +409,20 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 }
             };
 
-            let parse_via_wpds_fn = format_ident!("parse_{}_via_wpds", cat);
-            let parse_via_wpds_recovering_fn = format_ident!("parse_{}_via_wpds_recovering", cat);
-            let parse_via_wpds_all_fn = format_ident!("parse_{}_via_wpds_all", cat);
-            let parse_via_wpds_all_with_source_fn =
-                format_ident!("parse_{}_via_wpds_all_with_source", cat);
-            let parse_via_wpds_method = quote! {
+            let parse_via_wpda_fn = format_ident!("parse_{}_via_wpda", cat);
+            let parse_via_wpda_recovering_fn = format_ident!("parse_{}_via_wpda_recovering", cat);
+            let parse_via_wpda_all_fn = format_ident!("parse_{}_via_wpda_all", cat);
+            let parse_via_wpda_all_with_source_fn =
+                format_ident!("parse_{}_via_wpda_all_with_source", cat);
+            let parse_via_wpda_method = quote! {
                 /// WPDS-driven parser entry point.
                 ///
                 /// Lexes via `lex(input)`, converts each `Token` to
                 /// `(TokenKind, &str)` via the per-grammar `token_to_kind` +
                 /// `token_text` adapter, then dispatches to the WPDS facade
-                /// `parse_<Cat>_via_wpds`. Identical to `Cat::parse_structured`
+                /// `parse_<Cat>_via_wpda`. Identical to `Cat::parse_structured`
                 /// — kept as a stable internal name during the migration.
-                pub fn parse_via_wpds(input: &str) -> Result<#cat, ParseError> {
+                pub fn parse_via_wpda(input: &str) -> Result<#cat, ParseError> {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
                     let tokens = lex(input)?;
                     let kinds: Vec<mettail_prattail::automata::TokenKind> =
@@ -432,7 +432,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         .map(|(t, r)| token_text(t, input, *r))
                         .collect();
                     let mut pos = 0usize;
-                    match #parse_via_wpds_fn(&kinds, &texts, &mut pos, 0) {
+                    match #parse_via_wpda_fn(&kinds, &texts, &mut pos, 0) {
                         Ok(v) => {
                             if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
                                 return Err(ParseError::TrailingTokens {
@@ -445,12 +445,12 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             }
                             Ok(v)
                         }
-                        Err(WpdsParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
+                        Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                             expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
                             range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
                             hint: None,
                         }),
-                        Err(WpdsParseError::ParseFailed { message, position, attempts: _ }) => {
+                        Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -467,7 +467,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdsParseError::Incomplete { position }) => {
+                        Err(WpdaParseError::Incomplete { position }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -484,7 +484,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdsParseError::AmbiguityBudget { budget, actual, position }) => {
+                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -504,7 +504,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 /// M8 (2026-05-14): multi-result WPDS-driven parser entry.
                 ///
                 /// Returns ALL accepted terms produced by the walker's
-                /// `WpdsResolveResult::Accepted` vec, in lex-min order
+                /// `WpdaResolveResult::Accepted` vec, in lex-min order
                 /// (per the underlying `LexicographicWeight` ordering). Use
                 /// this when downstream disambiguation needs every alt
                 /// (e.g. `parse_preserving_vars` flattening into
@@ -515,9 +515,9 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 /// byte position), routes through `LatticeTokenSource`
                 /// so the walker's lex-Fork surfaces all alternatives.
                 /// Otherwise uses the slice path — byte-identical to
-                /// `parse_via_wpds`. The `_all_with_source` facade
+                /// `parse_via_wpda`. The `_all_with_source` facade
                 /// variant accepts either source.
-                pub fn parse_via_wpds_all(input: &str) -> Result<Vec<#cat>, ParseError> {
+                pub fn parse_via_wpda_all(input: &str) -> Result<Vec<#cat>, ParseError> {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
                     let tokens = lex(input)?;
                     // M6c.4 + M6c.7.2 (2026-05-14): route through
@@ -532,9 +532,9 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         hint: None,
                     })?;
                     if dag.has_ambiguity() {
-                        let source = mettail_prattail::wpds_runtime::LatticeTokenSource::new(dag);
+                        let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
                         let mut pos = 0usize;
-                        return match #parse_via_wpds_all_with_source_fn(&source, &mut pos, 0) {
+                        return match #parse_via_wpda_all_with_source_fn(&source, &mut pos, 0) {
                             Ok((terms, _weights)) => {
                                 // M6c.8.3 (2026-05-14): use the source's
                                 // `eof_node()` instead of
@@ -547,7 +547,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 // (at the real EOF sentinel index)
                                 // would be misreported as
                                 // `TrailingTokens`.
-                                use mettail_prattail::wpds_runtime::WpdsTokenSource as _;
+                                use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
                                 let eof_node = source.eof_node();
                                 if pos < eof_node {
                                     return Err(ParseError::TrailingTokens {
@@ -575,12 +575,12 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 }
                                 Ok(terms)
                             }
-                            Err(WpdsParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
+                            Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                                 expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
                                 range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
                                 hint: None,
                             }),
-                            Err(WpdsParseError::ParseFailed { message, position, attempts: _ }) => {
+                            Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
                                 let range = tokens
                                     .get(position)
                                     .map(|(_, r)| *r)
@@ -597,7 +597,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     hint: None,
                                 })
                             }
-                            Err(WpdsParseError::Incomplete { position }) => {
+                            Err(WpdaParseError::Incomplete { position }) => {
                                 let range = tokens
                                     .get(position)
                                     .map(|(_, r)| *r)
@@ -614,7 +614,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     hint: None,
                                 })
                             }
-                            Err(WpdsParseError::AmbiguityBudget { budget, actual, position }) => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position }) => {
                                 let range = tokens
                                     .get(position)
                                     .map(|(_, r)| *r)
@@ -639,7 +639,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         .map(|(t, r)| token_text(t, input, *r))
                         .collect();
                     let mut pos = 0usize;
-                    match #parse_via_wpds_all_fn(&kinds, &texts, &mut pos, 0) {
+                    match #parse_via_wpda_all_fn(&kinds, &texts, &mut pos, 0) {
                         Ok((terms, _weights)) => {
                             if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
                                 return Err(ParseError::TrailingTokens {
@@ -661,12 +661,12 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             }
                             Ok(terms)
                         }
-                        Err(WpdsParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
+                        Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                             expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
                             range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
                             hint: None,
                         }),
-                        Err(WpdsParseError::ParseFailed { message, position, attempts: _ }) => {
+                        Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -683,7 +683,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdsParseError::Incomplete { position }) => {
+                        Err(WpdaParseError::Incomplete { position }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -700,7 +700,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdsParseError::AmbiguityBudget { budget, actual, position }) => {
+                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -720,7 +720,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             let _ = parse_fn;
             // `Cat::parse_structured` routes through the WPDS facade
             // unconditionally — every category in `language.types` has a
-            // facade emitted by `wpds_codegen` (with synthetic.rs filling
+            // facade emitted by `wpda_codegen` (with synthetic.rs filling
             // in literal / collection / Var rules where the user grammar
             // doesn't supply explicit ones). No runtime stubs.
             let parse_structured_body = quote! {
@@ -737,7 +737,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     .map(|(t, r)| token_text(t, input, *r))
                     .collect();
                 let mut pos = 0usize;
-                match #parse_via_wpds_fn(&kinds, &texts, &mut pos, 0) {
+                match #parse_via_wpda_fn(&kinds, &texts, &mut pos, 0) {
                     Ok(v) => {
                         if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
                             return Err(ParseError::TrailingTokens {
@@ -750,12 +750,12 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         }
                         Ok(v)
                     }
-                    Err(WpdsParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
+                    Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                         expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
                         range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
                         hint: None,
                     }),
-                    Err(WpdsParseError::ParseFailed { message, position, attempts: _ }) => {
+                    Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
                         let range = tokens
                             .get(position)
                             .map(|(_, r)| *r)
@@ -772,7 +772,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             hint: None,
                         })
                     }
-                    Err(WpdsParseError::Incomplete { position }) => {
+                    Err(WpdaParseError::Incomplete { position }) => {
                         let range = tokens
                             .get(position)
                             .map(|(_, r)| *r)
@@ -789,7 +789,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             hint: None,
                         })
                     }
-                    Err(WpdsParseError::AmbiguityBudget { budget, actual, position }) => {
+                    Err(WpdaParseError::AmbiguityBudget { budget, actual, position }) => {
                         let range = tokens
                             .get(position)
                             .map(|(_, r)| *r)
@@ -815,7 +815,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         Self::parse_structured(input).map_err(|e| e.to_string())
                     }
 
-                    #parse_via_wpds_method
+                    #parse_via_wpda_method
 
                     /// Parse a string as this category, returning a structured `ParseError`.
                     ///
@@ -848,7 +848,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     /// parsing after errors using the WPDS facade's internal sync-token
                     /// recovery (skip past `,`/`;`/`)`/etc. on Error and retry).
                     ///
-                    /// C4-C5 (2026-04-28): wraps `parse_<Cat>_via_wpds_recovering`
+                    /// C4-C5 (2026-04-28): wraps `parse_<Cat>_via_wpda_recovering`
                     /// to surface every recovery attempt as a separate
                     /// `ParseError::UnexpectedToken`, not just the final one.
                     /// Each `RecoveryAttempt` becomes one `ParseError`. On
@@ -872,7 +872,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             .iter()
                             .map(|(t, r)| token_text(t, input, *r))
                             .collect();
-                        let recovering_fn = #parse_via_wpds_recovering_fn;
+                        let recovering_fn = #parse_via_wpda_recovering_fn;
                         let mut pos = 0usize;
                         let (result, attempts) = recovering_fn(&kinds, &texts, &mut pos, 0);
                         let mut errors: Vec<ParseError> = attempts
@@ -935,7 +935,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 }
                                 (Some(v), errors)
                             }
-                            Err(WpdsParseError::EmptyResult) => {
+                            Err(WpdaParseError::EmptyResult) => {
                                 errors.push(ParseError::UnexpectedEof {
                                     expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
                                     range: tokens
@@ -946,7 +946,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                                 (None, errors)
                             }
-                            Err(WpdsParseError::Incomplete { position }) => {
+                            Err(WpdaParseError::Incomplete { position }) => {
                                 let range = tokens
                                     .get(position)
                                     .map(|(_, r)| *r)
@@ -967,7 +967,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                                 (None, errors)
                             }
-                            Err(WpdsParseError::AmbiguityBudget { budget, actual, position }) => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position }) => {
                                 let range = tokens
                                     .get(position)
                                     .map(|(_, r)| *r)
@@ -1010,7 +1010,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             // attempts. This fold restores the contract
                             // that `parse_recovering` always reports
                             // non-empty errors on parse failure.
-                            Err(WpdsParseError::ParseFailed { message, position, attempts: _ }) => {
+                            Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
                                 let range = tokens
                                     .get(position)
                                     .map(|(_, r)| *r)
@@ -1061,7 +1061,7 @@ pub fn is_literal_rule(rule: &GrammarRule) -> bool {
 /// Spec-derived predicate: does this category get a parseable
 /// auto-Var rule via `synthetic.rs::synthesize_grammar_rules`?
 ///
-/// Mirrors `macros/src/gen/runtime/wpds_codegen/synthetic.rs:231-249`
+/// Mirrors `macros/src/gen/runtime/wpda_codegen/synthetic.rs:231-249`
 /// exactly. The synthetic Var rule is added iff:
 ///   1. The category appears in `language.types`.
 ///   2. The category has NO `native_type` (so it's user-defined,

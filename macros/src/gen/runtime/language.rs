@@ -1872,7 +1872,7 @@ fn generate_language_struct_multi(
             // (`NFA_PREFIX_SPILL_<CAT>`, `NFA_FORCED_PREFIX_<CAT>`,
             // `NFA_PRIMARY_WEIGHT_<CAT>`) plus an F3 lazy-spillover replay
             // loop. Under WPDS-only operation (post-Stage-3.12 atomic
-            // swap), `Cat::parse → parse_<Cat>_via_wpds → walker` —
+            // swap), `Cat::parse → parse_<Cat>_via_wpda → walker` —
             // never reaches the trampoline NFA emitter that populates
             // `NFA_PREFIX_SPILL_<CAT>`. The replay loop iterated an
             // always-empty Vec, dead code that only added cognitive
@@ -1889,14 +1889,14 @@ fn generate_language_struct_multi(
             // length-equal invariant. WeightCorrection emissions are
             // now quiescent (all weights tie); future Stage 10b-prime
             // can wire real per-cat WPDS weights via
-            // `parse_<Cat>_via_wpds_with_weight`.
-            // M8b (2026-05-14): use parse_via_wpds_all so within-cat
+            // `parse_<Cat>_via_wpda_with_weight`.
+            // M8b (2026-05-14): use parse_via_wpda_all so within-cat
             // multi-result is surfaced into `successes`. The cross-cat
             // flatten below (match-on-len at lines 2718-2727) then
             // folds within-cat AND cross-cat ambiguity uniformly into
             // `Ambiguous(Vec<Inner>)`.
             let try_block = quote! {
-                match #cat::parse_via_wpds_all(input) {
+                match #cat::parse_via_wpda_all(input) {
                     Ok(terms) => {
                         for t in terms {
                             successes.push(#inner_enum_name::#variant(t));

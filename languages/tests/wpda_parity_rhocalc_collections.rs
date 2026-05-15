@@ -14,7 +14,7 @@
 //! - Empty collection `{ }` (with explicit `{` and `}` tokens — not PZero's `"{}"`
 //!   single-token form) hits the empty-collection bootstrap in PrefixDispatch.
 
-use mettail_languages::rhocalc::{parse_Proc_via_wpds, Proc};
+use mettail_languages::rhocalc::{parse_Proc_via_wpda, Proc};
 use mettail_prattail::automata::TokenKind;
 
 /// Single-element collection: `{ error }` → `Proc::PPar({Proc::Err})`.
@@ -27,7 +27,7 @@ fn wpds_parse_ppar_single_element() {
     ];
     let texts = vec!["{", "error", "}"];
     let mut pos = 0usize;
-    let result = parse_Proc_via_wpds(&kinds, &texts, &mut pos, 0);
+    let result = parse_Proc_via_wpda(&kinds, &texts, &mut pos, 0);
     match result {
         Ok(ref par @ Proc::PPar(ref bag)) => {
             assert_eq!(bag.len(), 1, "expected 1-element bag, got {}", bag.len());
@@ -54,7 +54,7 @@ fn wpds_parse_ppar_two_elements() {
     ];
     let texts = vec!["{", "error", "|", "error", "}"];
     let mut pos = 0usize;
-    let result = parse_Proc_via_wpds(&kinds, &texts, &mut pos, 0);
+    let result = parse_Proc_via_wpda(&kinds, &texts, &mut pos, 0);
     match result {
         Ok(Proc::PPar(ref bag)) => {
             assert_eq!(bag.len(), 2, "expected 2-element bag, got {}", bag.len());
@@ -81,7 +81,7 @@ fn wpds_parse_ppar_three_elements() {
     ];
     let texts = vec!["{", "error", "|", "error", "|", "error", "}"];
     let mut pos = 0usize;
-    let result = parse_Proc_via_wpds(&kinds, &texts, &mut pos, 0);
+    let result = parse_Proc_via_wpda(&kinds, &texts, &mut pos, 0);
     match result {
         Ok(Proc::PPar(ref bag)) => {
             assert_eq!(bag.len(), 3, "expected 3-element bag, got {}", bag.len());
@@ -101,7 +101,7 @@ fn wpds_parse_ppar_empty() {
     ];
     let texts = vec!["{", "}"];
     let mut pos = 0usize;
-    let result = parse_Proc_via_wpds(&kinds, &texts, &mut pos, 0);
+    let result = parse_Proc_via_wpda(&kinds, &texts, &mut pos, 0);
     match result {
         Ok(Proc::PPar(ref bag)) => {
             assert_eq!(bag.len(), 0, "expected empty bag, got {}", bag.len());

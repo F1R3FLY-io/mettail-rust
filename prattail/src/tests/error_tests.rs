@@ -105,8 +105,8 @@ fn test_generated_code_imports_runtime_types() {
 }
 
 // Stage 10.5b conclusion (2026-05-05): `test_generated_code_references_parse_error_variants`
-// MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
-// (Walker emits WpdsParseError + ParseFailed variants; the trampoline-emitted
+// MOVED to macros/src/gen/runtime/wpda_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
+// (Walker emits WpdaParseError + ParseFailed variants; the trampoline-emitted
 // ParseError::UnexpectedToken / UnexpectedEof variants are gone with their emitters).
 
 #[test]
@@ -189,9 +189,9 @@ fn test_format_error_context() {
 // -- Expected message generation --
 
 // Stage 10.5r migration (2026-05-04): `test_error_message_includes_integer_literal`
-// MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
+// MOVED to macros/src/gen/runtime/wpda_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
 // (Walker codegen lives in the macros crate, downstream of prattail; the
-// expected-message strings are emitted by `wpds_codegen/recovery.rs::emit_recovery_module`).
+// expected-message strings are emitted by `wpda_codegen/recovery.rs::emit_recovery_module`).
 
 #[test]
 fn test_error_message_includes_identifier() {
@@ -207,23 +207,23 @@ fn test_error_message_includes_identifier() {
 }
 
 // Stage 10.5r migration (2026-05-04): `test_error_message_includes_boolean_literal`
-// MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
+// MOVED to macros/src/gen/runtime/wpda_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
 // (Walker codegen lives in the macros crate; expected-message strings are
-// emitted by `wpds_codegen/recovery.rs::emit_recovery_module`).
+// emitted by `wpda_codegen/recovery.rs::emit_recovery_module`).
 
 // Stage 10.5r migration (2026-05-04): `test_error_message_includes_category_name`
-// MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
+// MOVED to macros/src/gen/runtime/wpda_codegen/mod.rs::tests::walker_emits_wpds_parse_error_type
 // (category name appears in Walker-emitted expected-message strings via
-// `wpds_codegen/recovery.rs::emit_recovery_module`).
+// `wpda_codegen/recovery.rs::emit_recovery_module`).
 
 // -- Error helper function generation --
 
 // Stage 10.5b conclusion (2026-05-05): `test_generated_code_contains_expect_token`
 // + `test_generated_code_contains_expect_ident` DELETED. Both tested trampoline-
 // internal helpers (expect_token, expect_ident) emitted by the now-deleted
-// pratt::write_parser_helpers. Walker uses WpdsParseError + RecoveryAttempt
+// pratt::write_parser_helpers. Walker uses WpdaParseError + RecoveryAttempt
 // directly (no expect_* wrappers). The error-reporting FEATURE survives via
-// WpdsParseError, asserted in macros::tests::walker_emits_wpds_parse_error_type.
+// WpdaParseError, asserted in macros::tests::walker_emits_wpds_parse_error_type.
 
 #[test]
 fn test_runtime_types_provides_format_error_context() {
@@ -244,13 +244,13 @@ fn test_runtime_types_provides_format_error_context() {
 
 // Stage 10.5b conclusion (2026-05-05): `test_prefix_handler_has_eof_check` DELETED.
 // `UnexpectedEof` was a trampoline-side ParseError variant emitted by the
-// deleted prefix handlers. Walker EOF detection lives in WpdsWalker::run_to_end_of_input
-// (returns WpdsState::Error / WpdsResolveResult::ParseError naturally).
+// deleted prefix handlers. Walker EOF detection lives in WpdaWalker::run_to_end_of_input
+// (returns WpdaState::Error / WpdaResolveResult::ParseError naturally).
 
 // -- Missing cast rule diagnostics (Sprint 10a) --
 
 // Stage 10.5r migration (2026-05-04): `test_multi_category_emits_cast_suggestions`
-// MOVED to macros/src/gen/runtime/wpds_codegen/mod.rs::tests
+// MOVED to macros/src/gen/runtime/wpda_codegen/mod.rs::tests
 // (cast-suggestion hints are emitted by Walker codegen; test asserts against
 // Walker output, which lives in the macros crate).
 

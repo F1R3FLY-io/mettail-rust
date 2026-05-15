@@ -221,7 +221,7 @@ fn wfst_optsmoke_dispatch_ifelse_eval() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn wpds_optsmoke_ifelse_true_0() {
+fn wpda_optsmoke_ifelse_true_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(0i32)), None);
     let input_str = format!("{}", input_term);
@@ -233,7 +233,7 @@ fn wpds_optsmoke_ifelse_true_0() {
 }
 
 #[test]
-fn wpds_optsmoke_ifelse_true_1() {
+fn wpda_optsmoke_ifelse_true_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(1i32)), None);
     let input_str = format!("{}", input_term);
@@ -245,7 +245,7 @@ fn wpds_optsmoke_ifelse_true_1() {
 }
 
 #[test]
-fn wpds_optsmoke_ifelse_true_2() {
+fn wpda_optsmoke_ifelse_true_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(2i32)), None);
     let input_str = format!("{}", input_term);
@@ -257,7 +257,7 @@ fn wpds_optsmoke_ifelse_true_2() {
 }
 
 #[test]
-fn wpds_optsmoke_ifelse_true_3() {
+fn wpda_optsmoke_ifelse_true_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(3i32)), None);
     let input_str = format!("{}", input_term);
@@ -269,7 +269,7 @@ fn wpds_optsmoke_ifelse_true_3() {
 }
 
 #[test]
-fn wpds_optsmoke_ifelse_true_5() {
+fn wpda_optsmoke_ifelse_true_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(5i32)), None);
     let input_str = format!("{}", input_term);
@@ -281,7 +281,7 @@ fn wpds_optsmoke_ifelse_true_5() {
 }
 
 #[test]
-fn wpds_optsmoke_ifelse_false_0() {
+fn wpda_optsmoke_ifelse_false_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(0i32)), None);
     let input_str = format!("{}", input_term);
@@ -293,7 +293,7 @@ fn wpds_optsmoke_ifelse_false_0() {
 }
 
 #[test]
-fn wpds_optsmoke_ifelse_false_1() {
+fn wpda_optsmoke_ifelse_false_1() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(1i32)), None);
     let input_str = format!("{}", input_term);
@@ -305,7 +305,7 @@ fn wpds_optsmoke_ifelse_false_1() {
 }
 
 #[test]
-fn wpds_optsmoke_ifelse_false_2() {
+fn wpda_optsmoke_ifelse_false_2() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(2i32)), None);
     let input_str = format!("{}", input_term);
@@ -317,7 +317,7 @@ fn wpds_optsmoke_ifelse_false_2() {
 }
 
 #[test]
-fn wpds_optsmoke_ifelse_false_3() {
+fn wpda_optsmoke_ifelse_false_3() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(3i32)), None);
     let input_str = format!("{}", input_term);
@@ -329,7 +329,7 @@ fn wpds_optsmoke_ifelse_false_3() {
 }
 
 #[test]
-fn wpds_optsmoke_ifelse_false_5() {
+fn wpda_optsmoke_ifelse_false_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(5i32)), None);
     let input_str = format!("{}", input_term);

@@ -242,7 +242,7 @@ pub struct GrammarRule {
     pub tier_directive: Option<TierDirective>,
     /// Stage 3.13b (2026-05-01): provenance flag distinguishing user-written
     /// rules (false) from synthetic auto-injection rules emitted by
-    /// `macros/src/gen/runtime/wpds_codegen/auto_inject.rs::make_injection_rule`
+    /// `macros/src/gen/runtime/wpda_codegen/auto_inject.rs::make_injection_rule`
     /// (true). Used by:
     /// - Stage 3.13c routing filter (`pipeline.rs:1316`) to exclude synthetic
     ///   rules from legacy unified-trampoline cast_rules.
@@ -1073,7 +1073,7 @@ fn parse_opt_op(content: ParseStream) -> SynResult<PatternOp> {
 /// Convert term context to old-style items and bindings for backward compatibility.
 ///
 /// **Stage 3.13 (2026-04-30):** made `pub` so auto-injection codegen
-/// (`macros/src/gen/runtime/wpds_codegen/auto_inject.rs::make_injection_rule`)
+/// (`macros/src/gen/runtime/wpda_codegen/auto_inject.rs::make_injection_rule`)
 /// can synthesize judgement-style GrammarRules with both the new-style
 /// `term_context` field AND the legacy `items` field populated identically
 /// to how the DSL parser at `:589` does it. Without this, downstream

@@ -34,8 +34,8 @@ use crate::lexer::{extract_terminals, generate_lexer_as_string_hybrid, GrammarRu
 // write_recovery_helpers DELETED. They emitted runtime helpers
 // (expect_token, expect_ident, peek_token, peek_ahead, sync_to) that
 // were consumed only by trampoline-emitted RD handlers, all gone.
-// Walker (parse_<Cat>_via_wpds) has its own error handling via
-// WpdsParseError + RecoveryAttempt and doesn't need these helpers.
+// Walker (parse_<Cat>_via_wpda) has its own error handling via
+// WpdaParseError + RecoveryAttempt and doesn't need these helpers.
 use crate::prediction::{
     analyze_cross_category_overlaps, compute_first_sets, compute_first_sets_incremental,
     compute_follow_sets_from_inputs, compute_follow_sets_incremental,
@@ -1307,7 +1307,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
     // Extract cast rules
     // Stage 3.13c (2026-05-01): exclude synthetic auto-injection rules from
     // legacy unified-trampoline cast_rules. Synthetic rules emitted by
-    // `wpds_codegen/auto_inject.rs::make_injection_rule` are visible only to
+    // `wpda_codegen/auto_inject.rs::make_injection_rule` are visible only to
     // the WPDS path; routing them through unified-trampoline cast machinery
     // produces ambiguity warnings and downstream codegen errors (W05 false
     // positives + IfElse/KwInt arity mismatches in `int_bool-unified.rs`).
@@ -2608,8 +2608,8 @@ fn generate_parser_code(
     // Stage 10.5 (2026-05-04): RD handler emission (`all_prefix_handlers` Vec
     // build + lambda/dollar handler block) DELETED. These emitters fed the
     // now-deleted trampoline emission. Walker emits binder syntax via
-    // `wpds_codegen/binder.rs` (lambda/dollar) and prefix RD rules via
-    // `wpds_codegen/prefix.rs`.
+    // `wpda_codegen/binder.rs` (lambda/dollar) and prefix RD rules via
+    // `wpda_codegen/prefix.rs`.
     //
     // Stage 10.5 (2026-05-04): `dispatch_categories` declaration DELETED.
     // It fed `TrampolineConfig::needs_dispatch` and the cross-cat dispatch
@@ -3689,7 +3689,7 @@ fn generate_parser_code(
     }
 
     // Stage 10.5 (2026-05-04): trampoline-emission per-category for-loop DELETED.
-    // Walker (WPDS) emits `parse_<Cat>_via_wpds` via `wpds_codegen/facade.rs`,
+    // Walker (WPDS) emits `parse_<Cat>_via_wpda` via `wpda_codegen/facade.rs`,
     // subsuming `parse_<cat>_own` and `parse_<cat>_own_traced`. The associated
     // setup blocks (prefix_cse_all, all_frame_infos, unified_mode, TrampolineConfig
     // construction) all died with the loop they fed.
@@ -3697,8 +3697,8 @@ fn generate_parser_code(
     // Stage 10.5 (2026-05-04): cross-category dispatch emission DELETED.
     // `write_category_dispatch` emitted arms calling `parse_<cat>_own`, which
     // is no longer emitted post-trampoline-deletion. Walker (WPDS) provides
-    // equivalent cross-category dispatch via `parse_<Cat>_via_wpds` emitted by
-    // `wpds_codegen/facade.rs` (Fork+AmbiguityFanout+lex-min weights).
+    // equivalent cross-category dispatch via `parse_<Cat>_via_wpda` emitted by
+    // `wpda_codegen/facade.rs` (Fork+AmbiguityFanout+lex-min weights).
 
     // ── Error recovery functions (parallel set, zero overhead on non-recovering path) ──
 
@@ -3734,7 +3734,7 @@ fn generate_parser_code(
     // Per Plan agent finding (ac1ca5956a3783d6c): `wfst_recover_<Cat>` was
     // emitted by `generate_wfst_recovery_fn` but had ZERO callers — the
     // actual runtime recovery is the wrapper-level skip-to-sync loop in
-    // `wpds_codegen/facade.rs::parse_<Cat>_via_wpds_recovering`. The dead
+    // `wpda_codegen/facade.rs::parse_<Cat>_via_wpda_recovering`. The dead
     // emission chain (generate_wfst_recovery_fn + CROSS_CAT_CASTS_<cat>
     // static + emit_recovery_wfst_static + emit_parse_simulator_static)
     // dragged in FRAME_STATE_<CAT>/RUNNING_WEIGHT_<CAT>/PARENT_WEIGHT_<CAT>
@@ -3751,7 +3751,7 @@ fn generate_parser_code(
 
     // Stage 10.4 (2026-05-04): unified trampoline generation block DELETED.
     // Walker (WPDS) subsumes the multi-category mutual-recursion CPS dispatch
-    // via per-cursor `BranchCursor`s and `WpdsState::AmbiguityFanout`.
+    // via per-cursor `BranchCursor`s and `WpdaState::AmbiguityFanout`.
     // `unified_trampoline.rs` and its FrameVariantInfo / UnifiedTrampolineConfig
     // / write_unified_types entry point all deleted in lockstep.
 
@@ -4676,11 +4676,11 @@ fn emit_token_to_id_fn(
 // ZERO callers — they referenced FRAME_STATE_<CAT>/RUNNING_WEIGHT_<CAT>/
 // PARENT_WEIGHT_<CAT> thread-locals last set by the deleted trampoline.rs.
 // Per Plan agent ac1ca5956a3783d6c: dead code eliminated; recovery now lives
-// purely in wpds_codegen/facade.rs::parse_<Cat>_via_wpds_recovering wrapper.
+// purely in wpda_codegen/facade.rs::parse_<Cat>_via_wpda_recovering wrapper.
 
 // Stage 10.5 (2026-05-04): `write_trampolined_parser_recovering_wfst` DELETED.
 // It emitted `parse_<cat>_own_recovering` calling now-gone `parse_<cat>_own`.
-// Walker emits `parse_<Cat>_via_wpds_recovering` via `wpds_codegen/facade.rs`,
+// Walker emits `parse_<Cat>_via_wpda_recovering` via `wpda_codegen/facade.rs`,
 // which is what `Cat::parse_recovering` already routes through (atomic swap
 // completed in earlier WPDS migration phases). Stage 10.5r migrates the
 // recovery-feature wiring (bracket counters, cascade prevention, wfst_recover_<cat>

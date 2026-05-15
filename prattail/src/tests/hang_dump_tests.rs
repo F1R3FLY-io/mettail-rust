@@ -189,31 +189,31 @@ fn publish_then_take_overrides_trigger_and_preserves_fields() {
 #[test]
 fn walker_publishes_snapshot_during_run_to_end_of_input() {
     use crate::automata::lex_weight::LexicographicWeight;
-    use crate::gss::{WpdsGss, WpdsGssNode};
-    use crate::wpds_runtime::{
-        SliceTokenSource, StackSymbolV2, WpdsState, WpdsTokenSource,
+    use crate::gss::{WpdaGss, WpdaGssNode};
+    use crate::wpda_runtime::{
+        SliceTokenSource, StackSymbolV2, WpdaState, WpdaTokenSource,
     };
-    use crate::wpds_walker::{WpdsStepAction, WpdsStepEngine, WpdsWalker};
+    use crate::wpda_walker::{WpdaStepAction, WpdaEngine, WpdaWalker};
     use std::cell::RefCell;
 
     // Local minimal ScriptedEngine — pop the next action from a Vec
-    // each call. Mirrors the pattern at wpds_walker.rs:7000+.
+    // each call. Mirrors the pattern at wpda_walker.rs:7000+.
     struct ScriptedEngine {
-        script: RefCell<Vec<WpdsStepAction<LexicographicWeight>>>,
+        script: RefCell<Vec<WpdaStepAction<LexicographicWeight>>>,
     }
-    impl WpdsStepEngine<LexicographicWeight> for ScriptedEngine {
+    impl WpdaEngine<LexicographicWeight> for ScriptedEngine {
         fn step(
             &self,
-            _state: &WpdsState,
-            _gss: &WpdsGss<LexicographicWeight>,
-            _frontier_top: Option<&WpdsGssNode>,
+            _state: &WpdaState,
+            _gss: &WpdaGss<LexicographicWeight>,
+            _frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
-            _tokens: &dyn WpdsTokenSource,
-        ) -> WpdsStepAction<LexicographicWeight> {
+            _tokens: &dyn WpdaTokenSource,
+        ) -> WpdaStepAction<LexicographicWeight> {
             self.script
                 .borrow_mut()
                 .pop()
-                .unwrap_or(WpdsStepAction::Idle)
+                .unwrap_or(WpdaStepAction::Idle)
         }
     }
 
@@ -224,15 +224,15 @@ fn walker_publishes_snapshot_during_run_to_end_of_input() {
     // terminal-transition step (Accept).
     let engine = ScriptedEngine {
         script: RefCell::new(vec![
-            WpdsStepAction::Accept,
-            WpdsStepAction::Push {
+            WpdaStepAction::Accept,
+            WpdaStepAction::Push {
                 symbol: StackSymbolV2::category_entry(0),
                 weight: LexicographicWeight::from_cost(0.0, 0, 0),
-                new_state: WpdsState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             },
         ]),
     };
-    let mut walker: WpdsWalker<LexicographicWeight, _> = WpdsWalker::new(engine, 0);
+    let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(engine, 0);
     let token_src = SliceTokenSource::new(&[]);
 
     walker

@@ -4,7 +4,7 @@
 //!
 //! The Calculator grammar is the canonical multi-error fixture: malformed
 //! infix expressions like `1 + + 2` trigger the WPDS facade's
-//! `WpdsState::Error` path, which the recovery wrapper retries up to
+//! `WpdaState::Error` path, which the recovery wrapper retries up to
 //! `MAX_RECOVERY_ROUNDS` times by skipping past sync delimiters
 //! (`)`, `}`, `]`, `;`, `,`).
 //!
